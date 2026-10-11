@@ -6,7 +6,7 @@ use crate::analyze::component::{
 use crate::analyze::passes::{PassCtx, run_passes};
 use crate::ir::{ComponentIR, Diagnostic};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 /// A compiled (or compiling) component, keyed by `path` or `path#export`.
@@ -23,6 +23,10 @@ pub struct ModuleCache {
     map: HashMap<String, Entry>,
     /// Cache key of the component the run was started for.
     root: Option<String>,
+    /// Store exports read so far (M3-F D7), by (module path, export).
+    pub store_exports: HashMap<(String, String), Result<crate::ir::StoreRef, String>>,
+    /// Store name → the module that defines it, for `store-name-duplicate`.
+    pub store_names: BTreeMap<String, String>,
 }
 
 impl ModuleCache {
@@ -164,7 +168,7 @@ fn compile_uncached(
 }
 
 /// The module a relative import names, as a path relative to the root:
-/// `<rel>`, `<rel>.tsx`, `<rel>.ts`, `<rel>/index.tsx`, first that exists.
+/// `<rel>`, `<rel>.tsx`, `<rel>.ts`, `<rel>/index.tsx`, `<rel>/index.ts`, first that exists.
 /// `None` for a package import or when nothing exists.
 pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String> {
     if !(rel.starts_with("./") || rel.starts_with("../")) {
@@ -186,6 +190,7 @@ pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String>
     candidates.push(format!("{joined}.tsx"));
     candidates.push(format!("{joined}.ts"));
     candidates.push(format!("{joined}/index.tsx"));
+    candidates.push(format!("{joined}/index.ts"));
     candidates.into_iter().find(|c| opts.root.join(c).is_file())
 }
 

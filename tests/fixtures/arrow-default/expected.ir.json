@@ -25,7 +25,8 @@
         }
       },
       "inputs": [
-        "*"
+        "*",
+        "__store"
       ],
       "outputs": [
         "_ssr_input_92ff5102"

@@ -56,17 +56,17 @@ test('brust build writes the S6 manifest (pinned) and every file it names', asyn
   expect(clone(item.jobs[1])).toMatchObject({
     id: 'j1',
     kind: 'ssr',
-    inputs: ['team'],
+    inputs: ['__store', 'team'],
     outputs: [expect.stringMatching(/^_ssr_team_/)],
     target: expect.stringMatching(/^team_/),
-    props: { team: 'team' },
+    props: { team: 'team', __store: '__store' },
   })
   expect(clone(item.children)).toEqual([{ id: expect.stringMatching(/^priceRow_/), instances: 'per-row:item.rows', props: { item: 'item.rows[idx]', unit: 'unit' } }])
   expect(item.use_id_slots).toBe(1)
   expect(clone(m.components[item.jobs[1].target])).toMatchObject({
     tier: 'react',
     client: expect.stringMatching(/^client\/react-team_[0-9a-f]{8}-[0-9a-f]{10}\.js$/),
-    jobs: [{ kind: 'ssr', inputs: ['*'], target: item.jobs[1].target }],
+    jobs: [{ kind: 'ssr', inputs: ['*', '__store'], target: item.jobs[1].target }],
   })
   expect(m.assets.react).toBeUndefined()
   for (const p of [m.assets.runtime, ...Object.values(m.components).map((c: any) => c.client).filter(Boolean), 'jobs.js', 'public/app.css', 'index.js'])
@@ -126,10 +126,10 @@ test('cache(), a per-row react child and a client_only child map to S6 (and pass
     {
       id: 'j0',
       kind: 'ssr',
-      inputs: ['items'],
+      inputs: ['__store', 'items'],
       outputs: [`_ssr_${badge}`],
       target: badge,
-      props: { label: 'items[idx].name' },
+      props: { label: 'items[idx].name', __store: '__store' },
       per_instance: 'items', // the list's context path, not `_l1`
       cache: { key: 'page.id', tags: ['list'], ttl_seconds: 30 },
     },
@@ -137,7 +137,7 @@ test('cache(), a per-row react child and a client_only child map to S6 (and pass
   // client_only: no ssr job anywhere for it, a static children[] entry so its chunk is linked.
   expect(page.children).toEqual([{ id: clock, instances: 'static', props: {} }])
   expect(clone(m.components[clock])).toMatchObject({ tier: 'react', jobs: [], client: expect.stringMatching(/^client\/react-clock_/) })
-  expect(clone(m.components[badge].jobs)).toMatchObject([{ id: 'j0', kind: 'ssr', inputs: ['*'], target: badge }])
+  expect(clone(m.components[badge].jobs)).toMatchObject([{ id: 'j0', kind: 'ssr', inputs: ['*', '__store'], target: badge }])
 
   const html = await (await fetch(`${base}/list`)).text()
   expect(html.match(/<b>.*?<\/b>/g)).toEqual(['<b>Ann<!-- -->:<!-- -->0</b>', '<b>Bob<!-- -->:<!-- -->0</b>'])

@@ -3,10 +3,10 @@
 //! directives name.
 use super::common::{
     DerivedShape, Facts, client_fn, client_js, import_lines, imports_in, module_code,
-    module_names_in,
+    module_names_in, store_client_js, visit_idents, visit_verbatim_captures,
 };
 use super::{Member, MemberDef, Paint};
-use crate::ir::{Attr, ComponentIR, Expr, Node, RawExpr};
+use crate::ir::{Attr, ComponentIR, Expr, IdentKind, Node, RawExpr};
 use std::collections::BTreeSet;
 
 /// The chunk source and its members in export order.
@@ -48,6 +48,34 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
     for r in roots.iter().chain(&reached_raws) {
         imports_in(r, &mut imports);
         module_names_in(r, &f, &mut module_names);
+    }
+    // Store handles (M3-F D7): the chunk imports each one under the user's specifier; the bundler
+    // resolves it against the component's source dir (C6). The job never imports a store module.
+    let mut store_handles = BTreeSet::new();
+    let mut views = BTreeSet::new();
+    let effect_deps = ir.effects.iter().flat_map(|e| e.deps.iter().flatten());
+    for r in roots
+        .iter()
+        .copied()
+        .chain(reached_raws.iter().copied())
+        .chain(effect_deps)
+    {
+        visit_idents(r, &mut |_, kind| {
+            if let IdentKind::Store { handle, .. } = kind {
+                store_handles.insert(handle.clone());
+            }
+        });
+        // Verbatim code reads the view `s` as written: the chunk declares it.
+        visit_verbatim_captures(r, &mut |name, kind| {
+            if let IdentKind::Store { handle, key: None } = kind {
+                views.insert((handle.clone(), name.to_string()));
+            }
+        });
+    }
+    for h in &store_handles {
+        if let Some(u) = f.stores.get(h) {
+            imports.insert(u.import.clone());
+        }
     }
     module_names.extend(ir.client_module_locals.iter().cloned());
     let module = module_code(ir, &module_names, &mut imports);
@@ -98,6 +126,29 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
             DerivedShape::Function => format!("const {} = {}", d.name, client_fn(raw, &f)),
         };
         decls.push((raw.loc, line));
+    }
+    // The view `s` a verbatim body reads: live getters over the store's signals and computeds.
+    for u in &ir.stores {
+        let (Some(v), Some(r)) = (&u.view, &u.resolved) else {
+            continue;
+        };
+        if !views.contains(&(u.handle.clone(), v.clone())) {
+            continue;
+        }
+        let mut keys: Vec<&String> = r.signals.iter().chain(&r.computeds).collect();
+        keys.sort();
+        keys.dedup();
+        let getters: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                format!(
+                    "get {}() {{ return {} }}",
+                    object_key(k),
+                    store_client_js(&u.handle, Some(k), &f)
+                )
+            })
+            .collect();
+        decls.push((u.loc, format!("const {v} = {{ {} }}", getters.join(", "))));
     }
     decls.sort_by_key(|d| d.0);
 

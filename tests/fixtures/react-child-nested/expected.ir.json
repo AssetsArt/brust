@@ -178,6 +178,7 @@
         }
       },
       "inputs": [
+        "__store",
         "groups"
       ],
       "outputs": [
@@ -185,6 +186,7 @@
       ],
       "per_item": "it",
       "props": {
+        "__store": "__store",
         "item": "groups[idx].items[idx]"
       },
       "literals": {

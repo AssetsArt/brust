@@ -44,9 +44,9 @@ pub struct SlotInfo {
 /// One enclosing `For`.
 struct List {
     item: String,
-    /// Prop paths the source reads.
+    /// Prop and store paths the source reads.
     paths: Vec<String>,
-    /// The source reads state, so the list changes on the client.
+    /// The source reads state or a store, so the list changes on the client.
     stateful: bool,
 }
 
@@ -76,7 +76,7 @@ struct Placer<'s> {
     /// `useId()` bindings: server-seeded values (`_idN`, S7 step 6). Template-only:
     /// a job cannot read them, so a non-template expression reading one falls back.
     ids: BTreeSet<String>,
-    /// Prop paths read by the conditions of the enclosing `If`s (F33): a slot under
+    /// Prop and store paths read by the conditions of the enclosing `If`s (F33): a slot under
     /// a guard varies with the guard's value, so the job key must include it.
     guards: Vec<BTreeSet<String>>,
     flagged: BTreeSet<&'static str>,
@@ -158,7 +158,9 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
         // The job evaluates state-dependent slots with the seeds: it reads
         // whatever the state initializers read.
         for s in &ir.state {
-            inputs.extend(p.st.cx.deps_expr(&s.init, &[]).props);
+            let d = p.st.cx.deps_expr(&s.init, &[]);
+            inputs.extend(d.props);
+            inputs.extend(d.stores);
             if let Expr::Precomputed { inputs: i, .. } = &s.init {
                 inputs.extend(i.iter().cloned());
             }
@@ -404,8 +406,11 @@ impl Placer<'_> {
             self.lists.last().map(|l| l.item.clone())
         };
         let mut inputs: Vec<String> = deps.props.iter().cloned().collect();
+        // A store read is a job input (`__store.<name>.<key>`, D7); never a prop (C1).
+        inputs.extend(deps.stores.iter().cloned());
         inputs.extend(self.guards.iter().flatten().cloned());
-        let mut state_dependent = !deps.state.is_empty();
+        // R5: a store-dependent slot is recomputed by the client like a state-dependent one.
+        let mut state_dependent = deps.reactive();
         if per_item.is_some() {
             for l in &self.lists {
                 inputs.extend(l.paths.iter().cloned());
@@ -438,13 +443,17 @@ impl Placer<'_> {
             loc: r.loc,
             deps: deps.clone(),
         });
-        if !deps.state.is_empty() {
+        if deps.reactive() {
             // The client re-evaluates it (§3.2 rule 3: its props are seeds).
             self.reactive += 1;
             self.st.client_uses.push(super::ClientUse {
                 loc: r.loc,
                 deps: deps.clone(),
-                what: "a state-dependent value",
+                what: if deps.state.is_empty() {
+                    "a store-dependent value"
+                } else {
+                    "a state-dependent value"
+                },
                 raw: Some((r.clone(), self.loop_scope.clone())),
             });
         }
@@ -611,7 +620,10 @@ impl Placer<'_> {
             Node::Slot(e) => self.expr(e),
             Node::If { cond, then, else_ } => {
                 let guard = match &*cond {
-                    Expr::Raw(r) => self.st.cx.deps(r, &self.loop_scope).props,
+                    Expr::Raw(r) => {
+                        let d = self.st.cx.deps(r, &self.loop_scope);
+                        d.props.into_iter().chain(d.stores).collect()
+                    }
                     _ => BTreeSet::new(),
                 };
                 self.expr(cond);
@@ -648,9 +660,8 @@ impl Placer<'_> {
                 self.loop_scope.extend(index.iter().cloned());
                 self.lists.push(List {
                     item: item.clone(),
-                    paths: src_deps.prop_paths(),
-                    stateful: !src_deps.state.is_empty()
-                        || self.lists.last().is_some_and(|l| l.stateful),
+                    paths: minimal_paths(src_deps.props.iter().chain(&src_deps.stores).cloned()),
+                    stateful: src_deps.reactive() || self.lists.last().is_some_and(|l| l.stateful),
                 });
                 self.expr(key);
                 body.iter_mut().for_each(|c| self.node(c));

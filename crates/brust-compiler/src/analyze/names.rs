@@ -19,42 +19,52 @@ pub struct NameTable<'a> {
     state: HashSet<u32>,
     setters: HashSet<u32>,
     loop_bindings: HashSet<u32>,
+    /// `useStore` bindings (M3-F D7) → (handle as written, key): the view `s` has key `None`,
+    /// a destructured `{ count }` has `Some("count")`.
+    stores: HashMap<u32, (String, Option<String>)>,
     /// The exact symbols the parser generated for the JSX runtime: callees of
     /// lowered JSX calls and the generated `Fragment` tag (never by spelling).
     jsx_runtime: HashSet<u32>,
 }
 
-impl<'a> NameTable<'a> {
-    pub fn new(ast: &'a js_ast::Ast<'_>, component: &js_ast::G::Fn) -> Self {
-        let records = ast.import_records.as_slice();
-        let path_of = |i: u32| {
-            records
-                .get(i as usize)
-                .map(|r| String::from_utf8_lossy(r.path.text).into_owned())
-        };
-        // `import` statements are the source of truth: `ast.named_imports` is a
-        // bundler table and leaves out default and namespace imports.
-        let mut imports = HashMap::new();
-        for part in ast.parts.iter() {
-            for stmt in part.stmts.slice() {
-                let js_ast::stmt::Data::SImport(imp) = &stmt.data else {
-                    continue;
-                };
-                let Some(path) = path_of(imp.import_record_index) else {
-                    continue;
-                };
-                if let Some(d) = &imp.default_name {
-                    imports.insert(d.ref_.inner_index(), (path.clone(), "default".into()));
-                }
-                for item in imp.items.slice() {
-                    let imported = String::from_utf8_lossy(item.alias.slice()).into_owned();
-                    imports.insert(item.name.ref_.inner_index(), (path.clone(), imported));
-                }
-                if imp.star_name_loc.start >= 0 {
-                    imports.insert(imp.namespace_ref.inner_index(), (path, "*".into()));
-                }
+/// Every `import` binding of the module: local symbol (`Ref::inner_index`) → (module path,
+/// imported name; `default` or `*` for default and namespace imports). `import` statements are
+/// the source of truth: `ast.named_imports` is a bundler table and leaves out default and
+/// namespace imports.
+pub fn module_imports(ast: &js_ast::Ast<'_>) -> HashMap<u32, (String, String)> {
+    let records = ast.import_records.as_slice();
+    let path_of = |i: u32| {
+        records
+            .get(i as usize)
+            .map(|r| String::from_utf8_lossy(r.path.text).into_owned())
+    };
+    let mut imports = HashMap::new();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            let js_ast::stmt::Data::SImport(imp) = &stmt.data else {
+                continue;
+            };
+            let Some(path) = path_of(imp.import_record_index) else {
+                continue;
+            };
+            if let Some(d) = &imp.default_name {
+                imports.insert(d.ref_.inner_index(), (path.clone(), "default".into()));
+            }
+            for item in imp.items.slice() {
+                let imported = String::from_utf8_lossy(item.alias.slice()).into_owned();
+                imports.insert(item.name.ref_.inner_index(), (path.clone(), imported));
+            }
+            if imp.star_name_loc.start >= 0 {
+                imports.insert(imp.namespace_ref.inner_index(), (path, "*".into()));
             }
         }
+    }
+    imports
+}
+
+impl<'a> NameTable<'a> {
+    pub fn new(ast: &'a js_ast::Ast<'_>, component: &js_ast::G::Fn) -> Self {
+        let imports = module_imports(ast);
         let mut table = NameTable {
             symbols: ast.symbols.as_slice(),
             imports,
@@ -63,6 +73,7 @@ impl<'a> NameTable<'a> {
             state: HashSet::new(),
             setters: HashSet::new(),
             loop_bindings: HashSet::new(),
+            stores: HashMap::new(),
             jsx_runtime: HashSet::new(),
         };
         table.jsx_runtime = table.collect_jsx_runtime(ast);
@@ -176,6 +187,11 @@ impl<'a> NameTable<'a> {
             IdentKind::State
         } else if self.setters.contains(&k) {
             IdentKind::Setter
+        } else if let Some((handle, key)) = self.stores.get(&k) {
+            IdentKind::Store {
+                handle: handle.clone(),
+                key: key.clone(),
+            }
         } else if self.loop_bindings.contains(&k) {
             IdentKind::LoopBinding
         } else if let Some((source, imported)) = self.imports.get(&k) {
@@ -213,6 +229,20 @@ impl<'a> NameTable<'a> {
     pub fn mark_setter(&mut self, r: js_ast::Ref) {
         let k = self.key(r);
         self.setters.insert(k);
+    }
+
+    /// `r` is bound by `useStore(handle)`: the view (`key == None`) or one destructured key.
+    pub fn mark_store(&mut self, r: js_ast::Ref, handle: String, key: Option<String>) {
+        let k = self.key(r);
+        self.stores.insert(k, (handle, key));
+    }
+
+    /// The handle of the store view `r` (`s` of `const s = useStore(h)`), if it is one.
+    pub fn store_view(&self, r: js_ast::Ref) -> Option<&str> {
+        match self.stores.get(&self.key(r)) {
+            Some((handle, None)) => Some(handle.as_str()),
+            _ => None,
+        }
     }
 
     pub fn mark_loop_binding(&mut self, r: js_ast::Ref) {

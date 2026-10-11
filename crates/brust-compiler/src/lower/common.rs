@@ -1,11 +1,13 @@
 //! Facts every backend reads off one component: the structural expressions
 //! behind placed values, dependency classification, which derived values a
 //! piece of code reaches, and JS printing with the chunk's / job's names.
+use crate::analyze::passes::deps::STORE_INPUT;
 use crate::analyze::passes::deps::{Deps, DepsCx};
 use crate::ir::{
     ArrowBody, ComponentIR, DerivedDecl, Expr, IdentKind, JsCtx, RawExpr, RawKind, ServerExpr,
-    Structural,
+    StoreUse, Structural,
 };
+use crate::lower::server_expr::member_access;
 use std::collections::{BTreeSet, HashMap};
 
 /// The raw expression of a placed value: `Server` carries it; others are
@@ -40,6 +42,8 @@ pub struct Facts<'a> {
     pub states: BTreeSet<String>,
     /// Destructuring defaults by prop name (`size = 3`).
     pub prop_defaults: HashMap<String, RawExpr>,
+    /// `useStore` bindings by handle (M3-F D7).
+    pub stores: HashMap<String, &'a StoreUse>,
 }
 
 const FUNCTION_WHYS: &[&str] = &[
@@ -108,7 +112,16 @@ impl<'a> Facts<'a> {
                 .iter()
                 .filter_map(|p| p.default.clone().map(|d| (p.name.clone(), d)))
                 .collect(),
+            stores: ir.stores.iter().map(|u| (u.handle.clone(), u)).collect(),
         }
+    }
+
+    /// The store name a handle resolved to; `None` when unresolved (the component is tier React).
+    pub fn store_name(&self, handle: &str) -> Option<&'a str> {
+        self.stores
+            .get(handle)
+            .and_then(|u| u.resolved.as_ref())
+            .map(|r| r.name.as_str())
     }
 
     pub fn deps(&self, r: &RawExpr, scope: &[String]) -> Deps {
@@ -209,6 +222,44 @@ pub fn visit_idents(r: &RawExpr, f: &mut dyn FnMut(&str, &IdentKind)) {
     }
 }
 
+/// Calls `f` for every capture of a verbatim body (`Arrow{Block}` / `Opaque`) in `r`: the
+/// names such code reads as written, with no printer in between.
+pub fn visit_verbatim_captures(r: &RawExpr, f: &mut dyn FnMut(&str, &IdentKind)) {
+    let mut go = |e: &RawExpr| visit_verbatim_captures(e, f);
+    match &r.kind {
+        RawKind::Lit(_) | RawKind::Ident { .. } | RawKind::Jsx(_) => {}
+        RawKind::Member { target, .. } => go(target),
+        RawKind::Index { target, index } => {
+            go(target);
+            go(index);
+        }
+        RawKind::Call { callee, args } => {
+            go(callee);
+            args.iter().for_each(&mut go);
+        }
+        RawKind::Binary { left, right, .. } => {
+            go(left);
+            go(right);
+        }
+        RawKind::Unary { value, .. } => go(value),
+        RawKind::Cond { test, yes, no } => {
+            go(test);
+            go(yes);
+            go(no);
+        }
+        RawKind::Template { parts, .. } => parts.iter().for_each(|(p, _)| go(p)),
+        RawKind::Array(items) => items.iter().for_each(&mut go),
+        RawKind::Object(props) => props.iter().for_each(|(_, v)| go(v)),
+        RawKind::Arrow {
+            body: ArrowBody::Expr(b),
+            ..
+        } => go(b),
+        RawKind::Arrow { captures, .. } | RawKind::Opaque { captures, .. } => {
+            captures.iter().for_each(|(n, k)| f(n, k))
+        }
+    }
+}
+
 /// Imports printed code reads: `(local, source, imported)`.
 pub type ImportUse = (String, String, String);
 
@@ -264,8 +315,12 @@ pub fn module_code(
         let Some(captures) = scope.get(n.as_str()) else {
             continue;
         };
-        if !need.insert(n) {
+        if !need.insert(n.clone()) {
             continue;
+        }
+        // The whole statement is printed (`const a = 1, b = f()`): its other names run too.
+        for d in ir.module_decls.iter().filter(|d| d.names.contains(&n)) {
+            stack.extend(d.names.iter().cloned());
         }
         for (c, k) in captures.iter() {
             match k {
@@ -345,7 +400,48 @@ fn client_ident(name: &str, kind: &IdentKind, f: &Facts<'_>) -> Option<String> {
             _ => None,
         },
         IdentKind::Setter => f.setters.get(name).map(|s| format!("{s}.set")),
+        IdentKind::Store { handle, key } => Some(store_client_js(handle, key.as_deref(), f)),
         _ => None,
+    }
+}
+
+/// A store read in the chunk (M3-F D7): a signal or computed key is a live call
+/// (`cart.count()`); any other key, or the whole view, reads the snapshot, which
+/// drops functions as React's `useStore` does (`cart.snapshot()["add"]`).
+pub fn store_client_js(handle: &str, key: Option<&str>, f: &Facts<'_>) -> String {
+    let resolved = f.stores.get(handle).and_then(|u| u.resolved.as_ref());
+    match key {
+        Some(k)
+            if resolved.is_some_and(|r| r.signals.iter().chain(&r.computeds).any(|s| s == k)) =>
+        {
+            if crate::ir::expr::is_js_ident(k) {
+                format!("{handle}.{k}()")
+            } else {
+                format!("{handle}[{}]()", crate::ir::expr::js_string(k))
+            }
+        }
+        Some(k) => format!("{handle}.snapshot()[{}]", crate::ir::expr::js_string(k)),
+        None => format!("{handle}.snapshot()"),
+    }
+}
+
+/// `__store.cart.count` / `__store["pokedex.team"].members` (jinja).
+pub fn store_jinja(name: &str, key: Option<&str>) -> String {
+    let view = member_access(STORE_INPUT, name);
+    match key {
+        Some(k) => member_access(&view, k),
+        None => view,
+    }
+}
+
+/// Precompute job (D7: inputs carry the value; jobs never import a store module).
+pub fn store_server_js(name: &str, key: Option<&str>) -> String {
+    let js = crate::ir::expr::js_string;
+    let view = format!("(props.{STORE_INPUT}?.[{}] ?? {{}})", js(name));
+    match key {
+        Some(k) if crate::ir::expr::is_js_ident(k) => format!("{view}.{k}"),
+        Some(k) => format!("{view}[{}]", js(k)),
+        None => view,
     }
 }
 
@@ -368,6 +464,10 @@ pub fn server_js(r: &RawExpr, f: &Facts<'_>) -> String {
             // The job destructures every prop under its local name.
             IdentKind::Prop if name != "*" => f.prop_locals.get(name).cloned(),
             IdentKind::Prop => Some(f.prop_locals.get("*").cloned().unwrap_or("props".into())),
+            IdentKind::Store { handle, key } => Some(match f.store_name(handle) {
+                Some(n) => store_server_js(n, key.as_deref()),
+                None => "undefined".into(),
+            }),
             _ => None,
         }),
     }
@@ -405,6 +505,12 @@ fn wrap_source(
                 Some((_, DerivedShape::Value)) => (name.clone(), format!("{name}()")),
                 _ => continue,
             },
+            // The view `s` is a chunk const of getters (lower/client.rs): in scope as is.
+            IdentKind::Store { key: None, .. } => continue,
+            // A destructured `{ count }` is bound to its current value at call time.
+            IdentKind::Store { handle, key } => {
+                (name.clone(), store_client_js(handle, key.as_deref(), f))
+            }
             _ => continue,
         };
         if !params.contains(&param) {

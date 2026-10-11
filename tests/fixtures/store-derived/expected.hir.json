@@ -1,0 +1,36 @@
+{
+  "function": "CartTotal",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "s",
+          "reactive": true
+        },
+        {
+          "name": "unit",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    },
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "total",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    }
+  ]
+}

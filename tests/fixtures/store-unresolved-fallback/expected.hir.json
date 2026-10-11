@@ -1,0 +1,19 @@
+{
+  "function": "CartBadge",
+  "params": 0,
+  "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "s",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t0"
+      ]
+    }
+  ]
+}

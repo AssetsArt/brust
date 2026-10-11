@@ -12,7 +12,7 @@
 //! `_ssr_<childId>`, and an inlined child instance's job output under
 //! `__<childId>_<k>` (an object of its slots, indexed per item of the parent's
 //! enclosing lists).
-use super::common::{Facts, raw_of};
+use super::common::{Facts, raw_of, store_jinja};
 use super::server_expr::{JinjaCtx, UNDEFINED, jinja_string, to_jinja};
 use super::{LowerCtx, Member, MemberDef, Paint};
 use crate::ir::{
@@ -253,6 +253,12 @@ impl<'a, 'c> Printer<'a, 'c> {
             } else {
                 UNDEFINED.into()
             }),
+            // Store paths are global: an inlined child prints the same text (no instance suffix).
+            // An unresolved handle never lowers (tier React).
+            IdentKind::Store { handle, key } => Some(match self.f.store_name(handle) {
+                Some(n) => store_jinja(n, key.as_deref()),
+                None => UNDEFINED.into(),
+            }),
             _ => None,
         }
     }
@@ -331,7 +337,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         let deps = self.f.deps(raw, &self.scope());
         let in_row = self.frames.iter().any(|f| f.directive);
-        let sd = !deps.state.is_empty()
+        let sd = deps.reactive()
             || matches!(
                 placed,
                 Expr::Precomputed {
@@ -909,7 +915,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         let directive_row = self.native
             && (src_raw
                 .as_ref()
-                .is_some_and(|r| !self.f.deps(r, &self.scope()).state.is_empty())
+                .is_some_and(|r| self.f.deps(r, &self.scope()).reactive())
                 || body.iter().any(|b| needs_directives(b, &self.f)));
         let var = {
             let v = self.loop_var.get() + 1;
@@ -1484,7 +1490,7 @@ fn expr_reactive(e: &Expr, f: &Facts<'_>) -> bool {
         Expr::Precomputed {
             state_dependent, ..
         } => *state_dependent,
-        Expr::Server(ServerExpr(r)) => !f.deps(r, &[]).state.is_empty(),
+        Expr::Server(ServerExpr(r)) => f.deps(r, &[]).reactive(),
         _ => false,
     }
 }

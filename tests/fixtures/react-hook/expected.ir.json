@@ -69,7 +69,8 @@
         }
       },
       "inputs": [
-        "*"
+        "*",
+        "__store"
       ],
       "outputs": [
         "_ssr_input_d2ab59e4"

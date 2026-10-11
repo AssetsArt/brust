@@ -1,0 +1,260 @@
+{
+  "id": "input_5e4b56f8",
+  "source": "tests/fixtures/store-handler-write/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "step",
+      "local": "step",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 225,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 231,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 231,
+                      "kind": {
+                        "Member": {
+                          "target": {
+                            "loc": 231,
+                            "kind": {
+                              "Member": {
+                                "target": {
+                                  "loc": 231,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "cart",
+                                      "kind": {
+                                        "Import": {
+                                          "source": "./cart",
+                                          "imported": "cart"
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "name": "count",
+                                "optional": false
+                              }
+                            }
+                          },
+                          "name": "set",
+                          "optional": false
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 246,
+                        "kind": {
+                          "Binary": {
+                            "op": "Add",
+                            "left": {
+                              "loc": 246,
+                              "kind": {
+                                "Ident": {
+                                  "name": "s.count",
+                                  "kind": {
+                                    "Store": {
+                                      "handle": "cart",
+                                      "key": "count"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "right": {
+                              "loc": 256,
+                              "kind": {
+                                "Ident": {
+                                  "name": "step",
+                                  "kind": "Prop"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "cart",
+                {
+                  "Import": {
+                    "source": "./cart",
+                    "imported": "cart"
+                  }
+                }
+              ],
+              [
+                "s",
+                {
+                  "Store": {
+                    "handle": "cart",
+                    "key": null
+                  }
+                }
+              ],
+              [
+                "step",
+                "Prop"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    },
+    {
+      "name": "_h2",
+      "body": {
+        "loc": 284,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Block": {
+                "source": "() => {\n  const n = s.count * 2;\n  cart.count.set(n);\n}",
+                "captures_only": false
+              }
+            },
+            "captures": [
+              [
+                "s",
+                {
+                  "Store": {
+                    "handle": "cart",
+                    "key": null
+                  }
+                }
+              ],
+              [
+                "cart",
+                {
+                  "Import": {
+                    "source": "./cart",
+                    "imported": "cart"
+                  }
+                }
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 182,
+      "tag": "button",
+      "attrs": [
+        {
+          "Static": {
+            "name": "type",
+            "value": "button"
+          }
+        },
+        {
+          "Event": {
+            "event": "click",
+            "handler": "_h1"
+          }
+        },
+        {
+          "Event": {
+            "event": "dblclick",
+            "handler": "_h2"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Text": "Add ("
+        },
+        {
+          "Slot": {
+            "Server": {
+              "loc": 375,
+              "kind": {
+                "Ident": {
+                  "name": "s.count",
+                  "kind": {
+                    "Store": {
+                      "handle": "cart",
+                      "key": "count"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "Text": ")"
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [
+    "step"
+  ],
+  "client_imports": [
+    [
+      "./cart",
+      "cart"
+    ]
+  ],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "stores": [
+    {
+      "handle": "cart",
+      "import": [
+        "cart",
+        "./cart",
+        "cart"
+      ],
+      "view": "s",
+      "fields": [],
+      "loc": 152,
+      "resolved": {
+        "name": "cart",
+        "module": "tests/fixtures/store-handler-write/cart.ts",
+        "signals": [
+          "count"
+        ],
+        "computeds": [],
+        "factory_read": true
+      }
+    }
+  ],
+  "diagnostics": []
+}

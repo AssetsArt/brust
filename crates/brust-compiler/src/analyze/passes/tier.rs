@@ -70,11 +70,18 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         && ir.refs.is_empty()
         && ir.child_links.is_empty()
         && !has_state_dependent(ir)
+        // A resolved store read updates after first paint (M3-F D7).
+        && !ir.stores.iter().any(|s| s.resolved.is_some())
     {
         ir.tier = Tier::Static;
     } else {
         ir.tier = Tier::Native;
     }
+    react_jobs(ir);
+}
+
+/// The React tail of the decision: run again when a later check makes the component React.
+pub fn react_jobs(ir: &mut ComponentIR) {
     // §3.3: a React component's one job is its SSR render over its props;
     // precompute slots and child islands are React's business then.
     if matches!(ir.tier, Tier::React { .. }) && ir.uses_outlet {

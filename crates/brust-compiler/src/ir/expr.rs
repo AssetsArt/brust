@@ -10,9 +10,19 @@ pub enum IdentKind {
     Local,
     State,
     Setter,
-    Import { source: String, imported: String },
+    Import {
+        source: String,
+        imported: String,
+    },
     Global,
     LoopBinding,
+    /// A store read through `useStore` (M3-F D7). `handle` is the handle as written in this module
+    /// (`cart`, `stores.cart`: what the chunk calls); `key` is the member read (`s.count`, or a
+    /// destructured `{ count }`), `None` for the whole view `s`.
+    Store {
+        handle: String,
+        key: Option<String>,
+    },
     Unknown,
 }
 
@@ -304,7 +314,7 @@ pub fn js_number(n: f64) -> String {
     }
 }
 
-fn is_js_ident(s: &str) -> bool {
+pub(crate) fn is_js_ident(s: &str) -> bool {
     let mut cs = s.chars();
     cs.next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
@@ -351,6 +361,24 @@ fn print(e: &RawExpr, ctx: JsCtx, names: JsNames<'_>, out: &mut String) {
             }
             (IdentKind::State, JsCtx::Client) => {
                 out.push_str(name);
+                out.push_str("()");
+            }
+            // A store read is a live signal read (M3-F D7); lowering overrides it with the
+            // resolved key set (`client_ident`).
+            (IdentKind::Store { handle, key }, JsCtx::Client) => {
+                out.push_str(handle);
+                match key {
+                    Some(k) if is_js_ident(k) => {
+                        out.push('.');
+                        out.push_str(k);
+                    }
+                    Some(k) => {
+                        out.push('[');
+                        out.push_str(&js_string(k));
+                        out.push(']');
+                    }
+                    None => out.push_str(".snapshot"),
+                }
                 out.push_str("()");
             }
             _ => out.push_str(name),

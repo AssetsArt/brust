@@ -222,6 +222,9 @@ pub struct ComponentIR {
     pub cache: Option<CacheDecl>,
     /// Child components used by the template, in document order.
     pub children: Vec<ChildRef>,
+    /// `useStore(handle)` bindings in source order (M3-F D7).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stores: Vec<StoreUse>,
     pub diagnostics: Vec<Diagnostic>,
     /// Module-level declarations and what each reads (its captures), for the
     /// passes to follow helpers; not part of the serialized IR.
@@ -283,6 +286,7 @@ impl ComponentIR {
             needs_worker: false,
             cache: None,
             children: vec![],
+            stores: vec![],
             diagnostics: vec![],
             module_scope: vec![],
             module_decls: vec![],
