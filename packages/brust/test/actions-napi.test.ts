@@ -3,7 +3,7 @@
 // `{ fetch }` (no Elysia). Server-starting file: runs alone (ci.yml).
 import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
-import { beginDrain, cacheStats, localAddr, registerWorker, startServer, untilReady } from '../native/index.js'
+import { beginDrain, localAddr, registerWorker, startServer, untilReady } from '../native/index.js'
 import { setActionsApp } from '../src/actions-bridge'
 import type { StoreRecord } from '../src/store/core-adapter'
 import { getServerInstance } from '../src/store/server-context'
@@ -51,9 +51,18 @@ const app = {
 test('actions through the real Rust server and worker dispatch', async () => {
   // Boot errors, before any server: each message is asserted (a bare toThrow() is a green lie).
   const base0 = { host: '127.0.0.1', port: 0, distDir: dist, workers: 1, claimTimeoutMs: 500 }
+  // The process-wide server as it is now: none when this file runs alone, an earlier file's in a full `bun test`.
+  const current = () => {
+    try {
+      return localAddr()
+    } catch (e) {
+      return (e as Error).message
+    }
+  }
+  const server0 = current()
   expect(() => startServer({ ...base0, cors: { origins: ['*'], credentials: true } })).toThrow(/cors: .*wildcard/)
   expect(() => startServer({ ...base0, actions: { prefix: '/_brust' } })).toThrow(/actions: .*reserved/)
-  expect(() => cacheStats()).toThrow(/startServer has not been called/) // a failed boot started nothing
+  expect(current()).toBe(server0) // a failed boot starts and replaces nothing
 
   startServer({
     ...base0,
