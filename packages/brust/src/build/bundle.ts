@@ -31,6 +31,8 @@ export interface BrowserCtx {
   appRoot: string
   /** `brust.toml` `[build] server_only`: import prefixes / app-root-relative paths. */
   serverOnly: string[]
+  /** Real paths of server-only files (the actions entry, R8): a browser import of one is refused. */
+  serverFiles?: string[]
 }
 
 /** Resolution for staged artifacts (`importer` = a staged file registered in `sourceOf`): relative
@@ -92,15 +94,18 @@ const BROWSER_POLYFILLS = new Set([
  * m2c): a Node/Bun builtin (`node:*`, `bun:*`, `bun`, a bare builtin name such as `fs` or
  * `fs/promises` — unless it is an allowlisted browser polyfill the app installed), the server
  * parts of this package, a `*.server.*` file, or a prefix / app-root relative path listed in
- * `[build] server_only`. A bare specifier is matched against `server_only` as written (an entry
- * can name a package), and EVERY specifier is also checked by the file it resolves to (Bun's
- * resolver honours tsconfig `paths`, so an alias cannot bypass the `*.server.*` / path rules). */
+ * `[build] server_only`. M3-F R8 adds three: `@brust/core/elysia`, `elysia` (and `elysia/*`), and
+ * the configured actions entry file (`ctx.serverFiles`, compared by real path). A bare specifier is
+ * matched against `server_only` as written (an entry can name a package), and EVERY specifier is
+ * also checked by the file it resolves to (Bun's resolver honours tsconfig `paths`, so an alias
+ * cannot bypass the `*.server.*` / path rules). */
 function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean {
   if (spec.startsWith('node:') || spec.startsWith('bun:') || spec === 'bun') return true
   const from = dirname(ctx.sourceOf.get(importer) ?? importer)
   const bare = spec.split('/')[0]!
   if ((BUILTINS.has(spec) || BUILTINS.has(bare)) && !(BROWSER_POLYFILLS.has(bare) && installed(bare, from, ctx.appRoot))) return true
-  if (/^@brust\/core\/(server|native)(\/|$)/.test(spec)) return true
+  if (/^@brust\/core\/(server|native|elysia)(\/|$)/.test(spec)) return true
+  if (spec === 'elysia' || spec.startsWith('elysia/')) return true
   if (/\.server(\.[^/]*)?$/.test(spec)) return true
   const isPath = spec.startsWith('./') || spec.startsWith('../') || isAbsolute(spec)
   if (!isPath && ctx.serverOnly.some((p) => spec.startsWith(p))) return true
@@ -111,6 +116,9 @@ function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean 
     return false // unresolvable: Bun reports it
   }
   if (/\.server\.[^/]*$/.test(basename(file))) return true
+  try {
+    if (ctx.serverFiles?.includes(realpathSync(file))) return true
+  } catch {}
   const rel = relative(ctx.appRoot, file)
   return !rel.startsWith('..') && !isAbsolute(rel) && ctx.serverOnly.some((p) => rel.startsWith(p))
 }
@@ -318,6 +326,19 @@ const workerStorePlugin: BunPlugin = {
   setup(b) {
     b.onResolve({ filter: /^@brust\/runtime-dom\/store(\/react)?$/ }, (a) => ({ path: a.path.replace('@brust/runtime-dom', '@brust/core'), external: true }))
   },
+}
+
+/** dist/actions.js externals: the jobs set plus Elysia, so the app, `@brust/core/elysia` and the
+ * worker's `mountActions` share ONE elysia (instanceof, HTTPError) — ruling R7. */
+const ACTIONS_EXTERNALS = [...JOBS_EXTERNALS, 'elysia', 'elysia/*', '@elysia/*']
+
+/** `dist/actions.js` (M3-F E1): the actions entry for the worker (`target: 'bun'`). No `define`: Elysia
+ * and app code read NODE_ENV at runtime (run.ts sets production). */
+export async function buildActions(dist: string, entry: string): Promise<string> {
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [workerStorePlugin] })
+  if (!res.success) throw new BuildError('bundle', `actions: ${res.logs.map(String).join('\n')}`)
+  write(join(dist, 'actions.js'), await res.outputs[0]!.text())
+  return 'actions.js'
 }
 
 /** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export

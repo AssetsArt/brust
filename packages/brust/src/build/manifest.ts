@@ -51,12 +51,20 @@ export interface RouteRecord {
   catch_all: boolean
 }
 
+/** `manifest.actions` (A3): `entry` is relative to dist; `maxBodyBytes` is camelCase by contract. */
+export interface ActionsRecord {
+  entry: string
+  prefix: string
+  maxBodyBytes: number
+}
+
 export interface ManifestJson {
   version: 1
   routes: RouteRecord[]
   components: Record<string, ComponentRecord>
   assets: { runtime: string }
   jobs_module: string
+  actions: ActionsRecord | null
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: IR JSON (externally tagged enums)
@@ -236,6 +244,7 @@ export function writeManifest(opts: {
   runtime: string
   /** component id → `client/<file>` (client chunk or react island chunk). */
   chunks: Map<string, string>
+  actions?: ActionsRecord | null
 }): ManifestJson {
   const { compiled } = opts
   const known = (id: string) => compiled.has(id)
@@ -273,7 +282,7 @@ export function writeManifest(opts: {
     }
   })
   linkNativeChunks(routes, compiled, components)
-  return { version: 1, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js' }
+  return { version: 1, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
 }
 
 /** S6 amendment (F66): the server's asset injection walks only each chain component's direct

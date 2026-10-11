@@ -10,6 +10,16 @@
 import { availableParallelism } from 'node:os'
 import { join } from 'node:path'
 
+/** `[cors]` in brust.toml; same shape and validation as the Rust `CorsConfig` (crates/brust-server/src/config.rs). */
+export interface CorsConfig {
+  origins: string[]
+  methods?: string[]
+  headers?: string[]
+  exposeHeaders?: string[]
+  credentials: boolean
+  maxAgeSeconds?: number
+}
+
 export interface BrustConfig {
   host: string
   port: number
@@ -22,6 +32,8 @@ export interface BrustConfig {
   callTimeoutMs: number
   /** tokio threads of the HTTP runtime (renders every page); absent = one per core (server default). */
   ioThreads?: number
+  /** From brust.toml `[cors]` only (runtime config: no env / CLI layer); absent = CORS off. */
+  cors?: CorsConfig
 }
 
 export class BrustConfigError extends Error {
@@ -40,6 +52,8 @@ const DEFAULTS = { host: 'localhost', port: 1337, drainTimeoutMs: 10_000, bootTi
  * workers is a misconfiguration, not a deployment, and each render slot is a 256 KiB shared
  * response buffer per worker (more than 64 would only exhaust memory). */
 export const MAX_MS = 0xffff_ffff
+/** `max_age_seconds` crosses napi as `u32`, like the ms values. */
+const MAX_U32 = 0xffff_ffff
 /** tokio I/O threads (BRUST_WORKER_THREADS); more than this is a misconfiguration. */
 export const MAX_IO_THREADS = 256
 export const MAX_WORKERS = 1024
@@ -71,6 +85,7 @@ export async function loadConfig(cwd: string = process.cwd(), cli: Partial<Brust
     bootTimeoutMs: env.bootTimeoutMs ?? cli.bootTimeoutMs ?? DEFAULTS.bootTimeoutMs,
     callTimeoutMs: env.callTimeoutMs ?? cli.callTimeoutMs ?? DEFAULTS.callTimeoutMs,
     ioThreads: env.ioThreads ?? cli.ioThreads,
+    ...(fromToml.cors !== undefined ? { cors: fromToml.cors } : {}),
   }
 }
 
@@ -119,7 +134,43 @@ function fromTomlTable(parsed: unknown, file: string): Partial<BrustConfig> {
       out.workers = count
     }
   }
+  if ('cors' in root) out.cors = parseCors(root.cors, file)
   return out
+}
+
+function parseCors(v: unknown, file: string): CorsConfig {
+  const t = table(v, 'cors', file)
+  const strings = (val: unknown, key: string): string[] | undefined => {
+    if (val === undefined) return undefined
+    if (!Array.isArray(val) || val.some((x) => typeof x !== 'string'))
+      throw new BrustConfigError(`${file}: cors.${key} must be an array of strings (got ${JSON.stringify(val)})`, file)
+    return val as string[]
+  }
+  const origins = strings(t.origins, 'origins') ?? []
+  const methods = strings(t.methods, 'methods')
+  const headers = strings(t.headers, 'headers')
+  const exposeHeaders = strings(t.expose_headers, 'expose_headers')
+  if (t.credentials !== undefined && typeof t.credentials !== 'boolean')
+    throw new BrustConfigError(`${file}: cors.credentials must be a boolean (got ${JSON.stringify(t.credentials)})`, file)
+  const credentials = t.credentials === true
+  const age = t.max_age_seconds
+  if (age !== undefined && (typeof age !== 'number' || !Number.isInteger(age) || age < 0 || age > MAX_U32))
+    throw new BrustConfigError(`${file}: cors.max_age_seconds must be an integer in 0..${MAX_U32} (got ${JSON.stringify(age)})`, file)
+  // Rust CorsConfig::validate, verbatim.
+  if (origins.length === 0) throw new BrustConfigError(`${file}: cors.origins must be non-empty`, file)
+  if (credentials && origins.includes('*'))
+    throw new BrustConfigError(
+      `${file}: cors.credentials cannot be combined with a wildcard origin '*' (browsers reject Access-Control-Allow-Origin: * with credentials); list explicit origins instead`,
+      file,
+    )
+  return {
+    origins,
+    ...(methods ? { methods } : {}),
+    ...(headers ? { headers } : {}),
+    ...(exposeHeaders ? { exposeHeaders } : {}),
+    credentials,
+    ...(age !== undefined ? { maxAgeSeconds: age as number } : {}),
+  }
 }
 
 /** Integer env var in `[min, max]`; unset or empty = absent. */

@@ -1,0 +1,8 @@
+[actions]
+prefix = "/api"
+max_body_bytes = 1024
+
+[cors]
+origins = ["https://app.example"]
+credentials = true
+expose_headers = ["x-total"]

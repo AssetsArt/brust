@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setNative } from '../src/native'
@@ -366,5 +366,28 @@ test('planJobs on a thread that registered no worker declines', async () => {
     expect(got).toBe('!')
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('worker.ts loads with elysia not installed: an app without [actions] needs no elysia (R7)', () => {
+  // A copy of src/ outside the repo with node_modules minus elysia/@elysia: the published-install shape.
+  const pkg = join(import.meta.dir, '..')
+  const d = mkdtempSync(join(tmpdir(), 'brust-noelysia-'))
+  try {
+    cpSync(join(pkg, 'src'), join(d, 'src'), { recursive: true })
+    symlinkSync(join(pkg, 'native'), join(d, 'native'))
+    mkdirSync(join(d, 'node_modules'))
+    for (const n of readdirSync(join(pkg, 'node_modules')))
+      if (n !== 'elysia' && n !== '@elysia') symlinkSync(join(pkg, 'node_modules', n), join(d, 'node_modules', n))
+    const p = Bun.spawnSync([process.execPath, '-e', "await import('./src/worker.ts'); console.log('LOADED')"], {
+      cwd: d,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, BRUST_WORKER_ID: undefined },
+    })
+    expect(p.stderr.toString()).not.toMatch(/elysia/)
+    expect(p.stdout.toString()).toContain('LOADED')
+  } finally {
+    rmSync(d, { recursive: true, force: true })
   }
 })
