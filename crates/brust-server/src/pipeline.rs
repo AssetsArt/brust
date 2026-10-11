@@ -28,7 +28,7 @@ use crate::pool::PlanBox;
 use crate::protocol::{
     JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
 };
-use crate::render::{Overlay, RenderError, Renderer, inject_page_assets_into, use_ids};
+use crate::render::{Overlay, RenderError, Renderer, inject_document_assets_into, use_ids};
 use crate::routing::routes::{Search, decode_search};
 use crate::server::body::{self, ResponseBody, empty_body};
 use crate::server::header_str;
@@ -70,7 +70,7 @@ pub(crate) struct PageMeta {
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
 pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<ResponseBody> {
-    let (parts, _body) = req.into_parts();
+    let (parts, incoming) = req.into_parts();
     let method = parts.method.as_str();
     let full = parts
         .uri
@@ -90,6 +90,14 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
         && let Some(acao) = c.allow_origin_value(origin)
     {
         return c.preflight_response(acao, headers);
+    }
+
+    // ----- actions (M3-F E3): the whole prefix subtree, any method, before the method gate and the
+    // `/_brust/` static root (the default prefix lives under it). The body is read ONLY here.
+    if let Some(a) = &s.actions
+        && a.is_under(path_only)
+    {
+        return crate::actions::handle(&s, a, &parts, incoming, full, method == "HEAD").await;
     }
 
     let head = method == "HEAD";
@@ -140,16 +148,20 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
         "request"
     );
     if head {
-        // RFC 9110 §9.3.2: a HEAD carries the GET's Content-Length. Page bodies
-        // are fully buffered, so the size hint is exact.
-        let len = http_body::Body::size_hint(resp.body()).exact();
-        let (mut p, _) = resp.into_parts();
-        if let Some(n) = len {
-            p.headers.insert(http::header::CONTENT_LENGTH, n.into());
-        }
-        return Response::from_parts(p, empty_body());
+        return head_only(resp);
     }
     resp
+}
+
+/// RFC 9110 §9.3.2: a HEAD carries the GET's Content-Length. Page and action bodies
+/// are fully buffered, so the size hint is exact.
+pub(crate) fn head_only(resp: Response<ResponseBody>) -> Response<ResponseBody> {
+    let len = http_body::Body::size_hint(resp.body()).exact();
+    let (mut p, _) = resp.into_parts();
+    if let Some(n) = len {
+        p.headers.insert(http::header::CONTENT_LENGTH, n.into());
+    }
+    Response::from_parts(p, empty_body())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -709,7 +721,13 @@ fn render_document(
         ctx,
         &mut out,
     )?;
-    inject_page_assets_into(&mut out, &route.chain, &s.manifest, ctx.get(STORE_KEY));
+    inject_document_assets_into(
+        &mut out,
+        &route.chain,
+        &s.manifest,
+        ctx.get(STORE_KEY),
+        s.action_prefix_tag.as_deref(),
+    );
     // M3-P P7: stored only when it changes — the steady state writes no shared cache line.
     let hint = next_hint(out.len());
     if s.render_hints[ri].load(Ordering::Relaxed) != hint {

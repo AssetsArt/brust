@@ -14,6 +14,16 @@ use serde_json::{Value, json};
 #[allow(unused_imports)]
 pub use fake_bun::{FakeBun, FakeBunHandle, Gate};
 
+/// The A2 frame a `fetch` responder answers: `[u32 LE meta_len][meta JSON {status, headers}][body]`.
+pub fn frame(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
+    let meta = serde_json::to_vec(&json!({"status": status, "headers": headers}))
+        .expect("frame meta serialises");
+    let mut f = (meta.len() as u32).to_le_bytes().to_vec();
+    f.extend_from_slice(&meta);
+    f.extend_from_slice(body);
+    f
+}
+
 pub fn fx() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist")
 }
@@ -285,4 +295,138 @@ pub fn sized_dist(pad: usize) -> tempfile::TempDir {
     )
     .unwrap();
     dist
+}
+
+/// Like [`boot_in`] with an actions subtree (and optionally CORS) configured (M3-F).
+pub fn boot_actions(
+    fake: Arc<FakeBun>,
+    dist_dir: &Path,
+    actions: brust_server::ActionsConfig,
+    cors: Option<brust_server::CorsConfig>,
+) -> Arc<Server> {
+    let mut cfg = config(dist_dir);
+    cfg.actions = Some(actions);
+    cfg.cors = cors;
+    let s = start(cfg).expect("start");
+    let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&fake))));
+    fake.bind(&s, id);
+    s
+}
+
+/// One HTTP/1.1 request carrying `body` on a fresh connection (`host: fx` unless given).
+async fn send<B>(
+    s: &Server,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: B,
+) -> (u16, http::HeaderMap, Vec<u8>)
+where
+    B: http_body::Body<Data = bytes::Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let tcp = tokio::net::TcpStream::connect(s.local_addr())
+        .await
+        .unwrap();
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tcp))
+            .await
+            .unwrap();
+    tokio::spawn(conn);
+    let mut b = http::Request::builder().method(method).uri(path);
+    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
+        b = b.header("host", "fx");
+    }
+    for (k, v) in headers {
+        b = b.header(*k, *v);
+    }
+    let resp = sender.send_request(b.body(body).unwrap()).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    let bytes = http_body_util::BodyExt::collect(body)
+        .await
+        .unwrap()
+        .to_bytes();
+    (parts.status.as_u16(), parts.headers, bytes.to_vec())
+}
+
+fn block_on<F: std::future::Future>(f: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(f)
+}
+
+/// A request with a buffered body (`Full` → the client sends Content-Length).
+pub fn request_body(
+    s: &Server,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Vec<u8>,
+) -> (u16, http::HeaderMap, Vec<u8>) {
+    block_on(send(
+        s,
+        method,
+        path,
+        headers,
+        http_body_util::Full::new(bytes::Bytes::from(body)),
+    ))
+}
+
+type ChunkStream = tokio_stream::wrappers::ReceiverStream<
+    Result<http_body::Frame<bytes::Bytes>, std::convert::Infallible>,
+>;
+
+/// A request whose body streams `chunks` with no size hint (→ `Transfer-Encoding: chunked`).
+pub fn request_chunked(
+    s: &Server,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    chunks: Vec<Vec<u8>>,
+) -> (u16, http::HeaderMap, Vec<u8>) {
+    block_on(async {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tokio::spawn(async move {
+            for c in chunks {
+                if tx
+                    .send(Ok(http_body::Frame::data(bytes::Bytes::from(c))))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+        let body: http_body_util::StreamBody<ChunkStream> =
+            http_body_util::StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx));
+        send(s, method, path, headers, body).await
+    })
+}
+
+/// A request whose body never ends (the sender stays alive); panics unless the answer arrives
+/// within 2 s — proof the server answered without reading the body.
+pub fn request_open_body(
+    s: &Server,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> (u16, http::HeaderMap, Vec<u8>) {
+    block_on(async {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tx.send(Ok(http_body::Frame::data(bytes::Bytes::from_static(b"x"))))
+            .await
+            .unwrap();
+        let body: http_body_util::StreamBody<ChunkStream> =
+            http_body_util::StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx));
+        let r = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            send(s, method, path, headers, body),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("{method} {path}: no answer within 2 s (body read?)"));
+        drop(tx);
+        r
+    })
 }
