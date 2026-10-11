@@ -9,7 +9,7 @@ use std::time::Duration;
 use http::{Request, Response};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
@@ -23,6 +23,7 @@ use crate::render::Renderer;
 use crate::routing::RouteTable;
 
 pub mod body;
+pub mod coarse_timer;
 pub(crate) mod cors;
 pub mod static_assets;
 pub mod tls;
@@ -222,6 +223,11 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
 
             let sem = Arc::new(tokio::sync::Semaphore::new(accept_cap));
 
+            // M3-P P7 (R2): hyper's header-read timeout runs on our coarse sharded timer, not on
+            // tokio's wheel (one global lock per register and per clear, on every request).
+            let header_timer = coarse_timer::CoarseTimer::new(coarse_timer::TICK);
+            let header_ticker = header_timer.spawn_ticker();
+
             // X-Powered-By, stamped on EVERY response at the service layer.
             // insert-if-absent: headers the pipeline set win. L1 holds JSON
             // context, never a response, so stamping a HIT can never duplicate.
@@ -286,6 +292,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                 let read_buf_cap = tuning.read_buf_cap;
                 let max_req = tuning.max_request_bytes;
                 let header_timeout = Duration::from_millis(tuning.header_read_timeout_ms.max(1));
+                let header_timer = header_timer.clone();
                 let acceptor = acceptor.clone();
                 let conn_drain = drain_sig_rx.clone();
                 let conn_token = conn_token_tx.clone();
@@ -352,6 +359,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                                 max_req,
                                 read_buf_cap,
                                 header_timeout,
+                                header_timer,
                                 conn_drain,
                             )
                             .await;
@@ -363,6 +371,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                                 max_req,
                                 read_buf_cap,
                                 header_timeout,
+                                header_timer,
                                 conn_drain,
                             )
                                 .await;
@@ -384,6 +393,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                 Ok(_) => info!("graceful drain: all in-flight connections finished"),
                 Err(_) => warn!("graceful drain: deadline elapsed; forcing remaining connections"),
             }
+            header_ticker.abort();
             state.signal_drain_done();
         });
     });
@@ -411,6 +421,7 @@ async fn serve_io<I, S, B>(
     max_req: usize,
     read_buf_cap: usize,
     header_timeout: Duration,
+    header_timer: coarse_timer::CoarseTimer,
     mut drain: tokio::sync::watch::Receiver<bool>,
 ) where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
@@ -427,7 +438,7 @@ async fn serve_io<I, S, B>(
     builder
         .http1()
         .max_buf_size(max_req.max(read_buf_cap).max(8192))
-        .timer(TokioTimer::new())
+        .timer(header_timer)
         .header_read_timeout(header_timeout);
     // Pin the connection so it can be both polled to completion AND, on drain,
     // told to `graceful_shutdown()` (finish the in-flight request, then close).
