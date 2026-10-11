@@ -28,12 +28,13 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerPool};
+use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerEntry, WorkerPool};
 
 /// Which worker entry point a [`RenderDispatch::call`] targets (spec §1 S1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -217,14 +218,9 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
     }
     let json = serde_json::to_string(req)
         .map_err(|e| CallError::BadResponse(format!("request serialise: {e}")))?;
+    pool.ensure_sweeper();
     let pool = Arc::clone(pool);
     let (stamped, stamped_slot) = (Arc::clone(claim.entry()), claim.slot());
-    // The body is identical to the former spawned task. It is polled INLINE on
-    // the request's task (no spawn, no scheduling hop); `Detach` makes the two
-    // cases the spawn used to cover explicit: dropped before completion
-    // (deadline, client disconnect) → the remainder is spawned so the claim it
-    // owns is released only when JS settles; a panic → `Err(payload)` to us,
-    // the claim released by the unwinding async block.
     let call: Pin<Box<dyn Future<Output = PlannedResult<Resp>> + Send>> = Box::pin(async move {
         let entry = Arc::clone(claim.entry());
         let slot = claim.slot();
@@ -255,20 +251,23 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
     });
     // Deadline: `call_timeout` from the call's start; if the worker planned (M3-P P6), the jobs
     // phase gets `call_timeout` from its own start, as the old separate jobs call did. The claim
-    // is still held by `call` while it is pending, so the stamp is this request's.
+    // is still held by `call` while it is pending, so the stamp is this request's. M3-P P7 (R3):
+    // the deadline lives in the claimed slot and the pool's sweeper wakes it — no tokio timer per call.
     let mut fut = Detach(Some(call));
-    let mut deadline = tokio::time::Instant::now() + call_timeout;
-    let r = loop {
-        match tokio::time::timeout_at(deadline, &mut fut).await {
-            Ok(r) => break Ok(r),
-            Err(e) => match stamped.jobs_phase_since(stamped_slot) {
-                Some(t) if tokio::time::Instant::from_std(t) + call_timeout > deadline => {
-                    deadline = tokio::time::Instant::from_std(t) + call_timeout;
-                }
-                _ => break Err(e),
-            },
-        }
+    let mut deadline = SlotDeadline {
+        at: std::time::Instant::now() + call_timeout,
+        call_timeout,
+        entry: stamped,
+        slot: stamped_slot,
     };
+    deadline.entry.arm_deadline(deadline.slot, deadline.at);
+    let r = std::future::poll_fn(|cx| {
+        if let Poll::Ready(r) = Pin::new(&mut fut).poll(cx) {
+            return Poll::Ready(Ok(r));
+        }
+        deadline.poll(cx).map(Err)
+    })
+    .await;
     drop(fut);
     match r {
         Ok(Ok(result)) => result,
@@ -280,7 +279,42 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
         // task and keeps the claim until JS settles (the `RenderClaim` drop rule
         // in `pool.rs`); its late result is dropped, so nothing from this call
         // reaches a cache.
-        Err(_elapsed) => Err(CallError::Deadline),
+        Err(Elapsed) => Err(CallError::Deadline),
+    }
+}
+
+/// A claimed call's deadline passed (the `call_worker_planned` deadline arm).
+struct Elapsed;
+
+/// The deadline of one claimed call (M3-P P7, R3). Ready iff now >= `at`, where `at` starts as
+/// `call_timeout` after the call and moves to `call_timeout` after the jobs-phase stamp when that
+/// is later (the S7 per-phase rule, unchanged). Pending parks the waker in the claimed slot, which
+/// the pool's sweeper wakes once the armed deadline passed.
+struct SlotDeadline {
+    at: std::time::Instant,
+    call_timeout: Duration,
+    entry: Arc<WorkerEntry>,
+    slot: u32,
+}
+
+impl SlotDeadline {
+    fn poll(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Elapsed> {
+        let now = std::time::Instant::now();
+        if now >= self.at {
+            match self.entry.jobs_phase_since(self.slot) {
+                Some(t) if t + self.call_timeout > self.at => {
+                    self.at = t + self.call_timeout;
+                    self.entry.arm_deadline(self.slot, self.at);
+                    if now >= self.at {
+                        return Poll::Ready(Elapsed);
+                    }
+                }
+                _ => return Poll::Ready(Elapsed),
+            }
+        }
+        // Parked on every pending poll: the sweeper TAKES the waker when it fires.
+        self.entry.park_deadline_waker(self.slot, cx.waker());
+        Poll::Pending
     }
 }
 
