@@ -575,3 +575,226 @@ fn store_name_duplicate() {
         ir.diagnostics
     );
 }
+
+// --- Task 3: store-view reads paint `__store.<name>.<key>` (server path). ---
+
+/// Lowers `src` as `tests/fixtures/{case}/T.tsx` (so `./cart` resolves in `store-read`).
+fn lower_at(case: &str, src: &str) -> (ComponentIR, String, String) {
+    lower_in(
+        repo(),
+        format!("tests/fixtures/{case}/T.tsx"),
+        src.to_string(),
+    )
+}
+
+fn lower_in(root: PathBuf, path: String, src: String) -> (ComponentIR, String, String) {
+    use brust_compiler::lower::DEFAULT_RUNTIME_IMPORT;
+    use brust_compiler::pipeline::compile_tree;
+    run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            &path,
+            Some(src.into_bytes()),
+            &AnalyzeOptions {
+                root,
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap();
+        let a = &tree[0].artifacts;
+        (
+            (*tree[0].ir).clone(),
+            a.jinja.clone(),
+            a.client_js.clone().unwrap_or_default(),
+        )
+    })
+}
+
+/// `C.tsx` lowered in a fresh temp root holding `files`.
+fn lower_tree(files: &[(&str, &str)]) -> (ComponentIR, String, String) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::SeqCst);
+    let root = std::env::temp_dir().join(format!("brustc-store-lower-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for (path, text) in files {
+        let p = root.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let src = files.iter().find(|(p, _)| *p == "C.tsx").expect("C.tsx").1;
+    let out = lower_in(root.clone(), "C.tsx".into(), src.to_string());
+    let _ = std::fs::remove_dir_all(&root);
+    out
+}
+
+fn render(jinja: &str, ctx: serde_json::Value) -> String {
+    let mut env = minijinja::Environment::new();
+    brust_jinja::register(&mut env);
+    env.render_str(jinja, brust_jinja::value_of(ctx)).unwrap()
+}
+
+#[test]
+fn store_read_paints_server_path() {
+    let (ir, j, _) = lower_at(
+        "store-read",
+        &component("const s = useStore(cart); return <p>{s.count}</p>"),
+    );
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(j.contains("{{ __store.cart.count | e }}"), "{j}");
+    let html = render(&j, serde_json::json!({"__store": {"cart": {"count": 3}}}));
+    assert!(html.contains(">3</p>"), "{html}");
+    // C1: the snapshot never reaches props.
+    assert!(!j.contains("x-props"), "{j}");
+    assert!(
+        !rules(&ir).contains(&"store-name-dotted"),
+        "{:?}",
+        ir.diagnostics
+    );
+}
+
+#[test]
+fn store_read_destructured() {
+    let (_, j, _) = lower_at(
+        "store-read",
+        &component("const { count } = useStore(cart); return <p>{count}</p>"),
+    );
+    assert!(j.contains("{{ __store.cart.count | e }}"), "{j}");
+}
+
+#[test]
+fn store_reads_never_reach_client_props() {
+    // A handler and a painted value both read the store; neither is a prop.
+    let (ir, _, _) = lower_at(
+        "store-read",
+        &component(
+            "const s = useStore(cart); return <button onClick={() => console.log(s.count, props.x)}>{s.count}</button>",
+        ),
+    );
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(
+        ir.client_props.iter().all(|p| !p.starts_with("__store")),
+        "{:?}",
+        ir.client_props
+    );
+    assert!(
+        ir.client_imports
+            .contains(&("./cart".to_string(), "cart".to_string())),
+        "{:?}",
+        ir.client_imports
+    );
+}
+
+const TEAM: &str = "import { defineStore, signal } from 'brust/store'\nexport const team = defineStore('pokedex.team', () => ({ members: signal('') }))\n";
+
+#[test]
+fn store_name_with_dot() {
+    let (ir, j, _) = lower_tree(&[
+        ("team.ts", TEAM),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { team } from './team'\nexport default function C() { const s = useStore(team); const t = useStore(team); return <p>{s.members}{t.members}</p> }",
+        ),
+    ]);
+    assert!(
+        ir.stores.iter().all(|u| u.resolved.is_some()),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(
+        j.contains("{{ __store[\"pokedex.team\"].members | e }}"),
+        "{j}"
+    );
+    let html = render(
+        &j,
+        serde_json::json!({"__store": {"pokedex.team": {"members": "ash"}}}),
+    );
+    assert!(html.contains("ash"), "{html}");
+    // R3: the job input falls back to the coarse `__store`; one warning per store name.
+    let dotted: Vec<_> = ir
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule == "store-name-dotted")
+        .collect();
+    assert_eq!(dotted.len(), 1, "{:?}", ir.diagnostics);
+    assert_eq!(dotted[0].class, DiagClass::Warning);
+    assert!(
+        dotted[0].message.contains("pokedex.team"),
+        "{:?}",
+        dotted[0]
+    );
+    assert!(
+        dotted[0].message.contains("whole snapshot"),
+        "{:?}",
+        dotted[0]
+    );
+    assert!(
+        dotted[0]
+            .remediation
+            .contains("prefer dot-free store names"),
+        "{:?}",
+        dotted[0]
+    );
+
+    // A dotted key falls back the same way.
+    let (ir, j, _) = lower_tree(&[
+        ("cart.ts", CART),
+        (
+            "C.tsx",
+            "import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\nexport default function C() { const s = useStore(cart); return <p>{s[\"a.b\"]}</p> }",
+        ),
+    ]);
+    assert!(j.contains("__store.cart[\"a.b\"]"), "{j}");
+    assert!(
+        rules(&ir).contains(&"store-name-dotted"),
+        "{:?}",
+        ir.diagnostics
+    );
+
+    // An unresolved handle already falls back: no dotted warning.
+    let ir = analyze_tree(&[("C.tsx", &reader("import { cart } from 'shop.stores'"))]);
+    assert!(
+        !rules(&ir).contains(&"store-name-dotted"),
+        "{:?}",
+        ir.diagnostics
+    );
+}
+
+#[test]
+fn store_input_paths() {
+    use brust_compiler::analyze::passes::deps::{split_inputs, store_input};
+    assert_eq!(
+        store_input(Some("cart"), Some("count")),
+        "__store.cart.count"
+    );
+    assert_eq!(store_input(Some("cart"), None), "__store.cart");
+    assert_eq!(
+        store_input(Some("pokedex.team"), Some("members")),
+        "__store"
+    );
+    assert_eq!(store_input(Some("cart"), Some("a[0]")), "__store");
+    assert_eq!(store_input(Some("cart"), Some("")), "__store");
+    assert_eq!(store_input(None, Some("count")), "__store");
+    let d = split_inputs(&[
+        "item.price".into(),
+        "__store".into(),
+        "__store.cart.count".into(),
+        "__storey".into(),
+    ]);
+    assert_eq!(
+        d.props.into_iter().collect::<Vec<_>>(),
+        ["__storey", "item.price"]
+    );
+    assert_eq!(
+        d.stores.into_iter().collect::<Vec<_>>(),
+        ["__store", "__store.cart.count"]
+    );
+}

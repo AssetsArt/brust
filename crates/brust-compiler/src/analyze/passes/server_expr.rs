@@ -32,6 +32,8 @@ fn check(e: &RawExpr) -> Result<(), &'static str> {
             IdentKind::Prop | IdentKind::Local | IdentKind::State | IdentKind::LoopBinding => {
                 Ok(())
             }
+            // A store read paints `__store.<name>.<key>` (M3-F D7); the bare view stays outside.
+            IdentKind::Store { key: Some(_), .. } => Ok(()),
             _ => Err("identifier kind"),
         },
         RawKind::Member { target, .. } => check(target),

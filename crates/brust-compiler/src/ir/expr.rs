@@ -314,7 +314,7 @@ pub fn js_number(n: f64) -> String {
     }
 }
 
-fn is_js_ident(s: &str) -> bool {
+pub(crate) fn is_js_ident(s: &str) -> bool {
     let mut cs = s.chars();
     cs.next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')

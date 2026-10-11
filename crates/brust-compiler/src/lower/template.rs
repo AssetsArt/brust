@@ -12,7 +12,7 @@
 //! `_ssr_<childId>`, and an inlined child instance's job output under
 //! `__<childId>_<k>` (an object of its slots, indexed per item of the parent's
 //! enclosing lists).
-use super::common::{Facts, raw_of};
+use super::common::{Facts, raw_of, store_jinja};
 use super::server_expr::{JinjaCtx, UNDEFINED, jinja_string, to_jinja};
 use super::{LowerCtx, Member, MemberDef, Paint};
 use crate::ir::{
@@ -252,6 +252,12 @@ impl<'a, 'c> Printer<'a, 'c> {
                 self.id_ref(k)
             } else {
                 UNDEFINED.into()
+            }),
+            // Store paths are global: an inlined child prints the same text (no instance suffix).
+            // An unresolved handle never lowers (tier React).
+            IdentKind::Store { handle, key } => Some(match self.f.store_name(handle) {
+                Some(n) => store_jinja(n, key.as_deref()),
+                None => UNDEFINED.into(),
             }),
             _ => None,
         }

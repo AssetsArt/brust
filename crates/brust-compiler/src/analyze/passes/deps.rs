@@ -2,7 +2,7 @@
 //! state, setters, imports, globals, loop bindings — following derived locals
 //! through the component body.
 use crate::ir::{
-    ArrowBody, Attr, ComponentIR, Expr, IdentKind, Node, RawExpr, RawKind, ServerExpr,
+    ArrowBody, Attr, ComponentIR, Expr, IdentKind, Node, RawExpr, RawKind, ServerExpr, StoreUse,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -36,6 +36,8 @@ pub struct Deps {
     pub opaque: bool,
     /// Locals that are not declared in the component body (module scope).
     pub module_locals: BTreeSet<String>,
+    /// Job-input paths of store reads (`__store.cart.count`, M3-F D7); never props (C1).
+    pub stores: BTreeSet<String>,
 }
 
 impl Deps {
@@ -49,6 +51,12 @@ impl Deps {
         self.loop_bindings.extend(o.loop_bindings.iter().cloned());
         self.opaque |= o.opaque;
         self.module_locals.extend(o.module_locals.iter().cloned());
+        self.stores.extend(o.stores.iter().cloned());
+    }
+
+    /// Reads something that changes on the client after first paint (state or a store).
+    pub fn reactive(&self) -> bool {
+        !self.state.is_empty() || !self.stores.is_empty()
     }
 
     /// Prop paths with every path dropped whose prefix is also present
@@ -81,6 +89,36 @@ pub fn minimal_paths(paths: impl IntoIterator<Item = String>) -> Vec<String> {
         .collect()
 }
 
+/// The root of every store job-input path: the server puts the request's store snapshot there (C5).
+pub const STORE_INPUT: &str = "__store";
+
+/// Job-input path of a store read (R3): `__store.<name>.<key>`, `__store.<name>` for the whole view,
+/// or `__store` when a segment contains `.`/`[`/`]` or is empty (inputs::Path splits on `.`).
+pub fn store_input(name: Option<&str>, key: Option<&str>) -> String {
+    let plain = |s: &str| !s.is_empty() && !s.contains(['.', '[', ']']);
+    match (name, key) {
+        (Some(n), None) if plain(n) => format!("{STORE_INPUT}.{n}"),
+        (Some(n), Some(k)) if plain(n) && plain(k) => format!("{STORE_INPUT}.{n}.{k}"),
+        _ => STORE_INPUT.into(),
+    }
+}
+
+/// Precomputed job inputs as deps: `__store` / `__store.*` are store reads, the rest prop paths.
+pub fn split_inputs(inputs: &[String]) -> Deps {
+    let mut d = Deps::default();
+    for i in inputs {
+        let store = i
+            .strip_prefix(STORE_INPUT)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'));
+        if store {
+            d.stores.insert(i.clone());
+        } else {
+            d.props.insert(i.clone());
+        }
+    }
+    d
+}
+
 /// What a local name in the component body stands for.
 #[derive(Debug, Clone)]
 enum LocalDef {
@@ -97,6 +135,8 @@ pub struct DepsCx {
     locals: HashMap<String, LocalDef>,
     /// Module-level declarations → what they read.
     module: HashMap<String, Vec<(String, IdentKind)>>,
+    /// `useStore` bindings by handle (`StoreUse.resolved` names the store).
+    stores: HashMap<String, StoreUse>,
 }
 
 impl DepsCx {
@@ -105,10 +145,7 @@ impl DepsCx {
         for d in &ir.derived {
             let def = match &d.expr {
                 Expr::Raw(r) | Expr::Server(ServerExpr(r)) => LocalDef::Value(r.clone()),
-                Expr::Precomputed { inputs, .. } => LocalDef::Placed(Deps {
-                    props: inputs.iter().cloned().collect(),
-                    ..Default::default()
-                }),
+                Expr::Precomputed { inputs, .. } => LocalDef::Placed(split_inputs(inputs)),
                 Expr::ClientOnly { .. } => LocalDef::Opaque,
             };
             locals.insert(d.name.clone(), def);
@@ -125,6 +162,11 @@ impl DepsCx {
         DepsCx {
             locals,
             module: ir.module_scope.iter().cloned().collect(),
+            stores: ir
+                .stores
+                .iter()
+                .map(|u| (u.handle.clone(), u.clone()))
+                .collect(),
         }
     }
 
@@ -139,18 +181,13 @@ impl DepsCx {
                 ..
             } = &d.expr
             {
-                locals.insert(
-                    d.name.clone(),
-                    LocalDef::Placed(Deps {
-                        props: inputs.iter().cloned().collect(),
-                        ..Default::default()
-                    }),
-                );
+                locals.insert(d.name.clone(), LocalDef::Placed(split_inputs(inputs)));
             }
         }
         DepsCx {
             locals,
             module: self.module.clone(),
+            stores: self.stores.clone(),
         }
     }
 
@@ -174,10 +211,7 @@ impl DepsCx {
     pub fn deps_expr(&self, e: &Expr, loop_scope: &[String]) -> Deps {
         match e {
             Expr::Raw(r) | Expr::Server(ServerExpr(r)) => self.deps(r, loop_scope),
-            Expr::Precomputed { inputs, .. } => Deps {
-                props: inputs.iter().cloned().collect(),
-                ..Default::default()
-            },
+            Expr::Precomputed { inputs, .. } => split_inputs(inputs),
             Expr::ClientOnly { .. } => Deps {
                 opaque: true,
                 ..Default::default()
@@ -348,8 +382,16 @@ impl Walker<'_> {
                 out.loop_bindings.insert(name.into());
             }
             IdentKind::Local => self.local(name, out),
-            // Temporary (M3-F Task 1): store reads become `__store` paths in Task 3.
-            IdentKind::Store { .. } => out.opaque = true,
+            IdentKind::Store { handle, key } => {
+                // An unresolved handle reads the coarse `__store` (it never lowers: tier React).
+                let u = self.cx.stores.get(handle);
+                let name = u.and_then(|u| u.resolved.as_ref()).map(|r| r.name.as_str());
+                out.stores.insert(store_input(name, key.as_deref()));
+                // The chunk imports the handle: `client_imports` and the server-only check see it.
+                if let Some(u) = u {
+                    out.imports.insert((u.import.1.clone(), u.import.2.clone()));
+                }
+            }
             IdentKind::Unknown => out.opaque = true,
         }
     }
@@ -397,7 +439,7 @@ impl Walker<'_> {
     fn expr(&mut self, e: &Expr, out: &mut Deps) {
         match e {
             Expr::Raw(r) | Expr::Server(ServerExpr(r)) => self.raw(r, out),
-            Expr::Precomputed { inputs, .. } => out.props.extend(inputs.iter().cloned()),
+            Expr::Precomputed { inputs, .. } => out.union(&split_inputs(inputs)),
             Expr::ClientOnly { .. } => out.opaque = true,
         }
     }

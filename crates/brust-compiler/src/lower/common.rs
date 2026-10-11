@@ -1,11 +1,13 @@
 //! Facts every backend reads off one component: the structural expressions
 //! behind placed values, dependency classification, which derived values a
 //! piece of code reaches, and JS printing with the chunk's / job's names.
+use crate::analyze::passes::deps::STORE_INPUT;
 use crate::analyze::passes::deps::{Deps, DepsCx};
 use crate::ir::{
     ArrowBody, ComponentIR, DerivedDecl, Expr, IdentKind, JsCtx, RawExpr, RawKind, ServerExpr,
-    Structural,
+    StoreUse, Structural,
 };
+use crate::lower::server_expr::member_access;
 use std::collections::{BTreeSet, HashMap};
 
 /// The raw expression of a placed value: `Server` carries it; others are
@@ -40,6 +42,8 @@ pub struct Facts<'a> {
     pub states: BTreeSet<String>,
     /// Destructuring defaults by prop name (`size = 3`).
     pub prop_defaults: HashMap<String, RawExpr>,
+    /// `useStore` bindings by handle (M3-F D7).
+    pub stores: HashMap<String, &'a StoreUse>,
 }
 
 const FUNCTION_WHYS: &[&str] = &[
@@ -108,7 +112,16 @@ impl<'a> Facts<'a> {
                 .iter()
                 .filter_map(|p| p.default.clone().map(|d| (p.name.clone(), d)))
                 .collect(),
+            stores: ir.stores.iter().map(|u| (u.handle.clone(), u)).collect(),
         }
+    }
+
+    /// The store name a handle resolved to; `None` when unresolved (the component is tier React).
+    pub fn store_name(&self, handle: &str) -> Option<&'a str> {
+        self.stores
+            .get(handle)
+            .and_then(|u| u.resolved.as_ref())
+            .map(|r| r.name.as_str())
     }
 
     pub fn deps(&self, r: &RawExpr, scope: &[String]) -> Deps {
@@ -349,6 +362,26 @@ fn client_ident(name: &str, kind: &IdentKind, f: &Facts<'_>) -> Option<String> {
     }
 }
 
+/// `__store.cart.count` / `__store["pokedex.team"].members` (jinja).
+pub fn store_jinja(name: &str, key: Option<&str>) -> String {
+    let view = member_access(STORE_INPUT, name);
+    match key {
+        Some(k) => member_access(&view, k),
+        None => view,
+    }
+}
+
+/// Precompute job (D7: inputs carry the value; jobs never import a store module).
+pub fn store_server_js(name: &str, key: Option<&str>) -> String {
+    let js = crate::ir::expr::js_string;
+    let view = format!("(props.{STORE_INPUT}?.[{}] ?? {{}})", js(name));
+    match key {
+        Some(k) if crate::ir::expr::is_js_ident(k) => format!("{view}.{k}"),
+        Some(k) => format!("{view}[{}]", js(k)),
+        None => view,
+    }
+}
+
 /// `props().n`, or its destructuring default when it is undefined.
 fn prop_with_default(name: &str, d: &RawExpr, f: &Facts<'_>) -> String {
     let read = format!("props()[{}]", crate::ir::expr::js_string(name));
@@ -368,6 +401,10 @@ pub fn server_js(r: &RawExpr, f: &Facts<'_>) -> String {
             // The job destructures every prop under its local name.
             IdentKind::Prop if name != "*" => f.prop_locals.get(name).cloned(),
             IdentKind::Prop => Some(f.prop_locals.get("*").cloned().unwrap_or("props".into())),
+            IdentKind::Store { handle, key } => Some(match f.store_name(handle) {
+                Some(n) => store_server_js(n, key.as_deref()),
+                None => "undefined".into(),
+            }),
             _ => None,
         }),
     }

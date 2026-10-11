@@ -1,11 +1,17 @@
 //! Stores pass (M3-F D7): resolves each `useStore` handle to the `defineStore('<name>', …)` it
 //! names, through the handle's import (`analyze/stores.rs`). An unresolved handle is a
 //! `store-name-unresolved` fallback (the tier pass then makes the component React); the same
-//! name defined by two modules in one compile is a `store-name-duplicate` warning.
+//! name defined by two modules in one compile is a `store-name-duplicate` warning; a read whose
+//! job-input path falls back to the coarse `__store` (R3) is a `store-name-dotted` warning.
 use super::PassCtx;
+use super::deps::{STORE_INPUT, store_input};
 use crate::analyze::modules::resolve as resolve_module;
 use crate::analyze::stores::read_store_export;
-use crate::ir::{ComponentIR, Diagnostic, StoreRef};
+use crate::ir::{
+    ArrowBody, Attr, ComponentIR, Diagnostic, Expr, IdentKind, Node, RawExpr, RawKind, ServerExpr,
+    StoreRef,
+};
+use std::collections::BTreeSet;
 
 /// Fills `StoreUse.resolved` for every `useStore` of `ir`.
 pub fn resolve(ir: &mut ComponentIR, ctx: &PassCtx<'_>) {
@@ -54,7 +60,125 @@ pub fn resolve(ir: &mut ComponentIR, ctx: &PassCtx<'_>) {
             }
         }
     }
+    dotted(ir, &mut diags);
     ir.diagnostics.extend(diags);
+}
+
+/// R3: a first-paint read of a resolved store whose name or key cannot be a job-input path
+/// segment declares the coarse `__store` input. One warning per store name.
+fn dotted(ir: &ComponentIR, diags: &mut Vec<Diagnostic>) {
+    let mut reads = BTreeSet::new();
+    node_reads(&ir.template, &mut reads);
+    for s in &ir.state {
+        expr_reads(&s.init, &mut reads);
+    }
+    for d in &ir.derived {
+        expr_reads(&d.expr, &mut reads);
+    }
+    let mut warned = BTreeSet::new();
+    for u in &ir.stores {
+        let Some(r) = &u.resolved else { continue };
+        let coarse = reads.iter().any(|(h, k)| {
+            *h == u.handle && store_input(Some(&r.name), k.as_deref()) == STORE_INPUT
+        });
+        if coarse && warned.insert(r.name.clone()) {
+            diags.push(Diagnostic::warning(
+                "store-name-dotted",
+                format!(
+                    "useStore({}): the store name '{}' or a key read from it contains '.', '[' or ']'; its job inputs fall back to `{STORE_INPUT}`, so the job key hashes the whole snapshot",
+                    u.handle, r.name
+                ),
+                u.loc,
+                "prefer dot-free store names and keys",
+            ));
+        }
+    }
+}
+
+type Reads = BTreeSet<(String, Option<String>)>;
+
+fn expr_reads(e: &Expr, out: &mut Reads) {
+    if let Expr::Raw(r) | Expr::Server(ServerExpr(r)) = e {
+        raw_reads(r, out);
+    }
+}
+
+/// Every store `(handle, key)` read in `r`, the whole subtree (JSX, arrow bodies and captures).
+fn raw_reads(r: &RawExpr, out: &mut Reads) {
+    let ident = |kind: &IdentKind, out: &mut Reads| {
+        if let IdentKind::Store { handle, key } = kind {
+            out.insert((handle.clone(), key.clone()));
+        }
+    };
+    match &r.kind {
+        RawKind::Lit(_) => {}
+        RawKind::Ident { kind, .. } => ident(kind, out),
+        RawKind::Member { target, .. } => raw_reads(target, out),
+        RawKind::Index { target, index } => {
+            raw_reads(target, out);
+            raw_reads(index, out);
+        }
+        RawKind::Call { callee, args } => {
+            raw_reads(callee, out);
+            args.iter().for_each(|a| raw_reads(a, out));
+        }
+        RawKind::Binary { left, right, .. } => {
+            raw_reads(left, out);
+            raw_reads(right, out);
+        }
+        RawKind::Unary { value, .. } => raw_reads(value, out),
+        RawKind::Cond { test, yes, no } => {
+            raw_reads(test, out);
+            raw_reads(yes, out);
+            raw_reads(no, out);
+        }
+        RawKind::Template { parts, .. } => parts.iter().for_each(|(p, _)| raw_reads(p, out)),
+        RawKind::Array(items) => items.iter().for_each(|i| raw_reads(i, out)),
+        RawKind::Object(props) => props.iter().for_each(|(_, v)| raw_reads(v, out)),
+        RawKind::Arrow { captures, body, .. } => {
+            captures.iter().for_each(|(_, k)| ident(k, out));
+            if let ArrowBody::Expr(b) = body {
+                raw_reads(b, out);
+            }
+        }
+        RawKind::Opaque { captures, .. } => captures.iter().for_each(|(_, k)| ident(k, out)),
+        RawKind::Jsx(n) => node_reads(n, out),
+    }
+}
+
+fn node_reads(n: &Node, out: &mut Reads) {
+    match n {
+        Node::Element {
+            attrs, children, ..
+        } => {
+            for a in attrs {
+                if let Attr::Dynamic { value, .. } | Attr::Spread(value) = a {
+                    expr_reads(value, out);
+                }
+            }
+            children.iter().for_each(|c| node_reads(c, out));
+        }
+        Node::Slot(e) => expr_reads(e, out),
+        Node::If { cond, then, else_ } => {
+            expr_reads(cond, out);
+            then.iter().chain(else_).for_each(|c| node_reads(c, out));
+        }
+        Node::For {
+            source, key, body, ..
+        } => {
+            expr_reads(source, out);
+            expr_reads(key, out);
+            body.iter().for_each(|c| node_reads(c, out));
+        }
+        Node::Component {
+            props, children, ..
+        } => {
+            props.iter().for_each(|(_, v)| expr_reads(v, out));
+            children.iter().for_each(|c| node_reads(c, out));
+        }
+        Node::Fragment(cs) => cs.iter().for_each(|c| node_reads(c, out)),
+        Node::Text(_) | Node::Outlet => {}
+    }
 }
 
 struct Unresolved {
