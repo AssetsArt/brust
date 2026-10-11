@@ -27,6 +27,17 @@ export interface StartOptions {
   l1Capacity?: number
   jobCacheCapacity?: number
   generator?: string
+  /** Server actions (M3-F): the URL prefix and body cap, from the build manifest. Absent = no actions. */
+  actions?: { prefix: string; maxBodyBytes: number }
+  /** `[cors]` from brust.toml (runtime config, not in the manifest). Absent = CORS off. */
+  cors?: {
+    origins: string[]
+    methods?: string[]
+    headers?: string[]
+    exposeHeaders?: string[]
+    credentials: boolean
+    maxAgeSeconds?: number
+  }
 }
 export type WorkerFn = (kind: 'loader' | 'jobs', requestJson: string, slot: number) => Promise<number>
 export interface NativeBinding {

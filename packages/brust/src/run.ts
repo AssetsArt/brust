@@ -6,10 +6,10 @@
 // process.exit, OOM) → drain → exit 1: M2 does not respawn, the supervisor restarts the process.
 // Nothing here returns on its own: a started server keeps the process alive and a drained one
 // does not end it, so every exit is an explicit `process.exit`.
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { type BrustConfig, loadConfig } from './config'
-import { beginDrain, startServer, untilReady } from './native'
+import { beginDrain, type StartOptions, startServer, untilReady } from './native'
 import { SLOT_BYTES } from './worker'
 
 export interface RunOptions {
@@ -18,6 +18,26 @@ export interface RunOptions {
   entry?: string
   /** Overrides below env (CLI flags): see config.ts (incl. `bootTimeoutMs`, default 30000). */
   config?: Partial<BrustConfig>
+}
+
+/** The manifest fields `run` needs (build/manifest.ts owns the full shape). */
+export interface RunManifest {
+  actions?: { entry: string; prefix: string; maxBodyBytes: number } | null
+}
+
+/** Pure: the napi `StartOptions`. No actions/cors → exactly the pre-actions keys. */
+export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, version: string): StartOptions {
+  return {
+    host: cfg.host,
+    port: cfg.port,
+    distDir,
+    workers: cfg.workers,
+    callTimeoutMs: cfg.callTimeoutMs,
+    workerThreads: cfg.ioThreads,
+    generator: `brust/${version}`,
+    ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes } } : {}),
+    ...(cfg.cors ? { cors: cfg.cors } : {}),
+  }
 }
 
 /** Every worker's response buffer, kept reachable until the process exits (see run()). */
@@ -33,6 +53,12 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   const distDir = resolve(process.env.BRUST_DIST_DIR || opts.distDir || 'dist')
   const manifest = join(distDir, 'manifest.json')
   if (!existsSync(manifest)) fail(`run brust build first (${manifest} not found)`)
+  let m: RunManifest
+  try {
+    m = JSON.parse(readFileSync(manifest, 'utf8')) as RunManifest
+  } catch (e) {
+    fail(`bad manifest ${manifest}: ${(e as Error).message}`)
+  }
   const entry = resolve(process.env.BRUST_APP_ENTRY || opts.entry || 'routes.tsx')
   if (!existsSync(entry)) fail(`routes entry ${entry} not found`)
 
@@ -45,7 +71,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
 
   const version: string = (await Bun.file(join(import.meta.dir, '../package.json')).json()).version
   try {
-    startServer({ host: cfg.host, port: cfg.port, distDir, workers: cfg.workers, callTimeoutMs: cfg.callTimeoutMs, workerThreads: cfg.ioThreads, generator: `brust/${version}` })
+    startServer(startOptions(cfg, distDir, m, version))
   } catch (e) {
     fail((e as Error).message)
   }
