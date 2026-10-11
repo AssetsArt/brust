@@ -23,6 +23,8 @@ export type Row = RowBase & ({ expect: 'native' | 'static'; jobs: number } | { e
 
 const R = `import { useState } from 'react'\n`
 const child = (body: string) => `export default function Child(props: any) { ${body} }`
+const ST = `import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\n`
+const CART = `import { defineStore, signal, computed } from 'brust/store'\nexport const cart = defineStore('cart', () => { const count = signal(0); const dbl = computed(() => count() * 2); return { count, dbl } })`
 
 export const CATEGORIES: Record<Row['category'], string> = {
   A: 'JSX basics',
@@ -233,6 +235,37 @@ export const rows: Row[] = [
     snippet: `${R}import Badge from './Badge'\nimport { take } from './take'\nexport default function C({ rows }: any) { const [n, setN] = useState(1); return <ul onClick={() => setN(n + 1)}>{take(rows, n).map((r: any) => <li key={r.id}><Badge type={r.t} label={r.l} color={r.c} /></li>)}</ul> }`,
     files: { 'Badge.tsx': child(`return <span data-type={props.type} style={{ background: props.color }}>{props.label}</span>`), 'take.ts': `export const take = (rows: any[], n: number) => rows.slice(0, n)` },
     note: 'ledger F70/F71: the client re-creates the rows; the helper reads rows whole, so x-props keeps the full list' },
+  { id: 'e-store-read', category: 'E', authoring: 'store field read through useStore', expect: 'native', jobs: 0,
+    snippet: `${ST}export default function C() { const s = useStore(cart); return <p>{s.count}</p> }`,
+    files: { 'cart.ts': CART },
+    note: 'M3-F D7: store-view root → __store.cart.count' },
+  { id: 'e-store-destructure', category: 'E', authoring: 'destructured useStore fields', expect: 'native', jobs: 0,
+    snippet: `${ST}export default function C() { const { count } = useStore(cart); return <p>{count}</p> }`,
+    files: { 'cart.ts': CART },
+    note: 'M3-F D7' },
+  { id: 'e-store-derived', category: 'E', authoring: 'helper over a store read', expect: 'native', jobs: 1,
+    snippet: `${ST}import { fmt } from './fmt'\nexport default function C() { const s = useStore(cart); return <p>{fmt(s.count)}</p> }`,
+    files: { 'cart.ts': CART, 'fmt.ts': `export const fmt = (n: number) => n.toFixed(2)` },
+    note: 'M3-F D7: precompute slot keyed by __store.cart.count' },
+  { id: 'e-store-handler-write', category: 'E', authoring: 'store write in an event handler', expect: 'native', jobs: 0,
+    snippet: `${ST}export default function C() { const s = useStore(cart); return <button onClick={() => cart.count.set(s.count + 1)}>{s.count}</button> }`,
+    files: { 'cart.ts': CART },
+    note: 'M3-F D7: writes in handlers are plain calls' },
+  { id: 'e-store-reexport', category: 'E', authoring: 'store handle through a re-export', expect: 'native', jobs: 0,
+    snippet: `import { useStore } from 'brust/store/react'\nimport { cart } from './stores'\nexport default function C() { const s = useStore(cart); return <p>{s.count}</p> }`,
+    files: { 'cart.ts': CART, 'stores.ts': `export { cart } from './cart'` },
+    note: 'M3-F D7: re-exports followed' },
+  { id: 'e-store-unresolved', category: 'E', authoring: 'store handle from a package', expect: 'react',
+    snippet: `import { useStore } from 'brust/store/react'\nimport { cart } from 'shop-stores'\nexport default function C() { const s = useStore(cart); return <p>{s.count}</p> }`,
+    note: 'M3-F D7: fallback store-name-unresolved' },
+  { id: 'e-store-write-in-render', category: 'E', authoring: 'store write during render', expect: 'react',
+    snippet: `${ST}export default function C() { const s = useStore(cart); const n = cart.count.set(1); return <p>{s.count}</p> }`,
+    files: { 'cart.ts': CART },
+    note: 'M3-F D7: fallback store-write-in-render' },
+  { id: 'e-store-computed-key', category: 'E', authoring: 'store computed key read', expect: 'react',
+    snippet: `${ST}export default function C() { const s = useStore(cart); return <p>{s.dbl}</p> }`,
+    files: { 'cart.ts': CART },
+    note: 'M3-F R1: fallback store-key-unsupported' },
   { id: 'e-parse-error', category: 'E', authoring: 'snippet that does not parse', expect: 'compile-error',
     snippet: `export default function C() { return <div> }`,
     note: 'reported as a row, never aborts the battery' },
