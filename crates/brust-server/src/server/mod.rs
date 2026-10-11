@@ -103,7 +103,7 @@ impl Server {
 /// accept loop on its own runtime thread. Returns once the bind (and TLS
 /// acceptor build) succeeded; the loop waits for `expected_workers`
 /// registrations before accepting. Every boot failure is an `Err` (no partial
-/// boot): `"manifest: …"`, `"routes: …"`, `"render: …"`, `"cors: …"`,
+/// boot): `"manifest: …"`, `"routes: …"`, `"render: …"`, `"cors: …"`, `"actions: …"`,
 /// `"bind failed on {addr}: …"`, `"tls acceptor build failed: …"`.
 pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
     let loaded = Manifest::load(&cfg.dist_dir).map_err(|e| format!("manifest: {e}"))?;
@@ -114,6 +114,10 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         crate::pipeline::PlanIndex::new(&loaded.manifest).map_err(|e| format!("manifest: {e}"))?;
     if let Some(c) = &cfg.cors {
         c.validate().map_err(|e| format!("cors: {e}"))?;
+    }
+    if let Some(a) = &cfg.actions {
+        a.validate(&loaded.manifest)
+            .map_err(|e| format!("actions: {e}"))?;
     }
     let tuning = cfg.tuning;
     let state = Arc::new(Server {
@@ -146,6 +150,19 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         tls: cfg.tls,
         cors: cfg.cors,
         generator: cfg.generator,
+        // A4 verbatim; a validated prefix holds only [A-Za-z0-9._~/-], so no escaping.
+        action_prefix_tag: cfg
+            .actions
+            .as_ref()
+            .filter(|a| !a.is_default_prefix())
+            .map(|a| {
+                format!(
+                    "<script>globalThis.__BRUST_ACTION_PREFIX__=\"{}\"</script>",
+                    a.prefix
+                )
+                .into_boxed_str()
+            }),
+        actions: cfg.actions,
         claim_timeout: Duration::from_millis(tuning.claim_timeout_ms),
         call_timeout: Duration::from_millis(tuning.call_timeout_ms),
     });
@@ -508,6 +525,43 @@ mod tests {
         assert!(
             msg.contains("bind failed"),
             "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn start_rejects_bad_actions_and_bad_cors() {
+        let dist = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist");
+        let Err(msg) = start(Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            dist_dir: dist.clone(),
+            actions: Some(crate::config::ActionsConfig {
+                prefix: "/_brust".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }) else {
+            panic!("start should refuse the prefix /_brust");
+        };
+        assert!(msg.starts_with("actions: "), "{msg}");
+
+        let Err(msg) = start(Config {
+            addr: "127.0.0.1:0".parse().unwrap(),
+            dist_dir: dist,
+            cors: Some(crate::config::CorsConfig {
+                origins: vec!["*".into()],
+                methods: None,
+                headers: None,
+                expose_headers: None,
+                credentials: true,
+                max_age_seconds: None,
+            }),
+            ..Default::default()
+        }) else {
+            panic!("start should refuse credentials with a wildcard origin");
+        };
+        assert!(
+            msg.starts_with("cors: ") && msg.contains("wildcard"),
+            "{msg}"
         );
     }
 
