@@ -1,7 +1,7 @@
 {
   "header": {
     "date": "2026-10-11",
-    "host": "darwin/arm64 Aitthis-MacBook-Pro.local",
+    "host": "darwin/arm64",
     "cores": 10,
     "loadavg": [
       5.7,
@@ -2193,7 +2193,7 @@
   "actions": {
     "header": {
       "date": "2026-10-12",
-      "host": "darwin/arm64 Aitthis-MacBook-Pro.local",
+      "host": "darwin/arm64",
       "cores": 10,
       "loadavg": [
         8.76,

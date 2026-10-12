@@ -4,7 +4,7 @@
 //   bun bench/run.ts --apps brust,next --probes D --dur 3s --enc identity --seed 7
 // Flow: guards → build every app → parity (abort on mismatch) → shuffled (app, probe) loop, server restarted per
 // pair, 1 s settle + discarded warm-up, identity then gzip (A probes: identity only, at c=120 and c=1) → RESULTS.json + RESULTS.md. Exit 0 ok, 1 failure, 2 busy.
-import { cpus, hostname, loadavg } from 'node:os'
+import { cpus, loadavg } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { type AppId, type AppSpec, killAllOnExit, startApp } from './lib/app'
@@ -170,7 +170,7 @@ releaseLock()
 // probe, the actions block only apps that served an A probe; writeResults merges into the RESULTS.json already there.
 const budgetOf = (a: AppSpec) => (a.id === 'next' ? 'procs=1 (as shipped)' : a.id === 'bun-serve' || a.id === 'elysia-bun' ? `procs=${workersN}` : `workers=${workersN}`)
 const date = new Date().toISOString().slice(0, 10)
-const host = `${process.platform}/${process.arch} ${hostname()}`
+const host = `${process.platform}/${process.arch}`
 const pageApps = apps.filter((a) => pageProbes.some((p) => serves(a.id, p)))
 const actionApps = apps.filter((a) => jsonProbes.some((p) => serves(a.id, p)))
 const ofApps = (xs: AppSpec[]) => Object.fromEntries(xs.map((a) => [a.id, budgetOf(a)]))

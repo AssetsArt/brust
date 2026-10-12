@@ -112,3 +112,9 @@ describe('actions (A1/A2)', () => {
     expect(fresh.header).toEqual(r.header)
   })
 })
+
+test('the rendered header names platform/arch only, never a machine hostname (repo rule)', () => {
+  const md = renderMarkdown(fixture as unknown as Results)
+  expect(md).toMatch(/host darwin\/arm64 ·/)
+  expect(md).not.toMatch(/\.local\b|MacBook/)
+})
