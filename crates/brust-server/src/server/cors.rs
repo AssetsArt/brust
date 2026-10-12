@@ -95,6 +95,16 @@ impl ResolvedCors {
         }
     }
 
+    /// F87: the request `Origin` is listed in `origins` by name. A wildcard never counts here: the cross-site guard
+    /// must not be switched off by `origins = ["*"]` (use `[actions] cross_site = "allow"` for that).
+    pub(crate) fn origin_listed(&self, origin: &HeaderValue) -> bool {
+        origin.to_str().is_ok_and(|o| {
+            self.origins
+                .iter()
+                .any(|allowed| allowed != "*" && allowed == o)
+        })
+    }
+
     /// Build the preflight 204. `acao` is the value `allow_origin_value`
     /// produced for the request's Origin (the caller has already established
     /// the origin is allowed).

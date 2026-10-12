@@ -16,6 +16,11 @@ test('actions → { prefix, maxBodyBytes } (camelCase, no entry)', () => {
   expect(Object.keys(o.actions as object)).toEqual(['prefix', 'maxBodyBytes'])
 })
 
+test('actions.crossSite is forwarded when the manifest carries it (F87)', () => {
+  const o = startOptions(base, '/d', { actions: { entry: 'actions.js', prefix: '/api', maxBodyBytes: 1, crossSite: 'allow' } }, 'v')
+  expect(o.actions).toEqual({ prefix: '/api', maxBodyBytes: 1, crossSite: 'allow' })
+})
+
 test('cors → passed through with camelCase keys only', () => {
   const cors = { origins: ['https://a.example'], methods: ['GET'], exposeHeaders: ['x-a'], credentials: true, maxAgeSeconds: 60 }
   const o = startOptions({ ...base, cors } as BrustConfig, '/d', {}, 'v')

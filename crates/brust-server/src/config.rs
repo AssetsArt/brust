@@ -91,6 +91,17 @@ const RESERVED: &[&str] = &["/ping", "/public", "/_brust/client", "/_brust/cache
 pub struct ActionsConfig {
     pub prefix: String,
     pub max_body_bytes: usize,
+    pub cross_site: CrossSite,
+}
+
+/// F87 / spec E10: what Rust does with a mutating action request whose browser-declared site is foreign.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrossSite {
+    /// 403 before the body is read, unless `[cors]` allows the `Origin`.
+    #[default]
+    Reject,
+    /// Forward everything (a public API consumed cross-origin).
+    Allow,
 }
 
 impl Default for ActionsConfig {
@@ -98,6 +109,7 @@ impl Default for ActionsConfig {
         Self {
             prefix: DEFAULT_ACTION_PREFIX.into(),
             max_body_bytes: DEFAULT_MAX_ACTION_BODY_BYTES,
+            cross_site: CrossSite::default(),
         }
     }
 }

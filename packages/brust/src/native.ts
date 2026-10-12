@@ -45,6 +45,8 @@ export interface CorsOptions {
 export interface ActionsOptions {
   prefix?: string
   maxBodyBytes?: number
+  /** F87: cross-site mutating requests. Default `reject`. */
+  crossSite?: 'reject' | 'allow'
 }
 export type WorkerFn = (kind: 'loader' | 'jobs' | 'fetch', requestJson: string, slot: number) => Promise<number>
 export interface NativeBinding {

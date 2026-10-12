@@ -56,6 +56,7 @@ export interface ActionsRecord {
   entry: string
   prefix: string
   maxBodyBytes: number
+  crossSite: 'reject' | 'allow'
 }
 
 export interface ManifestJson {
