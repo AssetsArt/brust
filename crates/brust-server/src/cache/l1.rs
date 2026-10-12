@@ -1260,4 +1260,153 @@ mod tests {
         assert!(c.insert(k.clone(), rb_of("v"), TTL, &[], s));
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
     }
+
+    /// How the concurrency tests below invalidate: a tag (keys `/r{i}` tagged `t`) or a path (keys
+    /// `GET /r x={i}`, untagged).
+    #[derive(Clone, Copy)]
+    enum Inval {
+        Tag,
+        Path,
+    }
+
+    impl Inval {
+        fn key(self, i: usize) -> CacheKey {
+            match self {
+                Inval::Tag => key("GET", &format!("/r{i}"), ""),
+                Inval::Path => key("GET", "/r", &format!("x={i}")),
+            }
+        }
+
+        fn tags(self) -> Vec<String> {
+            match self {
+                Inval::Tag => tags(&["t"]),
+                Inval::Path => Vec::new(),
+            }
+        }
+
+        fn run(self, c: &L1Cache) {
+            match self {
+                Inval::Tag => {
+                    c.invalidate_tags(&tags(&["t"]));
+                }
+                Inval::Path => {
+                    c.invalidate_path("GET", "/r");
+                }
+            }
+        }
+    }
+
+    /// One render per thread per round, phased by barriers: every render stamps and reads `db`,
+    /// the mutation + invalidation runs, then every render inserts. No insert may land.
+    fn renders_racing_an_invalidation_phased(kind: Inval) {
+        const THREADS: usize = 8;
+        let c = L1Cache::new();
+        let db = AtomicU64::new(0);
+        let [read, mutated, inserted] =
+            std::array::from_fn::<_, 3, _>(|_| std::sync::Barrier::new(THREADS + 1));
+        let landed = AtomicUsize::new(0);
+        let stale = std::thread::scope(|sc| {
+            for i in 0..THREADS {
+                let (c, db, landed) = (&c, &db, &landed);
+                let (read, mutated, inserted) = (&read, &mutated, &inserted);
+                sc.spawn(move || {
+                    for _ in 0..200 {
+                        let since = c.read_stamp();
+                        let v = db.load(Ordering::SeqCst);
+                        read.wait();
+                        mutated.wait();
+                        let body = rb_of(&v.to_string());
+                        if c.insert(kind.key(i), body, TTL, &kind.tags(), since) {
+                            landed.fetch_add(1, Ordering::SeqCst);
+                        }
+                        inserted.wait();
+                    }
+                });
+            }
+            // Record, never panic in here: the renders would wait on the barriers forever.
+            let mut stale = Vec::new();
+            for _ in 0..200 {
+                read.wait();
+                db.fetch_add(1, Ordering::SeqCst);
+                kind.run(&c);
+                mutated.wait();
+                inserted.wait();
+                stale.extend((0..THREADS).filter(|&i| html(&c, &kind.key(i)).is_some()));
+            }
+            stale
+        });
+        assert_eq!(
+            landed.load(Ordering::SeqCst),
+            0,
+            "an insert stamped before the invalidation landed"
+        );
+        assert!(stale.is_empty(), "stale entries served: {}", stale.len());
+    }
+
+    /// Free-running renders on 16 keys against 500 mutation + invalidation pairs. When the last
+    /// pair is done, every entry holds the last value (a stale render never landed), and so does
+    /// every entry after one more pair and a fresh render per key; front and moka agree.
+    fn renders_racing_invalidations_end_fresh(kind: Inval) {
+        const KEYS: usize = 16;
+        let c = L1Cache::new();
+        let db = AtomicU64::new(0);
+        let render = |i: usize| {
+            let since = c.read_stamp();
+            let v = db.load(Ordering::SeqCst);
+            std::thread::yield_now();
+            c.insert(kind.key(i), rb_of(&v.to_string()), TTL, &kind.tags(), since);
+        };
+        let present = |c: &L1Cache, want: u64| {
+            for i in 0..KEYS {
+                if let Some(b) = html(c, &kind.key(i)) {
+                    assert_eq!(b, want.to_string().as_bytes(), "key {i}");
+                }
+            }
+        };
+        std::thread::scope(|sc| {
+            for t in 0..8 {
+                let render = &render;
+                sc.spawn(move || {
+                    for n in 0..2000 {
+                        render((t + n) % KEYS);
+                    }
+                });
+            }
+            sc.spawn(|| {
+                for _ in 0..500 {
+                    db.fetch_add(1, Ordering::SeqCst);
+                    kind.run(&c);
+                    std::thread::yield_now();
+                }
+            });
+        });
+        present(&c, 500);
+        db.fetch_add(1, Ordering::SeqCst);
+        kind.run(&c);
+        (0..KEYS).for_each(render);
+        present(&c, 501);
+        c.run_pending();
+        assert_eq!(c.front_len(), c.stats().len);
+        assert_eq!(c.front_len(), KEYS);
+    }
+
+    #[test]
+    fn renders_racing_a_tag_invalidation_never_land_stale_phased() {
+        renders_racing_an_invalidation_phased(Inval::Tag);
+    }
+
+    #[test]
+    fn renders_racing_tag_invalidations_end_fresh_free_running() {
+        renders_racing_invalidations_end_fresh(Inval::Tag);
+    }
+
+    #[test]
+    fn renders_racing_a_path_invalidation_never_land_stale_phased() {
+        renders_racing_an_invalidation_phased(Inval::Path);
+    }
+
+    #[test]
+    fn renders_racing_path_invalidations_end_fresh_free_running() {
+        renders_racing_invalidations_end_fresh(Inval::Path);
+    }
 }
