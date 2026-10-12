@@ -882,4 +882,202 @@ mod tests {
             assert!(c.get(&k("r")).is_none(), "by_key={by_key}");
         }
     }
+
+    // ----- F89: read stamps -----
+
+    fn val(v: serde_json::Value) -> Arc<Node> {
+        Arc::new(Node::from(v))
+    }
+
+    fn tags(ts: &[&str]) -> Vec<String> {
+        ts.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn invalidate_user_key_after_the_read_stamp_keeps_the_insert_out() {
+        let c = store();
+        let s0 = c.read_stamp();
+        assert_eq!(c.invalidate_user_key("u"), 0);
+        assert!(!c.insert(k("k:a/j0/u"), val(json!("old")), None, &[], Some("u"), s0));
+        assert!(c.get(&k("k:a/j0/u")).is_none());
+        sync(&c);
+        assert_eq!(
+            (
+                c.front_len(),
+                c.key_index_size(),
+                c.tag_index_size(),
+                c.stats().len
+            ),
+            (0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn a_tag_invalidation_after_the_read_stamp_keeps_the_insert_out() {
+        let c = store();
+        let s0 = c.read_stamp();
+        assert_eq!(c.invalidate_tags(&tags(&["t"])), 0);
+        assert!(!c.insert(
+            k("k:a/j0/u"),
+            val(json!("old")),
+            None,
+            &tags(&["t"]),
+            Some("u"),
+            s0
+        ));
+        assert!(c.get(&k("k:a/j0/u")).is_none());
+        sync(&c);
+        assert_eq!(
+            (
+                c.front_len(),
+                c.key_index_size(),
+                c.tag_index_size(),
+                c.stats().len
+            ),
+            (0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn an_insert_before_the_invalidation_is_still_evicted() {
+        let c = store();
+        let s0 = c.read_stamp();
+        assert!(c.insert(k("k:a/j0/u"), val(json!("v")), None, &[], Some("u"), s0));
+        assert_eq!(c.invalidate_user_key("u"), 1);
+        assert!(c.get(&k("k:a/j0/u")).is_none());
+    }
+
+    #[test]
+    fn a_stamp_after_the_invalidation_lands() {
+        let c = store();
+        c.invalidate_user_key("u");
+        let s0 = c.read_stamp();
+        assert!(c.insert(k("k:a/j0/u"), val(json!("new")), None, &[], Some("u"), s0));
+        assert!(c.get(&k("k:a/j0/u")).is_some());
+    }
+
+    #[test]
+    fn an_unrelated_user_key_does_not_reject() {
+        let c = store();
+        let b = (0..)
+            .map(|i| format!("u{i}"))
+            .find(|b| c.key_slot(b) != c.key_slot("u"))
+            .unwrap();
+        let s0 = c.read_stamp();
+        c.invalidate_user_key(&b);
+        assert!(c.insert(k("k:a/j0/u"), val(json!("v")), None, &[], Some("u"), s0));
+        assert!(c.get(&k("k:a/j0/u")).is_some());
+    }
+
+    #[test]
+    fn a_tag_named_like_the_user_key_does_not_reject() {
+        let c = store();
+        let s0 = c.read_stamp();
+        c.invalidate_tags(&tags(&["u"]));
+        assert!(c.insert(k("k:a/j0/u"), val(json!("v")), None, &[], Some("u"), s0));
+        assert!(c.get(&k("k:a/j0/u")).is_some());
+    }
+
+    #[test]
+    fn clear_after_the_stamp_keeps_the_insert_out() {
+        let c = store();
+        let s0 = c.read_stamp();
+        c.clear();
+        assert!(!c.insert(k("hash"), val(json!("old")), None, &[], None, s0));
+        assert!(c.get(&k("hash")).is_none());
+    }
+
+    #[test]
+    fn a_rejected_insert_leaves_the_newer_entry() {
+        let c = store();
+        let s1 = c.read_stamp();
+        c.invalidate_user_key("u");
+        let s2 = c.read_stamp();
+        assert!(c.insert(k("k:a/j0/u"), val(json!("new")), None, &[], Some("u"), s2));
+        assert!(!c.insert(k("k:a/j0/u"), val(json!("old")), None, &[], Some("u"), s1));
+        assert_eq!(
+            c.get(&k("k:a/j0/u")).as_deref(),
+            Some(&Node::from(json!("new")))
+        );
+        sync(&c);
+        assert_eq!(c.key_index_size(), 1);
+    }
+
+    #[test]
+    fn a_content_keyed_insert_is_checked_against_its_tags() {
+        // R2: one uniform check — a tagged content-keyed job is exactly where the app says the
+        // value is not a pure function of its hashed inputs.
+        let c = store();
+        let s0 = c.read_stamp();
+        c.invalidate_tags(&tags(&["t"]));
+        assert!(!c.insert(k("hash1"), val(json!(1)), None, &tags(&["t"]), None, s0));
+        assert!(c.insert(k("hash2"), val(json!(2)), None, &[], None, s0));
+    }
+
+    /// One job call per thread per round, phased by barriers (F86's L1 twin): every call stamps
+    /// and reads `db`, the mutation + invalidation runs, then every call inserts. No insert may
+    /// land. Violations are recorded and asserted after the scope: a panic inside it would leave
+    /// the callers parked on the barriers.
+    fn calls_racing_an_invalidation_phased(by_key: bool) {
+        const THREADS: usize = 8;
+        let c = store();
+        let db = AtomicU64::new(0);
+        let [read, mutated, inserted] =
+            std::array::from_fn::<_, 3, _>(|_| std::sync::Barrier::new(THREADS + 1));
+        let landed = AtomicUsize::new(0);
+        let key = |i: usize| k(&format!("k:c{i}/j0/u"));
+        let (tg, uk) = if by_key {
+            (Vec::new(), Some("u"))
+        } else {
+            (tags(&["t"]), None)
+        };
+        let stale = std::thread::scope(|sc| {
+            for i in 0..THREADS {
+                let (c, db, landed, tg) = (&c, &db, &landed, &tg);
+                let (read, mutated, inserted) = (&read, &mutated, &inserted);
+                sc.spawn(move || {
+                    for _ in 0..200 {
+                        let since = c.read_stamp();
+                        let v = db.load(Ordering::SeqCst);
+                        read.wait();
+                        mutated.wait();
+                        if c.insert(key(i), val(json!(v)), None, tg, uk, since) {
+                            landed.fetch_add(1, Ordering::SeqCst);
+                        }
+                        inserted.wait();
+                    }
+                });
+            }
+            let mut stale = Vec::new();
+            for _ in 0..200 {
+                read.wait();
+                db.fetch_add(1, Ordering::SeqCst);
+                if by_key {
+                    c.invalidate_user_key("u");
+                } else {
+                    c.invalidate_tags(&tags(&["t"]));
+                }
+                mutated.wait();
+                inserted.wait();
+                stale.extend((0..THREADS).filter(|&i| c.get(&key(i)).is_some()));
+            }
+            stale
+        });
+        assert_eq!(
+            landed.load(Ordering::SeqCst),
+            0,
+            "an insert stamped before the invalidation landed"
+        );
+        assert!(stale.is_empty(), "stale entries served: {}", stale.len());
+    }
+
+    #[test]
+    fn renders_racing_a_user_key_invalidation_never_land_stale_phased() {
+        calls_racing_an_invalidation_phased(true);
+    }
+
+    #[test]
+    fn renders_racing_a_tag_invalidation_never_land_stale_phased() {
+        calls_racing_an_invalidation_phased(false);
+    }
 }
