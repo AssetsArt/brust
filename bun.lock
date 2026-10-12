@@ -74,31 +74,31 @@
     },
     "npm/darwin-arm64": {
       "name": "@brust/native-darwin-arm64",
-      "version": "0.0.0",
+      "version": "2.0.0-alpha.1",
     },
     "npm/darwin-x64": {
       "name": "@brust/native-darwin-x64",
-      "version": "0.0.0",
+      "version": "2.0.0-alpha.1",
     },
     "npm/linux-arm64-gnu": {
       "name": "@brust/native-linux-arm64-gnu",
-      "version": "0.0.0",
+      "version": "2.0.0-alpha.1",
     },
     "npm/linux-arm64-musl": {
       "name": "@brust/native-linux-arm64-musl",
-      "version": "0.0.0",
+      "version": "2.0.0-alpha.1",
     },
     "npm/linux-x64-gnu": {
       "name": "@brust/native-linux-x64-gnu",
-      "version": "0.0.0",
+      "version": "2.0.0-alpha.1",
     },
     "npm/linux-x64-musl": {
       "name": "@brust/native-linux-x64-musl",
-      "version": "0.0.0",
+      "version": "2.0.0-alpha.1",
     },
     "packages/brust": {
       "name": "@brust/core",
-      "version": "0.0.0",
+      "version": "2.0.0-alpha.1",
       "bin": {
         "brust": "./bin/brust",
       },
@@ -136,7 +136,7 @@
     },
     "packages/create-app": {
       "name": "@brust/create-app",
-      "version": "0.0.0",
+      "version": "2.0.0-alpha.1",
       "bin": {
         "create-app": "./bin/create-app.ts",
       },
@@ -147,7 +147,7 @@
     },
     "packages/runtime-dom": {
       "name": "@brust/runtime-dom",
-      "version": "0.0.0",
+      "version": "2.0.0-alpha.1",
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.0.0",
         "@types/bun": "^1.4.0",
