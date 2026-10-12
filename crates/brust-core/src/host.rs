@@ -6,7 +6,9 @@
 //! `Send`: the methods return `impl Future` WITHOUT a `Send` bound — Workers futures are `!Send`.
 //! Auto traits leak through a concrete impl, so the native host's futures stay `Send`; the native
 //! adapter asserts it at compile time on the spawned per-request future.
+use std::cell::Cell;
 use std::future::Future;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -91,6 +93,57 @@ pub trait Clock {
     }
 }
 
+/// `ms` (a JS `Date.now()`) in ns, never below the last reading in `last`: a reading that goes
+/// back, is NaN or is negative returns the last one. Native-host seam, not an API.
+#[doc(hidden)]
+pub fn monotone_ns(last: &Cell<u64>, ms: f64) -> u64 {
+    let ns = ms * 1e6;
+    // NaN fails the comparison; `as u64` saturates above u64::MAX.
+    if ns >= 0.0 && ns as u64 > last.get() {
+        last.set(ns as u64);
+    }
+    last.get()
+}
+
+/// A hand-advanced clock (tests): clones share one reading. Not an API.
+#[doc(hidden)]
+#[derive(Clone, Debug, Default)]
+pub struct ManualClock(Rc<Cell<u64>>);
+
+impl ManualClock {
+    pub fn advance(&self, d: Duration) {
+        let ns = u64::try_from(d.as_nanos()).unwrap_or(u64::MAX);
+        self.0.set(self.0.get().saturating_add(ns));
+    }
+
+    pub fn set_ns(&self, ns: u64) {
+        self.0.set(ns);
+    }
+}
+
+impl Clock for ManualClock {
+    fn now_ns(&self) -> u64 {
+        self.0.get()
+    }
+}
+
+/// The Workers clock (R5): `js_sys::Date::now()` through [`monotone_ns`]. On Workers
+/// `Date.now()` (like `performance.now()`) only advances after I/O
+/// (<https://developers.cloudflare.com/workers/runtime-apis/performance/>), so a TTL is coarse
+/// within one request; `Instant::now` panics on wasm32-unknown-unknown.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+#[derive(Debug, Default)]
+pub struct JsClock {
+    last: Cell<u64>,
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+impl Clock for JsClock {
+    fn now_ns(&self) -> u64 {
+        monotone_ns(&self.last, js_sys::Date::now())
+    }
+}
+
 /// The page (L1) cache contract: the native `L1Cache`'s API, read stamps included (F86).
 pub trait PageCache {
     fn with_clock(capacity: u64, clock: Arc<InvalClock>) -> Self
@@ -168,4 +221,27 @@ pub trait Host: Clock {
         headers: &HeaderMap,
         head: bool,
     ) -> impl Future<Output = Option<http::Response<Bytes>>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn monotone_never_goes_back() {
+        let last = Cell::new(0);
+        assert_eq!(monotone_ns(&last, 5.0), 5_000_000);
+        assert_eq!(monotone_ns(&last, 3.0), 5_000_000);
+        assert_eq!(monotone_ns(&last, f64::NAN), 5_000_000);
+        assert_eq!(monotone_ns(&last, -1.0), 5_000_000);
+        assert_eq!(monotone_ns(&last, 7.5), 7_500_000);
+    }
+
+    #[test]
+    fn manual_clock_is_shared_by_clones() {
+        let a = ManualClock::default();
+        let b = a.clone();
+        b.advance(Duration::from_secs(2));
+        assert_eq!(a.now_ns(), 2_000_000_000);
+    }
 }

@@ -33,10 +33,16 @@ jobs:
       - run: cargo build --workspace
       # Invariant: the vendored path crate shadows the git one (only root lines are checked; bun_js_parser legitimately depends on it).
       - run: cargo tree -p brust-compiler -i bun_react_compiler | tee tree.txt && grep -q "^bun_react_compiler .*vendor/bun_react_compiler" tree.txt && ! grep -q "^bun_react_compiler .*github.com" tree.txt
-      # Invariant: brust-core stays host-agnostic (no tokio/hyper/moka/crossbeam in its normal deps).
-      - run: "! cargo tree -p brust-core -e normal | grep -E 'tokio|hyper|moka|crossbeam'"
+      # Invariant: brust-core stays host-agnostic (no tokio/hyper/moka/crossbeam/parking_lot in its normal deps).
+      - run: "! cargo tree -p brust-core -e normal | grep -E 'tokio|hyper|moka|crossbeam|parking_lot'"
       # --no-deps: the vendored Bun crate is not held to our lints (261 findings otherwise).
       - run: cargo clippy -p brust-core -p brust-compiler -p brust-compiler-cli -p brust-jinja -p brust-server -p brust-napi --no-deps -- -D warnings
+      # brust-core builds for Cloudflare Workers (wasm32-unknown-unknown), with and without gzip.
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo check -p brust-core --target wasm32-unknown-unknown
+      - run: cargo check -p brust-core --target wasm32-unknown-unknown --no-default-features
+      - run: cargo clippy -p brust-core --target wasm32-unknown-unknown --no-default-features --no-deps -- -D warnings
+      - run: "! cargo tree -p brust-core --target wasm32-unknown-unknown -e normal | grep -E 'tokio|hyper|moka|crossbeam|parking_lot|getrandom'"
       # The dual-evaluation harness (tests/dual_eval.rs) runs generated jobs and
       # chunks under bun against packages/runtime-dom and happy-dom.
       - run: bun install --frozen-lockfile
