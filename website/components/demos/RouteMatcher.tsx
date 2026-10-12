@@ -1,8 +1,14 @@
 // Demo, native tier: type a path and see which route of the pokedex example answers it, with the decoded params.
 // The matching runs in the input handler (route order, {param} segments, percent-decoding, the catch-all last).
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export default function RouteMatcher({ initialPath, initialPattern, initialParams }: { initialPath: string; initialPattern: string; initialParams: string[] }) {
+  const root = useRef<HTMLInputElement>(null)
+  // mounted marker for tests. A native effect runs BEFORE the host's refs and handlers are bound (gap G9), so the
+  // marker waits one microtask: mount binds synchronously right after the effects run.
+  useEffect(() => {
+    queueMicrotask(() => root.current?.setAttribute('data-ready', ''))
+  }, [])
   const [path, setPath] = useState(initialPath)
   const [pattern, setPattern] = useState(initialPattern)
   const [params, setParams] = useState(initialParams)
@@ -12,6 +18,7 @@ export default function RouteMatcher({ initialPath, initialPattern, initialParam
         Path
       </label>
       <input
+        ref={root}
         id="rm-path"
         className="demo-in"
         value={path}

@@ -15,6 +15,7 @@ interface Manifest {
 
 function build(entry: string, out: string): Manifest {
   outs.push(join(app, out))
+  rmSync(join(app, out), { recursive: true, force: true }) // a leftover from a killed run never leaks into this one
   const b = Bun.spawnSync([bin, 'build', entry, '--out-dir', out], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.stderr.toString()).toBe('')
   expect(b.exitCode).toBe(0)
@@ -31,7 +32,7 @@ function component(m: Manifest, name: string) {
 
 afterAll(() => {
   for (const o of outs) rmSync(o, { recursive: true, force: true })
-})
+}, 60_000)
 
 test('brust build routes.tsx: routes /, /docs (+ docs pages), *; the layout chrome is static with no jobs', () => {
   const m = build('routes.tsx', 'dist-test')

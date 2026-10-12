@@ -1,17 +1,23 @@
 // Demo, native tier: each button calls the real `POST /team` action (website/actions.ts) through the typed client;
 // the reply goes into the `team` store, and the buttons repaint from the store. The seventh Pokémon gets a 409.
 import { useStore } from '@brust/core/store/react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { addMember } from './team-client'
 import { team } from './team-store'
 
 export default function TeamPicker({ candidates }: { candidates: { id: number; name: string; sprite: string }[] }) {
+  const root = useRef<HTMLUListElement>(null)
+  // mounted marker for tests. A native effect runs BEFORE the host's refs and handlers are bound (gap G9), so the
+  // marker waits one microtask: mount binds synchronously right after the effects run.
+  useEffect(() => {
+    queueMicrotask(() => root.current?.setAttribute('data-ready', ''))
+  }, [])
   const s = useStore(team)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   return (
     <div className="picker">
-      <ul className="demo-list">
+      <ul className="demo-list" ref={root}>
         {candidates.map((c) => (
           <li key={c.id}>
             <img src={c.sprite} alt="" width={40} height={40} loading="lazy" />

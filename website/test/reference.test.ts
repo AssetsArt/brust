@@ -1,16 +1,12 @@
 // website/test/reference.test.ts — the reference pages (Cloudflare, Cache adapters, Cookbook): every route answers
 // 200, each page is the static tier with no jobs, code blocks come from loaders, an unknown route is 404.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { NAV } from '../lib/nav'
+import { build, freshOut, HOOK_MS, serve, type Server } from './harness'
 
-const app = join(import.meta.dir, '..')
-const bin = join(app, '../packages/brust/bin/brust')
-const out = 'dist-test-reference'
-const port = 23000 + Math.floor(Math.random() * 2000)
-const base = `http://127.0.0.1:${port}`
-let server: ReturnType<typeof Bun.spawn> | undefined
+let out = ''
+let base = ''
+let srv: Server | undefined
 
 interface Manifest {
   components: Record<string, { tier: string; jobs: { kind: string }[] }>
@@ -21,31 +17,17 @@ const GROUPS = ['Cloudflare', 'Cache adapters', 'Cookbook']
 const PAGES = NAV.filter((g) => GROUPS.includes(g.group)).flatMap((g) => g.items)
 
 beforeAll(async () => {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
-  expect(b.stderr.toString()).toBe('')
+  out = freshOut('reference')
   // the landing's react demo warns on purpose (hook-unsupported); no reference page may warn
-  expect(b.stdout.toString().split('\n').filter((l) => l.startsWith('warning') && l.includes('pages/docs/'))).toEqual([])
-  expect(b.exitCode).toBe(0)
-  manifest = JSON.parse(readFileSync(join(app, out, 'manifest.json'), 'utf8'))
-  server = Bun.spawn([bin, 'start', '--dist-dir', out], {
-    cwd: app,
-    env: { ...process.env, BRUST_PORT: String(port), BRUST_ADDR: '127.0.0.1', BRUST_WORKERS: '2' },
-    stdout: 'ignore',
-    stderr: 'ignore',
-  })
-  for (let i = 0; i < 120; i++) {
-    try {
-      if ((await fetch(`${base}/docs`)).ok) break
-    } catch {}
-    await Bun.sleep(250)
-  }
-}, 180_000)
+  manifest = build('routes.tsx', out, /^warning hook-unsupported (?!pages\/docs\/)/)
+  srv = await serve(out)
+  base = srv.base
+}, HOOK_MS)
 
 afterAll(async () => {
-  server?.kill()
-  await server?.exited
-  rmSync(join(app, out), { recursive: true, force: true })
-})
+  await srv?.stop()
+  freshOut('reference')
+}, HOOK_MS)
 
 test('the reference group has 12 pages: Cloudflare 3, Cache adapters 4, Cookbook 5', () => {
   expect(PAGES.length).toBe(12)

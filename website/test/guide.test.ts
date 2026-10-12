@@ -1,63 +1,39 @@
 // website/test/guide.test.ts — the Guide pages (C1): every route 200 with its title, the demo route (param, 404,
 // real cache headers), the tier of every demo, and each live demo driven in Chromium.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
 import { type Browser, chromium, type Page } from 'playwright'
 import { PAGES } from '../lib/nav'
+import { build, component, freshOut, HOOK_MS, type Manifest, ready, serve, type Server, TEST_MS, until, WAIT_MS } from './harness'
 
-const app = join(import.meta.dir, '..')
-const bin = join(app, '../packages/brust/bin/brust')
-const out = 'dist-test-guide'
-const port = 23000 + Math.floor(Math.random() * 2000)
-const base = `http://127.0.0.1:${port}`
 const GUIDE = PAGES.filter((p) => p.group === 'Guide' && p.slug !== 'quickstart')
-let server: ReturnType<typeof Bun.spawn> | undefined
+let base = ''
+let srv: Server | undefined
 let browser: Browser | undefined
-let manifest: { components: Record<string, { tier: string; client: string | null; jobs: { kind: string }[] }> }
+let manifest: Manifest
 
 beforeAll(async () => {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
-  expect(b.stderr.toString()).toBe('')
-  expect(b.exitCode).toBe(0)
+  const out = freshOut('guide')
   // the react demos legitimately print warning hook-unsupported; any other warning is a failure
-  expect(b.stdout.toString().split('\n').filter((l) => l.startsWith('warning') && !l.startsWith('warning hook-unsupported'))).toEqual([])
-  manifest = JSON.parse(readFileSync(join(app, out, 'manifest.json'), 'utf8'))
-  server = Bun.spawn([bin, 'start', '--dist-dir', out], {
-    cwd: app,
-    env: { ...process.env, BRUST_PORT: String(port), BRUST_ADDR: '127.0.0.1', BRUST_WORKERS: '2', BRUST_DIST_DIR: join(app, out) },
-    stdout: 'ignore',
-    stderr: 'ignore',
-  })
-  for (let i = 0; i < 120; i++) {
-    try {
-      if ((await fetch(`${base}/docs`)).ok) break
-    } catch {}
-    await Bun.sleep(250)
-  }
+  manifest = build('routes.tsx', out)
+  srv = await serve(out)
+  base = srv.base
   browser = await chromium.launch()
-}, 180_000)
+}, HOOK_MS)
 
 afterAll(async () => {
   await browser?.close()
-  server?.kill()
-  await server?.exited
-  rmSync(join(app, out), { recursive: true, force: true })
-})
+  await srv?.stop()
+  freshOut('guide')
+}, HOOK_MS)
 
-function tierOf(file: string) {
-  const prefix = `${file[0]!.toLowerCase()}${file.slice(1)}_`
-  const hits = Object.entries(manifest.components).filter(([id]) => id.startsWith(prefix))
-  expect([file, hits.length]).toEqual([file, 1])
-  return hits[0]![1]
-}
+const tierOf = (file: string) => component(manifest, file)
 
-async function open(path: string, init?: (p: Page) => Promise<void>): Promise<Page> {
+async function open(path: string): Promise<Page> {
   const ctx = await browser!.newContext({ viewport: { width: 1280, height: 900 } })
+  ctx.setDefaultTimeout(WAIT_MS)
   const page = await ctx.newPage()
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(String(e)))
-  await init?.(page)
   await page.goto(`${base}${path}`, { waitUntil: 'networkidle' })
   ;(page as Page & { errors: string[] }).errors = errors
   return page
@@ -73,7 +49,7 @@ test('every Guide page is 200 with its title, a live demo frame and no compiler 
     expect(html).toContain(`<title>${p.title} · brust docs</title>`)
     expect([p.slug, html.includes('class="browser"')]).toEqual([p.slug, true])
   }
-}, 60_000)
+}, TEST_MS)
 
 test('tiers: pages static; demos as the docs text claims', () => {
   for (const name of ['Introduction', 'Installation', 'ProjectStructure', 'Routing', 'Loaders', 'RenderingTiers', 'Caching', 'Actions', 'Store', 'Configuration', 'Cli', 'Deployment', 'Migrating', 'DemoPokemonPage'])
@@ -108,30 +84,35 @@ test('Rendering tiers: the labels come from the manifest', async () => {
 
 test('Routing: the matcher finds the route and decodes params', async () => {
   const page = await open('/docs/routing')
+  await ready(page, '.matcher')
   const input = page.locator('#rm-path')
-  const dd = page.locator('.matcher dd')
-  await input.fill('/pokemon/mr%2Fmime')
-  expect(await dd.allTextContents()).toEqual(['/pokemon/{name}', 'name = "mr/mime"', '200'])
-  await input.fill('/pokedex')
-  expect(await dd.allTextContents()).toEqual(['/pokedex', 'none', '200'])
-  await input.fill('/nope/x')
-  expect(await dd.allTextContents()).toEqual(['*', 'none', '404'])
+  const dd = () => page.locator('.matcher dd').allTextContents()
+  for (const [path, want] of [
+    ['/pokemon/mr%2Fmime', ['/pokemon/{name}', 'name = "mr/mime"', '200']],
+    ['/pokedex', ['/pokedex', 'none', '200']],
+    ['/nope/x', ['*', 'none', '404']],
+  ] as const) {
+    await input.fill(path)
+    expect(await until(dd, (v) => v.join('|') === want.join('|'))).toEqual([...want])
+  }
   expect(errorsOf(page)).toEqual([])
   await page.context().close()
-}, 60_000)
+}, TEST_MS)
 
 test('Caching: the probe shows the real headers MISS, HIT, BYPASS', async () => {
   const page = await open('/docs/caching')
+  await ready(page, '.probe')
   await page.locator('.probe button').click()
   await page.locator('.probe li code').nth(2).waitFor()
   const rows = await page.locator('.probe li code').allTextContents()
   expect(rows.map((r) => r.split(' · ')[1])).toEqual(['x-brust-cache: MISS', 'x-brust-cache: HIT', 'x-brust-cache: BYPASS'])
   expect(errorsOf(page)).toEqual([])
   await page.context().close()
-}, 60_000)
+}, TEST_MS)
 
 test('Actions + Store: real actions, a 409 at the seventh, one store across native and react', async () => {
   const page = await open('/docs/actions')
+  await ready(page, '.picker')
   const buttons = page.locator('.picker .demo-btn')
   for (let i = 0; i < 6; i++) {
     await buttons.nth(i).click()
@@ -144,29 +125,36 @@ test('Actions + Store: real actions, a 409 at the seventh, one store across nati
   // the Store page paints the same team from the cookie on the server, then the island and the badge share the store
   await page.goto(`${base}/docs/store`, { waitUntil: 'networkidle' })
   expect(await page.locator('.team-badge b').textContent()).toBe('6')
+  await ready(page, '.team-badge')
+  await page.locator('brust-island[data-hydrated] .team-island').waitFor()
   await page.locator('.team-island .demo-list button').first().click()
   await page.locator('.team-badge b', { hasText: '5' }).waitFor()
-  expect(await page.locator('.team-island .demo-list li').count()).toBe(5)
+  expect(await until(() => page.locator('.team-island .demo-list li').count(), (n) => n === 5)).toBe(5)
   expect(errorsOf(page)).toEqual([])
   await ctx.close()
-}, 60_000)
+}, TEST_MS)
 
 test('Installation, Project structure, Configuration, CLI, Deployment, Migrating: the native demos respond', async () => {
   let page = await open('/docs/installation')
+  await ready(page, '.starter')
   await page.locator('.starter .choice', { hasText: 'Squirtle' }).click()
   await page.locator('.starter .choice', { hasText: 'pokedex' }).click()
-  expect(await page.locator('.starter .cmd').textContent()).toContain('bun create @brust/app@latest squirtle-dex --template pokedex')
+  const want = 'bun create @brust/app@latest squirtle-dex --template pokedex'
+  expect(await until(() => page.locator('.starter .cmd').textContent(), (t) => !!t?.includes(want))).toContain(want)
   await page.context().close()
 
   page = await open('/docs/project-structure')
+  await ready(page, '.tree')
   await page.locator('.tree-list button', { hasText: 'actions.ts' }).click()
-  expect(await page.locator('.tree-role p:not([hidden])').textContent()).toContain('Never call app.listen()')
+  const role = () => page.locator('.tree-role p:not([hidden])').textContent()
+  expect(await until(role, (t) => !!t?.includes('Never call app.listen()'))).toContain('Never call app.listen()')
   await page.context().close()
 
   page = await open('/docs/configuration')
+  await ready(page, '.builder')
   await page.locator('.fields input').first().fill('8080')
   await page.locator('.fields label.sw').click()
-  const toml = await page.locator('.builder .cmd').first().textContent()
+  const toml = await until(() => page.locator('.builder .cmd').first().textContent(), (t) => !!t?.includes('port = 8080') && !t.includes('[actions]'))
   expect(toml).toContain('port = 8080')
   expect(toml).not.toContain('[actions]')
   expect(await page.locator('.builder .cmd').nth(1).textContent()).toContain('BRUST_PORT=8080')
@@ -178,9 +166,11 @@ test('Installation, Project structure, Configuration, CLI, Deployment, Migrating
     ['/docs/migrating', '2.x', "from '@brust/core/routes'"],
   ] as const) {
     page = await open(path)
+    await ready(page, '.switch')
     await page.locator('.switch [role=tab]', { hasText: tab }).click()
-    expect([path, await page.locator('.switch [role=tabpanel]:not([hidden]) code').textContent()]).toEqual([path, expect.stringContaining(text)])
+    const shown = () => page.locator('.switch [role=tabpanel]:not([hidden]) code').textContent()
+    expect([path, await until(shown, (t) => !!t?.includes(text))]).toEqual([path, expect.stringContaining(text)])
     expect(errorsOf(page)).toEqual([])
     await page.context().close()
   }
-}, 120_000)
+}, TEST_MS)

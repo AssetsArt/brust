@@ -1,13 +1,14 @@
 // website/test/landing.test.ts — the landing builds clean, `/` serves, the three demos compile to the tier the page claims, and every benchmark
 // number on the page comes from bench/RESULTS.json (never hard-coded).
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseBench } from '../lib/bench'
+import { freshOut, HOOK_MS, serve, type Server } from './harness'
 
 const app = join(import.meta.dir, '..')
 const bin = join(app, '../packages/brust/bin/brust')
-const OUT = 'dist-landing-test'
+let OUT = ''
 const results = JSON.parse(readFileSync(join(app, '../bench/RESULTS.json'), 'utf8'))
 
 interface Manifest {
@@ -15,7 +16,7 @@ interface Manifest {
   components: Record<string, { tier: string; client: string | null; jobs: { kind: string }[] }>
 }
 let manifest: Manifest
-let server: ReturnType<typeof Bun.spawn> | undefined
+let srv: Server | undefined
 let base = ''
 let html = ''
 
@@ -28,35 +29,20 @@ function component(name: string) {
 }
 
 beforeAll(async () => {
+  OUT = freshOut('landing')
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', OUT], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.stderr.toString()).toBe('')
   expect(b.exitCode).toBe(0)
-  manifest = JSON.parse(readFileSync(join(app, OUT, 'manifest.json'), 'utf8'))
-
-  server = Bun.spawn([bin, 'start', '--dist-dir', OUT, '--port', '0', '--workers', '1'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
-  const reader = (server.stdout as ReadableStream<Uint8Array>).getReader()
-  const dec = new TextDecoder()
-  let out = ''
-  while (!/\[brust\] ready/.test(out)) {
-    const { done, value } = await reader.read()
-    if (done) throw new Error(`brust start exited before ready:\n${out}`)
-    out += dec.decode(value, { stream: true })
-  }
-  base = `http://${/listening on (\S+)/.exec(out)![1]}`
-  void (async () => {
-    for (;;) if ((await reader.read()).done) return
-  })()
+  manifest = JSON.parse(readFileSync(join(OUT, 'manifest.json'), 'utf8'))
+  srv = await serve(OUT, 1)
+  base = srv.base
   html = await (await fetch(`${base}/`)).text()
-}, 180_000)
+}, HOOK_MS)
 
 afterAll(async () => {
-  if (server) {
-    server.kill('SIGINT')
-    if ((await Promise.race([server.exited, Bun.sleep(5000).then(() => undefined)])) === undefined) server.kill('SIGKILL')
-    await server.exited
-  }
-  rmSync(join(app, OUT), { recursive: true, force: true })
-})
+  await srv?.stop()
+  freshOut('landing')
+}, HOOK_MS)
 
 test('route / serves 200 as the landing, an unknown route is 404', async () => {
   expect(manifest.routes.map((r) => r.pattern)).toContain('/')

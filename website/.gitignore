@@ -1,0 +1,2 @@
+# build output and the test builds (dist-test-*): never committed, never type-checked (tsconfig excludes dist*)
+dist*/

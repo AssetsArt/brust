@@ -7,6 +7,7 @@ export default function Toc({ items }: { items: TocItem[] }) {
   const [active, setActive] = useState('')
   useEffect(() => {
     const toc = document.querySelector<HTMLElement>('.toc')
+    toc?.querySelector('h4')?.setAttribute('data-ready', '') // mounted marker for tests (inside .toc, as ready() expects)
     const onScroll = () => {
       let cur = items.length > 0 ? items[0]!.id : ''
       for (const it of items) {

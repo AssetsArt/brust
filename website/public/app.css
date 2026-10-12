@@ -331,7 +331,9 @@ footer.site p { margin-top: .5rem }
 .doc :not(pre) > code { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 0 .3em; font-size: .86em; overflow-wrap: anywhere }
 .table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 2px; background: var(--sheet) }
 .table-wrap:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px }
-.doc table { border-collapse: collapse; width: 100%; min-width: 34rem; font-size: 14.5px; line-height: 1.5 }
+.doc table { border-collapse: collapse; width: 100%; font-size: 14.5px; line-height: 1.5 }
+/* the 34rem floor only inside .table-wrap, which scrolls; a bare table must shrink with the column (its code wraps) */
+.table-wrap table { min-width: 34rem }
 .doc th, .doc td { text-align: left; vertical-align: top; padding: .55rem .8rem; border-bottom: 1px solid var(--rule) }
 .doc th { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--ink-2); white-space: nowrap }
 .doc tr:last-child td { border-bottom: 0 }
@@ -428,11 +430,8 @@ footer.site p { margin-top: .5rem }
 @keyframes glide { to { transform: translate(26px, -8px) } }
 @keyframes sunrise { from { transform: translateY(2.5rem); opacity: 0 } }
 
-/* ===== guide pages (site-docs-guide): tables, ordered lists, and the live demos inside .browser frames ===== */
+/* ===== guide pages (site-docs-guide): ordered lists and the live demos inside .browser frames (tables share the rules above) ===== */
 .doc ol { margin: 0; padding-left: 1.4rem } .doc ol li { margin: .3rem 0 }
-.doc table { width: 100%; max-width: 68ch; border-collapse: collapse; font-size: 15px; display: block; overflow-x: auto }
-.doc th, .doc td { text-align: left; vertical-align: top; padding: .5rem .75rem .5rem 0; border-bottom: 1px solid var(--rule) }
-.doc th { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--ink-2); border-bottom-color: var(--ink) }
 .doc .browser .vp { min-height: 0 }
 .doc .browser .vp.nvp { padding: 1.25rem }
 .cmd { margin: .75rem 0 0; background: var(--term); color: var(--term-fg); border: 1px solid var(--term-rule); border-radius: 2px; padding: .8rem 1rem; font-size: 13px; line-height: 1.6; overflow-x: auto }

@@ -1,9 +1,15 @@
 // Demo, native tier: fetches the cached demo route and shows the REAL x-brust-cache header of each response.
 // A fresh query string makes a fresh L1 key, so the first request is a MISS and the second a HIT; ?nocache=1 hits the
 // route's bypass expression.
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export default function CacheProbe({ names }: { names: string[] }) {
+  const root = useRef<HTMLButtonElement>(null)
+  // mounted marker for tests. A native effect runs BEFORE the host's refs and handlers are bound (gap G9), so the
+  // marker waits one microtask: mount binds synchronously right after the effects run.
+  useEffect(() => {
+    queueMicrotask(() => root.current?.setAttribute('data-ready', ''))
+  }, [])
   const [rows, setRows] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [turn, setTurn] = useState(0)
@@ -11,6 +17,7 @@ export default function CacheProbe({ names }: { names: string[] }) {
     <div className="probe">
       <div className="cta">
         <button
+          ref={root}
           type="button"
           className="demo-btn"
           disabled={busy}
