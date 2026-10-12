@@ -123,6 +123,8 @@ for (const [flavor, url] of servers()) {
       const a = await A.get('/items/7')
       expect(a.headers.get('x-brust-cache')).toBe('MISS')
       firstN = await nOf(a)
+      // A's write-through is async: B must not look before it landed, or B renders (and fills tier 1) itself.
+      await poll('A\'s page in the store', async () => ((await scan(redis, `{brust:${NS}}:page:*`)).length > 0 ? true : undefined), 3000)
       const b = await poll('HIT-L2 on B', async () => {
         const r = await B.get('/items/7')
         if (r.headers.get('x-brust-cache') === 'HIT-L2') return r
