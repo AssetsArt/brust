@@ -2,3 +2,6 @@
 [server]
 address = "127.0.0.1"
 port = 1340
+
+# Actions on (defaults: entry actions.ts, prefix /_brust/action, cross_site "reject"): the Actions and Store demos.
+[actions]

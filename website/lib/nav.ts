@@ -3,20 +3,20 @@
 // docsLayoutLoader derives the sidebar, breadcrumbs, pager and edit link for the current page.
 import type { ComponentType } from 'react'
 import type { LoaderCtx } from '@brust/core/routes'
-import Actions from '../pages/docs/Actions'
-import Caching from '../pages/docs/Caching'
-import Cli from '../pages/docs/Cli'
-import Configuration from '../pages/docs/Configuration'
-import Deployment from '../pages/docs/Deployment'
-import Installation from '../pages/docs/Installation'
-import Introduction from '../pages/docs/Introduction'
-import Loaders from '../pages/docs/Loaders'
-import Migrating from '../pages/docs/Migrating'
-import ProjectStructure from '../pages/docs/ProjectStructure'
+import Actions, { actionsLoader } from '../pages/docs/Actions'
+import Caching, { cachingLoader } from '../pages/docs/Caching'
+import Cli, { cliLoader } from '../pages/docs/Cli'
+import Configuration, { configurationLoader } from '../pages/docs/Configuration'
+import Deployment, { deploymentLoader } from '../pages/docs/Deployment'
+import Installation, { installationLoader } from '../pages/docs/Installation'
+import Introduction, { introductionLoader } from '../pages/docs/Introduction'
+import Loaders, { loadersLoader } from '../pages/docs/Loaders'
+import Migrating, { migratingLoader } from '../pages/docs/Migrating'
+import ProjectStructure, { projectStructureLoader } from '../pages/docs/ProjectStructure'
 import Quickstart, { quickstartLoader } from '../pages/docs/Quickstart'
-import RenderingTiers from '../pages/docs/RenderingTiers'
-import Routing from '../pages/docs/Routing'
-import Store from '../pages/docs/Store'
+import RenderingTiers, { renderingTiersLoader } from '../pages/docs/RenderingTiers'
+import Routing, { routingLoader } from '../pages/docs/Routing'
+import Store, { storeLoader } from '../pages/docs/Store'
 import CloudflareAdapter from '../pages/docs/cache-adapters/Cloudflare'
 import CacheAdaptersOverview from '../pages/docs/cache-adapters/Overview'
 import RedisAdapter from '../pages/docs/cache-adapters/Redis'
@@ -49,20 +49,20 @@ export const NAV: NavGroup[] = [
   {
     group: 'Guide',
     items: [
-      { slug: 'introduction', title: 'Introduction', file: 'pages/docs/Introduction.tsx', Component: Introduction },
-      { slug: 'installation', title: 'Installation', file: 'pages/docs/Installation.tsx', Component: Installation },
+      { slug: 'introduction', title: 'Introduction', file: 'pages/docs/Introduction.tsx', Component: Introduction, loader: introductionLoader },
+      { slug: 'installation', title: 'Installation', file: 'pages/docs/Installation.tsx', Component: Installation, loader: installationLoader },
       { slug: 'quickstart', title: 'Quickstart', file: 'pages/docs/Quickstart.tsx', Component: Quickstart, loader: quickstartLoader },
-      { slug: 'project-structure', title: 'Project structure', file: 'pages/docs/ProjectStructure.tsx', Component: ProjectStructure },
-      { slug: 'routing', title: 'Routing', file: 'pages/docs/Routing.tsx', Component: Routing },
-      { slug: 'loaders', title: 'Loaders and params', file: 'pages/docs/Loaders.tsx', Component: Loaders },
-      { slug: 'rendering-tiers', title: 'Rendering tiers', file: 'pages/docs/RenderingTiers.tsx', Component: RenderingTiers },
-      { slug: 'caching', title: 'Caching', file: 'pages/docs/Caching.tsx', Component: Caching },
-      { slug: 'actions', title: 'Actions', file: 'pages/docs/Actions.tsx', Component: Actions },
-      { slug: 'store', title: 'Store', file: 'pages/docs/Store.tsx', Component: Store },
-      { slug: 'configuration', title: 'Configuration', file: 'pages/docs/Configuration.tsx', Component: Configuration },
-      { slug: 'cli', title: 'CLI', file: 'pages/docs/Cli.tsx', Component: Cli },
-      { slug: 'deployment', title: 'Deployment', file: 'pages/docs/Deployment.tsx', Component: Deployment },
-      { slug: 'migrating', title: 'Migrating from 0.1.x', file: 'pages/docs/Migrating.tsx', Component: Migrating },
+      { slug: 'project-structure', title: 'Project structure', file: 'pages/docs/ProjectStructure.tsx', Component: ProjectStructure, loader: projectStructureLoader },
+      { slug: 'routing', title: 'Routing', file: 'pages/docs/Routing.tsx', Component: Routing, loader: routingLoader },
+      { slug: 'loaders', title: 'Loaders and params', file: 'pages/docs/Loaders.tsx', Component: Loaders, loader: loadersLoader },
+      { slug: 'rendering-tiers', title: 'Rendering tiers', file: 'pages/docs/RenderingTiers.tsx', Component: RenderingTiers, loader: renderingTiersLoader },
+      { slug: 'caching', title: 'Caching', file: 'pages/docs/Caching.tsx', Component: Caching, loader: cachingLoader },
+      { slug: 'actions', title: 'Actions', file: 'pages/docs/Actions.tsx', Component: Actions, loader: actionsLoader },
+      { slug: 'store', title: 'Store', file: 'pages/docs/Store.tsx', Component: Store, loader: storeLoader },
+      { slug: 'configuration', title: 'Configuration', file: 'pages/docs/Configuration.tsx', Component: Configuration, loader: configurationLoader },
+      { slug: 'cli', title: 'CLI', file: 'pages/docs/Cli.tsx', Component: Cli, loader: cliLoader },
+      { slug: 'deployment', title: 'Deployment', file: 'pages/docs/Deployment.tsx', Component: Deployment, loader: deploymentLoader },
+      { slug: 'migrating', title: 'Migrating from 0.1.x', file: 'pages/docs/Migrating.tsx', Component: Migrating, loader: migratingLoader },
     ],
   },
   {
