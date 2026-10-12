@@ -3,7 +3,7 @@
 import type { Subprocess } from 'bun'
 import type { ProbeId } from './probes'
 
-export type AppId = 'brust' | 'bun-serve' | 'next' | 'brust-01x'
+export type AppId = 'brust' | 'bun-serve' | 'next' | 'brust-01x' | 'elysia-bun'
 export interface AppSpec {
   id: AppId
   label: string
@@ -15,7 +15,7 @@ export interface AppSpec {
   ready: RegExp
   version(): Promise<string>
   sanity?(base: string, probe: ProbeId): Promise<void>
-  /** bun-serve only: per-process request counts (to verify reusePort balanced the load). */
+  /** bun-serve, elysia-bun: per-process request counts (to verify reusePort balanced the load). */
   distribution?(): Promise<number[]>
 }
 export interface RunningApp { base: string; proc: Subprocess; log(): string; stop(): Promise<void> }

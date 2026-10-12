@@ -5,7 +5,7 @@ import type { AppId } from './app'
 import type { Encoding, OhaNums } from './oha'
 import { PROBES, type ProbeId } from './probes'
 
-export interface Measurement { app: AppId; probe: ProbeId; enc: Encoding; nums: OhaNums; raw: unknown }
+export interface Measurement { app: AppId; probe: ProbeId; enc: Encoding; nums: OhaNums; raw: unknown; /** A rows: the oha connection count; page rows omit it (= the header's `conn`). */ conn?: number }
 export interface Header {
   date: string; host: string; cores: number; loadavg: number[]; seed: number; conn: number; dur: string; warmup: string; settleMs: number; workers: number
   versions: Record<string, string>; apps: AppId[]; skipped: { app: AppId; reason: string }[]; order: string[]
@@ -14,14 +14,21 @@ export interface Header {
   /** bun-serve reusePort balance verdict: true = every copy served >= 5%, false = 1-proc, null = not run */
   bunServeBalanced: boolean | null
 }
-export interface Results { header: Header; measurements: Measurement[] }
+/** The A1/A2 block (R4): a separate header, because an A-only run has no page header of its own to share. */
+export interface ActionsHeader {
+  date: string; host: string; cores: number; loadavg: number[]; seed: number; conns: number[]; dur: string; warmup: string; settleMs: number; workers: number
+  versions: Record<string, string>; apps: AppId[]; skipped: { app: AppId; reason: string }[]; order: string[]; budgets: Record<string, string>
+  /** elysia-bun reusePort balance verdict: true = every copy served >= 5%, false = 1-proc, null = not run */
+  elysiaBunBalanced: boolean | null
+}
+export interface Results { header: Header; measurements: Measurement[]; actions?: { header: ActionsHeader; measurements: Measurement[] } }
 export interface Verdict {
   f68: { d: number | null; i: number | null; met: boolean | null }
   sanity: { s: number | null; d: number | null; i: number | null; met: boolean | null }
   ceiling: { d: number | null; i: number | null; basis: 'equal-budget' | '1-proc' }
 }
 
-export const APP_LABEL: Record<AppId, string> = { brust: 'brust', 'bun-serve': 'bun-serve', next: 'next', 'brust-01x': 'brust-01x' }
+export const APP_LABEL: Record<AppId, string> = { brust: 'brust', 'bun-serve': 'bun-serve', next: 'next', 'brust-01x': 'brust-01x', 'elysia-bun': 'elysia-bun' }
 
 export function rpsOf(r: Results, app: AppId, probe: ProbeId, enc: Encoding = 'identity'): number | null {
   const m = r.measurements.find((x) => x.app === app && x.probe === probe && x.enc === enc)
@@ -59,8 +66,41 @@ export function renderVerdict(v: Verdict): string {
   ].join('\n')
 }
 
+export interface ActionsVerdict {
+  /** brust / elysia-bun rps at the high connection count, percent */
+  share: { A1: number | null; A2: number | null }
+  /** c=1 p50 brust − elysia-bun, microseconds */
+  p50Delta: { A1: number | null; A2: number | null }
+  balanced: boolean | null
+}
+const aRow = (r: Results, app: AppId, probe: ProbeId, high: boolean): Measurement | undefined => {
+  const rows = (r.actions?.measurements ?? []).filter((m) => m.app === app && m.probe === probe && m.enc === 'identity')
+  return high ? rows.filter((m) => (m.conn ?? 0) > 1).sort((a, b) => (b.conn ?? 0) - (a.conn ?? 0))[0] : rows.find((m) => m.conn === 1)
+}
+export function computeActionsVerdict(r: Results): ActionsVerdict {
+  const per = (probe: 'A1' | 'A2') => ({
+    share: share(aRow(r, 'brust', probe, true)?.nums.rps ?? null, aRow(r, 'elysia-bun', probe, true)?.nums.rps ?? null),
+    delta: ((a, b) => (a === undefined || b === undefined ? null : (a.nums.p50 - b.nums.p50) * 1000))(aRow(r, 'brust', probe, false), aRow(r, 'elysia-bun', probe, false)),
+  })
+  const a1 = per('A1')
+  const a2 = per('A2')
+  return { share: { A1: a1.share, A2: a2.share }, p50Delta: { A1: a1.delta, A2: a2.delta }, balanced: r.actions?.header.elysiaBunBalanced ?? null }
+}
+const micros = (n: number | null) => (n === null ? '—' : `${n >= 0 ? '+' : '-'}${Math.abs(Math.round(n))} µs`)
+export function renderActionsVerdict(v: ActionsVerdict): string {
+  return `actions  : brust / elysia-bun${v.balanced === false ? ' (1-proc: reusePort did not balance)' : ''} (c=120)  A1 ${percent(v.share.A1)}  A2 ${percent(v.share.A2)}   · c=1 p50 brust − elysia-bun  A1 ${micros(v.p50Delta.A1)}  A2 ${micros(v.p50Delta.A2)}`
+}
+
+/** What a run replaces in RESULTS.json (R4): the page block (header + measurements) and/or the actions block. */
+export function mergeResults(old: Results | undefined, run: Results, measured: { page: boolean; actions: boolean }): Results {
+  const page = measured.page ? { header: run.header, measurements: run.measurements } : old ? { header: old.header, measurements: old.measurements } : { header: run.header, measurements: [] }
+  const actions = measured.actions ? run.actions : old?.actions
+  return { ...page, ...(actions ? { actions } : {}) }
+}
+
 const int = (n: number) => Math.round(n).toLocaleString('en-US')
 const ms = (n: number) => n.toFixed(2)
+const ms3 = (n: number) => n.toFixed(3)
 
 export function renderMarkdown(r: Results): string {
   const h = r.header
@@ -71,7 +111,7 @@ export function renderMarkdown(r: Results): string {
     `host ${h.host} · ${versions} · seed ${h.seed} · \`oha -c ${h.conn} -z ${h.dur}\` · settle ${h.settleMs} ms + warm-up ${h.warmup} discarded · budgets ${Object.entries(h.budgets).map(([k, v]) => `${k} ${v}`).join(', ')} · load ${h.loadavg.map((n) => n.toFixed(1)).join(' ')} (${h.cores} cores) · order ${h.order.join(' ')}`,
   ]
   if (h.skipped.length) lines.push('', `skipped: ${h.skipped.map((s) => `${s.app} (${s.reason})`).join(', ')}`)
-  for (const p of PROBES) {
+  for (const p of PROBES.filter((x) => x.kind === 'page')) {
     lines.push('', `## ${p.id} — \`${p.path}\``, '', '| app | rps | p50 ms | p95 ms | p99 ms | errors | bytes/resp | gzip rps | gzip p50 | gzip p99 | gzip bytes/resp |', '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|')
     for (const app of h.apps) {
       const id = r.measurements.find((m) => m.app === app && m.probe === p.id && m.enc === 'identity')
@@ -80,11 +120,37 @@ export function renderMarkdown(r: Results): string {
       lines.push(`| ${APP_LABEL[app]} | ${int(id.nums.rps)} | ${ms(id.nums.p50)} | ${ms(id.nums.p95)} | ${ms(id.nums.p99)} | ${id.nums.errors} | ${int(id.nums.bytes)} | ${gz ? int(gz.nums.rps) : '—'} | ${gz ? ms(gz.nums.p50) : '—'} | ${gz ? ms(gz.nums.p99) : '—'} | ${gz ? int(gz.nums.bytes) : '—'} |`)
     }
   }
-  lines.push('', '```', renderVerdict(computeVerdict(r)), '```', '', 'Generated by `bun run bench` (`bench/run.ts`) from `RESULTS.json`; method and reading guide in `bench/README.md`.', '')
+  lines.push('', '```', renderVerdict(computeVerdict(r)), '```')
+  if (r.actions) lines.push(...renderActionsSection(r.actions))
+  lines.push('', 'Generated by `bun run bench` (`bench/run.ts`) from `RESULTS.json`; method and reading guide in `bench/README.md`.', '')
   return lines.join('\n')
 }
 
-export async function writeResults(dir: string, r: Results): Promise<void> {
-  await Bun.write(join(dir, 'RESULTS.json'), `${JSON.stringify(r, null, 2)}\n`)
-  await Bun.write(join(dir, 'RESULTS.md'), renderMarkdown(r))
+function renderActionsSection(a: NonNullable<Results['actions']>): string[] {
+  const h = a.header
+  const versions = Object.entries(h.versions).map(([k, v]) => `${k} ${v}`).join(' · ')
+  const lines = [
+    '', '## Actions', '',
+    `host ${h.host} · ${versions} · seed ${h.seed} · \`oha -c ${h.conns.join(' / ')} -z ${h.dur}\`, identity only · settle ${h.settleMs} ms + warm-up ${h.warmup} discarded per row · budgets ${Object.entries(h.budgets).map(([k, v]) => `${k} ${v}`).join(', ')} · load ${h.loadavg.map((n) => n.toFixed(1)).join(' ')} (${h.cores} cores) · order ${h.order.join(' ')}`,
+    '',
+    `elysia-bun reusePort balance: ${h.elysiaBunBalanced === null ? 'not measured' : h.elysiaBunBalanced ? 'balanced across the copies' : '1-proc (the load landed on one copy)'}. macOS does not balance SO_REUSEPORT, so on this host the elysia-bun row is in practice a single-process measurement; read it against brust's ${h.workers} workers + tokio threads accordingly.`,
+  ]
+  for (const p of PROBES.filter((x) => x.kind === 'json')) {
+    lines.push('', `### ${p.id} — \`${p.method} ${p.path}\``, '', '| app | conn | rps | p50 ms | p95 ms | p99 ms | errors | bytes/resp |', '|---|---:|---:|---:|---:|---:|---:|---:|')
+    for (const app of h.apps) {
+      for (const m of a.measurements.filter((x) => x.app === app && x.probe === p.id).sort((x, y) => (y.conn ?? 0) - (x.conn ?? 0)))
+        lines.push(`| ${APP_LABEL[app]} | c=${m.conn ?? '—'} | ${int(m.nums.rps)} | ${ms3(m.nums.p50)} | ${ms3(m.nums.p95)} | ${ms3(m.nums.p99)} | ${m.nums.errors} | ${int(m.nums.bytes)} |`)
+    }
+  }
+  lines.push('', '```', renderActionsVerdict(computeActionsVerdict({ header: undefined as never, measurements: [], actions: a })), '```')
+  return lines
+}
+
+/** Merges into the RESULTS.json already in `dir` (R4): a run replaces only the blocks it measured. */
+export async function writeResults(dir: string, r: Results, measured: { page: boolean; actions: boolean } = { page: true, actions: !!r.actions }): Promise<void> {
+  const file = Bun.file(join(dir, 'RESULTS.json'))
+  const old = (await file.exists()) ? ((await file.json()) as Results) : undefined
+  const merged = mergeResults(old, r, measured)
+  await Bun.write(join(dir, 'RESULTS.json'), `${JSON.stringify(merged, null, 2)}\n`)
+  await Bun.write(join(dir, 'RESULTS.md'), renderMarkdown(merged))
 }

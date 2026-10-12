@@ -12,6 +12,7 @@ test('brust build: 3 routes, cache config per probe, typeBadge static child, cou
     expect(b.stderr.toString()).toBe('')
     expect(b.exitCode).toBe(0)
     const m = await Bun.file(join(app, 'dist-test/manifest.json')).json()
+    expect(m.actions).toEqual({ entry: 'actions.js', prefix: '/_brust/action', maxBodyBytes: 262144 })
     const byPattern = Object.fromEntries(m.routes.map((r: { pattern: string }) => [r.pattern, r]))
     expect(Object.keys(byPattern).sort()).toEqual(['/dex', '/team', '/types'])
     expect(byPattern['/types'].cache).toEqual({ ttl_seconds: 3600, prefix: null, bypass: null, tags: ['types'] })
