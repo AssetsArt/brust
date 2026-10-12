@@ -38,9 +38,8 @@ The site is its own proof: each demo is a real brust component, and `website/tes
 | `CatchCard` demo | native | two `useState`, ternary `src` (normal/shiny), controlled checkbox, toggle button |
 | `PokemonSearch` demo | react | in-repo `useDebounced` → `warning hook-unsupported`, ssr job + react island; debounce observed (filter lands after the delay) |
 | `PokemonCard` demo | static | props only |
-| `CodeBlock` (syntax colors) | static, 0 jobs | `dangerouslySetInnerHTML` is a BUILD ERROR (`no-innerhtml`). Colors come from tokens: the page LOADER returns `{ code, lang, file?, cwd?, lines/tokens }` and CodeBlock maps them to `<span className={tok.c}>` (canon classes k/s/f/t/c/n/ps). The tokens must arrive as a props path: a child that highlights its own literal `code` prop gets a precompute job and the build fails with `instance-prop-path`. A nested native `CopyButton text={block.code}` inside CodeBlock works, also per row of a list (the list parent becomes native). |
+| `CodeBlock` (syntax colors) | static | Spike: `dangerouslySetInnerHTML` is a build error today (`no-innerhtml`). RULING (lead, 2026-10-13): lane inner-html (v2) adds it; CodeBlock = server-highlighted HTML in `<code dangerouslySetInnerHTML>`; until v2 merges into docs-site, CodeBlock shows plain escaped text behind the same props. Spike caveat: a child that highlights its own literal `code` prop gets a precompute job and fails the build (`instance-prop-path`), so highlighted HTML has to arrive as a props path from a loader (challenge filed). |
 
-Docs-text consequence: every page that shows code has a loader that builds its code blocks (`lib/highlight.ts`); pages never pass code as a JSX literal.
 
 ## Task table (Coordinator dispatches; deps must be `merged` first)
 
