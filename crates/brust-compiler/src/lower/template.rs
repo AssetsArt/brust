@@ -930,10 +930,15 @@ impl<'a, 'c> Printer<'a, 'c> {
             _ => None,
         };
         let src = self.value(source);
+        // F96d: a linked child's props change on the client (x-props-bind), so a list over a prop
+        // is reactive, exactly as `x-text` over a prop is (`reactive`). A route component's props
+        // are fixed: its prop-fed lists stay plain rows.
         let directive_row = self.native
             && (src_raw
                 .as_ref()
                 .is_some_and(|r| self.f.deps(r, &self.scope()).reactive())
+                || ((self.ctx.linked)(&self.f.ir.id)
+                    && self.reactive(src_raw.as_ref(), source).is_some())
                 || body.iter().any(|b| needs_directives(b, &self.f)));
         let var = {
             let v = self.loop_var.get() + 1;

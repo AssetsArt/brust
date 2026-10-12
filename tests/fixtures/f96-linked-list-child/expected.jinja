@@ -1,3 +1,3 @@
 {# brust v2 · input_c7026e6f · do not edit #}
 {% set log = ["a"] %}
-<div x-data="input_c7026e6f"><button x-on-click="_h1">add</button><ul x-data="entries_2200c262" x-props-bind="_p1">{% for l_22001 in (log) %}<li>{{ l_22001 | e }}</li>{% endfor %}</ul></div>
+<div x-data="input_c7026e6f"><button x-on-click="_h1">add</button><ul x-data="entries_2200c262" x-props='{{ {"log": log} | json_attr }}' x-props-bind="_p1">{% for l_22001 in (log) %}{% set i_22001 = loop.index0 %}<li x-for="l, i in _l1 by _k1" x-text="_c1:l">{{ l_22001 | e }}</li>{% else %}<!--x-for--><li x-for="l, i in _l1 by _k1" hidden x-text="_c1:l">{{ __undefined | e }}</li>{% endfor %}</ul></div>

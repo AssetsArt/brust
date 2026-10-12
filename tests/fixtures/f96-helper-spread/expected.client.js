@@ -3,8 +3,8 @@ import { signal, computed, defineBehavior } from "brust/runtime-dom"
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("input_560e4311", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const items = signal([1, 2, 3])
-  const add = () => items.set(([...items, items.length + 1]))
-  const sorted = () => ([...items]).sort((a, b) => b - a)
+  const add = () => items.set((((items) => ([...items, items.length + 1]))(items())))
+  const sorted = () => (((items) => ([...items]))(items())).sort((a, b) => b - a)
   const _c1 = computed(() => __text(items().length))
   const _c2 = computed(() => __text(sorted()[0]))
   return { items, add, _c1, _c2 }
