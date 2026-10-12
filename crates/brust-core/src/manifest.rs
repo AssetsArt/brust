@@ -233,7 +233,6 @@ pub enum ManifestError {
 
 /// Boot-time parse of every path the request pipeline evaluates, so a
 /// malformed one fails `load` instead of 500-ing every request.
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn check_paths(id: &str, c: &ComponentRecord) -> Result<(), ManifestError> {
     let bad = |field: String, path: &str, reason: String| ManifestError::BadPath {
         component: id.into(),
@@ -318,7 +317,6 @@ fn check_paths(id: &str, c: &ComponentRecord) -> Result<(), ManifestError> {
 }
 
 /// `[A-Za-z_][A-Za-z0-9_]*`: a name a template can read.
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn is_ident(s: &str) -> bool {
     let mut b = s.bytes();
     matches!(b.next(), Some(c) if c.is_ascii_alphabetic() || c == b'_')
@@ -327,16 +325,100 @@ fn is_ident(s: &str) -> bool {
 
 /// Root segment of a job input path: text before the first `.` or `[`, with a
 /// leading `props.` stripped (`"props.item.price"` → `"item"`).
-#[cfg(any(test, not(all(target_arch = "wasm32", target_os = "unknown"))))]
 pub(crate) fn input_root(input: &str) -> &str {
     let s = input.strip_prefix("props.").unwrap_or(input);
     s.split(['.', '[']).next().unwrap_or(s)
 }
 
+/// What a file reference in the manifest is, for [`walk`]'s file callback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FileUse {
+    /// `components[id].template`: its source is returned and kept.
+    Template,
+    /// `components[id].client`: only its existence matters.
+    Client,
+    /// `assets.runtime` / `assets.react`.
+    Asset,
+}
+
+/// [`walk`]'s file callback: `(component, rel path, use)` → a template's source, or nothing.
+type FileFn<'a> = dyn FnMut(&str, &str, FileUse) -> Result<Option<String>, ManifestError> + 'a;
+
+/// Every reference check of a parsed manifest, in `load`'s order (version, route chains, then per
+/// component: paths, job targets, the template, the client file, the children's job inputs; then
+/// the assets). `file(component, rel, use)` resolves each file reference: `Ok(Some(source))` for a
+/// template keeps it; an `Err` stops the walk.
+fn walk(
+    manifest: Manifest,
+    file: &mut FileFn<'_>,
+) -> Result<(Manifest, BTreeMap<String, String>), ManifestError> {
+    if manifest.version != 1 {
+        return Err(ManifestError::Version(manifest.version));
+    }
+    for r in &manifest.routes {
+        for c in &r.chain {
+            if !manifest.components.contains_key(c) {
+                return Err(ManifestError::UnknownComponent {
+                    route: r.id.clone(),
+                    component: c.clone(),
+                });
+            }
+        }
+    }
+    let mut templates = BTreeMap::new();
+    for (id, c) in &manifest.components {
+        check_paths(id, c)?;
+        for j in &c.jobs {
+            if let Some(t) = &j.target
+                && !manifest.components.contains_key(t)
+            {
+                return Err(ManifestError::BadJob {
+                    component: id.clone(),
+                    job: j.id.clone(),
+                    reason: format!("target {t:?} is not a known component"),
+                });
+            }
+        }
+        if let Some(src) = file(id, &c.template, FileUse::Template)? {
+            templates.insert(id.clone(), src);
+        }
+        if let Some(cl) = &c.client {
+            file(id, cl, FileUse::Client)?;
+        }
+        for ch in &c.children {
+            let Some(child) = manifest.components.get(&ch.id) else {
+                return Err(ManifestError::UnknownComponent {
+                    route: id.clone(),
+                    component: ch.id.clone(),
+                });
+            };
+            for j in &child.jobs {
+                // `*` is the child's whole props object: covered by definition.
+                for i in j.inputs.iter().filter(|i| i.as_str() != ALL_PROPS) {
+                    let root = input_root(i);
+                    if !ch.props.contains_key(root) {
+                        return Err(ManifestError::UncoveredInput {
+                            component: id.clone(),
+                            child: ch.id.clone(),
+                            job: j.id.clone(),
+                            root: root.into(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    file("assets", &manifest.assets.runtime, FileUse::Asset)?;
+    if let Some(r) = &manifest.assets.react {
+        file("assets", r, FileUse::Asset)?;
+    }
+    Ok((manifest, templates))
+}
+
 impl Manifest {
     /// Read and validate `<dist_dir>/manifest.json`. Fails closed: the first
     /// broken reference is returned as an `Err` naming the path/id. Not on
-    /// wasm32-unknown-unknown (no filesystem, R9a): a Workers host builds the manifest in memory.
+    /// wasm32-unknown-unknown (no filesystem, R9a): a Workers host uses [`Manifest::from_parts`].
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn load(dist_dir: &Path) -> Result<Loaded, ManifestError> {
         let mpath = dist_dir.join("manifest.json");
@@ -349,9 +431,6 @@ impl Manifest {
                 path: mpath.clone(),
                 source,
             })?;
-        if manifest.version != 1 {
-            return Err(ManifestError::Version(manifest.version));
-        }
         let must_exist = |component: &str, rel: &str| -> Result<PathBuf, ManifestError> {
             let p = dist_dir.join(rel);
             if p.is_file() {
@@ -363,68 +442,127 @@ impl Manifest {
                 })
             }
         };
-        for r in &manifest.routes {
-            for c in &r.chain {
-                if !manifest.components.contains_key(c) {
-                    return Err(ManifestError::UnknownComponent {
-                        route: r.id.clone(),
-                        component: c.clone(),
-                    });
-                }
+        let (manifest, templates) = walk(manifest, &mut |component, rel, used| {
+            let p = must_exist(component, rel)?;
+            if used != FileUse::Template {
+                return Ok(None);
             }
-        }
-        let mut templates = BTreeMap::new();
-        for (id, c) in &manifest.components {
-            check_paths(id, c)?;
-            for j in &c.jobs {
-                if let Some(t) = &j.target
-                    && !manifest.components.contains_key(t)
-                {
-                    return Err(ManifestError::BadJob {
-                        component: id.clone(),
-                        job: j.id.clone(),
-                        reason: format!("target {t:?} is not a known component"),
-                    });
-                }
-            }
-            let tp = must_exist(id, &c.template)?;
-            let src = std::fs::read_to_string(&tp)
-                .map_err(|source| ManifestError::Read { path: tp, source })?;
-            templates.insert(id.clone(), src);
-            if let Some(cl) = &c.client {
-                must_exist(id, cl)?;
-            }
-            for ch in &c.children {
-                let Some(child) = manifest.components.get(&ch.id) else {
-                    return Err(ManifestError::UnknownComponent {
-                        route: id.clone(),
-                        component: ch.id.clone(),
-                    });
-                };
-                for j in &child.jobs {
-                    // `*` is the child's whole props object: covered by definition.
-                    for i in j.inputs.iter().filter(|i| i.as_str() != ALL_PROPS) {
-                        let root = input_root(i);
-                        if !ch.props.contains_key(root) {
-                            return Err(ManifestError::UncoveredInput {
-                                component: id.clone(),
-                                child: ch.id.clone(),
-                                job: j.id.clone(),
-                                root: root.into(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        must_exist("assets", &manifest.assets.runtime)?;
-        if let Some(r) = &manifest.assets.react {
-            must_exist("assets", r)?;
-        }
+            std::fs::read_to_string(&p)
+                .map(Some)
+                .map_err(|source| ManifestError::Read { path: p, source })
+        })?;
         Ok(Loaded {
             manifest,
             templates,
             dist_dir: dist_dir.to_path_buf(),
         })
+    }
+
+    /// The manifest from memory (M4-CF-3; lane-1 R5): `manifest_json` is `manifest.json`'s text,
+    /// `files` the template sources keyed by `components[id].template`. The same parse, version
+    /// and reference checks as [`Manifest::load`], in its order; a missing template is
+    /// `MissingFile` with the template's rel path. Client and asset files are not checked (on
+    /// Workers, Static Assets owns them). `dist_dir` is empty.
+    pub fn from_parts(
+        manifest_json: &str,
+        files: &BTreeMap<String, String>,
+    ) -> Result<Loaded, ManifestError> {
+        let manifest: Manifest =
+            serde_json::from_str(manifest_json).map_err(|source| ManifestError::Parse {
+                path: PathBuf::from("manifest.json"),
+                source,
+            })?;
+        let (manifest, templates) = walk(manifest, &mut |component, rel, used| match used {
+            FileUse::Template => {
+                files
+                    .get(rel)
+                    .cloned()
+                    .map(Some)
+                    .ok_or_else(|| ManifestError::MissingFile {
+                        component: component.into(),
+                        path: PathBuf::from(rel),
+                    })
+            }
+            FileUse::Client | FileUse::Asset => Ok(None),
+        })?;
+        Ok(Loaded {
+            manifest,
+            templates,
+            dist_dir: PathBuf::new(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dist() -> PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../brust-server/tests/fixtures/dist")
+    }
+
+    /// The fixture's `manifest.json` text and every `jinja/<file>` keyed by its template rel path.
+    fn parts() -> (serde_json::Value, BTreeMap<String, String>) {
+        let d = dist();
+        let m = serde_json::from_slice(&std::fs::read(d.join("manifest.json")).unwrap()).unwrap();
+        let mut files = BTreeMap::new();
+        for e in std::fs::read_dir(d.join("jinja")).unwrap() {
+            let name = e.unwrap().file_name().into_string().unwrap();
+            let src = std::fs::read_to_string(d.join("jinja").join(&name)).unwrap();
+            files.insert(format!("jinja/{name}"), src);
+        }
+        (m, files)
+    }
+
+    #[test]
+    fn from_parts_equals_load_on_the_fixture_dist() {
+        let a = Manifest::load(&dist()).unwrap();
+        let (m, files) = parts();
+        let b = Manifest::from_parts(&m.to_string(), &files).unwrap();
+        assert_eq!(format!("{:?}", a.manifest), format!("{:?}", b.manifest));
+        assert_eq!(a.templates, b.templates);
+        assert_eq!(b.dist_dir, PathBuf::new());
+    }
+
+    #[test]
+    fn from_parts_missing_template_names_component() {
+        let (m, mut files) = parts();
+        files.remove("jinja/homePage_b2.jinja");
+        let e = Manifest::from_parts(&m.to_string(), &files).unwrap_err();
+        let ManifestError::MissingFile { component, path } = e else {
+            panic!("want MissingFile, got {e:?}");
+        };
+        assert_eq!(
+            (component.as_str(), path),
+            ("homePage_b2", PathBuf::from("jinja/homePage_b2.jinja"))
+        );
+    }
+
+    #[test]
+    fn from_parts_ignores_client_and_assets_files() {
+        let (mut m, files) = parts();
+        m["assets"]["runtime"] = "client/nope.js".into();
+        m["assets"]["react"] = "client/nope-react.js".into();
+        for c in m["components"].as_object_mut().unwrap().values_mut() {
+            c["client"] = "client/nope-island.js".into();
+        }
+        assert!(Manifest::from_parts(&m.to_string(), &files).is_ok());
+    }
+
+    #[test]
+    fn from_parts_bad_version() {
+        let (mut m, files) = parts();
+        m["version"] = 2.into();
+        let e = Manifest::from_parts(&m.to_string(), &files).unwrap_err();
+        assert!(matches!(e, ManifestError::Version(2)), "{e:?}");
+    }
+
+    #[test]
+    fn from_parts_bad_json() {
+        let e = Manifest::from_parts("{not json", &BTreeMap::new()).unwrap_err();
+        let ManifestError::Parse { path, .. } = e else {
+            panic!("want Parse, got {e:?}");
+        };
+        assert_eq!(path, PathBuf::from("manifest.json"));
     }
 }

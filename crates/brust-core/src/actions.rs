@@ -10,7 +10,7 @@ use crate::body::{self, header_str};
 use crate::config::{ActionsConfig, CrossSite};
 use crate::core::Core;
 use crate::cors::ResolvedCors;
-use crate::host::{ActionCall, CallError, Host, ReadErr, RequestHead};
+use crate::host::{ActionCall, ActionReply, CallError, Host, ReadErr, RequestHead};
 use crate::protocol::{FetchBody, FetchResponse};
 
 /// One request under the prefix → one `fetch` worker call. `body` is read only here, and never for GET/HEAD (R4).
@@ -86,7 +86,7 @@ pub(crate) async fn handle<H: Host>(
         s.worker_calls.incr();
     }
     let resp = match r {
-        Ok(f) => response_from_fetch(f),
+        Ok(r) => reply_to_response(r),
         Err(e @ (CallError::NoWorkers | CallError::Timeout)) => body::error_503(&e.to_string()),
         Err(CallError::Deadline) => {
             s.timed_out_calls.fetch_add(1, Ordering::Relaxed);
@@ -205,6 +205,14 @@ fn b64(b: &[u8]) -> String {
         });
     }
     out
+}
+
+/// The host's reply as a response: a `Fetch` through [`response_from_fetch`], a `Built` as is.
+fn reply_to_response(r: ActionReply) -> Response<Bytes> {
+    match r {
+        ActionReply::Fetch(f) => response_from_fetch(f),
+        ActionReply::Built(r) => r,
+    }
 }
 
 /// R9: the worker's answer as a response — status in 200..=599, framing headers dropped, every other valid pair
@@ -521,5 +529,24 @@ mod tests {
         let c: Vec<_> = r.headers().get_all("set-cookie").iter().collect();
         assert_eq!(c, ["a=1", "b=2"]);
         assert_eq!(r.headers().len(), 2);
+    }
+
+    #[test]
+    fn reply_to_response_passes_built_and_checks_fetch() {
+        let mut built = Response::new(Bytes::from_static(b"made"));
+        *built.status_mut() = http::StatusCode::CREATED;
+        built
+            .headers_mut()
+            .insert("x-a", HeaderValue::from_static("1"));
+        let r = reply_to_response(ActionReply::Built(built));
+        assert_eq!(r.status(), 201);
+        assert_eq!(r.headers().get("x-a").unwrap(), "1");
+        assert_eq!(r.body(), &Bytes::from_static(b"made"));
+        let r = reply_to_response(ActionReply::Fetch(FetchResponse {
+            status: 99,
+            headers: vec![],
+            body: Bytes::new(),
+        }));
+        assert_eq!(r.status(), 500);
     }
 }

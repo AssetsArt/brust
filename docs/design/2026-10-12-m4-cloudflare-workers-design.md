@@ -152,6 +152,8 @@ member for `cargo test` on the host.
 
 **Status (2026-10-12):** M4-CF-2 done @cb0b91b (lane `m4cf-core-wasm`): `cache/local.rs` `LocalL1`/`LocalJobs` (hand-rolled LRU, lazy TTL + 8-entry insert sweep, 256/512 entries + `L1_MAX_BODY_BYTES` 8 MiB) pass the 37-case `cache::conformance` suite that the native `L1Cache`/`JobCache` pass under the same names; `host::JsClock` (`js_sys::Date::now()`, monotone; js-sys wasm32-only, no `unsafe-eval`); wasm32-unknown-unknown has no `Manifest::load` and `env()` in a cache expression is a parse error there; CI checks/clippies brust-core for wasm32 and greps its tree.
 
+**Status (2026-10-12):** M4-CF-3 done @671bbb8 (lane `m4cf-worker-crate`): `crates/brust-wasm` (workers-rs 0.8.7, `worker-build --panic-unwind`, per-request `catch_unwind`), `Manifest::from_parts`, `ActionReply::{Fetch, Built}` (R4; brust-server = the `Fetch` wrap only, `pipeline.rs` untouched), the `brust-app.js` contract v1 (R2), import via the sentinel `cloudflare:brust-app` rewritten by `scripts/build.ts` (R1), invalidate via `install(rt)` called from `#[event(start)]` (ruling 19753649). `tests/cf/cf-min.test.ts` serves page/loader/job/island/action under local workerd (CI job `cf`).
+
 **Packages.** In `packages/brust`:
 - Split `worker.ts` into `handlers.ts`, which holds the pure `makeHandlers` plus helpers (`worker.ts:105-266`), and the Bun
   boot. The boot keeps `node:worker_threads` and napi (`worker.ts:4-7,314-345`).
@@ -236,19 +238,26 @@ impl<H: Host> Core<H> {
 
 **wasm ↔ app JS: the import mechanism (R3).** `brust-wasm/src/bridge.rs`:
 ```rust
-#[wasm_bindgen(raw_module = "./brust-app.js")]
+#[wasm_bindgen(raw_module = "cloudflare:brust-app")]   // sentinel; scripts/build.ts rewrites it to "./brust-app.js"
 extern "C" {
-    #[wasm_bindgen(js_name = loader)] fn js_loader(req_json: &str) -> js_sys::Promise;   // → string
-    #[wasm_bindgen(js_name = jobs)]   fn js_jobs(req_json: &str) -> js_sys::Promise;     // → string
-    #[wasm_bindgen(js_name = action)] fn js_action(req: web_sys::Request) -> js_sys::Promise; // → Response
-    static MANIFEST: String; static TEMPLATES: js_sys::Object; static CONFIG: String;     // data exports
+    #[wasm_bindgen(catch, js_name = loader)]  fn js_loader(json: &str) -> Result<js_sys::Promise, JsValue>; // → string
+    #[wasm_bindgen(catch, js_name = jobs)]    fn js_jobs(json: &str) -> Result<js_sys::Promise, JsValue>;   // → string
+    #[wasm_bindgen(catch, js_name = action)]  fn js_action(req: &web_sys::Request) -> Result<js_sys::Promise, JsValue>; // → Response
+    #[wasm_bindgen(catch, js_name = install)] fn js_install(rt: &JsValue) -> Result<(), JsValue>;
+    #[wasm_bindgen(thread_local_v2)] static MANIFEST: js_sys::JsString;   // data exports
+    #[wasm_bindgen(thread_local_v2)] static TEMPLATES: js_sys::Object;
+    #[wasm_bindgen(thread_local_v2)] static CONFIG: js_sys::JsString;
 }
-#[wasm_bindgen] pub fn invalidate(args: JsValue) -> JsValue;  // export: cache.invalidate on CF resolves here (R5)
 ```
+The contract v1 table lives in `crates/brust-wasm/src/bridge.rs`. `invalidate` is **not** a glue export: worker-build's
+bundled `index.js` re-exports only its own names, so `#[event(start)]` calls `install({ invalidate })` once and
+`cache.invalidate` on CF resolves through that `rt` (ruling 19753649; the app must not call it at module top level).
 
 How the import works and why it was chosen:
-- `raw_module` tells wasm-bindgen to emit the specifier **verbatim** in the glue, i.e. `import { loader } from "./brust-app.js"`.
-  Nothing is copied at wasm build time. The prebuilt wasm is therefore app-independent, and `brust build` only has to place
+- `raw_module` tells wasm-bindgen to emit the specifier **verbatim** in the glue. worker-build's bundler would try to resolve a
+  relative `./brust-app.js` at wasm build time, so the crate names the sentinel `cloudflare:brust-app` (kept external) and
+  `scripts/build.ts` rewrites only the import specifiers to `./brust-app.js` (≥1 before, 0 after; the wasm imports-object
+  keys are untouched). Nothing is copied at wasm build time. The prebuilt wasm is therefore app-independent, and `brust build` only has to place
   `brust-app.js` next to the glue. Wrangler's esbuild then resolves and bundles it.
 - Async calls go through `wasm_bindgen_futures::JsFuture::from(js_loader(&json)).await`, then `as_string()`. Responses are parsed
   with the **same** serde types as native: one JSON string each way, no `serde-wasm-bindgen` tree walk. P2's one-pass
@@ -267,16 +276,22 @@ logic. It is about 25 lines, **~1.2 KB** before bundling [I]:
 ```js
 import * as R from '<app>/routes.tsx'; import J, { stores } from '../jobs.js'; import A from '../actions.js' // if [actions]
 import M from '../manifest.json'; import T from './templates.json'
-import { makeHandlers, flattenRoutes, mountActions, fetchInScope } from '@brust/core/server-handlers'
+import { fetchInScope, flattenRoutes, jsonCall, makeHandlers } from '@brust/core/server-handlers'
+import { mountActions } from '@brust/core/server-handlers/actions'
 const h = makeHandlers({ leaves: flattenRoutes(R.routes ?? R.default).leaves, jobs: J, manifest: M, stores })
-const app = mountActions(A, M.actions.prefix).compile()          // startup-phase compile (§8)
-export const loader = async (j) => JSON.stringify(await h.loader(JSON.parse(j)))
-export const jobs   = async (j) => JSON.stringify(await h.jobs(JSON.parse(j)))
+const app = mountActions(A, '<actions prefix>').compile()       // startup-phase compile (§8)
+export const loader = jsonCall(h.loader)                        // never rejects: an error resolves {"error": …}
+export const jobs = jsonCall(h.jobs)
 export const action = (req) => fetchInScope(app, req)
-export const MANIFEST = JSON.stringify(M), TEMPLATES = T, CONFIG = '<baked runtime config JSON>'
+export const MANIFEST = JSON.stringify(M)
+export const TEMPLATES = T
+export { install } from '@brust/core/server-handlers'          // (rt: { invalidate }) => void
+export const CONFIG = '<baked runtime config JSON, abi 1>'
 ```
+The exact text is pinned: `tests/cf/entry.test.ts` diffs lane 4's `cfEntrySource` against
+`tests/fixtures/cf-min/cf/brust-app.entry.js` (ruling D3).
 Bun bundles this (`target: 'browser'`, `conditions: ['workerd','worker','browser']`, externals `cloudflare:*`, `node:*`) into
-`dist/cf/brust-app.js`.
+`dist/cf/worker/brust-app.js`.
 
 Two checks on the condition set:
 - It resolves `react-dom/server` to `server.edge.js`, which exports `renderToString`
@@ -304,11 +319,11 @@ stats = false                     # expose /_brust/cache/stats (R11; native alwa
   `wrangler` as a devDependency.
 
 **Generated `dist/cf/`**
-- `shim.mjs`, `index.js`, `index_bg.wasm`: the worker-build output, copied from `@brust/core-cf`. The prebuilt is ~1.2–2 MB
-  after `wasm-opt -Oz` [I].
-- `brust-app.js`.
+- `worker/index.js`, `worker/index_bg.wasm` (+ worker-build's `worker/worker/shim.mjs`): the worker-build output, copied from
+  `@brust/core-cf`. cf-min measures 2.65 MB raw / 0.79 MB gzip; wrangler's dry-run Total Upload is ~4.2 MiB / ~1.1 MiB gzip.
+- `worker/brust-app.js`, beside the glue.
 - `wrangler.jsonc`, with:
-  - `main: "shim.mjs"`
+  - `main: "worker/index.js"`
   - `compatibility_date`
   - `assets: { directory: "assets", binding: "ASSETS", run_worker_first: false }`
   - the user's bindings merged from the app-root `wrangler.jsonc` if one exists (R8)
