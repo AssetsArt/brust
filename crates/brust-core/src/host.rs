@@ -85,6 +85,15 @@ pub struct ActionCall<'a> {
     pub body: Option<Bytes>,
 }
 
+/// What a host's `action` answers.
+pub enum ActionReply {
+    /// The app's answer as data (native: the A2 frame); core validates it (`response_from_fetch`).
+    Fetch(FetchResponse),
+    /// The host built the response; core returns it as is apart from `Core::finish`. A host may
+    /// carry the body out of band in `Extensions` (Workers keeps the JS `Response` host-side).
+    Built(http::Response<Bytes>),
+}
+
 /// A monotonic clock for request timing (the `dur_ms` log field).
 pub trait Clock {
     fn now_ns(&self) -> u64;
@@ -209,10 +218,7 @@ pub trait Host: Clock {
         cap: usize,
     ) -> impl Future<Output = Result<Bytes, ReadErr>>;
     /// One action request → the app's answer.
-    fn action(
-        &self,
-        call: ActionCall<'_>,
-    ) -> impl Future<Output = Result<FetchResponse, CallError>>;
+    fn action(&self, call: ActionCall<'_>) -> impl Future<Output = Result<ActionReply, CallError>>;
     /// A static file under `root`; `rel` already passed `static_rules::safe_rel`. `None` = 404.
     fn static_file(
         &self,

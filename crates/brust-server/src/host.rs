@@ -7,11 +7,10 @@ use std::time::{Duration, Instant};
 
 use brust_core::body::{header_str, is_framing_header};
 use brust_core::config::ACTION_INLINE_BODY_BYTES;
-use brust_core::host::{ActionCall, CallError, Clock, Host, ReadErr, StaticRoot};
+use brust_core::host::{ActionCall, ActionReply, CallError, Clock, Host, ReadErr, StaticRoot};
 use brust_core::plan::{PlanCell, PlanSeed, PlannedCall};
 use brust_core::protocol::{
-    FetchBody, FetchRequest, FetchResponse, JobsRequest, JobsResponse, LoaderRequest,
-    LoaderResponse,
+    FetchBody, FetchRequest, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse,
 };
 use brust_core::static_rules::content_type_for;
 use bytes::Bytes;
@@ -89,7 +88,7 @@ impl Host for NativeHost {
 
     /// One `fetch` worker call. A body over [`ACTION_INLINE_BODY_BYTES`] waits in the call's cell
     /// for `takeFetchBody` (F82); a smaller one crosses inline as text or base64 (R2).
-    async fn action(&self, call: ActionCall<'_>) -> Result<FetchResponse, CallError> {
+    async fn action(&self, call: ActionCall<'_>) -> Result<ActionReply, CallError> {
         let (fb, heap_body) = match call.body {
             None => (None, None),
             Some(b) if b.len() > ACTION_INLINE_BODY_BYTES => {
@@ -145,6 +144,7 @@ impl Host for NativeHost {
             heap_body,
         )
         .await
+        .map(ActionReply::Fetch)
     }
 
     /// `/_brust/<rel>` serves `dist/client/` only (`safe_rel` admits `client/<file>`), `/public/`
