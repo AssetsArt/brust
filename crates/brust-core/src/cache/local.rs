@@ -321,6 +321,12 @@ impl<T: Clock> LocalL1<T> {
                 .any(|t| after(&self.tag_inval[self.slot(t.as_str())]))
     }
 
+    /// Entries stored, expired ones included (tests).
+    #[cfg(test)]
+    fn raw_len(&self) -> usize {
+        self.store.borrow().entries.len()
+    }
+
     /// Remove every entry; the number of live entries removed. Hits/misses are kept.
     pub fn clear(&self) -> usize {
         self.cleared_at.set(self.inval.next());
@@ -585,6 +591,219 @@ impl<T: Clock + Default> JobStore for LocalJobs<T> {
             len: st.entries.len(),
             capacity: self.capacity as usize,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll, Waker};
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::cache::conformance::{key, rb_of, tags, val};
+    use crate::host::ManualClock;
+
+    const TTL: Duration = Duration::from_secs(60);
+
+    fn l1(cap: u64, max_bytes: usize, t: &ManualClock) -> LocalL1<ManualClock> {
+        LocalL1::with_limits(cap, max_bytes, Arc::default(), t.clone())
+    }
+
+    fn jobs(t: &ManualClock) -> LocalJobs<ManualClock> {
+        LocalJobs::with_limits(64, Arc::default(), t.clone())
+    }
+
+    fn html(c: &LocalL1<ManualClock>, k: &CacheKey) -> Option<bytes::Bytes> {
+        c.get_with(k, |b| b.html.clone())
+    }
+
+    fn jk(s: &str) -> JobKey {
+        JobKey(s.to_string())
+    }
+
+    #[test]
+    fn ttl_is_exact_on_the_injected_clock() {
+        let t = ManualClock::default();
+        let ttl = Duration::from_secs(30);
+        let (c, j) = (l1(8, L1_MAX_BODY_BYTES, &t), jobs(&t));
+        let k = key("GET", "/t", "");
+        assert!(c.insert(k.clone(), rb_of("t"), ttl, &[], c.read_stamp()));
+        assert!(j.insert(jk("j"), val(json!(1)), Some(ttl), &[], None, j.read_stamp()));
+        t.set_ns(29_999_999_999);
+        assert!(html(&c, &k).is_some());
+        assert!(j.get(&jk("j")).is_some());
+        t.set_ns(30_000_000_000);
+        assert!(html(&c, &k).is_none());
+        assert!(j.get(&jk("j")).is_none());
+        assert_eq!((c.stats().len, j.stats().len), (0, 0));
+    }
+
+    #[test]
+    fn a_huge_ttl_never_expires() {
+        let t = ManualClock::default();
+        let (c, j) = (l1(8, L1_MAX_BODY_BYTES, &t), jobs(&t));
+        let k = key("GET", "/t", "");
+        assert!(c.insert(k.clone(), rb_of("t"), Duration::MAX, &[], c.read_stamp()));
+        assert!(j.insert(
+            jk("j"),
+            val(json!(1)),
+            Some(Duration::MAX),
+            &[],
+            None,
+            j.read_stamp()
+        ));
+        t.advance(Duration::from_secs(10 * 365 * 24 * 3600));
+        assert!(html(&c, &k).is_some());
+        assert!(j.get(&jk("j")).is_some());
+    }
+
+    #[test]
+    fn lru_evicts_the_least_recently_read() {
+        let t = ManualClock::default();
+        let c = l1(3, L1_MAX_BODY_BYTES, &t);
+        let k = |p: &str| key("GET", p, "");
+        for p in ["/a", "/b", "/c"] {
+            c.insert(k(p), rb_of(p), TTL, &[], c.read_stamp());
+        }
+        assert!(html(&c, &k("/a")).is_some());
+        c.insert(k("/d"), rb_of("/d"), TTL, &[], c.read_stamp());
+        assert!(
+            html(&c, &k("/b")).is_none(),
+            "b was the least recently read"
+        );
+        for p in ["/a", "/c", "/d"] {
+            assert!(html(&c, &k(p)).is_some(), "{p}");
+        }
+    }
+
+    #[test]
+    fn the_byte_cap_evicts_lru_and_skips_an_oversize_body() {
+        let t = ManualClock::default();
+        let c = l1(10, 100, &t);
+        let k = |i: usize| key("GET", &format!("/p{i}"), "");
+        for i in 0..4 {
+            assert!(c.insert(k(i), rb_of(&"x".repeat(30)), TTL, &[], c.read_stamp()));
+        }
+        assert!(
+            html(&c, &k(0)).is_none(),
+            "120 bytes > 100: the LRU body goes"
+        );
+        assert!(c.insert(k(9), rb_of(&"y".repeat(101)), TTL, &[], c.read_stamp()));
+        assert!(html(&c, &k(9)).is_none(), "an oversize body is not stored");
+        for i in 1..4 {
+            assert!(html(&c, &k(i)).is_some(), "/p{i}");
+        }
+    }
+
+    #[test]
+    fn insert_sweeps_expired_tail_entries() {
+        let t = ManualClock::default();
+        let c = l1(16, L1_MAX_BODY_BYTES, &t);
+        for i in 0..5 {
+            let p = format!("/e{i}");
+            c.insert(
+                key("GET", &p, ""),
+                rb_of(&p),
+                Duration::from_secs(1),
+                &[],
+                c.read_stamp(),
+            );
+        }
+        t.advance(Duration::from_secs(2));
+        c.insert(key("GET", "/new", ""), rb_of("n"), TTL, &[], c.read_stamp());
+        assert_eq!(c.raw_len(), 1);
+    }
+
+    #[test]
+    fn get_with_closure_may_reenter_the_cache() {
+        let t = ManualClock::default();
+        let c = l1(8, L1_MAX_BODY_BYTES, &t);
+        let (a, b) = (key("GET", "/a", ""), key("GET", "/b", ""));
+        c.insert(a.clone(), rb_of("a"), TTL, &tags(&["t"]), c.read_stamp());
+        let got = c.get_with(&a, |body| {
+            assert!(c.insert(b.clone(), rb_of("b"), TTL, &[], c.read_stamp()));
+            assert_eq!(c.invalidate_tags(&tags(&["t"])), 1);
+            body.html.clone()
+        });
+        assert_eq!(got.as_deref(), Some(&b"a"[..]));
+        assert!(
+            html(&c, &b).is_some(),
+            "the insert made inside f is visible"
+        );
+        assert!(
+            html(&c, &a).is_none(),
+            "the invalidation made inside f applied"
+        );
+    }
+
+    /// Pending once, then ready: one `.await` point where the isolate runs another request.
+    struct YieldOnce(bool);
+
+    impl Future for YieldOnce {
+        type Output = ();
+        fn poll(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<()> {
+            if self.0 {
+                Poll::Ready(())
+            } else {
+                self.0 = true;
+                Poll::Pending
+            }
+        }
+    }
+
+    fn poll<F: Future>(f: Pin<&mut F>) -> Poll<F::Output> {
+        f.poll(&mut Context::from_waker(Waker::noop()))
+    }
+
+    /// F86/F89 on one isolate: a render stamps, yields (its loader `.await`), and inserts; an
+    /// action's invalidation runs at the yield. The insert must not land; one stamped after the
+    /// invalidation lands.
+    #[test]
+    fn interleaved_requests_on_one_isolate_keep_f86_f89() {
+        let t = ManualClock::default();
+        let c = l1(8, L1_MAX_BODY_BYTES, &t);
+        let k = key("GET", "/k", "");
+        let render = |body: &'static str| {
+            let (c, k) = (&c, k.clone());
+            async move {
+                let s = c.read_stamp();
+                YieldOnce(false).await;
+                c.insert(k, rb_of(body), TTL, &tags(&["t"]), s)
+            }
+        };
+        let mut a = std::pin::pin!(render("old"));
+        assert!(poll(a.as_mut()).is_pending());
+        c.invalidate_tags(&tags(&["t"]));
+        assert_eq!(poll(a.as_mut()), Poll::Ready(false));
+        assert!(html(&c, &k).is_none());
+        c.invalidate_tags(&tags(&["t"]));
+        let mut b = std::pin::pin!(render("new"));
+        assert!(poll(b.as_mut()).is_pending());
+        assert_eq!(poll(b.as_mut()), Poll::Ready(true));
+        assert!(html(&c, &k).is_some());
+
+        let j = jobs(&t);
+        let call = |v: i64| {
+            let j = &j;
+            async move {
+                let s = j.read_stamp();
+                YieldOnce(false).await;
+                j.insert(jk("k:a/j0/u"), val(json!(v)), None, &[], Some("u"), s)
+            }
+        };
+        let mut a = std::pin::pin!(call(1));
+        assert!(poll(a.as_mut()).is_pending());
+        j.invalidate_user_key("u");
+        assert_eq!(poll(a.as_mut()), Poll::Ready(false));
+        assert!(j.get(&jk("k:a/j0/u")).is_none());
+        j.invalidate_user_key("u");
+        let mut b = std::pin::pin!(call(2));
+        assert!(poll(b.as_mut()).is_pending());
+        assert_eq!(poll(b.as_mut()), Poll::Ready(true));
+        assert!(j.get(&jk("k:a/j0/u")).is_some());
     }
 }
 
