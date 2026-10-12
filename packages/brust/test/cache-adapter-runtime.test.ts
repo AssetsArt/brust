@@ -164,3 +164,39 @@ test('loadAdapter: a custom factory gets its options; a built-in resolves env: o
   expect(b.name).toBe('memory')
   expect(seen).toEqual([{ x: 1 }, { url: 'redis://h' }])
 })
+
+test('F1: the origin replays its own invalidation once, after store.invalidate and the publish, with the seq', async () => {
+  const log: string[] = []
+  const counted: string[] = []
+  const replays: [InvalidateArgs, number | null][] = []
+  setCacheRuntime({
+    adapter: fakeAdapter(log, { slowInvalidate: 20 }),
+    origin: 'me',
+    defer: (p) => void p,
+    count: (n) => counted.push(n),
+    replay: (a, s) => (log.push('replay'), replays.push([a, s])),
+  })
+  afterInvalidate({ tags: ['items'] })
+  await tick(60)
+  expect(log).toEqual(['invalidate:start {"tags":["items"]}', 'invalidate:end', 'publish {"tags":["items"]} me', 'replay'])
+  expect(replays).toEqual([[{ tags: ['items'] }, 1]])
+  expect(counted).toEqual(['published'])
+})
+
+test('F1: no broadcast or a failed publish replays tier 1 only (seq null)', async () => {
+  const errSpy = console.error
+  console.error = () => {}
+  try {
+    const replays: (number | null)[] = []
+    const storeOnly = memoryAdapter({ broadcast: 'none' })
+    setCacheRuntime({ adapter: storeOnly, origin: 'me', defer: (p) => void p, count: () => {}, replay: (_a, s) => replays.push(s) })
+    afterInvalidate({ tags: ['a'] })
+    await tick()
+    setCacheRuntime({ adapter: fakeAdapter([], { failPublish: true }), origin: 'me', defer: (p) => void p.catch(() => {}), count: () => {}, replay: (_a, s) => replays.push(s) })
+    afterInvalidate({ tags: ['b'] })
+    await tick()
+    expect(replays).toEqual([null, null])
+  } finally {
+    console.error = errSpy
+  }
+})

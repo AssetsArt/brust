@@ -92,7 +92,7 @@ async function startCacheAdapter(m: CacheManifest, dist: string, appDir: string,
   const adapter = await loadAdapter(m, 'bun', (spec, builtin) => import(builtin ? Bun.resolveSync(spec, appDir) : join(dist, spec)), process.env)
   await adapter.init?.({ namespace: m.namespace, buildId: m.buildId, runtime: 'bun', workerId })
   const origin = process.env.BRUST_CACHE_ORIGIN || crypto.randomUUID()
-  setCacheRuntime({ adapter, origin, defer: (p) => void p.catch(() => {}), count })
+  setCacheRuntime({ adapter, origin, defer: (p) => void p.catch(() => {}), count, replay: (args, seq) => void cacheReplay(args, seq) })
   setCacheBridge({ store: adapter.store, getTimeoutMs: m.getTimeoutMs, maxBodyBytes: m.maxBodyBytes, count })
   return { adapter, origin }
 }

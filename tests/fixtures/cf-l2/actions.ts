@@ -15,6 +15,10 @@ export default new Elysia({ adapter: brust() })
   })
   // The event arrives but the store still holds the old body (KV lag): the floor must reject it.
   .post('/e2e/remote-publish-only', { body: Args }, async ({ body }) => ({ seq: await L2.broadcast!.publish(body.args, 'remote') }))
+  .post('/e2e/delay-next-invalidate', () => {
+    L2.__test.delayNextInvalidate(1000)
+    return {}
+  })
   .post('/e2e/hang-next-get', () => {
     L2.__test.hangNextGet(3000)
     return {}

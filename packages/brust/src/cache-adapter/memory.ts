@@ -46,6 +46,8 @@ export interface MemoryAdapterTest {
   hangNextGet(ms?: number): void
   /** The next store/broadcast call rejects. */
   failNext(): void
+  /** The next `store.invalidate` waits `ms` before it marks and deletes (a slow networked store). */
+  delayNextInvalidate(ms: number): void
   publishCount(): number
   /** Stored entries (expired ones included). */
   size(): number
@@ -75,6 +77,7 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
   let publishes = 0
   let hang: number | null = null
   let fail = false
+  let invalidateDelay = 0
   const subscribers = new Set<{ on: (e: InvalidationEvent) => void; onGap: () => void }>()
 
   const guarded = mode !== 'none'
@@ -129,6 +132,11 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
     },
     async invalidate(args: InvalidateArgs): Promise<void> {
       if (failing()) throw new Error('memory adapter: injected failure')
+      if (invalidateDelay > 0) {
+        const ms = invalidateDelay
+        invalidateDelay = 0
+        await new Promise(r => setTimeout(r, ms))
+      }
       // L7b: the marker first, at the seq the matching publish will take (seq + 1), so a set whose
       // stamp was read before this call is refused from now on; then the delete.
       mark(args, seq + 1)
@@ -200,6 +208,9 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
       },
       failNext() {
         fail = true
+      },
+      delayNextInvalidate(ms: number) {
+        invalidateDelay = ms
       },
       publishCount: () => publishes,
       size: () => entries.size,

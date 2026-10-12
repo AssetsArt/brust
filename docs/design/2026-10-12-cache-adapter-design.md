@@ -180,6 +180,7 @@ The HIT path and every non-cacheable route are untouched.
    - KV: impossible (no CAS), so the stale window is ≤ ttl, documented.
 3. **Invalidation floor (Workers).** The cursor remembers, in a bounded LRU of 4096 entries, the last replayed seq per tag and per path. An L2 hit whose `stamp` is below the floor of one of its tags/path is discarded as a miss. This closes the KV+DO case where a colo still holds a deleted body.
 4. **Own echo.** Every event carries `origin` (the worker or isolate id). Replay skips its own events: tier 1 is already invalidated.
+   - **Own replay (review F1, lane A).** Between the tier-1 primitive and the store delete, a request on the origin can re-fill tier 1 from the old L2 body, and its echo is skipped. So once its publish settles, the origin replays its own invalidation exactly once through the host REPLAY primitive (napi `cacheReplay` / wasm `rt.replay` → `Core::l2_replay(args, seq)`): tier 1 again and the floor at the publish seq. It is never published again (L3). No broadcast or a failed publish → tier 1 only (`seq` null).
 5. **Gaps.**
    - Push: on (re)subscribe, and in a 10 s reconciliation that reads the store's seq, a seq beyond the last seen → `onGap` → clear tier 1.
    - Pull: `behind`, a `gen` change, a regression, or a count mismatch → clear (the cursor rules of the epoch-hook draft).

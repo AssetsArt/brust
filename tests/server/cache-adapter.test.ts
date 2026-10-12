@@ -45,7 +45,7 @@ async function boot(): Promise<Srv> {
 }
 
 
-const relayStats = async () => (await (await fetch(`${relayUrl}/stats`)).json()) as { publishCount: number; gets: number }
+const relayStats = async () => (await (await fetch(`${relayUrl}/stats`)).json()) as { publishCount: number; gets: number; size: number }
 const nOf = async (r: Response) => Number(/class="n">(\d+)</.exec(await r.text())![1])
 async function poll<T>(what: string, f: () => Promise<T | undefined>, ms = 2000): Promise<T> {
   const t0 = Date.now()
@@ -132,6 +132,28 @@ test('4 a hung get renders within the budget', async () => {
   const l2 = await B.l2()
   expect(l2.timeouts).toBe(1)
   console.log(`B stats.l2 ${JSON.stringify(l2)}`)
+})
+
+test('4b F1: a stale L2 body re-filled on the origin before its delete landed is dropped by its own replay', async () => {
+  const size = (await relayStats()).size
+  const warm = await A.get('/items/10')
+  expect(warm.headers.get('x-brust-cache')).toBe('MISS')
+  const old = await nOf(warm)
+  await poll('the write-through', async () => ((await relayStats()).size > size ? true : undefined))
+  const published = (await relayStats()).publishCount
+  await fetch(`${relayUrl}/delay-next-invalidate`, { method: 'POST', body: '{"ms":1000}' })
+  const r = await fetch(`${A.base}/_brust/action/bump`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"tag":"items"}' })
+  expect(r.status).toBe(200)
+  await r.text()
+  // Inside the window: tier 1 is cleared but the shared store still holds the old body.
+  const stale = await A.get('/items/10')
+  expect(stale.headers.get('x-brust-cache')).toBe('HIT-L2')
+  expect(await nOf(stale)).toBe(old)
+  await poll('the publish', async () => ((await relayStats()).publishCount === published + 1 ? true : undefined), 4000)
+  await Bun.sleep(200)
+  const fresh = await A.get('/items/10')
+  expect(fresh.headers.get('x-brust-cache')).toBe('MISS')
+  expect(await nOf(fresh)).toBeGreaterThan(old)
 })
 
 test('5 with the relay gone, pages still render (fail-open)', async () => {

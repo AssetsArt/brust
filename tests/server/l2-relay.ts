@@ -12,7 +12,7 @@ const server = Bun.serve({
   async fetch(req, srv) {
     const url = new URL(req.url)
     if (url.pathname === '/sub') return srv.upgrade(req) ? undefined : new Response('upgrade failed', { status: 400 })
-    if (url.pathname === '/stats') return Response.json({ publishCount: a.__test.publishCount(), gets })
+    if (url.pathname === '/stats') return Response.json({ publishCount: a.__test.publishCount(), gets, size: a.__test.size() })
     if (req.method !== 'POST') return new Response('not found', { status: 404 })
     const body = (await req.json().catch(() => ({}))) as Record<string, any>
     switch (url.pathname) {
@@ -28,6 +28,9 @@ const server = Bun.serve({
         return Response.json({})
       case '/publish':
         return Response.json({ seq: await a.broadcast!.publish(body.args, body.origin) })
+      case '/delay-next-invalidate':
+        a.__test.delayNextInvalidate(body.ms ?? 1000)
+        return Response.json({})
       case '/hang-next-get':
         a.__test.hangNextGet(3000)
         return Response.json({})

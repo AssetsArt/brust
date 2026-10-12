@@ -8,9 +8,10 @@
 //! | `MANIFEST` | `string`, `manifest.json`'s text |
 //! | `TEMPLATES` | `Record<string, string>` keyed by `components[id].template` |
 //! | `CONFIG` | `string`, JSON (`config.rs`) |
-//! | `install` | `(rt: { invalidate, l2Count }) => { cache } \| void`, called once by `#[event(start)]`; the app must not call `rt` at module top level. `cache` (cache adapters R11/R14) = `{ get, set, since?, origin }` or `null`/absent |
+//! | `install` | `(rt: { invalidate, replay, l2Count }) => { cache } \| void`, called once by `#[event(start)]`; the app must not call `rt` at module top level. `cache` (cache adapters R11/R14) = `{ get, set, since?, origin }` or `null`/absent |
 //!
 //! `rt.invalidate(args)` takes `{key?, tags?, path?, method?}` and returns `{l1Removed, jobRemoved}`;
+//! `rt.replay(args, seq)` is the cache adapter's own-invalidation replay (tier 1 + the floor);
 //! bad args throw a `TypeError`. workerd normalises `..` and `\` in the URL before brust sees it,
 //! so the actions `ambiguous_path` check never fires on Workers (accepted delta).
 use std::collections::BTreeMap;
@@ -79,8 +80,17 @@ pub fn install(core: &'static Core<WasmHost>) -> Result<(), String> {
         name.as_string().is_some_and(|n| core.0.l2_count(&n))
     })
     .into_js_value();
+    let wrapped = std::panic::AssertUnwindSafe(core);
+    let replay = Closure::<dyn Fn(JsValue, JsValue) -> Result<JsValue, JsValue>>::new(
+        move |args: JsValue, seq: JsValue| {
+            let core = &wrapped;
+            replay(core.0, args, seq)
+        },
+    )
+    .into_js_value();
     let rt = js_sys::Object::new();
     js_sys::Reflect::set(&rt, &"invalidate".into(), &f).map_err(js_string)?;
+    js_sys::Reflect::set(&rt, &"replay".into(), &replay).map_err(js_string)?;
     js_sys::Reflect::set(&rt, &"l2Count".into(), &count).map_err(js_string)?;
     let out = js_install(&rt).map_err(|e| format!("install: {}", js_string(e)))?;
     let cache = if out.is_object() {
@@ -114,14 +124,28 @@ pub fn install(core: &'static Core<WasmHost>) -> Result<(), String> {
     }
 }
 
-fn invalidate(core: &Core<WasmHost>, args: JsValue) -> Result<JsValue, JsValue> {
+/// `rt.replay(args, seq)`: this isolate's own invalidation once its publish settled (review F1) —
+/// tier 1 again and the floor at `seq` (`null` = tier 1 only). Never published.
+fn replay(core: &Core<WasmHost>, args: JsValue, seq: JsValue) -> Result<JsValue, JsValue> {
+    let args = parse_args(args)?;
+    let seq = seq
+        .as_f64()
+        .filter(|s| s.is_finite() && *s >= 0.0 && *s <= 9_007_199_254_740_991.0)
+        .map(|s| s as u64);
+    core.l2_replay(args, seq);
+    Ok(JsValue::UNDEFINED)
+}
+
+fn parse_args(args: JsValue) -> Result<InvalidateArgs, JsValue> {
     let type_error = |m: String| JsValue::from(js_sys::TypeError::new(&m));
     let json = js_sys::JSON::stringify(&args)
         .map(String::from)
         .map_err(|_| type_error("cache.invalidate: args are not JSON".into()))?;
-    let args: InvalidateArgs =
-        serde_json::from_str(&json).map_err(|e| type_error(format!("cache.invalidate: {e}")))?;
-    let r = core.invalidate(args);
+    serde_json::from_str(&json).map_err(|e| type_error(format!("cache.invalidate: {e}")))
+}
+
+fn invalidate(core: &Core<WasmHost>, args: JsValue) -> Result<JsValue, JsValue> {
+    let r = core.invalidate(parse_args(args)?);
     let o = js_sys::Object::new();
     js_sys::Reflect::set(&o, &"l1Removed".into(), &(r.l1_removed as f64).into())?;
     js_sys::Reflect::set(&o, &"jobRemoved".into(), &(r.job_removed as f64).into())?;

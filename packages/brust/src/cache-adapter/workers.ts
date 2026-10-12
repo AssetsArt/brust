@@ -3,11 +3,13 @@
 // (`crates/brust-wasm/src/host.rs` `CacheBridge`). No `bun` import (it is bundled into brust-app.js).
 import { checkRuntime, compose, instantiate } from './load'
 import { setCacheRuntime } from './runtime'
-import type { CacheAdapter, SetMeta } from './types'
+import type { CacheAdapter, InvalidateArgs, SetMeta } from './types'
 
 /** What the wasm side passes to `install` (`bridge.rs`). */
 export interface CfRuntimeBase {
   l2Count?(name: string): boolean
+  /** `Core::l2_replay`: tier 1 + the floor at `seq`, never published (review F1's own replay). */
+  replay?(args: InvalidateArgs, seq: number | null): unknown
 }
 
 /** `CONFIG.cache` (build/cf-entry.ts), as the entry passes it. */
@@ -67,6 +69,7 @@ export function installCache(rt: CfRuntimeBase, ext: CfInstallExt): CfCacheBridg
     defer: (p) => waitUntil(p),
     count,
     ready: ensure,
+    replay: (args, seq) => void rt.replay?.(args, seq),
   })
   const store = a.store
   const since = a.broadcast?.since?.bind(a.broadcast)

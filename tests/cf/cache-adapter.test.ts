@@ -43,6 +43,7 @@ async function until<T>(what: string, f: () => Promise<T | undefined>, ms = 5000
     await Bun.sleep(50)
   }
 }
+const rOf = (html: string) => Number(/class="r">(\d+)</.exec(html)?.[1])
 /** The interval is 250 ms: a sleep of 300 ms is only a lower bound for the next poll. */
 const nextPoll = () => Bun.sleep(300)
 
@@ -180,5 +181,26 @@ describe.skipIf(!ENABLED)('cf-l2: a cache adapter on local workerd', () => {
     const l2 = (await S()).l2
     expect(l2.timeouts).toBe(before + 1)
     writeFileSync(join(OUT, 'l2-stats.json'), JSON.stringify(l2))
+  })
+
+  test('6 F1: a stale body re-filled in the isolate before its delete landed is dropped by its own replay', async () => {
+    const { size } = await state()
+    const warm = await get('/items/9')
+    expect(warm.headers.get('x-brust-cache')).toBe('MISS')
+    const old = rOf(await warm.text())
+    await until('the write-through', async () => ((await state()).size > size ? true : undefined))
+    const { publishCount } = await state()
+    await (await post('/e2e/delay-next-invalidate', {})).text()
+    const r = await post('/bump', { tag: 'items' })
+    expect(r.status).toBe(200)
+    await r.text()
+    const stale = await get('/items/9')
+    expect(stale.headers.get('x-brust-cache')).toBe('HIT-L2')
+    expect(rOf(await stale.text())).toBe(old)
+    await until('the publish', async () => ((await state()).publishCount === publishCount + 1 ? true : undefined))
+    await nextPoll()
+    const fresh = await get('/items/9')
+    expect(fresh.headers.get('x-brust-cache')).toBe('MISS')
+    expect(rOf(await fresh.text())).toBeGreaterThan(old)
   })
 })
