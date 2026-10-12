@@ -25,3 +25,9 @@ describe('handlers.ts is the pure half of worker.ts', () => {
     expect(JSON.parse(await boom('{}')).error).toContain('boom')
   })
 })
+
+test('@brust/core/server-handlers exposes what the generated entry imports', async () => {
+  const m = await import('@brust/core/server-handlers')
+  for (const k of ['makeHandlers', 'jsonCall', 'flattenRoutes', 'fetchInScope', 'noActions'] as const) expect(m[k]).toBeFunction()
+  expect((await import('@brust/core/server-handlers/actions')).mountActions).toBeFunction()
+})
