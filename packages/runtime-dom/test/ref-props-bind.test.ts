@@ -97,3 +97,41 @@ test('unmount(subtree) leaves the observer running for the rest of the page', as
   await flush()
   expect(seen).toEqual(['late'])
 })
+
+// F97: mount effects run after the instance is bound (x-ref, x-on), like React's commit.
+test('F97: a mount effect sees ref.current and a listener it attaches fires (passive and layout shape)', () => {
+  const seen: Array<Element | null> = []
+  let fired = 0
+  defineBehavior('f97a', ({ ref, effect }) => {
+    const r = ref('box')
+    effect(() => { seen.push(r.current); r.current?.addEventListener('ping', () => { fired++ }) })   // useEffect
+    effect(() => { seen.push(r.current) })                                                          // useLayoutEffect (same ctx.effect)
+    return {}
+  })
+  document.body.innerHTML = `<div x-data="f97a"><i id="b" x-ref="box"></i></div>`
+  mount()
+  expect(seen.map((e) => e?.id)).toEqual(['b', 'b'])
+  document.getElementById('b')!.dispatchEvent(new Event('ping'))
+  expect(fired).toBe(1)
+})
+
+test('F97: x-on handlers are live before effects run; an instance disposed before its effects flush never runs them', () => {
+  const log: string[] = []
+  defineBehavior('f97b', ({ effect, el }) => {
+    effect(() => { (el.querySelector('button') as HTMLButtonElement).click(); log.push('effect') })
+    return { hit: () => log.push('hit') }
+  })
+  document.body.innerHTML = `<div x-data="f97b"><button x-on-click="hit"></button></div>`
+  mount()
+  expect(log).toEqual(['hit', 'effect'])
+})
+
+test('F97: a nested host (x-if clone) has its refs bound before its own effects', () => {
+  const seen: Array<string | undefined> = []
+  const open = signal(true)
+  defineBehavior('f97o', () => ({ open }))
+  defineBehavior('f97c', ({ ref, effect }) => { const r = ref('t'); effect(() => { seen.push(r.current?.id) }); return {} })
+  document.body.innerHTML = `<div x-data="f97o"><section x-if="open"><p x-data="f97c"><b id="t" x-ref="t"></b></p></section></div>`
+  mount()
+  expect(seen).toEqual(['t'])
+})
