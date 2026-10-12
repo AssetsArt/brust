@@ -48,7 +48,8 @@ test('a version differing from @brust/core only warns', () => {
 })
 
 test('not installed anywhere -> cf-wasm error with the hint', () => {
-  expect(() => resolveCoreCf({ ...base, env: {} })).toThrow(/bun add -d @brust\/core-cf@/)
+  // corePkgDir outside the monorepo: since @brust/core-cf is an optionalDependency of @brust/core (M4-CF-6), the repo's own packages/brust resolves it.
+  expect(() => resolveCoreCf({ ...base, env: {}, corePkgDir: copy() })).toThrow(/bun add -d @brust\/core-cf@/)
 })
 
 test('--wasm-from-source without crates/brust-wasm is an error', () => {

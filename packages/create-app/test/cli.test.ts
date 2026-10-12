@@ -70,7 +70,7 @@ test('monorepo mode without --brust-dep re-syncs pokedex then writes file: + ove
   expect(existsSync(join(gen, 'routes.tsx'))).toBe(true)
   const pkg = JSON.parse(readFileSync(join(w, 'app/package.json'), 'utf8'))
   expect(pkg.dependencies['@brust/core']).toMatch(/^file:.*\/packages\/brust$/)
-  expect(Object.keys(pkg.overrides)).toHaveLength(7)
+  expect(Object.keys(pkg.overrides)).toHaveLength(8)
   expect(pkg.overrides['@brust/runtime-dom']).toMatch(/\/packages\/runtime-dom$/)
   expect(existsSync(join(w, 'app/data/pokedex.json'))).toBe(true)
   expect(existsSync(join(w, 'app/data/team.sqlite'))).toBe(false)

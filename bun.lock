@@ -124,6 +124,7 @@
         "typescript": "^7.0.2",
       },
       "optionalDependencies": {
+        "@brust/core-cf": "workspace:*",
         "@brust/native-darwin-arm64": "workspace:*",
         "@brust/native-darwin-x64": "workspace:*",
         "@brust/native-linux-arm64-gnu": "workspace:*",

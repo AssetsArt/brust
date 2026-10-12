@@ -428,6 +428,8 @@ Tool choice:
   https://developers.cloudflare.com/workers/testing/vitest-integration/].
 - The job reuses the bun:test harness over HTTP rather than adopting Vitest.
 
+**Status (2026-10-12):** M4-CF-6 done (lane `m4cf-ci`): release.yml `build-core-cf` → `@brust/core-cf` in the lockstep (10/10); `@brust/core` optional dep; ci `cf` job (blocking, 45 min).
+
 ## 7. Pokedex-on-Cloudflare dogfood
 
 - `lib/team-db.ts`: `TeamDb` becomes **async** (`list(): Promise<TeamMember[]>` …).

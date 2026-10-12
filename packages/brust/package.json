@@ -89,6 +89,7 @@
     "@brust/native-linux-x64-gnu": "workspace:*",
     "@brust/native-linux-arm64-gnu": "workspace:*",
     "@brust/native-linux-x64-musl": "workspace:*",
-    "@brust/native-linux-arm64-musl": "workspace:*"
+    "@brust/native-linux-arm64-musl": "workspace:*",
+    "@brust/core-cf": "workspace:*"
   }
 }
