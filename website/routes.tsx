@@ -2,7 +2,7 @@
 import { defineRoutes } from '@brust/core/routes'
 import Layout, { layoutLoader } from './components/Layout'
 import DocsIndexPage from './pages/DocsIndexPage'
-import HomePage from './pages/HomePage'
+import HomePage, { homeLoader } from './pages/HomePage'
 import NotFoundPage from './pages/NotFoundPage'
 
 export const routes = defineRoutes([
@@ -10,7 +10,7 @@ export const routes = defineRoutes([
     Component: Layout,
     loader: layoutLoader,
     children: [
-      { path: '/', Component: HomePage },
+      { path: '/', Component: HomePage, loader: homeLoader },
       { path: '/docs', Component: DocsIndexPage },
     ],
   },
