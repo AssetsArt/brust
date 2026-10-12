@@ -2,6 +2,7 @@
 // chunk registers a hydrate function through a global queue (no import of the runtime); the runtime
 // hydrates each host once, when idle (spec S12). Load order between runtime and chunks is free.
 import { warnOnce } from './warn'
+import { insideRaw } from './directives/common'
 
 export type IslandHydrate = (host: HTMLElement, props: Record<string, unknown>) => void
 type QueueEntry = [string, IslandHydrate]
@@ -57,6 +58,7 @@ function hydrateHost(host: HTMLElement, id: string, hydrate: IslandHydrate): voi
 }
 
 function scheduleHost(host: HTMLElement): void {
+  if (insideRaw(host)) return   // inside dangerouslySetInnerHTML markup: never hydrated
   if (pending.has(host) || host.hasAttribute('data-hydrated')) return
   const id = host.getAttribute('data-id')!
   pending.add(host)

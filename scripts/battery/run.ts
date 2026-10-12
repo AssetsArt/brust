@@ -3,7 +3,7 @@
 //   bun scripts/battery/run.ts            regenerate the report (exit 1 on an unexplained ⚠)
 //   bun scripts/battery/run.ts --check    same, without writing
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { CATEGORIES, rows, type Expect, type Row } from './rows.ts'
@@ -27,6 +27,8 @@ export interface Result {
   buildMessage?: string
   /** false when the row never reached the lowering spawn (`compile-error`) */
   built: boolean
+  /** `html_raw` occurrences in the printed templates: the one unescaped sink (`dangerouslySetInnerHTML`) */
+  rawSinks: number
   /** expectation not met (tier or job count), and the row is not a known gap */
   warn: boolean
 }
@@ -64,7 +66,7 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
       const message = lines[0]!.includes('panicked')
         ? `compiler panic: ${lines[1] ?? ''}`
         : lines[0]!.replace(/^error:\s*/, '').replaceAll(dir, '.')
-      return { row, observed: 'compile-error', jobs: [], diagnostics: [], message, build: 'ok', built: false }
+      return { row, observed: 'compile-error', jobs: [], diagnostics: [], message, build: 'ok', built: false, rawSinks: 0 }
     }
     const ir = JSON.parse(p.stdout) as IR
     const diagnostics = [...new Set(ir.diagnostics.map((d) => `${d.class.toLowerCase()}:${d.rule}`))]
@@ -76,10 +78,18 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
     const buildMessage = build === 'failed'
       ? ((b.stderr ?? '').split('\n').find((l) => l.trim()) ?? `exit ${b.status}`).replace(/^error:\s*/, '').replaceAll(dir, '.')
       : undefined
-    return { row, observed: hasError ? 'error' : tier, jobs, diagnostics, build, buildMessage, built: true }
+    return { row, observed: hasError ? 'error' : tier, jobs, diagnostics, build, buildMessage, built: true, rawSinks: countRawSinks(join(dir, 'out')) }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+}
+
+/** Every `html_raw` in the `.jinja` files `--emit all` wrote (none when the build was refused). */
+function countRawSinks(out: string): number {
+  const files = (d: string): string[] => {
+    try { return readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(d, e.name)) : [join(d, e.name)])) } catch { return [] }
+  }
+  return files(out).filter((f) => f.endsWith('.jinja')).reduce((n, f) => n + (readFileSync(f, 'utf8').match(/html_raw/g)?.length ?? 0), 0)
 }
 
 export function runBattery(): Result[] {
@@ -118,6 +128,8 @@ export function renderReport(results: Result[]): string {
     })
   }
   L.push(`| **Total** | ${total.n} | ${total.static} | ${total.native} | ${total.react} | ${total.error} | ${total.ce} | ${total.bf} | ${total.warn} |`, '')
+  L.push('## Raw HTML (`dangerouslySetInnerHTML`)', '')
+  L.push('`dangerouslySetInnerHTML={{ __html: v }}` works on every tier, with React\'s contract: `v` is the element\'s inner HTML, **unescaped**. The author is responsible for sanitising it; brust does not. `null`/`undefined` paint empty and any other non-string is `String(v)`. Static and native templates print it through the single `html_raw` filter (every other dynamic output stays `| e`); a value that reads state also gets an `x-html` directive that rewrites `innerHTML`. Children next to it, a void element, or an object without `__html` are build errors (React throws on each).', '')
   for (const [cat, title] of Object.entries(CATEGORIES)) {
     L.push(`## ${cat}. ${title}`, '')
     L.push('| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |', '|---|---|---|---|---|---|---|---|')

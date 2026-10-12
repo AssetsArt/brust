@@ -451,7 +451,9 @@ impl Walker<'_> {
             } => {
                 for a in attrs {
                     match a {
-                        Attr::Dynamic { value, .. } | Attr::Spread(value) => self.expr(value, out),
+                        Attr::Dynamic { value, .. }
+                        | Attr::Spread(value)
+                        | Attr::InnerHtml { value } => self.expr(value, out),
                         Attr::Static { .. } | Attr::Event { .. } | Attr::Ref { .. } => {}
                     }
                 }

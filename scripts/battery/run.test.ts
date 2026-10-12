@@ -44,3 +44,14 @@ test('every row lowers: non-error rows build ok, error rows are refused, nothing
   expect(results.filter((r) => r.built && r.build === 'refused').map((r) => r.row.id).sort()).toEqual(
     results.filter((r) => r.observed === 'error').map((r) => r.row.id).sort())
 })
+
+test('html_raw (the one unescaped sink) is printed only for dangerouslySetInnerHTML rows', () => {
+  const built = results.filter((r) => r.built && r.build === 'ok')
+  const withSink = built.filter((r) => r.rawSinks > 0).map((r) => r.row.id)
+  // Only a static/native row prints a template with the sink; a react row's markup is React's.
+  expect(withSink.sort()).toEqual(['a-inner-html', 'a-inner-html-state'])
+  for (const r of built) {
+    if (!r.row.snippet.includes('dangerouslySetInnerHTML')) expect(r.rawSinks).toBe(0)
+  }
+  expect(results.find((r) => r.row.id === 'a-inner-html-react')!.observed).toBe('react')
+})

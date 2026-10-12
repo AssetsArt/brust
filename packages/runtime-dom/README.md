@@ -39,6 +39,7 @@ Anything else (`x + 1`, `fn()`) is not parsed: a warning is logged once and the 
   (an object, typically a `computed`; function values pass through). Inside `x-for` the row's scope supplies the bindings. If the parent is not mounted yet
   (chunk still loading) the child links up when the parent mounts. No ancestor: warns, keeps the `x-props` seed.
 - **`x-text="value"`**: sets `textContent`; `null`/`undefined` → `''`.
+- **`x-html="value"`**: sets `innerHTML` (raw markup, unescaped); `null`/`undefined` → `''`. Emitted only by the compiler, for a `dangerouslySetInnerHTML` whose value changes after first paint; the author sanitises the markup (same contract as React). The first-paint check compares parsed markup, so equivalent spellings do not warn.
 - **`x-show="value"`**: `style.display = ''` when truthy, `'none'` otherwise.
 - **`x-if="value"`**: the element is replaced by a `<!--x-if-->` comment anchor; a clone is inserted after it while truthy and removed otherwise.
   Nested `x-data` hosts in the clone mount/dispose with it. Server HTML omits the element when false.
@@ -55,7 +56,7 @@ Anything else (`x + 1`, `fn()`) is not parsed: a warning is logged once and the 
 
 ## First-paint rule
 
-Nothing re-renders on mount: server HTML is the initial state. A binder writes the DOM only when its effect re-runs after a change, **or** when the initial `x-text` value differs from the server text,
+Nothing re-renders on mount: server HTML is the initial state. A binder writes the DOM only when its effect re-runs after a change, **or** when the initial `x-text` / `x-html` value differs from the server text,
 in which case it corrects it and warns once (`first-paint mismatch …`): a mismatch is a compiler bug the runtime must not hide. Elements created after mount (new rows, `x-if` clones) never trip this check.
 
 ## Gates

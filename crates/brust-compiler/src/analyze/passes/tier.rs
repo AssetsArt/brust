@@ -132,7 +132,10 @@ fn visit_exprs(n: &Node, f: &mut impl FnMut(&Expr)) {
             attrs, children, ..
         } => {
             for a in attrs {
-                if let Attr::Dynamic { value, .. } | Attr::Spread(value) = a {
+                if let Attr::Dynamic { value, .. }
+                | Attr::Spread(value)
+                | Attr::InnerHtml { value } = a
+                {
                     f(value);
                 }
             }
