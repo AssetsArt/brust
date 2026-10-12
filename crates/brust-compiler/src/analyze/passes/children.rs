@@ -89,6 +89,9 @@ struct Child {
     fed: bool,
     /// The compiled child reads a resolved store at render (its jobs read `__store`, C5).
     stores: bool,
+    /// The compiled child has a precompute job over its props: the server computes it once, so a
+    /// link that changes those props later would leave its slots stale (F96d).
+    prop_precompute: bool,
 }
 
 fn react(reason: &str) -> Tier {
@@ -199,6 +202,7 @@ impl Walker<'_, '_> {
                     tier: react("unresolved import"),
                     fed: false,
                     stores: false,
+                    prop_precompute: false,
                 };
             }
             self.diagnostics.push(Diagnostic::fallback(
@@ -213,6 +217,7 @@ impl Walker<'_, '_> {
                 tier: react("external component"),
                 fed: false,
                 stores: false,
+                prop_precompute: false,
             };
         };
         let export = match imported {
@@ -251,6 +256,7 @@ impl Walker<'_, '_> {
                         tier: react("local component"),
                         fed: false,
                         stores: false,
+                        prop_precompute: false,
                     };
                 };
                 ctx.modules
@@ -286,6 +292,7 @@ impl Walker<'_, '_> {
     ) -> Child {
         let mut fed = false;
         let mut stores = false;
+        let mut prop_precompute = false;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
                 stores = ir.stores.iter().any(|s| s.resolved.is_some());
@@ -294,6 +301,9 @@ impl Walker<'_, '_> {
                         .jobs
                         .iter()
                         .any(|j| matches!(j.kind, JobKind::Precompute));
+                prop_precompute = ir.jobs.iter().any(|j| {
+                    matches!(j.kind, JobKind::Precompute) && j.inputs.iter().any(|i| i != "__store")
+                });
                 ir.tier.clone()
             }
             Lookup::Cycle => {
@@ -330,6 +340,7 @@ impl Walker<'_, '_> {
             tier,
             fed,
             stores,
+            prop_precompute,
         }
     }
 
@@ -571,6 +582,16 @@ impl Walker<'_, '_> {
                         .iter()
                         .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
                 );
+                if need == LinkNeed::Always && child.prop_precompute {
+                    // Fail closed (F96d): the child computed values from its props once, on the
+                    // server; a linked prop that changes would leave them stale with no warning.
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "linked-prop-precompute",
+                        format!("<{name}> derives values from its props on the server, but its props change on the client"),
+                        *loc,
+                        "derive the value in the parent, or keep the child's props constant; the component renders as a React island",
+                    ));
+                }
                 if need != LinkNeed::None {
                     // The parent chunk rebuilds the row's `_pN` from the list: it reads the source,
                     // and every prop is a client read. For a `RowOnly` link these reads are

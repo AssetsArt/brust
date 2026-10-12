@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 25 | 16 | 7 | 2 | 0 | 0 | 0 | 0 |
+| A JSX basics | 26 | 16 | 7 | 3 | 0 | 0 | 0 | 0 |
 | B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 24 | 4 | 10 | 5 | 4 | 1 | 0 | 0 |
-| **Total** | 81 | 27 | 28 | 21 | 4 | 1 | 0 | 0 |
+| **Total** | 82 | 27 | 28 | 22 | 4 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -50,6 +50,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-svg-class-state | state-driven class on an SVG element (F96a) | native | native | 0 | ok | — | F96a: x-bind-class uses setAttribute (SVG className is a getter-only SVGAnimatedString) |
 | a-state-spread-handler | spread of a state array in a handler and a helper (F96b) | native | native | precompute | ok | — | F96b: a verbatim body nested in a structured expression gets its captures bound (xs → xs()) |
 | a-state-list-static-child | static child listing a state-fed prop (F96d) | native | native | 0 | ok | — | F96d: the linked child repaints its own list (x-for over props()) |
+| a-linked-child-prop-precompute | state-fed prop derived with a callback in a linked child (F96d) | react | react | ssr | ok | fallback:linked-prop-precompute | F96d fail-closed: a server-computed value over a prop the parent changes would freeze; fallback linked-prop-precompute |
 | a-spread-host | spread props on a host element (F31) | react | react | ssr | ok | fallback:spread-props | fallback spread-props until the template backend can expand a known-shape spread |
 
 ## B. Composition
