@@ -3,10 +3,12 @@
 // Exit codes: 0 ok, 1 build/boot error (`error <rule> <message>` / `[brust] …`), 2 usage.
 import { parseArgs } from 'node:util'
 import { BuildError, runBuild } from './build'
+import { runDev } from './dev'
 import { run } from './run'
 
 const USAGE = `usage:
   brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare] [--wasm-from-source]
+  brust dev [entry=routes.tsx] --target cloudflare [--out-dir dist] [--port N] [--wasm-from-source] [-- <wrangler args>]
   brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
 
 Config precedence for start: env (BRUST_ADDR, BRUST_PORT, BRUST_WORKERS, BRUST_RENDER_SLOTS,
@@ -29,7 +31,10 @@ function intFlag(name: string, v: string | undefined, min: number): number | und
 }
 
 export async function main(argv: string[]): Promise<void> {
-  const [cmd, ...rest] = argv
+  const [cmd, ...all] = argv
+  const dd = cmd === 'dev' ? all.indexOf('--') : -1
+  const rest = dd < 0 ? all : all.slice(0, dd)
+  const passthrough = dd < 0 ? [] : all.slice(dd + 1)
   if (cmd === undefined || cmd === '--help' || cmd === '-h' || cmd === 'help') {
     process.stdout.write(USAGE)
     process.exit(cmd === undefined ? 2 : 0)
@@ -84,6 +89,28 @@ export async function main(argv: string[]): Promise<void> {
     }
     console.log(`[brust] built ${str('out-dir') ?? 'dist'} in ${Math.round(performance.now() - t0)}ms`)
     process.exit(0)
+  }
+  if (cmd === 'dev') {
+    if (positionals.length > 1) usage(`dev takes one entry (got ${positionals.join(' ')})`)
+    if (target !== 'cloudflare') usage('brust dev: only --target cloudflare in this release')
+    const port = intFlag('port', str('port'), 0)
+    try {
+      process.exit(
+        await runDev({
+          appRoot: process.cwd(),
+          entry: positionals[0] ?? 'routes.tsx',
+          outDir: str('out-dir') ?? 'dist',
+          ...(port !== undefined && { port }),
+          wranglerArgs: passthrough,
+          fromSource: values['wasm-from-source'] === true,
+          log: (s) => console.log(s),
+        }),
+      )
+    } catch (e) {
+      if (e instanceof BuildError) console.error(`error ${e.rule} ${e.message}`)
+      else console.error(`error dev ${(e as Error).stack ?? String(e)}`)
+      process.exit(1)
+    }
   }
   if (cmd === 'start') {
     if (positionals.length > 0) usage(`start takes no positional arguments (got ${positionals.join(' ')})`)
