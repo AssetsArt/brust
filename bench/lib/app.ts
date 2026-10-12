@@ -50,7 +50,13 @@ export async function waitForLine(stdout: ReadableStream<Uint8Array>, re: RegExp
     }
   })()
   const timer = new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`not ready after ${timeoutMs} ms:\n${out}`)), timeoutMs))
-  const exited = onExit.then((code) => { throw new Error(`exited (${code}) before ready:\n${out}`) })
+  // The leader's exit can be observed before its last stdout bytes are read: settle `found` first (it ends at stdout EOF, so
+  // `out` is complete) instead of reporting a log that misses them. A grandchild holding the pipe is bounded by `timer`.
+  const exited = onExit.then(async (code) => {
+    const m = await found.catch(() => null)
+    if (m) return m
+    throw new Error(`exited (${code}) before ready:\n${out}`)
+  })
   const match = await Promise.race([found, timer, exited])
   return { match, log }
 }
