@@ -224,10 +224,10 @@ describe.skipIf(!ENABLED)('cf-min on local workerd', () => {
       return r.text()
     }
     const html = await raw('html')
-    expect(html).toContain('<div id="raw"><b>x</b></div>')
+    expect(html).toContain('<div id="raw" x-raw><b>x</b></div>')
     expect(html).toContain('<p id="text">&lt;b&gt;x&lt;/b&gt;</p>')
-    expect(await raw('null')).toContain('<div id="raw"></div>')
-    expect(await raw('num')).toContain('<div id="raw">7</div>')
+    expect(await raw('null')).toContain('<div id="raw" x-raw></div>')
+    expect(await raw('num')).toContain('<div id="raw" x-raw>7</div>')
   })
 
   test('p50 of 50 distinct-id MISSes', async () => {

@@ -40,14 +40,14 @@ const page = async (kind: string) => {
 
 test('a string __html renders as markup; a sibling {text} stays escaped', async () => {
   const html = await page('html')
-  expect(html).toContain('<div id="raw"><b>x</b></div>')
+  expect(html).toContain('<div id="raw" x-raw><b>x</b></div>')
   expect(html).toContain('<p id="text">&lt;b&gt;x&lt;/b&gt;</p>')
 })
 
 test('null __html renders an empty element', async () => {
-  expect(await page('null')).toContain('<div id="raw"></div>')
+  expect(await page('null')).toContain('<div id="raw" x-raw></div>')
 })
 
 test('a number __html renders its string', async () => {
-  expect(await page('num')).toContain('<div id="raw">7</div>')
+  expect(await page('num')).toContain('<div id="raw" x-raw>7</div>')
 })
