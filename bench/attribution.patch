@@ -23,7 +23,7 @@ index bd95ffc..303bd7d 100644
  tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "time", "fs"] }
  tokio-stream = "0.1"
 diff --git a/crates/brust-server/src/dispatch.rs b/crates/brust-server/src/dispatch.rs
-index 1de0177..b1531ba 100644
+index 8d06e0d..626c58d 100644
 --- a/crates/brust-server/src/dispatch.rs
 +++ b/crates/brust-server/src/dispatch.rs
 @@ -225,10 +225,15 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
@@ -45,7 +45,7 @@ index 1de0177..b1531ba 100644
              })
      })
      .await
-@@ -346,18 +351,27 @@ async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
+@@ -291,18 +296,27 @@ async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
  where
      D: FnOnce(&[u8]) -> Result<R, CallError> + Send + 'static,
  {
@@ -73,7 +73,7 @@ index 1de0177..b1531ba 100644
          let len = match entry.dispatch.call(kind, json, slot).await {
              Ok(n) => n,
              Err(DispatchError::EnqueueFailed(m)) => {
-@@ -367,17 +381,46 @@ where
+@@ -312,17 +326,46 @@ where
              }
              Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
          };
@@ -120,7 +120,7 @@ index 1de0177..b1531ba 100644
          let plan = claim.take_plan();
          drop(claim);
          parsed.map(|r| (r, plan))
-@@ -402,7 +445,7 @@ where
+@@ -347,7 +390,7 @@ where
      })
      .await;
      drop(fut);
@@ -129,7 +129,7 @@ index 1de0177..b1531ba 100644
          Ok(Ok(result)) => result,
          Ok(Err(payload)) => Err(CallError::BadResponse(format!(
              "worker call panicked: {}",
-@@ -413,7 +456,9 @@ where
+@@ -358,7 +401,9 @@ where
          // in `pool.rs`); its late result is dropped, so nothing from this call
          // reaches a cache.
          Err(Elapsed) => Err(CallError::Deadline),
@@ -141,7 +141,7 @@ index 1de0177..b1531ba 100644
  
  /// A claimed call's deadline passed (the `call_worker_decoded` deadline arm).
 diff --git a/crates/brust-server/src/lib.rs b/crates/brust-server/src/lib.rs
-index fc6ffb5..e24742d 100644
+index e366070..81918d0 100644
 --- a/crates/brust-server/src/lib.rs
 +++ b/crates/brust-server/src/lib.rs
 @@ -8,6 +8,7 @@ pub mod http;
@@ -270,10 +270,10 @@ index 0000000..b5a5421
 +    serde_json::to_vec(&m).unwrap()
 +}
 diff --git a/crates/brust-server/src/pipeline.rs b/crates/brust-server/src/pipeline.rs
-index f683874..ac3f943 100644
+index 0ba8fd8..f41a7ad 100644
 --- a/crates/brust-server/src/pipeline.rs
 +++ b/crates/brust-server/src/pipeline.rs
-@@ -108,6 +108,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -109,6 +109,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "ping");
          return body::resp(200, "text/plain", &[], b"pong\n".to_vec());
      }
@@ -283,7 +283,7 @@ index f683874..ac3f943 100644
      if path_only == "/_brust/cache/stats" {
          tracing::debug!(target: "brust::request", path = path_only, status = 200u16, "stats");
          let json = serde_json::to_vec(&s.stats()).unwrap_or_else(|_| b"{}".to_vec());
-@@ -138,6 +141,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -139,6 +142,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
          bun_calls: 0,
      };
      let resp = page(&s, full, headers, &mut meta).await;
@@ -291,7 +291,7 @@ index f683874..ac3f943 100644
      tracing::debug!(
          target: "brust::request",
          route = %meta.route.map_or("-", |ri| s.manifest.routes[ri].id.as_str()),
-@@ -150,6 +154,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
+@@ -151,6 +155,7 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
      if head {
          return head_only(resp);
      }
@@ -299,7 +299,7 @@ index f683874..ac3f943 100644
      resp
  }
  
-@@ -288,6 +293,10 @@ async fn page(
+@@ -289,6 +294,10 @@ async fn page(
      headers: &HeaderMap,
      meta: &mut PageMeta,
  ) -> Response<ResponseBody> {
@@ -310,7 +310,7 @@ index f683874..ac3f943 100644
      // Pages are GET; a HEAD runs the same path (and shares its L1 entries).
      // M3-P P4: match only — the envelope is built after the L1 decision, on a MISS/BYPASS.
      let Some(rm) = s.routes.match_route(full) else {
-@@ -301,6 +310,8 @@ async fn page(
+@@ -302,6 +311,8 @@ async fn page(
          .get(http::header::ACCEPT_ENCODING)
          .and_then(|v| v.to_str().ok())
          .map(str::trim);
@@ -319,7 +319,7 @@ index f683874..ac3f943 100644
  
      // ----- (3) L1 -----
      let (cache_key, outcome, search) = l1_decision(s, route_id, route, full, headers, &rm.params);
-@@ -319,15 +330,21 @@ async fn page(
+@@ -320,16 +331,22 @@ async fn page(
          });
          if let Some(r) = hit {
              meta.cache = CacheOutcome::Hit;
@@ -330,10 +330,11 @@ index f683874..ac3f943 100644
          }
      }
 +    perf::rec(perf::L1, t);
-     // F86: the render starts here, after the probe missed and before the first worker call (the
-     // loader reads app data in it). A HIT returned above; a BYPASS has no key and takes no stamp.
-     // An invalidation covering this entry after the stamp keeps the insert below out of L1.
-     let since = cache_key.as_ref().map(|_| s.l1.read_stamp());
+     // F86/F89: the render starts here, after the probe missed and before the first worker call
+     // (the loader, and planned jobs, read app data in it). A HIT returned above; every other page
+     // stamps, BYPASS and uncached routes too (they still run jobs). One stamp guards both caches
+     // (one clock): an invalidation covering an entry after it keeps that insert out.
+     let since = s.clock.stamp();
  
 +    let t = std::time::Instant::now();
      let envelope = rm.into_envelope("GET", full, headers, search);
@@ -342,7 +343,7 @@ index f683874..ac3f943 100644
  
      // ----- (4) loader -----
      let path_only = full.split('?').next().unwrap_or(full);
-@@ -352,6 +369,9 @@ async fn page(
+@@ -354,6 +371,9 @@ async fn page(
      let mut extra: Vec<(String, String)> = Vec::new();
      // M3-P P6: the plan the worker built inside the loader call, with its job results.
      let mut planned: Option<(PlannedCall, Vec<JobResult>)> = None;
@@ -352,7 +353,7 @@ index f683874..ac3f943 100644
      // M3-F S7b: a loader-less route still calls the worker when its chain reads a store, so the
      // snapshot (defaults included) is seeded and tagged. No loaders and no stores: zero calls.
      if !route.loaders.is_empty() || s.plans.chain_has_stores(&route.chain) {
-@@ -389,6 +409,9 @@ async fn page(
+@@ -391,6 +411,9 @@ async fn page(
              s.worker_calls.incr();
              meta.bun_calls += 1;
          }
@@ -362,7 +363,7 @@ index f683874..ac3f943 100644
          match r {
              Ok(LoaderResponse::Planned { results }) => {
                  let Some(PlanCell::Planned(pc)) =
-@@ -480,6 +503,8 @@ async fn page(
+@@ -482,6 +505,8 @@ async fn page(
              }
          }
      }
@@ -371,7 +372,7 @@ index f683874..ac3f943 100644
      // ----- (5) jobs -----
      let (mut ctx, plans, lookup) = match planned {
          Some((pc, results)) => {
-@@ -504,6 +529,7 @@ async fn page(
+@@ -507,6 +532,7 @@ async fn page(
          }
          None => {
              let ctx = Node::map(ctx);
@@ -379,7 +380,7 @@ index f683874..ac3f943 100644
              let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
                  Ok(p) => p,
                  Err(e) => {
-@@ -511,8 +537,14 @@ async fn page(
+@@ -514,8 +540,14 @@ async fn page(
                      return body::error_500();
                  }
              };
@@ -394,7 +395,7 @@ index f683874..ac3f943 100644
                  // M3-P P7 (R1): a miss planned on tokio turns the route's plan offer back on.
                  let offer = &s.plan_offer[ri];
                  if offer.load(Ordering::Relaxed) != 0 {
-@@ -557,12 +589,18 @@ async fn page(
+@@ -559,12 +591,18 @@ async fn page(
          }
      };
  
@@ -413,7 +414,7 @@ index f683874..ac3f943 100644
  
      // ----- (7) render, assets, L1 store -----
      let ctx = Arc::new(ctx);
-@@ -575,6 +613,7 @@ async fn page(
+@@ -577,6 +615,7 @@ async fn page(
          Ok(h) => h,
          Err(e) => return render_failed(route, &e),
      };
@@ -421,7 +422,7 @@ index f683874..ac3f943 100644
      // One header map per request. Only a render that is stored needs a second
      // copy (the L1 entry's); a BYPASS or an uncached route sends the only one.
      let store = cache_key.is_some() && status == 200 && cacheable && route.cache.is_some();
-@@ -598,6 +637,8 @@ async fn page(
+@@ -600,6 +639,8 @@ async fn page(
          encoded,
          hdr,
      );
@@ -430,7 +431,7 @@ index f683874..ac3f943 100644
      // The rendered body carries the loader's headers (and its gzip if this
      // request made it), so a HIT replays them.
      if store
-@@ -610,9 +651,18 @@ async fn page(
+@@ -611,9 +652,18 @@ async fn page(
      {
          tracing::debug!(target: "brust::cache", route = %route.id, "L1 insert skipped: invalidated during the render");
      }
@@ -448,8 +449,8 @@ index f683874..ac3f943 100644
 +
  /// Validate, store and fan out the worker's `results` for `lookup.misses` — shared by the jobs
  /// call and the planned loader call. `Err` = the 500 to send, already logged (today's messages).
- #[expect(
-@@ -720,6 +770,9 @@ fn render_document(
+ /// `Ok(true)`: an insert was rejected (its value was computed before a covering invalidation,
+@@ -729,6 +779,9 @@ fn render_document(
      ri: usize,
      ctx: &Node,
  ) -> Result<Bytes, RenderError> {
@@ -459,7 +460,7 @@ index f683874..ac3f943 100644
      let mut out = String::with_capacity(s.render_hints[ri].load(Ordering::Relaxed));
      render_chain_into(
          &s.manifest,
-@@ -729,6 +782,9 @@ fn render_document(
+@@ -738,6 +791,9 @@ fn render_document(
          ctx,
          &mut out,
      )?;
@@ -469,7 +470,7 @@ index f683874..ac3f943 100644
      inject_document_assets_into(
          &mut out,
          &route.chain,
-@@ -736,6 +792,7 @@ fn render_document(
+@@ -745,6 +801,7 @@ fn render_document(
          ctx.get(STORE_KEY),
          s.action_prefix_tag.as_deref(),
      );
@@ -477,7 +478,7 @@ index f683874..ac3f943 100644
      // M3-P P7: stored only when it changes — the steady state writes no shared cache line.
      let hint = next_hint(out.len());
      if s.render_hints[ri].load(Ordering::Relaxed) != hint {
-@@ -852,7 +909,9 @@ pub fn render_chain_into(
+@@ -861,7 +918,9 @@ pub fn render_chain_into(
      let children = ctx.get(CHILDREN_KEY);
      let own_all = ctx.get(OWN_KEY);
      // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
@@ -487,7 +488,7 @@ index f683874..ac3f943 100644
      // `_props` (the island host's `x-props`): the merged loader context — params,
      // path, loader data — without the server's per-component maps. A view over
      // the tree (no copy), shared by every chain component.
-@@ -860,6 +919,7 @@ pub fn render_chain_into(
+@@ -869,6 +928,7 @@ pub fn render_chain_into(
      // Per component: Arc views of its child-slot and own-job maps (no copy),
      // looked up own first, then children, then its `_idN`, then the base.
      let overlay = |id: &str| {
@@ -495,7 +496,7 @@ index f683874..ac3f943 100644
          let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
          let mut maps = Vec::with_capacity(2);
          for all in [children, own_all] {
-@@ -1556,7 +1616,9 @@ fn plan_one<'a>(
+@@ -1565,7 +1625,9 @@ fn plan_one<'a>(
          Dest::Chain { row, .. } => row,
          Dest::Child { .. } => None,
      };
@@ -505,7 +506,7 @@ index f683874..ac3f943 100644
      // M3-F C5/D8: every ssr job renders inside a store scope seeded from `__store`, so the
      // snapshot is one of its inputs (and of its hashed key). Precompute jobs never see stores.
      if j.kind == JobKind::Ssr
-@@ -1574,9 +1636,18 @@ fn plan_one<'a>(
+@@ -1583,9 +1645,18 @@ fn plan_one<'a>(
      // parent-scope inputs, so the row is part of the key.
      let (key, user_key) = match per_instance {
          Some(r) if !j.has_props || j.cache_key.is_some() => {
@@ -526,7 +527,7 @@ index f683874..ac3f943 100644
      };
      out.push(JobPlan {
          key,
-@@ -1863,10 +1934,14 @@ fn plan_response(
+@@ -1872,10 +1943,14 @@ fn plan_response(
      };
      merge_loader_response(&mut base, data, snapshot, &route.id);
      let ctx = Node::map(base);
@@ -541,7 +542,7 @@ index f683874..ac3f943 100644
      let (misses, call_ids) = if lookup.misses.is_empty() {
          (String::new(), Vec::new())
      } else {
-@@ -1891,6 +1966,7 @@ fn plan_response(
+@@ -1900,6 +1975,7 @@ fn plan_response(
  /// worker's JS thread, synchronously inside its call for `slot`. Never panics out, never errs:
  /// every failure is [`PLAN_DECLINED`] and leaves no plan behind.
  pub fn plan_in_call(s: &Server, worker: u32, slot: u32, len: u32) -> String {
@@ -582,10 +583,10 @@ index f5561cc..8449cf7 100644
              }
          }
 diff --git a/crates/brust-server/src/server/mod.rs b/crates/brust-server/src/server/mod.rs
-index 0b9afde..9b75ca4 100644
+index 97a1bfe..5ea1af7 100644
 --- a/crates/brust-server/src/server/mod.rs
 +++ b/crates/brust-server/src/server/mod.rs
-@@ -329,6 +329,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
+@@ -333,6 +333,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                          let state = Arc::clone(&state);
                          let powered_by = powered_by.clone();
                          async move {
@@ -593,7 +594,7 @@ index 0b9afde..9b75ca4 100644
                              // CORS stamping happens HERE and ONLY here — the single
                              // chokepoint that sees every response path (static
                              // assets, error helpers, L1 HITs, rendered pages). Clone
-@@ -348,6 +349,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
+@@ -352,6 +353,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                              {
                                  c.stamp_response(resp.headers_mut(), origin.as_ref());
                              }
@@ -602,7 +603,7 @@ index 0b9afde..9b75ca4 100644
                          }
                      });
 diff --git a/packages/brust/src/worker.ts b/packages/brust/src/worker.ts
-index 809c751..16c9591 100644
+index a418cdc..6cbaad3 100644
 --- a/packages/brust/src/worker.ts
 +++ b/packages/brust/src/worker.ts
 @@ -1,6 +1,7 @@
@@ -612,8 +613,8 @@ index 809c751..16c9591 100644
 +import { dlopen } from 'bun:ffi'
  import { join, resolve } from 'node:path'
  import { workerData } from 'node:worker_threads'
- import { runFetch, setActionsApp, setActionsLimits } from './actions-bridge'
-@@ -267,28 +268,71 @@ export function makeHandlers(opts: {
+ import { runFetch, setActionsApp } from './actions-bridge'
+@@ -266,28 +267,71 @@ export function makeHandlers(opts: {
   * chain answered `ok` is planned in the same call (`plan`, the napi `planJobs` by default — the
   * addon is touched only then). */
  export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan: PlanJobs = planJobs) {

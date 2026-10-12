@@ -16,6 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::cache::job_cache::JobCache;
 use crate::cache::l1::L1Cache;
+use crate::cache::stamp::InvalClock;
 use crate::config::{Config, Server};
 use crate::manifest::Manifest;
 use crate::pool::WorkerPool;
@@ -120,6 +121,8 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             .map_err(|e| format!("actions: {e}"))?;
     }
     let tuning = cfg.tuning;
+    // One invalidation clock for both caches: `page()` stamps it once per request (F89).
+    let clock = Arc::new(InvalClock::default());
     let state = Arc::new(Server {
         pool: Arc::new(WorkerPool::new()),
         routes,
@@ -132,8 +135,9 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         manifest: loaded.manifest,
         plans,
         renderer,
-        l1: L1Cache::with_capacity(cfg.l1_capacity),
-        jobs: JobCache::new(cfg.job_cache_capacity),
+        l1: L1Cache::with_clock(cfg.l1_capacity, Arc::clone(&clock)),
+        jobs: JobCache::with_clock(cfg.job_cache_capacity, Arc::clone(&clock)),
+        clock,
         dist_dir: cfg.dist_dir.clone(),
         loader_calls: crate::cache::l1::StripedCounter::new(),
         job_calls: AtomicU64::new(0),

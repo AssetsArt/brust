@@ -20,6 +20,7 @@ use hyper::body::Incoming;
 use crate::cache::job_cache::{JobCache, JobKey};
 use crate::cache::key_expr::EvalCtx;
 use crate::cache::l1::{CacheKey, RenderedBody, build_cache_key};
+use crate::cache::stamp::ReadStamp;
 use crate::config::Server;
 use crate::dispatch::{CallError, CallKind, call_worker, call_worker_planned};
 use crate::inputs::{self, Path};
@@ -322,10 +323,11 @@ async fn page(
             return r.unwrap_or_else(|b| hit_response(&b, gz));
         }
     }
-    // F86: the render starts here, after the probe missed and before the first worker call (the
-    // loader reads app data in it). A HIT returned above; a BYPASS has no key and takes no stamp.
-    // An invalidation covering this entry after the stamp keeps the insert below out of L1.
-    let since = cache_key.as_ref().map(|_| s.l1.read_stamp());
+    // F86/F89: the render starts here, after the probe missed and before the first worker call
+    // (the loader, and planned jobs, read app data in it). A HIT returned above; every other page
+    // stamps, BYPASS and uncached routes too (they still run jobs). One stamp guards both caches
+    // (one clock): an invalidation covering an entry after it keeps that insert out.
+    let since = s.clock.stamp();
 
     let envelope = rm.into_envelope("GET", full, headers, search);
 
@@ -496,8 +498,9 @@ async fn page(
             if !lookup.misses.is_empty() {
                 s.job_calls.fetch_add(1, Ordering::Relaxed);
                 let ids: Vec<&str> = pc.call_ids.iter().map(String::as_str).collect();
-                if let Err(resp) = apply_job_results(s, route, &plans, &mut lookup, &ids, results) {
-                    return resp;
+                match apply_job_results(s, route, &plans, &mut lookup, &ids, results, since) {
+                    Ok(rejected) => cacheable &= !rejected,
+                    Err(resp) => return resp,
                 }
             }
             (pc.ctx, plans, lookup)
@@ -547,10 +550,9 @@ async fn page(
                     }
                 };
                 let ids: Vec<&str> = req.jobs.iter().map(|c| c.id.as_str()).collect();
-                if let Err(resp) =
-                    apply_job_results(s, route, &plans, &mut lookup, &ids, resp.results)
-                {
-                    return resp;
+                match apply_job_results(s, route, &plans, &mut lookup, &ids, resp.results, since) {
+                    Ok(rejected) => cacheable &= !rejected,
+                    Err(resp) => return resp,
                 }
             }
             (ctx, plans, lookup)
@@ -603,7 +605,6 @@ async fn page(
     if store
         && let Some(k) = cache_key
         && let Some(c) = &route.cache
-        && let Some(since) = since
         && !s
             .l1
             .insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags, since)
@@ -615,6 +616,8 @@ async fn page(
 
 /// Validate, store and fan out the worker's `results` for `lookup.misses` — shared by the jobs
 /// call and the planned loader call. `Err` = the 500 to send, already logged (today's messages).
+/// `Ok(true)`: an insert was rejected (its value was computed before a covering invalidation,
+/// F89); the value still serves this response, but the page must not be stored in L1 (R5).
 #[expect(
     clippy::result_large_err,
     reason = "the Err is the cold 500 page() returns as is; boxing it buys nothing"
@@ -626,7 +629,8 @@ fn apply_job_results(
     lookup: &mut Lookup,
     ids: &[&str],
     results: Vec<JobResult>,
-) -> Result<(), Response<ResponseBody>> {
+    since: ReadStamp,
+) -> Result<bool, Response<ResponseBody>> {
     let Lookup {
         values,
         owner,
@@ -667,16 +671,21 @@ fn apply_job_results(
         }
         note_missing_slots(s, &plans[i], v);
     }
+    let mut rejected = false;
     for (v, &i) in fresh.into_iter().zip(misses.iter()) {
         let p = &plans[i];
         let v = Arc::new(v);
-        s.jobs.insert(
+        if !s.jobs.insert(
             p.key.clone(),
             Arc::clone(&v),
             p.ttl,
             p.tags,
             p.user_key.as_deref(),
-        );
+            since,
+        ) {
+            rejected = true;
+            tracing::debug!(target: "brust::cache", route = %route.id, component_id = %p.component_id, job_id = %p.job_id, "job cache insert skipped: invalidated during the call");
+        }
         values[i] = Some(v);
     }
     for i in 0..plans.len() {
@@ -684,7 +693,7 @@ fn apply_job_results(
             values[i] = values[owner[i]].clone();
         }
     }
-    Ok(())
+    Ok(rejected)
 }
 
 fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody> {
@@ -2217,6 +2226,7 @@ pub mod plan_stage {
                     p.ttl,
                     p.tags,
                     p.user_key.as_deref(),
+                    cache.read_stamp(),
                 );
             }
         }
@@ -3138,7 +3148,14 @@ mod tests {
         let plans = collect_jobs(&idx, &r2(&m).chain, &Node::map(want)).unwrap();
         for (i, p) in plans.iter().enumerate() {
             let v = Arc::new(n(json!({ "_s1": i })));
-            cache.insert(p.key.clone(), v, p.ttl, p.tags, p.user_key.as_deref());
+            cache.insert(
+                p.key.clone(),
+                v,
+                p.ttl,
+                p.tags,
+                p.user_key.as_deref(),
+                cache.read_stamp(),
+            );
         }
         let (pc, misses) = plan_response(&idx, &cache, r2(&m), base("pikachu"), PIKACHU).unwrap();
         assert_eq!(misses, "");
