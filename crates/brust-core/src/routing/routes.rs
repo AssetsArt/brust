@@ -320,7 +320,8 @@ pub enum RouteInstallError {
     },
 }
 
-pub(crate) fn build_request_envelope<'a>(
+#[doc(hidden)]
+pub fn build_request_envelope<'a>(
     method: &'a str,
     full_path: &'a str,
     query: &'a str,
@@ -1017,7 +1018,8 @@ mod tests {
 
     #[test]
     fn from_manifest_installs_catch_all_outside_matchit() {
-        let dist = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist");
+        let dist = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../brust-server/tests/fixtures/dist");
         let loaded = crate::manifest::Manifest::load(&dist).unwrap();
         let table = RouteTable::from_manifest(&loaded.manifest).unwrap();
         let headers = http::HeaderMap::new();

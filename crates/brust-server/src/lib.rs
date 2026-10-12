@@ -5,14 +5,11 @@ pub mod cache;
 pub mod config;
 pub mod dispatch;
 pub mod http;
-pub mod inputs;
-pub mod manifest;
 mod pipeline;
 pub mod pool;
-pub mod protocol;
-pub mod render;
-pub mod routing;
 pub mod server;
+
+pub use brust_core::{inputs, manifest, protocol, render, routing};
 
 /// Internals timed by `benches/render.rs`; not an API.
 #[doc(hidden)]

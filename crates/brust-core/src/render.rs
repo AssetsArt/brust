@@ -692,7 +692,8 @@ mod tests {
 
     #[test]
     fn inject_assets_into_equals_inject_assets() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dist");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../brust-server/tests/fixtures/dist");
         let m = crate::manifest::Manifest::load(&dir).unwrap().manifest;
         // routes[0] is all-static (no tags); routes[1] has a native page (tags).
         for route in &m.routes[..2] {
