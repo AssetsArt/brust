@@ -3,10 +3,10 @@
 //! clients, invalidation drops the body with the entry, HEAD on a HIT.
 mod common;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
-use brust_server::InvalidateArgs;
+use brust_server::{InvalidateArgs, Server};
 use common::*;
 use serde_json::{Value, json};
 
@@ -146,4 +146,46 @@ fn head_on_a_hit_carries_the_get_headers_and_no_body() {
         );
     }
     assert_eq!(f.counts(), (1, 0));
+}
+
+/// F86: the loader's first call invalidates the route's tag mid-render (as a `POST /team` racing a
+/// page render would). That render read the data before the invalidation, so it must not land in
+/// L1: the next request is a MISS that renders fresh data, which then caches.
+#[test]
+fn an_invalidation_during_the_loader_keeps_that_render_out_of_l1() {
+    let srv: Arc<OnceLock<Arc<Server>>> = Default::default();
+    let (n, srv2) = (Arc::new(AtomicU32::new(0)), Arc::clone(&srv));
+    let f = FakeBun::new(
+        move |_| {
+            let i = n.fetch_add(1, Ordering::SeqCst) + 1;
+            if i == 1 {
+                srv2.get().unwrap().invalidate(InvalidateArgs {
+                    tags: vec!["sized".into()],
+                    ..Default::default()
+                });
+            }
+            json!({"ok": true, "data": {"who": format!("v{i}")}})
+        },
+        |_: Value| json!({"results": []}),
+    );
+    let dist = sized_dist(PAD);
+    let s = boot_in(f.clone(), dist.path());
+    assert!(srv.set(Arc::clone(&s)).is_ok());
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        let (_, h, body) = request_raw(&s, "GET", "/sized", &[("accept-encoding", "identity")]);
+        let text = String::from_utf8(body).unwrap();
+        let who = ["v1", "v2"]
+            .into_iter()
+            .find(|w| text.contains(&format!("<h1>{w}</h1>")));
+        seen.push((cache_hdr(&h).map(str::to_owned), who));
+    }
+    let want = |c: &str, w: &'static str| (Some(c.to_owned()), Some(w));
+    assert_eq!(
+        seen,
+        [want("MISS", "v1"), want("MISS", "v2"), want("HIT", "v2")],
+        "the render that read before the invalidation was cached"
+    );
+    assert_eq!(f.counts().0, 2);
+    assert_eq!(stats(&s)["l1"]["len"], 1);
 }
