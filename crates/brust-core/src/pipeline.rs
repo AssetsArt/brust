@@ -486,9 +486,13 @@ async fn page<H: Host>(
 /// call and the planned loader call. `Err` = the 500 to send, already logged (today's messages).
 /// `Ok(true)`: an insert was rejected (its value was computed before a covering invalidation,
 /// F89); the value still serves this response, but the page must not be stored in L1 (R5).
-#[expect(
-    clippy::result_large_err,
-    reason = "the Err is the cold 500 page() returns as is; boxing it buys nothing"
+// 32-bit wasm: the Err is under the lint's threshold, so the expectation would be unfulfilled.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    expect(
+        clippy::result_large_err,
+        reason = "the Err is the cold 500 page() returns as is; boxing it buys nothing"
+    )
 )]
 fn apply_job_results<H: Host>(
     s: &Core<H>,

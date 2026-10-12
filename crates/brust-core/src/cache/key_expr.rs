@@ -185,9 +185,13 @@ impl<'a> Parser<'a> {
                     )),
                 }
             }
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
             "env" => Ok(Expr::Env(
                 std::env::var(one_str(&args)?).unwrap_or_default(),
             )),
+            // R9b: no process env on Workers; fail the route compile instead of keying on "".
+            #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+            "env" => Err(env_unavailable(&one_str(&args)?)),
             "or" => {
                 if args.is_empty() {
                     return Err("cache expression: or() needs >= 1 argument".into());
@@ -279,6 +283,14 @@ impl<'a> Parser<'a> {
             Err(format!("cache expression: expected '{}'", c as char))
         }
     }
+}
+
+/// The parse error `env(name)` is on wasm32-unknown-unknown (R9b).
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "unknown")))]
+fn env_unavailable(name: &str) -> String {
+    format!(
+        "cache expression: env('{name}') is not available on Cloudflare Workers (no process env); use a literal"
+    )
 }
 
 #[cfg(test)]
@@ -401,5 +413,13 @@ mod tests {
     #[test]
     fn reject_eq_bad_arity() {
         assert!(Expr::parse("eq(a)").is_err());
+    }
+
+    /// R9b: on Workers there is no process env, so `env()` refuses to compile the expression.
+    #[test]
+    fn env_is_unavailable_on_workers() {
+        let m = env_unavailable("X");
+        assert!(m.contains("env('X')"), "{m}");
+        assert!(m.contains("Cloudflare Workers"), "{m}");
     }
 }
