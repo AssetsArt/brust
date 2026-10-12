@@ -16,8 +16,8 @@ use napi_derive::napi;
 use parking_lot::RwLock;
 
 use brust_server::{
-    ActionsConfig, Config, CorsConfig, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES,
-    InvalidateArgs, Server, Tuning, start,
+    ActionsConfig, Config, CorsConfig, CrossSite, DEFAULT_ACTION_PREFIX,
+    DEFAULT_MAX_ACTION_BODY_BYTES, InvalidateArgs, Server, Tuning, start,
 };
 
 use crate::dispatch::{BufPtr, KindArg, TsfnDispatch, WorkerTsfn};
@@ -106,6 +106,8 @@ pub struct NapiCorsOptions {
 pub struct NapiActionsOptions {
     pub prefix: Option<String>,
     pub max_body_bytes: Option<u32>,
+    /// `"reject"` (default) or `"allow"` (F87): cross-site mutating action requests.
+    pub cross_site: Option<String>,
 }
 
 /// Field for field; an absent `credentials` is `false`.
@@ -127,6 +129,10 @@ fn actions_config(a: NapiActionsOptions) -> ActionsConfig {
         max_body_bytes: a
             .max_body_bytes
             .map_or(DEFAULT_MAX_ACTION_BODY_BYTES, |n| n as usize),
+        cross_site: match a.cross_site.as_deref() {
+            Some("allow") => CrossSite::Allow,
+            _ => CrossSite::Reject,
+        },
     }
 }
 
@@ -374,17 +380,20 @@ mod tests {
         let none = NapiActionsOptions {
             prefix: None,
             max_body_bytes: None,
+            cross_site: None,
         };
         assert_eq!(actions_config(none), ActionsConfig::default());
         let set = NapiActionsOptions {
             prefix: Some("/api".into()),
             max_body_bytes: Some(1024),
+            cross_site: Some("allow".into()),
         };
         assert_eq!(
             actions_config(set),
             ActionsConfig {
                 prefix: "/api".into(),
                 max_body_bytes: 1024,
+                cross_site: CrossSite::Allow,
             }
         );
     }

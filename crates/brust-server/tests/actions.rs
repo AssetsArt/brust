@@ -5,7 +5,7 @@ mod common;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use brust_server::{ActionsConfig, start};
+use brust_server::{ActionsConfig, CrossSite, start};
 use common::*;
 use serde_json::{Value, json};
 
@@ -567,9 +567,18 @@ fn cors_action_post_is_stamped() {
 
 #[test]
 fn cors_disallowed_origin_is_processed_without_acao() {
-    // The server is not the enforcement point for a non-preflight request: the browser blocks
-    // the READ when ACAO is missing.
-    let (fake, s) = cors_server(note);
+    // With `cross_site = "allow"` the server is not the enforcement point for a non-preflight request: the
+    // browser blocks the READ when ACAO is missing. (Under the F87 default this POST is a 403: see below.)
+    let fake = fake().with_fetch(note);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig {
+            cross_site: CrossSite::Allow,
+            ..ActionsConfig::default()
+        },
+        Some(cors_policy()),
+    );
     let (status, h, _) = post_note(&s, EVIL);
     assert_eq!(status, 200);
     assert_eq!(hdr(&h, "access-control-allow-origin"), None);
@@ -746,5 +755,78 @@ fn dot_segments_and_backslashes_are_400() {
     assert_eq!(fake.fetch_count(), 0);
     let (status, _, _) = request_body(&s, "POST", "/_brust/action/a.b", &[], b"x".to_vec());
     assert_eq!(status, 200);
+    assert_eq!(fake.fetch_count(), 1);
+}
+
+// ----- F87 / spec E10: cross-site mutating requests are refused in Rust, before the body and the worker -----
+
+fn post_with(
+    s: &brust_server::Server,
+    headers: &[(&str, &str)],
+) -> (u16, http::HeaderMap, Vec<u8>) {
+    request_body(s, "POST", ACTION, headers, br#"{"text":"hi"}"#.to_vec())
+}
+
+#[test]
+fn cross_site_post_is_403_and_the_worker_is_not_called() {
+    let (fake, s) = server(note);
+    let (st, h, b) = post_with(
+        &s,
+        &[("origin", EVIL), ("content-type", "application/json")],
+    );
+    assert_eq!(st, 403);
+    assert_eq!(hdr(&h, "content-type"), Some("application/problem+json"));
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["title"], "CrossSiteRejected");
+    assert_eq!(v["status"], 403);
+    assert!(
+        v["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("cross-site POST to an action is rejected")
+    );
+    assert_eq!(fake.fetch_count(), 0);
+    // Fetch Metadata alone (no Origin) is enough.
+    let (st, ..) = post_with(&s, &[("sec-fetch-site", "cross-site")]);
+    assert_eq!(st, 403);
+    assert_eq!(fake.fetch_count(), 0);
+}
+
+#[test]
+fn same_origin_headerless_and_get_requests_are_forwarded() {
+    let (fake, s) = server(note);
+    // `host: fx` is what the harness sends.
+    assert_eq!(post_with(&s, &[("origin", "http://fx")]).0, 200);
+    assert_eq!(post_with(&s, &[]).0, 200);
+    assert_eq!(
+        request_body(&s, "GET", ACTION, &[("origin", EVIL)], vec![]).0,
+        200
+    );
+    assert_eq!(fake.fetch_count(), 3);
+}
+
+#[test]
+fn cross_site_allow_forwards_a_foreign_post() {
+    let fake = fake().with_fetch(note);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig {
+            cross_site: CrossSite::Allow,
+            ..ActionsConfig::default()
+        },
+        None,
+    );
+    assert_eq!(post_with(&s, &[("origin", EVIL)]).0, 200);
+    assert_eq!(fake.fetch_count(), 1);
+}
+
+#[test]
+fn cross_site_cors_listed_origin_is_forwarded_and_stamped() {
+    let (fake, s) = cors_server(note);
+    let (st, h, _) = post_note(&s, ALLOWED);
+    assert_eq!(st, 200);
+    assert_eq!(hdr(&h, "access-control-allow-origin"), Some(ALLOWED));
+    assert_eq!(post_note(&s, EVIL).0, 403);
     assert_eq!(fake.fetch_count(), 1);
 }
