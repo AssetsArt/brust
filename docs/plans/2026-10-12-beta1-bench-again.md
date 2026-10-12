@@ -22,3 +22,6 @@ owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · ba
 
 ## Acceptance (lead)
 Two files changed; lock released (bb key empty); READY note has the per-row deltas and the seed; S/D/I within ±5% or a challenge filed.
+
+## Ruling 2026-10-12 ~13:00Z on the first run (challenge e7bf54a0, Illenium)
+The first run (lane @51a6b53, load 8.86 at start) showed brust I identity −12.43% vs the committed baseline (measured 2026-10-11 at @97b944a, load 5.7) while S/D moved < 2.5% and the control `elysia-bun` fell 11–18% at c=1. Ruled NOT a regression on that evidence and NOT merged: a load-polluted row must not become the baseline. Resolution: a three-variant interleaved A/B on this Mac — BASE 97b944a, MID 0f0a136 (alpha.2, beta1 lanes in, M4-CF out), NOW daaea0a — brust only, probe I identity, same seed, 3 alternating rounds, best-of-3 vs best-of-3, run only at 1-min load < 6 with `lead:gates` idle. Within 5% → host noise, re-run the full bench once at low load and commit that. Over 5% → real; MID locates the group (beta1 lanes vs M4-CF), results stay uncommitted, lead bisects. Lesson carried from M3-P (memory 5b2d5001): a regression gate on a shared host is a trigger for an interleaved A/B, never a verdict by itself.
