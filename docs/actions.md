@@ -384,13 +384,13 @@ export const api = client<App>({
 - `Sec-Fetch-Site: cross-site` is present, or
 - an `Origin` header is present and its authority (`host[:port]`, compared as written, lower-cased) is not the request's own host. The request host is the first `X-Forwarded-Host` value when the header is present, otherwise `Host`. A literal `Origin: null` counts as foreign.
 
-Either way the request still passes if its `Origin` is allowed by `[cors]` (see CORS above). The response is `application/problem+json`:
+Either way the request still passes if its `Origin` is listed by name in `[cors] origins` (see CORS above). A wildcard `origins = ["*"]` does **not** count: it lets other sites read your responses, but it never switches this guard off. Use `cross_site = "allow"` for that. The response is `application/problem+json`:
 
 ```json
 {"type":"about:blank","title":"CrossSiteRejected","status":403,"detail":"cross-site POST to an action is rejected; set [actions] cross_site = \"allow\" or list the origin in [cors]"}
 ```
 
-What is **not** affected: `GET`/`HEAD` (reads are not CSRF targets), same-origin browser requests, and requests with neither header (curl, server-to-server, the Eden client running inside the worker). `Sec-Fetch-Site: same-site` (a sibling subdomain) is allowed by design. The 0.1.x server had no such check.
+What is **not** affected: `GET`/`HEAD` (reads are not CSRF targets), same-origin browser requests, and requests with neither header (curl, server-to-server, the Eden client running inside the worker). A sibling subdomain (`Sec-Fetch-Site: same-site`) is rejected unless its origin is listed in `[cors]`, because browsers send its `Origin` and the authority differs from the host. The 0.1.x server had no such check.
 
 This stops a hostile web page from submitting a form to your action with the visitor's browser. It does not stop a script that sets no `Origin`, so it is not authentication.
 
