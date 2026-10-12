@@ -1,13 +1,13 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index d442464..6d345b3 100644
+index 87880d5..486dd08 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -143,8 +143,11 @@ dependencies = [
+@@ -154,8 +154,11 @@ dependencies = [
   "flate2",
   "http",
   "js-sys",
 + "libc",
-  "matchit",
+  "matchit 0.9.2",
   "minijinja",
 + "once_cell",
 + "parking_lot",
@@ -647,7 +647,7 @@ index 13a907e..e817d61 100644
                          }
                      });
 diff --git a/packages/brust/src/worker.ts b/packages/brust/src/worker.ts
-index 809c751..16c9591 100644
+index b17b95b..2fcf42f 100644
 --- a/packages/brust/src/worker.ts
 +++ b/packages/brust/src/worker.ts
 @@ -1,6 +1,7 @@
@@ -658,7 +658,7 @@ index 809c751..16c9591 100644
  import { join, resolve } from 'node:path'
  import { workerData } from 'node:worker_threads'
  import { runFetch, setActionsApp, setActionsLimits } from './actions-bridge'
-@@ -267,28 +268,71 @@ export function makeHandlers(opts: {
+@@ -44,28 +45,71 @@ const PLANNED = { planned: true } as const
   * chain answered `ok` is planned in the same call (`plan`, the napi `planJobs` by default — the
   * addon is touched only then). */
  export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan: PlanJobs = planJobs) {
