@@ -1,0 +1,9 @@
+# l2-relay: the cache-adapter lane A native e2e (tests/server/cache-adapter.test.ts). Two `brust start`
+# processes share one relay-hosted memory adapter (tests/server/l2-relay.ts).
+[actions]
+
+[cache]
+adapter = "custom"
+module = "cache.ts"
+namespace = "l2e2e"
+get_timeout_ms = 200
