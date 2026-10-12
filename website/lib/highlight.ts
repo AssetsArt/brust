@@ -62,7 +62,9 @@ function span(cls: string | undefined, text: string): string {
 }
 
 function highlightSource(code: string, lang: string): string {
-  const lines = highlighter.codeToTokensBase(code, { lang, theme: 'brust-canon' })
+  // tokenizeTimeLimit 0: shiki's default 500 ms per line makes a line that times out (a cold grammar on a loaded
+  // machine) come back as ONE token in its first token's colour, and the memo would keep that for the worker's life.
+  const lines = highlighter.codeToTokensBase(code, { lang, theme: 'brust-canon', tokenizeTimeLimit: 0 })
   return lines
     .map((line) => {
       let out = ''

@@ -134,22 +134,34 @@ test('CopyButton without the Clipboard API: says "Select to copy" and selects th
 }, 60_000)
 
 test('CopyButton: a second click restarts the 1.4 s reset (the first timer is cleared)', async () => {
+  // Deterministic: without the Clipboard API the label is set synchronously in the click handler, so the
+  // fake clock alone decides when each reset timer fires (the async writeText path would race the clock).
+  const ctx = await browser!.newContext()
+  await ctx.addInitScript(() => Object.defineProperty(Navigator.prototype, 'clipboard', { get: () => undefined }))
+  const page = await ctx.newPage()
+  await page.clock.install()
+  await page.goto(`${base}/docs/quickstart`, { waitUntil: 'networkidle' })
+  const btn = page.locator('figure.code button').nth(1)
+  await btn.click()
+  await page.clock.runFor(1000)
+  expect(await btn.textContent()).toBe('Select to copy')
+  await btn.click()
+  await page.clock.runFor(1000) // 2.0 s after the first click: the first timer would have reset the label at 1.4 s
+  expect(await btn.textContent()).toBe('Select to copy')
+  await page.clock.runFor(500) // 1.5 s after the second click
+  expect(await btn.textContent()).toBe('Copy')
+  await ctx.close()
+}, 60_000)
+
+test('CopyButton with the Clipboard API: copies the shell commands without prompts and says Copied', async () => {
   const ctx = await browser!.newContext()
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base })
   const page = await ctx.newPage()
-  await page.clock.install()
   await page.goto(`${base}/docs/quickstart`, { waitUntil: 'networkidle' })
   const btn = page.locator('figure.code button').nth(1)
   await btn.click()
   await page.locator('figure.code button.done').waitFor()
   expect(await btn.textContent()).toBe('Copied')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('bun create @brust/app@latest my-app\ncd my-app && bun install')
-  await page.clock.runFor(1000)
-  await btn.click()
-  await Bun.sleep(150) // real time: let the clipboard promise settle and arm the new timer
-  await page.clock.runFor(1000) // 2.0 s after the first click: the first timer would have reset the label at 1.4 s
-  expect(await btn.textContent()).toBe('Copied')
-  await page.clock.runFor(500) // 1.5 s after the second click
-  expect(await btn.textContent()).toBe('Copy')
   await ctx.close()
 }, 60_000)
