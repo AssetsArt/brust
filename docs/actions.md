@@ -387,7 +387,7 @@ export const api = client<App>({
 Either way the request still passes if its `Origin` is listed by name in `[cors] origins` (see CORS above). A wildcard `origins = ["*"]` does **not** count: it lets other sites read your responses, but it never switches this guard off. Use `cross_site = "allow"` for that. The response is `application/problem+json`:
 
 ```json
-{"type":"about:blank","title":"CrossSiteRejected","status":403,"detail":"cross-site POST to an action is rejected; set [actions] cross_site = \"allow\" or list the origin in [cors]"}
+{"type":"about:blank","title":"CrossSiteRejected","status":403,"detail":"cross-site POST to an action is rejected; set [actions] cross_site = \"allow\", or list the exact origin in [cors].origins (a wildcard does not count)"}
 ```
 
 What is **not** affected: `GET`/`HEAD` (reads are not CSRF targets), same-origin browser requests, and requests with neither header (curl, server-to-server, the Eden client running inside the worker). A sibling subdomain (`Sec-Fetch-Site: same-site`) is rejected unless its origin is listed in `[cors]`, because browsers send its `Origin` and the authority differs from the host. The 0.1.x server had no such check.

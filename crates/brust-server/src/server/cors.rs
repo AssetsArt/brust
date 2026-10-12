@@ -97,7 +97,7 @@ impl ResolvedCors {
 
     /// F87: the request `Origin` is listed in `origins` by name. A wildcard never counts here: the cross-site guard
     /// must not be switched off by `origins = ["*"]` (use `[actions] cross_site = "allow"` for that).
-    pub(crate) fn allows_explicit(&self, origin: &HeaderValue) -> bool {
+    pub(crate) fn origin_listed(&self, origin: &HeaderValue) -> bool {
         origin.to_str().is_ok_and(|o| {
             self.origins
                 .iter()

@@ -155,7 +155,7 @@ pub(crate) fn cross_site_verdict(
         return Ok(());
     }
     let origin = headers.get(http::header::ORIGIN);
-    let cors_allows = || origin.zip(cors).is_some_and(|(o, c)| c.allows_explicit(o));
+    let cors_allows = || origin.zip(cors).is_some_and(|(o, c)| c.origin_listed(o));
     let fetch_site = header_str(headers, "sec-fetch-site");
     if fetch_site
         .as_deref()
@@ -425,6 +425,32 @@ mod tests {
                 ("origin", "https://evil.example"),
                 ("sec-fetch-site", "cross-site")
             ],
+            Some("app.example"),
+            Some(&c)
+        ));
+    }
+
+    #[test]
+    fn cross_site_wildcard_cors_with_allow_mode_forwards() {
+        let h = hm(&[("origin", "https://evil.example")]);
+        let c = cors(&["*"]);
+        assert!(
+            cross_site_verdict("POST", &h, Some("app.example"), Some(&c), CrossSite::Allow).is_ok()
+        );
+    }
+
+    #[test]
+    fn cross_site_listed_origin_is_an_exact_match() {
+        let c = cors(&["https://partner.example"]);
+        assert!(!v(
+            "POST",
+            &[("origin", "https://partner.example:8443")],
+            Some("app.example"),
+            Some(&c)
+        ));
+        assert!(!v(
+            "POST",
+            &[("origin", "http://partner.example")],
             Some("app.example"),
             Some(&c)
         ));
