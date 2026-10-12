@@ -38,11 +38,17 @@ if (Object.keys(brust.optionalDependencies ?? {}).sort().join(',') !== want) pro
 const createApp = JSON.parse(readFileSync(resolve(ROOT, 'packages/create-app/package.json'), 'utf8'))
 if (Object.keys(createApp.dependencies ?? {}).some((k) => k.startsWith('@brust/'))) problems.push('  packages/create-app must not depend on @brust/*: its own version IS the @brust/core spec it writes (R3)')
 if (brust.private || createApp.private || JSON.parse(readFileSync(resolve(ROOT, 'packages/runtime-dom/package.json'), 'utf8')).private) problems.push('  a package is still "private": true')
+// bun.lock records every workspace package's version, and `bun publish`/`bun pm pack` rewrite `workspace:*` FROM THE LOCKFILE —
+// a bump that leaves bun.lock behind ships peers/optionals pinned to the previous version (alpha.3 lesson: cache-redis pack test red in CI).
+await $`bun install`.quiet()
+const lockText = readFileSync(resolve(ROOT, 'bun.lock'), 'utf8')
+const lockVersions = FILES.map((f) => { const dir = f.replace(/\/package\.json$/, ''); const m = lockText.match(new RegExp(`"${dir}": \\{[^}]*?"version": "([^"]+)"`)); return [f, m?.[1] ?? null] as const })
+for (const [f, v] of lockVersions) if (v !== NEW) problems.push(`  bun.lock ${f.replace(/\/package\.json$/, '')}: ${v ?? 'missing'} (expected ${NEW}; run bun install)`)
 if (problems.length || verified !== EXPECTED) { console.error(`✗ verification FAILED (${verified}/${EXPECTED})`); for (const p of problems) console.error(p); process.exit(1) }
-console.log(`✓ bumped ${verified}/${EXPECTED} refs to ${NEW}`); for (const c of changes) console.log(c)
+console.log(`✓ bumped ${verified}/${EXPECTED} refs + bun.lock to ${NEW}`); for (const c of changes) console.log(c)
 if (!RELEASE) { console.log(`\nnext: git commit -am "chore(release): ${NEW}" && git tag -a v${NEW} -m "brust ${NEW}" && git push origin HEAD v${NEW}`); process.exit(0) }
 const branch = (await $`git rev-parse --abbrev-ref HEAD`.text()).trim()
 if (branch !== 'v2') { console.error(`✗ --release refuses to run off v2 (on "${branch}")`); process.exit(1) }
-await $`git add ${FILES}`; await $`git commit -m ${`chore(release): ${NEW}`}`; await $`git tag -a ${`v${NEW}`} -m ${`brust ${NEW}`}`
+await $`git add ${FILES} bun.lock`; await $`git commit -m ${`chore(release): ${NEW}`}`; await $`git tag -a ${`v${NEW}`} -m ${`brust ${NEW}`}`
 await $`git push origin HEAD`; await $`git push origin ${`v${NEW}`}`
 console.log(`✓ pushed v${NEW} — release.yml publishes (human-confirmed by the tag)`)
