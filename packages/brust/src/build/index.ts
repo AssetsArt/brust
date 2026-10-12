@@ -204,7 +204,11 @@ async function buildInto(
   const pub = join(appRoot, 'public')
   if (existsSync(pub)) cpSync(pub, join(out, 'public'), { recursive: true })
   if (o.cf) {
-    const warnings = await buildCloudflare(out, { appRoot, entry, dist: o.dist, compiled, manifest, sourceOf: ctx.sourceOf, actionsEntry: o.actionsEntry, log: o.log }, o.cf)
+    const warnings = await buildCloudflare(
+      out,
+      { appRoot, entry, dist: o.dist, compiled, manifest, sourceOf: ctx.sourceOf, actionsEntry: o.actionsEntry, cacheModule: o.cacheModule, cacheGetTimeoutMs: o.cache?.getTimeoutMs, log: o.log },
+      o.cf,
+    )
     for (const w of warnings) o.log(w)
   }
   const entryRel = relative(o.dist, entry)

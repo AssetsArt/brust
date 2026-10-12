@@ -35,3 +35,18 @@ test('hostile paths are quoted, not interpolated', () => {
   const s = cfEntrySource({ ...base, entry: '/a"b\n/c.tsx' })
   expect(s).toContain('import * as R from "/a\\"b\\n/c.tsx"')
 })
+
+test('cache adapter: the install wrapper replaces the re-export; without cache the entry is unchanged', () => {
+  const cache = { adapter: 'custom', getTimeoutMs: 100, maxBodyBytes: 1048576, namespace: 'n', buildId: '0123456789abcdef', epochIntervalMs: 1000 }
+  const plain = cfEntrySource({ ...base, cache: null })
+  expect(plain).toBe(cfEntrySource(base))
+  const s = cfEntrySource({ ...base, config: { ...base.config, cache }, cache: { module: '/app/lib/cache.ts', options: { k: 1 } } })
+  expect(s).toContain('import CACHE from "/app/lib/cache.ts"')
+  expect(s).toContain('import { waitUntil } from "cloudflare:workers"')
+  expect(s).toContain('export const install = (rt) => installRuntime(rt, { adapter: CACHE, options: {"k":1}, config: {"adapter":"custom"')
+  expect(s).not.toContain('export { install } from')
+  expect(s).not.toContain('CACHE_BROADCAST')
+  const composed = cfEntrySource({ ...base, config: { ...base.config, cache }, cache: { module: '@brust/cache-cloudflare/kv', options: {}, broadcast: '@brust/cache-cloudflare/do', broadcastOptions: { b: 2 } } })
+  expect(composed).toContain('import CACHE_BROADCAST from "@brust/cache-cloudflare/do"')
+  expect(composed).toContain('broadcast: CACHE_BROADCAST, broadcastOptions: {"b":2}')
+})

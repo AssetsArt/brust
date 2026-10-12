@@ -19,7 +19,8 @@ const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
 export const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify('production') }
 
 const matchesExternal = (spec: string, external: string[]) =>
-  external.some((p) => (p.endsWith('/*') ? spec.startsWith(p.slice(0, -1)) : spec === p))
+  // A trailing `*` is a prefix (`elysia/*`, `node:*`, `cloudflare:*`): the generated CF entry imports `cloudflare:workers`.
+  external.some((p) => (p.endsWith('*') ? spec.startsWith(p.slice(0, -1)) : spec === p))
 
 /** Staged artifact (by its absolute and its real path) → the component SOURCE file it was
  * generated from. */

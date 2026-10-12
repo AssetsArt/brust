@@ -9,11 +9,16 @@ use brust_core::cache::local::{LocalJobs, LocalL1};
 use brust_core::host::{
     ActionCall, ActionReply, CallError, Clock, Host, JsClock, ReadErr, StaticRoot,
 };
+use brust_core::l2::{L2Counters, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta};
 use brust_core::plan::{PlanSeed, PlannedCall};
-use brust_core::protocol::{JobsRequest, JobsResponse, LoaderRequest, LoaderResponse};
+use brust_core::protocol::{
+    CacheReplyMeta, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse,
+};
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http::{HeaderMap, Response};
+use std::sync::Arc;
+use std::time::Duration;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 
@@ -33,6 +38,20 @@ pub struct WasmHost {
     clock: JsClock,
     replies: RefCell<HashMap<u64, web_sys::Response>>,
     next: Cell<u64>,
+    /// The cache adapter bridge `install` returned (cache-adapter R11, R14); `None` = no L2.
+    cache: RefCell<Option<CacheBridge>>,
+}
+
+/// The JS side of the cache adapter (`server-handlers.ts` `install` → `{ cache }`):
+/// `get(key) → Promise<{json, body}>` (`json` = a `CacheReplyMeta`), `set(key, json, body)` (defers
+/// itself with `waitUntil`), `since(seq) → Promise<string>` (an `EpochSince` JSON; pull broadcasts).
+#[derive(Clone)]
+pub struct CacheBridge {
+    pub get: js_sys::Function,
+    pub set: js_sys::Function,
+    pub since: Option<js_sys::Function>,
+    pub origin: String,
+    pub get_timeout: Duration,
 }
 
 impl WasmHost {
@@ -40,11 +59,58 @@ impl WasmHost {
     pub fn take(&self, id: ReplyId) -> Option<web_sys::Response> {
         self.replies.borrow_mut().remove(&id.0)
     }
+
+    pub fn set_cache(&self, b: CacheBridge) {
+        *self.cache.borrow_mut() = Some(b);
+    }
+
+    /// A clone of the bridge: no borrow is held across an await (a JS action may re-enter).
+    pub fn cache(&self) -> Option<CacheBridge> {
+        self.cache.borrow().clone()
+    }
+}
+
+/// One `get` answer → the lookup.
+fn lookup_of(v: wasm_bindgen::JsValue) -> L2Lookup {
+    let field = |k: &str| js_sys::Reflect::get(&v, &k.into()).ok();
+    let Some(json) = field("json").and_then(|j| j.as_string()) else {
+        return L2Lookup::Failed("cache get answered no json".into());
+    };
+    let m: CacheReplyMeta = match serde_json::from_str(&json) {
+        Ok(m) => m,
+        Err(e) => return L2Lookup::Failed(format!("cache get: {e}")),
+    };
+    if let Some(e) = m.error {
+        return L2Lookup::Failed(e);
+    }
+    if m.hit != Some(true) {
+        return L2Lookup::Miss { stamp: m.stamp };
+    }
+    let (Some(status), Some(body)) = (
+        m.status,
+        field("body").and_then(|b| b.dyn_into::<js_sys::Uint8Array>().ok()),
+    ) else {
+        return L2Lookup::Failed("cache hit without status or body".into());
+    };
+    L2Lookup::Hit {
+        page: L2Page {
+            status,
+            headers: m.headers,
+            body: Bytes::from(body.to_vec()),
+        },
+        stamp: m.stamp,
+        entry_stamp: m.entry_stamp,
+        stored_at_ms: m.stored_at,
+    }
 }
 
 impl Clock for WasmHost {
     fn now_ns(&self) -> u64 {
         self.clock.now_ns()
+    }
+
+    fn wall_ms(&self) -> u64 {
+        js_sys::Date::now() as u64
     }
 }
 
@@ -177,5 +243,53 @@ impl Host for WasmHost {
         _head: bool,
     ) -> Option<Response<Bytes>> {
         None
+    }
+
+    /// `store.get` raced against `get_timeout` (R7: fail-open; the JS promise is left to settle).
+    async fn l2_get(&self, p: &L2Probe<'_>) -> L2Lookup {
+        let Some(b) = self.cache() else {
+            return L2Lookup::Off;
+        };
+        let promise = match b
+            .get
+            .call1(&wasm_bindgen::JsValue::NULL, &p.key.0.as_str().into())
+        {
+            Ok(v) => match v.dyn_into::<js_sys::Promise>() {
+                Ok(p) => p,
+                Err(_) => return L2Lookup::Failed("cache get returned no promise".into()),
+            },
+            Err(e) => return L2Lookup::Failed(js_string(e)),
+        };
+        let get = JsFuture::from(promise);
+        let delay = worker::Delay::from(b.get_timeout);
+        futures_util::pin_mut!(get, delay);
+        match futures_util::future::select(get, delay).await {
+            futures_util::future::Either::Left((Ok(v), _)) => lookup_of(v),
+            futures_util::future::Either::Left((Err(e), _)) => L2Lookup::Failed(js_string(e)),
+            futures_util::future::Either::Right(_) => L2Lookup::Timeout,
+        }
+    }
+
+    /// `store.set` handed to JS, which defers it with `waitUntil` and counts `sets`/`set_refused`.
+    fn l2_set(&self, key: L2Key, page: L2Page, meta: L2SetMeta, counters: &Arc<L2Counters>) {
+        let Some(b) = self.cache() else { return };
+        let json = serde_json::json!({
+            "status": page.status,
+            "headers": page.headers,
+            "meta": {"ttlMs": meta.ttl_ms, "tags": meta.tags, "method": meta.method, "path": meta.path, "stamp": meta.stamp},
+        })
+        .to_string();
+        let body = js_sys::Uint8Array::from(&page.body[..]);
+        if b.set
+            .call3(
+                &wasm_bindgen::JsValue::NULL,
+                &key.0.as_str().into(),
+                &json.into(),
+                &body,
+            )
+            .is_err()
+        {
+            counters.bump("errors");
+        }
     }
 }

@@ -14,6 +14,8 @@ export interface CacheRuntime {
   defer: (p: Promise<unknown>) => void
   /** Bumps a `stats.l2` counter (napi `cacheL2Count` / wasm `rt.l2Count`). */
   count: (name: string) => void
+  /** Resolves once the adapter's `init` ran (Workers defer it to the first use). */
+  ready?: () => Promise<void>
 }
 
 let current: CacheRuntime | null = null
@@ -40,6 +42,7 @@ export function afterInvalidate(args: InvalidateArgs): void {
   if (!r || (!r.adapter.store && !r.adapter.broadcast)) return
   const { adapter, origin, count } = r
   const task = (async () => {
+    await r.ready?.()
     if (adapter.store) {
       try {
         await adapter.store.invalidate(args)
