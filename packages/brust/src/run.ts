@@ -22,7 +22,7 @@ export interface RunOptions {
 
 /** The manifest fields `run` needs (build/manifest.ts owns the full shape). */
 export interface RunManifest {
-  actions?: { entry: string; prefix: string; maxBodyBytes: number; crossSite?: 'reject' | 'allow' } | null
+  actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null
 }
 
 /** Pure: the napi `StartOptions`. No actions/cors → exactly the pre-actions keys. */
@@ -35,7 +35,7 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     callTimeoutMs: cfg.callTimeoutMs,
     workerThreads: cfg.ioThreads,
     generator: `brust/${version}`,
-    ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}) } } : {}),
+    ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}) } } : {}),
     ...(cfg.cors ? { cors: cfg.cors } : {}),
   }
 }

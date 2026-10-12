@@ -10,10 +10,10 @@ test('no actions and no cors → exactly today\'s keys', () => {
   expect(o.generator).toBe('brust/1.2.3')
 })
 
-test('actions → { prefix, maxBodyBytes } (camelCase, no entry)', () => {
-  const o = startOptions(base, '/d', { actions: { entry: 'actions.js', prefix: '/_brust/action', maxBodyBytes: 262144 } }, 'v')
-  expect(o.actions).toEqual({ prefix: '/_brust/action', maxBodyBytes: 262144 })
-  expect(Object.keys(o.actions as object)).toEqual(['prefix', 'maxBodyBytes'])
+test('actions → { prefix, maxBodyBytes, maxResponseBytes } (camelCase, no entry)', () => {
+  const o = startOptions(base, '/d', { actions: { entry: 'actions.js', prefix: '/_brust/action', maxBodyBytes: 262144, maxResponseBytes: 8388608 } }, 'v')
+  expect(o.actions).toEqual({ prefix: '/_brust/action', maxBodyBytes: 262144, maxResponseBytes: 8388608 })
+  expect(Object.keys(o.actions as object)).toEqual(['prefix', 'maxBodyBytes', 'maxResponseBytes'])
 })
 
 test('actions.crossSite is forwarded when the manifest carries it (F87)', () => {
