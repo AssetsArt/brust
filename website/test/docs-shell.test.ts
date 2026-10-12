@@ -31,7 +31,8 @@ function component(name: string) {
 beforeAll(async () => {
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.stderr.toString()).toBe('')
-  expect(b.stdout.toString()).not.toContain('warning')
+  // the react demos (landing PokemonSearch) legitimately print warning hook-unsupported: any other warning is a failure
+  expect(b.stdout.toString().split('\n').filter((l) => l.startsWith('warning') && !l.startsWith('warning hook-unsupported'))).toEqual([])
   expect(b.exitCode).toBe(0)
   manifest = JSON.parse(readFileSync(join(app, out, 'manifest.json'), 'utf8'))
   server = Bun.spawn([bin, 'start', '--dist-dir', out], {

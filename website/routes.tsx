@@ -3,7 +3,7 @@ import { defineRoutes } from '@brust/core/routes'
 import DocsLayout, { docsLayoutLoader } from './components/docs/DocsLayout'
 import Layout, { layoutLoader } from './components/Layout'
 import { DOCS_HOME, PAGES } from './lib/nav'
-import HomePage from './pages/HomePage'
+import HomePage, { homeLoader } from './pages/HomePage'
 import NotFoundPage from './pages/NotFoundPage'
 // brust build maps each route Component to its file through the DEFAULT imports of this file, so every docs page
 // is imported here even though the routes come from lib/nav.ts (a page missing here fails with component-source).
@@ -41,7 +41,7 @@ export const routes = defineRoutes([
     Component: Layout,
     loader: layoutLoader,
     children: [
-      { path: '/', Component: HomePage },
+      { path: '/', Component: HomePage, loader: homeLoader },
       // Docs: /docs is the docs home; every nav entry is /docs/{slug} (lib/nav.ts) inside the docs shell.
       {
         Component: DocsLayout,
