@@ -1,0 +1,7 @@
+// Harness Worker for the D1 contract suite (tests/cf/team-db-d1.test.ts): wrangler bundles harness.ts itself, no brust wasm.
+{
+  "name": "pokedex-d1-harness",
+  "main": "harness.ts",
+  "compatibility_date": "2026-10-01",
+  "d1_databases": [{ "binding": "TEAM_DB", "database_name": "pokedex-team-test", "migrations_dir": "../../../examples/pokedex/migrations" }]
+}
