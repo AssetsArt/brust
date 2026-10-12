@@ -1,27 +1,61 @@
-// The document root for every docs page: <html>, the site header, and <Outlet/> for the page.
+// The document root for every site page: <html>, fonts and CSS, the site header, <Outlet/> for the page, the footer.
+// layoutLoader supplies the @brust/core version and a default title; a page loader's `title` wins (child keys win).
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { Outlet } from '@brust/core/routes'
+import SiteFooter from './SiteFooter'
+import SiteHeader from './SiteHeader'
 
-export default function Layout() {
+// Fonts: Chakra Petch (display), Zen Old Mincho (text), Azeret Mono (code, labels), one stylesheet each.
+
+let version: string | undefined
+function coreVersion(): string {
+  if (version === undefined) {
+    // @brust/core does not export its package.json; walk up from its resolved entry.
+    let dir = dirname(Bun.resolveSync('@brust/core', import.meta.dir))
+    while (version === undefined) {
+      try {
+        const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+        if (pkg.name === '@brust/core') version = String(pkg.version)
+      } catch {}
+      const up = dirname(dir)
+      if (up === dir) version = ''
+      dir = up
+    }
+  }
+  return version
+}
+
+export interface LayoutData {
+  title: string
+  version: string
+}
+
+export async function layoutLoader(): Promise<LayoutData> {
+  return { title: 'brust', version: coreVersion() }
+}
+
+export default function Layout({ title, version }: LayoutData) {
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>brust docs</title>
+        <title>{title}</title>
         <link rel="icon" href="/public/favicon.svg" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&display=swap" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@400;500;600;700&display=swap" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600;700&display=swap" />
         <link rel="stylesheet" href="/public/app.css" />
       </head>
       <body>
-        <header className="site-header">
-          <a href="/" className="brand">brust</a>
-          <nav aria-label="Site">
-            <a href="/docs">Docs</a>
-            <a href="https://github.com/AssetsArt/brust">GitHub</a>
-          </nav>
-        </header>
+        <SiteHeader version={version} />
         <main>
           <Outlet />
         </main>
+        <SiteFooter />
       </body>
     </html>
   )

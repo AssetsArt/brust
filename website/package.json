@@ -13,7 +13,8 @@
   "dependencies": {
     "@brust/core": "workspace:*",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "shiki": "^4.5.0"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",

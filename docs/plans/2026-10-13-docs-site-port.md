@@ -24,22 +24,22 @@ The site is its own proof: each demo is a real brust component, and `website/tes
 8. **Dependencies.** `@brust/core: workspace:*`, React 19. No new runtime dependency without a lead ruling (the react-tier demo uses an in-repo custom hook, not a library). **Ruled in:** `shiki` as a `website/` dependency only (challenge dd484eca on site-foundation, Dew).
 9. **Gates for every READY** (paste counts, not logs): `cd website && bun run typecheck && bun test` 0 fail; `bun run build` exit 0 with empty stderr; `brust start` then every route the lane touched returns 200 (unknown route 404); screenshots of every touched page in light + dark at 1440px and 400px via Playwright from `tests/server/` (it has `playwright`; launch with `--use-angle=swiftshader` if WebGL ever matters) saved under the lane scratchpad and listed in READY; detector 0 findings.
 
-## Interaction → tier table (hypothesis; Task A1.1 verifies and amends this table in this file)
+## Interaction → tier table (VERIFIED by Task A1.1, 2026-10-13: `brust build` manifest tiers + Chromium runtime check, 0 page errors)
 
-| Widget (canon) | Planned tier | How |
+| Widget (canon) | Observed tier | How (what the spike proved) |
 |---|---|---|
-| Code block Copy button | native | `useState` label + `onClick` → `navigator.clipboard.writeText` (fallback: select text) |
-| Tabs (tiers section) | native | `useState` selected tab; panels toggled by `hidden` |
-| tmux session intro | static | CSS-only keyframes (typing via `steps()`, reveals), plays once on load |
-| Poster `$ brust build` | native | `useState` lit/status + timers inside the handler |
-| Benchmark count-up + histogram grow | native | `useEffect` + `IntersectionObserver`; final values render first |
-| Step rail fill | native | `useEffect` scroll listener → CSS var |
-| Docs "On this page" scrollspy | native | `useEffect` + scroll, active state |
-| `CatchCard` demo | native | two `useState`, ternary `src`, controlled checkbox |
-| `PokemonSearch` demo | react | in-repo custom hook `useDebounced` (custom hook → react, coverage row c-custom-hook) |
+| Code block Copy button | native | `useState` label + `onClick` → `navigator.clipboard.writeText(text).then(ok, fail)`; `setTimeout` reset inside the handler stays native; clipboard holds the text |
+| Tabs (tiers section) | native | `useState` selected tab; panels toggled by `hidden`, `aria-selected` on the tabs |
+| tmux session intro | static | markup only; motion is CSS keyframes (no JS) |
+| Poster `$ brust build` | native | two `useState` + two `setTimeout` inside `onClick`; lit → done → unlit observed |
+| Benchmark count-up + histogram grow | native | `useRef` + `useEffect` + `IntersectionObserver` + `setInterval`; the final value is in the SSR HTML first |
+| Step rail fill | native | `useEffect` scroll listener → `document.documentElement.style.setProperty('--rail', …)` |
+| Docs "On this page" scrollspy | native | `useEffect` + scroll listener + `useState` active id → `aria-current` |
+| `CatchCard` demo | native | two `useState`, ternary `src` (normal/shiny), controlled checkbox, toggle button |
+| `PokemonSearch` demo | react | in-repo `useDebounced` → `warning hook-unsupported`, ssr job + react island; debounce observed (filter lands after the delay) |
 | `PokemonCard` demo | static | props only |
+| `CodeBlock` (syntax colors) | static | Spike: `dangerouslySetInnerHTML` is a build error today (`no-innerhtml`). RULING (lead, 2026-10-13): lane inner-html (v2) adds it; CodeBlock = server-highlighted HTML in `<code dangerouslySetInnerHTML>`; until v2 merges into docs-site, CodeBlock shows plain escaped text behind the same props. Spike caveat: a child that highlights its own literal `code` prop gets a precompute job and fails the build (`instance-prop-path`), so highlighted HTML has to arrive as a props path from a loader (challenge filed). |
 
-Any widget whose observed tier differs: amend the table, and if the docs text claims a tier, the text follows the compiler (never the reverse).
 
 ## Task table (Coordinator dispatches; deps must be `merged` first)
 

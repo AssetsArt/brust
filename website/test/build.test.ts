@@ -1,20 +1,54 @@
-// website/test/build.test.ts — the docs site builds, has exactly its three routes, and ships no client JavaScript yet.
-import { expect, test } from 'bun:test'
-import { rmSync } from 'node:fs'
+// website/test/build.test.ts — the site builds clean, and every foundation component compiles to the tier the plan's
+// tier table claims (docs/plans/2026-10-13-docs-site-port.md, verified by the A1.1 spike).
+import { afterAll, expect, test } from 'bun:test'
+import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 const app = join(import.meta.dir, '..')
 const bin = join(app, '../packages/brust/bin/brust')
+const outs: string[] = []
 
-test('brust build: routes /, /docs, * — every component static, no client chunks', async () => {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', 'dist-test'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+interface Manifest {
+  routes: { pattern: string }[]
+  components: Record<string, { tier: string; client: string | null; jobs: { kind: string }[] }>
+}
+
+function build(entry: string, out: string): Manifest {
+  outs.push(join(app, out))
+  const b = Bun.spawnSync([bin, 'build', entry, '--out-dir', out], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.stderr.toString()).toBe('')
   expect(b.exitCode).toBe(0)
-  const m = await Bun.file(join(app, 'dist-test/manifest.json')).json()
-  expect(m.routes.map((r: { pattern: string }) => r.pattern)).toEqual(['/', '/docs', '*'])
-  for (const [id, c] of Object.entries(m.components as Record<string, { tier: string; client: string | null }>)) {
-    expect([id, c.tier]).toEqual([id, 'static'])
-    expect([id, c.client]).toEqual([id, null])
+  return JSON.parse(readFileSync(join(app, out, 'manifest.json'), 'utf8'))
+}
+
+/** Component record by source name (`codeBlock_<hash>` → `CodeBlock`). */
+function component(m: Manifest, name: string) {
+  const prefix = `${name[0]!.toLowerCase()}${name.slice(1)}_`
+  const hits = Object.entries(m.components).filter(([id]) => id.startsWith(prefix))
+  expect([name, hits.length]).toEqual([name, 1])
+  return hits[0]![1]
+}
+
+afterAll(() => {
+  for (const o of outs) rmSync(o, { recursive: true, force: true })
+})
+
+test('brust build routes.tsx: routes /, /docs, *; the layout chrome is static with no jobs', () => {
+  const m = build('routes.tsx', 'dist-test')
+  expect(m.routes.map((r) => r.pattern)).toEqual(['/', '/docs', '*'])
+  for (const name of ['Layout', 'SiteHeader', 'SiteFooter', 'NotFoundPage']) {
+    const c = component(m, name)
+    expect([name, c.tier, c.jobs.length, c.client]).toEqual([name, 'static', 0, null])
   }
-  rmSync(join(app, 'dist-test'), { recursive: true, force: true })
+}, 120_000)
+
+test('tier table: CodeBlock static (0 jobs), CopyButton native, Button static', () => {
+  const m = build('test/fixtures/routes.tsx', 'dist-test-fx')
+  expect(m.routes.map((r) => r.pattern)).toEqual(['/foundation', '*'])
+  const tiers: Record<string, [string, number]> = { CodeBlock: ['static', 0], CopyButton: ['native', 0], Button: ['static', 0], Layout: ['static', 0] }
+  for (const [name, [tier, jobs]] of Object.entries(tiers)) {
+    const c = component(m, name)
+    expect([name, c.tier, c.jobs.length]).toEqual([name, tier, jobs])
+  }
+  expect(component(m, 'CopyButton').client).toMatch(/^client\/copyButton_/)
 }, 120_000)
