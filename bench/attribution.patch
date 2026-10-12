@@ -23,10 +23,29 @@ index bd95ffc..303bd7d 100644
  tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "time", "fs"] }
  tokio-stream = "0.1"
 diff --git a/crates/brust-server/src/dispatch.rs b/crates/brust-server/src/dispatch.rs
-index 8d06e0d..e772a1d 100644
+index 8d06e0d..626c58d 100644
 --- a/crates/brust-server/src/dispatch.rs
 +++ b/crates/brust-server/src/dispatch.rs
-@@ -291,18 +291,27 @@ async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
+@@ -225,10 +225,15 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
+     call_worker_decoded(pool, timeout, call_timeout, kind, req, seed, |bytes| {
+         // M3-P P7: validate UTF-8 once and parse from `str` (serde_json's `from_slice` re-checks
+         // every string it reads; ~8% of the D parse).
+-        std::str::from_utf8(bytes)
+-            .map_err(|e| CallError::BadResponse(format!("response not UTF-8: {e}")))
++        let t_u = std::time::Instant::now();
++        let r = std::str::from_utf8(bytes);
++        crate::perf::rec(crate::perf::READ_UTF8, t_u);
++        r.map_err(|e| CallError::BadResponse(format!("response not UTF-8: {e}")))
+             .and_then(|s| {
+-                serde_json::from_str::<Resp>(s).map_err(|e| CallError::BadResponse(e.to_string()))
++                let t_s = std::time::Instant::now();
++                let v = serde_json::from_str::<Resp>(s).map_err(|e| CallError::BadResponse(e.to_string()));
++                crate::perf::rec(crate::perf::READ_SERDE, t_s);
++                v
+             })
+     })
+     .await
+@@ -291,18 +296,27 @@ async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
  where
      D: FnOnce(&[u8]) -> Result<R, CallError> + Send + 'static,
  {
@@ -50,15 +69,15 @@ index 8d06e0d..e772a1d 100644
          let entry = Arc::clone(claim.entry());
          let slot = claim.slot();
 +        let t_disp = std::time::Instant::now();
-+        let call_epoch = perf::epoch_ms();
++        let call_epoch = perf::mono_ns();
          let len = match entry.dispatch.call(kind, json, slot).await {
              Ok(n) => n,
              Err(DispatchError::EnqueueFailed(m)) => {
-@@ -312,17 +321,46 @@ where
+@@ -312,17 +326,46 @@ where
              }
              Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
          };
-+        let back_epoch = perf::epoch_ms();
++        let back_epoch = perf::mono_ns();
 +        perf::rec(perf::CW_DISPATCH + o, t_disp);
          let (ptr, cap) = entry.dispatch.buf_slot(slot);
          if len == 0 || len as usize > cap {
@@ -75,7 +94,7 @@ index 8d06e0d..e772a1d 100644
 +            unsafe { std::ptr::copy_nonoverlapping(ptr.add(cap - 80) as *const f64, f.as_mut_ptr(), 10) };
 +            if f[0] == 7.5 {
 +                let us = |ms: f64| (ms.max(0.0) * 1e6) as u64;
-+                perf::add(perf::CW_RUST_TO_JS + o, us(f[1] - call_epoch));
++                perf::add(perf::CW_RUST_TO_JS + o, (f[1] - call_epoch).max(0.0) as u64);
 +                perf::add(perf::CW_JS_PARSE + o, us(f[2]));
 +                perf::add(perf::CW_JS_HANDLER + o, us(f[3]));
 +                // Counted only when the call planned / ran missed jobs (D keeps its tree).
@@ -88,7 +107,7 @@ index 8d06e0d..e772a1d 100644
 +                perf::add(perf::CW_JS_STRINGIFY + o, us(f[6]));
 +                perf::add(perf::CW_JS_WRITE + o, us(f[7]));
 +                perf::add(perf::CW_JS_TOTAL + o, us(f[8]));
-+                perf::add(perf::CW_JS_TO_RUST + o, us(back_epoch - f[9]));
++                perf::add(perf::CW_JS_TO_RUST + o, (back_epoch - f[9]).max(0.0) as u64);
 +            }
 +        }
          // SAFETY: the worker's Promise resolved (happens-before through the dispatch
@@ -101,7 +120,7 @@ index 8d06e0d..e772a1d 100644
          let plan = claim.take_plan();
          drop(claim);
          parsed.map(|r| (r, plan))
-@@ -347,7 +385,7 @@ where
+@@ -347,7 +390,7 @@ where
      })
      .await;
      drop(fut);
@@ -110,7 +129,7 @@ index 8d06e0d..e772a1d 100644
          Ok(Ok(result)) => result,
          Ok(Err(payload)) => Err(CallError::BadResponse(format!(
              "worker call panicked: {}",
-@@ -358,7 +396,9 @@ where
+@@ -358,7 +401,9 @@ where
          // in `pool.rs`); its late result is dropped, so nothing from this call
          // reaches a cache.
          Err(Elapsed) => Err(CallError::Deadline),
@@ -135,10 +154,10 @@ index 98dad01..5112e1f 100644
  pub mod render;
 diff --git a/crates/brust-server/src/perf.rs b/crates/brust-server/src/perf.rs
 new file mode 100644
-index 0000000..d14d78b
+index 0000000..b5a5421
 --- /dev/null
 +++ b/crates/brust-server/src/perf.rs
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,111 @@
 +//! TEMPORARY per-stage attribution (m2p ruling 7d164bb6) — local patch, never commit.
 +//! Per-thread accumulators (no cross-thread contention), summed by `/_brust/perf`.
 +use std::sync::Arc;
@@ -163,6 +182,8 @@ index 0000000..d14d78b
 +    RENDER_CHAIN = 42, CPU_SVC = 43,
 +    // planned loader call (M3-P P6): plan_in_call on the worker thread, inside CW_DISPATCH
 +    PLAN_IN_CALL = 44, PIC_COLLECT = 45, PIC_LOOKUP = 46,
++    // F83: loader-response decode split (all kinds share these): UTF-8 validation of the SAB bytes vs serde_json::from_str
++    READ_UTF8 = 47, READ_SERDE = 48,
 +    // call_worker, per kind: + 0 (loader) / + 20 (jobs)
 +    CW_TOTAL = 60, CW_CLAIM = 61, CW_SER = 62, CW_SPAWN_SCHED = 63, CW_ENQUEUE = 64,
 +    CW_PROMISE = 65, CW_READ_PARSE = 66, CW_JOIN = 67, CW_RUST_TO_JS = 68, CW_JS_PARSE = 69,
@@ -216,6 +237,13 @@ index 0000000..d14d78b
 +    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
 +    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
 +    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
++}
++
++/// Monotonic ns on CLOCK_UPTIME_RAW (macOS). The worker reads the SAME clock through bun:ffi, so the two
++/// bridge legs can be timed across threads (Bun's performance.timeOrigin vs Rust's SystemTime disagree by ~0.5 ms).
++pub fn mono_ns() -> f64 {
++    unsafe extern "C" { fn clock_gettime_nsec_np(clock_id: u32) -> u64; }
++    unsafe { clock_gettime_nsec_np(8) as f64 }
 +}
 +
 +pub fn epoch_ms() -> f64 {
@@ -571,22 +599,32 @@ index 0b9afde..9b75ca4 100644
                          }
                      });
 diff --git a/packages/brust/src/worker.ts b/packages/brust/src/worker.ts
-index 2244ecc..87669e7 100644
+index a418cdc..6cbaad3 100644
 --- a/packages/brust/src/worker.ts
 +++ b/packages/brust/src/worker.ts
-@@ -264,28 +264,69 @@ export function makeHandlers(opts: {
+@@ -1,6 +1,7 @@
+ // The Bun side of contract 7 (`crates/brust-server/src/protocol.rs`): requests arrive as inline
+ // JSON, responses go into this worker's SharedArrayBuffer slot (SAB rule, `dispatch.rs`). A
+ // handler NEVER rejects across the tsfn: every failure becomes `{error}` / `{id, error}`.
++import { dlopen } from 'bun:ffi'
+ import { join, resolve } from 'node:path'
+ import { workerData } from 'node:worker_threads'
+ import { runFetch, setActionsApp } from './actions-bridge'
+@@ -266,28 +267,71 @@ export function makeHandlers(opts: {
   * chain answered `ok` is planned in the same call (`plan`, the napi `planJobs` by default — the
   * addon is touched only then). */
  export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan: PlanJobs = planJobs) {
 +  // PERF (temporary, m2p 7d164bb6): 10 f64 at the end of the slot — magic, entry epoch ms, parse,
 +  // handler (loaders only), plan (writeSlot #1 + planJobs), jobs (h.jobs on misses), stringify,
 +  // write, total (ms), exit epoch ms.
-+  const T0 = performance.timeOrigin
++  const mono = dlopen('/usr/lib/libSystem.B.dylib', { clock_gettime_nsec_np: { args: ['u32'], returns: 'u64' } }).symbols.clock_gettime_nsec_np
++  const monoNs = (): number => Number(mono(8))
 +  const sub = Math.floor(view.byteLength / Math.max(1, slots))
 +  const tail = new Float64Array(view.buffer, view.byteOffset, view.byteLength / 8)
    return async (kind: string, requestJson: string, slot: number): Promise<number> => {
      if (kind === 'fetch') return runFetch(requestJson, view, slot, slots)
 +    const a = performance.now()
++    const aM = monoNs()
 +    let b = a
 +    let c = a
 +    let pl = 0
@@ -595,7 +633,7 @@ index 2244ecc..87669e7 100644
 +      const at = (slot * sub + sub - 80) / 8
 +      const z = performance.now()
 +      tail[at] = 7.5
-+      tail[at + 1] = T0 + a
++      tail[at + 1] = aM
 +      tail[at + 2] = b - a
 +      tail[at + 3] = c - b
 +      tail[at + 4] = pl
@@ -603,7 +641,7 @@ index 2244ecc..87669e7 100644
 +      tail[at + 6] = st
 +      tail[at + 7] = wr
 +      tail[at + 8] = z - a
-+      tail[at + 9] = T0 + performance.now()
++      tail[at + 9] = monoNs()
 +      return n
 +    }
      let out: unknown

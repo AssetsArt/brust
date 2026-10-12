@@ -123,9 +123,10 @@ tsfn dispatch already batches: one loop tick runs all queued calls, no per-tick 
 
 ## 6. Estimate, risks, recommendation
 
-### 6.1 Attainable gain against ATTRIBUTION [I] (all inputs from "After P7", not re-measured)
-- I (c=1): 70.2 µs total, bridge 14.6 µs. Removing the entire bridge → ≈55.6 µs → **≤ +26% rps at c=1**. A direct in-thread call plus building a request object costs something (≥1–3 µs [I]), so realistic ≈ +18–22%.
-- D (c=1): 516.5 µs, loader-response parse 81 µs + bridge 14.6 µs = 95.6 µs = 18.5% → **≤ +22% at c=1**, realistic well below because part of the parse becomes JSC `get`s (§3.3).
+### 6.1 Attainable gain against ATTRIBUTION (updated 2026-10-12 with the F83 measured split)
+Inputs are now measured (`bench/ATTRIBUTION.md` "F83 split (2026-10-12)", medians of 3, c=1, `beta1` @ffe84ad). The bridge is **wake only**: D 15.1 µs (out 8.5 + back 6.8), I 14.2 µs (out 8.8 + back 5.4). The JSON envelope is outside the bridge.
+- I (e2e 67.3 µs): wake 14.2 µs = 21%, whole JSON envelope 3.5 µs = 5%. Removing the hop → **≤ +26% rps at c=1** (unchanged); building a request object and calling in-thread costs ≥1–3 µs [I], so realistic ≈ +18–22%.
+- D (e2e 485 µs): wake 15.3 µs = 3.2%. The big share is the response JSON round trip: `JSON.stringify` 23.0 + serde parse 76.1 (read/`from_utf8` 1.0) = ~101 µs = 20.9%. That is payload encoding, **addressable without an in-process bridge** (lazy/tape `Node`, binary encoding; ATTRIBUTION E3). An in-process bridge alone gains ≤ +3% on D; it reaches ~+32% only if it also removes the JSON round trip at no field-read cost, which §3.3 says is unproven.
 - c=120 throughput: today HTTP I/O (S ≈ 22.7 µs CPU/req) lives on hyper threads, JS handler ≈ 5.9 µs/req (I). Same-thread merges them onto one isolate thread: ≈ 28.6 µs/req ⇒ **≈ 35k rps per isolate** versus 105k today, so Shape A needs ≥3 isolates (Workers, `SO_REUSEPORT`) just to break even, with each isolate's memory/startup cost. [I derived from ATTRIBUTION rows; ignoring render which already runs off the JS thread in some probes]. Net high-concurrency gain is likely small or negative; the benefit concentrates in low-concurrency latency.
 
 ### 6.2 Risks
@@ -144,10 +145,10 @@ Do not start Shape A. Trigger table (any one flips it to a spike, two to GO-plan
 | Bun publishes an embedding/extension crate or a stable export list for the host layer (a `Bun__*`/JSC API in `linker.lds`'s `global:`) | `src/linker.lds`, `scripts/build/flags.ts` export list; release notes |
 | posix addons get an event-loop hook (`uv_poll_init`/`uv_async_init` implemented, or `napi_get_uv_event_loop` returns a pollable handle) | `src/jsc/bindings/uv-posix-stubs.c` loses `__bun_throw_not_implemented` for those |
 | ≥ 2 further Rust-era Bun releases with `src/jsc` public signatures unchanged | `git diff <tag>..<tag> -- src/jsc/*.rs` |
-| a throwaway measurement shows the JSON/parse share (not the wake share) is ≥ 15% of D at realistic payloads | spike §5.3/§5.4, separate task, host-lock rules apply |
+| a throwaway measurement shows the JSON/parse share (not the wake share) is ≥ 15% of D at realistic payloads | **MET 2026-10-12 (F83): 20.9% of D e2e** — but it is payload encoding, so the action is a current-shape lever (lazy/tape `Node`, E3), not an in-process bridge; it does not by itself flip the verdict |
 
 ### 6.4 Suggested follow-ups (not started, need lead call)
-1. **S1 (measure only, in the current shape):** split the 14.6 µs bridge into wake vs JSON, and the 81 µs parse into read vs parse. This is the cheapest way to learn what an in-process bridge could possibly win. Needs the bench host-lock; excluded from this memo by brief.
+1. ~~**S1 (measure only)**~~ **DONE 2026-10-12 (F83):** bridge = wake 8.5 + 6.8 µs (D) / 8.8 + 5.4 µs (I); loader-response = read 1.0 + parse 76.1 µs (D). See §6.1 and `bench/ATTRIBUTION.md` "F83 split". Consequence for the trigger table: the D JSON share (20.9%) is real but fixable in the current shape; the in-process-specific prize is the ~14 µs wake (21% of I, 3% of D).
 2. ~~**S2 (5.3 feasibility)**~~ **DONE 2026-10-12 (F84): NO-GO.** Bun's loop cannot watch a kqueue/epoll fd (§5.3); only the posix event-loop-hook trigger in §6.3 reopens it.
 3. Re-run this memo's §1.2 and §4.2 greps on each Bun bump; they are the cheapest early-warning for the trigger table.
 
