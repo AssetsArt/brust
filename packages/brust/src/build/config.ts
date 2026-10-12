@@ -77,6 +77,33 @@ function rangeInt(file: string, key: string, v: unknown, lo: number, hi: number,
   return v
 }
 
+/** `[cache.redis]`'s keys and ranges (cache-redis R10); `@brust/cache-redis` validates the same list at worker boot. */
+const REDIS_INT_KEYS: ReadonlyArray<readonly [string, number, number]> = [
+  ['connect_timeout_ms', 100, 60_000],
+  ['max_body_bytes', 1, MAX_L2_BODY_BYTES],
+  ['marker_ttl_ms', 60_000, 604_800_000],
+  ['unlink_batch', 1, 10_000],
+  ['reconnect_min_ms', 10, 60_000],
+  ['reconnect_max_ms', 10, 600_000],
+]
+const REDIS_TLS_KEYS: Record<string, string> = { reject_unauthorized: 'boolean', server_name: 'string', ca_file: 'string' }
+
+function checkRedisTable(file: string, r: Record<string, unknown>): void {
+  const known = new Set(['url', 'tls', ...REDIS_INT_KEYS.map(([k]) => k)])
+  for (const k of Object.keys(r)) if (!known.has(k)) throw new BuildError('cache', `${file}: cache.redis.${k} is not a known key`)
+  for (const [k, lo, hi] of REDIS_INT_KEYS) rangeInt(file, `redis.${k}`, r[k], lo, hi, lo)
+  if (typeof r.reconnect_min_ms === 'number' && typeof r.reconnect_max_ms === 'number' && r.reconnect_max_ms < r.reconnect_min_ms)
+    throw new BuildError('cache', `${file}: cache.redis.reconnect_max_ms must be >= cache.redis.reconnect_min_ms`)
+  const tls = r.tls
+  if (tls === undefined || typeof tls === 'boolean') return
+  if (!isTable(tls)) throw new BuildError('cache', `${file}: cache.redis.tls must be a boolean or a table`)
+  for (const [k, v] of Object.entries(tls)) {
+    const want = REDIS_TLS_KEYS[k]
+    if (!want) throw new BuildError('cache', `${file}: cache.redis.tls.${k} is not a known key`)
+    if (typeof v !== want || v === '') throw new BuildError('cache', `${file}: cache.redis.tls.${k} must be a ${want === 'string' ? 'non-empty string' : want}`)
+  }
+}
+
 /** The option table a built-in reads. */
 function builtinOptions(name: string, t: Record<string, unknown>): Record<string, unknown> {
   const key = name === 'redis' || name === 'dragonfly' ? 'redis' : 'cloudflare'
@@ -120,6 +147,7 @@ async function parseCache(file: string, appRoot: string, raw: unknown): Promise<
   const redis = t.redis as Record<string, unknown> | undefined
   if (redis?.url !== undefined && (typeof redis.url !== 'string' || !/^env:[A-Za-z_][A-Za-z0-9_]*$/.test(redis.url)))
     throw new BuildError('cache', `${file}: cache.redis.url must be "env:NAME" (a literal URL is refused: it may hold a password)`)
+  if (redis) checkRedisTable(file, redis)
   for (const n of [name, broadcast]) {
     if (n === undefined || n === 'custom') continue
     try {

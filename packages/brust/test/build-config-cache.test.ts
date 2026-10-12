@@ -1,6 +1,6 @@
 // `[cache]` in brust.toml (cache adapters, spec §6, R4, R8): parsed and validated at build.
 import { afterEach, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadBuildConfig } from '../src/build/config'
@@ -82,4 +82,51 @@ test('a built-in that is not installed gives the install hint', async () => {
   expect((await err('[cache]\nadapter = "redis"\n[cache.redis]\nurl = "env:REDIS_URL"\n')).message).toContain('adapter "redis" needs @brust/cache-redis (bun add @brust/cache-redis)')
   expect((await err('[cache]\nadapter = "custom"\nmodule = "c.ts"\nbroadcast = "cloudflare-do"\n')).message).toContain('@brust/cache-cloudflare')
   expect((await err('[cache]\nadapter = "custom"\nmodule = "c.ts"\nbroadcast = "custom"\n')).message).toContain('cache.broadcast must name a built-in')
+})
+
+// cache-redis R10: the `[cache.redis]` key list is checked at build, the same list the adapter checks at boot.
+const REDIS = '[cache]\nadapter = "custom"\nmodule = "c.ts"\n[cache.redis]\nurl = "env:R"\n'
+
+test('an unknown [cache.redis] key names it', async () => {
+  expect((await err(`${REDIS}urll = "env:X"\n`)).message).toContain('cache.redis.urll is not a known key')
+})
+
+test('[cache.redis] range errors name the key', async () => {
+  for (const [k, vs, range] of [
+    ['connect_timeout_ms', [0, 60001], '100..60000'],
+    ['max_body_bytes', [0, 67108865], '1..67108864'],
+    ['marker_ttl_ms', [59999, 604800001], '60000..604800000'],
+    ['unlink_batch', [0, 10001], '1..10000'],
+    ['reconnect_min_ms', [9, 60001], '10..60000'],
+  ] as const)
+    for (const v of vs) expect((await err(`${REDIS}${k} = ${v}\n`)).message).toContain(`cache.redis.${k} must be an integer in ${range}`)
+  expect((await err(`${REDIS}reconnect_min_ms = 500\nreconnect_max_ms = 100\n`)).message).toContain('reconnect_max_ms must be >= cache.redis.reconnect_min_ms')
+})
+
+test('[cache.redis] tls forms', async () => {
+  expect((await err(`${REDIS}tls = "yes"\n`)).message).toContain('cache.redis.tls must be a boolean or a table')
+  expect((await err(`${REDIS}tls = { cert = "x" }\n`)).message).toContain('cache.redis.tls.cert is not a known key')
+  expect((await err(`${REDIS}tls = { ca_file = 1 }\n`)).message).toContain('cache.redis.tls.ca_file must be a non-empty string')
+})
+
+test('every [cache.redis] key valid → passes and reaches manifest.cache.options unchanged', async () => {
+  const app = tmpApp(
+    '[cache]\nadapter = "redis"\n[cache.redis]\nurl = "env:R"\ntls = { reject_unauthorized = false, server_name = "x", ca_file = "ca.pem" }\nconnect_timeout_ms = 100\nmax_body_bytes = 1\nmarker_ttl_ms = 60000\nunlink_batch = 10000\nreconnect_min_ms = 10\nreconnect_max_ms = 600000\n',
+  )
+  // The built-in must resolve from the app root: a stub package stands in for @brust/cache-redis.
+  const pkg = join(app, 'node_modules/@brust/cache-redis')
+  mkdirSync(pkg, { recursive: true })
+  writeFileSync(join(pkg, 'package.json'), '{"name":"@brust/cache-redis","version":"0.0.0","main":"index.js"}')
+  writeFileSync(join(pkg, 'index.js'), 'module.exports = {}')
+  const c = (await loadBuildConfig(app)).cache!
+  expect(c.options).toEqual({
+    url: 'env:R',
+    tls: { reject_unauthorized: false, server_name: 'x', ca_file: 'ca.pem' },
+    connect_timeout_ms: 100,
+    max_body_bytes: 1,
+    marker_ttl_ms: 60000,
+    unlink_batch: 10000,
+    reconnect_min_ms: 10,
+    reconnect_max_ms: 600000,
+  })
 })
