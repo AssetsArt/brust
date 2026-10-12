@@ -76,7 +76,7 @@ struct Walker<'s, 'c> {
     ssr_outputs: HashMap<String, u32>,
     /// `RowOnly` links by id with the client reads they imply, resolved after the walk.
     /// With the child's name and location when it derives values from its props on the server (F96d).
-    row_only: HashMap<u32, (Vec<super::ClientUse>, Option<(String, u32)>)>,
+    row_only: HashMap<u32, RowOnlyLink>,
     /// Whether this component's own props can change after first paint (see `children`).
     props_reactive: bool,
 }
@@ -94,6 +94,9 @@ struct Child {
     /// link that changes those props later would leave its slots stale (F96d).
     prop_precompute: bool,
 }
+
+/// Client reads a `RowOnly` link implies, and the child's (name, loc) when it precomputes over props.
+type RowOnlyLink = (Vec<super::ClientUse>, Option<(String, u32)>);
 
 fn linked_prop_precompute(name: &str, loc: u32) -> Diagnostic {
     Diagnostic::fallback(
