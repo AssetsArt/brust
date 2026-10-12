@@ -2,6 +2,10 @@ import { parseValue, resolve, resolveMember, type ParsedValue, type Scope } from
 import { warnOnce } from '../warn'
 import type { Instance } from '../instance'
 
+/** Markup inside a `dangerouslySetInnerHTML` element (`x-html` / `x-raw`, compiler-emitted) is inert: nothing under it is bound, mounted or hydrated. */
+export const RAW_SEL = '[x-html],[x-raw]'
+export const insideRaw = (el: Element): boolean => !!el.parentElement?.closest(RAW_SEL)
+
 export function parsed(inst: Instance, attr: string, raw: string): ParsedValue | null {
   const p = parseValue(raw)
   if (!p) warnOnce(`p:${inst.name}:${attr}:${raw}`, `${attr}="${raw}" in ${inst.name}: not a member path`)

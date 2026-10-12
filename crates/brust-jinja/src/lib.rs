@@ -584,7 +584,7 @@ pub fn is_url_attr(html_name: &str) -> bool {
 /// `srcdoc` (the runtime refuses to bind them too).
 pub fn is_refused_attr(html_name: &str) -> bool {
     let n = html_name.to_ascii_lowercase();
-    n.starts_with("on") || n == "srcdoc" || n == "x-html"
+    n.starts_with("on") || n == "srcdoc" || n == "x-html" || n == "x-raw"
 }
 
 /// The runtime's URL rule: the scheme of `new URL(v, base)` is http(s),

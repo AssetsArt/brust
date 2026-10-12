@@ -149,3 +149,26 @@ test('a literal x-html in user markup only binds a compiler member: no member, n
     expect(document.getElementById('p')!.innerHTML).toBe('safe')
   } finally { console.warn = orig }
 })
+
+test('markup inside an x-html / x-raw element is inert: no binding, no mounting (P1, P2)', () => {
+  const ran: string[] = []
+  defineBehavior('outer', () => ({ h: signal('<button id="b" x-on-click="hit">go</button>'), hit: () => ran.push('host') }))
+  defineBehavior('victim', () => { ran.push('victim'); return {} })
+  document.body.innerHTML = `<div x-data="outer"><p id="r" x-html="h"><button id="b" x-on-click="hit">go</button></p><p id="q" x-raw><i x-data="victim" id="v"></i><span x-text="h">t</span></p></div>`
+  mount()
+  ;(document.getElementById('b') as HTMLButtonElement).click()
+  expect(ran).toEqual([])                                  // x-on-click inside x-html not bound, x-data inside x-raw not mounted
+  expect(document.getElementById('q')!.querySelector('span')!.textContent).toBe('t')
+})
+
+test('x-html update that writes x-data markup does not mount it', async () => {
+  const ran: string[] = []
+  const h = signal('a')
+  defineBehavior('outer2', () => ({ h }))
+  defineBehavior('victim2', () => { ran.push('victim'); return {} })
+  document.body.innerHTML = `<div x-data="outer2"><p id="r" x-html="h">a</p></div>`
+  mount()
+  h.set('<b x-data="victim2">x</b>')
+  await flush()
+  expect(ran).toEqual([])
+})

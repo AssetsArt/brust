@@ -793,6 +793,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                 if let Some(b) = self.reactive(raw, value) {
                     let d = self.value_member(raw.unwrap(), b, Paint::Raw);
                     open.push_str(&format!(" x-html=\"{d}\""));
+                } else {
+                    // Marks the markup inert for the runtime (nothing inside is bound or mounted).
+                    open.push_str(" x-raw");
                 }
             }
         }

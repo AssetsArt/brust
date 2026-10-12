@@ -53,7 +53,11 @@ fn static_literal_renders_raw_inner_html() {
     );
     assert_eq!(tier, Tier::Static);
     assert!(c.is_empty(), "{c}");
-    assert_eq!(render(&j, serde_json::json!({})), "<div><b>x</b></div>");
+    // x-raw marks the markup inert for the runtime (nothing inside is bound or mounted).
+    assert_eq!(
+        render(&j, serde_json::json!({})),
+        "<div x-raw><b>x</b></div>"
+    );
     assert!(!j.contains("x-html"), "{j}");
 }
 
@@ -63,12 +67,18 @@ fn null_undefined_and_number_values() {
         "export default function T({ h }: any) { return <div dangerouslySetInnerHTML={{ __html: h }} /> }",
     );
     assert_eq!(tier, Tier::Static);
-    assert_eq!(render(&j, serde_json::json!({ "h": null })), "<div></div>");
-    assert_eq!(render(&j, serde_json::json!({})), "<div></div>");
-    assert_eq!(render(&j, serde_json::json!({ "h": 7 })), "<div>7</div>");
+    assert_eq!(
+        render(&j, serde_json::json!({ "h": null })),
+        "<div x-raw></div>"
+    );
+    assert_eq!(render(&j, serde_json::json!({})), "<div x-raw></div>");
+    assert_eq!(
+        render(&j, serde_json::json!({ "h": 7 })),
+        "<div x-raw>7</div>"
+    );
     assert_eq!(
         render(&j, serde_json::json!({ "h": "<i>y</i>" })),
-        "<div><i>y</i></div>"
+        "<div x-raw><i>y</i></div>"
     );
 }
 
@@ -79,10 +89,13 @@ fn identifier_shape_reads_dunder_html_and_tolerates_absence() {
     );
     assert_eq!(
         render(&j, serde_json::json!({ "o": { "__html": "<u>z</u>" } })),
-        "<div><u>z</u></div>"
+        "<div x-raw><u>z</u></div>"
     );
-    assert_eq!(render(&j, serde_json::json!({})), "<div></div>");
-    assert_eq!(render(&j, serde_json::json!({ "o": null })), "<div></div>");
+    assert_eq!(render(&j, serde_json::json!({})), "<div x-raw></div>");
+    assert_eq!(
+        render(&j, serde_json::json!({ "o": null })),
+        "<div x-raw></div>"
+    );
 }
 
 #[test]
@@ -138,7 +151,7 @@ fn only_the_inner_html_body_is_raw() {
         &j,
         serde_json::json!({ "h": "<b>ok</b>", "t": "<b>no</b>", "a": "\"><x>" }),
     );
-    assert!(out.contains("<p><b>ok</b></p>"), "{out}");
+    assert!(out.contains("<p x-raw><b>ok</b></p>"), "{out}");
     assert!(out.contains("<p>&lt;b&gt;no&lt;/b&gt;</p>"), "{out}");
     assert!(!out.contains("<x>"), "{out}");
 }
@@ -171,7 +184,7 @@ fn script_body_keeps_working() {
     );
     assert_eq!(
         render(&j, serde_json::json!({ "h": "{\"a\":1}" })),
-        "<script type=\"application/ld+json\">{\"a\":1}</script>"
+        "<script type=\"application/ld+json\" x-raw>{\"a\":1}</script>"
     );
 }
 
@@ -186,7 +199,7 @@ fn list_rows_render_raw_and_native_rows_get_x_html() {
             &j,
             serde_json::json!({ "xs": [{ "id": 1, "h": "<b>a</b>" }, { "id": 2, "h": "c" }] })
         ),
-        "<ul><li><b>a</b></li><li>c</li></ul>"
+        "<ul><li x-raw><b>a</b></li><li x-raw>c</li></ul>"
     );
     // Same rule as `x-text` in a row: a row binds directives only when its source or a
     // painted value reads state; a prop-only list prints plain rows.

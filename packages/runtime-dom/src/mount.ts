@@ -2,6 +2,7 @@ import { Instance, hooks, instances, nearestInstance } from './instance'
 import { untracked } from './signal'
 import { whenBehavior } from './registry'
 import { bindHost } from './directives/index'
+import { insideRaw } from './directives/common'
 import { warnOnce } from './warn'
 import { bindPropsFromParent } from './props-bind'
 import { scheduleIslands, cancelIslands } from './island'
@@ -41,7 +42,7 @@ function mountTree(root: ParentNode): void {
   if (root instanceof HTMLElement && root.hasAttribute('x-data')) hosts.push(root)
   root.querySelectorAll<HTMLElement>('[x-data]').forEach((h) => hosts.push(h))
   // document order = parents before children, so nearestInstance finds a mounted parent
-  for (const h of hosts) mountHost(h)
+  for (const h of hosts) if (!insideRaw(h)) mountHost(h)
   scheduleIslands(root)
 }
 hooks.mountTree = (root) => untracked(() => mountTree(root))
