@@ -11,7 +11,7 @@ bun install
 bun run dev        # brust build routes.tsx && brust start  ->  http://127.0.0.1:1337
 ```
 
-Requires Bun 1.4 or newer on a platform that has a native package (`@brust/native-<platform>`: darwin x64/arm64, linux x64/arm64 gnu and musl).
+Requires Bun 1.4 or newer on a platform that has a native package (`@brust/native-<platform>`: darwin x64/arm64, linux x64/arm64 gnu and musl). Cloudflare Workers is a build target (`brust build --target cloudflare`); its prebuilt wasm, `@brust/core-cf`, installs with `@brust/core`. See docs/cloudflare.md.
 
 ## 2. Options
 
