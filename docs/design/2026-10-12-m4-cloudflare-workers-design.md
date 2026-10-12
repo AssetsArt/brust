@@ -341,6 +341,9 @@ The app author needs only `wrangler`.
 
 ## 5. Caching and store semantics on Workers
 
+> **Runtime-scope rule (human, 2026-10-12): the brust runtime on Cloudflare depends on Workers only.** brust ships no Durable Object, KV or D1 of its own. Cross-isolate invalidation is therefore an OPTIONAL app-provided hook (`install(rt)` may pass `epoch: { since, publish }`; brust-wasm keeps only the cursor/replay logic, lane `m4cf-epoch-hook`). Without a hook, invalidation is isolate-local and a cached page may be served stale up to its `ttl` by other isolates — documented, with the advice to keep `ttl` short on Workers. A Durable Object epoch implementation is provided as a copy-paste EXAMPLE (user code) in `docs/cloudflare.md` and in the pokedex example. R5's "lane 7 required" is amended accordingly: the hook is required, the DO is not.
+
+
 | Concern | Native (`brust start`) | Workers | Delta to document |
 |---|---|---|---|
 | L1 scope | one process, all workers share (`l1.rs:287`) | per isolate; many isolates per colo, recycled at will; JS heap + wasm memory share 128 MB [C limits#memory] | hit rate lower; capacity by entries is risky, so the CF default is 256 and `L1_MAX_BODY_BYTES` 8 MiB (lane 2) |
