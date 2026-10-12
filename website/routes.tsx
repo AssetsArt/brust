@@ -5,6 +5,7 @@ import Layout, { layoutLoader } from './components/Layout'
 import { DOCS_HOME, PAGES } from './lib/nav'
 import HomePage from './pages/HomePage'
 import NotFoundPage from './pages/NotFoundPage'
+import DemoPokemonPage, { demoPokemonLoader } from './components/demos/DemoPokemonPage'
 // brust build maps each route Component to its file through the DEFAULT imports of this file, so every docs page
 // is imported here even though the routes come from lib/nav.ts (a page missing here fails with component-source).
 import Actions from './pages/docs/Actions'
@@ -42,6 +43,13 @@ export const routes = defineRoutes([
     loader: layoutLoader,
     children: [
       { path: '/', Component: HomePage },
+      // Demo block (site-docs-guide): a cached route with a param, fetched by the Caching page and linked from Loaders.
+      {
+        path: '/demo/pokemon/{name}',
+        Component: DemoPokemonPage,
+        loader: demoPokemonLoader,
+        cache: { ttl_seconds: 60, tags: ['pokemon'], bypass: 'query(nocache)' },
+      },
       // Docs: /docs is the docs home; every nav entry is /docs/{slug} (lib/nav.ts) inside the docs shell.
       {
         Component: DocsLayout,

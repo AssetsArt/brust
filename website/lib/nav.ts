@@ -9,7 +9,7 @@ import Cli from '../pages/docs/Cli'
 import Configuration from '../pages/docs/Configuration'
 import Deployment from '../pages/docs/Deployment'
 import Installation from '../pages/docs/Installation'
-import Introduction from '../pages/docs/Introduction'
+import Introduction, { introductionLoader } from '../pages/docs/Introduction'
 import Loaders from '../pages/docs/Loaders'
 import Migrating from '../pages/docs/Migrating'
 import ProjectStructure from '../pages/docs/ProjectStructure'
@@ -49,7 +49,7 @@ export const NAV: NavGroup[] = [
   {
     group: 'Guide',
     items: [
-      { slug: 'introduction', title: 'Introduction', file: 'pages/docs/Introduction.tsx', Component: Introduction },
+      { slug: 'introduction', title: 'Introduction', file: 'pages/docs/Introduction.tsx', Component: Introduction, loader: introductionLoader },
       { slug: 'installation', title: 'Installation', file: 'pages/docs/Installation.tsx', Component: Installation },
       { slug: 'quickstart', title: 'Quickstart', file: 'pages/docs/Quickstart.tsx', Component: Quickstart, loader: quickstartLoader },
       { slug: 'project-structure', title: 'Project structure', file: 'pages/docs/ProjectStructure.tsx', Component: ProjectStructure },
