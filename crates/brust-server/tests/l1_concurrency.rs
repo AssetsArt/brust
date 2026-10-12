@@ -104,7 +104,13 @@ fn hot_key_writer_makes_progress_under_twelve_readers() {
                     inv = true;
                 } else {
                     max_started.store(i, Ordering::SeqCst);
-                    cache.insert(hot.clone(), body(&format!("v{i}")), TTL, &tags(&["hot"]));
+                    cache.insert(
+                        hot.clone(),
+                        body(&format!("v{i}")),
+                        TTL,
+                        &tags(&["hot"]),
+                        cache.read_stamp(),
+                    );
                     last = Some(i);
                     inv = false;
                 }
@@ -137,7 +143,13 @@ fn churn(cap: u64) {
                 for j in 0..ROUNDS {
                     let k = key(&format!("/o{o}/k{j}"));
                     let v = format!("{o}-{j}");
-                    cache.insert(k.clone(), body(&v), TTL, &[own.clone(), "all".to_owned()]);
+                    cache.insert(
+                        k.clone(),
+                        body(&v),
+                        TTL,
+                        &[own.clone(), "all".to_owned()],
+                        cache.read_stamp(),
+                    );
                     // Admission or a concurrent tag/clear may drop it; a DIFFERENT body is never legal.
                     if let Some(b) = cache.get(&k) {
                         assert_eq!(html(&b), v, "cap {cap}: stale/foreign body");

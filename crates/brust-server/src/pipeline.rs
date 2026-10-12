@@ -322,6 +322,10 @@ async fn page(
             return r.unwrap_or_else(|b| hit_response(&b, gz));
         }
     }
+    // F86: the render starts here, after the probe missed and before the first worker call (the
+    // loader reads app data in it). A HIT returned above; a BYPASS has no key and takes no stamp.
+    // An invalidation covering this entry after the stamp keeps the insert below out of L1.
+    let since = cache_key.as_ref().map(|_| s.l1.read_stamp());
 
     let envelope = rm.into_envelope("GET", full, headers, search);
 
@@ -594,13 +598,17 @@ async fn page(
         encoded,
         hdr,
     );
+    // The rendered body carries the loader's headers (and its gzip if this
+    // request made it), so a HIT replays them.
     if store
         && let Some(k) = cache_key
         && let Some(c) = &route.cache
+        && let Some(since) = since
+        && !s
+            .l1
+            .insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags, since)
     {
-        // The rendered body carries the loader's headers (and its gzip if this
-        // request made it), so a HIT replays them.
-        s.l1.insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags);
+        tracing::debug!(target: "brust::cache", route = %route.id, "L1 insert skipped: invalidated during the render");
     }
     resp
 }
