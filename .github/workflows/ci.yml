@@ -51,12 +51,13 @@ jobs:
       # --exclude: the vendored crate's own lib-test cannot link (its native stubs live in brust-compiler).
       - run: cargo test --workspace --exclude bun_react_compiler
       - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
-  # M4-CF: cf-min built for Cloudflare (worker-build --panic-unwind + `brust build --target cloudflare`),
-  # served by local workerd (`wrangler dev`, pinned in tests/cf/tools.ts) and probed over HTTP.
+  # M4-CF: ONE blocking job for every Cloudflare test. Order: the release-shape wasm first (a release-leg break shows on every PR),
+  # then workerd e2e (cf-min + pokedex on D1, tests/cf), the build-target unit tests, and the scaffold --target cloudflare case.
   # No Cloudflare credentials: `deploy --dry-run` only; the real-edge proof is local-only.
+  # Making `cf` a required check is a human branch-protection setting.
   cf:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -68,25 +69,40 @@ jobs:
             ~/.cargo/registry
             target
           key: cargo-cf-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: cargo-cf-${{ runner.os }}-
-      - id: worker-build
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/worker-build
-          key: worker-build-0.8.7-${{ runner.os }}
-      - if: steps.worker-build.outputs.cache-hit != 'true'
-        run: cargo install worker-build --version 0.8.7 --locked
+          restore-keys: |
+            cargo-cf-${{ runner.os }}-
+            cargo-${{ runner.os }}-
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "canary" }
+      # worker-build's version has ONE source: npm/core-cf/package.json brust.workerBuild (core-cf-check --versions pins it to Cargo.toml).
+      - id: wb
+        run: echo "v=$(bun -e "console.log(require('./npm/core-cf/package.json').brust.workerBuild)")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/worker-build
+            ~/.cache/worker-build
+          key: worker-build-${{ runner.os }}-${{ steps.wb.outputs.v }}
+      - run: worker-build --version 2>/dev/null | grep -qF "${{ steps.wb.outputs.v }}" || cargo install worker-build --version "${{ steps.wb.outputs.v }}" --locked --force
       - uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: bun-cf-${{ runner.os }}-${{ hashFiles('bun.lock', 'tests/cf/tools.ts') }}
+          key: bun-cf-${{ runner.os }}-${{ hashFiles('bun.lock', 'tests/cf/tools.ts', 'packages/create-app/templates/blank/package.json.tmpl') }}
       - run: bun install --frozen-lockfile
       - run: cd packages/brust && bun run build:debug
+      # 1. the release-shape wasm (what release.yml build-core-cf runs) + its gate; the copy is the scaffold case's package source (R6).
+      - run: |
+          bun crates/brust-wasm/scripts/build.ts
+          bun scripts/core-cf-check.ts npm/core-cf --pack --versions crates/brust-wasm/Cargo.toml
+          cp -R npm/core-cf "$RUNNER_TEMP/core-cf"
+      # 2. workerd e2e: cf-min (lane 3) and pokedex on local D1 (lane 5); rebuilds an --e2e wasm into npm/core-cf/worker (never published).
       - run: BRUST_CF_E2E=1 bun test --timeout 900000 tests/cf
+      # 3. build-target unit tests (lane 4; fake core-cf fixture, no wasm). handlers/fetch-in-scope also run in the server job.
+      - run: cd packages/brust && bun test test/cf-*.test.ts
+      # 4. the scaffold case: blank from packed tarballs → `brust build --target cloudflare` (BRUST_CORE_CF_DIR unset in the app build) → wrangler deploy --dry-run.
+      - run: cd packages/create-app && BRUST_CORE_CF_DIR="$RUNNER_TEMP/core-cf" bun test --timeout 600000 test/scaffold.test.ts -t cloudflare
   runtime-dom:
     runs-on: ubuntu-latest
     steps:
@@ -173,7 +189,7 @@ jobs:
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-actions.test.ts
       - run: cd packages/brust && bun test test/build-actions.test.ts
       - run: cd packages/brust && bun test test/actions-napi.test.ts
-      - run: cd packages/brust && bun test test/handlers.test.ts test/fetch-in-scope.test.ts test/cf-*.test.ts
+      - run: cd packages/brust && bun test test/handlers.test.ts test/fetch-in-scope.test.ts
       # m2e: the pokedex dogfood (spec §10). Each server-starting file runs alone.
       - run: cd examples/pokedex && bun test
       - run: cd examples/pokedex && bun run typecheck
@@ -191,4 +207,4 @@ jobs:
       # The exit report is generated: a diff means the committed one is stale.
       - run: bun run m2-exit && git diff --exit-code docs/plans/m2-exit-report.md
       - run: bun test scripts/m2-exit
-      - run: bun test scripts/release-check.test.ts
+      - run: bun test scripts/release-check.test.ts scripts/core-cf-check.test.ts
