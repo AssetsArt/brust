@@ -13,7 +13,6 @@ use std::sync::{Arc, OnceLock};
 
 use tokio::sync::Notify;
 
-use crate::core::Core;
 use crate::dispatch::RenderDispatch;
 use crate::host::NativeHost;
 use crate::server::Tuning;
@@ -24,6 +23,7 @@ pub use brust_core::config::{
     DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs,
     InvalidateResult, MAX_ACTION_BYTES, Stats,
 };
+use brust_core::core::Core;
 
 /// Everything `start` needs. Fixed for the server's lifetime.
 #[derive(Clone, Debug)]

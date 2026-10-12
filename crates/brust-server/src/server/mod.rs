@@ -15,10 +15,10 @@ use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
 use crate::config::{Config, Server};
-use crate::core::{Core, CoreConfig};
 use crate::host::NativeHost;
 use crate::manifest::Manifest;
 use crate::pool::WorkerPool;
+use brust_core::core::{Core, CoreConfig};
 
 pub mod body;
 pub mod coarse_timer;

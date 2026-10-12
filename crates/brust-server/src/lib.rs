@@ -3,7 +3,6 @@
 mod actions;
 pub mod cache;
 pub mod config;
-mod core;
 pub mod dispatch;
 mod host;
 pub mod http;
@@ -16,8 +15,8 @@ pub use brust_core::{inputs, manifest, protocol, render, routing};
 /// Internals timed by `benches/render.rs`; not an API.
 #[doc(hidden)]
 pub mod bench {
-    pub use crate::pipeline::plan_stage::{Planned, Planner};
-    pub use crate::pipeline::{
+    pub use brust_core::pipeline::plan_stage::{Planned, Planner};
+    pub use brust_core::pipeline::{
         cached_body, next_hint, props_view, render_chain_html, render_chain_into,
     };
 }

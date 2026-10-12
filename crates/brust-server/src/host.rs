@@ -96,7 +96,7 @@ impl Host for NativeHost {
                 (Some(FetchBody::Heap(b.len())), Some(b))
             }
             Some(b) => (
-                Some(crate::actions::encode_body(
+                Some(brust_core::actions::encode_body(
                     header_str(call.headers, "content-type")
                         .as_deref()
                         .unwrap_or(""),

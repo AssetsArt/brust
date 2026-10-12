@@ -3,20 +3,23 @@
 //! by [`Core::new`] from a loaded manifest, minus everything that binds or spawns. A host owns one
 //! `Core` and hands each request to the pipeline with it.
 //!
-//! Fields are the native-host seam (`doc(hidden)` once this moves into brust-core), not an API.
+//! Fields are the native-host seam (`doc(hidden)`), not an API.
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use brust_core::cache::StripedCounter;
-use brust_core::cache::stamp::InvalClock;
-use brust_core::config::{ActionsConfig, CorsConfig, InvalidateArgs, InvalidateResult, Stats};
-use brust_core::cors::ResolvedCors;
-use brust_core::host::{Host, JobStore, PageCache};
-use brust_core::manifest::{Loaded, Manifest};
-use brust_core::render::Renderer;
-use brust_core::routing::RouteTable;
-use http::{HeaderMap, HeaderName, HeaderValue};
+use bytes::Bytes;
+use http::{HeaderMap, HeaderName, HeaderValue, Response};
+
+use crate::cache::StripedCounter;
+use crate::cache::stamp::InvalClock;
+use crate::config::{ActionsConfig, CorsConfig, InvalidateArgs, InvalidateResult, Stats};
+use crate::cors::ResolvedCors;
+use crate::host::{Host, JobStore, PageCache, RequestHead};
+use crate::manifest::{Loaded, Manifest};
+use crate::pipeline::PlanIndex;
+use crate::render::Renderer;
+use crate::routing::RouteTable;
 
 /// What [`Core::new`] needs besides the host and the manifest. Fixed for the core's lifetime.
 #[derive(Clone, Debug, Default)]
@@ -34,43 +37,64 @@ pub struct CoreConfig {
 
 /// The shared core state, one per server.
 pub struct Core<H: Host> {
-    pub(crate) host: H,
-    pub(crate) routes: RouteTable,
-    pub(crate) manifest: Manifest,
+    #[doc(hidden)]
+    pub host: H,
+    #[doc(hidden)]
+    pub routes: RouteTable,
+    #[doc(hidden)]
+    pub manifest: Manifest,
     /// Boot-time job-planning templates of `manifest`.
-    pub(crate) plans: crate::pipeline::PlanIndex,
-    pub(crate) renderer: Renderer,
-    pub(crate) l1: H::L1,
-    pub(crate) jobs: H::Jobs,
+    #[doc(hidden)]
+    pub plans: PlanIndex,
+    #[doc(hidden)]
+    pub renderer: Renderer,
+    #[doc(hidden)]
+    pub l1: H::L1,
+    #[doc(hidden)]
+    pub jobs: H::Jobs,
     /// The invalidation clock `l1` and `jobs` are built on (F89): one read stamp per page.
-    pub(crate) clock: Arc<InvalClock>,
+    #[doc(hidden)]
+    pub clock: Arc<InvalClock>,
     /// M3-P P7: striped (one cache line per stripe) — bumped on every loader page.
-    pub(crate) loader_calls: StripedCounter,
-    pub(crate) job_calls: AtomicU64,
+    #[doc(hidden)]
+    pub loader_calls: StripedCounter,
+    #[doc(hidden)]
+    pub job_calls: AtomicU64,
     /// M3-P P7: striped, like `loader_calls`.
-    pub(crate) worker_calls: StripedCounter,
-    pub(crate) timed_out_calls: AtomicU64,
+    #[doc(hidden)]
+    pub worker_calls: StripedCounter,
+    #[doc(hidden)]
+    pub timed_out_calls: AtomicU64,
     /// (component, slot) pairs already warned about as missing from a job result.
-    pub(crate) missing_slots: Mutex<HashSet<(String, String)>>,
-    pub(crate) cors: Option<CorsConfig>,
+    #[doc(hidden)]
+    pub missing_slots: Mutex<HashSet<(String, String)>>,
+    #[doc(hidden)]
+    pub cors: Option<CorsConfig>,
     /// `cors` resolved into prebuilt header values once at `new` (per server,
     /// not a process global: several servers may live in one process).
-    pub(crate) cors_resolved: Option<ResolvedCors>,
+    #[doc(hidden)]
+    pub cors_resolved: Option<ResolvedCors>,
     /// M3-F: the validated actions subtree; `None` = no actions.
-    pub(crate) actions: Option<ActionsConfig>,
+    #[doc(hidden)]
+    pub actions: Option<ActionsConfig>,
     /// A4: `<script>globalThis.__BRUST_ACTION_PREFIX__="…"</script>`, prebuilt at `new` for a
     /// non-default prefix only.
-    pub(crate) action_prefix_tag: Option<Box<str>>,
+    #[doc(hidden)]
+    pub action_prefix_tag: Option<Box<str>>,
     /// Last document length per manifest route (+ slack): the capacity of the
     /// next render's buffer (M3-P P3). A size, never bytes.
-    pub(crate) render_hints: Vec<AtomicUsize>,
+    #[doc(hidden)]
+    pub render_hints: Vec<AtomicUsize>,
     /// M3-P P7 (R1): per route (manifest index), consecutive planned calls whose jobs all hit;
     /// at `pipeline::OFFER_STOP` the route stops offering the plan until a miss resets it.
-    pub(crate) plan_offer: Box<[AtomicU32]>,
+    #[doc(hidden)]
+    pub plan_offer: Box<[AtomicU32]>,
     /// `X-Powered-By`, stamped on every response by [`Core::finish`].
-    pub(crate) powered_by: Option<HeaderValue>,
+    #[doc(hidden)]
+    pub powered_by: Option<HeaderValue>,
     /// The scheme the L1 key expressions see is `https`.
-    pub(crate) https: bool,
+    #[doc(hidden)]
+    pub https: bool,
 }
 
 impl<H: Host> Core<H> {
@@ -82,8 +106,7 @@ impl<H: Host> Core<H> {
             RouteTable::from_manifest(&loaded.manifest).map_err(|e| format!("routes: {e}"))?;
         let renderer =
             Renderer::from_templates(&loaded.templates).map_err(|e| format!("render: {e}"))?;
-        let plans = crate::pipeline::PlanIndex::new(&loaded.manifest)
-            .map_err(|e| format!("manifest: {e}"))?;
+        let plans = PlanIndex::new(&loaded.manifest).map_err(|e| format!("manifest: {e}"))?;
         if let Some(c) = &cfg.cors {
             c.validate().map_err(|e| format!("cors: {e}"))?;
         }
@@ -166,6 +189,12 @@ impl<H: Host> Core<H> {
             timed_out_calls: self.timed_out_calls.load(Ordering::Relaxed),
             missing_slots: self.missing_slots.lock().map_or(0, |m| m.len() as u64),
         }
+    }
+
+    /// One request through the pipeline (`pipeline::handle`).
+    #[inline]
+    pub async fn handle(&self, rq: RequestHead<'_>, body: H::Body) -> Response<Bytes> {
+        crate::pipeline::handle(self, rq, body).await
     }
 
     /// The configured CORS policy, if any. `None` = disabled.
