@@ -42,6 +42,8 @@ pub struct Config {
     pub generator: Option<String>,
     /// M3-F: the actions subtree; `None` = no actions.
     pub actions: Option<ActionsConfig>,
+    /// The cache adapter (shared second tier); `None` = none.
+    pub l2: Option<brust_core::l2::L2Config>,
 }
 
 impl Default for Config {
@@ -57,6 +59,7 @@ impl Default for Config {
             cors: None,
             generator: None,
             actions: None,
+            l2: None,
         }
     }
 }

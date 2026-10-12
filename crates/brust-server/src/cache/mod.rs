@@ -54,6 +54,11 @@ impl PageCache for L1Cache {
     }
 
     #[inline]
+    fn clear_all(&self) -> usize {
+        L1Cache::clear(self)
+    }
+
+    #[inline]
     fn stats(&self) -> CacheStats {
         L1Cache::stats(self)
     }
@@ -97,6 +102,11 @@ impl JobStore for JobCache {
     #[inline]
     fn invalidate_user_key(&self, user_key: &str) -> usize {
         JobCache::invalidate_user_key(self, user_key)
+    }
+
+    #[inline]
+    fn clear_all(&self) {
+        JobCache::clear(self)
     }
 
     #[inline]

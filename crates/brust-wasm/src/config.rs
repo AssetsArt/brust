@@ -92,6 +92,7 @@ pub fn parse(json: &str) -> Result<(CoreConfig, bool), String> {
             },
         }),
         https: true,
+        l2: None,
     };
     Ok((core, c.stats))
 }

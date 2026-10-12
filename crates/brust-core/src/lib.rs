@@ -30,6 +30,7 @@ pub mod core;
 mod cors;
 pub mod host;
 pub mod inputs;
+pub mod l2;
 pub mod manifest;
 pub mod pipeline;
 #[doc(hidden)]

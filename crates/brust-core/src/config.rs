@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 pub use crate::cache::CacheStats;
+use crate::l2::L2Stats;
 use crate::manifest::Manifest;
 
 /// Global CORS policy, set once at boot (via `ServeOptions.cors` in the napi
@@ -158,15 +159,15 @@ impl ActionsConfig {
 }
 
 /// `cache.invalidate({ key?, tags?, path?, method? })` (spec §5).
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct InvalidateArgs {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
 }
 
@@ -191,6 +192,9 @@ pub struct Stats {
     /// Distinct (component, slot) pairs whose job result lacked a declared output (an older
     /// `dist/jobs.js`); the slot renders empty and is warned once.
     pub missing_slots: u64,
+    /// The cache adapter's counters; absent (and the JSON byte-identical) without an adapter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub l2: Option<L2Stats>,
 }
 
 #[cfg(test)]
@@ -306,10 +310,48 @@ mod tests {
             worker_calls: 7,
             timed_out_calls: 8,
             missing_slots: 9,
+            l2: None,
         };
         assert_eq!(
             serde_json::to_string(&s).unwrap(),
             r#"{"l1":{"hits":1,"misses":2,"len":3,"capacity":4},"job":{"hits":11,"misses":12,"len":13,"capacity":14},"loader_calls":5,"job_calls":6,"worker_calls":7,"timed_out_calls":8,"missing_slots":9}"#
         );
+    }
+
+    #[test]
+    fn stats_with_l2_appends_the_object() {
+        let c = CacheStats {
+            hits: 0,
+            misses: 0,
+            len: 0,
+            capacity: 0,
+        };
+        let s = Stats {
+            l1: c.clone(),
+            job: c,
+            loader_calls: 0,
+            job_calls: 0,
+            worker_calls: 0,
+            timed_out_calls: 0,
+            missing_slots: 0,
+            l2: Some(crate::l2::L2Counters::default().snapshot("custom")),
+        };
+        let j = serde_json::to_string(&s).unwrap();
+        assert!(
+            j.ends_with(r#","missing_slots":0,"l2":{"adapter":"custom","hits":0,"misses":0,"timeouts":0,"errors":0,"rejected_floor":0,"sets":0,"set_refused":0,"set_dropped":0,"set_oversize":0,"published":0,"publish_errors":0,"received":0,"skipped_own":0,"resets":0,"epoch_polls":0,"poll_errors":0}}"#),
+            "{j}"
+        );
+    }
+
+    #[test]
+    fn invalidate_args_serialize_skips_empty() {
+        let a = InvalidateArgs {
+            tags: vec!["a".into()],
+            path: Some("/x".into()),
+            ..Default::default()
+        };
+        let j = serde_json::to_string(&a).unwrap();
+        assert_eq!(j, r#"{"tags":["a"],"path":"/x"}"#);
+        assert_eq!(serde_json::from_str::<InvalidateArgs>(&j).unwrap(), a);
     }
 }
