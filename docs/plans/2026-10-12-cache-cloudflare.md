@@ -384,7 +384,7 @@ Commit per task with the Co-Authored-By trailer; never `git add -A`. Kill only t
 - **A1:** `(cd packages/cache-cloudflare && bun run typecheck && bun test)` → 0 fail; `rg -n "from ['\"]bun" packages/cache-cloudflare/src` → empty.
 - **A2:** `(cd packages/brust && bun run build:debug && bun run typecheck && bun test)` → 0 fail; `bun test tests/cf/entry.test.ts` → pass (D3).
 - **A3:** `BRUST_CF_E2E=1 bun test --timeout 900000 tests/cf` → conformance kv / do / kvdo green; `cache-cloudflare.test.ts` 2 × 7 pass; every pre-existing file unchanged vs `$OUT/cf-before.txt`.
-- **A4:** a no-`[cache]` build of `tests/fixtures/cf-min` is byte-identical to the base: `diff -r $OUT/cf-min-before tests/fixtures/cf-min/dist/cf` (worker + wrangler.jsonc) → empty.
+- **A4 (amended by lead ruling 2026-10-12, found by knock2 at READY @ca99efc):** a no-`[cache]` build of `tests/fixtures/cf-min` is byte-identical to the base EXCEPT `worker/brust-app.js`, whose only diff is the R2 `composeWith` hook in lane A's `compose()` (the core composer is bundled into every Workers build, so the original wording contradicted R2 — the plan's defect, not the lane's). Bar: `diff -r` shows nothing outside `worker/brust-app.js`; the `brust-app.js` hunk is exactly the compose() change; the D3 entry snapshot and `wrangler.jsonc` stay byte-identical.
 - **A5:** `bun pm pack` in `packages/cache-cloudflare` → the tarball holds `src/**`, `README.md` and `package.json` only, with no `workspace:` in the packed `package.json` [I: verify bun rewrites a peer `workspace:*`; if not, pin `^<version>` and say so in the note].
 - **A6:** `bun test --timeout 120000 tests/server/pokedex.test.ts` → 0 fail; `git diff origin/m4cf --stat -- crates npm .github/workflows/release.yml scripts` → empty.
 
