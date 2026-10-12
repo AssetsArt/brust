@@ -36,19 +36,57 @@ jobs:
       # Invariant: brust-core stays host-agnostic (no tokio/hyper/moka/crossbeam/parking_lot in its normal deps).
       - run: "! cargo tree -p brust-core -e normal | grep -E 'tokio|hyper|moka|crossbeam|parking_lot'"
       # --no-deps: the vendored Bun crate is not held to our lints (261 findings otherwise).
-      - run: cargo clippy -p brust-core -p brust-compiler -p brust-compiler-cli -p brust-jinja -p brust-server -p brust-napi --no-deps -- -D warnings
+      - run: cargo clippy -p brust-core -p brust-compiler -p brust-compiler-cli -p brust-jinja -p brust-server -p brust-napi -p brust-wasm --no-deps -- -D warnings
       # brust-core builds for Cloudflare Workers (wasm32-unknown-unknown), with and without gzip.
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo check -p brust-core --target wasm32-unknown-unknown
       - run: cargo check -p brust-core --target wasm32-unknown-unknown --no-default-features
       - run: cargo clippy -p brust-core --target wasm32-unknown-unknown --no-default-features --no-deps -- -D warnings
       - run: "! cargo tree -p brust-core --target wasm32-unknown-unknown -e normal | grep -E 'tokio|hyper|moka|crossbeam|parking_lot|getrandom'"
+      # brust-wasm (the Workers host) is held to the same lints on its real target.
+      - run: cargo clippy -p brust-wasm --target wasm32-unknown-unknown --no-deps -- -D warnings
       # The dual-evaluation harness (tests/dual_eval.rs) runs generated jobs and
       # chunks under bun against packages/runtime-dom and happy-dom.
       - run: bun install --frozen-lockfile
       # --exclude: the vendored crate's own lib-test cannot link (its native stubs live in brust-compiler).
       - run: cargo test --workspace --exclude bun_react_compiler
       - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
+  # M4-CF: cf-min built for Cloudflare (worker-build --panic-unwind + `brust build --target cloudflare`),
+  # served by local workerd (`wrangler dev`, pinned in tests/cf/tools.ts) and probed over HTTP.
+  # No Cloudflare credentials: `deploy --dry-run` only; the real-edge proof is local-only.
+  cf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: nightly-2026-09-15, components: "rust-src", targets: wasm32-unknown-unknown }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: cargo-cf-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-cf-${{ runner.os }}-
+      - id: worker-build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/worker-build
+          key: worker-build-0.8.7-${{ runner.os }}
+      - if: steps.worker-build.outputs.cache-hit != 'true'
+        run: cargo install worker-build --version 0.8.7 --locked
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "canary" }
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cf-${{ runner.os }}-${{ hashFiles('bun.lock', 'tests/cf/tools.ts') }}
+      - run: bun install --frozen-lockfile
+      - run: cd packages/brust && bun run build:debug
+      - run: BRUST_CF_E2E=1 bun test --timeout 900000 tests/cf
   runtime-dom:
     runs-on: ubuntu-latest
     steps:
