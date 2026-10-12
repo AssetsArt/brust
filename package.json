@@ -10,7 +10,8 @@
     "bench",
     "bench/apps/brust",
     "bench/apps/bun-serve",
-    "bench/apps/next"
+    "bench/apps/next",
+    "tests/fixtures/cf-min"
   ],
   "scripts": {
     "bun-codegen": "bun scripts/bun-codegen.ts",

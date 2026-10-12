@@ -173,6 +173,16 @@
         "react",
       ],
     },
+    "tests/fixtures/cf-min": {
+      "name": "@brust/fixture-cf-min",
+      "version": "0.0.0",
+      "dependencies": {
+        "@brust/core": "workspace:*",
+        "elysia": "2.0.0-beta.30",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+    },
     "tests/server": {
       "name": "@brust/server-tests",
       "version": "0.0.0",
@@ -197,6 +207,8 @@
     "@brust/create-app": ["@brust/create-app@workspace:packages/create-app"],
 
     "@brust/example-pokedex": ["@brust/example-pokedex@workspace:examples/pokedex"],
+
+    "@brust/fixture-cf-min": ["@brust/fixture-cf-min@workspace:tests/fixtures/cf-min"],
 
     "@brust/native-darwin-arm64": ["@brust/native-darwin-arm64@workspace:npm/darwin-arm64"],
 
