@@ -11,6 +11,7 @@ use serde::Serialize;
 #[doc(hidden)]
 pub mod conformance;
 pub mod key_expr;
+pub mod local;
 pub mod stamp;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

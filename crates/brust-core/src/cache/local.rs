@@ -1,0 +1,457 @@
+//! Single-thread page and job caches for hosts without threads (Cloudflare Workers): `LocalL1`
+//! and `LocalJobs`, the `PageCache` / `JobStore` the Workers host builds `Core` on. They pass the
+//! same conformance suite as the native moka caches (`cache::conformance`: the F81/F86/F89 cases),
+//! with the same `InvalClock` / `ReadStamp` semantics: every invalidation publishes the clock's
+//! next value in a hashed per-tag / per-(method, path) / per-user-key slot (or `cleared_at`), and an
+//! insert stamped before a covering invalidation does not land.
+//!
+//! - **Eviction (R1/R3).** LRU over `HashMap<Rc<K>, _>` + a `BTreeMap<tick, Rc<K>>` recency
+//!   order, by entry capacity ([`WORKERS_L1_CAPACITY`] / [`WORKERS_JOB_CAPACITY`] on Workers)
+//!   and, for L1, by body bytes ([`L1_MAX_BODY_BYTES`]). A body over the byte cap is not stored
+//!   and `insert` still returns `true` (moka's admission drop does the same; `false` means
+//!   "invalidated").
+//! - **TTL (R2).** Measured in ns on the injected [`Clock`]. Lazy: an expired entry is removed on
+//!   read (a miss); each insert sweeps at most 8 expired entries from the LRU end; `stats()` reaps
+//!   them all, so `len` counts live entries. A ttl past `u64` ns never expires.
+//! - **Bytes (R4).** L1 accounts `html.len()` only. Workers builds brust-core without `gzip`, so
+//!   `RenderedBody::gzip` is never filled; a gzip-enabled build would exceed the cap by the gzip
+//!   variants made later.
+//! - **Hasher (R6).** A fixed `DefaultHasher`: reproducible slots, and colliding keys cost at most
+//!   O(capacity) per call inside one isolate.
+//! - **Reentrancy.** A single isolate interleaves requests at every `.await`; every method takes
+//!   and releases its borrows inside the call and returns no guard, and `get_with` calls `f` with
+//!   no borrow held, so `f` may re-enter the cache.
+use std::cell::{Cell, RefCell};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::{BuildHasher, BuildHasherDefault, Hash};
+use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Duration;
+
+use super::stamp::{INVAL_SLOTS, InvalClock, ReadStamp};
+use super::{CacheKey, CacheStats, RenderedBody};
+use crate::host::{Clock, PageCache};
+
+/// `[cloudflare] l1_capacity` default (spec §4).
+pub const WORKERS_L1_CAPACITY: u64 = 256;
+/// `[cloudflare] job_cache_capacity` default (spec §4).
+pub const WORKERS_JOB_CAPACITY: u64 = 512;
+/// The L1 body-byte cap `LocalL1::with_clock` applies: 256 entries at a 32 KiB page, inside the
+/// 128 MB isolate JS and wasm share.
+pub const L1_MAX_BODY_BYTES: usize = 8 << 20;
+/// Expired entries an insert inspects from the LRU end.
+const SWEEP: usize = 8;
+
+type Fixed = BuildHasherDefault<DefaultHasher>;
+type Index<K> = HashMap<String, HashSet<Rc<K>, Fixed>, Fixed>;
+
+struct Slot<V> {
+    value: V,
+    expires_ns: Option<u64>,
+    tags: Box<[String]>,
+    user_key: Option<Box<str>>,
+    tick: u64,
+    bytes: usize,
+}
+
+impl<V> Slot<V> {
+    fn live(&self, now: u64) -> bool {
+        self.expires_ns.is_none_or(|e| now < e)
+    }
+}
+
+/// The LRU store both caches share: entries, recency, the tag and user-key indexes, bytes.
+struct Store<K, V> {
+    entries: HashMap<Rc<K>, Slot<V>, Fixed>,
+    recency: BTreeMap<u64, Rc<K>>,
+    tags: Index<K>,
+    users: Index<K>,
+    next_tick: u64,
+    bytes: usize,
+}
+
+impl<K: Hash + Eq, V> Store<K, V> {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::default(),
+            recency: BTreeMap::new(),
+            tags: HashMap::default(),
+            users: HashMap::default(),
+            next_tick: 0,
+            bytes: 0,
+        }
+    }
+
+    /// The one removal path: entry, recency, both indexes (empty sets dropped), bytes.
+    fn remove(&mut self, k: &K) -> Option<Slot<V>> {
+        let s = self.entries.remove(k)?;
+        self.recency.remove(&s.tick);
+        for t in s.tags.iter() {
+            unindex(&mut self.tags, t, k);
+        }
+        if let Some(u) = &s.user_key {
+            unindex(&mut self.users, u, k);
+        }
+        self.bytes -= s.bytes;
+        Some(s)
+    }
+
+    /// Store `v` under `k` (replacing any entry), then evict LRU entries past the limits.
+    #[allow(clippy::too_many_arguments)]
+    fn insert(
+        &mut self,
+        k: K,
+        value: V,
+        expires_ns: Option<u64>,
+        tags: &[String],
+        user_key: Option<&str>,
+        bytes: usize,
+        now: u64,
+        capacity: u64,
+        max_bytes: usize,
+    ) {
+        self.remove(&k);
+        self.sweep(now);
+        let k = Rc::new(k);
+        let tick = self.next_tick;
+        self.next_tick += 1;
+        self.recency.insert(tick, Rc::clone(&k));
+        for t in tags {
+            self.tags
+                .entry(t.clone())
+                .or_default()
+                .insert(Rc::clone(&k));
+        }
+        if let Some(u) = user_key {
+            self.users
+                .entry(u.to_owned())
+                .or_default()
+                .insert(Rc::clone(&k));
+        }
+        self.bytes += bytes;
+        self.entries.insert(
+            k,
+            Slot {
+                value,
+                expires_ns,
+                tags: tags.into(),
+                user_key: user_key.map(Into::into),
+                tick,
+                bytes,
+            },
+        );
+        while self.entries.len() as u64 > capacity || self.bytes > max_bytes {
+            let Some((_, lru)) = self.recency.pop_first() else {
+                break;
+            };
+            self.remove(&lru);
+        }
+    }
+
+    /// The live entry's value (its recency bumped); an expired one is removed. `None` = a miss.
+    fn get(&mut self, k: &K, now: u64) -> Option<&V> {
+        let live = self.entries.get(k)?.live(now);
+        if !live {
+            self.remove(k);
+            return None;
+        }
+        let tick = self.next_tick;
+        self.next_tick += 1;
+        let s = self.entries.get_mut(k)?;
+        if let Some(rk) = self.recency.remove(&s.tick) {
+            self.recency.insert(tick, rk);
+        }
+        s.tick = tick;
+        Some(&s.value)
+    }
+
+    /// Drop expired entries among the `SWEEP` least recently used.
+    fn sweep(&mut self, now: u64) {
+        let dead: Vec<Rc<K>> = self
+            .recency
+            .values()
+            .take(SWEEP)
+            .filter(|k| self.entries.get(&***k).is_some_and(|s| !s.live(now)))
+            .cloned()
+            .collect();
+        for k in dead {
+            self.remove(&k);
+        }
+    }
+
+    /// Drop every expired entry.
+    fn reap(&mut self, now: u64) {
+        let dead: Vec<Rc<K>> = self
+            .entries
+            .iter()
+            .filter(|(_, s)| !s.live(now))
+            .map(|(k, _)| Rc::clone(k))
+            .collect();
+        for k in dead {
+            self.remove(&k);
+        }
+    }
+
+    fn live_len(&self, now: u64) -> usize {
+        self.entries.values().filter(|s| s.live(now)).count()
+    }
+
+    /// Remove every key indexed under `names` in `index` (tags or user keys); the distinct count.
+    fn take_indexed(&mut self, users: bool, names: &[String]) -> usize {
+        let index = if users {
+            &mut self.users
+        } else {
+            &mut self.tags
+        };
+        let mut keys: HashSet<Rc<K>, Fixed> = HashSet::default();
+        for n in names {
+            if let Some(set) = index.remove(n.as_str()) {
+                keys.extend(set);
+            }
+        }
+        let n = keys.len();
+        for k in keys {
+            self.remove(&k);
+        }
+        n
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.recency.clear();
+        self.tags.clear();
+        self.users.clear();
+        self.bytes = 0;
+    }
+
+    fn index_size(&self, users: bool) -> usize {
+        let index = if users { &self.users } else { &self.tags };
+        index.values().map(HashSet::len).sum()
+    }
+}
+
+fn unindex<K: Hash + Eq>(index: &mut Index<K>, name: &str, k: &K) {
+    if let Some(set) = index.get_mut(name) {
+        set.remove(k);
+        if set.is_empty() {
+            index.remove(name);
+        }
+    }
+}
+
+/// `now + ttl` in ns; `None` (never expires) when it does not fit in `u64`.
+fn deadline(now: u64, ttl: Duration) -> Option<u64> {
+    u64::try_from(ttl.as_nanos())
+        .ok()
+        .and_then(|t| now.checked_add(t))
+}
+
+fn slots() -> Box<[Cell<u64>]> {
+    (0..INVAL_SLOTS).map(|_| Cell::new(0)).collect()
+}
+
+/// Publish `seq` in a slot (never lowering it).
+fn publish(slot: &Cell<u64>, seq: u64) {
+    slot.set(slot.get().max(seq));
+}
+
+/// The single-thread page cache (L1) for hosts without threads. See the module docs.
+pub struct LocalL1<T: Clock> {
+    store: RefCell<Store<CacheKey, Arc<RenderedBody>>>,
+    time: T,
+    inval: Arc<InvalClock>,
+    tag_inval: Box<[Cell<u64>]>,
+    path_inval: Box<[Cell<u64>]>,
+    cleared_at: Cell<u64>,
+    hits: Cell<u64>,
+    misses: Cell<u64>,
+    capacity: u64,
+    max_bytes: usize,
+    hasher: Fixed,
+}
+
+impl<T: Clock> LocalL1<T> {
+    /// `capacity` entries (at least 1) and `max_bytes` of bodies, on `inval`, timed by `time`.
+    pub fn with_limits(capacity: u64, max_bytes: usize, inval: Arc<InvalClock>, time: T) -> Self {
+        Self {
+            store: RefCell::new(Store::new()),
+            time,
+            inval,
+            tag_inval: slots(),
+            path_inval: slots(),
+            cleared_at: Cell::new(0),
+            hits: Cell::new(0),
+            misses: Cell::new(0),
+            capacity: capacity.max(1),
+            max_bytes,
+            hasher: Fixed::default(),
+        }
+    }
+
+    fn slot<V: Hash + ?Sized>(&self, v: &V) -> usize {
+        (self.hasher.hash_one(v) as usize) % INVAL_SLOTS
+    }
+
+    /// The tag invalidation slot of `t` (tests pick non-colliding tags with it).
+    pub fn tag_slot(&self, t: &str) -> usize {
+        self.slot(t)
+    }
+
+    /// The `(method, path)` invalidation slot.
+    pub fn path_slot(&self, m: &str, p: &str) -> usize {
+        self.slot(&(m, p))
+    }
+
+    /// Keys indexed across all tags.
+    pub fn tag_index_size(&self) -> usize {
+        self.store.borrow().index_size(false)
+    }
+
+    /// A covering invalidation (`clear`, this key's method + path, one of `tags`) came after
+    /// `since` (`l1.rs` `invalidated_since`).
+    fn invalidated_since(&self, key: &CacheKey, tags: &[String], since: ReadStamp) -> bool {
+        let after = |c: &Cell<u64>| c.get() > since.0;
+        after(&self.cleared_at)
+            || after(&self.path_inval[self.slot(&(key.method.as_str(), key.path.as_str()))])
+            || tags
+                .iter()
+                .any(|t| after(&self.tag_inval[self.slot(t.as_str())]))
+    }
+
+    /// Remove every entry; the number of live entries removed. Hits/misses are kept.
+    pub fn clear(&self) -> usize {
+        self.cleared_at.set(self.inval.next());
+        let now = self.time.now_ns();
+        let mut st = self.store.borrow_mut();
+        let n = st.live_len(now);
+        st.clear();
+        n
+    }
+}
+
+impl<T: Clock + Default> PageCache for LocalL1<T> {
+    fn with_clock(capacity: u64, clock: Arc<InvalClock>) -> Self {
+        Self::with_limits(capacity, L1_MAX_BODY_BYTES, clock, T::default())
+    }
+
+    fn get_with<R>(&self, key: &CacheKey, f: impl FnOnce(&Arc<RenderedBody>) -> R) -> Option<R> {
+        let now = self.time.now_ns();
+        let body = self.store.borrow_mut().get(key, now).map(Arc::clone);
+        // The borrow is released: `f` may re-enter the cache.
+        match body {
+            Some(b) => {
+                self.hits.set(self.hits.get() + 1);
+                Some(f(&b))
+            }
+            None => {
+                self.misses.set(self.misses.get() + 1);
+                None
+            }
+        }
+    }
+
+    fn insert(
+        &self,
+        key: CacheKey,
+        body: Arc<RenderedBody>,
+        ttl: Duration,
+        tags: &[String],
+        since: ReadStamp,
+    ) -> bool {
+        if self.invalidated_since(&key, tags, since) {
+            return false;
+        }
+        let now = self.time.now_ns();
+        let bytes = body.html.len();
+        let mut st = self.store.borrow_mut();
+        if bytes > self.max_bytes {
+            // Not stored (an older entry under the key goes too: it is being replaced).
+            st.remove(&key);
+            return true;
+        }
+        st.insert(
+            key,
+            body,
+            deadline(now, ttl),
+            tags,
+            None,
+            bytes,
+            now,
+            self.capacity,
+            self.max_bytes,
+        );
+        true
+    }
+
+    fn read_stamp(&self) -> ReadStamp {
+        self.inval.stamp()
+    }
+
+    fn invalidate_tags(&self, tags: &[String]) -> usize {
+        let seq = self.inval.next();
+        for t in tags {
+            publish(&self.tag_inval[self.slot(t.as_str())], seq);
+        }
+        self.store.borrow_mut().take_indexed(false, tags)
+    }
+
+    /// Every entry for `method` + `path`, any query/prefix; the number of live ones.
+    fn invalidate_path(&self, method: &str, path: &str) -> usize {
+        publish(
+            &self.path_inval[self.path_slot(method, path)],
+            self.inval.next(),
+        );
+        let now = self.time.now_ns();
+        let mut st = self.store.borrow_mut();
+        let hits: Vec<Rc<CacheKey>> = st
+            .entries
+            .keys()
+            .filter(|k| k.method == method && k.path == path)
+            .cloned()
+            .collect();
+        let mut live = 0;
+        for k in hits {
+            if st.remove(&k).is_some_and(|s| s.live(now)) {
+                live += 1;
+            }
+        }
+        live
+    }
+
+    fn stats(&self) -> CacheStats {
+        let now = self.time.now_ns();
+        let mut st = self.store.borrow_mut();
+        st.reap(now);
+        CacheStats {
+            hits: self.hits.get(),
+            misses: self.misses.get(),
+            len: st.entries.len(),
+            capacity: self.capacity as usize,
+        }
+    }
+}
+
+#[cfg(test)]
+mod conformance {
+    use super::*;
+    use crate::cache::conformance::ConformL1;
+    use crate::host::ManualClock;
+
+    impl ConformL1 for LocalL1<ManualClock> {
+        fn clear(&self) -> usize {
+            LocalL1::clear(self)
+        }
+        fn tag_slot(&self, t: &str) -> usize {
+            LocalL1::tag_slot(self, t)
+        }
+        fn path_slot(&self, m: &str, p: &str) -> usize {
+            LocalL1::path_slot(self, m, p)
+        }
+        fn tag_index_size(&self) -> usize {
+            LocalL1::tag_index_size(self)
+        }
+    }
+
+    crate::page_cache_conformance!(<LocalL1<ManualClock> as PageCache>::with_clock);
+}
