@@ -324,6 +324,9 @@ pub struct L1Cache {
     capacity: u64,
     #[cfg(test)]
     pub(crate) mid_insert: MidInsertHook,
+    /// Test-only hook run after `invalidate_path` scanned every shard.
+    #[cfg(test)]
+    pub(crate) after_path_scan: MidInsertHook,
 }
 
 impl L1Cache {
@@ -381,6 +384,8 @@ impl L1Cache {
             capacity,
             #[cfg(test)]
             mid_insert: Mutex::new(None),
+            #[cfg(test)]
+            after_path_scan: Mutex::new(None),
         }
     }
 
@@ -572,6 +577,10 @@ impl L1Cache {
                 self.inner.remove(k);
                 s.write().remove(k);
             }
+        }
+        #[cfg(test)]
+        if let Some(h) = &*self.after_path_scan.lock() {
+            h();
         }
         self.inner.run_pending_tasks();
         live
@@ -1424,5 +1433,23 @@ mod tests {
     #[test]
     fn renders_racing_path_invalidations_end_fresh_free_running() {
         renders_racing_invalidations_end_fresh(Inval::Path);
+    }
+
+    #[test]
+    fn invalidate_path_publishes_before_it_scans() {
+        // Deterministic: a render stamped before `invalidate_path` inserts once every shard was
+        // scanned. Publishing after the scan would let it land, stale, in an already-scanned shard.
+        let c = Arc::new(L1Cache::new());
+        let k = key("GET", "/p", "x=1");
+        let s = c.read_stamp();
+        let landed = Arc::new(Mutex::new(None));
+        let (c2, k2, landed2) = (Arc::downgrade(&c), k.clone(), Arc::clone(&landed));
+        *c.after_path_scan.lock() = Some(Box::new(move || {
+            let c = c2.upgrade().unwrap();
+            *landed2.lock() = Some(c.insert(k2.clone(), rb_of("old"), TTL, &[], s));
+        }));
+        c.invalidate_path("GET", "/p");
+        assert_eq!(*landed.lock(), Some(false));
+        assert!(html(&c, &k).is_none());
     }
 }
