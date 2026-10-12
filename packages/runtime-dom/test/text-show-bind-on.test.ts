@@ -90,3 +90,95 @@ test('x-bind- refuses on* / srcdoc attributes and javascript: URLs', () => {
   console.warn = orig
   expect(warns.length).toBe(2)
 })
+
+test('x-html: update writes markup, null clears, no write while unchanged', () => {
+  const h = signal<string | null>('<b>a</b>')
+  defineBehavior('h1', () => ({ h }))
+  document.body.innerHTML = `<div x-data="h1"><p id="p" x-html="h"><b>a</b></p></div>`
+  mount()
+  const p = document.getElementById('p')!
+  const b = p.firstElementChild
+  expect(p.innerHTML).toBe('<b>a</b>')
+  expect(p.firstElementChild).toBe(b)             // first run matched the server markup: no rewrite
+  h.set('<i>x</i><u>y</u>'); expect(p.innerHTML).toBe('<i>x</i><u>y</u>')
+  h.set(null); expect(p.innerHTML).toBe('')
+  h.set('t'); expect(p.innerHTML).toBe('t')
+})
+
+test('x-html: equivalent markup spelling is not a first-paint mismatch', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  try {
+    const h = signal('a<br/>b &amp; c')
+    defineBehavior('h2', () => ({ h }))
+    document.body.innerHTML = `<div x-data="h2"><p id="p" x-html="h">a<br>b &amp; c</p></div>`
+    mount()
+    expect(warns.filter((w) => w.includes('mismatch'))).toEqual([])
+  } finally { console.warn = orig }
+})
+
+test('x-html: first-run mismatch warns and corrects the DOM', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  try {
+    const h = signal('<b>client</b>')
+    defineBehavior('h3', () => ({ h }))
+    document.body.innerHTML = `<div x-data="h3"><p id="p" x-html="h"><i>server</i></p></div>`
+    mount()
+    expect(document.getElementById('p')!.innerHTML).toBe('<b>client</b>')
+    expect(warns.filter((w) => w.includes('first-paint mismatch x-html')).length).toBe(1)
+  } finally { console.warn = orig }
+})
+
+test('x-html: an unknown member warns and leaves the DOM alone', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  try {
+    defineBehavior('h4', () => ({}))
+    document.body.innerHTML = `<div x-data="h4"><p id="p" x-html="nope"><i>server</i></p></div>`
+    mount()
+    expect(document.getElementById('p')!.innerHTML).toBe('<i>server</i>')
+    expect(warns.some((w) => w.includes('no such member'))).toBe(true)
+  } finally { console.warn = orig }
+})
+
+test('a literal x-html in user markup only binds a compiler member: no member, no write', () => {
+  // The runtime evaluates no expression: `x-html="alert(1)"` is not a member path, so it warns and does nothing.
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  try {
+    defineBehavior('h5', () => ({}))
+    document.body.innerHTML = `<div x-data="h5"><p id="p" x-html="alert(1)">safe</p></div>`
+    mount()
+    expect(document.getElementById('p')!.innerHTML).toBe('safe')
+  } finally { console.warn = orig }
+})
+
+test('markup inside an x-html / x-raw element is inert: no binding, no mounting (P1, P2)', () => {
+  const ran: string[] = []
+  defineBehavior('outer', () => ({ h: signal('<button id="b" x-on-click="hit">go</button>'), hit: () => ran.push('host') }))
+  defineBehavior('victim', () => { ran.push('victim'); return {} })
+  document.body.innerHTML = `<div x-data="outer"><p id="r" x-html="h"><button id="b" x-on-click="hit">go</button></p><p id="q" x-raw><i x-data="victim" id="v"></i><span x-text="h">t</span></p></div>`
+  mount()
+  ;(document.getElementById('b') as HTMLButtonElement).click()
+  expect(ran).toEqual([])                                  // x-on-click inside x-html not bound, x-data inside x-raw not mounted
+  expect(document.getElementById('q')!.querySelector('span')!.textContent).toBe('t')
+})
+
+test('x-html update that writes x-data markup does not mount it', async () => {
+  const ran: string[] = []
+  const h = signal('a')
+  defineBehavior('outer2', () => ({ h }))
+  defineBehavior('victim2', () => { ran.push('victim'); return {} })
+  document.body.innerHTML = `<div x-data="outer2"><p id="r" x-html="h">a</p></div>`
+  mount()
+  h.set('<b x-data="victim2">x</b>')
+  await flush()
+  expect(ran).toEqual([])
+})
+
+test('a React island subtree is inert: x-on-click / x-data inside it are never bound or mounted (F94)', () => {
+  const ran: string[] = []
+  defineBehavior('outer3', () => ({ hit: () => ran.push('host') }))
+  defineBehavior('victim3', () => { ran.push('victim'); return {} })
+  document.body.innerHTML = `<div x-data="outer3"><brust-island data-id="nope"><button id="b" x-on-click="hit">go</button><i x-data="victim3"></i></brust-island></div>`
+  mount()
+  ;(document.getElementById('b') as HTMLButtonElement).click()
+  expect(ran).toEqual([])
+})

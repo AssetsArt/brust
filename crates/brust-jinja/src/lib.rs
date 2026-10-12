@@ -32,6 +32,14 @@ pub fn register(env: &mut Environment<'_>) {
         ValueKind::String => escape_text(v.as_str().unwrap_or_default()),
         _ => escape_text(&paint(&v)),
     });
+    // The ONE unescaped sink: `dangerouslySetInnerHTML` (React's contract: the
+    // author owns the markup). null/undefined paint empty, anything else is
+    // `String(v)`. The compiler emits it only for an `Attr::InnerHtml`.
+    env.add_filter("html_raw", |v: Value| match v.kind() {
+        ValueKind::Undefined | ValueKind::None => String::new(),
+        ValueKind::String => v.as_str().unwrap_or_default().to_string(),
+        _ => js_string(&v),
+    });
     env.add_filter("js_str", |v: Value| paint(&v));
     env.add_filter("js_string", |v: Value| js_string(&v));
     env.add_filter("attr_str", |v: Value| attr_string(&v));
@@ -573,10 +581,11 @@ pub fn is_url_attr(html_name: &str) -> bool {
 }
 
 /// Attributes never rendered from component code: inline event handlers and
-/// `srcdoc` (the runtime refuses to bind them too).
+/// `srcdoc` (the runtime refuses to bind them too), and every `x-` name: those are
+/// runtime-dom directives, which only the compiler may emit (F94).
 pub fn is_refused_attr(html_name: &str) -> bool {
     let n = html_name.to_ascii_lowercase();
-    n.starts_with("on") || n == "srcdoc"
+    n.starts_with("on") || n == "srcdoc" || n.starts_with("x-")
 }
 
 /// The runtime's URL rule: the scheme of `new URL(v, base)` is http(s),
@@ -1140,6 +1149,33 @@ mod tests {
             render("{{ x | attr_str }}", minijinja::context! { x => 3 }),
             "3"
         );
+        // html_raw: the one unescaped sink; null/undefined paint empty, else String(v).
+        let raw = |t: &str, c: Value| render(t, c);
+        assert_eq!(
+            raw(
+                "{{ x | html_raw }}",
+                minijinja::context! { x => "<b>&</b>" }
+            ),
+            "<b>&</b>"
+        );
+        assert_eq!(
+            raw("{{ x | html_raw }}", minijinja::context! { x => () }),
+            ""
+        );
+        assert_eq!(raw("{{ x | html_raw }}", minijinja::context! {}), "");
+        assert_eq!(
+            raw("{{ x | html_raw }}", minijinja::context! { x => 7 }),
+            "7"
+        );
+        assert_eq!(
+            raw("{{ x | html_raw }}", minijinja::context! { x => 1.5 }),
+            "1.5"
+        );
+        assert_eq!(
+            raw("{{ x | html_raw }}", minijinja::context! { x => true }),
+            "true"
+        );
+        assert!(is_refused_attr("x-html") && is_refused_attr("X-HTML"));
     }
 
     #[test]
@@ -1191,6 +1227,28 @@ mod tests {
         assert!(
             is_refused_attr("onclick") && is_refused_attr("srcdoc") && !is_refused_attr("title")
         );
+        // F94: every runtime directive family is reserved; near-misses stay allowed.
+        for d in [
+            "x-data",
+            "x-props",
+            "x-props-bind",
+            "x-on-click",
+            "x-bind-class",
+            "x-text",
+            "x-html",
+            "x-raw",
+            "x-if",
+            "x-for",
+            "x-show",
+            "x-model",
+            "x-ref",
+            "X-On-Click",
+        ] {
+            assert!(is_refused_attr(d), "{d}");
+        }
+        for ok in ["xlink:href", "data-x-foo", "x", "xmlns", "max"] {
+            assert!(!is_refused_attr(ok), "{ok}");
+        }
     }
 
     #[test]

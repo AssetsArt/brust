@@ -7,7 +7,7 @@
 // `*.client.js` in <dir> (they import ./rt.ts, which captures the factories),
 // instantiates each host's behavior in document order with the props the
 // runtime would give it (x-props, or the parent member named by
-// x-props-bind), and compares every x-text / x-bind-* / x-if / x-model value
+// x-props-bind), and compares every x-text / x-html / x-bind-* / x-if / x-model value
 // with what the server painted. Hidden templates are skipped.
 import { readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -149,6 +149,11 @@ for (const host of Array.from(doc.querySelectorAll('[x-data]')) as Element[]) {
         checked++
         const want = textOf(resolveDirective(members, at.value, scope))
         if (el.textContent !== want) mismatches.push(`${where}: painted ${JSON.stringify(el.textContent)}, client ${JSON.stringify(want)}`)
+      } else if (at.name === 'x-html') {
+        checked++
+        const v = resolveDirective(members, at.value, scope)
+        const norm = doc.createElement('div'); norm.innerHTML = v == null ? '' : String(v)   // both sides through the HTML parser
+        if (el.innerHTML !== norm.innerHTML) mismatches.push(`${where}: painted ${JSON.stringify(el.innerHTML)}, client ${JSON.stringify(norm.innerHTML)}`)
       } else if (at.name.startsWith('x-bind-')) {
         checked++
         const attr = at.name.slice(7)

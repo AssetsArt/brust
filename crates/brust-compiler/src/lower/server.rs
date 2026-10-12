@@ -282,8 +282,10 @@ fn collect(n: &Node, s: &Node, cx: &mut Ctx, out: &mut Vec<Slot>) {
         ) => {
             for (a, b) in attrs.iter().zip(sa) {
                 if let (
-                    Attr::Dynamic { value, .. } | Attr::Spread(value),
-                    Attr::Dynamic { value: sv, .. } | Attr::Spread(sv),
+                    Attr::Dynamic { value, .. } | Attr::Spread(value) | Attr::InnerHtml { value },
+                    Attr::Dynamic { value: sv, .. }
+                    | Attr::Spread(sv)
+                    | Attr::InnerHtml { value: sv },
                 ) = (a, b)
                 {
                     expr(value, sv, cx, out);

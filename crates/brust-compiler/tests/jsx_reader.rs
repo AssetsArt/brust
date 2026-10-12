@@ -193,18 +193,127 @@ fn explicit_children_prop_is_diagnosed_not_dropped() {
 }
 
 #[test]
-fn member_tags_and_inner_html_are_diagnosed() {
-    let (_, d) = tpl(
-        "import * as M from './m'\nexport default function T({ h }: any) { return <div dangerouslySetInnerHTML={h}><M.X/></div> }",
+fn user_written_x_attributes_are_reserved_and_dropped() {
+    let (n, d) = tpl(
+        "export default function T({ t }: any) { return <div x-on-click=\"_h1\" x-data=\"victim\" x-text={t} data-x-ok=\"1\" /> }",
     );
+    let reserved: Vec<_> = d.iter().filter(|x| x.rule == "reserved-attr").collect();
+    assert_eq!(reserved.len(), 3, "{d:?}");
     assert!(
-        d.iter()
-            .any(|x| x.rule == "no-innerhtml" && matches!(x.class, DiagClass::Error))
+        reserved
+            .iter()
+            .all(|x| matches!(x.class, DiagClass::Warning))
     );
+    let Node::Element { attrs, .. } = n else {
+        panic!()
+    };
+    assert_eq!(attrs.len(), 1, "{attrs:?}");
+    assert!(matches!(&attrs[0], Attr::Static { name, .. } if name == "data-x-ok"));
+}
+
+#[test]
+fn member_tags_are_a_fallback() {
+    let (_, d) =
+        tpl("import * as M from './m'\nexport default function T() { return <div><M.X/></div> }");
     assert!(
         d.iter()
             .any(|x| x.rule == "member-tag" && matches!(x.class, DiagClass::Fallback))
     );
+}
+
+fn inner_html_attr(n: Node) -> Expr {
+    let Node::Element {
+        attrs, children, ..
+    } = n
+    else {
+        panic!("{n:?}")
+    };
+    assert!(children.is_empty(), "{children:?}");
+    assert_eq!(attrs.len(), 1, "{attrs:?}");
+    let Attr::InnerHtml { value } = attrs.into_iter().next().unwrap() else {
+        panic!("not an InnerHtml attr")
+    };
+    value
+}
+
+#[test]
+fn inner_html_literal_shape_unwraps_to_the_html_value() {
+    let (n, d) = tpl(
+        "export default function T() { return <div dangerouslySetInnerHTML={{ __html: '<b>x</b>' }} /> }",
+    );
+    assert!(d.is_empty(), "{d:?}");
+    let Expr::Raw(RawExpr { kind, .. }) = inner_html_attr(n) else {
+        panic!()
+    };
+    assert!(matches!(kind, RawKind::Lit(Literal::Str(s)) if s == "<b>x</b>"));
+}
+
+#[test]
+fn inner_html_identifier_shape_reads_dunder_html_null_safe() {
+    let (n, d) =
+        tpl("export default function T({ h }: any) { return <div dangerouslySetInnerHTML={h} /> }");
+    assert!(d.is_empty(), "{d:?}");
+    let Expr::Raw(RawExpr { kind, .. }) = inner_html_attr(n) else {
+        panic!()
+    };
+    let RawKind::Member {
+        target,
+        name,
+        optional,
+    } = kind
+    else {
+        panic!("{kind:?}")
+    };
+    assert_eq!(name, "__html");
+    assert!(optional);
+    assert!(matches!(target.kind, RawKind::Ident { ref name, .. } if name == "h"));
+}
+
+fn errors(d: &[Diagnostic]) -> Vec<&str> {
+    d.iter()
+        .filter(|x| matches!(x.class, DiagClass::Error))
+        .map(|x| x.rule.as_str())
+        .collect()
+}
+
+#[test]
+fn inner_html_with_children_is_an_error() {
+    let (_, d) = tpl(
+        "export default function T({ h }: any) { return <div dangerouslySetInnerHTML={h}><b>x</b></div> }",
+    );
+    assert_eq!(errors(&d), ["innerhtml-children"], "{d:?}");
+    let (_, d) = tpl(
+        "export default function T({ h, c }: any) { return <div dangerouslySetInnerHTML={h} children={c} /> }",
+    );
+    assert!(errors(&d).contains(&"innerhtml-children"), "{d:?}");
+}
+
+#[test]
+fn inner_html_on_a_void_element_is_an_error() {
+    let (_, d) =
+        tpl("export default function T({ h }: any) { return <img dangerouslySetInnerHTML={h} /> }");
+    assert_eq!(errors(&d), ["innerhtml-void"], "{d:?}");
+}
+
+#[test]
+fn inner_html_literal_without_dunder_html_is_an_error() {
+    let (_, d) = tpl(
+        "export default function T() { return <div dangerouslySetInnerHTML={{ html: 'x' }} /> }",
+    );
+    assert_eq!(errors(&d), ["innerhtml-shape"], "{d:?}");
+}
+
+#[test]
+fn inner_html_on_a_component_passes_through_as_a_prop() {
+    let (n, d) = tpl(
+        "import { Box } from './box'\nexport default function T({ h }: any) { return <Box dangerouslySetInnerHTML={h} /> }",
+    );
+    assert!(errors(&d).is_empty(), "{d:?}");
+    let Node::Component { props, .. } = n else {
+        panic!("{n:?}")
+    };
+    assert_eq!(props.len(), 1);
+    assert_eq!(props[0].0, "dangerouslySetInnerHTML");
 }
 
 #[test]

@@ -1,4 +1,5 @@
 import './text'
+import './html'
 import './show'
 import './bind'
 import './on'

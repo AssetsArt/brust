@@ -402,7 +402,10 @@ impl<'a, 'f> Render<'a, 'f> {
                 attrs, children, ..
             } => {
                 for a in attrs {
-                    if let Attr::Dynamic { value, .. } | Attr::Spread(value) = a {
+                    if let Attr::Dynamic { value, .. }
+                    | Attr::Spread(value)
+                    | Attr::InnerHtml { value } = a
+                    {
                         self.expr(value);
                     }
                 }

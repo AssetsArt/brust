@@ -364,7 +364,9 @@ impl Walker<'_, '_> {
             } => {
                 attrs.iter().any(|a| match a {
                     Attr::Event { .. } | Attr::Ref { .. } => true,
-                    Attr::Dynamic { value, .. } => self.reads_state(value),
+                    Attr::Dynamic { value, .. } | Attr::InnerHtml { value } => {
+                        self.reads_state(value)
+                    }
                     _ => false,
                 }) || children.iter().any(|c| self.body_directive(c))
             }

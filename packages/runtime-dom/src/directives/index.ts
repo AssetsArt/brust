@@ -12,6 +12,7 @@ export function bindHost(inst: Instance, el: Element, scope: Scope): void {
   walkChildren(inst, el, scope)
 }
 export function walkChildren(inst: Instance, el: Element, scope: Scope): void {
+  if (el.hasAttribute('x-html') || el.hasAttribute('x-raw') || el.localName === 'brust-island') return   // raw markup / React island: inert
   for (const child of Array.from(el.children)) {
     if ('__scope' in child) continue                          // x-for row: already bound with its own scope
     if (child.hasAttribute('x-for')) { bindElement(inst, child, scope); continue } // x-for owns the element (even when it is also a host)

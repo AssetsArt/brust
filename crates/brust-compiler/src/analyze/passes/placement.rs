@@ -229,7 +229,10 @@ fn collect_slots(ir: &ComponentIR, f: &mut impl FnMut(&str, &[String], bool)) {
                 attrs, children, ..
             } => {
                 for a in attrs {
-                    if let Attr::Dynamic { value, .. } | Attr::Spread(value) = a {
+                    if let Attr::Dynamic { value, .. }
+                    | Attr::Spread(value)
+                    | Attr::InnerHtml { value } = a
+                    {
                         expr(value, f);
                     }
                 }
@@ -599,7 +602,9 @@ impl Placer<'_> {
                 }
                 for a in attrs.iter_mut() {
                     match a {
-                        Attr::Dynamic { value, .. } | Attr::Spread(value) => self.expr(value),
+                        Attr::Dynamic { value, .. }
+                        | Attr::Spread(value)
+                        | Attr::InnerHtml { value } => self.expr(value),
                         Attr::Event { .. } => self.reactive += 1,
                         Attr::Static { .. } | Attr::Ref { .. } => {}
                     }

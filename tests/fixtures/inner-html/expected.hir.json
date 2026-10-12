@@ -1,0 +1,49 @@
+{
+  "function": "InnerHtml",
+  "params": 0,
+  "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "on",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t0"
+      ]
+    },
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t1",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    },
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t0",
+          "reactive": true
+        },
+        {
+          "name": "t2",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t3"
+      ]
+    }
+  ]
+}

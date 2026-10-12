@@ -17,7 +17,7 @@ use super::server_expr::{JinjaCtx, UNDEFINED, jinja_string, to_jinja};
 use super::{LowerCtx, Member, MemberDef, Paint};
 use crate::ir::{
     Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobKind, Node, RawExpr, RawKind, ServerExpr,
-    Tier,
+    Tier, VOID,
 };
 use brust_jinja::{
     attr_name, escape_attr, is_boolean_attr, is_refused_attr, is_url_attr, safe_url,
@@ -25,11 +25,6 @@ use brust_jinja::{
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
-
-const VOID: &[&str] = &[
-    "img", "input", "br", "hr", "meta", "link", "area", "base", "col", "embed", "source", "track",
-    "wbr",
-];
 
 /// What a prop of an inlined child reads in the parent's template.
 #[derive(Clone, Debug)]
@@ -97,6 +92,8 @@ pub struct Printer<'a, 'c> {
     blank: bool,
     /// Printing the children of `<script>` / `<style>`: static text goes out verbatim.
     raw_text: bool,
+    /// The body of the element being opened, when it carries `dangerouslySetInnerHTML`.
+    inner_html: Option<String>,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -125,6 +122,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             ssr: HashMap::new(),
             blank: false,
             raw_text: false,
+            inner_html: None,
         })
     }
 
@@ -537,6 +535,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         let mut body = String::new();
         std::mem::swap(&mut body, &mut self.out);
         let mut text_directive = None;
+        let inner_html = self.inner_html.take();
         let raw_before = self.raw_text;
         self.raw_text = tag.eq_ignore_ascii_case("script") || tag.eq_ignore_ascii_case("style");
         if lone {
@@ -548,6 +547,9 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.raw_text = raw_before;
         std::mem::swap(&mut body, &mut self.out);
+        if let Some(h) = inner_html {
+            body = h;
+        }
         if let Some(d) = text_directive {
             open.push_str(&format!(" x-text=\"{d}\""));
         }
@@ -780,13 +782,29 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
             }
             Attr::Spread(_) => {}
+            Attr::InnerHtml { value } => {
+                // The one raw sink (`html_raw`): the element body is the value, unescaped.
+                let raw = match sa {
+                    Attr::InnerHtml { value: sv } => raw_of(value, Some(sv)),
+                    _ => None,
+                };
+                self.inner_html = Some(format!("{{{{ {} | html_raw }}}}", self.value(value)));
+                // A reactive value also gets `x-html` (only a compiled InnerHtml ever does).
+                if let Some(b) = self.reactive(raw, value) {
+                    let d = self.value_member(raw.unwrap(), b, Paint::Raw);
+                    open.push_str(&format!(" x-html=\"{d}\""));
+                } else {
+                    // Marks the markup inert for the runtime (nothing inside is bound or mounted).
+                    open.push_str(" x-raw");
+                }
+            }
         }
     }
 
     fn refuse(&mut self, html: &str, tag: &str) {
         self.diagnostics.push(Diagnostic::warning(
             "unsafe-attr",
-            format!("`{html}` on <{tag}> is not rendered (inline handlers, srcdoc and unsafe URLs are refused)"),
+            format!("`{html}` on <{tag}> is not rendered (inline handlers, srcdoc, `x-html` and unsafe URLs are refused)"),
             0,
             "use an event prop (onClick) and http(s)/relative URLs",
         ));
@@ -1466,7 +1484,7 @@ fn needs_directives(n: &Node, f: &Facts<'_>) -> bool {
         } => {
             attrs.iter().any(|a| match a {
                 Attr::Event { .. } | Attr::Ref { .. } => true,
-                Attr::Dynamic { value, .. } => expr_reactive(value, f),
+                Attr::Dynamic { value, .. } | Attr::InnerHtml { value } => expr_reactive(value, f),
                 _ => false,
             }) || children.iter().any(|c| needs_directives(c, f))
         }

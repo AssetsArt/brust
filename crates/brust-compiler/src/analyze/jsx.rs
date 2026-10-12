@@ -2,6 +2,7 @@
 //! `was_jsx_element`) back into template `Node`s. The parser has already applied
 //! JSX whitespace collapsing and entity decoding to text children.
 use crate::analyze::expr::{Reader, estring, loc_of};
+use crate::ir::template::VOID;
 use crate::ir::{Attr, Diagnostic, Expr, HandlerDecl, IdentKind, Node, RawExpr, RawKind};
 use bun_ast as js_ast;
 use js_ast::OpCode;
@@ -102,6 +103,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     let mut props_out = Vec::new();
     let mut children = Vec::new();
     let mut ref_name = None;
+    let mut children_prop = false;
     for p in obj.properties.iter() {
         let Some(value) = &p.value else { continue };
         if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
@@ -128,6 +130,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             continue;
         }
         if name == "children" {
+            children_prop = true;
             r.diagnostics.push(Diagnostic::fallback(
                 "children-prop",
                 "`children` passed as an attribute is not supported natively",
@@ -145,6 +148,28 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                 let v = r.expr(value);
                 props_out.push((name, Expr::Raw(v)));
             }
+        }
+    }
+
+    if let Tag::Host(tag) = &tag
+        && attrs.iter().any(|a| matches!(a, Attr::InnerHtml { .. }))
+    {
+        // React throws on both: one of `children` / `dangerouslySetInnerHTML`, and none on a void element.
+        if !children.is_empty() || children_prop {
+            r.diagnostics.push(Diagnostic::error(
+                "innerhtml-children",
+                "an element cannot have both children and dangerouslySetInnerHTML",
+                loc,
+                "drop the children, or put the markup in __html",
+            ));
+        }
+        if VOID.contains(&tag.as_str()) {
+            r.diagnostics.push(Diagnostic::error(
+                "innerhtml-void",
+                format!("<{tag}> is a void element and cannot take dangerouslySetInnerHTML"),
+                loc,
+                "set dangerouslySetInnerHTML on a container element",
+            ));
         }
     }
 
@@ -209,13 +234,17 @@ fn read_attr(
             value: Expr::Raw(r.expr(value)),
         });
     }
-    if name == "dangerouslySetInnerHTML" {
-        r.diagnostics.push(Diagnostic::error(
-            "no-innerhtml",
-            "dangerouslySetInnerHTML is not supported",
+    if name.to_ascii_lowercase().starts_with("x-") {
+        r.diagnostics.push(Diagnostic::warning(
+            "reserved-attr",
+            format!("`{name}` attributes are reserved for brust's runtime and are not rendered"),
             loc_of(value),
-            "render the markup as elements, or move this component to React",
+            "rename it (`data-x-…`) or move this component to React",
         ));
+        return None;
+    }
+    if name == "dangerouslySetInnerHTML" {
+        return read_inner_html(r, value);
     }
     if let Some(event) = event_name(name) {
         if name.ends_with("Capture") {
@@ -244,6 +273,38 @@ fn read_attr(
             name: name.into(),
             value: Expr::Raw(r.expr(value)),
         },
+    })
+}
+
+/// `dangerouslySetInnerHTML={{ __html: v }}` (React's contract): the attribute
+/// carries `v`. An object literal is unwrapped at compile time; any other
+/// expression `o` reads `o.__html` (null-safe: `o` may be absent).
+fn read_inner_html(r: &mut Reader<'_, '_>, value: &js_ast::Expr) -> Option<Attr> {
+    let raw = r.expr(value);
+    let inner = match raw.kind {
+        RawKind::Object(props) => {
+            let Some((_, html)) = props.into_iter().find(|(k, _)| k == "__html") else {
+                r.diagnostics.push(Diagnostic::error(
+                    "innerhtml-shape",
+                    "dangerouslySetInnerHTML needs an object with an `__html` key",
+                    loc_of(value),
+                    "pass `{ __html: markup }`",
+                ));
+                return None;
+            };
+            html
+        }
+        kind => RawExpr {
+            loc: raw.loc,
+            kind: RawKind::Member {
+                target: Box::new(RawExpr { loc: raw.loc, kind }),
+                name: "__html".into(),
+                optional: true,
+            },
+        },
+    };
+    Some(Attr::InnerHtml {
+        value: Expr::Raw(inner),
     })
 }
 
