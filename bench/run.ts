@@ -172,7 +172,7 @@ releaseLock()
 const budgetOf = (a: AppSpec) => (a.id === 'next' ? 'procs=1 (as shipped)' : a.id === 'bun-serve' || a.id === 'elysia-bun' ? `procs=${workersN}` : `workers=${workersN}`)
 const date = new Date().toISOString().slice(0, 10)
 const host = `${process.platform}/${process.arch}`
-/** Model · chip · RAM of this machine, never its hostname (repo rule). macOS: system_profiler; Linux: DMI + /proc/cpuinfo. */
+/** Model · chip · RAM of this machine; the machine name is never recorded (repo rule). macOS: system_profiler; Linux: DMI + /proc/cpuinfo. */
 function describeMachine(): Machine {
   const memGb = Math.round(totalmem() / 2 ** 30)
   if (process.platform === 'darwin') {
