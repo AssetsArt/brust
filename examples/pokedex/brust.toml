@@ -10,3 +10,9 @@ server_only = ["lib/team-db"]
 # `brust build --target cloudflare` swaps the sqlite roster for the D1 one (the whole facade module).
 [cloudflare.alias]
 "lib/team-db.ts" = "lib/team-db.d1.ts"
+
+# A shared second cache tier (needs `bun add @brust/cache-redis`; see the brust docs, "Redis / Dragonfly"):
+# [cache]
+# adapter = "redis"   # or "dragonfly"
+# [cache.redis]
+# url = "env:REDIS_URL"
