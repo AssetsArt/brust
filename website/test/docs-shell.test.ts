@@ -1,61 +1,33 @@
 // website/test/docs-shell.test.ts — the docs shell: one route per nav entry, the shell's tiers, and in Chromium the
 // sidebar/pager/edit link, the "On this page" scrollspy and the Copy button (no Clipboard API; timer restart).
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { readFileSync, rmSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
 import { DOCS_HOME, EDIT_BASE, NAV, PAGES } from '../lib/nav'
+import { app, build, component as componentOf, freshOut, HOOK_MS, type Manifest, ready, serve, type Server, TEST_MS, until } from './harness'
 
-const app = join(import.meta.dir, '..')
 const coreVersion = JSON.parse(readFileSync(join(app, '../packages/brust/package.json'), 'utf8')).version as string
-const bin = join(app, '../packages/brust/bin/brust')
-const out = 'dist-test-shell'
-const port = 21000 + Math.floor(Math.random() * 2000)
-const base = `http://127.0.0.1:${port}`
-let server: ReturnType<typeof Bun.spawn> | undefined
+let base = ''
+let srv: Server | undefined
 let browser: Browser | undefined
-
-interface Manifest {
-  routes: { pattern: string }[]
-  components: Record<string, { tier: string; client: string | null; jobs: { kind: string }[] }>
-}
 let manifest: Manifest
-
-function component(name: string) {
-  const prefix = `${name[0]!.toLowerCase()}${name.slice(1)}_`
-  const hits = Object.entries(manifest.components).filter(([id]) => id.startsWith(prefix))
-  expect([name, hits.length]).toEqual([name, 1])
-  return hits[0]![1]
-}
+const component = (name: string) => componentOf(manifest, name)
 
 beforeAll(async () => {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
-  expect(b.stderr.toString()).toBe('')
+  const out = freshOut('shell')
   // the react demos (landing PokemonSearch) legitimately print warning hook-unsupported: any other warning is a failure
-  expect(b.stdout.toString().split('\n').filter((l) => l.startsWith('warning') && !l.startsWith('warning hook-unsupported'))).toEqual([])
-  expect(b.exitCode).toBe(0)
-  manifest = JSON.parse(readFileSync(join(app, out, 'manifest.json'), 'utf8'))
-  server = Bun.spawn([bin, 'start', '--dist-dir', out], {
-    cwd: app,
-    env: { ...process.env, BRUST_PORT: String(port), BRUST_ADDR: '127.0.0.1', BRUST_WORKERS: '2' },
-    stdout: 'ignore',
-    stderr: 'ignore',
-  })
-  for (let i = 0; i < 120; i++) {
-    try {
-      if ((await fetch(`${base}/docs`)).ok) break
-    } catch {}
-    await Bun.sleep(250)
-  }
+  manifest = build('routes.tsx', out)
+  srv = await serve(out)
+  base = srv.base
   browser = await chromium.launch()
-}, 180_000)
+}, HOOK_MS)
 
 afterAll(async () => {
   await browser?.close()
-  server?.kill()
-  await server?.exited
-  rmSync(join(app, out), { recursive: true, force: true })
-})
+  await srv?.stop()
+  freshOut('shell')
+}, HOOK_MS)
 
 test('routes: /docs plus one /docs/{slug} per nav entry, in nav order; the canon slugs are present', () => {
   // the /demo/... routes belong to the Guide demos (guide.test.ts), not to the docs shell
@@ -94,7 +66,7 @@ test('every docs route is 200 with its title and current sidebar link; /docs is 
   const docs = await (await fetch(`${base}/docs`)).text()
   expect(docs).toContain(`<a href="/docs/${home.slug}" aria-current="page">${home.title}</a>`)
   expect((await fetch(`${base}/docs/nope`)).status).toBe(404)
-}, 60_000)
+}, TEST_MS)
 
 test('pager: previous/next follow the nav order across groups; the ends have one side', async () => {
   const first = await (await fetch(`${base}/docs/introduction`)).text()
@@ -112,28 +84,28 @@ test('pager: previous/next follow the nav order across groups; the ends have one
 test('On this page: the section being read is aria-current and the dot moves to it', async () => {
   const page = await browser!.newPage({ viewport: { width: 1440, height: 800 } })
   await page.goto(`${base}/docs/quickstart`, { waitUntil: 'networkidle' })
+  await ready(page, '.toc')
   const current = () => page.locator('.toc a[aria-current="location"]').allTextContents()
-  expect(await current()).toEqual(['Check the requirements'])
-  await page.locator('#run').scrollIntoViewIfNeeded()
+  expect(await until(current, (v) => v.join() === 'Check the requirements')).toEqual(['Check the requirements'])
   await page.evaluate(() => scrollTo(0, document.getElementById('run')!.offsetTop - 40))
-  await page.waitForTimeout(100)
-  expect(await current()).toEqual(['Run it'])
-  const y = await page.evaluate(() => getComputedStyle(document.querySelector('.toc')!).getPropertyValue('--ind-y'))
-  expect(Number.parseFloat(y)).toBeGreaterThan(0)
+  expect(await until(current, (v) => v.join() === 'Run it')).toEqual(['Run it'])
+  const indY = () => page.evaluate(() => Number.parseFloat(getComputedStyle(document.querySelector('.toc')!).getPropertyValue('--ind-y')))
+  expect(await until(indY, (y) => y > 0)).toBeGreaterThan(0)
   await page.close()
-}, 60_000)
+}, TEST_MS)
 
 test('CopyButton without the Clipboard API: says "Select to copy" and selects the code', async () => {
   const ctx = await browser!.newContext()
   await ctx.addInitScript(() => Object.defineProperty(Navigator.prototype, 'clipboard', { get: () => undefined }))
   const page = await ctx.newPage()
   await page.goto(`${base}/docs/quickstart`, { waitUntil: 'networkidle' })
+  await ready(page, 'figure.code button')
   const btn = page.locator('figure.code button').first()
   await btn.click()
-  expect(await btn.textContent()).toBe('Select to copy')
+  expect(await until(() => btn.textContent(), (t) => t === 'Select to copy')).toBe('Select to copy')
   expect(await page.evaluate(() => String(getSelection()))).toContain('bun --version')
   await ctx.close()
-}, 60_000)
+}, TEST_MS)
 
 test('CopyButton: a second click restarts the 1.4 s reset (the first timer is cleared)', async () => {
   // Deterministic: without the Clipboard API the label is set synchronously in the click handler, so the
@@ -144,6 +116,7 @@ test('CopyButton: a second click restarts the 1.4 s reset (the first timer is cl
   await page.clock.install()
   await page.goto(`${base}/docs/quickstart`, { waitUntil: 'networkidle' })
   const btn = page.locator('figure.code button').nth(1)
+  await ready(page, 'figure.code button', 1)
   await btn.click()
   await page.clock.runFor(1000)
   expect(await btn.textContent()).toBe('Select to copy')
@@ -153,7 +126,7 @@ test('CopyButton: a second click restarts the 1.4 s reset (the first timer is cl
   await page.clock.runFor(500) // 1.5 s after the second click
   expect(await btn.textContent()).toBe('Copy')
   await ctx.close()
-}, 60_000)
+}, TEST_MS)
 
 test('CopyButton with the Clipboard API: copies the shell commands without prompts and says Copied', async () => {
   const ctx = await browser!.newContext()
@@ -161,9 +134,10 @@ test('CopyButton with the Clipboard API: copies the shell commands without promp
   const page = await ctx.newPage()
   await page.goto(`${base}/docs/quickstart`, { waitUntil: 'networkidle' })
   const btn = page.locator('figure.code button').nth(1)
+  await ready(page, 'figure.code button', 1)
   await btn.click()
   await page.locator('figure.code button.done').waitFor()
   expect(await btn.textContent()).toBe('Copied')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('bun create @brust/app@latest my-app\ncd my-app && bun install')
   await ctx.close()
-}, 60_000)
+}, TEST_MS)

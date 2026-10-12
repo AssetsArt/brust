@@ -1,11 +1,17 @@
 // The Copy button on a code block (native tier): copies the block's text; a shell block copies its `$ ` commands only.
 // Without the Clipboard API (a non-secure origin) or when the write is refused, it selects the code instead, so the
 // reader can copy by hand. A second click within the label's 1.4 s restarts the reset timer (the old one is cleared).
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export default function CopyButton({ text, lang }: { text: string; lang: string }) {
   const [label, setLabel] = useState('Copy')
   const reset = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const self = useRef<HTMLSpanElement>(null)
+  // mounted marker for tests, on the label span. A native effect runs BEFORE refs and handlers are bound (gap G9),
+  // so the marker waits one microtask: mount binds synchronously right after the effects run.
+  useEffect(() => {
+    queueMicrotask(() => self.current?.setAttribute('data-ready', ''))
+  }, [])
   return (
     <button
       type="button"
@@ -39,7 +45,7 @@ export default function CopyButton({ text, lang }: { text: string; lang: string 
         navigator.clipboard.writeText(copy).then(() => show('Copied'), selectCode)
       }}
     >
-      {label}
+      <span ref={self}>{label}</span>
     </button>
   )
 }
