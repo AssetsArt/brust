@@ -6,7 +6,7 @@ import { cpSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'no
 import { builtinModules } from 'node:module'
 import { dirname, join, relative } from 'node:path'
 import type { BunPlugin } from 'bun'
-import { loadConfig } from '../config'
+import { BrustConfigError, type CorsConfig, loadCors } from '../config'
 import { layoutAssets } from './cf-assets'
 import { type CfConfigJson, cfEntrySource } from './cf-entry'
 import { type CoreCf, resolveCoreCf } from './cf-core'
@@ -27,6 +27,8 @@ export interface CfPrepared {
   user: UserWrangler
   coreVersion: string
   pkgName: string | undefined
+  /** brust.toml `[cors]`, validated before any write */
+  cors: CorsConfig | undefined
   warnings: string[]
 }
 
@@ -53,7 +55,14 @@ export async function prepareCloudflare(appRoot: string, cfg: CloudflareBuildCon
     pkgName = undefined
   }
   const coreVersion = String((JSON.parse(readFileSync(join(import.meta.dir, '..', '..', 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0')
-  return { cfg: cfg ?? DEFAULT_CFG, core, user, coreVersion, pkgName, warnings }
+  let cors: CorsConfig | undefined
+  try {
+    cors = await loadCors(appRoot)
+  } catch (e) {
+    if (e instanceof BrustConfigError) throw new BuildError('config', e.message)
+    throw e
+  }
+  return { cfg: cfg ?? DEFAULT_CFG, core, user, coreVersion, pkgName, cors, warnings }
 }
 
 export interface CfBuildCtx {
@@ -136,15 +145,13 @@ function cfStorePlugin(appRoot: string): BunPlugin {
   }
 }
 
-function smokeFiles(app: string, glueBase: string): { preload: string; smoke: string } {
+function smokeFiles(app: string): { preload: string; smoke: string } {
   const preload = `// generated: stubs the Workers-only modules so brust-app.js can be imported under Bun
 import { plugin } from 'bun'
 plugin({
   name: 'brust-cf-smoke',
   setup(b) {
     b.module('cloudflare:workers', () => ({ exports: { env: {}, waitUntil() {} }, loader: 'object' }))
-    b.onResolve({ filter: new RegExp('/' + ${JSON.stringify(glueBase)} + '$') }, (a) => ({ path: a.path, namespace: 'brust-glue' }))
-    b.onLoad({ filter: /.*/, namespace: 'brust-glue' }, () => ({ loader: 'js', contents: 'export const invalidate = () => ({ l1Removed: 0, jobRemoved: 0 })' }))
   },
 })
 `
@@ -177,7 +184,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   const templatesPath = join(stage, 'templates.json')
   writeFileSync(templatesPath, JSON.stringify(templates))
 
-  const cors = (await loadConfig(ctx.appRoot).catch(() => ({}) as { cors?: unknown })).cors
+  const cors = p.cors
   const a = ctx.manifest.actions
   const config: CfConfigJson = {
     abi: 1,
@@ -234,7 +241,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   warnings.push(...merged.warnings)
   writeFileSync(join(cfDir, 'wrangler.jsonc'), renderWrangler(merged.config))
 
-  const { preload, smoke } = smokeFiles(appFile, glue.split('/').pop() ?? glue)
+  const { preload, smoke } = smokeFiles(appFile)
   writeFileSync(join(stage, 'smoke-preload.ts'), preload)
   writeFileSync(join(stage, 'smoke.ts'), smoke)
   const r = Bun.spawnSync([process.execPath, '--preload', join(stage, 'smoke-preload.ts'), join(stage, 'smoke.ts')], {

@@ -95,3 +95,35 @@ console.log(JSON.stringify({ status: res.status, body: await res.json(), seen })
   expect(r.stderr.toString()).toBe('')
   expect(JSON.parse(r.stdout.toString())).toEqual({ status: 200, body: { l1Removed: 7, jobRemoved: 1 }, seen: [{ tags: ['x'] }] })
 })
+
+function appWithToml(extra: string): string {
+  const dir = join(FIX, 'cf-app-cors')
+  rmSync(dir, { recursive: true, force: true })
+  cleanup.push(dir)
+  cpSync(APP, dir, { recursive: true })
+  writeFileSync(join(dir, 'brust.toml'), `${readFileSync(join(APP, 'brust.toml'), 'utf8')}\n${extra}\n`)
+  return dir
+}
+const configOf = (out: string) => {
+  const js = readFileSync(join(out, 'cf', 'worker', 'brust-app.js'), 'utf8')
+  return JSON.parse(/CONFIG = '(.*)'/.exec(js)![1]!) as Record<string, unknown>
+}
+
+test('[cors] reaches CONFIG, even with an unrelated bad env var on the build host (F1)', () => {
+  const dir = appWithToml('[cors]\norigins = ["https://ok.example"]\ncredentials = true')
+  const out = join(outDir(), 'dist')
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out], { BRUST_PORT: 'abc' })
+  expect(r.err).toBe('')
+  expect(r.code).toBe(0)
+  expect(configOf(out).cors).toEqual({ origins: ['https://ok.example'], credentials: true })
+})
+
+test('an invalid [cors] fails the build before anything is written (F1)', () => {
+  const dir = appWithToml('[cors]\norigins = "https://ok.example"')
+  const out = join(outDir(), 'dist')
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])
+  expect(r.code).toBe(1)
+  expect(r.err).toContain('error config')
+  expect(r.err).toContain('cors.origins')
+  expect(existsSync(out)).toBe(false)
+})
