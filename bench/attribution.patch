@@ -1,11 +1,11 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index cd7a48f..0654ed9 100644
+index d442464..6d345b3 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -142,8 +142,11 @@ dependencies = [
-  "bytes",
+@@ -143,8 +143,11 @@ dependencies = [
   "flate2",
   "http",
+  "js-sys",
 + "libc",
   "matchit",
   "minijinja",
@@ -15,10 +15,10 @@ index cd7a48f..0654ed9 100644
   "serde",
   "serde_json",
 diff --git a/crates/brust-core/Cargo.toml b/crates/brust-core/Cargo.toml
-index 7a58cdf..5f351f9 100644
+index 54a338b..f0bbe69 100644
 --- a/crates/brust-core/Cargo.toml
 +++ b/crates/brust-core/Cargo.toml
-@@ -24,6 +24,9 @@ matchit = "0.9"
+@@ -26,6 +26,9 @@ matchit = "0.9"
  percent-encoding = "2.3"
  blake3 = "1"
  flate2 = { version = "1", optional = true }
@@ -29,10 +29,10 @@ index 7a58cdf..5f351f9 100644
  [lints]
  workspace = true
 diff --git a/crates/brust-core/src/lib.rs b/crates/brust-core/src/lib.rs
-index b461b0f..79f1d6a 100644
+index f3ad6c4..7a015ee 100644
 --- a/crates/brust-core/src/lib.rs
 +++ b/crates/brust-core/src/lib.rs
-@@ -15,6 +15,7 @@ mod cors;
+@@ -31,6 +31,7 @@ mod cors;
  pub mod host;
  pub mod inputs;
  pub mod manifest;
@@ -158,7 +158,7 @@ index 0000000..b5a5421
 +    serde_json::to_vec(&m).unwrap()
 +}
 diff --git a/crates/brust-core/src/pipeline.rs b/crates/brust-core/src/pipeline.rs
-index 5fedc92..33488c8 100644
+index d9feec4..2a5a79a 100644
 --- a/crates/brust-core/src/pipeline.rs
 +++ b/crates/brust-core/src/pipeline.rs
 @@ -97,6 +97,9 @@ pub async fn handle<H: Host>(
@@ -345,7 +345,7 @@ index 5fedc92..33488c8 100644
  /// Validate, store and fan out the worker's `results` for `lookup.misses` — shared by the jobs
  /// call and the planned loader call. `Err` = the 500 to send, already logged (today's messages).
  /// `Ok(true)`: an insert was rejected (its value was computed before a covering invalidation,
-@@ -597,6 +648,9 @@ fn render_document<H: Host>(
+@@ -601,6 +652,9 @@ fn render_document<H: Host>(
      ri: usize,
      ctx: &Node,
  ) -> Result<Bytes, RenderError> {
@@ -355,7 +355,7 @@ index 5fedc92..33488c8 100644
      let mut out = String::with_capacity(s.render_hints[ri].load(Ordering::Relaxed));
      render_chain_into(
          &s.manifest,
-@@ -606,6 +660,9 @@ fn render_document<H: Host>(
+@@ -610,6 +664,9 @@ fn render_document<H: Host>(
          ctx,
          &mut out,
      )?;
@@ -365,7 +365,7 @@ index 5fedc92..33488c8 100644
      inject_document_assets_into(
          &mut out,
          &route.chain,
-@@ -613,6 +670,7 @@ fn render_document<H: Host>(
+@@ -617,6 +674,7 @@ fn render_document<H: Host>(
          ctx.get(STORE_KEY),
          s.action_prefix_tag.as_deref(),
      );
@@ -373,7 +373,7 @@ index 5fedc92..33488c8 100644
      // M3-P P7: stored only when it changes — the steady state writes no shared cache line.
      let hint = next_hint(out.len());
      if s.render_hints[ri].load(Ordering::Relaxed) != hint {
-@@ -729,7 +787,9 @@ pub fn render_chain_into(
+@@ -733,7 +791,9 @@ pub fn render_chain_into(
      let children = ctx.get(CHILDREN_KEY);
      let own_all = ctx.get(OWN_KEY);
      // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
@@ -383,7 +383,7 @@ index 5fedc92..33488c8 100644
      // `_props` (the island host's `x-props`): the merged loader context — params,
      // path, loader data — without the server's per-component maps. A view over
      // the tree (no copy), shared by every chain component.
-@@ -737,6 +797,7 @@ pub fn render_chain_into(
+@@ -741,6 +801,7 @@ pub fn render_chain_into(
      // Per component: Arc views of its child-slot and own-job maps (no copy),
      // looked up own first, then children, then its `_idN`, then the base.
      let overlay = |id: &str| {
@@ -391,7 +391,7 @@ index 5fedc92..33488c8 100644
          let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
          let mut maps = Vec::with_capacity(2);
          for all in [children, own_all] {
-@@ -1419,7 +1480,9 @@ fn plan_one<'a>(
+@@ -1423,7 +1484,9 @@ fn plan_one<'a>(
          Dest::Chain { row, .. } => row,
          Dest::Child { .. } => None,
      };
@@ -401,7 +401,7 @@ index 5fedc92..33488c8 100644
      // M3-F C5/D8: every ssr job renders inside a store scope seeded from `__store`, so the
      // snapshot is one of its inputs (and of its hashed key). Precompute jobs never see stores.
      if j.kind == JobKind::Ssr
-@@ -1437,9 +1500,18 @@ fn plan_one<'a>(
+@@ -1441,9 +1504,18 @@ fn plan_one<'a>(
      // parent-scope inputs, so the row is part of the key.
      let (key, user_key) = match per_instance {
          Some(r) if !j.has_props || j.cache_key.is_some() => {
@@ -422,7 +422,7 @@ index 5fedc92..33488c8 100644
      };
      out.push(JobPlan {
          key,
-@@ -1685,10 +1757,14 @@ pub fn plan_response(
+@@ -1689,10 +1761,14 @@ pub fn plan_response(
      };
      merge_loader_response(&mut base, data, snapshot, &route.id);
      let ctx = Node::map(base);
@@ -588,10 +588,10 @@ index f20ab55..73b6723 100644
  
  /// A claimed call's deadline passed (the `call_worker_decoded` deadline arm).
 diff --git a/crates/brust-server/src/lib.rs b/crates/brust-server/src/lib.rs
-index c7d578a..b8523ca 100644
+index 7bf1be9..aac23a3 100644
 --- a/crates/brust-server/src/lib.rs
 +++ b/crates/brust-server/src/lib.rs
-@@ -10,7 +10,7 @@ mod pipeline;
+@@ -12,7 +12,7 @@ mod pipeline;
  pub mod pool;
  pub mod server;
  
