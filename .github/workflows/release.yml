@@ -1,7 +1,7 @@
 name: release
 # Builds the @brust/native addon for 6 targets (zig for every Linux cross leg: aws-lc-sys needs a per-target C
-# compiler — 0.1.x release.yml:53-61) and, on workflow_dispatch, DRY-RUNS the npm publish of @brust/core,
-# @brust/runtime-dom and the six @brust/native-<plat>. The real publish job is gated to `v*` tags: a human pushes
+# compiler — 0.1.x release.yml:53-61), builds @brust/core-cf (the ONE app-independent workers-rs wasm; `build-core-cf`) and, on
+# workflow_dispatch, DRY-RUNS the npm publish of @brust/core, @brust/runtime-dom, @brust/core-cf and the six @brust/native-<plat>. The real publish job is gated to `v*` tags: a human pushes
 # the tag (scripts/release-bump.ts --release). Secret for the real publish: BRUST_NPM_TOKEN (memory npm-org-brust).
 on:
   push: { tags: ["v*"] }
@@ -42,9 +42,32 @@ jobs:
         run: cd packages/brust && bun run build:target --target ${{ matrix.target }} ${{ matrix.napi_extra }}
       - uses: actions/upload-artifact@v4
         with: { name: "bindings-${{ matrix.target }}", path: packages/brust/native/brust.*.node, if-no-files-found: error }
+  build-core-cf:
+    name: build @brust/core-cf (wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: nightly-2026-09-15, components: "rust-src", targets: wasm32-unknown-unknown }
+      - uses: Swatinem/rust-cache@v2
+        with: { key: core-cf }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.2" }
+      - run: bun install --frozen-lockfile
+      # worker-build's version has ONE source: npm/core-cf/package.json brust.workerBuild (core-cf-check --versions pins it to Cargo.toml).
+      - id: wb
+        run: echo "v=$(bun -e "console.log(require('./npm/core-cf/package.json').brust.workerBuild)")" >> "$GITHUB_OUTPUT"
+      - run: cargo install worker-build --version "${{ steps.wb.outputs.v }}" --locked
+      # Release + panic-unwind are build.ts's defaults and the pinned-nightly PATH shim is applied inside (it fails without the [pinned] line);
+      # NEVER --e2e here. The check also rejects an e2e marker, a wrong file set, a wasm >= 4 MiB and a tarball that lost worker/.
+      - run: |
+          bun crates/brust-wasm/scripts/build.ts
+          bun scripts/core-cf-check.ts npm/core-cf --pack --versions crates/brust-wasm/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with: { name: core-cf-worker, path: npm/core-cf/worker/, if-no-files-found: error }
   dry-run:
     name: npm publish --dry-run
-    needs: build
+    needs: [build, build-core-cf]
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -60,15 +83,20 @@ jobs:
         run: cd packages/brust && bun run build:debug
       - uses: actions/download-artifact@v4
         with: { pattern: "bindings-*", path: packages/brust/native, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { name: core-cf-worker, path: npm/core-cf/worker }
       - name: Assemble npm/<plat> (six .node files into the committed dirs)
         run: ./packages/brust/node_modules/.bin/napi artifacts --package-json-path packages/brust/package.json --output-dir packages/brust/native --npm-dir npm
       - name: Dry-run publish (bun rewrites workspace:* to the version)
         run: |
           set -e
-          for d in packages/runtime-dom packages/brust packages/create-app npm/*; do (cd "$d" && bun publish --dry-run --access public); done
+          PLATS=$(bun -e "console.log(require('./scripts/release-files.ts').PLATS.join(' '))")
+          bun scripts/core-cf-check.ts npm/core-cf --pack --versions crates/brust-wasm/Cargo.toml
+          for d in packages/runtime-dom $(printf 'npm/%s ' $PLATS) npm/core-cf packages/brust packages/create-app; do (cd "$d" && bun publish --dry-run --access public); done
           cd packages/brust && bun pm pack --destination /tmp/pack && tar -xOf /tmp/pack/*.tgz package/package.json > /tmp/packed.json
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
           grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
+          bun -e "const p=require('/tmp/packed.json'); if (p.optionalDependencies?.['@brust/core-cf'] !== p.version) { console.error('packed @brust/core lacks @brust/core-cf@' + p.version + ' in optionalDependencies'); process.exit(1) }"
           # @brust/create-app: the generated pokedex template ships, and no dev leftovers do (prepack runs on pack and publish).
           (cd "$GITHUB_WORKSPACE/packages/create-app" && bun pm pack --destination /tmp/pack-ca)
           tar -tzf /tmp/pack-ca/*.tgz > /tmp/ca.txt
@@ -78,7 +106,7 @@ jobs:
         env: { NPM_CONFIG_TOKEN: dry-run-no-auth, NODE_AUTH_TOKEN: dry-run-no-auth }   # bun publish --dry-run still demands a token; nothing is sent
   publish:
     name: publish to npm (tag push only, environment-gated — a human action)
-    needs: build
+    needs: [build, build-core-cf]
     # Never on workflow_dispatch (a dispatch on an existing tag must not publish); the `npm-publish` environment
     # carries the required reviewers and BRUST_NPM_TOKEN as an environment secret. The first step checks the lockstep (release-check.ts).
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -101,20 +129,24 @@ jobs:
       - run: cd packages/brust && bun run build:debug
       - uses: actions/download-artifact@v4
         with: { pattern: "bindings-*", path: packages/brust/native, merge-multiple: true }
+      - uses: actions/download-artifact@v4
+        with: { name: core-cf-worker, path: npm/core-cf/worker }
       - run: ./packages/brust/node_modules/.bin/napi artifacts --package-json-path packages/brust/package.json --output-dir packages/brust/native --npm-dir npm
       - name: Re-run the dry-run tarball checks on the real tree
         run: |
           set -e
+          bun scripts/core-cf-check.ts npm/core-cf --pack --versions crates/brust-wasm/Cargo.toml
           cd packages/brust && bun pm pack --destination /tmp/pack && tar -xOf /tmp/pack/*.tgz package/package.json > /tmp/packed.json
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
           grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
+          bun -e "const p=require('/tmp/packed.json'); if (p.optionalDependencies?.['@brust/core-cf'] !== p.version) { console.error('packed @brust/core lacks @brust/core-cf@' + p.version + ' in optionalDependencies'); process.exit(1) }"
           # @brust/create-app: the generated pokedex template ships, and no dev leftovers do (prepack runs on pack and publish).
           (cd "$GITHUB_WORKSPACE/packages/create-app" && bun pm pack --destination /tmp/pack-ca)
           tar -tzf /tmp/pack-ca/*.tgz > /tmp/ca.txt
           grep -qx 'package/templates/pokedex/routes.tsx' /tmp/ca.txt
           grep -qx 'package/templates/blank/_gitignore' /tmp/ca.txt
           ! grep -Eq '/(node_modules|dist|test)/|team\.sqlite' /tmp/ca.txt || { echo 'dev leftovers in the @brust/create-app tarball'; exit 1; }
-      - name: Publish (runtime-dom → six natives → core, so core never lands before its optional deps; re-runnable)
+      - name: Publish (runtime-dom → six natives → core-cf → core → create-app, so core never lands before its optional deps; re-runnable)
         run: |
           set -e
           printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$HOME/.npmrc"
@@ -123,9 +155,11 @@ jobs:
           pub() { # dir name — skip what an earlier partial run already published
             if npm view "$2@$VERSION" version >/dev/null 2>&1; then echo "$2@$VERSION already published"; else (cd "$1" && bun publish --access public --tag "$TAG"); fi
           }
+          PLATS=$(bun -e "console.log(require('./scripts/release-files.ts').PLATS.join(' '))")
           pub packages/runtime-dom @brust/runtime-dom
-          for d in npm/*; do pub "$d" "@brust/native-$(basename "$d")"; done
+          for p in $PLATS; do pub "npm/$p" "@brust/native-$p"; done
+          pub npm/core-cf @brust/core-cf
           pub packages/brust @brust/core
           pub packages/create-app @brust/create-app
-          if [[ "$VERSION" == *-* ]]; then for p in @brust/runtime-dom @brust/core @brust/create-app $(ls npm | sed 's/^/@brust\/native-/'); do npm dist-tag add "$p@$VERSION" latest; done; fi
+          if [[ "$VERSION" == *-* ]]; then for p in @brust/runtime-dom @brust/core-cf @brust/core @brust/create-app $(printf '@brust/native-%s ' $PLATS); do npm dist-tag add "$p@$VERSION" latest; done; fi
         env: { NPM_CONFIG_TOKEN: "${{ secrets.BRUST_NPM_TOKEN }}", NODE_AUTH_TOKEN: "${{ secrets.BRUST_NPM_TOKEN }}" }
