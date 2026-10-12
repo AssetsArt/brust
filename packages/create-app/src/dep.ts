@@ -2,7 +2,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 
-/** = scripts/release-bump.ts PLATS. */
+/** = scripts/release-files.ts PLATS. */
 export const PLATS = ['darwin-x64', 'darwin-arm64', 'linux-x64-gnu', 'linux-arm64-gnu', 'linux-x64-musl', 'linux-arm64-musl'] as const
 
 export interface BrustDep {
@@ -44,6 +44,7 @@ export function resolveBrustDep(o: { explicit?: string; targetDir: string; pkgRo
     if (inWorkspace(root, o.targetDir)) return { kind: 'workspace', spec: 'workspace:*' }
     // `file:` alone fails: core's own workspace:* deps do not resolve outside the workspace globs, so override them.
     const overrides: Record<string, string> = { '@brust/runtime-dom': `file:${root}/packages/runtime-dom` }
+    overrides['@brust/core-cf'] = `file:${root}/npm/core-cf`
     for (const p of PLATS) overrides[`@brust/native-${p}`] = `file:${root}/npm/${p}`
     return { kind: 'file', spec: `file:${root}/packages/brust`, overrides }
   }
