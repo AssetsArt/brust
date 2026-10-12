@@ -445,6 +445,7 @@ Tool choice:
     with Eden types, a tag invalidate and a 409 problem body, all on one Worker.
   - The dataset is a 152,717-byte JSON import (`data/pokedex.json`), well inside the 64 MiB size limit.
   - It documents the R5 staleness live: a second isolate keeps `/team` up to `ttl` stale.
+- **Status:** M4-CF-5 done on `lane/m4cf-pokedex-d1`: async `TeamDb`, `lib/team-db.d1.ts` (one conditional-insert `batch()`), `[cloudflare.alias]`, `migrations/0001_team.sql`, `tests/cf/{team-db-d1,pokedex-d1}.test.ts` (contract on real local D1; pokedex on workerd).
 
 ## 8. Limits and risks
 

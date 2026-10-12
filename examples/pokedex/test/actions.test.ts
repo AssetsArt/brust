@@ -38,7 +38,7 @@ test('POST twice is idempotent (one row; a no-op does not invalidate)', async ()
   await post({ id: 25 })
   const r = await post({ id: 25 })
   expect(r.status).toBe(200)
-  expect(db.list()).toHaveLength(1)
+  expect(await db.list()).toHaveLength(1)
   expect(calls).toHaveLength(1)
 })
 

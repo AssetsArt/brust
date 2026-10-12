@@ -26,9 +26,24 @@ at most 6 members and a seventh add answers `409` (`TeamFull`). The team store (
 
 - `routes.tsx` — `/`, `/pokedex`, `/pokemon/{name}` (L1 60 s, `?nocache` bypass), `/type-chart` (L1 1 h), `/unified`, and a
   root-level `*` 404 outside the layout. Pages that show the team carry the cache tag `team`.
-- `lib/` — loaders over the snapshot, `team-db.ts` (sqlite, server-only), `team-client.ts` + `api.ts` (the typed actions client).
+- `lib/` — loaders over the snapshot, `team-db.ts` (the team interface: sqlite natively, D1 on Cloudflare via `[cloudflare.alias]`; server-only), `team-client.ts` + `api.ts` (the typed actions client).
 - `actions.ts` — the Elysia 2 team app on `brust()`; `stores/` — `team` and `unified` (`defineStore`).
 - `components/`, `pages/` — plain React functions.
+
+## Cloudflare Workers (preview)
+
+```bash
+bun run cf:migrate:local   # create the local D1 table (state in .wrangler/)
+bun run dev:cf             # build for Workers and run `wrangler dev` (rebuilds on change)
+```
+
+`brust build --target cloudflare` swaps `lib/team-db.ts` for the D1 version (`lib/team-db.d1.ts`) through `[cloudflare.alias]`
+in `brust.toml`; your bindings live in `wrangler.jsonc`. To deploy: `wrangler d1 create __PROJECT_NAME__-team`, paste the
+`database_id` into the **app-root** `wrangler.jsonc` (not `dist/cf/`, which is regenerated), `bun run cf:migrate:remote`,
+then `bun run deploy:cf`.
+
+Preview note: a team change refreshes cached team pages only in the isolate that served the action; other isolates catch up
+within the route `ttl` (60 s for `/pokemon/*`, 1 h for `/type-chart`) until the cross-isolate invalidation lands.
 
 ## Regenerating the stylesheet (never hand-edit `public/app.css`)
 

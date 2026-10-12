@@ -1,1 +1,3 @@
 data/team.sqlite*
+.wrangler/
+.dev.vars*
