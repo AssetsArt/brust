@@ -31,6 +31,7 @@ The reader stops raising `no-innerhtml`. It records a new attr variant (e.g. `At
 
 - Autoescape stays None, and every other dynamic output keeps `| e` (memory: brust-jinja-autoescape-none, a past real XSS). The **only** unescaped sink added is the InnerHtml one, through one named filter.
 - `x-html` is reached **only** through a compiled `dangerouslySetInnerHTML`. A hand-written `x-html` attribute in source JSX is not special (React would print it as a plain attribute). The runtime binds directives from compiler output only, as today. Confirm that is how runtime-dom scopes binding, and add a test that a literal `x-html="…"` string attribute in user JSX is escaped/printed and not executed.
+- **Raw subtrees are opaque to the runtime (ruled 2026-10-13, Mellow F1 on round 1).** Markup inside a `dangerouslySetInnerHTML` element is never bound or mounted, as in React. The compiler marks every InnerHtml element: `x-html` when reactive, `x-raw` otherwise. runtime-dom's `walkChildren` does not descend into `[x-html]` or `[x-raw]`. `mountTree` and the MutationObserver skip `[x-data]` hosts and islands whose closest `[x-html],[x-raw]` lies inside the root. `x-raw` is refused in user JSX, like `x-html`. Tests: an SSR body `<button x-on-click=…>` inside a raw element does not fire, and an `x-html` update to `<div x-data=…>` mounts nothing.
 - Docs: one paragraph in the react-coverage / authoring docs. Say that it is raw HTML, that the author is responsible for sanitising, and that it is the same contract as React.
 
 ## Tasks
