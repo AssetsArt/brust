@@ -1,0 +1,27 @@
+{
+  "function": "F96LinkedListChild",
+  "params": 0,
+  "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t0"
+      ]
+    },
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "log",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    }
+  ]
+}

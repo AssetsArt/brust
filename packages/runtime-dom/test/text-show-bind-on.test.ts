@@ -182,3 +182,15 @@ test('a React island subtree is inert: x-on-click / x-data inside it are never b
   ;(document.getElementById('b') as HTMLButtonElement).click()
   expect(ran).toEqual([])
 })
+
+test('F96a: x-bind-class works on SVG elements (className is a getter-only SVGAnimatedString there)', () => {
+  const cls = signal('a')
+  defineBehavior('svg1', () => ({ cls }))
+  document.body.innerHTML = `<div x-data="svg1"><svg><circle id="c" class="a" x-bind-class="cls"></circle></svg></div>`
+  const c = document.getElementById('c')!
+  // Browsers expose SVGElement.className as a getter-only SVGAnimatedString; happy-dom does not, so model it.
+  Object.defineProperty(c, 'className', { get: () => ({ baseVal: 'a', animVal: 'a' }) })
+  mount()
+  cls.set('b b2'); expect(c.getAttribute('class')).toBe('b b2')
+  cls.set(null as unknown as string); expect(c.getAttribute('class')).toBe('')
+})
