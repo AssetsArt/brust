@@ -23,7 +23,7 @@ index bd95ffc..303bd7d 100644
  tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "time", "fs"] }
  tokio-stream = "0.1"
 diff --git a/crates/brust-server/src/dispatch.rs b/crates/brust-server/src/dispatch.rs
-index 8d06e0d..626c58d 100644
+index 1de0177..b1531ba 100644
 --- a/crates/brust-server/src/dispatch.rs
 +++ b/crates/brust-server/src/dispatch.rs
 @@ -225,10 +225,15 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
@@ -45,7 +45,7 @@ index 8d06e0d..626c58d 100644
              })
      })
      .await
-@@ -291,18 +296,27 @@ async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
+@@ -346,18 +351,27 @@ async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
  where
      D: FnOnce(&[u8]) -> Result<R, CallError> + Send + 'static,
  {
@@ -73,7 +73,7 @@ index 8d06e0d..626c58d 100644
          let len = match entry.dispatch.call(kind, json, slot).await {
              Ok(n) => n,
              Err(DispatchError::EnqueueFailed(m)) => {
-@@ -312,17 +326,46 @@ where
+@@ -367,17 +381,46 @@ where
              }
              Err(DispatchError::PromiseRejected(m)) => return Err(CallError::Rejected(m)),
          };
@@ -120,7 +120,7 @@ index 8d06e0d..626c58d 100644
          let plan = claim.take_plan();
          drop(claim);
          parsed.map(|r| (r, plan))
-@@ -347,7 +390,7 @@ where
+@@ -402,7 +445,7 @@ where
      })
      .await;
      drop(fut);
@@ -129,7 +129,7 @@ index 8d06e0d..626c58d 100644
          Ok(Ok(result)) => result,
          Ok(Err(payload)) => Err(CallError::BadResponse(format!(
              "worker call panicked: {}",
-@@ -358,7 +401,9 @@ where
+@@ -413,7 +456,9 @@ where
          // in `pool.rs`); its late result is dropped, so nothing from this call
          // reaches a cache.
          Err(Elapsed) => Err(CallError::Deadline),
@@ -141,7 +141,7 @@ index 8d06e0d..626c58d 100644
  
  /// A claimed call's deadline passed (the `call_worker_decoded` deadline arm).
 diff --git a/crates/brust-server/src/lib.rs b/crates/brust-server/src/lib.rs
-index 98dad01..5112e1f 100644
+index fc6ffb5..e24742d 100644
 --- a/crates/brust-server/src/lib.rs
 +++ b/crates/brust-server/src/lib.rs
 @@ -8,6 +8,7 @@ pub mod http;
@@ -602,7 +602,7 @@ index 0b9afde..9b75ca4 100644
                          }
                      });
 diff --git a/packages/brust/src/worker.ts b/packages/brust/src/worker.ts
-index a418cdc..6cbaad3 100644
+index 809c751..16c9591 100644
 --- a/packages/brust/src/worker.ts
 +++ b/packages/brust/src/worker.ts
 @@ -1,6 +1,7 @@
@@ -612,8 +612,8 @@ index a418cdc..6cbaad3 100644
 +import { dlopen } from 'bun:ffi'
  import { join, resolve } from 'node:path'
  import { workerData } from 'node:worker_threads'
- import { runFetch, setActionsApp } from './actions-bridge'
-@@ -266,28 +267,71 @@ export function makeHandlers(opts: {
+ import { runFetch, setActionsApp, setActionsLimits } from './actions-bridge'
+@@ -267,28 +268,71 @@ export function makeHandlers(opts: {
   * chain answered `ok` is planned in the same call (`plan`, the napi `planJobs` by default — the
   * addon is touched only then). */
  export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan: PlanJobs = planJobs) {
