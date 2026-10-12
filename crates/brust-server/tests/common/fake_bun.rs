@@ -7,10 +7,12 @@
 //! worker (M3-P P6). Counts are (loader runs, job batches) — a planned call
 //! counts one of each, as the two-call path did.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::time::Duration;
 
 use brust_server::Server;
 use brust_server::dispatch::{CallKind, DispatchError, RenderDispatch};
@@ -48,6 +50,10 @@ pub struct FakeBun {
     bound: OnceLock<(Weak<Server>, u32)>,
     /// Runs between `plan_in_call` and the reply ([`FakeBun::with_after_plan`]).
     after_plan: Option<Box<dyn Fn() + Send + Sync>>,
+    /// The cache adapter `cache` calls go to ([`FakeBun::with_l2`]); shared across fakes.
+    pub l2: Option<Arc<FakeL2>>,
+    pub cache_calls: AtomicU32,
+    pub last_cache: Mutex<Option<Value>>,
     ptr: *mut u8,
     len: usize,
 }
@@ -91,6 +97,9 @@ impl FakeBun {
             gate: None,
             bound: OnceLock::new(),
             after_plan: None,
+            l2: None,
+            cache_calls: AtomicU32::new(0),
+            last_cache: Mutex::new(None),
             ptr,
             len,
         })
@@ -171,6 +180,103 @@ impl FakeBun {
         Arc::new(b)
     }
 
+    /// Answers `cache` calls from `l2` (several fakes may share one: two servers, one store).
+    pub fn with_l2(self: Arc<Self>, l2: Arc<FakeL2>) -> Arc<Self> {
+        let mut b = Arc::into_inner(self).expect("with_l2 before the fake is shared");
+        b.l2 = Some(l2);
+        Arc::new(b)
+    }
+
+    /// `cache` calls received.
+    pub fn cache_count(&self) -> u32 {
+        self.cache_calls.load(Ordering::SeqCst)
+    }
+
+    pub fn last_cache(&self) -> Option<Value> {
+        self.last_cache.lock().unwrap().clone()
+    }
+
+    /// A `cache` call like the real bridge's (`runCache`): `get` answers a framed hit, a heap hit
+    /// (`put_fetch_reply`) when it does not fit the slot, or a miss; `set` takes the body
+    /// (`take_fetch_body`) and applies the store's stale guard.
+    fn reply_cache(&self, req: Value, slot: u32) -> Vec<u8> {
+        let l2 = self.l2.as_ref().expect("FakeBun: no l2");
+        let bound = self
+            .bound
+            .get()
+            .and_then(|(w, id)| w.upgrade().map(|s| (s, *id)));
+        let meta_frame = |meta: Value, body: &[u8]| {
+            let meta = serde_json::to_vec(&meta).unwrap();
+            let mut f = (meta.len() as u32).to_le_bytes().to_vec();
+            f.extend_from_slice(&meta);
+            f.extend_from_slice(body);
+            f
+        };
+        if l2.fail_next.swap(false, Ordering::SeqCst) {
+            return meta_frame(json!({"error": "fake l2 failure"}), b"");
+        }
+        let mut st = l2.state.lock().unwrap();
+        match req["op"].as_str() {
+            Some("get") => {
+                st.gets += 1;
+                let key = req["key"].as_str().unwrap();
+                let seq = st.seq;
+                let Some(e) = st.map.get(key) else {
+                    return meta_frame(json!({"hit": false, "stamp": seq}), b"");
+                };
+                let meta = json!({"hit": true, "status": e.status, "headers": e.headers,
+                    "stamp": seq, "entryStamp": e.entry_stamp, "storedAt": e.stored_at});
+                let body = e.body.clone();
+                drop(st);
+                let f = meta_frame(meta.clone(), &body);
+                let (_, cap) = self.buf_slot(slot);
+                if f.len() <= cap {
+                    return f;
+                }
+                let (s, id) = bound.expect("FakeBun: a heap cache hit needs a bound fake");
+                if !brust_server::put_fetch_reply(&s, id, slot, &body) {
+                    return meta_frame(json!({"hit": false, "stamp": seq}), b"");
+                }
+                let mut meta = meta;
+                meta["heap"] = json!(body.len());
+                meta_frame(meta, b"")
+            }
+            Some("set") => {
+                st.sets += 1;
+                let (s, id) = bound.expect("FakeBun: a cache set needs a bound fake");
+                let body = brust_server::take_fetch_body(&s, id, slot).expect("set body");
+                assert_eq!(
+                    Some(body.len() as u64),
+                    req["heap"].as_u64(),
+                    "set heap length"
+                );
+                let m = &req["meta"];
+                let tags: Vec<String> = serde_json::from_value(m["tags"].clone()).unwrap();
+                let stamp = m["stamp"].as_u64();
+                if let Some(stamp) = stamp
+                    && tags
+                        .iter()
+                        .any(|t| st.tag_inval.get(t).is_some_and(|&q| q > stamp))
+                {
+                    return meta_frame(json!({"ok": false}), b"");
+                }
+                st.map.insert(
+                    req["key"].as_str().unwrap().to_owned(),
+                    FakeEntry {
+                        status: req["status"].as_u64().unwrap() as u16,
+                        headers: serde_json::from_value(req["headers"].clone()).unwrap(),
+                        body,
+                        tags,
+                        entry_stamp: stamp,
+                        stored_at: now_ms(),
+                    },
+                );
+                meta_frame(json!({"ok": true}), b"")
+            }
+            op => panic!("FakeBun: unknown cache op {op:?}"),
+        }
+    }
+
     /// The `slot` sub-region of the leaked buffer.
     fn buf_slot(&self, slot: u32) -> (*mut u8, usize) {
         FakeBunHandle::slot_of(self.ptr, self.len, slot)
@@ -236,6 +342,7 @@ impl FakeBun {
             CallKind::Loader => &self.loader,
             CallKind::Jobs => &self.jobs,
             CallKind::Fetch => return self.reply_fetch(req, slot),
+            CallKind::Cache => return self.reply_cache(req, slot),
         };
         let resp = respond(req.clone());
         if kind == CallKind::Loader
@@ -303,11 +410,28 @@ impl RenderDispatch for FakeBunHandle {
             CallKind::Loader => (&f.loader_calls, &f.last_loader),
             CallKind::Jobs => (&f.job_calls, &f.last_jobs),
             CallKind::Fetch => (&f.fetch_calls, &f.last_fetch),
+            CallKind::Cache => (&f.cache_calls, &f.last_cache),
         };
         counter.fetch_add(1, Ordering::SeqCst);
         *last.lock().unwrap() = Some(req.clone());
         if f.never_complete {
             return Box::pin(std::future::pending());
+        }
+        // A hung `get`: the reply comes late (the real bridge's own timer settles it), so the
+        // request's `get_timeout` fires first and the slot stays claimed until then.
+        if kind == CallKind::Cache
+            && req["op"] == "get"
+            && f.l2
+                .as_ref()
+                .is_some_and(|l| l.hang_next_get.swap(false, Ordering::SeqCst))
+        {
+            let f = Arc::clone(f);
+            return Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                let bytes = f.reply(kind, req, slot);
+                f.write(slot, &bytes);
+                Ok(bytes.len() as u32)
+            });
         }
         if let Some(mut gate) = f.gate.clone() {
             // Parked: the reply is built and written only when the gate opens, as a
@@ -338,4 +462,71 @@ impl Gate {
     pub fn settle_all(&self) {
         let _ = self.0.send(true);
     }
+}
+
+/// One stored page of a [`FakeL2`].
+pub struct FakeEntry {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+    pub tags: Vec<String>,
+    pub entry_stamp: Option<u64>,
+    pub stored_at: u64,
+}
+
+#[derive(Default)]
+pub struct FakeL2State {
+    pub map: HashMap<String, FakeEntry>,
+    /// The broadcast seq (`stamp` of every get).
+    pub seq: u64,
+    /// Per tag: the seq of its last invalidation (the stale-write guard).
+    pub tag_inval: HashMap<String, u64>,
+    pub gets: u32,
+    pub sets: u32,
+}
+
+/// An in-test cache adapter store with the exact stale guard of the real ones.
+#[derive(Default)]
+pub struct FakeL2 {
+    pub state: Mutex<FakeL2State>,
+    pub hang_next_get: std::sync::atomic::AtomicBool,
+    pub fail_next: std::sync::atomic::AtomicBool,
+}
+
+impl FakeL2 {
+    pub fn new() -> Arc<Self> {
+        Arc::default()
+    }
+
+    /// `store.invalidate({tags:[tag]})` + its publish: the next seq, marker, delete.
+    pub fn invalidate_tag(&self, tag: &str) {
+        let mut st = self.state.lock().unwrap();
+        st.seq += 1;
+        let seq = st.seq;
+        st.tag_inval.insert(tag.to_owned(), seq);
+        st.map.retain(|_, e| !e.tags.iter().any(|t| t == tag));
+    }
+
+    /// Put a page directly (a body another server wrote).
+    pub fn put(&self, key: &str, e: FakeEntry) {
+        self.state.lock().unwrap().map.insert(key.to_owned(), e);
+    }
+
+    pub fn len(&self) -> usize {
+        self.state.lock().unwrap().map.len()
+    }
+
+    /// `(gets, sets)` answered.
+    pub fn ops(&self) -> (u32, u32) {
+        let st = self.state.lock().unwrap();
+        (st.gets, st.sets)
+    }
+}
+
+/// Wall-clock ms (an entry's `storedAt`).
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }

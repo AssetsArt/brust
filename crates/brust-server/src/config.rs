@@ -102,6 +102,21 @@ impl Server {
         self.core.invalidate(args)
     }
 
+    /// See [`Core::l2_replay`]: a broadcast invalidation from another process (never re-published).
+    pub fn l2_replay(&self, args: InvalidateArgs, seq: Option<u64>) -> InvalidateResult {
+        self.core.l2_replay(args, seq)
+    }
+
+    /// See [`Core::l2_count`].
+    pub fn l2_count(&self, name: &str) -> bool {
+        self.core.l2_count(name)
+    }
+
+    /// See [`Core::clear_local`]: both tier-1 caches dropped (a broadcast gap). The L1 count.
+    pub fn cache_clear(&self) -> usize {
+        self.core.clear_local()
+    }
+
     /// The configured TLS settings, if any. `None` = plaintext.
     pub fn tls(&self) -> Option<&TlsConfig> {
         self.tls.as_ref()

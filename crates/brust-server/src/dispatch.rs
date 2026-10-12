@@ -35,8 +35,11 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerEntry, WorkerPool};
-use crate::protocol::{FetchMeta, FetchRequest, FetchResponse};
+use crate::protocol::{
+    CacheReplyMeta, CacheRequest, CacheSetMeta, FetchMeta, FetchRequest, FetchResponse,
+};
 pub use brust_core::host::CallError;
+use brust_core::l2::{L2Lookup, L2Page, L2SetMeta};
 
 /// Which worker entry point a [`RenderDispatch::call`] targets (spec §1 S1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -45,6 +48,8 @@ pub enum CallKind {
     Loader,
     Jobs,
     Fetch,
+    /// The cache adapter's `store.get` / `store.set` (cache-adapter lane A, R2).
+    Cache,
 }
 
 /// Failure layers from a worker dispatch, mirroring the old
@@ -247,6 +252,11 @@ pub async fn call_worker_fetch(
 }
 
 fn fetch_frame_parts(b: &[u8]) -> Result<(FetchMeta, &[u8]), CallError> {
+    frame_parts(b)
+}
+
+/// A2 framing for any meta type: `[u32 LE meta_len][meta JSON][body]`.
+fn frame_parts<M: DeserializeOwned>(b: &[u8]) -> Result<(M, &[u8]), CallError> {
     let Some(head) = b.get(..4) else {
         return Err(CallError::BadResponse(
             "fetch frame shorter than 4 bytes".into(),
@@ -259,7 +269,7 @@ fn fetch_frame_parts(b: &[u8]) -> Result<(FetchMeta, &[u8]), CallError> {
             b.len() - 4
         )));
     };
-    let m: FetchMeta = serde_json::from_slice(meta)
+    let m: M = serde_json::from_slice(meta)
         .map_err(|e| CallError::BadResponse(format!("fetch frame meta: {e}")))?;
     Ok((m, &b[4 + n..]))
 }
@@ -306,6 +316,139 @@ pub(crate) fn decode_fetch_reply(
         status: m.status,
         headers: m.headers,
         body,
+    })
+}
+
+/// The cache adapter's per-call cell (cache-adapter A, R3), the `FetchCell` twin with its own cap:
+/// `body` is a `set` body for `takeFetchBody`; `reply` a `get` hit too large for the slot
+/// (`putFetchReply`, at most `cap` bytes).
+pub struct CacheCell {
+    pub(crate) body: Option<bytes::Bytes>,
+    pub(crate) reply: Arc<parking_lot::Mutex<Option<bytes::Bytes>>>,
+    pub(crate) cap: usize,
+}
+
+/// One `cache` `get` → the lookup (`Failed` for an `{error}` answer or a malformed frame).
+/// `cap` = `L2Config::max_body_bytes` (a bigger heap hit is declined by `putFetchReply`).
+pub async fn call_worker_cache_get(
+    pool: &Arc<WorkerPool>,
+    claim_timeout: Duration,
+    call_timeout: Duration,
+    key: &str,
+    cap: usize,
+) -> Result<L2Lookup, CallError> {
+    let reply = Arc::new(parking_lot::Mutex::new(None));
+    let cell = CacheCell {
+        body: None,
+        reply: Arc::clone(&reply),
+        cap,
+    };
+    call_worker_decoded(
+        pool,
+        claim_timeout,
+        call_timeout,
+        CallKind::Cache,
+        &CacheRequest::Get { key },
+        Some(Box::new(cell)),
+        move |b| decode_cache_get(b, &reply),
+    )
+    .await
+    .map(|(r, _)| r)
+}
+
+/// One `cache` `set` → `Ok(true)` stored, `Ok(false)` refused (stale stamp / too big).
+/// `claim_timeout` `ZERO` = never wait for a slot (R2: dropped, `Err(Timeout)`).
+pub async fn call_worker_cache_set(
+    pool: &Arc<WorkerPool>,
+    claim_timeout: Duration,
+    call_timeout: Duration,
+    key: &str,
+    page: L2Page,
+    meta: &L2SetMeta,
+) -> Result<bool, CallError> {
+    let cell = CacheCell {
+        body: Some(page.body.clone()),
+        reply: Arc::default(),
+        cap: page.body.len(),
+    };
+    let req = CacheRequest::Set {
+        key,
+        status: page.status,
+        headers: &page.headers,
+        meta: CacheSetMeta {
+            ttl_ms: meta.ttl_ms,
+            tags: &meta.tags,
+            method: &meta.method,
+            path: &meta.path,
+            stamp: meta.stamp,
+        },
+        heap: page.body.len(),
+    };
+    call_worker_decoded(
+        pool,
+        claim_timeout,
+        call_timeout,
+        CallKind::Cache,
+        &req,
+        Some(Box::new(cell)),
+        |b| {
+            let (m, _) = frame_parts::<CacheReplyMeta>(b)?;
+            match (m.ok, m.error) {
+                (_, Some(e)) => Err(CallError::BadResponse(format!("cache set: {e}"))),
+                (Some(ok), None) => Ok(ok),
+                (None, None) => Err(CallError::BadResponse("cache set reply without ok".into())),
+            }
+        },
+    )
+    .await
+    .map(|(r, _)| r)
+}
+
+/// A `get` answer: `{hit:true,…}` + the framed body (or `heap: n` and the body from `reply`);
+/// `{hit:false, stamp}`; `{error}` → `Failed`.
+pub(crate) fn decode_cache_get(
+    b: &[u8],
+    reply: &parking_lot::Mutex<Option<bytes::Bytes>>,
+) -> Result<L2Lookup, CallError> {
+    let (m, framed) = frame_parts::<CacheReplyMeta>(b)?;
+    if let Some(e) = m.error {
+        return Ok(L2Lookup::Failed(e));
+    }
+    if m.hit != Some(true) {
+        return Ok(L2Lookup::Miss { stamp: m.stamp });
+    }
+    let Some(status) = m.status else {
+        return Ok(L2Lookup::Failed("cache hit without status".into()));
+    };
+    let body = match m.heap {
+        None => bytes::Bytes::copy_from_slice(framed),
+        Some(n) => {
+            if !framed.is_empty() {
+                return Ok(L2Lookup::Failed(
+                    "heap cache hit frame carries a body".into(),
+                ));
+            }
+            match reply.lock().take() {
+                Some(body) if body.len() as u64 == n => body,
+                Some(body) => {
+                    return Ok(L2Lookup::Failed(format!(
+                        "heap cache hit {} != {n}",
+                        body.len()
+                    )));
+                }
+                None => return Ok(L2Lookup::Failed("heap cache hit missing".into())),
+            }
+        }
+    };
+    Ok(L2Lookup::Hit {
+        page: L2Page {
+            status,
+            headers: m.headers,
+            body,
+        },
+        stamp: m.stamp,
+        entry_stamp: m.entry_stamp,
+        stored_at_ms: m.stored_at,
     })
 }
 
@@ -1044,6 +1187,83 @@ mod tests {
             assert!(t0.elapsed() < Duration::from_secs(2), "slot never released");
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    fn l2_page() -> L2Page {
+        L2Page {
+            status: 200,
+            headers: vec![],
+            body: bytes::Bytes::from_static(b"<p>"),
+        }
+    }
+
+    fn l2_meta() -> L2SetMeta {
+        L2SetMeta {
+            ttl_ms: 1000,
+            tags: vec![],
+            method: "GET".into(),
+            path: "/".into(),
+            stamp: None,
+        }
+    }
+
+    /// R2: a background `set` never waits for a slot — the only one is busy → `Timeout` at once.
+    #[tokio::test(flavor = "current_thread")]
+    async fn cache_set_with_no_free_slot_is_dropped_at_once() {
+        let (pool, release) = gated_pool();
+        let p2 = Arc::clone(&pool);
+        let parked =
+            tokio::spawn(async move { call_with(&p2, 1000, 5000, CallKind::Loader).await });
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let t0 = std::time::Instant::now();
+        let r = call_worker_cache_set(
+            &pool,
+            Duration::ZERO,
+            Duration::from_secs(1),
+            "k",
+            l2_page(),
+            &l2_meta(),
+        )
+        .await;
+        assert!(matches!(r, Err(CallError::Timeout)), "{r:?}");
+        assert!(
+            t0.elapsed() < Duration::from_millis(100),
+            "{:?}",
+            t0.elapsed()
+        );
+        let _ = release.send(Ok(()));
+        let _ = parked.await;
+    }
+
+    /// The host side: `l2_set` on a busy pool counts `set_dropped` once its task ran.
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_l2_set_counts_set_dropped() {
+        use brust_core::host::Host;
+        let (pool, release) = gated_pool();
+        let p2 = Arc::clone(&pool);
+        let parked =
+            tokio::spawn(async move { call_with(&p2, 1000, 5000, CallKind::Loader).await });
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let host = crate::host::NativeHost {
+            pool: Arc::clone(&pool),
+            dist_dir: "dist".into(),
+            claim_timeout: Duration::from_secs(1),
+            call_timeout: Duration::from_secs(1),
+            l2: Some((Duration::from_millis(50), 1 << 20)),
+        };
+        let n = Arc::new(brust_core::l2::L2Counters::default());
+        host.l2_set(brust_core::l2::L2Key("k".into()), l2_page(), l2_meta(), &n);
+        let t0 = std::time::Instant::now();
+        while n.set_dropped.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            assert!(
+                t0.elapsed() < Duration::from_secs(1),
+                "set_dropped never counted"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(n.sets.load(std::sync::atomic::Ordering::Relaxed), 0);
+        let _ = release.send(Ok(()));
+        let _ = parked.await;
     }
 
     /// M3-P P7: the sweeper walks every registered entry, not the pool's current list, so a

@@ -263,6 +263,59 @@ pub struct FetchResponse {
     pub body: bytes::Bytes,
 }
 
+/// A `cache` worker call (the cache adapter's `store.get`/`store.set`), inline JSON like every
+/// request. A `set` body always waits in the call's cell for `takeFetchBody` (`heap` = its length).
+#[derive(Debug, Serialize)]
+#[serde(tag = "op", rename_all = "lowercase")]
+pub enum CacheRequest<'a> {
+    Get {
+        key: &'a str,
+    },
+    Set {
+        key: &'a str,
+        status: u16,
+        headers: &'a [(String, String)],
+        meta: CacheSetMeta<'a>,
+        heap: usize,
+    },
+}
+
+/// `store.set`'s `SetMeta` on the wire (camelCase, `stamp: null` = unguarded).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheSetMeta<'a> {
+    pub ttl_ms: u64,
+    pub tags: &'a [String],
+    pub method: &'a str,
+    pub path: &'a str,
+    pub stamp: Option<u64>,
+}
+
+/// A `cache` call's A2 meta: `get` → `{hit, status?, headers?, stamp, entryStamp?, storedAt?, heap?}`;
+/// `set` → `{ok}`; any failure → `{error}`. Unknown keys ignored.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheReplyMeta {
+    #[serde(default)]
+    pub hit: Option<bool>,
+    #[serde(default)]
+    pub status: Option<u16>,
+    #[serde(default)]
+    pub headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub stamp: Option<u64>,
+    #[serde(default)]
+    pub entry_stamp: Option<u64>,
+    #[serde(default)]
+    pub stored_at: Option<u64>,
+    #[serde(default)]
+    pub heap: Option<u64>,
+    #[serde(default)]
+    pub ok: Option<bool>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,7 +12,7 @@ use brust_server::{Config, Server, Tuning, start};
 use serde_json::{Value, json};
 
 #[allow(unused_imports)]
-pub use fake_bun::{FakeBun, FakeBunHandle, Gate};
+pub use fake_bun::{FakeBun, FakeBunHandle, FakeEntry, FakeL2, Gate};
 
 /// The A2 frame a `fetch` responder answers: `[u32 LE meta_len][meta JSON {status, headers}][body]`.
 pub fn frame(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Vec<u8> {
@@ -118,6 +118,27 @@ pub fn boot_with(fake: Arc<FakeBun>, tweak: impl FnOnce(&mut Tuning)) -> Arc<Ser
 /// Like [`boot`] with another `dist/` (see [`temp_dist`]).
 pub fn boot_in(fake: Arc<FakeBun>, dist_dir: &Path) -> Arc<Server> {
     let s = start(config(dist_dir)).expect("start");
+    let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&fake))));
+    fake.bind(&s, id);
+    s
+}
+
+/// The `L2Config` of the L2 tests: adapter `custom`, namespace `t`, build `b1`.
+pub fn l2_config(get_timeout_ms: u64, max_body_bytes: usize) -> brust_core::l2::L2Config {
+    brust_core::l2::L2Config {
+        adapter: "custom".into(),
+        get_timeout: std::time::Duration::from_millis(get_timeout_ms),
+        max_body_bytes,
+        namespace: "t".into(),
+        build_id: "b1".into(),
+    }
+}
+
+/// Like [`boot_in`] with a cache adapter configured.
+pub fn boot_l2(fake: Arc<FakeBun>, dist_dir: &Path, l2: brust_core::l2::L2Config) -> Arc<Server> {
+    let mut cfg = config(dist_dir);
+    cfg.l2 = Some(l2);
+    let s = start(cfg).expect("start");
     let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&fake))));
     fake.bind(&s, id);
     s
