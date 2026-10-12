@@ -13,21 +13,21 @@ export interface TeamDeps {
 }
 
 export function teamApp({ db, invalidate }: TeamDeps = { db: teamDb, invalidate: cache.invalidate }) {
-  const reply = () => ({ team: db().list(), max: MAX_TEAM })
+  const reply = async () => ({ team: await db().list(), max: MAX_TEAM })
   // R5: cached pages that render the team carry the tag `team`; drop them after a real change.
   const changed = () => invalidate({ tags: ['team'] })
   return new Elysia({ adapter: brust() })
     .get('/team', () => reply())
-    .post('/team', { body: t.Object({ id: t.Integer({ minimum: 1 }) }) }, ({ body }) => {
+    .post('/team', { body: t.Object({ id: t.Integer({ minimum: 1 }) }) }, async ({ body }) => {
       const p = pokemonById(body.id)
       if (!p) return problem(404, { title: 'UnknownPokemon', detail: `no Pokémon #${body.id}` })
-      const r = db().add(p)
+      const r = await db().add(p)
       if (r === 'full') return problem(409, { title: 'TeamFull', detail: `the team already has ${MAX_TEAM} members`, max: MAX_TEAM })
       if (r === 'added') changed()
       return reply()
     })
-    .delete('/team/:id', { params: t.Object({ id: t.Integer({ minimum: 1 }) }) }, ({ params }) => {
-      if (db().remove(params.id)) changed()
+    .delete('/team/:id', { params: t.Object({ id: t.Integer({ minimum: 1 }) }) }, async ({ params }) => {
+      if (await db().remove(params.id)) changed()
       return reply()
     })
 }
