@@ -341,6 +341,15 @@ export async function buildActions(dist: string, entry: string): Promise<string>
   return 'actions.js'
 }
 
+/** `dist/cache-adapter.js` (cache adapters R8): a custom adapter module for the worker (`target: 'bun'`), with
+ * the actions externals so it shares the app's dependencies. */
+export async function buildCacheAdapter(dist: string, entry: string): Promise<string> {
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS })
+  if (!res.success) throw new BuildError('bundle', `cache adapter: ${res.logs.map(String).join('\n')}`)
+  write(join(dist, 'cache-adapter.js'), await res.outputs[0]!.text())
+  return 'cache-adapter.js'
+}
+
 /** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
 export async function buildJobs(dist: string, compiled: Map<string, Compiled>, sourceOf: SourceOf, appRoot: string, stores: string[] = []): Promise<void> {

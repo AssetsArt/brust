@@ -67,6 +67,24 @@ export interface ManifestJson {
   assets: { runtime: string }
   jobs_module: string
   actions: ActionsRecord | null
+  /** `[cache]` (cache adapters); absent without one (the manifest is then byte-identical). */
+  cache?: CacheRecord
+}
+
+/** `manifest.cache` / `CONFIG.cache`: the adapter the runtime loads (`cache-adapter/load.ts`). */
+export interface CacheRecord {
+  adapter: string
+  /** `custom`: the bundled module, relative to dist. */
+  module?: string
+  broadcast?: string
+  options: Record<string, unknown>
+  broadcastOptions?: Record<string, unknown>
+  namespace: string
+  getTimeoutMs: number
+  maxBodyBytes: number
+  epochIntervalMs: number
+  /** 16 hex chars of sha256 over the build output (R7): every L2 key carries it. */
+  buildId: string
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: IR JSON (externally tagged enums)
