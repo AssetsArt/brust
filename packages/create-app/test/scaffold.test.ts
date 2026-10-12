@@ -5,12 +5,14 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { host, hostNative, packAll, REPO, type Running, sh, startApp } from './helpers.ts'
+import { coreCfSource, host, hostNative, packAll, packCoreCf, REPO, type Running, sh, startApp } from './helpers.ts'
 
 let work = ''
 let tgz: ReturnType<typeof packAll>
 let native: ReturnType<typeof hostNative>
 let hostDir = ''
+let coreCfTgz: string | null = null
+const CF_SRC = coreCfSource()
 const running: Running[] = []
 const T = 300_000
 
@@ -19,6 +21,7 @@ beforeAll(() => {
   tgz = packAll(work)
   native = hostNative(work)
   hostDir = host(work, tgz.createApp)
+  if (CF_SRC) coreCfTgz = packCoreCf(work, CF_SRC)
 }, 600_000)
 afterAll(async () => {
   for (const r of running.splice(0)) await r.stop().catch(() => {})
@@ -29,7 +32,7 @@ const walk = (d: string, base = d): string[] => readdirSync(d, { withFileTypes: 
 const readPkg = (dir: string) => JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
 function setOverrides(dir: string, extra: Record<string, string> = {}) {
   const pkg = readPkg(dir)
-  pkg.overrides = { '@brust/runtime-dom': `file:${tgz.runtimeDom}`, [native.name]: `file:${native.dir}`, ...extra }
+  pkg.overrides = { '@brust/runtime-dom': `file:${tgz.runtimeDom}`, [native.name]: `file:${native.dir}`, '@brust/core-cf': coreCfTgz ? `file:${coreCfTgz}` : `file:${REPO}/npm/core-cf`, ...extra }
   writeFileSync(join(dir, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`)
 }
 function scaffold(name: string, template: string): string {
@@ -113,3 +116,26 @@ test('monorepo mode: blank without --brust-dep installs from file: + overrides a
   sh(['bun', 'run', 'build'], dir)
   expect(existsSync(join(dir, 'dist/manifest.json'))).toBe(true)
 }, T)
+
+// R6: runs only with a built wasm (the ci `cf` job builds it; BRUST_CORE_CF_DIR points at the release-shaped package). The app build runs
+// WITHOUT BRUST_CORE_CF_DIR, so the resolution proven is the published layout: @brust/core-cf installed beside @brust/core.
+test.skipIf(!CF_SRC)('blank --target cloudflare from packed tarballs resolves @brust/core-cf; wrangler deploy --dry-run bundles it', () => {
+  const dir = scaffold('cf-app', 'blank')
+  setOverrides(dir)
+  sh(['bun', 'install'], dir)
+  const env = { ...process.env } as Record<string, string | undefined>
+  delete env.BRUST_CORE_CF_DIR
+  const run = (cmd: string[], extra: Record<string, string> = {}) => {
+    const r = Bun.spawnSync(cmd, { cwd: dir, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', ...extra } as Record<string, string> })
+    const out = r.stdout.toString() + r.stderr.toString()
+    if (r.exitCode !== 0) throw new Error(`${cmd.join(' ')} exited ${r.exitCode}:\n${out}`)
+    return out
+  }
+  run(['./node_modules/.bin/brust', 'build', 'routes.tsx', '--target', 'cloudflare'])
+  const sha = (f: string) => new Bun.CryptoHasher('sha256').update(readFileSync(f)).digest('hex')
+  expect(sha(join(dir, 'dist/cf/worker/index_bg.wasm'))).toBe(sha(join(CF_SRC!, 'worker/index_bg.wasm')))
+  expect(existsSync(join(dir, 'dist/cf/worker/brust-app.js'))).toBe(true)
+  expect((Bun.JSONC.parse(readFileSync(join(dir, 'dist/cf/wrangler.jsonc'), 'utf8')) as { main: string }).main).toBe('worker/index.js')
+  const out = run(['./node_modules/.bin/wrangler', 'deploy', '--dry-run', '--outdir', join(work, 'cf-bundle'), '-c', 'dist/cf/wrangler.jsonc'], { WRANGLER_SEND_METRICS: 'false', CI: '1' })
+  expect(out).toMatch(/Total Upload/)
+}, 600_000)

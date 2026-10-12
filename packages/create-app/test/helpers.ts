@@ -30,6 +30,23 @@ export function packAll(work: string): { createApp: string; core: string; runtim
   }
 }
 
+/** A built @brust/core-cf package dir: $BRUST_CORE_CF_DIR if it holds worker/index_bg.wasm, else the repo's npm/core-cf, else null (no wasm built → the cloudflare case skips). */
+export function coreCfSource(): string | null {
+  const wasm = (d: string) => existsSync(join(d, 'worker/index_bg.wasm'))
+  const env = process.env.BRUST_CORE_CF_DIR
+  if (env && wasm(env)) return env
+  const repo = join(REPO, 'npm/core-cf')
+  return wasm(repo) ? repo : null
+}
+
+/** Pack `src` (package.json, README.md if any, worker/) as the published shape; returns the tarball path. */
+export function packCoreCf(work: string, src: string): string {
+  const dir = join(work, 'core-cf-pkg')
+  mkdirSync(dir, { recursive: true })
+  for (const f of ['package.json', 'README.md', 'worker']) if (existsSync(join(src, f))) cpSync(join(src, f), join(dir, f), { recursive: true })
+  return pack(dir, join(work, 'packs'))
+}
+
 /** The host platform's native package as a directory: npm/<plat>/package.json + the built addon. */
 export function hostNative(work: string): { name: string; dir: string } {
   const nodes = readdirSync(join(REPO, 'packages/brust/native')).filter((f) => /^brust\..+\.node$/.test(f))
