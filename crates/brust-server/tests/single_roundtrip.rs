@@ -207,14 +207,27 @@ fn a_late_planned_call_leaves_no_plan_behind() {
         "the seed waits in the claimed slot"
     );
     gate.settle_all();
-    // The detached remainder plans, takes the cell and drops the claim once JS settles.
+    // The detached remainder plans, takes the cell and drops the claim once JS settles. An empty
+    // cell alone is not the end state: `plan_in_call` takes the seed out of the cell before it
+    // puts the plan back, and the fake counts the jobs batch only after `plan_in_call` returns,
+    // so a poll can see 0 cells while the counts are still (1, 0). Wait for all three.
+    let observe = || {
+        (
+            f.counts(),
+            s.plan_cells_in_use(),
+            stats(&s)["timed_out_calls"].as_u64(),
+        )
+    };
     let t0 = std::time::Instant::now();
-    while s.plan_cells_in_use() != 0 && t0.elapsed() < std::time::Duration::from_secs(5) {
+    let mut seen = observe();
+    while seen != ((1, 1), 0, Some(1)) && t0.elapsed() < std::time::Duration::from_secs(5) {
         std::thread::sleep(std::time::Duration::from_millis(1));
+        seen = observe();
     }
-    assert_eq!(s.plan_cells_in_use(), 0);
-    assert_eq!(f.counts(), (1, 1), "the late call took the offer");
-    assert_eq!(stats(&s)["timed_out_calls"].as_u64(), Some(1));
+    let (counts, cells, timed_out) = seen;
+    assert_eq!(cells, 0, "a plan was left behind: {seen:?}");
+    assert_eq!(counts, (1, 1), "the late call took the offer: {seen:?}");
+    assert_eq!(timed_out, Some(1), "{seen:?}");
 }
 
 // ----------------------------------------------------------------------------
