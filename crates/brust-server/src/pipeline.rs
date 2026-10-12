@@ -31,11 +31,12 @@ use crate::protocol::{
 };
 use crate::render::{Overlay, RenderError, Renderer, inject_document_assets_into, use_ids};
 use crate::routing::routes::{Search, decode_search};
-use crate::server::body::{self, ResponseBody, empty_body};
-use crate::server::header_str;
-use crate::server::static_assets::{
-    asset_lookup_key, content_type_for, is_safe_css_filename, is_safe_island_filename,
-    static_asset_response,
+use crate::server::body::{ResponseBody, bytes_body};
+use crate::server::static_assets::static_asset_response;
+use brust_core::body::{self, head_only, header_str};
+use brust_core::host::StaticRoot;
+use brust_core::static_rules::{
+    IMMUTABLE, asset_lookup_key, content_type_for, is_hashed, safe_rel,
 };
 
 /// L1 outcome of a page request, for the `x-brust-cache` header and the log line.
@@ -67,10 +68,11 @@ pub(crate) struct PageMeta {
     pub bun_calls: u8,
 }
 
-/// Immutable `Cache-Control` for content-hashed static files.
-const IMMUTABLE: &str = "public, max-age=31536000, immutable";
-
 pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<ResponseBody> {
+    respond(req, s).await.map(bytes_body)
+}
+
+async fn respond(req: Request<Incoming>, s: Arc<Server>) -> Response<Bytes> {
     let (parts, incoming) = req.into_parts();
     let method = parts.method.as_str();
     let full = parts
@@ -154,69 +156,6 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
     resp
 }
 
-/// RFC 9110 §9.3.2: a HEAD carries the GET's Content-Length. Page and action bodies
-/// are fully buffered, so the size hint is exact.
-pub(crate) fn head_only(resp: Response<ResponseBody>) -> Response<ResponseBody> {
-    let len = http_body::Body::size_hint(resp.body()).exact();
-    let (mut p, _) = resp.into_parts();
-    if let Some(n) = len {
-        p.headers.insert(http::header::CONTENT_LENGTH, n.into());
-    }
-    Response::from_parts(p, empty_body())
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum StaticRoot {
-    /// `/_brust/<rel>` → `dist/<rel>`, restricted to `client/` chunks.
-    Brust,
-    /// `/public/<rel>` → `dist/public/<rel>`.
-    Public,
-}
-
-/// Validate a static `rel` path (already percent-decoded). Every segment is
-/// non-empty, does not start with `.` (so no `.`/`..`/dotfiles) and holds only
-/// `[A-Za-z0-9_.-]`. Under `/_brust/` only `client/<file>.js|.css` is served:
-/// the dist root also holds `manifest.json`, `jobs.js` (server-side) and
-/// `jinja/`, none of which may leave the server.
-fn safe_rel(rel: &str, root: StaticRoot) -> Option<&str> {
-    let segs: Vec<&str> = rel.split('/').collect();
-    let seg_ok = |s: &&str| {
-        !s.is_empty()
-            && !s.starts_with('.')
-            && s.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
-    };
-    if !segs.iter().all(seg_ok) {
-        return None;
-    }
-    if root == StaticRoot::Brust {
-        let [dir, file] = segs.as_slice() else {
-            return None;
-        };
-        if *dir != "client" || !(is_safe_island_filename(file) || is_safe_css_filename(file)) {
-            return None;
-        }
-    }
-    Some(rel)
-}
-
-/// `<stem>` ends in `-<hex6+>` (lowercase) holding at least one digit: a
-/// content-hashed file name. The digit rule keeps English words spelt in hex
-/// letters (`brand-facade.css`, `-decade`) from being marked immutable.
-fn is_hashed(file: &std::path::Path) -> bool {
-    let Some(stem) = file.file_stem().and_then(|s| s.to_str()) else {
-        return false;
-    };
-    match stem.rsplit_once('-') {
-        Some((_, h)) => {
-            h.len() >= 6
-                && h.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-                && h.bytes().any(|b| b.is_ascii_digit())
-        }
-        None => false,
-    }
-}
-
 /// `file` resolved through every symlink still lies under `root` (resolved
 /// too: `dist/` itself may sit behind a symlink). A symlink under `dist/` that
 /// points outside the served directory, or a missing file, is `false`.
@@ -236,7 +175,7 @@ async fn static_file(
     rel: &str,
     headers: &HeaderMap,
     head: bool,
-) -> Response<ResponseBody> {
+) -> Response<Bytes> {
     let decoded = asset_lookup_key(rel);
     let Some(rel) = safe_rel(&decoded, root) else {
         return body::error_404();
@@ -283,12 +222,7 @@ async fn static_file(
 // page path
 // ----------------------------------------------------------------------------
 
-async fn page(
-    s: &Server,
-    full: &str,
-    headers: &HeaderMap,
-    meta: &mut PageMeta,
-) -> Response<ResponseBody> {
+async fn page(s: &Server, full: &str, headers: &HeaderMap, meta: &mut PageMeta) -> Response<Bytes> {
     // Pages are GET; a HEAD runs the same path (and shares its L1 entries).
     // M3-P P4: match only — the envelope is built after the L1 decision, on a MISS/BYPASS.
     let Some(rm) = s.routes.match_route(full) else {
@@ -630,7 +564,7 @@ fn apply_job_results(
     ids: &[&str],
     results: Vec<JobResult>,
     since: ReadStamp,
-) -> Result<bool, Response<ResponseBody>> {
+) -> Result<bool, Response<Bytes>> {
     let Lookup {
         values,
         owner,
@@ -696,7 +630,7 @@ fn apply_job_results(
     Ok(rejected)
 }
 
-fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<ResponseBody> {
+fn render_failed(route: &RouteRecord, e: &RenderError) -> Response<Bytes> {
     tracing::error!(route = %route.id, error = %e, "render failed");
     body::error_500()
 }
@@ -808,7 +742,7 @@ fn page_response(
     bytes: Bytes,
     gzipped: bool,
     cache_hdr: Option<&'static str>,
-) -> Response<ResponseBody> {
+) -> Response<Bytes> {
     if let Some(v) = cache_hdr {
         h.append("x-brust-cache", http::HeaderValue::from_static(v));
     }
@@ -828,7 +762,7 @@ fn page_response(
 }
 
 /// An L1 HIT's response: the stored body (or its once-made gzip) with the stored header map.
-fn hit_response(b: &RenderedBody, gz: bool) -> Response<ResponseBody> {
+fn hit_response(b: &RenderedBody, gz: bool) -> Response<Bytes> {
     let (bytes, encoded) = cached_body(b, gz);
     page_response(
         b.status,
@@ -3014,44 +2948,6 @@ mod tests {
         assert_eq!(v, [("a", "3"), ("b", "2")]);
         assert!(!ci_collision(&v));
         assert!(ci_collision(&[("session", ""), ("Session", "x")]));
-    }
-
-    #[test]
-    fn hashed_names_need_six_lowercase_hex() {
-        use std::path::Path as P;
-        assert!(is_hashed(P::new("client/detailPage_c3-1a2b3c.js")));
-        assert!(!is_hashed(P::new("client/runtime-8b1c.js")));
-        assert!(!is_hashed(P::new("client/x-1A2B3C.js")));
-        assert!(!is_hashed(P::new("client/react-19.2.0.js")));
-        // Hex-letter words are not hashes: the suffix needs a digit.
-        assert!(!is_hashed(P::new("public/brand-facade.css")));
-        assert!(!is_hashed(P::new("public/decade-abcdef.css")));
-        assert!(is_hashed(P::new("public/logo-abcde1.svg")));
-    }
-
-    #[test]
-    fn static_rel_rule() {
-        let b = StaticRoot::Brust;
-        assert_eq!(safe_rel("client/a-1.js", b), Some("client/a-1.js"));
-        assert_eq!(safe_rel("client/a.css", b), Some("client/a.css"));
-        for bad in [
-            "manifest.json",
-            "jobs.js",
-            "jinja/x.jinja",
-            "client/../manifest.json",
-            "client/.x.js",
-            "client/x.json",
-            "client//x.js",
-            "client/sub/x.js",
-            "",
-        ] {
-            assert_eq!(safe_rel(bad, b), None, "{bad}");
-        }
-        let p = StaticRoot::Public;
-        assert_eq!(safe_rel("img/a.png", p), Some("img/a.png"));
-        for bad in ["../manifest.json", "", "a/", "/a", "a\\b", ".env", "a b"] {
-            assert_eq!(safe_rel(bad, p), None, "{bad}");
-        }
     }
 
     #[test]

@@ -12,9 +12,8 @@ use hyper::body::Incoming;
 use crate::config::{ACTION_INLINE_BODY_BYTES, ActionsConfig, CrossSite, Server};
 use crate::dispatch::{CallError, FetchCell, call_worker_fetch};
 use crate::protocol::{FetchBody, FetchRequest, FetchResponse};
-use crate::server::body::{self, ResponseBody};
-use crate::server::cors::ResolvedCors;
-use crate::server::header_str;
+use brust_core::body::{self, header_str};
+use brust_core::cors::ResolvedCors;
 
 /// F82, on the worker's JS thread inside its `fetch` call for `slot`: the heap request body, once.
 /// `None`: no such worker, the slot is not in a call, it is not a `fetch` call, no heap body was
@@ -70,7 +69,7 @@ pub(crate) async fn handle(
     incoming: Incoming,
     full: &str,
     head: bool,
-) -> Response<ResponseBody> {
+) -> Response<Bytes> {
     let method = parts.method.as_str();
     // R9: `new Request` throws on these; the worker could not answer them.
     if matches!(method, "CONNECT" | "TRACE" | "TRACK") {
@@ -187,11 +186,7 @@ pub(crate) async fn handle(
         status = resp.status().as_u16(),
         "action"
     );
-    if head {
-        crate::pipeline::head_only(resp)
-    } else {
-        resp
-    }
+    if head { body::head_only(resp) } else { resp }
 }
 
 /// F87 / spec E10: may a request with these headers mutate through an action? `host` is the request authority
@@ -326,7 +321,7 @@ fn b64(b: &[u8]) -> String {
 
 /// R9: the worker's answer as a response — status in 200..=599, framing headers dropped, every other valid pair
 /// appended in order (repeated `Set-Cookie` survive). No gzip, never L1.
-fn response_from_fetch(f: FetchResponse) -> Response<ResponseBody> {
+fn response_from_fetch(f: FetchResponse) -> Response<Bytes> {
     if !(200..=599).contains(&f.status) {
         tracing::error!(status = f.status, "action answered an invalid status");
         return body::error_500();

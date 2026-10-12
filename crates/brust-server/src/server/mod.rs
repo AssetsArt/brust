@@ -1,5 +1,5 @@
 //! The hyper accept loop, carried from brust-core `server/mod.rs:33-442` @
-//! d04718f (`Tuning`, `start`, `serve_io`, `header_str`). The 0.1.x
+//! d04718f (`Tuning`, `start`, `serve_io`; `header_str` is `brust_core::body::header_str`). The 0.1.x
 //! `handle_request` is replaced by [`crate::pipeline::handle`].
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize};
@@ -25,7 +25,6 @@ use crate::routing::RouteTable;
 
 pub mod body;
 pub mod coarse_timer;
-pub(crate) mod cors;
 pub mod static_assets;
 pub mod tls;
 
@@ -150,7 +149,10 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         drain_done: Arc::new(Notify::new()),
         drain_timeout_ms: AtomicU64::new(10_000),
         local_addr: OnceLock::new(),
-        cors_resolved: cfg.cors.as_ref().map(cors::ResolvedCors::from_config),
+        cors_resolved: cfg
+            .cors
+            .as_ref()
+            .map(brust_core::cors::ResolvedCors::from_config),
         tls: cfg.tls,
         cors: cfg.cors,
         generator: cfg.generator,
@@ -494,14 +496,6 @@ async fn serve_io<I, S, B>(
             }
         }
     }
-}
-
-/// Case-insensitive single-header lookup as a trimmed `String`.
-pub(crate) fn header_str(headers: &http::HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get(name)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_string())
 }
 
 #[cfg(test)]
