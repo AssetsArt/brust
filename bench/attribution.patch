@@ -270,7 +270,7 @@ index 0000000..b5a5421
 +    serde_json::to_vec(&m).unwrap()
 +}
 diff --git a/crates/brust-server/src/pipeline.rs b/crates/brust-server/src/pipeline.rs
-index 15999b7..7aca8a2 100644
+index f683874..ac3f943 100644
 --- a/crates/brust-server/src/pipeline.rs
 +++ b/crates/brust-server/src/pipeline.rs
 @@ -108,6 +108,9 @@ pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<R
@@ -319,7 +319,7 @@ index 15999b7..7aca8a2 100644
  
      // ----- (3) L1 -----
      let (cache_key, outcome, search) = l1_decision(s, route_id, route, full, headers, &rm.params);
-@@ -319,11 +330,17 @@ async fn page(
+@@ -319,15 +330,21 @@ async fn page(
          });
          if let Some(r) = hit {
              meta.cache = CacheOutcome::Hit;
@@ -329,8 +329,12 @@ index 15999b7..7aca8a2 100644
 +            return r;
          }
      }
- 
 +    perf::rec(perf::L1, t);
+     // F86: the render starts here, after the probe missed and before the first worker call (the
+     // loader reads app data in it). A HIT returned above; a BYPASS has no key and takes no stamp.
+     // An invalidation covering this entry after the stamp keeps the insert below out of L1.
+     let since = cache_key.as_ref().map(|_| s.l1.read_stamp());
+ 
 +    let t = std::time::Instant::now();
      let envelope = rm.into_envelope("GET", full, headers, search);
 +    perf::rec(perf::ENVELOPE, t);
@@ -338,7 +342,7 @@ index 15999b7..7aca8a2 100644
  
      // ----- (4) loader -----
      let path_only = full.split('?').next().unwrap_or(full);
-@@ -348,6 +365,9 @@ async fn page(
+@@ -352,6 +369,9 @@ async fn page(
      let mut extra: Vec<(String, String)> = Vec::new();
      // M3-P P6: the plan the worker built inside the loader call, with its job results.
      let mut planned: Option<(PlannedCall, Vec<JobResult>)> = None;
@@ -348,7 +352,7 @@ index 15999b7..7aca8a2 100644
      // M3-F S7b: a loader-less route still calls the worker when its chain reads a store, so the
      // snapshot (defaults included) is seeded and tagged. No loaders and no stores: zero calls.
      if !route.loaders.is_empty() || s.plans.chain_has_stores(&route.chain) {
-@@ -385,6 +405,9 @@ async fn page(
+@@ -389,6 +409,9 @@ async fn page(
              s.worker_calls.incr();
              meta.bun_calls += 1;
          }
@@ -358,7 +362,7 @@ index 15999b7..7aca8a2 100644
          match r {
              Ok(LoaderResponse::Planned { results }) => {
                  let Some(PlanCell::Planned(pc)) =
-@@ -476,6 +499,8 @@ async fn page(
+@@ -480,6 +503,8 @@ async fn page(
              }
          }
      }
@@ -367,7 +371,7 @@ index 15999b7..7aca8a2 100644
      // ----- (5) jobs -----
      let (mut ctx, plans, lookup) = match planned {
          Some((pc, results)) => {
-@@ -500,6 +525,7 @@ async fn page(
+@@ -504,6 +529,7 @@ async fn page(
          }
          None => {
              let ctx = Node::map(ctx);
@@ -375,7 +379,7 @@ index 15999b7..7aca8a2 100644
              let plans = match collect_jobs(&s.plans, &route.chain, &ctx) {
                  Ok(p) => p,
                  Err(e) => {
-@@ -507,8 +533,14 @@ async fn page(
+@@ -511,8 +537,14 @@ async fn page(
                      return body::error_500();
                  }
              };
@@ -390,7 +394,7 @@ index 15999b7..7aca8a2 100644
                  // M3-P P7 (R1): a miss planned on tokio turns the route's plan offer back on.
                  let offer = &s.plan_offer[ri];
                  if offer.load(Ordering::Relaxed) != 0 {
-@@ -553,12 +585,18 @@ async fn page(
+@@ -557,12 +589,18 @@ async fn page(
          }
      };
  
@@ -409,7 +413,7 @@ index 15999b7..7aca8a2 100644
  
      // ----- (7) render, assets, L1 store -----
      let ctx = Arc::new(ctx);
-@@ -571,6 +609,7 @@ async fn page(
+@@ -575,6 +613,7 @@ async fn page(
          Ok(h) => h,
          Err(e) => return render_failed(route, &e),
      };
@@ -417,21 +421,20 @@ index 15999b7..7aca8a2 100644
      // One header map per request. Only a render that is stored needs a second
      // copy (the L1 entry's); a BYPASS or an uncached route sends the only one.
      let store = cache_key.is_some() && status == 200 && cacheable && route.cache.is_some();
-@@ -594,6 +633,8 @@ async fn page(
+@@ -598,6 +637,8 @@ async fn page(
          encoded,
          hdr,
      );
 +    perf::rec(perf::BODY_RESP, t);
 +    let t = std::time::Instant::now();
+     // The rendered body carries the loader's headers (and its gzip if this
+     // request made it), so a HIT replays them.
      if store
-         && let Some(k) = cache_key
-         && let Some(c) = &route.cache
-@@ -601,10 +642,19 @@ async fn page(
-         // The rendered body carries the loader's headers (and its gzip if this
-         // request made it), so a HIT replays them.
-         s.l1.insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags);
-+        perf::rec(perf::L1_INSERT, t);
+@@ -610,9 +651,18 @@ async fn page(
+     {
+         tracing::debug!(target: "brust::cache", route = %route.id, "L1 insert skipped: invalidated during the render");
      }
++    perf::rec(perf::L1_INSERT, t);
 +    if cpu { perf::add(perf::CPU_POST, perf::thread_cpu() - c3 + c2); }
      resp
  }
@@ -446,7 +449,7 @@ index 15999b7..7aca8a2 100644
  /// Validate, store and fan out the worker's `results` for `lookup.misses` — shared by the jobs
  /// call and the planned loader call. `Err` = the 500 to send, already logged (today's messages).
  #[expect(
-@@ -712,6 +762,9 @@ fn render_document(
+@@ -720,6 +770,9 @@ fn render_document(
      ri: usize,
      ctx: &Node,
  ) -> Result<Bytes, RenderError> {
@@ -456,7 +459,7 @@ index 15999b7..7aca8a2 100644
      let mut out = String::with_capacity(s.render_hints[ri].load(Ordering::Relaxed));
      render_chain_into(
          &s.manifest,
-@@ -721,6 +774,9 @@ fn render_document(
+@@ -729,6 +782,9 @@ fn render_document(
          ctx,
          &mut out,
      )?;
@@ -466,7 +469,7 @@ index 15999b7..7aca8a2 100644
      inject_document_assets_into(
          &mut out,
          &route.chain,
-@@ -728,6 +784,7 @@ fn render_document(
+@@ -736,6 +792,7 @@ fn render_document(
          ctx.get(STORE_KEY),
          s.action_prefix_tag.as_deref(),
      );
@@ -474,7 +477,7 @@ index 15999b7..7aca8a2 100644
      // M3-P P7: stored only when it changes — the steady state writes no shared cache line.
      let hint = next_hint(out.len());
      if s.render_hints[ri].load(Ordering::Relaxed) != hint {
-@@ -844,7 +901,9 @@ pub fn render_chain_into(
+@@ -852,7 +909,9 @@ pub fn render_chain_into(
      let children = ctx.get(CHILDREN_KEY);
      let own_all = ctx.get(OWN_KEY);
      // The merged context as a value: an Arc bump (M3-P P2), shared by the chain.
@@ -484,7 +487,7 @@ index 15999b7..7aca8a2 100644
      // `_props` (the island host's `x-props`): the merged loader context — params,
      // path, loader data — without the server's per-component maps. A view over
      // the tree (no copy), shared by every chain component.
-@@ -852,6 +911,7 @@ pub fn render_chain_into(
+@@ -860,6 +919,7 @@ pub fn render_chain_into(
      // Per component: Arc views of its child-slot and own-job maps (no copy),
      // looked up own first, then children, then its `_idN`, then the base.
      let overlay = |id: &str| {
@@ -492,7 +495,7 @@ index 15999b7..7aca8a2 100644
          let slots = manifest.components.get(id).map_or(0, |c| c.use_id_slots);
          let mut maps = Vec::with_capacity(2);
          for all in [children, own_all] {
-@@ -1548,7 +1608,9 @@ fn plan_one<'a>(
+@@ -1556,7 +1616,9 @@ fn plan_one<'a>(
          Dest::Chain { row, .. } => row,
          Dest::Child { .. } => None,
      };
@@ -502,7 +505,7 @@ index 15999b7..7aca8a2 100644
      // M3-F C5/D8: every ssr job renders inside a store scope seeded from `__store`, so the
      // snapshot is one of its inputs (and of its hashed key). Precompute jobs never see stores.
      if j.kind == JobKind::Ssr
-@@ -1566,9 +1628,18 @@ fn plan_one<'a>(
+@@ -1574,9 +1636,18 @@ fn plan_one<'a>(
      // parent-scope inputs, so the row is part of the key.
      let (key, user_key) = match per_instance {
          Some(r) if !j.has_props || j.cache_key.is_some() => {
@@ -523,7 +526,7 @@ index 15999b7..7aca8a2 100644
      };
      out.push(JobPlan {
          key,
-@@ -1855,10 +1926,14 @@ fn plan_response(
+@@ -1863,10 +1934,14 @@ fn plan_response(
      };
      merge_loader_response(&mut base, data, snapshot, &route.id);
      let ctx = Node::map(base);
@@ -538,7 +541,7 @@ index 15999b7..7aca8a2 100644
      let (misses, call_ids) = if lookup.misses.is_empty() {
          (String::new(), Vec::new())
      } else {
-@@ -1883,6 +1958,7 @@ fn plan_response(
+@@ -1891,6 +1966,7 @@ fn plan_response(
  /// worker's JS thread, synchronously inside its call for `slot`. Never panics out, never errs:
  /// every failure is [`PLAN_DECLINED`] and leaves no plan behind.
  pub fn plan_in_call(s: &Server, worker: u32, slot: u32, len: u32) -> String {
