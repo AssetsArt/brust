@@ -1,0 +1,18 @@
+# cf-cache, variant kvdo: KV store + Durable Object broadcast (combine). scripts/build-cf.ts copies it to brust.toml.
+[actions]
+
+[cache]
+adapter = "cloudflare-kv"
+broadcast = "cloudflare-do"
+namespace = "cfcache"
+epoch_interval_ms = 250
+
+[cache.cloudflare]
+kv_min_ttl_s = 300
+
+[cloudflare]
+name = "brust-cf-cache-kvdo"
+stats = true
+
+[cloudflare.alias]
+"lib/do.ts" = "lib/do.cf.ts"

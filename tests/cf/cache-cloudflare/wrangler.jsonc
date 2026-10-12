@@ -1,0 +1,11 @@
+// Harness Worker for the @brust/cache-cloudflare conformance suite: wrangler bundles harness.ts itself (no brust wasm).
+{
+  "name": "cache-cloudflare-harness",
+  "main": "harness.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [{ "binding": "BRUST_CACHE", "id": "cache-cloudflare-local" }],
+  "durable_objects": { "bindings": [{ "name": "BRUST_CACHE_DO", "class_name": "BrustCacheDO" }] },
+  "migrations": [{ "tag": "brust-cache-v1", "new_sqlite_classes": ["BrustCacheDO"] }],
+  "vars": { "BRUST_CACHE_TEST": "1" }
+}

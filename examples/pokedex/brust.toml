@@ -16,3 +16,13 @@ server_only = ["lib/team-db"]
 # adapter = "redis"   # or "dragonfly"
 # [cache.redis]
 # url = "env:REDIS_URL"
+
+# Or, on Cloudflare Workers: a shared second cache tier (KV bodies + a Durable Object invalidation broadcast). Off by default.
+# Needs: bun add @brust/cache-cloudflare, plus the KV and Durable Object bindings in wrangler.jsonc (see the comment there).
+# [cache]
+# adapter = "cloudflare-kv"
+# broadcast = "cloudflare-do"
+# epoch_interval_ms = 5000
+#
+# [cache.cloudflare]
+# kv_min_ttl_s = 300

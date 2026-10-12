@@ -1,0 +1,7 @@
+{
+  "kv_namespaces": [{ "binding": "BRUST_CACHE", "id": "cf-cache-local" }],
+  "durable_objects": { "bindings": [{ "name": "BRUST_CACHE_DO", "class_name": "BrustCacheDO" }] },
+  "migrations": [{ "tag": "brust-cache-v1", "new_sqlite_classes": ["BrustCacheDO"] }],
+  // test hooks of BrustCacheDO (__regen, __state): enabled in this fixture only
+  "vars": { "BRUST_CACHE_TEST": "1" }
+}

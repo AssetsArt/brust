@@ -98,6 +98,7 @@ jobs:
           bun scripts/core-cf-check.ts npm/core-cf --pack --versions crates/brust-wasm/Cargo.toml
           cp -R npm/core-cf "$RUNNER_TEMP/core-cf"
       # 2. workerd e2e: cf-min (lane 3) and pokedex on local D1 (lane 5); rebuilds an --e2e wasm into npm/core-cf/worker (never published).
+      - run: cd packages/cache-cloudflare && bun run typecheck && bun test
       - run: BRUST_CF_E2E=1 bun test --timeout 900000 tests/cf
       # 3. build-target unit tests (lane 4; fake core-cf fixture, no wasm). handlers/fetch-in-scope also run in the server job.
       - run: cd packages/brust && bun test test/cf-*.test.ts
