@@ -570,6 +570,18 @@ impl L1Cache {
         self.tag_index.lock().values().map(|s| s.len()).sum()
     }
 
+    /// The `tag_inval` slot of `t` (test hook: tests pick non-colliding tags with it).
+    #[cfg(test)]
+    pub(crate) fn tag_slot(&self, t: &str) -> usize {
+        (self.hasher.hash_one(t) as usize) % INVAL_SLOTS
+    }
+
+    /// The `path_inval` slot of `(m, p)` (test hook, as `tag_slot`).
+    #[cfg(test)]
+    pub(crate) fn path_slot(&self, m: &str, p: &str) -> usize {
+        (self.hasher.hash_one((m, p)) as usize) % INVAL_SLOTS
+    }
+
     /// Entries in the read front (test hook: it must track moka's).
     #[cfg(test)]
     pub(crate) fn front_len(&self) -> usize {
@@ -1086,5 +1098,96 @@ mod tests {
             b.status
         });
         assert_eq!((r, calls.get()), (Some(200), 1));
+    }
+
+    // ----- F86: read stamps -----
+
+    const TTL: Duration = Duration::from_secs(60);
+
+    fn tags(ts: &[&str]) -> Vec<String> {
+        ts.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn an_invalidation_after_the_read_stamp_keeps_the_insert_out() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s = c.read_stamp();
+        c.invalidate_tags(&tags(&["t"]));
+        assert!(!c.insert(k.clone(), rb_of("old"), TTL, &tags(&["t"]), s));
+        assert!(html(&c, &k).is_none());
+        c.run_pending();
+        assert_eq!(
+            (c.front_len(), c.tag_index_size(), c.stats().len),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn an_insert_before_the_invalidation_is_still_evicted() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s = c.read_stamp();
+        assert!(c.insert(k.clone(), rb_of("v"), TTL, &tags(&["t"]), s));
+        assert_eq!(c.invalidate_tags(&tags(&["t"])), 1);
+        assert!(html(&c, &k).is_none());
+    }
+
+    #[test]
+    fn a_stamp_after_the_invalidation_lands() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        c.invalidate_tags(&tags(&["t"]));
+        let s = c.read_stamp();
+        assert!(c.insert(k.clone(), rb_of("new"), TTL, &tags(&["t"]), s));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"new")));
+    }
+
+    #[test]
+    fn an_untagged_insert_ignores_tag_invalidation() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s = c.read_stamp();
+        c.invalidate_tags(&tags(&["t"]));
+        assert!(c.insert(k.clone(), rb_of("v"), TTL, &[], s));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
+    }
+
+    #[test]
+    fn an_unrelated_tag_invalidation_does_not_reject() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let b = (0..)
+            .map(|i| format!("u{i}"))
+            .find(|b| c.tag_slot(b) != c.tag_slot("t"))
+            .unwrap();
+        let s = c.read_stamp();
+        c.invalidate_tags(&[b]);
+        assert!(c.insert(k.clone(), rb_of("v"), TTL, &tags(&["t"]), s));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
+    }
+
+    #[test]
+    fn clear_after_the_stamp_keeps_the_insert_out() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s = c.read_stamp();
+        c.clear();
+        assert!(!c.insert(k.clone(), rb_of("old"), TTL, &[], s));
+        assert!(html(&c, &k).is_none());
+    }
+
+    #[test]
+    fn a_rejected_insert_leaves_the_newer_entry() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s1 = c.read_stamp();
+        c.invalidate_tags(&tags(&["t"]));
+        let s2 = c.read_stamp();
+        assert!(c.insert(k.clone(), rb_of("new"), TTL, &tags(&["t"]), s2));
+        assert!(!c.insert(k.clone(), rb_of("old"), TTL, &tags(&["t"]), s1));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"new")));
+        c.run_pending();
+        assert_eq!(c.tag_index_size(), 1);
     }
 }
