@@ -7,11 +7,10 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { $ } from 'bun'
+import { FILES, PLATS } from './release-files'
 const NEW = process.argv[2]; const RELEASE = process.argv.includes('--release')
 if (!NEW || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(NEW)) { console.error('usage: bun scripts/release-bump.ts <version> [--release]'); process.exit(1) }
 const ROOT = resolve(import.meta.dir, '..')
-const PLATS = ['darwin-x64', 'darwin-arm64', 'linux-x64-gnu', 'linux-arm64-gnu', 'linux-x64-musl', 'linux-arm64-musl']
-const FILES = ['packages/brust/package.json', 'packages/runtime-dom/package.json', 'packages/create-app/package.json', ...PLATS.map((p) => `npm/${p}/package.json`)]
 const EXPECTED = FILES.length // 9
 function setVersion(text: string, v: string): { text: string; old: string | null } {
   const re = /("version"\s*:\s*")([^"]*)(")/; const m = text.match(re)
