@@ -442,3 +442,6 @@ Escalate with `conclave task challenge 838f12fb-70c1-41b7-acf2-d4065cf6bb64 m4cf
 - an existing assertion must change;
 - a Task 12 delete fails;
 - a file outside the Boundary.
+
+
+> **Contract-table amendments (lead ruling on Mellow's drift findings D1-D3, 2026-10-12):** D1 strike any `#[wasm_bindgen] pub fn invalidate` glue-export wording — `install(rt)` is binding (ruling 19753649). D3 THIS lane owns the byte-for-byte test: drive lane 4's `cfEntrySource` with the fixture's paths/CONFIG and diff against `tests/fixtures/cf-min/cf/brust-app.entry.js` (which includes the `install` re-export line); Mellow checks for it in review.

@@ -55,7 +55,7 @@ Lane M4-CF-4 of `docs/design/2026-10-12-m4-cloudflare-workers-design.md`. Read i
 | exports | `loader(json: string): Promise<string>`, `jobs(json): Promise<string>` (never reject: a parse/handler error resolves to `{"error":…}` like `makeDispatch`); `action(req: Request): Promise<Response>`; `MANIFEST: string` (manifest.json text); `TEMPLATES: Record<string,string>` keyed by the manifest `components[id].template` value (`jinja/<id>.jinja`); `CONFIG: string` (JSON below) | bridge externs |
 | `CONFIG` JSON | `{"abi":1,"generator":"brust/<core version>","l1Capacity":256,"jobCacheCapacity":512,"stats":false,"edgeCache":"off","cors"?:<config.ts CorsConfig, camelCase>,"actions"?:{"prefix","maxBodyBytes","maxResponseBytes","crossSite"}}` | `CoreConfig` |
 | `cache.invalidate` | the CF bundle's napi stub calls the glue export `invalidate(args)` and expects `{l1Removed, jobRemoved}` (R8) | `#[wasm_bindgen] pub fn invalidate` |
-| package metadata | `npm/core-cf/package.json` `"brust": {"abi":1,"main":"index.js","appModuleDir":".","glue":"index.js","compatibilityDate":"2026-10-01","workerBuild":"^0.8","wasmBindgen":"0.2.129"}`; files under `worker/` = the worker-build `build/` dir verbatim | lane 3 corrects `main`/`glue`/`appModuleDir` from its Task 1 finding |
+| package metadata | `npm/core-cf/package.json` `"brust": {"abi":1,"main":"index.js","appModuleDir":".","glue":"index.js","compatibilityDate":"2026-10-01","workerBuild":"0.8.7" (pinned, lane 3 R13),"wasmBindgen":"0.2.129"}`; files under `worker/` = the worker-build `build/` dir verbatim | lane 3 corrects `main`/`glue`/`appModuleDir` from its Task 1 finding |
 
 ## Goal
 - `brust build [entry] --target cloudflare [--out-dir dist] [--wasm-from-source]` runs the normal build unchanged, then writes `dist/cf/`:
@@ -396,3 +396,6 @@ Escalate with `conclave task challenge 838f12fb-70c1-41b7-acf2-d4065cf6bb64 m4cf
 - Bun cannot bundle elysia/react for `workerd` conditions;
 - `fs.watch` recursion fails on Linux;
 - a file outside the Boundary.
+
+
+> **Contract-table amendments (lead ruling on Mellow's drift findings D1-D3, 2026-10-12):** D1 the `cache.invalidate` row = `install(rt)` (ruling 19753649): the generated entry re-exports `install` from `@brust/core/server-handlers`, `#[event(start)]` calls `install({ invalidate })`, the napi stub calls the installed `rt.invalidate`; any earlier wording of a glue `invalidate` export is void. D2 package metadata row = lane 3 R13 values: `workerBuild` pinned `"0.8.7"`, `worker/` = the build script's output. D3 the byte-for-byte entry test against `tests/fixtures/cf-min/cf/brust-app.entry.js` is OWNED BY LANE 3 (it merges after this lane and has the fixture); this lane ships the snapshot tests only.
