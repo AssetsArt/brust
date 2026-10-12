@@ -75,7 +75,8 @@ struct Walker<'s, 'c> {
     instances: Vec<InstanceRecord>,
     ssr_outputs: HashMap<String, u32>,
     /// `RowOnly` links by id with the client reads they imply, resolved after the walk.
-    row_only: HashMap<u32, Vec<super::ClientUse>>,
+    /// With the child's name and location when it derives values from its props on the server (F96d).
+    row_only: HashMap<u32, (Vec<super::ClientUse>, Option<(String, u32)>)>,
     /// Whether this component's own props can change after first paint (see `children`).
     props_reactive: bool,
 }
@@ -92,6 +93,17 @@ struct Child {
     /// The compiled child has a precompute job over its props: the server computes it once, so a
     /// link that changes those props later would leave its slots stale (F96d).
     prop_precompute: bool,
+}
+
+fn linked_prop_precompute(name: &str, loc: u32) -> Diagnostic {
+    Diagnostic::fallback(
+        "linked-prop-precompute",
+        format!(
+            "<{name}> derives values from its props on the server, but its props change on the client"
+        ),
+        loc,
+        "derive the value in the parent, or keep the child's props constant; the component renders as a React island",
+    )
 }
 
 fn react(reason: &str) -> Tier {
@@ -410,9 +422,14 @@ impl Walker<'_, '_> {
                 }
                 Node::Component { link, children, .. } => {
                     if let Some(id) = *link
-                        && let Some(uses) = self.row_only.remove(&id)
+                        && let Some((uses, pc)) = self.row_only.remove(&id)
                     {
                         if reactive {
+                            // The client re-creates this row, so its props change: values the
+                            // child computed from them on the server would freeze (F96d).
+                            if let Some((name, loc)) = pc {
+                                self.diagnostics.push(linked_prop_precompute(&name, loc));
+                            }
                             self.st.client_uses.extend(uses);
                         } else {
                             *link = None;
@@ -585,12 +602,7 @@ impl Walker<'_, '_> {
                 if need == LinkNeed::Always && child.prop_precompute {
                     // Fail closed (F96d): the child computed values from its props once, on the
                     // server; a linked prop that changes would leave them stale with no warning.
-                    self.diagnostics.push(Diagnostic::fallback(
-                        "linked-prop-precompute",
-                        format!("<{name}> derives values from its props on the server, but its props change on the client"),
-                        *loc,
-                        "derive the value in the parent, or keep the child's props constant; the component renders as a React island",
-                    ));
+                    self.diagnostics.push(linked_prop_precompute(name, *loc));
                 }
                 if need != LinkNeed::None {
                     // The parent chunk rebuilds the row's `_pN` from the list: it reads the source,
@@ -629,7 +641,8 @@ impl Walker<'_, '_> {
                     match need {
                         LinkNeed::Always => self.st.client_uses.extend(uses),
                         LinkNeed::RowOnly => {
-                            self.row_only.insert(id, uses);
+                            let pc = child.prop_precompute.then(|| (name.clone(), *loc));
+                            self.row_only.insert(id, (uses, pc));
                         }
                         LinkNeed::None => unreachable!(),
                     }

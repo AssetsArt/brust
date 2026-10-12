@@ -64,3 +64,34 @@ fn plain_prop_reads_in_a_linked_child_stay_native() {
         "{d:?}"
     );
 }
+
+/// A row-scoped (RowOnly) link in a row the client re-creates: the parent's state feeds the list.
+#[test]
+fn row_child_with_callback_derived_value_in_a_state_fed_list_falls_back() {
+    let dir = std::env::temp_dir().join(format!("brust-lpp-row-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("Item.tsx"),
+        "export default function Item({ it }: any) { return <li>{it.tags.filter((t: any) => t.on).length}</li> }",
+    )
+    .unwrap();
+    let src = "import { useState } from 'react'\nimport Item from './Item'\nexport default function T() { const [items, setItems] = useState<any[]>([]); return <ul onClick={() => setItems(items.concat([{ id: 1, tags: [] }]))}>{items.map((it) => <Item key={it.id} it={it} />)}</ul> }";
+    let path = dir.join("T.tsx").to_string_lossy().into_owned();
+    let ir = run_on_compiler_thread(move || {
+        analyze_source(
+            &path,
+            src.as_bytes().to_vec(),
+            &AnalyzeOptions {
+                root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    });
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert!(
+        ir.diagnostics
+            .iter()
+            .any(|d| d.rule == "linked-prop-precompute")
+    );
+}
