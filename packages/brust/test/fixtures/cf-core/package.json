@@ -1,0 +1,5 @@
+{
+  "name": "@brust/core-cf",
+  "version": "2.0.0-alpha.2",
+  "brust": { "abi": 1, "main": "index.js", "appModuleDir": ".", "glue": "index.js", "compatibilityDate": "2026-10-01" }
+}

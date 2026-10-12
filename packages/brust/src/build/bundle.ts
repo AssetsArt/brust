@@ -16,7 +16,7 @@ import { BuildError } from './errors'
 
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
 /** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). */
-const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify('production') }
+export const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify('production') }
 
 const matchesExternal = (spec: string, external: string[]) =>
   external.some((p) => (p.endsWith('/*') ? spec.startsWith(p.slice(0, -1)) : spec === p))

@@ -1,0 +1,255 @@
+// `brust build --target cloudflare` (M4-CF spec §4): after the normal build, writes `<out>/cf/`:
+//   worker/      the @brust/core-cf glue + wasm (verbatim)  +  <appModuleDir>/brust-app.js (ONE Bun bundle, R2)
+//   assets/      Static Assets tree + _headers (R7)         wrangler.jsonc  (user config merged with brust's keys, R5)
+//   .stage/      the generated entry + the smoke harness (kept for inspection)
+import { cpSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { builtinModules } from 'node:module'
+import { dirname, join, relative } from 'node:path'
+import type { BunPlugin } from 'bun'
+import { BrustConfigError, type CorsConfig, loadCors } from '../config'
+import { layoutAssets } from './cf-assets'
+import { type CfConfigJson, cfEntrySource } from './cf-entry'
+import { type CoreCf, resolveCoreCf } from './cf-core'
+import { mergeWrangler, readUserWrangler, renderWrangler, type UserWrangler } from './cf-wrangler'
+import { type CloudflareBuildConfig, CF_MIN_COMPAT_DATE } from './config'
+import { PRODUCTION, type SourceOf, sourceDirPlugin } from './bundle'
+import type { Compiled } from './compile'
+import { BuildError } from './errors'
+
+export interface CfFlags {
+  fromSource: boolean
+  env: Record<string, string | undefined>
+}
+
+export interface CfPrepared {
+  cfg: CloudflareBuildConfig
+  core: CoreCf
+  user: UserWrangler
+  coreVersion: string
+  pkgName: string | undefined
+  /** brust.toml `[cors]`, validated before any write */
+  cors: CorsConfig | undefined
+  warnings: string[]
+}
+
+const DEFAULT_CFG: CloudflareBuildConfig = { name: undefined, compatibilityDate: undefined, l1Capacity: 256, jobCacheCapacity: 512, stats: false, edgeCache: 'off', alias: {} }
+
+/** Everything that can fail on the app's own input or install, before a byte is written (index.ts rule). */
+export async function prepareCloudflare(appRoot: string, cfg: CloudflareBuildConfig | null, flags: CfFlags): Promise<CfPrepared> {
+  const core = resolveCoreCf({ appRoot, fromSource: flags.fromSource, env: flags.env })
+  const user = await readUserWrangler(appRoot)
+  const warnings = [...core.warnings]
+  try {
+    const toml = Bun.file(join(appRoot, 'brust.toml'))
+    if (await toml.exists()) {
+      const root = Bun.TOML.parse(await toml.text()) as Record<string, unknown>
+      for (const k of ['server', 'workers']) if (k in root) warnings.push(`[brust] brust.toml [${k}] is ignored on this target`)
+    }
+  } catch {
+    // loadBuildConfig already reported a malformed brust.toml
+  }
+  let pkgName: string | undefined
+  try {
+    pkgName = (JSON.parse(readFileSync(join(appRoot, 'package.json'), 'utf8')) as { name?: string }).name
+  } catch {
+    pkgName = undefined
+  }
+  const coreVersion = String((JSON.parse(readFileSync(join(import.meta.dir, '..', '..', 'package.json'), 'utf8')) as { version?: string }).version ?? '0.0.0')
+  let cors: CorsConfig | undefined
+  try {
+    cors = await loadCors(appRoot)
+  } catch (e) {
+    if (e instanceof BrustConfigError) throw new BuildError('config', e.message)
+    throw e
+  }
+  return { cfg: cfg ?? DEFAULT_CFG, core, user, coreVersion, pkgName, cors, warnings }
+}
+
+export interface CfBuildCtx {
+  appRoot: string
+  entry: string
+  /** the FINAL dist dir (`out` is a tmp sibling that is renamed to it): wrangler paths are relative to `<dist>/cf` */
+  dist: string
+  compiled: Map<string, Compiled>
+  manifest: { components: Record<string, { template: string }>; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null }
+  sourceOf: SourceOf
+  actionsEntry: string | null
+  log: (s: string) => void
+}
+
+const CORE_SRC = join(import.meta.dir, '..')
+const BUILTINS = new Set(builtinModules.filter((m) => !m.startsWith('_')))
+
+/** Violations of the Workers host surface: `bun`/`bun:*` anywhere in the graph (R2 f). */
+function cfGuard(appRoot: string, violations: string[]): BunPlugin {
+  return {
+    name: 'brust-cf-guard',
+    setup(b) {
+      b.onResolve({ filter: /^bun(:.*)?$/ }, (a) => {
+        violations.push(`${relative(appRoot, a.importer) || a.importer} imports ${a.path}`)
+        return { path: a.path, external: true }
+      })
+      b.onResolve({ filter: /^[a-z_]+(\/[a-z_/]+)?$/ }, (a) => (BUILTINS.has(a.path) ? { path: `node:${a.path}`, external: true } : undefined))
+    },
+  }
+}
+
+/** `[cloudflare] alias` (spec R12): a module whose resolved path is a key is replaced by its value. */
+function cfAlias(alias: Record<string, string>, sourceOf: SourceOf): BunPlugin {
+  return {
+    name: 'brust-cf-alias',
+    setup(b) {
+      if (Object.keys(alias).length === 0) return
+      b.onResolve({ filter: /.*/ }, (a) => {
+        if (a.importer === '' || a.importer.includes('/node_modules/')) return undefined
+        let abs: string
+        try {
+          abs = Bun.resolveSync(a.path, dirname(sourceOf.get(a.importer) ?? a.importer))
+        } catch {
+          return undefined
+        }
+        const to = alias[abs]
+        return to === undefined ? undefined : { path: to }
+      })
+    },
+  }
+}
+
+/** The CF bundle's stand-in for the napi addon (`native.ts` `require('../native/index.js')`, R8): every call
+ * fails loudly, since a Worker has no addon. */
+function cfNativeStub(handlersPath: string): BunPlugin {
+  const names = ['startServer', 'registerWorker', 'untilReady', 'beginDrain', 'cacheInvalidate', 'cacheStats', 'localAddr', 'planJobs', 'takeFetchBody', 'putFetchReply']
+  return {
+    name: 'brust-cf-native',
+    setup(b) {
+      b.onResolve({ filter: /^\.\.\/native\/index\.js$/ }, (a) => (/[\\/]src[\\/]native\.ts$/.test(a.importer) ? { path: 'brust-cf-native', namespace: 'brust-cf' } : undefined))
+      b.onLoad({ filter: /.*/, namespace: 'brust-cf' }, () => ({
+        loader: 'js',
+        // cacheInvalidate -> the `rt.invalidate` the glue installed at start (ruling 19753649); the rest has no Worker meaning.
+        contents: `import { installedRuntime } from ${JSON.stringify(handlersPath)}\nconst no = (n) => () => { throw new Error(n + ' is not available on Cloudflare Workers') }\nmodule.exports = {${names.map((n) => (n === 'cacheInvalidate' ? 'cacheInvalidate: (a) => installedRuntime().invalidate(a)' : `${n}: no(${JSON.stringify(n)})`)).join(', ')}}\n`,
+      }))
+    },
+  }
+}
+
+/** The @brust/core `workerStorePlugin` twin for a bundle that inlines `@brust/core` (not external). */
+function cfStorePlugin(appRoot: string): BunPlugin {
+  return {
+    name: 'brust-cf-store',
+    setup(b) {
+      // The core's own re-export files (`src/store/{index,react}.ts`) must keep their real target, else they loop.
+      b.onResolve({ filter: /^@brust\/runtime-dom\/store(\/react)?$/ }, (a) =>
+        a.importer.startsWith(CORE_SRC) ? undefined : { path: Bun.resolveSync(a.path.replace('@brust/runtime-dom', '@brust/core'), appRoot) },
+      )
+    },
+  }
+}
+
+function smokeFiles(app: string): { preload: string; smoke: string } {
+  const preload = `// generated: stubs the Workers-only modules so brust-app.js can be imported under Bun
+import { plugin } from 'bun'
+plugin({
+  name: 'brust-cf-smoke',
+  setup(b) {
+    b.module('cloudflare:workers', () => ({ exports: { env: {}, waitUntil() {} }, loader: 'object' }))
+  },
+})
+`
+  const smoke = `// generated: build-time smoke check of the CF bundle (child process; mock leaks are process-wide)
+const m = await import(${JSON.stringify(app)})
+const bad = []
+for (const k of ['loader', 'jobs', 'action', 'install']) if (typeof m[k] !== 'function') bad.push(k + ' is not a function')
+if (typeof m.MANIFEST !== 'string' || JSON.parse(m.MANIFEST).version !== 1) bad.push('MANIFEST.version !== 1')
+if (typeof m.CONFIG !== 'string' || JSON.parse(m.CONFIG).abi !== 1) bad.push('CONFIG.abi !== 1')
+if (typeof m.TEMPLATES !== 'object' || m.TEMPLATES === null) bad.push('TEMPLATES is not an object')
+const r = await m.loader('{}')
+if (typeof r !== 'string' || !r.includes('error')) bad.push('loader({}) did not resolve an error string: ' + String(r))
+if (bad.length) { console.error(bad.join('\\n')); process.exit(1) }
+`
+  return { preload, smoke }
+}
+
+export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepared): Promise<string[]> {
+  const cfDir = join(out, 'cf')
+  const stage = join(cfDir, '.stage')
+  const warnings = [...p.warnings]
+  mkdirSync(stage, { recursive: true })
+  cpSync(p.core.workerDir, join(cfDir, 'worker'), { recursive: true })
+
+  const templates: Record<string, string> = {}
+  for (const [id, c] of Object.entries(ctx.manifest.components)) {
+    const comp = ctx.compiled.get(id)
+    if (comp) templates[c.template] = comp.jinja
+  }
+  const templatesPath = join(stage, 'templates.json')
+  writeFileSync(templatesPath, JSON.stringify(templates))
+
+  const cors = p.cors
+  const a = ctx.manifest.actions
+  const config: CfConfigJson = {
+    abi: 1,
+    generator: `brust/${p.coreVersion}`,
+    l1Capacity: p.cfg.l1Capacity,
+    jobCacheCapacity: p.cfg.jobCacheCapacity,
+    stats: p.cfg.stats,
+    edgeCache: p.cfg.edgeCache,
+    ...(cors ? { cors } : {}),
+    ...(a ? { actions: { prefix: a.prefix, maxBodyBytes: a.maxBodyBytes, maxResponseBytes: a.maxResponseBytes ?? 8_388_608, crossSite: a.crossSite ?? 'reject' } } : {}),
+  }
+  const entryPath = join(stage, 'brust-app.entry.js')
+  const jobsEntry = join(out, '.stage', 'jobs.ts')
+  writeFileSync(
+    entryPath,
+    cfEntrySource({ entry: ctx.entry, jobsEntry, actionsEntry: a ? ctx.actionsEntry : null, prefix: a?.prefix ?? '', manifestPath: join(out, 'manifest.json'), templatesPath, config }),
+  )
+  // Bare imports of the generated files resolve from the app root (an --out-dir outside the app has no node_modules above it).
+  // (registered by absolute AND real path: the bundler reports the real one, e.g. /private/var on macOS)
+  for (const f of [entryPath, jobsEntry]) {
+    ctx.sourceOf.set(f, ctx.entry)
+    ctx.sourceOf.set(realpathSync(f), ctx.entry)
+  }
+
+  const glue = p.core.meta.glue
+  const appDir = join(cfDir, 'worker', p.core.meta.appModuleDir)
+  const glueRel = relative(appDir, join(cfDir, 'worker', glue)).split('\\').join('/')
+  const glueSpec = glueRel.startsWith('.') ? glueRel : `./${glueRel}`
+  const violations: string[] = []
+  const res = await Bun.build({
+    entrypoints: [entryPath],
+    target: 'browser',
+    format: 'esm',
+    conditions: ['workerd', 'worker', 'browser'],
+    define: PRODUCTION,
+    minify: false,
+    external: ['node:*', 'cloudflare:*', glueSpec],
+    plugins: [cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'])],
+  })
+  if (violations.length > 0) throw new BuildError('cf-unsupported', `${[...new Set(violations)].join('\n')}\nthese modules do not exist on Cloudflare Workers; swap them with [cloudflare] alias`)
+  if (!res.success) throw new BuildError('bundle', `cloudflare: ${res.logs.map(String).join('\n')}`)
+  const js = res.outputs.filter((o) => o.kind === 'entry-point')
+  if (js.length !== 1) throw new BuildError('bundle', `cloudflare: expected one entry-point output, got ${js.length}`)
+  for (const o of res.outputs) if (o.kind !== 'entry-point') warnings.push(`[brust] cloudflare bundle: dropped non-JS output ${o.path}`)
+  const appFile = join(appDir, 'brust-app.js')
+  mkdirSync(appDir, { recursive: true })
+  writeFileSync(appFile, await js[0]!.text())
+
+  const assets = layoutAssets(out, cfDir, p.coreVersion)
+  warnings.push(...assets.warnings)
+  const compatibilityDate = p.cfg.compatibilityDate ?? p.core.meta.compatibilityDate
+  if (compatibilityDate < CF_MIN_COMPAT_DATE) throw new BuildError('config', `compatibility_date ${compatibilityDate} is older than ${CF_MIN_COMPAT_DATE}`)
+  const merged = mergeWrangler(p.user, { appRoot: ctx.appRoot, cfDir: join(ctx.dist, 'cf'), name: p.cfg.name, pkgName: p.pkgName, compatibilityDate, main: p.core.meta.main, version: p.coreVersion })
+  warnings.push(...merged.warnings)
+  writeFileSync(join(cfDir, 'wrangler.jsonc'), renderWrangler(merged.config))
+
+  const { preload, smoke } = smokeFiles(appFile)
+  writeFileSync(join(stage, 'smoke-preload.ts'), preload)
+  writeFileSync(join(stage, 'smoke.ts'), smoke)
+  const r = Bun.spawnSync([process.execPath, '--preload', join(stage, 'smoke-preload.ts'), join(stage, 'smoke.ts')], {
+    cwd: ctx.appRoot,
+    env: { ...process.env, NODE_ENV: 'production' },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  if (r.exitCode !== 0) throw new BuildError('cf-smoke', `${r.stderr.toString().trim() || r.stdout.toString().trim()}\n(open bindings lazily: module top level runs at build time with env = {})`)
+  return warnings
+}

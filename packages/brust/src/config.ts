@@ -89,6 +89,22 @@ export async function loadConfig(cwd: string = process.cwd(), cli: Partial<Brust
   }
 }
 
+/** `[cors]` of brust.toml and nothing else (no env, no cli): what the Cloudflare build ships in CONFIG.
+ * Throws `BrustConfigError` on a bad table, exactly like `loadConfig`. */
+export async function loadCors(cwd: string): Promise<CorsConfig | undefined> {
+  const tomlPath = join(cwd, 'brust.toml')
+  const file = Bun.file(tomlPath)
+  if (!(await file.exists())) return undefined
+  let parsed: unknown
+  try {
+    parsed = Bun.TOML.parse(await file.text())
+  } catch (e) {
+    throw new BrustConfigError(`failed to parse ${tomlPath}: ${(e as Error).message}`, tomlPath)
+  }
+  const root = (parsed ?? {}) as Record<string, unknown>
+  return 'cors' in root ? parseCors(root.cors, tomlPath) : undefined
+}
+
 /** CLI / programmatic overrides get the same bounds as env (a CLI `--port 0` = any free port). */
 function checkCli(cli: Partial<BrustConfig>): void {
   const check = (name: string, v: number | undefined, min: number, max: number) => {
