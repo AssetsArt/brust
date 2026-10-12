@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { decodeEntities, diffParity, normalizeMain } from './parity'
+import { checkJsonParity, decodeEntities, diffParity, normalizeMain } from './parity'
 
 const brustHtml = `<html lang="en"><head><title>Team</title><link rel="stylesheet" href="/x.css"></head><body>
 <header><nav><a href="/types">Types</a></nav></header>
@@ -61,5 +61,28 @@ describe('diffParity', () => {
   test('different text content is a mismatch', () => {
     const d = diffParity({ app: 'brust', n: normalizeMain('<main><h1>Types</h1></main>') }, { app: 'next', n: normalizeMain('<main><h1>Type</h1></main>') })
     expect(d).toMatch(/text differs at index 0: brust "Types" vs next "Type"/)
+  })
+})
+
+describe('checkJsonParity', () => {
+  const ok = (app: string, body: string) => ({ app, status: 200, contentType: 'application/json;charset=utf-8', body })
+  const expected = [{ name: 'a', label: 'x' }, { name: 'b', label: 'y' }]
+  test('equal bodies pass despite key order and whitespace', async () => {
+    await checkJsonParity([ok('brust', '[{"name":"a","label":"x"},{"name":"b","label":"y"}]'), ok('elysia-bun', '[ {"label":"x","name":"a"},\n {"label":"y", "name":"b"} ]')], 'A1', expected)
+  })
+  test('a non-200 status fails', async () => {
+    await expect(checkJsonParity([ok('brust', '[]'), { ...ok('elysia-bun', '[]'), status: 404 }], 'A1', [])).rejects.toThrow(/json parity mismatch on probe A1 \(brust vs elysia-bun\)/)
+  })
+  test('a non-json content-type fails', async () => {
+    await expect(checkJsonParity([ok('brust', '[]'), { ...ok('elysia-bun', '[]'), contentType: 'text/plain' }], 'A1', [])).rejects.toThrow(/json parity mismatch on probe A1 \(brust vs elysia-bun\)/)
+  })
+  test('a body that is not JSON fails', async () => {
+    await expect(checkJsonParity([ok('brust', '[]'), ok('elysia-bun', 'nope')], 'A1', [])).rejects.toThrow(/json parity mismatch on probe A1 \(brust vs elysia-bun\)/)
+  })
+  test('a deep difference names the first differing path', async () => {
+    await expect(checkJsonParity([ok('brust', '[{"label":"x"},{"label":"y"}]'), ok('elysia-bun', '[{"label":"x"},{"label":"z"}]')], 'A1', [{ label: 'x' }, { label: 'y' }])).rejects.toThrow(/\$\[1\]\.label/)
+  })
+  test('two equally wrong apps fail against expected', async () => {
+    await expect(checkJsonParity([ok('brust', '{"ok":false}'), ok('elysia-bun', '{"ok":false}')], 'A2', { ok: true, id: 25 })).rejects.toThrow(/json parity mismatch on probe A2 \(brust vs expected\)/)
   })
 })

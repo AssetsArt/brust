@@ -1,0 +1,478 @@
+{
+  "header": {
+    "date": "2026-10-10",
+    "host": "darwin/arm64",
+    "cores": 10,
+    "loadavg": [
+      3.1,
+      4.2,
+      4.0
+    ],
+    "seed": 12345,
+    "conn": 120,
+    "dur": "10s",
+    "warmup": "3s",
+    "settleMs": 1000,
+    "workers": 10,
+    "versions": {
+      "bun": "1.4.3-canary",
+      "node": "v22.23.1",
+      "next": "16.4.0",
+      "brust": "0.0.0 @ abc1234",
+      "brust-01x": "0.1.69-alpha",
+      "oha": "1.11.0"
+    },
+    "apps": [
+      "brust",
+      "bun-serve",
+      "next",
+      "brust-01x"
+    ],
+    "skipped": [],
+    "order": [
+      "next:I",
+      "brust:S",
+      "bun-serve:D"
+    ],
+    "budgets": {
+      "brust": "workers=10",
+      "bun-serve": "procs=10",
+      "next": "procs=1 (as shipped)",
+      "brust-01x": "workers=10"
+    },
+    "bunServeBalanced": true
+  },
+  "measurements": [
+    {
+      "app": "brust",
+      "probe": "S",
+      "enc": "identity",
+      "nums": {
+        "rps": 46000,
+        "p50": 2.5,
+        "p95": 2.8,
+        "p99": 2.9,
+        "total": 460000,
+        "errors": 0,
+        "status": {
+          "200": 460000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "brust",
+      "probe": "D",
+      "enc": "identity",
+      "nums": {
+        "rps": 50000,
+        "p50": 2.3,
+        "p95": 4.0,
+        "p99": 5.1,
+        "total": 500000,
+        "errors": 0,
+        "status": {
+          "200": 500000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "brust",
+      "probe": "I",
+      "enc": "identity",
+      "nums": {
+        "rps": 40000,
+        "p50": 2.9,
+        "p95": 5.5,
+        "p99": 7.0,
+        "total": 400000,
+        "errors": 0,
+        "status": {
+          "200": 400000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "brust",
+      "probe": "D",
+      "enc": "gzip",
+      "nums": {
+        "rps": 48000,
+        "p50": 2.4,
+        "p95": 4.2,
+        "p99": 5.3,
+        "total": 480000,
+        "errors": 0,
+        "status": {
+          "200": 480000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "bun-serve",
+      "probe": "S",
+      "enc": "identity",
+      "nums": {
+        "rps": 70000,
+        "p50": 1.6,
+        "p95": 2.0,
+        "p99": 2.4,
+        "total": 700000,
+        "errors": 0,
+        "status": {
+          "200": 700000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "bun-serve",
+      "probe": "D",
+      "enc": "identity",
+      "nums": {
+        "rps": 60000,
+        "p50": 1.9,
+        "p95": 2.6,
+        "p99": 3.3,
+        "total": 600000,
+        "errors": 0,
+        "status": {
+          "200": 600000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "bun-serve",
+      "probe": "I",
+      "enc": "identity",
+      "nums": {
+        "rps": 65000,
+        "p50": 1.8,
+        "p95": 2.4,
+        "p99": 3.0,
+        "total": 650000,
+        "errors": 0,
+        "status": {
+          "200": 650000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "next",
+      "probe": "S",
+      "enc": "identity",
+      "nums": {
+        "rps": 5000,
+        "p50": 23.0,
+        "p95": 35.0,
+        "p99": 40.0,
+        "total": 50000,
+        "errors": 0,
+        "status": {
+          "200": 50000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "next",
+      "probe": "D",
+      "enc": "identity",
+      "nums": {
+        "rps": 15000,
+        "p50": 7.8,
+        "p95": 12.0,
+        "p99": 15.0,
+        "total": 150000,
+        "errors": 0,
+        "status": {
+          "200": 150000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "next",
+      "probe": "I",
+      "enc": "identity",
+      "nums": {
+        "rps": 12000,
+        "p50": 9.9,
+        "p95": 14.0,
+        "p99": 18.0,
+        "total": 120000,
+        "errors": 2,
+        "status": {
+          "200": 120000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "brust-01x",
+      "probe": "S",
+      "enc": "identity",
+      "nums": {
+        "rps": 5100,
+        "p50": 23.4,
+        "p95": 34.9,
+        "p99": 40.2,
+        "total": 51000,
+        "errors": 0,
+        "status": {
+          "200": 51000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "brust-01x",
+      "probe": "D",
+      "enc": "identity",
+      "nums": {
+        "rps": 45000,
+        "p50": 2.6,
+        "p95": 5.0,
+        "p99": 6.5,
+        "total": 450000,
+        "errors": 0,
+        "status": {
+          "200": 450000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    },
+    {
+      "app": "brust-01x",
+      "probe": "I",
+      "enc": "identity",
+      "nums": {
+        "rps": 42000,
+        "p50": 2.8,
+        "p95": 5.4,
+        "p99": 6.6,
+        "total": 420000,
+        "errors": 0,
+        "status": {
+          "200": 420000
+        },
+        "bytes": 21000
+      },
+      "raw": null
+    }
+  ],
+  "actions": {
+    "header": {
+      "date": "2026-10-12",
+      "host": "darwin/arm64",
+      "cores": 10,
+      "loadavg": [
+        3.1,
+        4.2,
+        4.0
+      ],
+      "seed": 7,
+      "conns": [
+        120,
+        1
+      ],
+      "dur": "10s",
+      "warmup": "3s",
+      "settleMs": 1000,
+      "workers": 10,
+      "versions": {
+        "bun": "1.4.3",
+        "oha": "1.15.0",
+        "brust": "2.0.0 @ abc1234",
+        "elysia-bun": "elysia 2.0.0-beta.30 \u00b7 bun 1.4.3"
+      },
+      "apps": [
+        "brust",
+        "elysia-bun"
+      ],
+      "skipped": [],
+      "order": [
+        "brust:A1",
+        "elysia-bun:A1",
+        "elysia-bun:A2",
+        "brust:A2"
+      ],
+      "budgets": {
+        "brust": "workers=10",
+        "elysia-bun": "procs=10"
+      },
+      "elysiaBunBalanced": true
+    },
+    "measurements": [
+      {
+        "app": "brust",
+        "probe": "A1",
+        "enc": "identity",
+        "nums": {
+          "rps": 35000,
+          "p50": 3.2,
+          "p95": 4.1,
+          "p99": 5.0,
+          "total": 350000,
+          "errors": 0,
+          "status": {
+            "200": 350000
+          },
+          "bytes": 1812
+        },
+        "raw": null,
+        "conn": 120
+      },
+      {
+        "app": "brust",
+        "probe": "A1",
+        "enc": "identity",
+        "nums": {
+          "rps": 6000,
+          "p50": 0.114,
+          "p95": 0.13,
+          "p99": 0.2,
+          "total": 60000,
+          "errors": 0,
+          "status": {
+            "200": 60000
+          },
+          "bytes": 1812
+        },
+        "raw": null,
+        "conn": 1
+      },
+      {
+        "app": "elysia-bun",
+        "probe": "A1",
+        "enc": "identity",
+        "nums": {
+          "rps": 40000,
+          "p50": 2.9,
+          "p95": 3.6,
+          "p99": 4.4,
+          "total": 400000,
+          "errors": 0,
+          "status": {
+            "200": 400000
+          },
+          "bytes": 1812
+        },
+        "raw": null,
+        "conn": 120
+      },
+      {
+        "app": "elysia-bun",
+        "probe": "A1",
+        "enc": "identity",
+        "nums": {
+          "rps": 7500,
+          "p50": 0.1,
+          "p95": 0.12,
+          "p99": 0.18,
+          "total": 75000,
+          "errors": 0,
+          "status": {
+            "200": 75000
+          },
+          "bytes": 1812
+        },
+        "raw": null,
+        "conn": 1
+      },
+      {
+        "app": "brust",
+        "probe": "A2",
+        "enc": "identity",
+        "nums": {
+          "rps": 18000,
+          "p50": 6.5,
+          "p95": 8.0,
+          "p99": 9.5,
+          "total": 180000,
+          "errors": 0,
+          "status": {
+            "200": 180000
+          },
+          "bytes": 20
+        },
+        "raw": null,
+        "conn": 120
+      },
+      {
+        "app": "brust",
+        "probe": "A2",
+        "enc": "identity",
+        "nums": {
+          "rps": 5000,
+          "p50": 0.136,
+          "p95": 0.16,
+          "p99": 0.25,
+          "total": 50000,
+          "errors": 0,
+          "status": {
+            "200": 50000
+          },
+          "bytes": 20
+        },
+        "raw": null,
+        "conn": 1
+      },
+      {
+        "app": "elysia-bun",
+        "probe": "A2",
+        "enc": "identity",
+        "nums": {
+          "rps": 20000,
+          "p50": 6.0,
+          "p95": 7.2,
+          "p99": 8.8,
+          "total": 200000,
+          "errors": 0,
+          "status": {
+            "200": 200000
+          },
+          "bytes": 20
+        },
+        "raw": null,
+        "conn": 120
+      },
+      {
+        "app": "elysia-bun",
+        "probe": "A2",
+        "enc": "identity",
+        "nums": {
+          "rps": 5600,
+          "p50": 0.12,
+          "p95": 0.14,
+          "p99": 0.2,
+          "total": 56000,
+          "errors": 0,
+          "status": {
+            "200": 56000
+          },
+          "bytes": 20
+        },
+        "raw": null,
+        "conn": 1
+      }
+    ]
+  }
+}

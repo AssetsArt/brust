@@ -49,4 +49,9 @@ describe('ohaArgs', () => {
     ])
     expect(ohaArgs('u', { conn: 1, dur: '3s', enc: 'gzip' })).toContain('accept-encoding:gzip')
   })
+  test('POST with an inline body adds -d and the json content-type', () => {
+    expect(ohaArgs('u', { conn: 1, dur: '3s', enc: 'identity', method: 'POST', body: '{"id":25}' })).toEqual([
+      '-c', '1', '-z', '3s', '--no-tui', '--output-format', 'json', '-m', 'POST', '-H', 'accept-encoding:identity', '-d', '{"id":25}', '-H', 'content-type:application/json', 'u',
+    ])
+  })
 })

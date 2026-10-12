@@ -24,8 +24,8 @@ pub mod bench {
 }
 
 pub use config::{
-    ActionsConfig, Config, CorsConfig, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES,
-    InvalidateArgs, InvalidateResult, Server, Stats,
+    ActionsConfig, Config, CorsConfig, CrossSite, DEFAULT_ACTION_PREFIX,
+    DEFAULT_MAX_ACTION_BODY_BYTES, InvalidateArgs, InvalidateResult, Server, Stats,
 };
 pub use dispatch::{CallKind, DispatchError, RenderDispatch};
 pub use pipeline::{PLAN_DECLINED, plan_in_call};

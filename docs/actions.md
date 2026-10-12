@@ -38,9 +38,10 @@ Add the `[actions]` table to `brust.toml`. If the table is present actions are o
 entry = "actions.ts"         # project-relative path, default "actions.ts"
 prefix = "/_brust/action"    # default "/_brust/action"
 max_body_bytes = 262144      # request body cap, default 262144 (256 KiB)
+cross_site = "reject"        # "reject" (default) or "allow": see Security posture
 ```
 
-`brust build` bundles the entry to `dist/actions.js` (with `elysia` kept external) and records `actions { entry, prefix, maxBodyBytes }` in the manifest. The worker imports it at boot.
+`brust build` bundles the entry to `dist/actions.js` (with `elysia` kept external) and records `actions { entry, prefix, maxBodyBytes, crossSite }` in the manifest. The worker imports it at boot.
 
 The entry must default-export an Elysia app built with the `brust()` adapter. Also export the app's type so the client can be typed from it:
 
@@ -374,7 +375,51 @@ export const api = client<App>({
 
 - Eden's GET carries `content-type: application/json`, so a cross-origin GET is preflighted (difference (e)). The default `headers` echo covers that; if you set `headers`, include `content-type`.
 
-## 9. Limits
+## 9. Security posture
+
+**Actions are public endpoints.** Anyone who can reach the server can call them. Brust adds one default protection and nothing else; authentication and authorisation are your app's job.
+
+**What Rust rejects by default.** A request under the actions prefix whose method is not `GET`, `HEAD` or `OPTIONS` is answered **403** before its body is read and before the worker is called, when the browser says the request is cross-site:
+
+- `Sec-Fetch-Site: cross-site` is present, or
+- an `Origin` header is present and its authority (`host[:port]`, compared as written, lower-cased) is not the request's own host. The request host is the first `X-Forwarded-Host` value when the header is present, otherwise `Host`. A literal `Origin: null` counts as foreign.
+
+Either way the request still passes if its `Origin` is listed by name in `[cors] origins` (see CORS above). A wildcard `origins = ["*"]` does **not** count: it lets other sites read your responses, but it never switches this guard off. Use `cross_site = "allow"` for that. The response is `application/problem+json`:
+
+```json
+{"type":"about:blank","title":"CrossSiteRejected","status":403,"detail":"cross-site POST to an action is rejected; set [actions] cross_site = \"allow\", or list the exact origin in [cors].origins (a wildcard does not count)"}
+```
+
+What is **not** affected: `GET`/`HEAD` (reads are not CSRF targets), same-origin browser requests, and requests with neither header (curl, server-to-server, the Eden client running inside the worker). A sibling subdomain (`Sec-Fetch-Site: same-site`) is rejected unless its origin is listed in `[cors]`, because browsers send its `Origin` and the authority differs from the host. The 0.1.x server had no such check.
+
+This stops a hostile web page from submitting a form to your action with the visitor's browser. It does not stop a script that sets no `Origin`, so it is not authentication.
+
+**Behind a proxy**, make sure the original host reaches brust: either pass `Host` through or set `X-Forwarded-Host`. A proxy that rewrites `Host` and sends no `X-Forwarded-Host` makes same-origin POSTs look cross-site and they get the 403.
+
+**Opting out.** For a public API that other sites call from a browser, set `cross_site = "allow"` in `[actions]` (usually together with `[cors]`):
+
+```toml
+[actions]
+cross_site = "allow"
+```
+
+**Content type and auth stay in your app.** Elysia also parses `application/x-www-form-urlencoded` bodies, so require JSON and a token for mutations with a guard:
+
+```ts
+import { brust } from '@brust/core/elysia'
+import { Elysia } from 'elysia'
+
+const guarded = new Elysia({ adapter: brust() }).onBeforeHandle(({ request, status }) => {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    if (!request.headers.get('content-type')?.startsWith('application/json')) return status(415, 'json only')
+    if (request.headers.get('authorization') !== `Bearer ${process.env.API_TOKEN}`) return status(401, 'unauthorized')
+  }
+})
+```
+
+The pokedex example has no auth on purpose (it is a demo); it relies on the default above.
+
+## 10. Limits
 
 - **Request body** at most `max_body_bytes` (default 262144). Larger is **413**; an unsupported transfer is **415**. The body is buffered whole before your app runs, so there is no streaming upload.
 - **Response body** at most one worker slot (256 KiB). A larger body is a **500** with `brust: action response exceeds <n> bytes`, and a log line. Chunked and streamed responses are the known limit F82.
@@ -385,6 +430,6 @@ export const api = client<App>({
 - **Running without Rust** is not built in. If you want the app on another server, `export default app.fetch` from your own entry; the `brust()` adapter's `listen` will still throw.
 - **Beta pin.** Elysia 2 is a beta. Both packages are pinned exactly; never use `next` or a range, and re-test before bumping.
 
-## 10. Next
+## 11. Next
 
 The pokedex example builds a team with these pieces: an Elysia app on a database file ([`examples/pokedex/actions.ts`](../examples/pokedex/actions.ts)), the typed client and the shared store ([`examples/pokedex/lib/team-client.ts`](../examples/pokedex/lib/team-client.ts)). The store is explained in [The unified store](./store.md).

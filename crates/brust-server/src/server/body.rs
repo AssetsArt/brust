@@ -252,6 +252,24 @@ pub(crate) fn error_411() -> Response<ResponseBody> {
 pub(crate) fn error_413() -> Response<ResponseBody> {
     resp(413, "text/plain", &[], b"payload too large".to_vec())
 }
+/// F87: a cross-site mutating action request, refused before its body is read.
+pub(crate) fn error_403_cross_site(method: &str) -> Response<ResponseBody> {
+    let detail = format!(
+        "cross-site {method} to an action is rejected; set [actions] cross_site = \"allow\", or list the exact origin in [cors].origins (a wildcard does not count)"
+    );
+    let b = serde_json::json!({
+        "type": "about:blank",
+        "title": "CrossSiteRejected",
+        "status": 403,
+        "detail": detail,
+    });
+    resp(
+        403,
+        "application/problem+json",
+        &[],
+        b.to_string().into_bytes(),
+    )
+}
 pub(crate) fn error_415() -> Response<ResponseBody> {
     resp(415, "text/plain", &[], b"unsupported media type".to_vec())
 }

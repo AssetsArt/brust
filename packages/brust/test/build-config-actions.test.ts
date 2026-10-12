@@ -35,12 +35,19 @@ test('no [actions] table -> actions null, even with an actions.ts present (R6)',
 
 test('empty [actions] -> defaults', async () => {
   const c = await loadBuildConfig(tmpApp('[actions]\n'))
-  expect(c.actions).toEqual({ entry: 'actions.ts', prefix: '/_brust/action', maxBodyBytes: 262144 })
+  expect(c.actions).toEqual({ entry: 'actions.ts', prefix: '/_brust/action', maxBodyBytes: 262144, crossSite: 'reject' })
 })
 
 test('explicit values; leading ./ stripped from entry', async () => {
   const c = await loadBuildConfig(tmpApp('[actions]\nentry = "./server/api.ts"\nprefix = "/api"\nmax_body_bytes = 1024\n'))
-  expect(c.actions).toEqual({ entry: 'server/api.ts', prefix: '/api', maxBodyBytes: 1024 })
+  expect(c.actions).toEqual({ entry: 'server/api.ts', prefix: '/api', maxBodyBytes: 1024, crossSite: 'reject' })
+})
+
+test('cross_site: "allow" is kept, "reject" is the default, anything else is a build error (F87)', async () => {
+  expect((await loadBuildConfig(tmpApp('[actions]\ncross_site = "allow"\n'))).actions?.crossSite).toBe('allow')
+  expect((await loadBuildConfig(tmpApp('[actions]\ncross_site = "reject"\n'))).actions?.crossSite).toBe('reject')
+  await fails('[actions]\ncross_site = "maybe"\n', 'actions.cross_site must be "reject" or "allow"')
+  await fails('[actions]\ncross_site = true\n', 'actions.cross_site must be "reject" or "allow"')
 })
 
 test('invalid [actions] values fail with BuildError config', async () => {
