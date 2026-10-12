@@ -152,3 +152,61 @@ mod tests {
         jobs(&<JobCache as JobStore>::with_clock(16, clock));
     }
 }
+
+/// The shared cache contract (`brust_core::cache::conformance`) against the native caches; the
+/// same cases run against `brust_core::cache::local` in brust-core.
+#[cfg(test)]
+mod conformance {
+    use brust_core::cache::conformance::{ConformJobs, ConformL1};
+
+    use super::*;
+
+    impl ConformL1 for L1Cache {
+        fn clear(&self) -> usize {
+            L1Cache::clear(self)
+        }
+        fn tag_slot(&self, t: &str) -> usize {
+            L1Cache::tag_slot(self, t)
+        }
+        fn path_slot(&self, m: &str, p: &str) -> usize {
+            L1Cache::path_slot(self, m, p)
+        }
+        fn tag_index_size(&self) -> usize {
+            L1Cache::tag_index_size(self)
+        }
+        fn settle(&self) {
+            self.run_pending();
+        }
+    }
+
+    impl ConformJobs for JobCache {
+        fn clear(&self) {
+            JobCache::clear(self)
+        }
+        fn invalidate_key(&self, k: &JobKey) -> bool {
+            JobCache::invalidate_key(self, k)
+        }
+        fn tag_slot(&self, t: &str) -> usize {
+            JobCache::tag_slot(self, t)
+        }
+        fn key_slot(&self, u: &str) -> usize {
+            JobCache::key_slot(self, u)
+        }
+        fn tag_index_size(&self) -> usize {
+            JobCache::tag_index_size(self)
+        }
+        fn key_index_size(&self) -> usize {
+            JobCache::key_index_size(self)
+        }
+        fn settle(&self) {
+            self.run_pending();
+        }
+    }
+
+    brust_core::page_cache_conformance!(<L1Cache as PageCache>::with_clock);
+    brust_core::job_store_conformance!(<JobCache as JobStore>::with_clock);
+    brust_core::shared_clock_conformance!(
+        <L1Cache as PageCache>::with_clock,
+        <JobCache as JobStore>::with_clock
+    );
+}

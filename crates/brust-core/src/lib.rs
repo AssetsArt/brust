@@ -12,8 +12,10 @@
 //!   `static_rules`, the pipeline's planning internals, the stamp internals) are `#[doc(hidden)]
 //!   pub`: the native-host seam, not an API. Everything else a host does not read is crate-private.
 //! - **Features.** `gzip` (default) compresses pages and lets the host compress assets; without it
-//!   `compress::gzip` is `None` and every body is identity. `Manifest::load` reads the disk with
-//!   `std::fs` (it compiles on wasm32 and fails there at runtime).
+//!   `compress::gzip` is `None` and every body is identity.
+//! - **wasm32-unknown-unknown.** No `Manifest::load` there (lane 3: `from_parts`); `env()` in a
+//!   cache expression is a parse error; time comes from `host::Clock` (no `Instant` anywhere in
+//!   core: `Instant::now` panics on wasm32-unknown-unknown).
 //! - **Dependencies.** No tokio, hyper, moka or crossbeam (CI checks `cargo tree`).
 #![deny(clippy::all)]
 #[doc(hidden)]

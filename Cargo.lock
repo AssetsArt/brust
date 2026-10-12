@@ -142,6 +142,7 @@ dependencies = [
  "bytes",
  "flate2",
  "http",
+ "js-sys",
  "matchit",
  "minijinja",
  "percent-encoding",

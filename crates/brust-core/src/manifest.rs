@@ -4,7 +4,9 @@
 //! so a bad manifest fails `start` instead of a request (spec §7).
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+use std::path::Path;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -231,6 +233,7 @@ pub enum ManifestError {
 
 /// Boot-time parse of every path the request pipeline evaluates, so a
 /// malformed one fails `load` instead of 500-ing every request.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn check_paths(id: &str, c: &ComponentRecord) -> Result<(), ManifestError> {
     let bad = |field: String, path: &str, reason: String| ManifestError::BadPath {
         component: id.into(),
@@ -315,6 +318,7 @@ fn check_paths(id: &str, c: &ComponentRecord) -> Result<(), ManifestError> {
 }
 
 /// `[A-Za-z_][A-Za-z0-9_]*`: a name a template can read.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn is_ident(s: &str) -> bool {
     let mut b = s.bytes();
     matches!(b.next(), Some(c) if c.is_ascii_alphabetic() || c == b'_')
@@ -323,6 +327,7 @@ fn is_ident(s: &str) -> bool {
 
 /// Root segment of a job input path: text before the first `.` or `[`, with a
 /// leading `props.` stripped (`"props.item.price"` → `"item"`).
+#[cfg(any(test, not(all(target_arch = "wasm32", target_os = "unknown"))))]
 pub(crate) fn input_root(input: &str) -> &str {
     let s = input.strip_prefix("props.").unwrap_or(input);
     s.split(['.', '[']).next().unwrap_or(s)
@@ -330,7 +335,9 @@ pub(crate) fn input_root(input: &str) -> &str {
 
 impl Manifest {
     /// Read and validate `<dist_dir>/manifest.json`. Fails closed: the first
-    /// broken reference is returned as an `Err` naming the path/id.
+    /// broken reference is returned as an `Err` naming the path/id. Not on
+    /// wasm32-unknown-unknown (no filesystem, R9a): a Workers host builds the manifest in memory.
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     pub fn load(dist_dir: &Path) -> Result<Loaded, ManifestError> {
         let mpath = dist_dir.join("manifest.json");
         let raw = std::fs::read(&mpath).map_err(|source| ManifestError::Read {

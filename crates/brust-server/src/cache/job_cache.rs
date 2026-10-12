@@ -475,6 +475,12 @@ impl JobCache {
     pub(crate) fn front_len(&self) -> usize {
         self.front.iter().map(|s| s.0.read().len()).sum()
     }
+
+    /// moka's pending maintenance (test hook, as `L1Cache::run_pending`).
+    #[cfg(test)]
+    pub(crate) fn run_pending(&self) {
+        self.cache.run_pending_tasks();
+    }
 }
 
 fn shard_of(hasher: &RandomState, k: &JobKey) -> usize {

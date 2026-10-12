@@ -10,6 +10,8 @@ description = "brust v2 host-agnostic core: routing, manifest, render, caches' c
 default = ["gzip"]
 # Page/asset gzip. Off: `compress::gzip` is `None`, every page is served identity.
 gzip = ["dep:flate2"]
+# test-only: exports cache::conformance (brust-server dev-dep)
+conformance = []
 
 [dependencies]
 brust-jinja.workspace = true
@@ -27,3 +29,8 @@ flate2 = { version = "1", optional = true }
 
 [lints]
 workspace = true
+
+# R5: the Workers clock (`host::JsClock`). No `unsafe-eval` (Workers forbids eval after startup), no
+# `std` (futures-util). 0.3.106 resolves wasm-bindgen 0.2.129, the version `worker 0.8.7` pins.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+js-sys = { version = "0.3.106", default-features = false }

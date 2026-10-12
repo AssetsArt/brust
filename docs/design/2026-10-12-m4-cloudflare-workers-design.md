@@ -150,6 +150,8 @@ member for `cargo test` on the host.
 
 **Status (2026-10-12):** M4-CF-1 done @15d1051 (lane `m4cf-core-split`): every "moves"/"stay" row above as amended, except the two "new" rows of later lanes (`cache/local.rs` → M4-CF-2, `brust-wasm` → M4-CF-3). `brust-server`'s public paths are pinned by `tests/public_api.rs`; `brust-napi` is unchanged.
 
+**Status (2026-10-12):** M4-CF-2 done @cb0b91b (lane `m4cf-core-wasm`): `cache/local.rs` `LocalL1`/`LocalJobs` (hand-rolled LRU, lazy TTL + 8-entry insert sweep, 256/512 entries + `L1_MAX_BODY_BYTES` 8 MiB) pass the 37-case `cache::conformance` suite that the native `L1Cache`/`JobCache` pass under the same names; `host::JsClock` (`js_sys::Date::now()`, monotone; js-sys wasm32-only, no `unsafe-eval`); wasm32-unknown-unknown has no `Manifest::load` and `env()` in a cache expression is a parse error there; CI checks/clippies brust-core for wasm32 and greps its tree.
+
 **Packages.** In `packages/brust`:
 - Split `worker.ts` into `handlers.ts`, which holds the pure `makeHandlers` plus helpers (`worker.ts:105-266`), and the Bun
   boot. The boot keeps `node:worker_threads` and napi (`worker.ts:4-7,314-345`).
@@ -326,7 +328,7 @@ The app author needs only `wrangler`.
 
 | Concern | Native (`brust start`) | Workers | Delta to document |
 |---|---|---|---|
-| L1 scope | one process, all workers share (`l1.rs:287`) | per isolate; many isolates per colo, recycled at will; JS heap + wasm memory share 128 MB [C limits#memory] | hit rate lower; capacity by entries is risky, so the CF default is 256 and lane 2 adds an optional byte weigher |
+| L1 scope | one process, all workers share (`l1.rs:287`) | per isolate; many isolates per colo, recycled at will; JS heap + wasm memory share 128 MB [C limits#memory] | hit rate lower; capacity by entries is risky, so the CF default is 256 and `L1_MAX_BODY_BYTES` 8 MiB (lane 2) |
 | `cache.invalidate` | coherent for the process (napi `cacheInvalidate`, `cache.ts:11-23`) | **only the isolate that ran the action**; others stale ≤ route `ttl` | R5; pokedex `/team` tag shows it |
 | F86/F89 read stamps | `InvalClock` (`stamp.rs`) | same clock per isolate, so same guarantees within one isolate | none inside an isolate |
 | TTL clock | `Instant` | `Date.now()`, which advances only across I/O on Workers [I] | TTLs coarse within one request: harmless |
@@ -431,7 +433,7 @@ Tool choice:
 | Worker size | 64 MiB uncompressed, **no compressed limit** (Free and Paid) [C https://developers.cloudflare.com/workers/platform/limits/#worker-size] | the brief's compressed caps are obsolete; the estimate is wasm 1.2–2 MB [I] + `brust-app.js` ~1–1.5 MB (react-dom edge prod 292,617 B + legacy 286,554 B unminified, Elysia, app) [I] ⇒ <4 MB |
 | Startup | 1 s to parse and run global scope, error 10021 [C …/limits/#worker-startup-time] | `#[event(start)]` does manifest parse + template compile (pokedex: tens of templates, est. <30 ms [I]) + Elysia `.compile()`; CI dry-run reports `startup_time_ms` |
 | CPU / request | Free 10 ms; Paid default 30 s, max 5 min via `limits.cpu_ms` [C …/limits/#cpu-time] | native D costs ≈0.73 ms CPU/request (10 cores / 13,759 rps) [I]; wasm minijinja 1.5–3× plus JS ⇒ est. 1–4 ms, fits Free; HITs are µs |
-| Memory | 128 MB per isolate, JS + wasm [C …/limits/#memory] | per-isolate capacities (256/512) + optional byte weigher |
+| Memory | 128 MB per isolate, JS + wasm [C …/limits/#memory] | per-isolate capacities (256/512) + `L1_MAX_BODY_BYTES` 8 MiB (lane 2) |
 | Threads | none [C …/webassembly/#threading] | single-thread caches; no tokio |
 | eval / `new Function` | disallowed, except at **startup** (`allow_eval_during_startup`, default ≥ 2025-06-01) [C https://developers.cloudflare.com/workers/configuration/compatibility-flags/#enable-eval-during-startup] | **risk:** Elysia's JIT must compile at startup ⇒ generated `.compile()` (§4); a lazy compile on first request would throw. Elysia's CF guide is 1.x-only ("experimental" `CloudflareAdapter`, no `aot:false` since 1.4.7) [C https://elysiajs.com/integrations/cloudflare-worker]; installed 2.0.0-beta.30 ships only `adapter/bun` and `adapter/web-standard` (`node_modules/.bun/elysia@2.0.0-beta.30…/dist/adapter/`) but has a `test:cf` script (`package.json:194`). Lane 3 gate: the pokedex actions app round-trips under workerd |
 | Subrequests | Free 50, Paid 10,000 [C …/limits/#subrequests] | brust core makes none; D1 queries count (Free: 50 queries per invocation [C https://developers.cloudflare.com/d1/platform/limits/]) |

@@ -33,6 +33,8 @@ rustls = "0.23"
 rustls-pemfile = "2"
 
 [dev-dependencies]
+# The shared cache conformance suite (brust_core::cache::conformance) runs against L1Cache/JobCache.
+brust-core = { workspace = true, features = ["conformance"] }
 tempfile = "3"
 # The HTTP tests decode gzip bodies (the encoder moved to brust-core).
 flate2 = "1"
