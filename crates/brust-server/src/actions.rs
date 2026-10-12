@@ -1,27 +1,27 @@
 //! M3-F E3/E4: the actions subtree. Rust owns the prefix, the preflight (pipeline), the body cap and the transport; the
 //! app in the worker owns routing, 404/405/422 and the response. CORS is NOT stamped here: the service_fn chokepoint
 //! stamps every response (cors.rs:9-14).
-use std::borrow::Cow;
 use std::sync::atomic::Ordering;
 
-use bytes::Bytes;
-use http::{HeaderMap, HeaderName, HeaderValue, Response};
-use http_body_util::{BodyExt, LengthLimitError, Limited};
-use hyper::body::Incoming;
-
-use crate::config::{ACTION_INLINE_BODY_BYTES, ActionsConfig, CrossSite, Server};
-use crate::dispatch::{CallError, FetchCell, call_worker_fetch};
-use crate::protocol::{FetchBody, FetchRequest, FetchResponse};
 use brust_core::body::{self, header_str};
 use brust_core::cors::ResolvedCors;
-use brust_core::host::ReadErr;
+use brust_core::host::{ActionCall, Host, ReadErr, RequestHead};
+use bytes::Bytes;
+use http::{HeaderMap, HeaderName, HeaderValue, Response};
+use hyper::body::Incoming;
+
+use crate::config::{ActionsConfig, CrossSite, Server};
+use crate::core::Core;
+use crate::dispatch::{CallError, FetchCell};
+use crate::host::NativeHost;
+use crate::protocol::{FetchBody, FetchResponse};
 
 /// F82, on the worker's JS thread inside its `fetch` call for `slot`: the heap request body, once.
 /// `None`: no such worker, the slot is not in a call, it is not a `fetch` call, no heap body was
 /// sent, or it was already taken.
 pub fn take_fetch_body(s: &Server, worker: u32, slot: u32) -> Option<Vec<u8>> {
     let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let entry = s.pool.entry(worker)?;
+        let entry = s.core.host.pool.entry(worker)?;
         let mut g = entry.claimed_plan_cell(slot)?.lock();
         g.as_mut()?.downcast_mut::<FetchCell>()?.body.take()
     }))
@@ -33,7 +33,7 @@ pub fn take_fetch_body(s: &Server, worker: u32, slot: u32) -> Option<Vec<u8>> {
 /// F82: hand Rust a response body too large for the slot. `false` = declined: no actions config,
 /// `body.len() > max_response_bytes`, the slot is not in a `fetch` call, or a reply was already put.
 pub fn put_fetch_reply(s: &Server, worker: u32, slot: u32, body: &[u8]) -> bool {
-    let Some(a) = s.actions.as_ref() else {
+    let Some(a) = s.core.actions.as_ref() else {
         return false;
     };
     if body.len() > a.max_response_bytes {
@@ -42,7 +42,7 @@ pub fn put_fetch_reply(s: &Server, worker: u32, slot: u32, body: &[u8]) -> bool 
     // Copy before taking the lock.
     let copy = Bytes::copy_from_slice(body);
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let Some(entry) = s.pool.entry(worker) else {
+        let Some(entry) = s.core.host.pool.entry(worker) else {
             return false;
         };
         let Some(cell) = entry.claimed_plan_cell(slot) else {
@@ -62,16 +62,15 @@ pub fn put_fetch_reply(s: &Server, worker: u32, slot: u32, body: &[u8]) -> bool 
     .unwrap_or(false)
 }
 
-/// One request under the prefix → one `fetch` worker call. `incoming` is read only here, and never for GET/HEAD (R4).
+/// One request under the prefix → one `fetch` worker call. `body` is read only here, and never for GET/HEAD (R4).
 pub(crate) async fn handle(
-    s: &Server,
+    s: &Core<NativeHost>,
     a: &ActionsConfig,
-    parts: &http::request::Parts,
-    incoming: Incoming,
-    full: &str,
+    rq: &RequestHead<'_>,
+    body: Incoming,
     head: bool,
 ) -> Response<Bytes> {
-    let method = parts.method.as_str();
+    let (method, full) = (rq.method, rq.full);
     // R9: `new Request` throws on these; the worker could not answer them.
     if matches!(method, "CONNECT" | "TRACE" | "TRACK") {
         return body::resp(501, "text/plain", &[], b"not implemented".to_vec());
@@ -82,7 +81,7 @@ pub(crate) async fn handle(
         return body::error_400();
     }
     // R2: Rust forwards bytes as received; an encoded body is the one shape it refuses.
-    let ce = parts
+    let ce = rq
         .headers
         .get(http::header::CONTENT_ENCODING)
         .and_then(|v| v.to_str().ok());
@@ -90,10 +89,10 @@ pub(crate) async fn handle(
         return body::error_415();
     }
     // F87: refuse a cross-site mutation before its body is read and before the worker is called.
-    let host = request_host(parts);
+    let host = request_host(rq.headers, rq.authority);
     if cross_site_verdict(
         method,
-        &parts.headers,
+        rq.headers,
         host.as_deref(),
         s.cors_resolved.as_ref(),
         a.cross_site,
@@ -102,30 +101,18 @@ pub(crate) async fn handle(
     {
         tracing::debug!(
             target: "brust::actions",
-            origin = header_str(&parts.headers, "origin").as_deref().unwrap_or(""),
+            origin = header_str(rq.headers, "origin").as_deref().unwrap_or(""),
             host = host.as_deref().unwrap_or(""),
             "cross-site rejected"
         );
         return body::error_403_cross_site(method);
     }
-    let (fb, heap_body) = if method == "GET" || method == "HEAD" {
-        (None, None)
+    let bytes = if method == "GET" || method == "HEAD" {
+        None
     } else {
-        match read_capped(incoming, a.max_body_bytes, s.call_timeout).await {
-            Ok(b) if b.is_empty() => (None, None),
-            // F82: over the inline threshold the bytes wait in the call's cell for `takeFetchBody`.
-            Ok(b) if b.len() > ACTION_INLINE_BODY_BYTES => {
-                (Some(FetchBody::Heap(b.len())), Some(b))
-            }
-            Ok(b) => (
-                Some(encode_body(
-                    header_str(&parts.headers, "content-type")
-                        .as_deref()
-                        .unwrap_or(""),
-                    b,
-                )),
-                None,
-            ),
+        match s.host.read_body(body, a.max_body_bytes).await {
+            Ok(b) if b.is_empty() => None,
+            Ok(b) => Some(b),
             Err(ReadErr::TooLarge) => return body::error_413(),
             Err(ReadErr::Io) => return body::error_400(),
             Err(ReadErr::Slow) => {
@@ -133,38 +120,16 @@ pub(crate) async fn handle(
             }
         }
     };
-    let query = full.split_once('?').map_or("", |(_, q)| q);
-    let mut pairs: Vec<(Cow<str>, Cow<str>)> = parts
-        .headers
-        .iter()
-        .filter(|(n, _)| !body::is_framing_header(n.as_str()))
-        .map(|(n, v)| {
-            (
-                Cow::Borrowed(n.as_str()),
-                String::from_utf8_lossy(v.as_bytes()),
-            )
-        })
-        .collect();
-    // R8: HTTP/2 carries the host in `:authority`, not a `host` header.
-    if !parts.headers.contains_key(http::header::HOST)
-        && let Some(au) = parts.uri.authority()
-    {
-        pairs.push((Cow::Borrowed("host"), Cow::Owned(au.as_str().to_owned())));
-    }
-    let req = FetchRequest {
-        method,
-        url: full,
-        headers: pairs,
-        body: fb,
-        req: crate::routing::routes::build_request_envelope(
+    let r = s
+        .host
+        .action(ActionCall {
             method,
             full,
-            query,
-            &parts.headers,
-            None,
-        ),
-    };
-    let r = call_worker_fetch(&s.pool, s.claim_timeout, s.call_timeout, &req, heap_body).await;
+            headers: rq.headers,
+            authority: rq.authority,
+            body: bytes,
+        })
+        .await;
     // R11: a worker call, never a loader call.
     if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
         s.worker_calls.incr();
@@ -229,12 +194,12 @@ pub(crate) fn cross_site_verdict(
 }
 
 /// The request authority behind proxies: the first `X-Forwarded-Host` value, else `Host`, else `:authority`.
-fn request_host(parts: &http::request::Parts) -> Option<String> {
-    header_str(&parts.headers, "x-forwarded-host")
+fn request_host(headers: &HeaderMap, authority: Option<&str>) -> Option<String> {
+    header_str(headers, "x-forwarded-host")
         .and_then(|v| v.split(',').next().map(|s| s.trim().to_owned()))
         .filter(|s| !s.is_empty())
-        .or_else(|| header_str(&parts.headers, "host"))
-        .or_else(|| parts.uri.authority().map(|a| a.as_str().to_owned()))
+        .or_else(|| header_str(headers, "host"))
+        .or_else(|| authority.map(str::to_owned))
 }
 
 /// A path a WHATWG URL parser would rewrite: a `.`/`..` segment (also as `%2e`), or a backslash (also `%5c`).
@@ -247,28 +212,8 @@ fn ambiguous_path(path: &str) -> bool {
             .any(|seg| matches!(seg.replace("%2e", ".").as_str(), "." | ".."))
 }
 
-/// The whole body, at most `cap` bytes. A declared Content-Length over the cap is refused before any read; a chunked
-/// body is cut off by [`Limited`] the moment it passes the cap; the whole read must finish within `deadline`.
-async fn read_capped<B>(b: B, cap: usize, deadline: std::time::Duration) -> Result<Bytes, ReadErr>
-where
-    B: http_body::Body<Data = Bytes>,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    if b.size_hint().lower() > cap as u64 {
-        return Err(ReadErr::TooLarge);
-    }
-    let Ok(read) = tokio::time::timeout(deadline, Limited::new(b, cap).collect()).await else {
-        return Err(ReadErr::Slow);
-    };
-    match read {
-        Ok(c) => Ok(c.to_bytes()),
-        Err(e) if e.downcast_ref::<LengthLimitError>().is_some() => Err(ReadErr::TooLarge),
-        Err(_) => Err(ReadErr::Io),
-    }
-}
-
 /// R2: text for JSON / form / `text/*` / no type when the bytes are UTF-8; base64 (lossless) for everything else.
-fn encode_body(ct: &str, b: Bytes) -> FetchBody {
+pub(crate) fn encode_body(ct: &str, b: Bytes) -> FetchBody {
     let essence = ct
         .split(';')
         .next()
@@ -338,9 +283,6 @@ fn response_from_fetch(f: FetchResponse) -> Response<Bytes> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http_body::Frame;
-    use http_body_util::{Full, StreamBody};
-    use std::convert::Infallible;
 
     fn hm(h: &[(&str, &str)]) -> HeaderMap {
         let mut m = HeaderMap::new();
@@ -535,7 +477,7 @@ mod tests {
             .body(())
             .unwrap()
             .into_parts();
-        let host = request_host(&parts);
+        let host = request_host(&parts.headers, parts.uri.authority().map(|a| a.as_str()));
         assert_eq!(host.as_deref(), Some("app.example"));
         assert!(
             cross_site_verdict(
@@ -582,34 +524,6 @@ mod tests {
         assert_eq!(t("image/png", b"x"), FetchBody::B64("eA==".into()));
     }
 
-    fn chunks(
-        n: usize,
-        size: usize,
-    ) -> StreamBody<tokio_stream::Iter<std::vec::IntoIter<Result<Frame<Bytes>, Infallible>>>> {
-        let v: Vec<_> = (0..n)
-            .map(|_| Ok(Frame::data(Bytes::from(vec![b'a'; size]))))
-            .collect();
-        StreamBody::new(tokio_stream::iter(v))
-    }
-
-    #[tokio::test]
-    async fn read_capped_by_length_and_by_stream() {
-        let full = |n: usize| Full::new(Bytes::from(vec![b'a'; n]));
-        assert_eq!(
-            read_capped(full(1025), 1024, T).await,
-            Err(ReadErr::TooLarge)
-        );
-        assert_eq!(read_capped(full(1024), 1024, T).await.unwrap().len(), 1024);
-        assert_eq!(
-            read_capped(chunks(3, 512), 1024, T).await,
-            Err(ReadErr::TooLarge)
-        );
-        assert_eq!(
-            read_capped(chunks(2, 512), 1024, T).await.unwrap().len(),
-            1024
-        );
-    }
-
     #[test]
     fn ambiguous_paths_are_refused() {
         for p in [
@@ -631,15 +545,6 @@ mod tests {
         ] {
             assert!(!ambiguous_path(p), "{p}");
         }
-    }
-
-    const T: std::time::Duration = std::time::Duration::from_secs(5);
-
-    #[tokio::test]
-    async fn read_capped_gives_up_on_a_trickled_body() {
-        let pending = StreamBody::new(tokio_stream::pending::<Result<Frame<Bytes>, Infallible>>());
-        let d = std::time::Duration::from_millis(50);
-        assert_eq!(read_capped(pending, 1024, d).await, Err(ReadErr::Slow));
     }
 
     #[test]

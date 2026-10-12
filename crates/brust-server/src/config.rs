@@ -8,19 +8,14 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use tokio::sync::Notify;
 
-use crate::cache::job_cache::JobCache;
-use crate::cache::l1::L1Cache;
+use crate::core::Core;
 use crate::dispatch::RenderDispatch;
-use crate::manifest::Manifest;
-use crate::pool::WorkerPool;
-use crate::render::Renderer;
-use crate::routing::RouteTable;
+use crate::host::NativeHost;
 use crate::server::Tuning;
 pub use crate::server::tls::TlsConfig;
 pub use brust_core::cache::CacheStats;
@@ -29,7 +24,6 @@ pub use brust_core::config::{
     DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs,
     InvalidateResult, MAX_ACTION_BYTES, Stats,
 };
-use brust_core::cors::ResolvedCors;
 
 /// Everything `start` needs. Fixed for the server's lifetime.
 #[derive(Clone, Debug)]
@@ -67,27 +61,10 @@ impl Default for Config {
     }
 }
 
-/// Shared server state (the stripped 0.1.x `AppState`), one per `start`.
+/// Shared server state (the stripped 0.1.x `AppState`), one per `start`: the host-agnostic
+/// [`Core`] over the native host, plus the accept loop's signals.
 pub struct Server {
-    pub(crate) pool: Arc<WorkerPool>,
-    pub(crate) routes: RouteTable,
-    pub(crate) manifest: Manifest,
-    /// Boot-time job-planning templates of `manifest`.
-    pub(crate) plans: crate::pipeline::PlanIndex,
-    pub(crate) renderer: Renderer,
-    pub(crate) l1: L1Cache,
-    pub(crate) jobs: JobCache,
-    /// The invalidation clock `l1` and `jobs` are built on (F89): one read stamp per page.
-    pub(crate) clock: Arc<crate::cache::stamp::InvalClock>,
-    pub(crate) dist_dir: PathBuf,
-    /// M3-P P7: striped (one cache line per stripe) — bumped on every loader page.
-    pub(crate) loader_calls: crate::cache::l1::StripedCounter,
-    pub(crate) job_calls: AtomicU64,
-    /// M3-P P7: striped, like `loader_calls`.
-    pub(crate) worker_calls: crate::cache::l1::StripedCounter,
-    pub(crate) timed_out_calls: AtomicU64,
-    /// (component, slot) pairs already warned about as missing from a job result.
-    pub(crate) missing_slots: std::sync::Mutex<std::collections::HashSet<(String, String)>>,
+    pub(crate) core: Core<NativeHost>,
     /// Worker-registration barrier: the accept loop waits on it.
     pub(crate) ready: Arc<Notify>,
     pub(crate) expected_workers: AtomicU32,
@@ -98,32 +75,15 @@ pub struct Server {
     pub(crate) drain_timeout_ms: AtomicU64,
     pub(crate) local_addr: OnceLock<SocketAddr>,
     pub(crate) tls: Option<TlsConfig>,
-    pub(crate) cors: Option<CorsConfig>,
-    /// `cors` resolved into prebuilt header values once at `start` (per server,
-    /// not a process global: several servers may live in one process).
-    pub(crate) cors_resolved: Option<ResolvedCors>,
-    pub(crate) generator: Option<String>,
-    /// M3-F: the validated actions subtree; `None` = no actions.
-    pub(crate) actions: Option<ActionsConfig>,
-    /// A4: `<script>globalThis.__BRUST_ACTION_PREFIX__="…"</script>`, prebuilt at `start` for a
-    /// non-default prefix only.
-    pub(crate) action_prefix_tag: Option<Box<str>>,
-    pub(crate) claim_timeout: Duration,
-    pub(crate) call_timeout: Duration,
-    /// Last document length per manifest route (+ slack): the capacity of the
-    /// next render's buffer (M3-P P3). A size, never bytes.
-    pub(crate) render_hints: Vec<AtomicUsize>,
-    /// M3-P P7 (R1): per route (manifest index), consecutive planned calls whose jobs all hit;
-    /// at `pipeline::OFFER_STOP` the route stops offering the plan until a miss resets it.
-    pub(crate) plan_offer: Box<[AtomicU32]>,
 }
 
 impl Server {
     /// Register a worker; once `expected_workers` have registered the accept
     /// loop starts serving.
     pub fn register_worker(&self, d: Box<dyn RenderDispatch>) -> u32 {
-        let id = self.pool.register(d);
-        if self.pool.registered_count() >= self.expected_workers.load(Ordering::SeqCst) as usize {
+        let pool = &self.core.host.pool;
+        let id = pool.register(d);
+        if pool.registered_count() >= self.expected_workers.load(Ordering::SeqCst) as usize {
             self.ready.notify_one();
         }
         id
@@ -134,27 +94,9 @@ impl Server {
         *self.local_addr.get().expect("local_addr is set by start")
     }
 
-    /// `key` → every job entry stored under that `cache({key})` value, in any
-    /// component (entries are namespaced `k:<componentId>/<jobId>/<key>`, found
-    /// through the job cache's user-key index); `tags` → both caches; `path` (+
-    /// `method`, default `GET`) → L1 entries for that path, any query/prefix.
-    /// L1 pages built from an invalidated job value are NOT evicted by `key`.
-    /// A job value computed by a call that began before the invalidation is not
-    /// cached, and its page is not stored in L1 (F89).
+    /// See [`Core::invalidate`].
     pub fn invalidate(&self, args: InvalidateArgs) -> InvalidateResult {
-        let mut r = InvalidateResult::default();
-        if let Some(k) = &args.key {
-            r.job_removed += self.jobs.invalidate_user_key(k);
-        }
-        if !args.tags.is_empty() {
-            r.l1_removed += self.l1.invalidate_tags(&args.tags);
-            r.job_removed += self.jobs.invalidate_tags(&args.tags);
-        }
-        if let Some(p) = &args.path {
-            let m = args.method.as_deref().unwrap_or("GET");
-            r.l1_removed += self.l1.invalidate_path(m, p);
-        }
-        r
+        self.core.invalidate(args)
     }
 
     /// The configured TLS settings, if any. `None` = plaintext.
@@ -164,19 +106,11 @@ impl Server {
 
     /// The configured CORS policy, if any. `None` = disabled.
     pub fn cors(&self) -> Option<&CorsConfig> {
-        self.cors.as_ref()
+        self.core.cors()
     }
 
     pub fn stats(&self) -> Stats {
-        Stats {
-            l1: self.l1.stats(),
-            job: self.jobs.stats(),
-            loader_calls: self.loader_calls.get(),
-            job_calls: self.job_calls.load(Ordering::Relaxed),
-            worker_calls: self.worker_calls.get(),
-            timed_out_calls: self.timed_out_calls.load(Ordering::Relaxed),
-            missing_slots: self.missing_slots.lock().map_or(0, |m| m.len() as u64),
-        }
+        self.core.stats()
     }
 
     // ----- graceful drain (config.rs:269-300) -----

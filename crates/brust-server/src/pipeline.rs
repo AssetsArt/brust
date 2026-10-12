@@ -22,23 +22,19 @@ use crate::cache::key_expr::EvalCtx;
 use crate::cache::l1::{CacheKey, RenderedBody, build_cache_key};
 use crate::cache::stamp::ReadStamp;
 use crate::config::Server;
-use crate::dispatch::{CallError, CallKind, call_worker, call_worker_planned};
+use crate::core::Core;
+use crate::dispatch::CallError;
+use crate::host::NativeHost;
 use crate::inputs::{self, Path};
 use crate::manifest::{ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteRecord};
-use crate::pool::PlanBox;
-use crate::protocol::{
-    JobCall, JobResult, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse, Verdict,
-};
+use crate::protocol::{JobCall, JobResult, JobsRequest, LoaderRequest, LoaderResponse, Verdict};
 use crate::render::{Overlay, RenderError, Renderer, inject_document_assets_into, use_ids};
 use crate::routing::routes::{Search, decode_search};
 use crate::server::body::{ResponseBody, bytes_body};
-use crate::server::static_assets::static_asset_response;
-use brust_core::body::{self, head_only, header_str};
-use brust_core::host::StaticRoot;
+use brust_core::body::{self, head_only};
+use brust_core::host::{Clock, Host, RequestHead, StaticRoot};
 use brust_core::plan::{Lookup, PlanCell, PlanRow, PlanSeed, PlanSrc, PlannedCall};
-use brust_core::static_rules::{
-    IMMUTABLE, asset_lookup_key, content_type_for, is_hashed, safe_rel,
-};
+use brust_core::static_rules::{IMMUTABLE, asset_lookup_key, is_hashed, safe_rel};
 
 /// L1 outcome of a page request, for the `x-brust-cache` header and the log line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,20 +65,26 @@ pub(crate) struct PageMeta {
     pub bun_calls: u8,
 }
 
-pub(crate) async fn handle(req: Request<Incoming>, s: Arc<Server>) -> Response<ResponseBody> {
-    respond(req, s).await.map(bytes_body)
+/// The hyper adapter: the request head as the core reads it, the core's answer with its body
+/// boxed once.
+pub(crate) async fn handle(req: Request<Incoming>, server: &Server) -> Response<ResponseBody> {
+    let (parts, incoming) = req.into_parts();
+    let rq = RequestHead {
+        method: parts.method.as_str(),
+        full: parts
+            .uri
+            .path_and_query()
+            .map(|pq| pq.as_str())
+            .unwrap_or_else(|| parts.uri.path()),
+        headers: &parts.headers,
+        authority: parts.uri.authority().map(|a| a.as_str()),
+    };
+    respond(&server.core, rq, incoming).await.map(bytes_body)
 }
 
-async fn respond(req: Request<Incoming>, s: Arc<Server>) -> Response<Bytes> {
-    let (parts, incoming) = req.into_parts();
-    let method = parts.method.as_str();
-    let full = parts
-        .uri
-        .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or_else(|| parts.uri.path());
+async fn respond(s: &Core<NativeHost>, rq: RequestHead<'_>, incoming: Incoming) -> Response<Bytes> {
+    let (method, full, headers) = (rq.method, rq.full, rq.headers);
     let path_only = full.split('?').next().unwrap_or(full);
-    let headers = &parts.headers;
 
     // ----- CORS preflight (carried from server/mod.rs:484-501) -----
     // OPTIONS + Origin + Access-Control-Request-Method + allowed origin →
@@ -101,7 +103,7 @@ async fn respond(req: Request<Incoming>, s: Arc<Server>) -> Response<Bytes> {
     if let Some(a) = &s.actions
         && a.is_under(path_only)
     {
-        return crate::actions::handle(&s, a, &parts, incoming, full, method == "HEAD").await;
+        return crate::actions::handle(s, a, &rq, incoming, method == "HEAD").await;
     }
 
     let head = method == "HEAD";
@@ -125,7 +127,7 @@ async fn respond(req: Request<Incoming>, s: Arc<Server>) -> Response<Bytes> {
             .map(|rel| (StaticRoot::Public, rel))
     };
     if let Some((root, rel)) = static_root {
-        let resp = static_file(&s, root, rel, headers, head).await;
+        let resp = static_file(s, root, rel, headers, head).await;
         tracing::debug!(
             target: "brust::request",
             path = path_only,
@@ -135,20 +137,20 @@ async fn respond(req: Request<Incoming>, s: Arc<Server>) -> Response<Bytes> {
         return resp;
     }
 
-    let t0 = std::time::Instant::now();
+    let t0 = s.host.now_ns();
     let mut meta = PageMeta {
         route: None,
         cache: CacheOutcome::None,
         bun_calls: 0,
     };
-    let resp = page(&s, full, headers, &mut meta).await;
+    let resp = page(s, full, headers, &mut meta).await;
     tracing::debug!(
         target: "brust::request",
         route = %meta.route.map_or("-", |ri| s.manifest.routes[ri].id.as_str()),
         status = resp.status().as_u16(),
         cache = %meta.cache,
         bun_calls = meta.bun_calls,
-        dur_ms = t0.elapsed().as_secs_f64() * 1e3,
+        dur_ms = s.host.now_ns().saturating_sub(t0) as f64 / 1e6,
         "request"
     );
     if head {
@@ -157,21 +159,8 @@ async fn respond(req: Request<Incoming>, s: Arc<Server>) -> Response<Bytes> {
     resp
 }
 
-/// `file` resolved through every symlink still lies under `root` (resolved
-/// too: `dist/` itself may sit behind a symlink). A symlink under `dist/` that
-/// points outside the served directory, or a missing file, is `false`.
-async fn inside_root(root: &std::path::Path, file: &std::path::Path) -> bool {
-    let (Ok(root), Ok(file)) = (
-        tokio::fs::canonicalize(root).await,
-        tokio::fs::canonicalize(file).await,
-    ) else {
-        return false;
-    };
-    file.starts_with(&root) && file != root
-}
-
 async fn static_file(
-    s: &Server,
+    s: &Core<NativeHost>,
     root: StaticRoot,
     rel: &str,
     headers: &HeaderMap,
@@ -181,32 +170,10 @@ async fn static_file(
     let Some(rel) = safe_rel(&decoded, root) else {
         return body::error_404();
     };
-    // `/_brust/` only serves `client/<file>` (see `safe_rel`), so its root is
-    // `dist/client`.
-    let served = match root {
-        StaticRoot::Brust => s.dist_dir.join("client"),
-        StaticRoot::Public => s.dist_dir.join("public"),
-    };
-    let file = match root {
-        StaticRoot::Brust => s.dist_dir.join(rel),
-        StaticRoot::Public => served.join(rel),
-    };
-    if !inside_root(&served, &file).await {
-        return body::error_404();
-    }
-    let Ok(bytes) = tokio::fs::read(&file).await else {
+    let Some(mut resp) = s.host.static_file(root, rel, headers, head).await else {
         return body::error_404();
     };
-    let accept_enc = header_str(headers, "accept-encoding").unwrap_or_default();
-    let mut resp = static_asset_response(
-        &accept_enc,
-        content_type_for(&file),
-        &file.to_string_lossy(),
-        bytes,
-        head,
-        false,
-    );
-    if is_hashed(&file) {
+    if is_hashed(std::path::Path::new(rel)) {
         resp.headers_mut().insert(
             http::header::CACHE_CONTROL,
             http::HeaderValue::from_static(IMMUTABLE),
@@ -223,7 +190,12 @@ async fn static_file(
 // page path
 // ----------------------------------------------------------------------------
 
-async fn page(s: &Server, full: &str, headers: &HeaderMap, meta: &mut PageMeta) -> Response<Bytes> {
+async fn page(
+    s: &Core<NativeHost>,
+    full: &str,
+    headers: &HeaderMap,
+    meta: &mut PageMeta,
+) -> Response<Bytes> {
     // Pages are GET; a HEAD runs the same path (and shares its L1 entries).
     // M3-P P4: match only — the envelope is built after the L1 decision, on a MISS/BYPASS.
     let Some(rm) = s.routes.match_route(full) else {
@@ -298,25 +270,16 @@ async fn page(s: &Server, full: &str, headers: &HeaderMap, meta: &mut PageMeta) 
             path: path_only,
             req: envelope.req,
             // M3-P P7 (R1): offered while the route's recent planned calls were not all hits.
-            plan: s.plans.chain_has_jobs(&route.chain)
+            plan: NativeHost::PLAN_OFFER
+                && s.plans.chain_has_jobs(&route.chain)
                 && s.plan_offer[ri].load(Ordering::Relaxed) < OFFER_STOP,
         };
         // The plan offer: the base context (params + path: two entries) the worker plans on.
-        let seed: Option<PlanBox> = req.plan.then(|| -> PlanBox {
-            Box::new(PlanCell::Seed(PlanSeed {
-                route: ri,
-                base: ctx.clone(),
-            }))
+        let seed = req.plan.then(|| PlanSeed {
+            route: ri,
+            base: ctx.clone(),
         });
-        let r = call_worker_planned::<_, LoaderResponse>(
-            &s.pool,
-            s.claim_timeout,
-            s.call_timeout,
-            CallKind::Loader,
-            &req,
-            seed,
-        )
-        .await;
+        let r = s.host.loader(&req, seed).await;
         let (r, cell) = match r {
             Ok((v, c)) => (Ok(v), c),
             Err(e) => (Err(e), None),
@@ -328,9 +291,7 @@ async fn page(s: &Server, full: &str, headers: &HeaderMap, meta: &mut PageMeta) 
         }
         match r {
             Ok(LoaderResponse::Planned { results }) => {
-                let Some(PlanCell::Planned(pc)) =
-                    cell.and_then(|b| b.downcast::<PlanCell>().ok()).map(|b| *b)
-                else {
+                let Some(pc) = cell else {
                     tracing::error!(route = %route.id, "planned loader response without a plan in the slot");
                     return body::error_500();
                 };
@@ -392,11 +353,7 @@ async fn page(s: &Server, full: &str, headers: &HeaderMap, meta: &mut PageMeta) 
             Ok(LoaderResponse::Error { error }) => {
                 // A plan in the cell means the loader succeeded and the worker's job batch failed
                 // as a whole inside the same call: report and count it as the jobs call would.
-                let planned = cell
-                    .as_ref()
-                    .and_then(|b| b.downcast_ref::<PlanCell>())
-                    .is_some_and(|c| matches!(c, PlanCell::Planned(_)));
-                if planned {
+                if cell.is_some() {
                     s.job_calls.fetch_add(1, Ordering::Relaxed);
                     tracing::error!(route = %route.id, %error, "jobs call failed (planned loader call)");
                 } else {
@@ -457,14 +414,7 @@ async fn page(s: &Server, full: &str, headers: &HeaderMap, meta: &mut PageMeta) 
                     offer.store(0, Ordering::Relaxed);
                 }
                 let req = jobs_request(&plans, &lookup.misses);
-                let r = call_worker::<_, JobsResponse>(
-                    &s.pool,
-                    s.claim_timeout,
-                    s.call_timeout,
-                    CallKind::Jobs,
-                    &req,
-                )
-                .await;
+                let r = s.host.jobs(&req).await;
                 if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
                     s.job_calls.fetch_add(1, Ordering::Relaxed);
                     s.worker_calls.incr();
@@ -558,7 +508,7 @@ async fn page(s: &Server, full: &str, headers: &HeaderMap, meta: &mut PageMeta) 
     reason = "the Err is the cold 500 page() returns as is; boxing it buys nothing"
 )]
 fn apply_job_results(
-    s: &Server,
+    s: &Core<NativeHost>,
     route: &RouteRecord,
     plans: &[JobPlan],
     lookup: &mut Lookup,
@@ -659,7 +609,7 @@ pub fn next_hint(len: usize) -> usize {
 /// (M3-P P3): the identity document. Shared by every path that renders, so
 /// the body a HIT serves is the bytes a fresh render produces.
 fn render_document(
-    s: &Server,
+    s: &Core<NativeHost>,
     route: &RouteRecord,
     ri: usize,
     ctx: &Node,
@@ -977,7 +927,7 @@ fn ci_collision(pairs: &[(&str, &str)]) -> bool {
 /// case-insensitive name collision, or a query name repeated after decoding
 /// (`sort_query` would merge orders the loader reads differently), bypasses L1.
 fn l1_decision<'a>(
-    s: &Server,
+    s: &Core<NativeHost>,
     route_id: u32,
     route: &RouteRecord,
     full: &'a str,
@@ -1044,7 +994,7 @@ fn l1_decision<'a>(
         .iter()
         .find(|(n, _)| *n == "host")
         .map_or("", |(_, v)| *v);
-    let scheme = if s.tls.is_some() { "https" } else { "http" };
+    let scheme = if s.https { "https" } else { "http" };
     let bare_path = full.split('?').next().unwrap_or(full);
     // Matched path params come straight off the envelope, so `param(id)` keys
     // an L1 entry per route param (decoded, as the loader sees them).
@@ -1775,7 +1725,8 @@ fn plan_response(
 /// every failure is [`PLAN_DECLINED`] and leaves no plan behind.
 pub fn plan_in_call(s: &Server, worker: u32, slot: u32, len: u32) -> String {
     let declined = || PLAN_DECLINED.to_string();
-    let Some(entry) = s.pool.entry(worker) else {
+    let s = &s.core;
+    let Some(entry) = s.host.pool.entry(worker) else {
         return declined();
     };
     let Some(cell) = entry.claimed_plan_cell(slot) else {
@@ -1919,7 +1870,7 @@ fn child_cell<'a>(
 /// A precompute result that lacks a declared output (a `dist/jobs.js` built before the
 /// generated `precompute` returned every slot) renders that slot empty; warn once per
 /// (component, slot) per process and count it in the stats.
-fn note_missing_slots(s: &Server, p: &JobPlan, v: &Node) {
+fn note_missing_slots(s: &Core<NativeHost>, p: &JobPlan, v: &Node) {
     if !matches!(p.kind, JobKind::Precompute) {
         return;
     }
@@ -3066,14 +3017,20 @@ mod tests {
     }
 
     fn claim(s: &Server) -> crate::pool::RenderClaim {
-        match s.pool.try_claim_render_lockfree() {
+        match s.core.host.pool.try_claim_render_lockfree() {
             crate::pool::ClaimResult::Claimed(c) => c,
             _ => panic!("no claim"),
         }
     }
 
     fn seed(s: &Server, name: &str) -> crate::pool::PlanBox {
-        let route = s.manifest.routes.iter().position(|r| r.id == "r2").unwrap();
+        let route = s
+            .core
+            .manifest
+            .routes
+            .iter()
+            .position(|r| r.id == "r2")
+            .unwrap();
         Box::new(PlanCell::Seed(PlanSeed {
             route,
             base: base(name),
@@ -3133,7 +3090,8 @@ mod tests {
         let got = plan_in_call(&s, id, c.slot(), len);
         let mut want = base("pikachu");
         merge_loader_data(&mut want, pikachu(), "r2");
-        let plans = collect_jobs(&s.plans, &r2(&s.manifest).chain, &Node::map(want)).unwrap();
+        let plans =
+            collect_jobs(&s.core.plans, &r2(&s.core.manifest).chain, &Node::map(want)).unwrap();
         assert_eq!(
             got,
             serde_json::to_string(&jobs_request(&plans, &[0, 1, 2])).unwrap()
@@ -3152,7 +3110,7 @@ mod tests {
         // The claim's drop leaves the slot idle and the cell empty.
         c.put_plan(seed(&s, "pikachu"));
         drop(c);
-        let e = s.pool.entry(id).unwrap();
+        let e = s.core.host.pool.entry(id).unwrap();
         assert!(e.slot(0).is_idle());
         assert!(e.claimed_plan_cell(0).is_none());
         assert!(e.slot(0).plan.lock().is_none());
