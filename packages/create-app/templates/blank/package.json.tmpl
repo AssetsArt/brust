@@ -7,7 +7,9 @@
     "dev": "brust build routes.tsx && brust start",
     "build": "brust build routes.tsx",
     "start": "brust start",
-    "typecheck": "bun check"
+    "typecheck": "bun check",
+    "dev:cf": "brust dev routes.tsx --target cloudflare",
+    "deploy:cf": "brust build routes.tsx --target cloudflare && wrangler deploy -c dist/cf/wrangler.jsonc"
   },
   "dependencies": {
     "@brust/core": __BRUST_DEP__,
@@ -19,6 +21,7 @@
   "devDependencies": {
     "@types/bun": "^1.4.0",
     "@types/react": "^19.2.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "wrangler": "^4.149.0"
   }
 }
