@@ -5,6 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "brust build routes.tsx",
+    "dev:cf": "wrangler d1 migrations apply TEAM_DB --local --persist-to .wrangler/state && brust dev routes.tsx --target cloudflare",
+    "deploy:cf": "brust build routes.tsx --target cloudflare && wrangler deploy -c dist/cf/wrangler.jsonc",
+    "cf:migrate:local": "wrangler d1 migrations apply TEAM_DB --local --persist-to .wrangler/state",
+    "cf:migrate:remote": "wrangler d1 migrations apply TEAM_DB --remote",
     "start": "brust start",
     "snapshot": "bun scripts/snapshot.ts",
     "test": "bun test",

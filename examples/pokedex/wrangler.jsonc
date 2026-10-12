@@ -1,0 +1,5 @@
+// Bindings for `brust build --target cloudflare` (merged into dist/cf/wrangler.jsonc).
+// brust owns main, assets and compatibility_date. Add the database_id from `wrangler d1 create pokedex-team` before deploy.
+{
+  "d1_databases": [{ "binding": "TEAM_DB", "database_name": "pokedex-team", "migrations_dir": "migrations" }]
+}

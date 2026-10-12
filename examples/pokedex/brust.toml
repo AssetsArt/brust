@@ -3,6 +3,10 @@ address = "127.0.0.1"
 port = 1337
 
 [build]
-server_only = ["lib/team-db.ts"]
+server_only = ["lib/team-db"]
 
 [actions]
+
+# `brust build --target cloudflare` swaps the sqlite roster for the D1 one (the whole facade module).
+[cloudflare.alias]
+"lib/team-db.ts" = "lib/team-db.d1.ts"
