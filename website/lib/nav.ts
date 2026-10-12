@@ -17,18 +17,18 @@ import Quickstart, { quickstartLoader } from '../pages/docs/Quickstart'
 import RenderingTiers, { renderingTiersLoader } from '../pages/docs/RenderingTiers'
 import Routing, { routingLoader } from '../pages/docs/Routing'
 import Store, { storeLoader } from '../pages/docs/Store'
-import CloudflareAdapter from '../pages/docs/cache-adapters/Cloudflare'
-import CacheAdaptersOverview from '../pages/docs/cache-adapters/Overview'
-import RedisAdapter from '../pages/docs/cache-adapters/Redis'
-import WriteYourOwn from '../pages/docs/cache-adapters/WriteYourOwn'
-import CloudflareCache from '../pages/docs/cloudflare/Cache'
-import D1 from '../pages/docs/cloudflare/D1'
-import Workers from '../pages/docs/cloudflare/Workers'
-import FormAction from '../pages/docs/cookbook/FormAction'
-import HelloWorld from '../pages/docs/cookbook/HelloWorld'
-import InvalidateCache from '../pages/docs/cookbook/InvalidateCache'
-import ReactIsland from '../pages/docs/cookbook/ReactIsland'
-import Static404 from '../pages/docs/cookbook/Static404'
+import CloudflareAdapter, { cloudflareAdapterLoader } from '../pages/docs/cache-adapters/Cloudflare'
+import CacheAdaptersOverview, { overviewLoader } from '../pages/docs/cache-adapters/Overview'
+import RedisAdapter, { redisLoader } from '../pages/docs/cache-adapters/Redis'
+import WriteYourOwn, { writeYourOwnLoader } from '../pages/docs/cache-adapters/WriteYourOwn'
+import CloudflareCache, { cloudflareCacheLoader } from '../pages/docs/cloudflare/Cache'
+import D1, { d1Loader } from '../pages/docs/cloudflare/D1'
+import Workers, { workersLoader } from '../pages/docs/cloudflare/Workers'
+import FormAction, { formActionLoader } from '../pages/docs/cookbook/FormAction'
+import HelloWorld, { helloWorldLoader } from '../pages/docs/cookbook/HelloWorld'
+import InvalidateCache, { invalidateCacheLoader } from '../pages/docs/cookbook/InvalidateCache'
+import ReactIsland, { reactIslandLoader } from '../pages/docs/cookbook/ReactIsland'
+import Static404, { static404Loader } from '../pages/docs/cookbook/Static404'
 
 export interface NavItem {
   /** Path under /docs, e.g. `quickstart` or `cookbook/hello-world`. */
@@ -68,28 +68,28 @@ export const NAV: NavGroup[] = [
   {
     group: 'Cloudflare',
     items: [
-      { slug: 'cloudflare/workers', title: 'Workers target', file: 'pages/docs/cloudflare/Workers.tsx', Component: Workers },
-      { slug: 'cloudflare/d1', title: 'D1 recipe', file: 'pages/docs/cloudflare/D1.tsx', Component: D1 },
-      { slug: 'cloudflare/cache', title: 'Cache on KV and DO', file: 'pages/docs/cloudflare/Cache.tsx', Component: CloudflareCache },
+      { slug: 'cloudflare/workers', title: 'Workers target', file: 'pages/docs/cloudflare/Workers.tsx', Component: Workers, loader: workersLoader },
+      { slug: 'cloudflare/d1', title: 'D1 recipe', file: 'pages/docs/cloudflare/D1.tsx', Component: D1, loader: d1Loader },
+      { slug: 'cloudflare/cache', title: 'Cache on KV and DO', file: 'pages/docs/cloudflare/Cache.tsx', Component: CloudflareCache, loader: cloudflareCacheLoader },
     ],
   },
   {
     group: 'Cache adapters',
     items: [
-      { slug: 'cache-adapters/overview', title: 'Overview', file: 'pages/docs/cache-adapters/Overview.tsx', Component: CacheAdaptersOverview },
-      { slug: 'cache-adapters/redis', title: 'Redis and Dragonfly', file: 'pages/docs/cache-adapters/Redis.tsx', Component: RedisAdapter },
-      { slug: 'cache-adapters/cloudflare', title: 'Cloudflare', file: 'pages/docs/cache-adapters/Cloudflare.tsx', Component: CloudflareAdapter },
-      { slug: 'cache-adapters/write-your-own', title: 'Write your own', file: 'pages/docs/cache-adapters/WriteYourOwn.tsx', Component: WriteYourOwn },
+      { slug: 'cache-adapters/overview', title: 'Overview', file: 'pages/docs/cache-adapters/Overview.tsx', Component: CacheAdaptersOverview, loader: overviewLoader },
+      { slug: 'cache-adapters/redis', title: 'Redis and Dragonfly', file: 'pages/docs/cache-adapters/Redis.tsx', Component: RedisAdapter, loader: redisLoader },
+      { slug: 'cache-adapters/cloudflare', title: 'Cloudflare', file: 'pages/docs/cache-adapters/Cloudflare.tsx', Component: CloudflareAdapter, loader: cloudflareAdapterLoader },
+      { slug: 'cache-adapters/write-your-own', title: 'Write your own', file: 'pages/docs/cache-adapters/WriteYourOwn.tsx', Component: WriteYourOwn, loader: writeYourOwnLoader },
     ],
   },
   {
     group: 'Cookbook',
     items: [
-      { slug: 'cookbook/hello-world', title: 'Hello world', file: 'pages/docs/cookbook/HelloWorld.tsx', Component: HelloWorld },
-      { slug: 'cookbook/react-island', title: 'A React island', file: 'pages/docs/cookbook/ReactIsland.tsx', Component: ReactIsland },
-      { slug: 'cookbook/form-action', title: 'Form action', file: 'pages/docs/cookbook/FormAction.tsx', Component: FormAction },
-      { slug: 'cookbook/static-404', title: 'Static 404 page', file: 'pages/docs/cookbook/Static404.tsx', Component: Static404 },
-      { slug: 'cookbook/invalidate-the-cache', title: 'Invalidate the cache', file: 'pages/docs/cookbook/InvalidateCache.tsx', Component: InvalidateCache },
+      { slug: 'cookbook/hello-world', title: 'Hello world', file: 'pages/docs/cookbook/HelloWorld.tsx', Component: HelloWorld, loader: helloWorldLoader },
+      { slug: 'cookbook/react-island', title: 'A React island', file: 'pages/docs/cookbook/ReactIsland.tsx', Component: ReactIsland, loader: reactIslandLoader },
+      { slug: 'cookbook/form-action', title: 'Form action', file: 'pages/docs/cookbook/FormAction.tsx', Component: FormAction, loader: formActionLoader },
+      { slug: 'cookbook/static-404', title: 'Static 404 page', file: 'pages/docs/cookbook/Static404.tsx', Component: Static404, loader: static404Loader },
+      { slug: 'cookbook/invalidate-the-cache', title: 'Invalidate the cache', file: 'pages/docs/cookbook/InvalidateCache.tsx', Component: InvalidateCache, loader: invalidateCacheLoader },
     ],
   },
 ]

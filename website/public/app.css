@@ -327,6 +327,14 @@ footer.site p { margin-top: .5rem }
 .doc h2 .n { width: 2rem; height: 2rem; display: inline-grid; place-items: center; border-radius: 50%; background: var(--amber-fill); color: var(--on-amber); font-family: var(--mono); font-size: 13px; font-weight: 400; flex: none }
 .doc p, .doc li { max-width: 68ch }
 .doc ul { margin: 0; padding-left: 1.2rem } .doc li { margin: .3rem 0 }
+.doc h3 { margin-top: 1rem; scroll-margin-top: 60px }
+.doc :not(pre) > code { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 0 .3em; font-size: .86em; overflow-wrap: anywhere }
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 2px; background: var(--sheet) }
+.table-wrap:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px }
+.doc table { border-collapse: collapse; width: 100%; min-width: 34rem; font-size: 14.5px; line-height: 1.5 }
+.doc th, .doc td { text-align: left; vertical-align: top; padding: .55rem .8rem; border-bottom: 1px solid var(--rule) }
+.doc th { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--ink-2); white-space: nowrap }
+.doc tr:last-child td { border-bottom: 0 }
 .note { display: grid; grid-template-columns: auto 1fr; gap: .9rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: 2px; padding: .85rem 1rem; font-size: 15px; max-width: 68ch }
 .note .tag { font-family: var(--mono); font-size: 11px; background: var(--amber-fill); color: var(--on-amber); border-radius: 3px; padding: .05rem .4rem; height: fit-content; margin-top: .15rem }
 .foot-meta { display: flex; gap: 1.5rem; font-size: 13.5px; color: var(--ink-2); margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--rule) }
