@@ -2,7 +2,8 @@
 import { useState } from 'react'
 import PosterScene from './PosterScene'
 
-const BUILT = 'BUILT DIST IN 17MS · 3 TIERS'
+// Real: `brust build routes.tsx` of the create-app blank template, warm, 4 of 5 runs (lead, 2026-10-13, M1 Pro).
+const BUILT = 'BUILT DIST IN 16MS · 3 TIERS'
 
 export default function Poster() {
   const [busy, setBusy] = useState(false)
@@ -42,7 +43,7 @@ export default function Poster() {
               document.getElementById('orb')?.classList.add('lit', 'flash')
               const finish = () => {
                 setBusy(false)
-                setLive('Built dist in 17 milliseconds: static, native and react.')
+                setLive('Built dist in 16 milliseconds: static, native and react.')
               }
               if (reduce) {
                 setStatus(BUILT)

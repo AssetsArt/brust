@@ -43,7 +43,7 @@ export function landingCode(): LandingCode {
     run: codeBlock({
       lang: 'sh',
       cwd: '~/my-app',
-      code: '$ bun run dev\n[brust] built dist in 17ms\n[brust] listening on 127.0.0.1:1337 (io: hyper(tokio))\n[brust] ready (10 workers)',
+      code: '$ bun run dev\n[brust] built dist in 16ms\n[brust] listening on 127.0.0.1:1337 (io: hyper(tokio))\n[brust] ready (10 workers)',
     }),
     staticDemo: codeBlock({ lang: 'tsx', file: 'components/PokemonCard.tsx', code: source('PokemonCard.tsx') }),
     nativeDemo: codeBlock({ lang: 'tsx', file: 'components/CatchCard.tsx', code: source('CatchCard.tsx') }),
