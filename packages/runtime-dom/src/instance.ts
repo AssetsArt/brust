@@ -11,6 +11,8 @@ export class Instance {
   disposed = false
   /** false until the initial bind pass finishes; the first-paint tripwire only applies before then. */
   booted = false
+  /** Effects the component declared while its factory ran: they start once the instance is bound (x-ref, x-on), like React's commit (F97). */
+  private pending: Array<[() => void | (() => void), Dispose?]> | null = []
 
   constructor(public host: HTMLElement, public name: string, public parent: Instance | null, initialProps: Record<string, unknown>) {
     this.props = signal(initialProps)
@@ -20,6 +22,30 @@ export class Instance {
   effect(fn: () => void | (() => void)): Dispose {
     const d = coreEffect(fn); this.disposers.push(d); return d
   }
+  /** `ctx.effect`: deferred until `start()` while the factory runs, immediate afterwards. */
+  private componentEffect(fn: () => void | (() => void)): Dispose {
+    if (!this.pending) return this.effect(fn)
+    const q: [() => void | (() => void), Dispose?] = [fn]
+    this.pending.push(q)
+    return () => { q[0] = () => {}; q[1]?.() }
+  }
+  /**
+   * Runs the queued component effects, in declaration order. Call after the initial bind pass.
+   * Order across hosts: a static nested host mounts after its parent (document order), so a
+   * parent's effects start before the child is bound; hosts created by x-if / x-for during the
+   * parent's bind pass start their own effects first. A throwing effect is handled like a
+   * throwing factory: logged, the instance disposed; returns false then.
+   */
+  start(): boolean {
+    const queue = this.pending
+    this.pending = null
+    for (const q of queue ?? []) {
+      if (this.disposed) break
+      try { q[1] = this.effect(q[0]) }
+      catch (e) { console.error(`[brust] effect threw: ${this.name}`, e); this.dispose(); instances.delete(this.host); return false }
+    }
+    return true
+  }
   onCleanup(fn: () => void): void { this.cleanups.push(fn) }
   ref<E extends Element = HTMLElement>(name: string): { current: E | null } {
     let r = this.refs.get(name)
@@ -27,7 +53,7 @@ export class Instance {
     return r as { current: E | null }
   }
   ctx(): BehaviorCtx {
-    return { el: this.host, props: this.props, effect: (fn) => this.effect(fn), onCleanup: (fn) => this.onCleanup(fn), ref: (n) => this.ref(n) }
+    return { el: this.host, props: this.props, effect: (fn) => this.componentEffect(fn), onCleanup: (fn) => this.onCleanup(fn), ref: (n) => this.ref(n) }
   }
   init(factory: BehaviorFactory): void {
     const m = factory(this.ctx())
@@ -37,6 +63,7 @@ export class Instance {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.pending = null   // effects not yet started never run
     for (const c of Array.from(this.children)) c.dispose()
     this.parent?.children.delete(this)
     for (const d of this.disposers.splice(0)) d()
