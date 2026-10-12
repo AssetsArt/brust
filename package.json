@@ -5,6 +5,7 @@
   "workspaces": [
     "packages/*",
     "examples/*",
+    "website",
     "npm/*",
     "tests/server",
     "bench",

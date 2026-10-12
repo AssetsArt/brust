@@ -205,6 +205,8 @@ jobs:
       # m2e: the pokedex dogfood (spec §10). Each server-starting file runs alone.
       - run: cd examples/pokedex && bun test
       - run: cd examples/pokedex && bun run typecheck
+      # website/: the docs site (TSX pages on the workspace @brust/core).
+      - run: cd website && bun run typecheck && bun test
       # m3f-create-app: unit + pack, then the scaffold run (packs core/runtime-dom, bun install from npm, build, start) on its own.
       - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/sync-template.test.ts test/pack.test.ts
       - run: cd packages/create-app && bun test --timeout 600000 test/scaffold.test.ts

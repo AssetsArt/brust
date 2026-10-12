@@ -257,6 +257,20 @@
         "playwright": "1.64.0",
       },
     },
+    "website": {
+      "name": "@brust/docs-site",
+      "version": "0.0.0",
+      "dependencies": {
+        "@brust/core": "workspace:*",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.4.0",
+        "@types/react": "^19.2.0",
+        "typescript": "^7.0.2",
+      },
+    },
   },
   "packages": {
     "@brust/bench": ["@brust/bench@workspace:bench"],
@@ -276,6 +290,8 @@
     "@brust/core-cf": ["@brust/core-cf@workspace:npm/core-cf"],
 
     "@brust/create-app": ["@brust/create-app@workspace:packages/create-app"],
+
+    "@brust/docs-site": ["@brust/docs-site@workspace:website"],
 
     "@brust/example-pokedex": ["@brust/example-pokedex@workspace:examples/pokedex"],
 
