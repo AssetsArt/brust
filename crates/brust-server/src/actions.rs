@@ -111,7 +111,7 @@ pub(crate) async fn handle(
             None,
         ),
     };
-    let r = call_worker_fetch(&s.pool, s.claim_timeout, s.call_timeout, &req).await;
+    let r = call_worker_fetch(&s.pool, s.claim_timeout, s.call_timeout, &req, None).await;
     // R11: a worker call, never a loader call.
     if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
         s.worker_calls.incr();

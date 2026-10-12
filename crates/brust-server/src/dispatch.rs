@@ -234,28 +234,42 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
     .await
 }
 
-/// One `fetch` round trip (A1 in, A2 out). Never planned.
+/// F82: the per-call cell a `fetch` call seeds into its slot's plan cell. `body` is the heap
+/// request body (taken once by `take_fetch_body`); `reply` receives the heap response body
+/// (`put_fetch_reply`) and is shared with the decode closure, which runs inside the claim.
+pub struct FetchCell {
+    pub(crate) body: Option<bytes::Bytes>,
+    pub(crate) reply: Arc<parking_lot::Mutex<Option<bytes::Bytes>>>,
+}
+
+/// One `fetch` round trip (A1 in, A2 out). Never planned. `heap_body` is a request body over the
+/// inline threshold; it waits in the call's [`FetchCell`] for the worker to take.
 pub async fn call_worker_fetch(
     pool: &Arc<WorkerPool>,
     timeout: Duration,
     call_timeout: Duration,
     req: &FetchRequest<'_>,
+    heap_body: Option<bytes::Bytes>,
 ) -> Result<FetchResponse, CallError> {
+    let reply = Arc::new(parking_lot::Mutex::new(None));
+    let cell = FetchCell {
+        body: heap_body,
+        reply: Arc::clone(&reply),
+    };
     call_worker_decoded(
         pool,
         timeout,
         call_timeout,
         CallKind::Fetch,
         req,
-        None,
-        decode_fetch_frame,
+        Some(Box::new(cell)),
+        move |b| decode_fetch_reply(b, &reply),
     )
     .await
     .map(|(r, _)| r)
 }
 
-/// A2: `[u32 LE meta_len][meta JSON][body]`; the body is copied (the slot is about to be released).
-pub fn decode_fetch_frame(b: &[u8]) -> Result<FetchResponse, CallError> {
+fn fetch_frame_parts(b: &[u8]) -> Result<(FetchMeta, &[u8]), CallError> {
     let Some(head) = b.get(..4) else {
         return Err(CallError::BadResponse(
             "fetch frame shorter than 4 bytes".into(),
@@ -270,10 +284,51 @@ pub fn decode_fetch_frame(b: &[u8]) -> Result<FetchResponse, CallError> {
     };
     let m: FetchMeta = serde_json::from_slice(meta)
         .map_err(|e| CallError::BadResponse(format!("fetch frame meta: {e}")))?;
+    Ok((m, &b[4 + n..]))
+}
+
+/// A2: `[u32 LE meta_len][meta JSON][body]`; the body is copied (the slot is about to be released).
+pub fn decode_fetch_frame(b: &[u8]) -> Result<FetchResponse, CallError> {
+    let (m, body) = fetch_frame_parts(b)?;
     Ok(FetchResponse {
         status: m.status,
         headers: m.headers,
-        body: bytes::Bytes::copy_from_slice(&b[4 + n..]),
+        body: bytes::Bytes::copy_from_slice(body),
+    })
+}
+
+/// F82: [`decode_fetch_frame`], except a meta with `heap: n` takes its body from `reply` (the
+/// worker's `putFetchReply`); the framed body must then be empty and the put length must be `n`.
+pub(crate) fn decode_fetch_reply(
+    b: &[u8],
+    reply: &parking_lot::Mutex<Option<bytes::Bytes>>,
+) -> Result<FetchResponse, CallError> {
+    let (m, framed) = fetch_frame_parts(b)?;
+    let Some(n) = m.heap else {
+        return Ok(FetchResponse {
+            status: m.status,
+            headers: m.headers,
+            body: bytes::Bytes::copy_from_slice(framed),
+        });
+    };
+    if !framed.is_empty() {
+        return Err(CallError::BadResponse(
+            "heap reply frame carries a body".into(),
+        ));
+    }
+    let Some(body) = reply.lock().take() else {
+        return Err(CallError::BadResponse("heap reply missing".into()));
+    };
+    if body.len() as u64 != n {
+        return Err(CallError::BadResponse(format!(
+            "heap reply {} != {n}",
+            body.len()
+        )));
+    }
+    Ok(FetchResponse {
+        status: m.status,
+        headers: m.headers,
+        body,
     })
 }
 
@@ -766,6 +821,7 @@ mod tests {
             Duration::from_millis(100),
             Duration::from_secs(5),
             &fetch_request(),
+            None,
         )
         .await
         .expect("round trip");
@@ -778,6 +834,71 @@ mod tests {
         ));
     }
 
+    fn heap_cell(v: Option<&[u8]>) -> parking_lot::Mutex<Option<bytes::Bytes>> {
+        parking_lot::Mutex::new(v.map(bytes::Bytes::copy_from_slice))
+    }
+
+    #[test]
+    fn decode_fetch_reply_table() {
+        let meta = br#"{"status":200,"headers":[["x","1"]],"heap":5}"#;
+        let r = decode_fetch_reply(&frame(meta, b""), &heap_cell(Some(b"hello"))).unwrap();
+        assert_eq!(
+            r,
+            FetchResponse {
+                status: 200,
+                headers: vec![("x".into(), "1".into())],
+                body: bytes::Bytes::from_static(b"hello"),
+            }
+        );
+        assert!(
+            bad(decode_fetch_reply(
+                &frame(meta, b"x"),
+                &heap_cell(Some(b"hello"))
+            ))
+            .contains("heap")
+        );
+        assert!(
+            bad(decode_fetch_reply(&frame(meta, b""), &heap_cell(None)))
+                .contains("heap reply missing")
+        );
+        assert!(
+            bad(decode_fetch_reply(
+                &frame(meta, b""),
+                &heap_cell(Some(b"four"))
+            ))
+            .contains("heap reply 4 != 5")
+        );
+        // No `heap` key: exactly `decode_fetch_frame`, the cell is ignored.
+        let f = frame(br#"{"status":201}"#, b"abc");
+        assert_eq!(
+            decode_fetch_reply(&f, &heap_cell(Some(b"zzz"))).unwrap(),
+            decode_fetch_frame(&f).unwrap()
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn call_worker_fetch_seeds_a_fetch_cell() {
+        let f = frame(br#"{"status":200}"#, b"ok");
+        let pool = pool_with(MockDispatch::replying(&f));
+        let r = call_worker_fetch(
+            &pool,
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            &fetch_request(),
+            Some(bytes::Bytes::from_static(b"big")),
+        )
+        .await
+        .expect("round trip");
+        assert_eq!(&r.body[..], b"ok");
+        let ClaimResult::Claimed(c) = pool.try_claim_render_lockfree() else {
+            panic!("slot not claimable again");
+        };
+        assert!(
+            c.entry().slot(0).plan.lock().is_none(),
+            "cell dropped with the claim"
+        );
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn fetch_len_over_capacity_is_bad_response() {
         let pool = pool_with(MockDispatch::reply_len(256 * 1024 + 1));
@@ -786,6 +907,7 @@ mod tests {
             Duration::from_millis(100),
             Duration::from_secs(5),
             &fetch_request(),
+            None,
         )
         .await;
         assert!(bad(r).contains("outside"));
