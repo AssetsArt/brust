@@ -11,7 +11,7 @@ cd my-app && bun install
 bun run dev                       # http://127.0.0.1:1337
 ```
 
-More in [`docs/create-app.md`](docs/create-app.md).
+More in [`docs/create-app.md`](docs/create-app.md). Cloudflare Workers: [`docs/cloudflare.md`](docs/cloudflare.md); shared cache adapters: [`docs/cache-adapters.md`](docs/cache-adapters.md).
 
 - Design: `docs/design/2026-10-08-react-compiler-design.md`
 - Plans: `docs/plans/`
