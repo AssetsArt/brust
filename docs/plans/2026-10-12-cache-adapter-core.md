@@ -494,3 +494,6 @@ Escalate with `conclave task challenge 838f12fb-70c1-41b7-acf2-d4065cf6bb64 cach
 - `_pipeline_future_is_send` fails;
 - a file outside the Boundary is needed;
 - local workerd runs more than one isolate.
+
+
+> **L7 — lead ruling on Mellow's pre-read (native stale re-fill race, 2026-10-12):** (a) `afterInvalidate` sequences `store.invalidate` BEFORE `broadcast.publish` (both still deferred off the request path); unit case: publish starts only after `store.invalidate` settles. (b) `store.invalidate` records the invalidation marker (per tag/path seq) BEFORE deleting, so a concurrent stale `set` from another instance is refused by the write guard even before publish; conformance case: `set(stale)` racing `invalidate(tag)` never lands. (c) Native gets the same `entryStamp` floor as Workers: worker 0 records replayed seqs per tag/path and `l2_get` treats an L2 hit older than that floor as a miss (one map lookup on an L2 hit only; the L1 HIT path is untouched). Task 7 and the test tables are amended accordingly.
