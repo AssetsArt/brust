@@ -100,7 +100,10 @@ export const PAGES: (NavItem & { group: string })[] = NAV.flatMap((g) => g.items
 /** `/docs` shows this page. */
 export const DOCS_HOME = 'introduction'
 
-export const EDIT_BASE = 'https://github.com/AssetsArt/brust/blob/v2/website/'
+/** The branch the site's source lives on; edit links follow it. Flip when the site lands elsewhere. */
+export const EDIT_BRANCH = 'docs-site'
+
+export const EDIT_BASE = `https://github.com/AssetsArt/brust/blob/${EDIT_BRANCH}/website/`
 
 export const href = (slug: string): string => `/docs/${slug}`
 

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { DOCS_HOME, NAV, PAGES } from '../lib/nav'
+import { DOCS_HOME, EDIT_BASE, NAV, PAGES } from '../lib/nav'
 
 const app = join(import.meta.dir, '..')
 const coreVersion = JSON.parse(readFileSync(join(app, '../packages/brust/package.json'), 'utf8')).version as string
@@ -86,7 +86,7 @@ test('every docs route is 200 with its title and current sidebar link; /docs is 
     expect(html).toContain(`<span class="v">${coreVersion}</span>`)
     expect(html).toContain(`<a href="/docs/${p.slug}" aria-current="page">${p.title}</a>`)
     expect(html).toContain(`<div class="crumbs">${p.group} / ${p.title}</div>`)
-    expect(html).toContain(`https://github.com/AssetsArt/brust/blob/v2/website/${p.file}`)
+    expect(html).toContain(`${EDIT_BASE}${p.file}`)
   }
   const home = PAGES.find((p) => p.slug === DOCS_HOME)!
   const docs = await (await fetch(`${base}/docs`)).text()
