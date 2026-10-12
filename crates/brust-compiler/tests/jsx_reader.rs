@@ -193,6 +193,25 @@ fn explicit_children_prop_is_diagnosed_not_dropped() {
 }
 
 #[test]
+fn user_written_x_attributes_are_reserved_and_dropped() {
+    let (n, d) = tpl(
+        "export default function T({ t }: any) { return <div x-on-click=\"_h1\" x-data=\"victim\" x-text={t} data-x-ok=\"1\" /> }",
+    );
+    let reserved: Vec<_> = d.iter().filter(|x| x.rule == "reserved-attr").collect();
+    assert_eq!(reserved.len(), 3, "{d:?}");
+    assert!(
+        reserved
+            .iter()
+            .all(|x| matches!(x.class, DiagClass::Warning))
+    );
+    let Node::Element { attrs, .. } = n else {
+        panic!()
+    };
+    assert_eq!(attrs.len(), 1, "{attrs:?}");
+    assert!(matches!(&attrs[0], Attr::Static { name, .. } if name == "data-x-ok"));
+}
+
+#[test]
 fn member_tags_are_a_fallback() {
     let (_, d) =
         tpl("import * as M from './m'\nexport default function T() { return <div><M.X/></div> }");

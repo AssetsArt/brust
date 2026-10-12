@@ -234,6 +234,15 @@ fn read_attr(
             value: Expr::Raw(r.expr(value)),
         });
     }
+    if name.to_ascii_lowercase().starts_with("x-") {
+        r.diagnostics.push(Diagnostic::warning(
+            "reserved-attr",
+            format!("`{name}` attributes are reserved for brust's runtime and are not rendered"),
+            loc_of(value),
+            "rename it (`data-x-…`) or move this component to React",
+        ));
+        return None;
+    }
     if name == "dangerouslySetInnerHTML" {
         return read_inner_html(r, value);
     }

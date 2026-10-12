@@ -33,6 +33,8 @@ Anything else (`x + 1`, `fn()`) is not parsed: a warning is logged once and the 
 
 ## Attributes
 
+Directives come only from compiler output: the compiler never prints an `x-*` attribute written in component JSX (warning `reserved-attr`), and the runtime does not bind inside `dangerouslySetInnerHTML` markup (`x-html` / `x-raw`) or a React island (`<brust-island>`).
+
 - **`x-data="name"`**: one instance per host. Nested hosts are bound by their own instance, not the parent's walker.
 - **`x-props='{"json":1}'`**: seeds `ctx.props`. Invalid JSON warns and seeds `{}`.
 - **`x-props-bind="member[:binding]"`**: on a child host, rebinds the child's `props` signal reactively to the nearest ancestor instance's member

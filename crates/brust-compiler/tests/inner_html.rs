@@ -224,3 +224,29 @@ fn state_driven_list_rows_get_x_html() {
     assert!(j.contains("x-html=\"_c"), "{j}");
     assert!(c.contains("x.h"), "{c}");
 }
+
+/// F94: no `x-` name written in source reaches the template, on static and native tiers,
+/// as a static string, a dynamic value or inside a spread.
+#[test]
+fn reserved_x_attributes_never_reach_the_template() {
+    let (j, _, tier) = lower(
+        "export default function T({ t, p }: any) { return <div x-on-click=\"_h1\" x-data=\"victim\" x-text={t}><b x-if=\"a\" X-Show=\"b\">k</b></div> }",
+    );
+    assert!(!j.contains("x-"), "{j}");
+    assert_eq!(tier, Tier::Static);
+    // A spread is a fallback: the component is a React island, the template carries no source attribute
+    // and runtime-dom treats the island subtree as inert (runtime test).
+    let (j, _, tier) =
+        lower("export default function T({ p }: any) { return <div {...p}>k</div> }");
+    assert!(matches!(tier, Tier::React { .. }), "{tier:?}");
+    assert!(!j.contains("x-on") && !j.contains("x-data"), "{j}");
+    let (j, _, tier) = lower(&format!(
+        "{STATE}export default function T({{ t }}: any) {{ const [n, setN] = useState(0); return <div x-on-click={{t}} x-bind-class=\"c\" onClick={{() => setN(n + 1)}}><p x-text={{t}}>{{n}}</p></div> }}"
+    ));
+    assert_eq!(tier, Tier::Native);
+    // only the compiler's own directives remain
+    for bad in ["x-on-click=\"{{", "x-bind-class=\"c\"", "x-text=\"{{"] {
+        assert!(!j.contains(bad), "{bad}: {j}");
+    }
+    assert!(j.contains("x-on-click=\"_h1\""), "{j}");
+}
