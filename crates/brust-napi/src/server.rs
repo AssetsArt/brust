@@ -1,5 +1,6 @@
 //! Server bindings: `startServer`, `registerWorker`, `untilReady`, `beginDrain`,
-//! `cacheInvalidate`, `cacheStats`, `localAddr`, `planJobs` over `brust_server`.
+//! `cacheInvalidate`, `cacheStats`, `localAddr`, `planJobs`, `takeFetchBody`, `putFetchReply`
+//! over `brust_server`.
 //!
 //! The CURRENT server lives in a `RwLock<Option<Arc<Server>>>` rather than a
 //! `OnceCell`: `bun test` runs every file in one process and several files
@@ -249,6 +250,26 @@ pub fn plan_jobs(slot: u32, len: u32) -> String {
     match BOUND.with_borrow(bound) {
         Some((s, id)) => brust_server::plan_in_call(&s, id, slot, len),
         None => brust_server::PLAN_DECLINED.to_string(),
+    }
+}
+
+/// F82: the heap request body of the calling worker's in-flight `fetch` call for `slot`, once.
+/// `None` when there is none, nothing is bound, or the binding is ambiguous. Sync, on the
+/// worker's JS thread; never throws.
+#[napi]
+pub fn take_fetch_body(slot: u32) -> Option<Uint8Array> {
+    let (s, id) = BOUND.with_borrow(bound)?;
+    brust_server::take_fetch_body(&s, id, slot).map(Uint8Array::new)
+}
+
+/// F82: hand Rust the response body of the calling worker's in-flight `fetch` call for `slot`
+/// (too large for the SAB slot). `false` = declined (over `max_response_bytes`, not in a `fetch`
+/// call, already put, nothing bound). Sync, on the worker's JS thread; never throws.
+#[napi]
+pub fn put_fetch_reply(slot: u32, body: Uint8Array) -> bool {
+    match BOUND.with_borrow(bound) {
+        Some((s, id)) => brust_server::put_fetch_reply(&s, id, slot, &body),
+        None => false,
     }
 }
 
