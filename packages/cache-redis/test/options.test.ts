@@ -27,7 +27,7 @@ describe('parseOptions', () => {
     ['reconnect_min_ms', 1.5],
     ['reconnect_max_ms', 'x'],
   ])('%s = %p is refused, naming the key', (k, v) => {
-    expect(() => parseOptions({ url: 'redis://h', [k]: v })).toThrow(new RegExp(`^TypeError: cache-redis: ${k} `))
+    expect(() => parseOptions({ url: 'redis://h', [k]: v })).toThrow(new RegExp(`^cache-redis: ${k} `))
   })
   test('boundary values pass', () => {
     const o = parseOptions({ url: 'redis://h', connect_timeout_ms: 100, max_body_bytes: 67_108_864, marker_ttl_ms: 60_000, unlink_batch: 10_000, reconnect_min_ms: 10, reconnect_max_ms: 10 })
@@ -38,10 +38,10 @@ describe('parseOptions', () => {
     expect(parseOptions({ url: 'redis://h', reconnect_min_ms: 9000 }).reconnectMaxMs).toBe(9000)
   })
   test('an unknown key', () => {
-    expect(() => parseOptions({ url: 'redis://h', urll: 'x' })).toThrow('TypeError: cache-redis: unknown option "urll"')
+    expect(() => parseOptions({ url: 'redis://h', urll: 'x' })).toThrow('cache-redis: unknown option "urll"')
   })
   test('an empty or missing url names url and never echoes a value', () => {
-    for (const o of [{ url: '' }, {}, { url: '  ' }]) expect(() => parseOptions(o)).toThrow(/^TypeError: cache-redis: url is required/)
+    for (const o of [{ url: '' }, {}, { url: '  ' }]) expect(() => parseOptions(o)).toThrow(/^cache-redis: url is required/)
     try {
       parseOptions({ url: 'redis://:s3cr3t@h', unlink_batch: 0 })
     } catch (e) {
