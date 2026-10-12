@@ -12,6 +12,8 @@ pub mod cors;
 pub mod host;
 pub mod inputs;
 pub mod manifest;
+#[doc(hidden)]
+pub mod plan;
 pub mod protocol;
 pub mod render;
 pub mod routing;

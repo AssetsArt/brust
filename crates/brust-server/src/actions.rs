@@ -14,6 +14,7 @@ use crate::dispatch::{CallError, FetchCell, call_worker_fetch};
 use crate::protocol::{FetchBody, FetchRequest, FetchResponse};
 use brust_core::body::{self, header_str};
 use brust_core::cors::ResolvedCors;
+use brust_core::host::ReadErr;
 
 /// F82, on the worker's JS thread inside its `fetch` call for `slot`: the heap request body, once.
 /// `None`: no such worker, the slot is not in a call, it is not a `fetch` call, no heap body was
@@ -244,16 +245,6 @@ fn ambiguous_path(path: &str) -> bool {
         || lower
             .split('/')
             .any(|seg| matches!(seg.replace("%2e", ".").as_str(), "." | ".."))
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum ReadErr {
-    /// Over the cap: by the declared length (before any read) or while reading.
-    TooLarge,
-    /// The client's body failed mid-read.
-    Io,
-    /// The body did not arrive within the deadline (a trickled body would hold the connection and up to `cap` bytes).
-    Slow,
 }
 
 /// The whole body, at most `cap` bytes. A declared Content-Length over the cap is refused before any read; a chunked

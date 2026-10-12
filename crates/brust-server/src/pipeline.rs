@@ -35,6 +35,7 @@ use crate::server::body::{ResponseBody, bytes_body};
 use crate::server::static_assets::static_asset_response;
 use brust_core::body::{self, head_only, header_str};
 use brust_core::host::StaticRoot;
+use brust_core::plan::{Lookup, PlanCell, PlanRow, PlanSeed, PlanSrc, PlannedCall};
 use brust_core::static_rules::{
     IMMUTABLE, asset_lookup_key, content_type_for, is_hashed, safe_rel,
 };
@@ -1101,18 +1102,6 @@ pub(crate) enum Dest<'a> {
     },
 }
 
-/// Where a plan's template lives in the [`PlanIndex`] (M3-P P6: a plan stored across the
-/// worker call is owned — [`PlanRow`] — and re-borrowed with [`rehydrate`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PlanSrc {
-    /// The job's component in `PlanIndex::comps` (the child component for a child instance).
-    comp: u32,
-    /// The job in that component's `jobs`.
-    job: u32,
-    /// Child instance: (parent component, child record in the parent's `children`).
-    via: Option<(u32, u32)>,
-}
-
 /// One job of one request. Borrows its strings from the [`PlanIndex`].
 #[derive(Debug, Clone)]
 pub(crate) struct JobPlan<'a> {
@@ -1136,15 +1125,6 @@ pub(crate) struct JobPlan<'a> {
     pub target: Option<&'a str>,
     /// The template this plan was built from.
     pub(crate) src: PlanSrc,
-}
-
-/// What survives the worker call of a plan: its template indices and its per-request strings.
-#[derive(Debug, Clone)]
-pub(crate) struct PlanRow {
-    src: PlanSrc,
-    row: Option<usize>,
-    key: JobKey,
-    user_key: Option<String>,
 }
 
 impl JobPlan<'_> {
@@ -1636,18 +1616,6 @@ pub(crate) fn collect_jobs<'a>(
     Ok(out)
 }
 
-/// Job-cache state of a request's plans.
-pub(crate) struct Lookup {
-    /// The cached value per plan (`None` = a miss).
-    pub values: Vec<Option<Arc<Node>>>,
-    /// Plans sharing a JobKey (e.g. two identical rows) are one computation:
-    /// `owner[i]` is the first missing plan with plan i's key; only owners are
-    /// sent to the worker, and each value is fanned out to every plan sharing it.
-    pub owner: Vec<usize>,
-    /// The owners, in plan order.
-    pub misses: Vec<usize>,
-}
-
 pub(crate) fn lookup_jobs(cache: &JobCache, plans: &[JobPlan]) -> Lookup {
     let values: Vec<Option<Arc<Node>>> = plans.iter().map(|p| cache.get(&p.key)).collect();
     let mut owner: Vec<usize> = (0..plans.len()).collect();
@@ -1755,34 +1723,6 @@ pub(crate) fn merge_values(ctx: &mut Node, plans: &[JobPlan], values: &[Option<A
 /// `planJobs` answer: not planned — the worker keeps its loader response in the slot and `page`
 /// plans after the call (the two-call path). Never a valid `JobsRequest` JSON.
 pub const PLAN_DECLINED: &str = "!";
-
-/// Put into the claimed slot by `page` before a planned loader call.
-pub(crate) struct PlanSeed {
-    /// The route's index in `manifest.routes`.
-    pub route: usize,
-    /// `params` + `path`, as `page` builds the context before the loader call.
-    pub base: MapInner,
-}
-
-/// Left in the slot by [`plan_in_call`] (success only) for `page`.
-pub(crate) struct PlannedCall {
-    /// base + loader data (`merge_loader_data`), as `page` builds it.
-    pub ctx: Node,
-    /// The loader's response headers.
-    pub headers: BTreeMap<String, String>,
-    /// `collect_jobs`, owned (re-borrowed with [`rehydrate`] after the call).
-    pub rows: Vec<PlanRow>,
-    /// Hits pinned, owner, misses — exactly `lookup_jobs`'.
-    pub lookup: Lookup,
-    /// The ids of the misses' calls, request order.
-    pub call_ids: Vec<String>,
-}
-
-/// The plan state of a planned loader call, in the claimed slot's cell (`pool::PlanBox`).
-pub(crate) enum PlanCell {
-    Seed(PlanSeed),
-    Planned(PlannedCall),
-}
 
 /// The planning core: `bytes` = the worker's `{ ok: true, data, headers? }`. `None` = decline
 /// (not that shape, `ok: false`, a planning error — `page` will meet the same error after the
