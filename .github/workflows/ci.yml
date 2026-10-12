@@ -161,6 +161,17 @@ jobs:
   server:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # cache-redis: the adapter's suites run against real servers; REQUIRED makes a missing URL a failure, not a skip.
+    services:
+      redis:
+        image: redis:7.4
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+      dragonfly:
+        image: docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.2
+        ports: ["6380:6379"]
+        options: --ulimit memlock=-1
+    env: { BRUST_REDIS_URL: "redis://127.0.0.1:6379", BRUST_DRAGONFLY_URL: "redis://127.0.0.1:6380", BRUST_REDIS_REQUIRED: "1" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -200,6 +211,8 @@ jobs:
       - run: bunx playwright install --with-deps chromium
       - run: bun test --timeout 120000 tests/server/pokedex.test.ts
       - run: bun test --timeout 120000 tests/server/cache-adapter.test.ts
+      - run: cd packages/cache-redis && bun run typecheck && bun test
+      - run: bun test --timeout 180000 tests/server/cache-redis.test.ts
       - run: bun test --timeout 120000 tests/server/hydrate.chromium.test.ts
       # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.
       - run: bun check -p bench

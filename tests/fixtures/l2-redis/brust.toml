@@ -1,0 +1,12 @@
+# l2-redis: the cache-redis native e2e (tests/server/cache-redis.test.ts). Two `brust start` processes
+# share one Redis or Dragonfly through @brust/cache-redis.
+[actions]
+
+[cache]
+adapter = "redis"
+namespace = "l2redis"
+get_timeout_ms = 200
+
+[cache.redis]
+url = "env:BRUST_E2E_REDIS_URL"
+reconnect_min_ms = 100
