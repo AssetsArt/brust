@@ -4,7 +4,8 @@
 //   bun bench/run.ts --apps brust,next --probes D --dur 3s --enc identity --seed 7
 // Flow: guards → build every app → parity (abort on mismatch) → shuffled (app, probe) loop, server restarted per
 // pair, 1 s settle + discarded warm-up, identity then gzip (A probes: identity only, at c=120 and c=1) → RESULTS.json + RESULTS.md. Exit 0 ok, 1 failure, 2 busy.
-import { cpus, loadavg } from 'node:os'
+import { cpus, loadavg, totalmem } from 'node:os'
+import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { type AppId, type AppSpec, killAllOnExit, startApp } from './lib/app'
@@ -16,7 +17,7 @@ import { checkBalance } from './lib/balance'
 import { checkJsonParity, checkParity, type JsonResponse } from './lib/parity'
 import { probe as probeOf, type ProbeId, serves } from './lib/probes'
 import { mulberry32, shuffle } from './lib/random'
-import { type ActionsHeader, computeActionsVerdict, computeVerdict, type Measurement, type Results, renderActionsVerdict, renderVerdict, writeResults } from './lib/report'
+import { type ActionsHeader, computeActionsVerdict, computeVerdict, type Measurement, type Results, renderActionsVerdict, renderVerdict, writeResults, type Machine } from './lib/report'
 import data from './apps/_shared/data.json'
 
 const { values: f } = parseArgs({
@@ -171,16 +172,28 @@ releaseLock()
 const budgetOf = (a: AppSpec) => (a.id === 'next' ? 'procs=1 (as shipped)' : a.id === 'bun-serve' || a.id === 'elysia-bun' ? `procs=${workersN}` : `workers=${workersN}`)
 const date = new Date().toISOString().slice(0, 10)
 const host = `${process.platform}/${process.arch}`
+/** Model · chip · RAM of this machine, never its hostname (repo rule). macOS: system_profiler; Linux: DMI + /proc/cpuinfo. */
+function describeMachine(): Machine {
+  const memGb = Math.round(totalmem() / 2 ** 30)
+  if (process.platform === 'darwin') {
+    const out = Bun.spawnSync(['system_profiler', 'SPHardwareDataType']).stdout.toString()
+    const f = (k: string) => new RegExp(`^\\s*${k}:\\s*(.+)$`, 'm').exec(out)?.[1]?.trim()
+    return { model: f('Model Name') ?? 'mac', chip: f('Chip') ?? f('Processor Name') ?? 'unknown', memGb: Number.parseInt(f('Memory') ?? '', 10) || memGb }
+  }
+  const read = (p: string) => { try { return readFileSync(p, 'utf8') } catch { return '' } }
+  return { model: read('/sys/devices/virtual/dmi/id/product_name').trim() || 'linux', chip: /^model name\s*:\s*(.+)$/m.exec(read('/proc/cpuinfo'))?.[1]?.trim() ?? 'unknown', memGb }
+}
+const machine = describeMachine()
 const pageApps = apps.filter((a) => pageProbes.some((p) => serves(a.id, p)))
 const actionApps = apps.filter((a) => jsonProbes.some((p) => serves(a.id, p)))
 const ofApps = (xs: AppSpec[]) => Object.fromEntries(xs.map((a) => [a.id, budgetOf(a)]))
 const pick = (xs: AppSpec[]) => Object.fromEntries(Object.entries(versions).filter(([k]) => ['bun', 'oha', 'node'].includes(k) || xs.some((a) => a.id === k)))
 const orderOf = (kind: 'page' | 'json') => pairs.filter(({ p }) => probeOf(p).kind === kind).map(({ a, p }) => `${a.id}:${p}`)
 const actions: { header: ActionsHeader; measurements: Measurement[] } | undefined = jsonProbes.length > 0 && actionApps.length > 0
-  ? { header: { date, host, cores, loadavg: load, seed, conns: [conn, 1], dur: f.dur!, warmup: f.warmup!, settleMs, workers: workersN, versions: pick(actionApps), apps: actionApps.map((a) => a.id), skipped, order: orderOf('json'), budgets: ofApps(actionApps), elysiaBunBalanced }, measurements: actionMeasurements }
+  ? { header: { date, host, machine, cores, loadavg: load, seed, conns: [conn, 1], dur: f.dur!, warmup: f.warmup!, settleMs, workers: workersN, versions: pick(actionApps), apps: actionApps.map((a) => a.id), skipped, order: orderOf('json'), budgets: ofApps(actionApps), elysiaBunBalanced }, measurements: actionMeasurements }
   : undefined
 const results: Results = {
-  header: { date, host, cores, loadavg: load, seed, conn, dur: f.dur!, warmup: f.warmup!, settleMs, workers: workersN, versions: pick(pageApps), apps: pageApps.map((a) => a.id), skipped, order: orderOf('page'), budgets: ofApps(pageApps), bunServeBalanced },
+  header: { date, host, machine, cores, loadavg: load, seed, conn, dur: f.dur!, warmup: f.warmup!, settleMs, workers: workersN, versions: pick(pageApps), apps: pageApps.map((a) => a.id), skipped, order: orderOf('page'), budgets: ofApps(pageApps), bunServeBalanced },
   measurements,
   ...(actions ? { actions } : {}),
 }

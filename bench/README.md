@@ -2,7 +2,7 @@
 
 Three pages, four servers, one `oha` — plus two Elysia action probes (A1/A2, below). `bench/run.ts` builds every app in production mode, checks the pages are the
 SAME page (parity), then measures each (app, probe) on a freshly started server and writes `RESULTS.json` +
-`RESULTS.md` from the numbers alone (spec: `docs/design/2026-10-10-m3-perf-bench-design.md` §1). The header names platform/arch and core count, never the machine's hostname (repo rule).
+`RESULTS.md` from the numbers alone (spec: `docs/design/2026-10-10-m3-perf-bench-design.md` §1). The header names the machine model, chip, RAM, core count and platform/arch — never the hostname (repo rule).
 
 ```bash
 cd packages/brust && bun run build                 # RELEASE addon (not build:debug) — the runner cannot tell
