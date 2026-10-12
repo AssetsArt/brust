@@ -88,7 +88,7 @@ class EffectImpl implements Subscriber {
 
 export function effect(fn: () => void | (() => void)): Dispose {
   const e = new EffectImpl(fn)
-  e.run()
+  try { e.run() } catch (x) { e.dispose(); throw x }   // F98: a first run that throws must not stay subscribed
   return () => e.dispose()
 }
 
