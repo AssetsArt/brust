@@ -2,6 +2,12 @@
 use crate::ir::expr::Expr;
 use serde::{Deserialize, Serialize};
 
+/// HTML void elements: no content, no end tag.
+pub const VOID: &[&str] = &[
+    "img", "input", "br", "hr", "meta", "link", "area", "base", "col", "embed", "source", "track",
+    "wbr",
+];
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Node {
     Element {
@@ -48,9 +54,25 @@ pub enum Node {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Attr {
-    Static { name: String, value: String },
-    Dynamic { name: String, value: Expr },
-    Event { event: String, handler: String },
-    Ref { name: String },
+    Static {
+        name: String,
+        value: String,
+    },
+    Dynamic {
+        name: String,
+        value: Expr,
+    },
+    Event {
+        event: String,
+        handler: String,
+    },
+    Ref {
+        name: String,
+    },
     Spread(Expr),
+    /// `dangerouslySetInnerHTML={{ __html: v }}`: `value` is the already-unwrapped `v`
+    /// (null-safe `o.__html` for a non-literal object). Printed through the one raw sink.
+    InnerHtml {
+        value: Expr,
+    },
 }

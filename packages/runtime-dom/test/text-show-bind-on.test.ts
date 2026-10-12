@@ -90,3 +90,62 @@ test('x-bind- refuses on* / srcdoc attributes and javascript: URLs', () => {
   console.warn = orig
   expect(warns.length).toBe(2)
 })
+
+test('x-html: update writes markup, null clears, no write while unchanged', () => {
+  const h = signal<string | null>('<b>a</b>')
+  defineBehavior('h1', () => ({ h }))
+  document.body.innerHTML = `<div x-data="h1"><p id="p" x-html="h"><b>a</b></p></div>`
+  mount()
+  const p = document.getElementById('p')!
+  const b = p.firstElementChild
+  expect(p.innerHTML).toBe('<b>a</b>')
+  expect(p.firstElementChild).toBe(b)             // first run matched the server markup: no rewrite
+  h.set('<i>x</i><u>y</u>'); expect(p.innerHTML).toBe('<i>x</i><u>y</u>')
+  h.set(null); expect(p.innerHTML).toBe('')
+  h.set('t'); expect(p.innerHTML).toBe('t')
+})
+
+test('x-html: equivalent markup spelling is not a first-paint mismatch', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  try {
+    const h = signal('a<br/>b &amp; c')
+    defineBehavior('h2', () => ({ h }))
+    document.body.innerHTML = `<div x-data="h2"><p id="p" x-html="h">a<br>b &amp; c</p></div>`
+    mount()
+    expect(warns.filter((w) => w.includes('mismatch'))).toEqual([])
+  } finally { console.warn = orig }
+})
+
+test('x-html: first-run mismatch warns and corrects the DOM', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  try {
+    const h = signal('<b>client</b>')
+    defineBehavior('h3', () => ({ h }))
+    document.body.innerHTML = `<div x-data="h3"><p id="p" x-html="h"><i>server</i></p></div>`
+    mount()
+    expect(document.getElementById('p')!.innerHTML).toBe('<b>client</b>')
+    expect(warns.filter((w) => w.includes('first-paint mismatch x-html')).length).toBe(1)
+  } finally { console.warn = orig }
+})
+
+test('x-html: an unknown member warns and leaves the DOM alone', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  try {
+    defineBehavior('h4', () => ({}))
+    document.body.innerHTML = `<div x-data="h4"><p id="p" x-html="nope"><i>server</i></p></div>`
+    mount()
+    expect(document.getElementById('p')!.innerHTML).toBe('<i>server</i>')
+    expect(warns.some((w) => w.includes('no such member'))).toBe(true)
+  } finally { console.warn = orig }
+})
+
+test('a literal x-html in user markup only binds a compiler member: no member, no write', () => {
+  // The runtime evaluates no expression: `x-html="alert(1)"` is not a member path, so it warns and does nothing.
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  try {
+    defineBehavior('h5', () => ({}))
+    document.body.innerHTML = `<div x-data="h5"><p id="p" x-html="alert(1)">safe</p></div>`
+    mount()
+    expect(document.getElementById('p')!.innerHTML).toBe('safe')
+  } finally { console.warn = orig }
+})

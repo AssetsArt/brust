@@ -108,9 +108,9 @@ fn body_reads(n: &Node, st: &PassState, item: &str, out: &mut ItemRead) {
         } => {
             for a in attrs {
                 match a {
-                    Attr::Dynamic { value, .. } | Attr::Spread(value) => {
-                        raw_reads(value, st, item, out)
-                    }
+                    Attr::Dynamic { value, .. }
+                    | Attr::Spread(value)
+                    | Attr::InnerHtml { value } => raw_reads(value, st, item, out),
                     Attr::Static { .. } | Attr::Event { .. } | Attr::Ref { .. } => {}
                 }
             }
