@@ -50,3 +50,14 @@ test('cache adapter: the install wrapper replaces the re-export; without cache t
   expect(composed).toContain('import CACHE_BROADCAST from "@brust/cache-cloudflare/do"')
   expect(composed).toContain('broadcast: CACHE_BROADCAST, broadcastOptions: {"b":2}')
 })
+
+test('doClass adds exactly one BrustCacheDO re-export; without it the entry is unchanged (D3)', () => {
+  const cache = { adapter: 'cloudflare-do', getTimeoutMs: 100, maxBodyBytes: 1048576, namespace: 'n', buildId: '0123456789abcdef', epochIntervalMs: 1000 }
+  const input = { ...base, config: { ...base.config, cache }, cache: { module: '@brust/cache-cloudflare/do', options: {} } }
+  const without = cfEntrySource(input)
+  const withDo = cfEntrySource({ ...input, doClass: true })
+  expect(without).not.toContain('BrustCacheDO')
+  expect(withDo.match(/export \{ BrustCacheDO \} from "@brust\/cache-cloudflare\/do"/g)).toHaveLength(1)
+  expect(withDo.replace('export { BrustCacheDO } from "@brust/cache-cloudflare/do"\n', '')).toBe(without)
+  expect(cfEntrySource({ ...base, doClass: false })).toBe(cfEntrySource(base))
+})

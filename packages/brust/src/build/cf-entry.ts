@@ -33,6 +33,8 @@ export interface CfEntryInput {
   templatesPath: string
   config: CfConfigJson
   cache?: CfEntryCache | null
+  /** A Durable Object is configured: the entry re-exports `BrustCacheDO` (R1; `worker/main.js` re-exports it from this one module). */
+  doClass?: boolean
 }
 
 export function cfEntrySource(i: CfEntryInput): string {
@@ -64,6 +66,7 @@ export function cfEntrySource(i: CfEntryInput): string {
           `export const install = (rt) => installRuntime(rt, { adapter: CACHE, options: ${JSON.stringify(c.options)}, ${c.broadcast ? `broadcast: CACHE_BROADCAST, broadcastOptions: ${JSON.stringify(c.broadcastOptions ?? {})}, ` : ''}config: ${JSON.stringify(i.config.cache)}, waitUntil })`,
         ]
       : ['export { install } from "@brust/core/server-handlers"']),
+    ...(i.doClass ? ['export { BrustCacheDO } from "@brust/cache-cloudflare/do"'] : []),
     `export const CONFIG = ${q(JSON.stringify(i.config))}`,
   ].join('\n')}\n`
 }

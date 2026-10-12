@@ -2,7 +2,7 @@
 //   worker/      the @brust/core-cf glue + wasm (verbatim)  +  <appModuleDir>/brust-app.js (ONE Bun bundle, R2)
 //   assets/      Static Assets tree + _headers (R7)         wrangler.jsonc  (user config merged with brust's keys, R5)
 //   .stage/      the generated entry + the smoke harness (kept for inspection)
-import { cpSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { dirname, join, relative } from 'node:path'
 import type { BunPlugin } from 'bun'
@@ -10,7 +10,7 @@ import { BrustConfigError, type CorsConfig, loadCors } from '../config'
 import { layoutAssets } from './cf-assets'
 import { type CfConfigJson, cfEntrySource } from './cf-entry'
 import { type CoreCf, resolveCoreCf } from './cf-core'
-import { mergeWrangler, readUserWrangler, renderWrangler, type UserWrangler } from './cf-wrangler'
+import { type CacheNeed, mergeWrangler, readUserWrangler, renderWrangler, type UserWrangler, verifyCacheBindings } from './cf-wrangler'
 import { type CloudflareBuildConfig, CF_MIN_COMPAT_DATE } from './config'
 import { PRODUCTION, type SourceOf, sourceDirPlugin } from './bundle'
 import type { Compiled } from './compile'
@@ -165,13 +165,25 @@ function cfEntryCache(c: CacheRecord, customModule: string | null) {
   return { module, options: c.options, ...(c.broadcast ? { broadcast: CACHE_BUILTINS[c.broadcast]!, broadcastOptions: c.broadcastOptions ?? {} } : {}) }
 }
 
+/** R2/R10: which Cloudflare bindings the configured cache needs (`[cache.cloudflare]` keys land in the adapter's options), or null. */
+export function cacheNeeds(c: CacheRecord | undefined): CacheNeed | null {
+  if (!c) return null
+  const opt = (o: Record<string, unknown> | undefined, k: string) => (typeof o?.[k] === 'string' ? (o[k] as string) : undefined)
+  const all = [c.options, c.broadcastOptions]
+  const names = [c.adapter, c.broadcast]
+  const kv = names.includes('cloudflare-kv') ? (all.map((o) => opt(o, 'kv_binding')).find((b) => b) ?? 'BRUST_CACHE') : undefined
+  const explicitDo = all.map((o) => opt(o, 'do_binding')).find((b) => b)
+  const dobind = names.includes('cloudflare-do') || explicitDo !== undefined ? (explicitDo ?? 'BRUST_CACHE_DO') : undefined
+  return kv === undefined && dobind === undefined ? null : { ...(kv !== undefined ? { kv } : {}), ...(dobind !== undefined ? { do: dobind } : {}) }
+}
+
 function smokeFiles(app: string, cache = false): { preload: string; smoke: string } {
   const preload = `// generated: stubs the Workers-only modules so brust-app.js can be imported under Bun
 import { plugin } from 'bun'
 plugin({
   name: 'brust-cf-smoke',
   setup(b) {
-    b.module('cloudflare:workers', () => ({ exports: { env: {}, waitUntil() {} }, loader: 'object' }))
+    b.module('cloudflare:workers', () => ({ exports: { env: {}, waitUntil() {}, DurableObject: class {} }, loader: 'object' }))
   },
 })
 `
@@ -197,6 +209,14 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   const cfDir = join(out, 'cf')
   const stage = join(cfDir, '.stage')
   const warnings = [...p.warnings]
+  // R10: a Cloudflare cache built-in needs the user's own bindings; verify (never add) before anything is bundled.
+  const need = cacheNeeds(ctx.manifest.cache)
+  if (need) {
+    const v = verifyCacheBindings(p.user.config, need)
+    if (!v.ok) throw new BuildError('cf-config', v.message)
+  }
+  const doClass = need?.do !== undefined
+  if (doClass && existsSync(join(p.core.workerDir, 'main.js'))) throw new BuildError('cf-config', `@brust/core-cf ships its own worker/main.js; brust cannot add the BrustCacheDO re-export (R1)`)
   mkdirSync(stage, { recursive: true })
   cpSync(p.core.workerDir, join(cfDir, 'worker'), { recursive: true })
 
@@ -227,7 +247,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   const jobsEntry = join(out, '.stage', 'jobs.ts')
   writeFileSync(
     entryPath,
-    cfEntrySource({ entry: ctx.entry, jobsEntry, actionsEntry: a ? ctx.actionsEntry : null, prefix: a?.prefix ?? '', manifestPath: join(out, 'manifest.json'), templatesPath, config, cache: entryCache }),
+    cfEntrySource({ entry: ctx.entry, jobsEntry, actionsEntry: a ? ctx.actionsEntry : null, prefix: a?.prefix ?? '', manifestPath: join(out, 'manifest.json'), templatesPath, config, cache: entryCache, doClass }),
   )
   // Bare imports of the generated files resolve from the app root (an --out-dir outside the app has no node_modules above it).
   // (registered by absolute AND real path: the bundler reports the real one, e.g. /private/var on macOS)
@@ -264,7 +284,15 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   warnings.push(...assets.warnings)
   const compatibilityDate = p.cfg.compatibilityDate ?? p.core.meta.compatibilityDate
   if (compatibilityDate < CF_MIN_COMPAT_DATE) throw new BuildError('config', `compatibility_date ${compatibilityDate} is older than ${CF_MIN_COMPAT_DATE}`)
-  const merged = mergeWrangler(p.user, { appRoot: ctx.appRoot, cfDir: join(ctx.dist, 'cf'), name: p.cfg.name, pkgName: p.pkgName, compatibilityDate, main: p.core.meta.main, version: p.coreVersion })
+  if (doClass) {
+    // R1: the Durable Object class must be exported by the deployed main module; the glue already imports ./brust-app.js, so it is one module copy.
+    const appRel = relative(join(cfDir, 'worker'), appFile).split('\\').join('/')
+    writeFileSync(
+      join(cfDir, 'worker', 'main.js'),
+      `// generated by brust build --target cloudflare (do not edit)\nexport * from "./${p.core.meta.main}"\nexport { default } from "./${p.core.meta.main}"\nexport { BrustCacheDO } from "./${appRel}"\n`,
+    )
+  }
+  const merged = mergeWrangler(p.user, { appRoot: ctx.appRoot, cfDir: join(ctx.dist, 'cf'), name: p.cfg.name, pkgName: p.pkgName, compatibilityDate, main: doClass ? 'main.js' : p.core.meta.main, version: p.coreVersion })
   warnings.push(...merged.warnings)
   writeFileSync(join(cfDir, 'wrangler.jsonc'), renderWrangler(merged.config))
 
