@@ -46,8 +46,29 @@ test('blank pins equal the repo', () => {
   for (const k of ['react', 'react-dom']) expect(pkg.dependencies[k]).toBe(pokedex.dependencies[k])
   for (const k of ['@types/bun', '@types/react', 'typescript']) expect(pkg.devDependencies[k]).toBe(pokedex.devDependencies[k])
 })
-test('blank scripts are dev/build/start/typecheck per R6', () => {
-  expect(blankPkg().scripts).toEqual({ dev: 'brust build routes.tsx && brust start', build: 'brust build routes.tsx', start: 'brust start', typecheck: 'bun check' })
+test('blank scripts are dev/build/start/typecheck per R6 plus the Cloudflare pair (M4-CF R11)', () => {
+  expect(blankPkg().scripts).toEqual({
+    dev: 'brust build routes.tsx && brust start',
+    build: 'brust build routes.tsx',
+    start: 'brust start',
+    typecheck: 'bun check',
+    'dev:cf': 'brust dev routes.tsx --target cloudflare',
+    'deploy:cf': 'brust build routes.tsx --target cloudflare && wrangler deploy -c dist/cf/wrangler.jsonc',
+  })
+})
+test('blank Cloudflare files: wrangler devDependency, account-free scripts, a lean wrangler.jsonc', () => {
+  const pkg = blankPkg()
+  expect(pkg.devDependencies.wrangler).toMatch(/^\^\d+\.\d+\.0$/)
+  for (const k of ['dev:cf', 'deploy:cf']) {
+    expect(pkg.scripts[k]).not.toContain('--name')
+    expect(pkg.scripts[k]).not.toContain('account')
+  }
+  const raw = readFileSync(join(blank, 'wrangler.jsonc.tmpl'), 'utf8')
+  expect(raw).not.toContain('account_id')
+  const w = Bun.JSONC.parse(raw.replaceAll('__PROJECT_NAME__', 'demo')) as Record<string, unknown>
+  expect(w.name).toBe('demo')
+  for (const k of ['main', 'assets', 'compatibility_date']) expect(w[k]).toBeUndefined()
+  expect(readFileSync(join(blank, '_gitignore'), 'utf8')).toContain('.wrangler/')
 })
 test('blank brust.toml has [server] and an [actions] table', () => {
   const t = Bun.TOML.parse(readFileSync(join(blank, 'brust.toml'), 'utf8')) as Record<string, unknown>

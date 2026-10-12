@@ -112,6 +112,32 @@ export function readFramed(view: Uint8Array, slot: number, slots: number, len: n
 
 const fail = (view: Uint8Array, slot: number, slots: number, msg: string) => writeFramed(view, slot, slots, 500, TEXT_PLAIN, enc.encode(msg))
 
+/** The store-scoped core shared by `runFetch` and `fetchInScope`: R1/E5 — one store scope around the handler AND the
+ * body read (a lazy body may still touch stores); set-cookie values kept apart. */
+export async function fetchParts(a: ActionsApp, req: Request): Promise<{ status: number; pairs: [string, string][]; body: Uint8Array }> {
+  return runInStoreContext(async () => {
+    const res = await a.fetch(req)
+    const pairs: [string, string][] = []
+    res.headers.forEach((v, k) => {
+      if (k !== 'set-cookie') pairs.push([k, v])
+    })
+    for (const c of res.headers.getSetCookie()) pairs.push(['set-cookie', c])
+    return { status: res.status, pairs, body: new Uint8Array(await res.arrayBuffer()) }
+  })
+}
+
+/** Host-agnostic entry (Cloudflare `action(req)`): the same scope and framing-free parts as `runFetch`, as a Response. */
+export async function fetchInScope(a: ActionsApp, req: Request): Promise<Response> {
+  const { status, pairs, body } = await fetchParts(a, req)
+  const headers = new Headers()
+  for (const [k, v] of pairs) headers.append(k, v)
+  return new Response([101, 204, 205, 304].includes(status) ? null : (body as BodyInit), { status, headers })
+}
+
+/** The `action` export of a worker whose app has no `[actions]`. */
+export const noActions = async (_: Request): Promise<Response> =>
+  new Response('brust: actions are not configured in this worker', { status: 500, headers: { 'content-type': 'text/plain; charset=utf-8' } })
+
 /** The `fetch` call (makeDispatch). Never rejects, never writes JSON: every outcome is a frame. A body of
  * more than 262144 bytes arrives by `io.takeBody` (A1 `{heap}`); a response that does not fit the slot leaves
  * by `io.putReply` with only status/headers/`heap` in the slot (F82), unless it exceeds `max_response_bytes`. */
@@ -128,15 +154,7 @@ export async function runFetch(requestJson: string, view: Uint8Array, slot: numb
     }
     const req = toRequest(fr, heapBody)
     // R1/E5: one store scope around the handler AND the body read (a lazy body may still touch stores).
-    const out = await runInStoreContext(async () => {
-      const res = await a.fetch(req)
-      const pairs: [string, string][] = []
-      res.headers.forEach((v, k) => {
-        if (k !== 'set-cookie') pairs.push([k, v])
-      })
-      for (const c of res.headers.getSetCookie()) pairs.push(['set-cookie', c])
-      return { status: res.status, pairs, body: new Uint8Array(await res.arrayBuffer()) }
-    })
+    const out = await fetchParts(a, req)
     const sub = Math.floor(view.byteLength / Math.max(1, slots))
     const metaLen = (m: FetchMeta) => enc.encode(JSON.stringify(m)).length
     if (4 + metaLen({ status: out.status, headers: out.pairs }) + out.body.length <= sub) return writeFramed(view, slot, slots, out.status, out.pairs, out.body)

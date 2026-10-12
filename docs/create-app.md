@@ -33,7 +33,7 @@ The target directory must be empty or absent; a directory that has files is refu
 - **`blank`**: one layout, one page, one `useState` counter (compiled to a native component: a signal in the browser, no React shipped), and `actions.ts`, an Elysia 2 app on `brust()` with a `GET /hello` endpoint. `brust.toml` has `[server]` and `[actions]`.
 - **`pokedex`**: the `examples/pokedex` app from this repository: loaders over an offline dataset, the L1 page cache, native components and a React island, and a persistent team (SQLite + Elysia actions + the unified store). It is generated from the example when the package is packed, so it never drifts from it. Its tests are not included.
 
-Scripts in both: `dev` (build, then start, until `brust dev` ships), `build` (`brust build routes.tsx`), `start` (`brust start`), `typecheck` (`bun check`).
+Scripts in both: `dev` (build, then start, until `brust dev` ships), `build` (`brust build routes.tsx`), `start` (`brust start`), `typecheck` (`bun check`). `blank` also has `dev:cf` (build for Cloudflare Workers and run `wrangler dev`) and `deploy:cf` (build, then `wrangler deploy` of `dist/cf`).
 
 ## 4. The `@brust/core` version
 
@@ -46,3 +46,4 @@ Scripts in both: `dev` (build, then start, until `brust dev` ships), `build` (`b
 - `brust.toml`: `[server]` (address, port) and `[actions]` (opt-in; defaults `entry = "actions.ts"`, `prefix = "/_brust/action"`). See [Actions](./actions.md).
 - State shared by loaders, native components and islands: [The unified store](./store.md).
 - The Elysia and Eden versions in `package.json` are exact pins of the current beta; bump them together with `@brust/core`.
+- `wrangler.jsonc` (blank): your Cloudflare bindings; brust owns `main`, `assets` and `compatibility_date` (see the Cloudflare docs, lane 8).

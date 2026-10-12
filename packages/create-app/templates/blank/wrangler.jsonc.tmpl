@@ -1,0 +1,9 @@
+// Your Cloudflare config for `bun run dev:cf` / `bun run deploy:cf`.
+// `brust build --target cloudflare` merges this file into dist/cf/wrangler.jsonc and owns these keys:
+// main, assets (the ASSETS binding), compatibility_date, no_bundle, build, rules, site.
+{
+  "name": "__PROJECT_NAME__"
+  // "d1_databases": [{ "binding": "DB", "database_name": "__PROJECT_NAME__", "database_id": "<id>" }],
+  // "kv_namespaces": [{ "binding": "KV", "id": "<id>" }],
+  // "vars": { "GREETING": "hello" }
+}
