@@ -47,7 +47,7 @@ for 0.1.x its release addon (`cd $BRUST_01X_DIR/runtime && bun run build`).
 The same Elysia 2 app answers both probes on two stacks, so the route code is byte-identical:
 `apps/_shared/actions-app.ts` (`GET /types`, `POST /team`), imported by `apps/brust/actions.ts` (the `[actions]` entry,
 `brust()` adapter: Rust HTTP → worker `fetch` call kind → `app.fetch`) and by `apps/elysia-bun/index.ts` (Elysia's
-default Bun adapter, `app.listen`). Only `brust` and `elysia-bun` run A1/A2; the runner builds (app, probe) pairs from
+default Bun adapter, `app.listen`). Only `brust` (shown as `elysia-brust` in the Actions tables) and `elysia-bun` run A1/A2; the runner builds (app, probe) pairs from
 `Probe.apps`, so `elysia-bun` never gets S/D/I.
 
 - Same URL on both: `elysia-bun` mounts the app under `/_brust/action`, the exact shape brust's worker builds
@@ -111,10 +111,10 @@ ceiling  : v2 / bun-serve  D p%  I q%        (target D ≥ 80%)      raw Bun.ser
 The Actions section adds one table per A probe (rows = app × connection count) and a verdict line:
 
 ```
-actions  : brust / elysia-bun (c=120)  A1 x%  A2 y%   · c=1 p50 brust − elysia-bun  A1 +n µs  A2 +m µs
+actions  : elysia-brust / elysia-bun (c=120)  A1 x%  A2 y%   · c=1 p50 elysia-brust − elysia-bun  A1 +n µs  A2 +m µs
 ```
 
-(brust's rps as a percentage of elysia-bun's at c=120; the c=1 p50 difference is the per-request cost of the hop.)
+(elysia-brust is the `brust` app serving the Elysia routes — S/D/I rows keep the name `brust`; its rps as a percentage of elysia-bun's at c=120; the c=1 p50 difference is the per-request cost of the hop.)
 
 `errors` excludes oha's "aborted due to deadline" (requests cut by `-z`, not failures); the raw oha JSON is in
 `RESULTS.json`. macOS numbers are not Linux numbers.

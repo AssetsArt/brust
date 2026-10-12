@@ -30,6 +30,9 @@ export interface Verdict {
 
 export const APP_LABEL: Record<AppId, string> = { brust: 'brust', 'bun-serve': 'bun-serve', next: 'next', 'brust-01x': 'brust-01x', 'elysia-bun': 'elysia-bun' }
 
+/** Display names in the Actions section: the brust row there is Elysia 2 served by brust (page rows stay `brust`). */
+export const ACTIONS_LABEL: Record<AppId, string> = { ...APP_LABEL, brust: 'elysia-brust' }
+
 export function rpsOf(r: Results, app: AppId, probe: ProbeId, enc: Encoding = 'identity'): number | null {
   const m = r.measurements.find((x) => x.app === app && x.probe === probe && x.enc === enc)
   return m ? m.nums.rps : null
@@ -88,7 +91,7 @@ export function computeActionsVerdict(r: Results): ActionsVerdict {
 }
 const micros = (n: number | null) => (n === null ? '—' : `${n >= 0 ? '+' : '-'}${Math.abs(Math.round(n))} µs`)
 export function renderActionsVerdict(v: ActionsVerdict): string {
-  return `actions  : brust / elysia-bun${v.balanced === false ? ' (1-proc: reusePort did not balance)' : ''} (c=120)  A1 ${percent(v.share.A1)}  A2 ${percent(v.share.A2)}   · c=1 p50 brust − elysia-bun  A1 ${micros(v.p50Delta.A1)}  A2 ${micros(v.p50Delta.A2)}`
+  return `actions  : elysia-brust / elysia-bun${v.balanced === false ? ' (1-proc: reusePort did not balance)' : ''} (c=120)  A1 ${percent(v.share.A1)}  A2 ${percent(v.share.A2)}   · c=1 p50 elysia-brust − elysia-bun  A1 ${micros(v.p50Delta.A1)}  A2 ${micros(v.p50Delta.A2)}`
 }
 
 /** What a run replaces in RESULTS.json (R4): the page block (header + measurements) and/or the actions block. */
@@ -133,13 +136,13 @@ function renderActionsSection(a: NonNullable<Results['actions']>): string[] {
     '', '## Actions', '',
     `host ${h.host} · ${versions} · seed ${h.seed} · \`oha -c ${h.conns.join(' / ')} -z ${h.dur}\`, identity only · settle ${h.settleMs} ms + warm-up ${h.warmup} discarded per row · budgets ${Object.entries(h.budgets).map(([k, v]) => `${k} ${v}`).join(', ')} · load ${h.loadavg.map((n) => n.toFixed(1)).join(' ')} (${h.cores} cores) · order ${h.order.join(' ')}`,
     '',
-    `elysia-bun reusePort balance: ${h.elysiaBunBalanced === null ? 'not measured' : h.elysiaBunBalanced ? 'balanced across the copies' : '1-proc (the load landed on one copy)'}. macOS does not balance SO_REUSEPORT, so on this host the elysia-bun row is in practice a single-process measurement; read it against brust's ${h.workers} workers + tokio threads accordingly.`,
+    `elysia-bun reusePort balance: ${h.elysiaBunBalanced === null ? 'not measured' : h.elysiaBunBalanced ? 'balanced across the copies' : '1-proc (the load landed on one copy)'}. macOS does not balance SO_REUSEPORT, so on this host the elysia-bun row is in practice a single-process measurement; read it against elysia-brust's ${h.workers} workers + tokio threads accordingly.`,
   ]
   for (const p of PROBES.filter((x) => x.kind === 'json')) {
     lines.push('', `### ${p.id} — \`${p.method} ${p.path}\``, '', '| app | conn | rps | p50 ms | p95 ms | p99 ms | errors | bytes/resp |', '|---|---:|---:|---:|---:|---:|---:|---:|')
     for (const app of h.apps) {
       for (const m of a.measurements.filter((x) => x.app === app && x.probe === p.id).sort((x, y) => (y.conn ?? 0) - (x.conn ?? 0)))
-        lines.push(`| ${APP_LABEL[app]} | c=${m.conn ?? '—'} | ${int(m.nums.rps)} | ${ms3(m.nums.p50)} | ${ms3(m.nums.p95)} | ${ms3(m.nums.p99)} | ${m.nums.errors} | ${int(m.nums.bytes)} |`)
+        lines.push(`| ${ACTIONS_LABEL[app]} | c=${m.conn ?? '—'} | ${int(m.nums.rps)} | ${ms3(m.nums.p50)} | ${ms3(m.nums.p95)} | ${ms3(m.nums.p99)} | ${m.nums.errors} | ${int(m.nums.bytes)} |`)
     }
   }
   lines.push('', '```', renderActionsVerdict(computeActionsVerdict({ header: undefined as never, measurements: [], actions: a })), '```')

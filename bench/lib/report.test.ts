@@ -82,15 +82,15 @@ describe('actions (A1/A2)', () => {
     expect(md).toContain('### A2 — `POST /_brust/action/team`')
     expect(md).toContain('| app | conn | rps | p50 ms | p95 ms | p99 ms | errors | bytes/resp |')
     const a1 = md.slice(md.indexOf('### A1'), md.indexOf('### A2')).split('\n').filter((l) => l.startsWith('| ') && !l.startsWith('| app') )
-    expect(a1.map((l) => l.split('|').slice(1, 3).map((c) => c.trim()).join(' '))).toEqual(['brust c=120', 'brust c=1', 'elysia-bun c=120', 'elysia-bun c=1'])
+    expect(a1.map((l) => l.split('|').slice(1, 3).map((c) => c.trim()).join(' '))).toEqual(['elysia-brust c=120', 'elysia-brust c=1', 'elysia-bun c=120', 'elysia-bun c=1'])
     expect(a1[1]).toContain('0.114')
     expect(md).toContain('SO_REUSEPORT') // the macOS caveat sits next to the numbers
   })
   test('(c) actions verdict line, byte-exact; unbalanced gets the 1-proc label', () => {
-    expect(renderActionsVerdict(computeActionsVerdict(ra))).toBe('actions  : brust / elysia-bun (c=120)  A1 87.5%  A2 90.0%   · c=1 p50 brust − elysia-bun  A1 +14 µs  A2 +16 µs')
+    expect(renderActionsVerdict(computeActionsVerdict(ra))).toBe('actions  : elysia-brust / elysia-bun (c=120)  A1 87.5%  A2 90.0%   · c=1 p50 elysia-brust − elysia-bun  A1 +14 µs  A2 +16 µs')
     const unbalanced = { ...ra, actions: { ...ra.actions!, header: { ...ra.actions!.header, elysiaBunBalanced: false } } }
     expect(renderActionsVerdict(computeActionsVerdict(unbalanced))).toContain('elysia-bun (1-proc: reusePort did not balance) (c=120)')
-    expect(renderMarkdown(ra)).toContain('actions  : brust / elysia-bun (c=120)')
+    expect(renderMarkdown(ra)).toContain('actions  : elysia-brust / elysia-bun (c=120)')
   })
   test('(d) merge: an A-only run keeps the page block, a page-only run keeps the actions', () => {
     const old = ra
