@@ -8,8 +8,6 @@ This page covers the build, the generated project, bindings, actions, caching, a
 
 ## 1. Quick start
 
-Live demo: https://brust-demo-pokedex.assetsart.workers.dev — pokedex on Workers + D1, built from the published packages.
-
 ```sh
 bun create @brust/app@latest my-app   # pin or use @latest: `bun create` caches the scaffolder, and a stale cache scaffolds an old template
 cd my-app
