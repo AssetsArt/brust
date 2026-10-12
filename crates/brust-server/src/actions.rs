@@ -9,12 +9,58 @@ use http::{HeaderMap, HeaderName, HeaderValue, Response};
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::body::Incoming;
 
-use crate::config::{ActionsConfig, CrossSite, Server};
-use crate::dispatch::{CallError, call_worker_fetch};
+use crate::config::{ACTION_INLINE_BODY_BYTES, ActionsConfig, CrossSite, Server};
+use crate::dispatch::{CallError, FetchCell, call_worker_fetch};
 use crate::protocol::{FetchBody, FetchRequest, FetchResponse};
 use crate::server::body::{self, ResponseBody};
 use crate::server::cors::ResolvedCors;
 use crate::server::header_str;
+
+/// F82, on the worker's JS thread inside its `fetch` call for `slot`: the heap request body, once.
+/// `None`: no such worker, the slot is not in a call, it is not a `fetch` call, no heap body was
+/// sent, or it was already taken.
+pub fn take_fetch_body(s: &Server, worker: u32, slot: u32) -> Option<Vec<u8>> {
+    let taken = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let entry = s.pool.entry(worker)?;
+        let mut g = entry.claimed_plan_cell(slot)?.lock();
+        g.as_mut()?.downcast_mut::<FetchCell>()?.body.take()
+    }))
+    .ok()
+    .flatten()?;
+    Some(Vec::from(taken))
+}
+
+/// F82: hand Rust a response body too large for the slot. `false` = declined: no actions config,
+/// `body.len() > max_response_bytes`, the slot is not in a `fetch` call, or a reply was already put.
+pub fn put_fetch_reply(s: &Server, worker: u32, slot: u32, body: &[u8]) -> bool {
+    let Some(a) = s.actions.as_ref() else {
+        return false;
+    };
+    if body.len() > a.max_response_bytes {
+        return false;
+    }
+    // Copy before taking the lock.
+    let copy = Bytes::copy_from_slice(body);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(entry) = s.pool.entry(worker) else {
+            return false;
+        };
+        let Some(cell) = entry.claimed_plan_cell(slot) else {
+            return false;
+        };
+        let g = cell.lock();
+        let Some(fc) = g.as_ref().and_then(|b| b.downcast_ref::<FetchCell>()) else {
+            return false;
+        };
+        let mut reply = fc.reply.lock();
+        if reply.is_some() {
+            return false;
+        }
+        *reply = Some(copy);
+        true
+    }))
+    .unwrap_or(false)
+}
 
 /// One request under the prefix → one `fetch` worker call. `incoming` is read only here, and never for GET/HEAD (R4).
 pub(crate) async fn handle(
@@ -62,17 +108,24 @@ pub(crate) async fn handle(
         );
         return body::error_403_cross_site(method);
     }
-    let fb = if method == "GET" || method == "HEAD" {
-        None
+    let (fb, heap_body) = if method == "GET" || method == "HEAD" {
+        (None, None)
     } else {
         match read_capped(incoming, a.max_body_bytes, s.call_timeout).await {
-            Ok(b) if b.is_empty() => None,
-            Ok(b) => Some(encode_body(
-                header_str(&parts.headers, "content-type")
-                    .as_deref()
-                    .unwrap_or(""),
-                b,
-            )),
+            Ok(b) if b.is_empty() => (None, None),
+            // F82: over the inline threshold the bytes wait in the call's cell for `takeFetchBody`.
+            Ok(b) if b.len() > ACTION_INLINE_BODY_BYTES => {
+                (Some(FetchBody::Heap(b.len())), Some(b))
+            }
+            Ok(b) => (
+                Some(encode_body(
+                    header_str(&parts.headers, "content-type")
+                        .as_deref()
+                        .unwrap_or(""),
+                    b,
+                )),
+                None,
+            ),
             Err(ReadErr::TooLarge) => return body::error_413(),
             Err(ReadErr::Io) => return body::error_400(),
             Err(ReadErr::Slow) => {
@@ -111,7 +164,7 @@ pub(crate) async fn handle(
             None,
         ),
     };
-    let r = call_worker_fetch(&s.pool, s.claim_timeout, s.call_timeout, &req, None).await;
+    let r = call_worker_fetch(&s.pool, s.claim_timeout, s.call_timeout, &req, heap_body).await;
     // R11: a worker call, never a loader call.
     if !matches!(r, Err(CallError::NoWorkers | CallError::Timeout)) {
         s.worker_calls.incr();

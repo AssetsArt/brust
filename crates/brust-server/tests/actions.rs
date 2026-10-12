@@ -117,7 +117,7 @@ fn body_over_cap_by_content_length_is_413() {
 
 #[test]
 fn chunked_body_over_cap_is_413() {
-    let (fake, s) = server(ok);
+    let (fake, s) = server_cap(ok, 262_144);
     let (status, _, body) = request_chunked(&s, "POST", URL, &[], vec![vec![b'a'; 1024]; 300]);
     assert_eq!((status, body.as_slice()), (413, &b"payload too large"[..]));
     assert_eq!(fake.fetch_count(), 0);
@@ -829,4 +829,116 @@ fn cross_site_cors_listed_origin_is_forwarded_and_stamped() {
     assert_eq!(hdr(&h, "access-control-allow-origin"), Some(ALLOWED));
     assert_eq!(post_note(&s, EVIL).0, 403);
     assert_eq!(fake.fetch_count(), 1);
+}
+
+// ---- F82: bodies larger than the slot cross by heap transfer ----
+
+fn server_resp_cap(
+    f: fn(Value) -> Vec<u8>,
+    max_response_bytes: usize,
+) -> (Arc<FakeBun>, Arc<brust_server::Server>) {
+    let fake = fake().with_fetch(f);
+    fake.set_response_cap(max_response_bytes);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig {
+            max_response_bytes,
+            ..ActionsConfig::default()
+        },
+        None,
+    );
+    (fake, s)
+}
+
+#[test]
+fn body_at_threshold_is_inline_and_one_over_is_heap() {
+    let (fake, s) = server(ok);
+    let h = [("content-type", "text/plain")];
+    let at = vec![b'a'; 262_144];
+    let (status, _, _) = request_body(&s, "POST", URL, &h, at.clone());
+    assert_eq!(status, 200);
+    assert_eq!(
+        last(&fake)["body"],
+        json!({"text": String::from_utf8(at).unwrap()})
+    );
+    assert_eq!(fake.last_fetch_body(), None);
+    let over = vec![b'b'; 262_145];
+    let (status, _, _) = request_body(&s, "POST", URL, &h, over.clone());
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["body"], json!({"heap": 262_145}));
+    assert_eq!(fake.last_fetch_body().as_deref(), Some(&over[..]));
+}
+
+#[test]
+fn heap_body_binary_is_lossless() {
+    let (fake, s) = server(ok);
+    let bin: Vec<u8> = (0..300 * 1024).map(|i| (i % 251) as u8).collect();
+    let h = [("content-type", "application/octet-stream")];
+    let (status, _, _) = request_body(&s, "POST", URL, &h, bin.clone());
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["body"], json!({"heap": bin.len()}));
+    assert_eq!(fake.last_fetch_body().as_deref(), Some(&bin[..]));
+}
+
+#[test]
+fn response_over_slot_crosses_by_heap() {
+    let (_fake, s) = server(|_| {
+        frame(
+            200,
+            &[
+                ("content-type", "application/octet-stream"),
+                ("set-cookie", "a=1"),
+                ("set-cookie", "b=2"),
+            ],
+            &vec![7u8; 1 << 20],
+        )
+    });
+    let (status, h, body) = request_body(&s, "GET", URL, &[], Vec::<u8>::new());
+    assert_eq!(status, 200);
+    assert_eq!(body, vec![7u8; 1 << 20]);
+    let cookies: Vec<&str> = h
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap())
+        .collect();
+    assert_eq!(cookies, ["a=1", "b=2"]);
+    assert_eq!(hdr(&h, "content-length"), Some("1048576"));
+}
+
+#[test]
+fn heap_reply_over_max_response_bytes_is_declined() {
+    let (_fake, s) = server_resp_cap(
+        |_| frame(200, &[("content-type", "text/plain")], &vec![b'x'; 300_000]),
+        262_144,
+    );
+    let (status, h, body) = get(&s, URL, &[]);
+    assert_eq!(
+        (status, body.as_str()),
+        (500, "brust: action response exceeds 262144 bytes")
+    );
+    assert_eq!(hdr(&h, "content-type"), Some("text/plain; charset=utf-8"));
+}
+
+#[test]
+fn heap_meta_without_reply_is_500() {
+    let (_fake, s) = server(|_| {
+        let meta = br#"{"status":200,"heap":10}"#;
+        let mut f = (meta.len() as u32).to_le_bytes().to_vec();
+        f.extend_from_slice(meta);
+        f
+    });
+    let (status, _, body) = get(&s, URL, &[]);
+    assert_eq!((status, body.as_str()), (500, "500 Internal Server Error"));
+}
+
+#[test]
+fn put_fetch_reply_declines_outside_a_fetch_call() {
+    let (fake, s) = server(ok);
+    let id = fake.worker_id();
+    // Idle slot (no call in flight), then an unknown worker.
+    assert!(!brust_server::put_fetch_reply(&s, id, 0, b"x"));
+    assert!(!brust_server::put_fetch_reply(&s, id + 99, 0, b"x"));
+    assert_eq!(brust_server::take_fetch_body(&s, id, 0), None);
+    assert_eq!(brust_server::take_fetch_body(&s, id + 99, 0), None);
 }

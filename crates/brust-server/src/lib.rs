@@ -23,6 +23,7 @@ pub mod bench {
     };
 }
 
+pub use actions::{put_fetch_reply, take_fetch_body};
 pub use config::{
     ACTION_INLINE_BODY_BYTES, ActionsConfig, Config, CorsConfig, CrossSite, DEFAULT_ACTION_PREFIX,
     DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs,
