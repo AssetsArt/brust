@@ -11,7 +11,7 @@ This page covers the build, the generated project, bindings, actions, caching, a
 Live demo: https://brust-demo-pokedex.assetsart.workers.dev — pokedex on Workers + D1, built from the published packages.
 
 ```sh
-bun create @brust/app my-app      # the blank template has the scripts and a wrangler.jsonc
+bun create @brust/app@latest my-app   # pin or use @latest: `bun create` caches the scaffolder, and a stale cache scaffolds an old template
 cd my-app
 bun install
 bun run dev:cf                    # build + wrangler dev (local workerd, simulated bindings)
