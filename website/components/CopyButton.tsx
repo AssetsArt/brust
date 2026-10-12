@@ -1,21 +1,42 @@
 // The Copy button on a code block (native tier): copies the block's text; a shell block copies its `$ ` commands only.
-import { useState } from 'react'
+// Without the Clipboard API (a non-secure origin) or when the write is refused, it selects the code instead, so the
+// reader can copy by hand. A second click within the label's 1.4 s restarts the reset timer (the old one is cleared).
+import { useRef, useState } from 'react'
 
 export default function CopyButton({ text, lang }: { text: string; lang: string }) {
   const [label, setLabel] = useState('Copy')
+  const reset = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   return (
     <button
       type="button"
       className={label === 'Copied' ? 'done' : ''}
-      onClick={() => {
-        const lines = text.split('\n')
-        const commands = lines.filter((l) => l.startsWith('$ ')).map((l) => l.slice(2))
+      onClick={(e) => {
+        const pre = e.currentTarget.closest('.code')?.querySelector('pre')
+        const show = (next: string) => {
+          setLabel(next)
+          clearTimeout(reset.current)
+          reset.current = setTimeout(() => setLabel('Copy'), 1400)
+        }
+        const selectCode = () => {
+          const sel = getSelection()
+          if (pre && sel) {
+            const range = document.createRange()
+            range.selectNodeContents(pre)
+            sel.removeAllRanges()
+            sel.addRange(range)
+          }
+          show('Select to copy')
+        }
+        const commands = text
+          .split('\n')
+          .filter((l) => l.startsWith('$ '))
+          .map((l) => l.slice(2))
         const copy = lang === 'sh' && commands.length > 0 ? commands.join('\n') : text
-        navigator.clipboard.writeText(copy).then(
-          () => setLabel('Copied'),
-          () => setLabel('Select to copy'),
-        )
-        setTimeout(() => setLabel('Copy'), 1400)
+        if (!navigator.clipboard) {
+          selectCode()
+          return
+        }
+        navigator.clipboard.writeText(copy).then(() => show('Copied'), selectCode)
       }}
     >
       {label}
