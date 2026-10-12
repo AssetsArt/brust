@@ -9,6 +9,14 @@
 //! the insert/invalidate gate (see `L1Cache::insert`). Reads are served by a
 //! sharded read front, moka kept as the lifetime policy (see [`JobCache`]).
 //!
+//! Read stamps (F89): an insert carries the `ReadStamp` its request took before it read app data
+//! (one stamp per page, on the clock shared with L1, `stamp.rs`). `invalidate_user_key`,
+//! `invalidate_tags` and `clear` take the next clock value and publish it in a hashed per-user-key
+//! / per-tag slot (or `cleared_at`); an insert whose user key, tags or `clear` were invalidated
+//! after its stamp does not land. Without it a `cache({key})` value computed by a call that began
+//! before `invalidate({key})` could still be inserted after it and served until its ttl. A slot
+//! collision only skips caching one value.
+//!
 //! Bounded by ENTRY COUNT (moka `max_capacity`), not bytes: a few very large
 //! job values can hold more memory than the count suggests.
 use std::collections::HashMap;
@@ -147,8 +155,15 @@ fn remove_front(front: &[Shard], shard: usize, key: &JobKey, generation: u64) {
 /// serialize on that key's `stripes` mutex so the front and moka see a key's
 /// writes in the same order (and an insert stamps and indexes its generation
 /// under it); the listener takes no stripe and removes only a matching
-/// generation, so it cannot drop a newer entry. Lock order: gate → stripe →
-/// index / front (each alone).
+/// generation, so it cannot drop a newer entry.
+///
+/// Read stamps (F89): an insert lands only if no covering invalidation took a clock sequence after
+/// its `ReadStamp`. Covering means `invalidate_user_key` of its user key (by slot),
+/// `invalidate_tags` of one of its tags (by slot), or `clear`; `invalidate_key` does not publish
+/// (no production caller). The clock is shared with L1 (`Server::clock`), and `page()` stamps once
+/// for both. Each covering invalidation publishes under the exclusive gate, and an insert checks
+/// under the shared gate + its stripe and holds both until its write. A slot collision only skips
+/// caching one value. Lock order unchanged: gate → stripe → index / front (each alone).
 pub struct JobCache {
     cache: Cache<JobKey, CachedJob>,
     front: Arc<[Shard]>,

@@ -293,6 +293,8 @@ impl Server {
     /// through the job cache's user-key index); `tags` → both caches; `path` (+
     /// `method`, default `GET`) → L1 entries for that path, any query/prefix.
     /// L1 pages built from an invalidated job value are NOT evicted by `key`.
+    /// A job value computed by a call that began before the invalidation is not
+    /// cached, and its page is not stored in L1 (F89).
     pub fn invalidate(&self, args: InvalidateArgs) -> InvalidateResult {
         let mut r = InvalidateResult::default();
         if let Some(k) = &args.key {
