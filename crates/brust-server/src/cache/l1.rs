@@ -15,6 +15,13 @@
 //! maintenance pass evicting the old entry right after the new insert indexed
 //! itself would un-index the NEWER entry, making it immune to tag invalidation.
 //!
+//! Read stamps (F86): an insert also carries the `ReadStamp` its render took before it read app
+//! data. Every invalidation (tags, path, `clear`) takes the next `inval_seq` and publishes it in a
+//! hashed per-tag / per-(method, path) slot (or `cleared_at`); an insert whose tags, method + path
+//! or `clear` were invalidated after its stamp does not land. Without it a render that read data
+//! before a `POST` invalidated its tag could still be inserted after the invalidation and serve the
+//! old data until its ttl. A slot collision only skips caching one render.
+//!
 //! Read front (M3-P P4): reads are served from 64 sharded maps in front of moka,
 //! which stays the lifetime policy (capacity, admission, ttl reaping). The design
 //! is the job cache's (`JobCache`: generation-stamped entries with their own
@@ -272,7 +279,16 @@ pub(crate) fn take_tagged<K: Clone + Eq + std::hash::Hash>(
 /// it across "stamp generation, index, front write, moka write", and release the front write guard
 /// BEFORE any moka call (moka may run the listener inline). The listener takes the tag-index mutex
 /// and a shard's write lock, each alone, and never a stripe or the gate; it removes only a matching
-/// generation, so it cannot drop a newer entry. Lock order: gate -> stripe -> (index | front).
+/// generation, so it cannot drop a newer entry.
+///
+/// Read stamps (F86): an insert lands only if no covering invalidation took an `inval_seq` after its
+/// `ReadStamp`. A covering invalidation is a tag of the insert (by slot), its method+path (by slot),
+/// or `clear`. Tag invalidation and `clear` publish under the exclusive gate, and the insert checks
+/// under the shared gate. `invalidate_path` is gate-free on purpose: the front is a superset of moka
+/// and the key stripe orders same-key writers. It publishes before scanning and scans shard i under
+/// `stripes[i]`, which an insert holds across check and write. A slot collision or an already-seen
+/// invalidation only skips caching one render. Lock order unchanged: gate -> stripe -> (index |
+/// front).
 pub struct L1Cache {
     inner: moka::sync::Cache<CacheKey, Slot>,
     front: Arc<[Shard]>,
