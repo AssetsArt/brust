@@ -1,6 +1,6 @@
 # bench — 2026-10-11
 
-host darwin/arm64 Aitthis-MacBook-Pro.local · bun 1.4.3 · oha 1.11.0 · node v22.23.1 · brust 0.0.0 @ 97b944a · bun-serve 1.4.3 · next 16.4.0 · brust-01x 0.1.69-alpha · seed 722459264 · `oha -c 120 -z 10s` · settle 1000 ms + warm-up 3s discarded · budgets brust workers=10, bun-serve procs=10, next procs=1 (as shipped), brust-01x workers=10 · load 5.7 8.5 10.3 (10 cores) · order bun-serve:S next:S brust:S brust-01x:S next:D bun-serve:D brust-01x:D brust:D brust:I brust-01x:I bun-serve:I next:I
+MacBook Pro · Apple M1 Pro · 16 GB · 10 cores · darwin/arm64 · bun 1.4.3 · oha 1.11.0 · node v22.23.1 · brust 0.0.0 @ 97b944a · bun-serve 1.4.3 · next 16.4.0 · brust-01x 0.1.69-alpha · seed 722459264 · `oha -c 120 -z 10s` · settle 1000 ms + warm-up 3s discarded · budgets brust workers=10, bun-serve procs=10, next procs=1 (as shipped), brust-01x workers=10 · load 5.7 8.5 10.3 (10 cores) · order bun-serve:S next:S brust:S brust-01x:S next:D bun-serve:D brust-01x:D brust:D brust:I brust-01x:I bun-serve:I next:I
 
 ## S — `/types`
 
@@ -37,7 +37,7 @@ ceiling  : v2 / bun-serve (1-proc: reusePort did not balance)  D 293.4%  I 229.9
 
 ## Actions
 
-host darwin/arm64 Aitthis-MacBook-Pro.local · bun 1.4.3 · oha 1.11.0 · node v22.23.1 · brust 0.0.0 @ 1944dfb · elysia-bun elysia 2.0.0-beta.30 · bun 1.4.3 · seed 1012 · `oha -c 120 / 1 -z 10s`, identity only · settle 1000 ms + warm-up 3s discarded per row · budgets brust workers=10, elysia-bun procs=10 · load 8.8 9.1 14.4 (10 cores) · order brust:A2 elysia-bun:A2 elysia-bun:A1 brust:A1
+MacBook Pro · Apple M1 Pro · 16 GB · 10 cores · darwin/arm64 · bun 1.4.3 · oha 1.11.0 · node v22.23.1 · brust 0.0.0 @ 1944dfb · elysia-bun elysia 2.0.0-beta.30 · bun 1.4.3 · seed 1012 · `oha -c 120 / 1 -z 10s`, identity only · settle 1000 ms + warm-up 3s discarded per row · budgets brust workers=10, elysia-bun procs=10 · load 8.8 9.1 14.4 (10 cores) · order brust:A2 elysia-bun:A2 elysia-bun:A1 brust:A1
 
 elysia-bun reusePort balance: 1-proc (the load landed on one copy). macOS does not balance SO_REUSEPORT, so on this host the elysia-bun row is in practice a single-process measurement; read it against elysia-brust's 10 workers + tokio threads accordingly.
 

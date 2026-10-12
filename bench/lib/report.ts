@@ -6,8 +6,13 @@ import type { Encoding, OhaNums } from './oha'
 import { PROBES, type ProbeId } from './probes'
 
 export interface Measurement { app: AppId; probe: ProbeId; enc: Encoding; nums: OhaNums; raw: unknown; /** A rows: the oha connection count; page rows omit it (= the header's `conn`). */ conn?: number }
+/** `MacBook Pro · Apple M1 Pro · 16 GB · 10 cores · darwin/arm64`, or just `host <platform/arch>` for results without a machine block. */
+function machineLine(h: { host: string; machine?: Machine; cores: number }): string {
+  return h.machine ? `${h.machine.model} · ${h.machine.chip} · ${h.machine.memGb} GB · ${h.cores} cores · ${h.host}` : `host ${h.host}`
+}
+export interface Machine { model: string; chip: string; memGb: number }
 export interface Header {
-  date: string; host: string; cores: number; loadavg: number[]; seed: number; conn: number; dur: string; warmup: string; settleMs: number; workers: number
+  date: string; host: string; /** model/chip/RAM of the measuring machine (never the hostname) */ machine?: Machine; cores: number; loadavg: number[]; seed: number; conn: number; dur: string; warmup: string; settleMs: number; workers: number
   versions: Record<string, string>; apps: AppId[]; skipped: { app: AppId; reason: string }[]; order: string[]
   /** process budget per app, e.g. 'brust workers=10', 'next procs=1 (as shipped)' */
   budgets: Record<string, string>
@@ -16,7 +21,7 @@ export interface Header {
 }
 /** The A1/A2 block (R4): a separate header, because an A-only run has no page header of its own to share. */
 export interface ActionsHeader {
-  date: string; host: string; cores: number; loadavg: number[]; seed: number; conns: number[]; dur: string; warmup: string; settleMs: number; workers: number
+  date: string; host: string; /** model/chip/RAM of the measuring machine (never the hostname) */ machine?: Machine; cores: number; loadavg: number[]; seed: number; conns: number[]; dur: string; warmup: string; settleMs: number; workers: number
   versions: Record<string, string>; apps: AppId[]; skipped: { app: AppId; reason: string }[]; order: string[]; budgets: Record<string, string>
   /** elysia-bun reusePort balance verdict: true = every copy served >= 5%, false = 1-proc, null = not run */
   elysiaBunBalanced: boolean | null
@@ -111,7 +116,7 @@ export function renderMarkdown(r: Results): string {
   const lines: string[] = [
     `# bench — ${h.date}`,
     '',
-    `host ${h.host} · ${versions} · seed ${h.seed} · \`oha -c ${h.conn} -z ${h.dur}\` · settle ${h.settleMs} ms + warm-up ${h.warmup} discarded · budgets ${Object.entries(h.budgets).map(([k, v]) => `${k} ${v}`).join(', ')} · load ${h.loadavg.map((n) => n.toFixed(1)).join(' ')} (${h.cores} cores) · order ${h.order.join(' ')}`,
+    `${machineLine(h)} · ${versions} · seed ${h.seed} · \`oha -c ${h.conn} -z ${h.dur}\` · settle ${h.settleMs} ms + warm-up ${h.warmup} discarded · budgets ${Object.entries(h.budgets).map(([k, v]) => `${k} ${v}`).join(', ')} · load ${h.loadavg.map((n) => n.toFixed(1)).join(' ')} (${h.cores} cores) · order ${h.order.join(' ')}`,
   ]
   if (h.skipped.length) lines.push('', `skipped: ${h.skipped.map((s) => `${s.app} (${s.reason})`).join(', ')}`)
   for (const p of PROBES.filter((x) => x.kind === 'page')) {
@@ -134,7 +139,7 @@ function renderActionsSection(a: NonNullable<Results['actions']>): string[] {
   const versions = Object.entries(h.versions).map(([k, v]) => `${k} ${v}`).join(' · ')
   const lines = [
     '', '## Actions', '',
-    `host ${h.host} · ${versions} · seed ${h.seed} · \`oha -c ${h.conns.join(' / ')} -z ${h.dur}\`, identity only · settle ${h.settleMs} ms + warm-up ${h.warmup} discarded per row · budgets ${Object.entries(h.budgets).map(([k, v]) => `${k} ${v}`).join(', ')} · load ${h.loadavg.map((n) => n.toFixed(1)).join(' ')} (${h.cores} cores) · order ${h.order.join(' ')}`,
+    `${machineLine(h)} · ${versions} · seed ${h.seed} · \`oha -c ${h.conns.join(' / ')} -z ${h.dur}\`, identity only · settle ${h.settleMs} ms + warm-up ${h.warmup} discarded per row · budgets ${Object.entries(h.budgets).map(([k, v]) => `${k} ${v}`).join(', ')} · load ${h.loadavg.map((n) => n.toFixed(1)).join(' ')} (${h.cores} cores) · order ${h.order.join(' ')}`,
     '',
     `elysia-bun reusePort balance: ${h.elysiaBunBalanced === null ? 'not measured' : h.elysiaBunBalanced ? 'balanced across the copies' : '1-proc (the load landed on one copy)'}. macOS does not balance SO_REUSEPORT, so on this host the elysia-bun row is in practice a single-process measurement; read it against elysia-brust's ${h.workers} workers + tokio threads accordingly.`,
   ]

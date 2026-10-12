@@ -112,3 +112,12 @@ describe('actions (A1/A2)', () => {
     expect(fresh.header).toEqual(r.header)
   })
 })
+
+test('the rendered header names model · chip · RAM · cores · platform/arch, never a machine hostname (repo rule)', () => {
+  const r = structuredClone(fixture) as unknown as Results
+  expect(renderMarkdown(r)).toMatch(/host darwin\/arm64 ·/) // no machine block: platform/arch only
+  r.header.machine = { model: 'MacBook Pro', chip: 'Apple M1 Pro', memGb: 16 }
+  const md = renderMarkdown(r)
+  expect(md).toContain(`MacBook Pro · Apple M1 Pro · 16 GB · ${r.header.cores} cores · darwin/arm64 ·`)
+  expect(md).not.toMatch(/\.local\b|MacBook-Pro/)
+})
