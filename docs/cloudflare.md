@@ -8,6 +8,8 @@ This page covers the build, the generated project, bindings, actions, caching, a
 
 ## 1. Quick start
 
+Live demo: https://brust-demo-pokedex.assetsart.workers.dev — pokedex on Workers + D1, built from the published packages.
+
 ```sh
 bun create @brust/app my-app      # the blank template has the scripts and a wrangler.jsonc
 cd my-app
