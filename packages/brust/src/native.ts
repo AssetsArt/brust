@@ -31,6 +31,16 @@ export interface StartOptions {
   cors?: CorsOptions
   /** The actions subtree (M3-F A3); absent = no actions. Boot error `actions: …` when invalid. */
   actions?: ActionsOptions
+  /** The cache adapter (`manifest.cache`); absent = none (byte-identical server). */
+  l2?: L2Options
+}
+/** napi `NapiL2Options`; defaults 50 ms, 1048576 bytes. */
+export interface L2Options {
+  adapter: string
+  getTimeoutMs?: number
+  maxBodyBytes?: number
+  namespace: string
+  buildId: string
 }
 /** napi `NapiCorsOptions` (camelCase keys; snake_case keys are silently dropped). */
 export interface CorsOptions {
@@ -50,7 +60,7 @@ export interface ActionsOptions {
   /** F87: cross-site mutating requests. Default `reject`. */
   crossSite?: 'reject' | 'allow'
 }
-export type WorkerFn = (kind: 'loader' | 'jobs' | 'fetch', requestJson: string, slot: number) => Promise<number>
+export type WorkerFn = (kind: 'loader' | 'jobs' | 'fetch' | 'cache', requestJson: string, slot: number) => Promise<number>
 export interface NativeBinding {
   startServer(opts: StartOptions): void
   registerWorker(buf: Uint8Array, slots: number, f: WorkerFn): number
@@ -65,6 +75,12 @@ export interface NativeBinding {
   takeFetchBody(slot: number): Uint8Array | null
   /** F82 — hand Rust a response body too large for the slot; false = declined. Never throws. */
   putFetchReply(slot: number, body: Uint8Array): boolean
+  /** cache adapter R10 — a foreign broadcast event: tier 1 + the floor at `seq`; never re-published. */
+  cacheReplay(args: InvalidateArgs, seq: number | null): InvalidateResult
+  /** cache adapter R9 — bump `stats.l2[name]`; false = unknown name / no adapter / no server. Never throws. */
+  cacheL2Count(name: string): boolean
+  /** cache adapter R10 — drop both tier-1 caches (a broadcast gap); the L1 entries removed. */
+  cacheClear(): number
 }
 
 let binding: NativeBinding | null = null
@@ -93,3 +109,6 @@ export const localAddr = (): string => native().localAddr()
 export const planJobs = (slot: number, len: number): string => native().planJobs(slot, len)
 export const takeFetchBody = (slot: number): Uint8Array | null => native().takeFetchBody(slot)
 export const putFetchReply = (slot: number, body: Uint8Array): boolean => native().putFetchReply(slot, body)
+export const cacheReplay = (args: InvalidateArgs, seq: number | null): InvalidateResult => native().cacheReplay(args, seq)
+export const cacheL2Count = (name: string): boolean => native().cacheL2Count(name)
+export const cacheClear = (): number => native().cacheClear()

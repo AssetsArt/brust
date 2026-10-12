@@ -12,7 +12,7 @@ mod pipeline;
 pub mod pool;
 pub mod server;
 
-pub use brust_core::{inputs, manifest, protocol, render, routing};
+pub use brust_core::{inputs, l2, manifest, protocol, render, routing};
 
 /// Internals timed by `benches/render.rs`; not an API.
 #[doc(hidden)]
