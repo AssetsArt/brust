@@ -4,6 +4,7 @@
 #![deny(clippy::all)]
 pub mod capped;
 pub mod config;
+pub mod epoch;
 pub mod head;
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]

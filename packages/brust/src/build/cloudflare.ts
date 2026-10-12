@@ -15,6 +15,8 @@ import { type CloudflareBuildConfig, CF_MIN_COMPAT_DATE } from './config'
 import { PRODUCTION, type SourceOf, sourceDirPlugin } from './bundle'
 import type { Compiled } from './compile'
 import { BuildError } from './errors'
+import type { CacheRecord } from './manifest'
+import { BUILTINS as CACHE_BUILTINS } from '../cache-adapter/load'
 
 export interface CfFlags {
   fromSource: boolean
@@ -71,9 +73,13 @@ export interface CfBuildCtx {
   /** the FINAL dist dir (`out` is a tmp sibling that is renamed to it): wrangler paths are relative to `<dist>/cf` */
   dist: string
   compiled: Map<string, Compiled>
-  manifest: { components: Record<string, { template: string }>; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null }
+  manifest: { components: Record<string, { template: string }>; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null; cache?: CacheRecord }
   sourceOf: SourceOf
   actionsEntry: string | null
+  /** A custom cache adapter's source module (absolute). */
+  cacheModule?: string | null
+  /** `[cache] get_timeout_ms` as written (absent → the Workers default, 100). */
+  cacheGetTimeoutMs?: number
   log: (s: string) => void
 }
 
@@ -118,7 +124,7 @@ function cfAlias(alias: Record<string, string>, sourceOf: SourceOf): BunPlugin {
 /** The CF bundle's stand-in for the napi addon (`native.ts` `require('../native/index.js')`, R8): every call
  * fails loudly, since a Worker has no addon. */
 function cfNativeStub(handlersPath: string): BunPlugin {
-  const names = ['startServer', 'registerWorker', 'untilReady', 'beginDrain', 'cacheInvalidate', 'cacheStats', 'localAddr', 'planJobs', 'takeFetchBody', 'putFetchReply']
+  const names = ['startServer', 'registerWorker', 'untilReady', 'beginDrain', 'cacheInvalidate', 'cacheStats', 'localAddr', 'planJobs', 'takeFetchBody', 'putFetchReply', 'cacheReplay', 'cacheL2Count', 'cacheClear']
   return {
     name: 'brust-cf-native',
     setup(b) {
@@ -145,7 +151,21 @@ function cfStorePlugin(appRoot: string): BunPlugin {
   }
 }
 
-function smokeFiles(app: string): { preload: string; smoke: string } {
+/** The entry's cache wiring (R8 on Workers): the custom source module or the built-in spec; an `env:`
+ * option cannot be resolved inside a Worker (no process env at bundle time) and is refused. */
+function cfEntryCache(c: CacheRecord, customModule: string | null) {
+  const noEnv = (o: Record<string, unknown> | undefined) => {
+    for (const [k, v] of Object.entries(o ?? {}))
+      if (typeof v === 'string' && v.startsWith('env:')) throw new BuildError('cache', `cache option ${k}: "env:" values are not available on Cloudflare Workers (use a binding)`)
+  }
+  noEnv(c.options)
+  noEnv(c.broadcastOptions)
+  const module = c.adapter === 'custom' ? customModule : CACHE_BUILTINS[c.adapter]
+  if (!module) throw new BuildError('cache', `cache adapter "${c.adapter}" has no module to bundle`)
+  return { module, options: c.options, ...(c.broadcast ? { broadcast: CACHE_BUILTINS[c.broadcast]!, broadcastOptions: c.broadcastOptions ?? {} } : {}) }
+}
+
+function smokeFiles(app: string, cache = false): { preload: string; smoke: string } {
   const preload = `// generated: stubs the Workers-only modules so brust-app.js can be imported under Bun
 import { plugin } from 'bun'
 plugin({
@@ -163,7 +183,11 @@ if (typeof m.MANIFEST !== 'string' || JSON.parse(m.MANIFEST).version !== 1) bad.
 if (typeof m.CONFIG !== 'string' || JSON.parse(m.CONFIG).abi !== 1) bad.push('CONFIG.abi !== 1')
 if (typeof m.TEMPLATES !== 'object' || m.TEMPLATES === null) bad.push('TEMPLATES is not an object')
 const r = await m.loader('{}')
-if (typeof r !== 'string' || !r.includes('error')) bad.push('loader({}) did not resolve an error string: ' + String(r))
+if (typeof r !== 'string' || !r.includes('error')) bad.push('loader({}) did not resolve an error string: ' + String(r))${cache ? `
+try {
+  const out = m.install({ invalidate: () => ({ l1Removed: 0, jobRemoved: 0 }), l2Count: () => true })
+  if (!out || !out.cache || typeof out.cache.origin !== 'string') bad.push('install() returned no cache bridge')
+} catch (e) { bad.push('cache adapter: ' + (e && e.message ? e.message : String(e))) }` : ''}
 if (bad.length) { console.error(bad.join('\\n')); process.exit(1) }
 `
   return { preload, smoke }
@@ -186,6 +210,8 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
 
   const cors = p.cors
   const a = ctx.manifest.actions
+  const cache = ctx.manifest.cache ? { ...ctx.manifest.cache, getTimeoutMs: ctx.cacheGetTimeoutMs ?? 100 } : null
+  const entryCache = cache ? cfEntryCache(cache, ctx.cacheModule ?? null) : null
   const config: CfConfigJson = {
     abi: 1,
     generator: `brust/${p.coreVersion}`,
@@ -195,12 +221,13 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     edgeCache: p.cfg.edgeCache,
     ...(cors ? { cors } : {}),
     ...(a ? { actions: { prefix: a.prefix, maxBodyBytes: a.maxBodyBytes, maxResponseBytes: a.maxResponseBytes ?? 8_388_608, crossSite: a.crossSite ?? 'reject' } } : {}),
+    ...(cache ? { cache: { adapter: cache.adapter, getTimeoutMs: cache.getTimeoutMs, maxBodyBytes: cache.maxBodyBytes, namespace: cache.namespace, buildId: cache.buildId, epochIntervalMs: cache.epochIntervalMs } } : {}),
   }
   const entryPath = join(stage, 'brust-app.entry.js')
   const jobsEntry = join(out, '.stage', 'jobs.ts')
   writeFileSync(
     entryPath,
-    cfEntrySource({ entry: ctx.entry, jobsEntry, actionsEntry: a ? ctx.actionsEntry : null, prefix: a?.prefix ?? '', manifestPath: join(out, 'manifest.json'), templatesPath, config }),
+    cfEntrySource({ entry: ctx.entry, jobsEntry, actionsEntry: a ? ctx.actionsEntry : null, prefix: a?.prefix ?? '', manifestPath: join(out, 'manifest.json'), templatesPath, config, cache: entryCache }),
   )
   // Bare imports of the generated files resolve from the app root (an --out-dir outside the app has no node_modules above it).
   // (registered by absolute AND real path: the bundler reports the real one, e.g. /private/var on macOS)
@@ -241,7 +268,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   warnings.push(...merged.warnings)
   writeFileSync(join(cfDir, 'wrangler.jsonc'), renderWrangler(merged.config))
 
-  const { preload, smoke } = smokeFiles(appFile)
+  const { preload, smoke } = smokeFiles(appFile, cache !== null)
   writeFileSync(join(stage, 'smoke-preload.ts'), preload)
   writeFileSync(join(stage, 'smoke.ts'), smoke)
   const r = Bun.spawnSync([process.execPath, '--preload', join(stage, 'smoke-preload.ts'), join(stage, 'smoke.ts')], {

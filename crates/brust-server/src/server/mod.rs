@@ -127,6 +127,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         dist_dir: cfg.dist_dir.clone(),
         claim_timeout: Duration::from_millis(tuning.claim_timeout_ms),
         call_timeout: Duration::from_millis(tuning.call_timeout_ms),
+        l2: cfg.l2.as_ref().map(|l| (l.get_timeout, l.max_body_bytes)),
     };
     let core = Core::new(
         host,
@@ -138,6 +139,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             generator: cfg.generator,
             actions: cfg.actions,
             https: cfg.tls.is_some(),
+            l2: cfg.l2,
         },
     )?;
     let state = Arc::new(Server {

@@ -1,0 +1,12 @@
+# cf-l2: the cache-adapter lane A Workers e2e (tests/cf/cache-adapter.test.ts). Built with `bun scripts/build-cf.ts`.
+[actions]
+
+[cache]
+adapter = "custom"
+module = "cache.ts"
+namespace = "cfl2"
+epoch_interval_ms = 250
+
+[cloudflare]
+name = "brust-cf-l2"
+stats = true

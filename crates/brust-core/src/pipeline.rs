@@ -23,7 +23,12 @@ use crate::cache::{CacheKey, JobKey, RenderedBody, build_cache_key};
 use crate::core::Core;
 use crate::host::{CallError, Host, JobStore, PageCache, RequestHead, StaticRoot};
 use crate::inputs::{self, Path};
-use crate::manifest::{ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteRecord};
+use crate::l2::{
+    L2Config, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta, page_from_l2, pairs_of, remaining_ttl,
+};
+use crate::manifest::{
+    ALL_PROPS, Instances, JobKind, JobRecord, Manifest, RouteCache, RouteRecord,
+};
 use crate::plan::{Lookup, PlanRow, PlanSeed, PlanSrc, PlannedCall};
 use crate::protocol::{JobCall, JobResult, JobsRequest, LoaderRequest, LoaderResponse, Verdict};
 use crate::render::{Overlay, RenderError, Renderer, inject_document_assets_into, use_ids};
@@ -34,6 +39,8 @@ use crate::static_rules::{IMMUTABLE, asset_lookup_key, is_hashed, safe_rel};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CacheOutcome {
     Hit,
+    /// Served from the cache adapter (shared second tier) after an L1 miss.
+    HitL2,
     Miss,
     Bypass,
     /// The route has no `cache`.
@@ -44,6 +51,7 @@ impl std::fmt::Display for CacheOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Hit => "HIT",
+            Self::HitL2 => "HIT-L2",
             Self::Miss => "MISS",
             Self::Bypass => "BYPASS",
             Self::None => "-",
@@ -218,6 +226,19 @@ async fn page<H: Host>(
     // stamps, BYPASS and uncached routes too (they still run jobs). One stamp guards both caches
     // (one clock): an invalidation covering an entry after it keeps that insert out.
     let since = s.clock.stamp();
+
+    // Cache adapter read-through (spec §3.2): a cacheable route only, after the stamp, before the
+    // loader. `l2_write` = the key and the stamp a successful L1 insert below writes back under.
+    let mut l2_write = None;
+    if let (Some(l2), Some(k), Some(c)) = (&s.l2, &cache_key, &route.cache) {
+        match l2_read(s, l2, k, c, full, since, accept_enc).await {
+            L2Read::Served(r) => {
+                meta.cache = CacheOutcome::HitL2;
+                return r;
+            }
+            L2Read::Write(w) => l2_write = w,
+        }
+    }
 
     let envelope = rm.into_envelope("GET", full, headers, search);
 
@@ -470,7 +491,21 @@ async fn page<H: Host>(
     );
     // The rendered body carries the loader's headers (and its gzip if this
     // request made it), so a HIT replays them.
-    if store
+    if let Some(w) = l2_write {
+        if store
+            && let Some(k) = cache_key
+            && let Some(c) = &route.cache
+        {
+            let b = Arc::clone(&body);
+            if s.l1
+                .insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags, since)
+            {
+                l2_write_back(s, w, &b, c, full);
+            } else {
+                tracing::debug!(target: "brust::cache", route = %route.id, "L1 insert skipped: invalidated during the render");
+            }
+        }
+    } else if store
         && let Some(k) = cache_key
         && let Some(c) = &route.cache
         && !s
@@ -480,6 +515,108 @@ async fn page<H: Host>(
         tracing::debug!(target: "brust::cache", route = %route.id, "L1 insert skipped: invalidated during the render");
     }
     resp
+}
+
+/// The outcome of the adapter read on an L1 miss.
+enum L2Read {
+    /// A valid L2 body, already inserted into L1: the response.
+    Served(Response<Bytes>),
+    /// Render; with `Some`, write the render back under this key and stamp (ruling L2).
+    Write(Option<(L2Key, Option<u64>)>),
+}
+
+/// One `l2_get` (bounded by the host), fail-open: only a valid, unexpired hit that is not below the
+/// invalidation floor is served (and inserted into L1 under the request's `since`).
+#[cold]
+async fn l2_read<H: Host>(
+    s: &Core<H>,
+    l2: &L2Config,
+    k: &CacheKey,
+    c: &RouteCache,
+    full: &str,
+    since: ReadStamp,
+    accept_enc: Option<&str>,
+) -> L2Read {
+    let key = L2Key::of(l2, k);
+    let path = full.split('?').next().unwrap_or(full);
+    let probe = L2Probe {
+        key: &key,
+        path,
+        tags: &c.tags,
+    };
+    let n = &s.l2_counters;
+    match s.host.l2_get(&probe).await {
+        L2Lookup::Hit {
+            page,
+            stamp,
+            entry_stamp,
+            stored_at_ms,
+        } => {
+            if s.l2_floor.with(|f| f.rejects(entry_stamp, path, &c.tags)) {
+                n.bump("rejected_floor");
+                return L2Read::Write(Some((key, stamp)));
+            }
+            let ttl = Duration::from_secs(c.ttl_seconds);
+            let Some(ttl) = remaining_ttl(ttl, stored_at_ms, s.host.wall_ms()) else {
+                n.bump("misses");
+                return L2Read::Write(Some((key, stamp)));
+            };
+            n.bump("hits");
+            let b = Arc::new(page_from_l2(page));
+            // A refused insert (invalidated meanwhile) still serves this request.
+            s.l1.insert(k.clone(), Arc::clone(&b), ttl, &c.tags, since);
+            let gz = crate::compress::accepts_gzip(accept_enc);
+            L2Read::Served(l2_hit_response(&b, gz))
+        }
+        L2Lookup::Miss { stamp } => {
+            n.bump("misses");
+            L2Read::Write(Some((key, stamp)))
+        }
+        L2Lookup::Floor { stamp } => {
+            n.bump("rejected_floor");
+            L2Read::Write(Some((key, stamp)))
+        }
+        L2Lookup::Timeout => {
+            n.bump("timeouts");
+            L2Read::Write(None)
+        }
+        L2Lookup::Failed(e) => {
+            n.bump("errors");
+            tracing::debug!(target: "brust::cache", error = %e, "cache adapter get failed");
+            L2Read::Write(None)
+        }
+        L2Lookup::Off => L2Read::Write(None),
+    }
+}
+
+/// After a successful L1 insert: hand the body to the adapter (fire and forget), or count it
+/// oversize.
+#[cold]
+fn l2_write_back<H: Host>(
+    s: &Core<H>,
+    (key, stamp): (L2Key, Option<u64>),
+    b: &RenderedBody,
+    c: &RouteCache,
+    full: &str,
+) {
+    let Some(l2) = &s.l2 else { return };
+    if b.html.len() > l2.max_body_bytes {
+        s.l2_counters.bump("set_oversize");
+        return;
+    }
+    let page = L2Page {
+        status: b.status,
+        headers: pairs_of(&b.headers),
+        body: b.html.clone(),
+    };
+    let meta = L2SetMeta {
+        ttl_ms: c.ttl_seconds.saturating_mul(1000),
+        tags: c.tags.clone(),
+        method: "GET".into(),
+        path: full.split('?').next().unwrap_or(full).to_owned(),
+        stamp,
+    };
+    s.host.l2_set(key, page, meta, &s.l2_counters);
 }
 
 /// Validate, store and fan out the worker's `results` for `lookup.misses` — shared by the jobs
@@ -709,6 +846,19 @@ fn hit_response(b: &RenderedBody, gz: bool) -> Response<Bytes> {
         bytes,
         encoded,
         Some("HIT"),
+    )
+}
+
+/// An L2 hit's response: [`hit_response`] with `x-brust-cache: HIT-L2`.
+fn l2_hit_response(b: &RenderedBody, gz: bool) -> Response<Bytes> {
+    let (bytes, encoded) = cached_body(b, gz);
+    page_response(
+        b.status,
+        b.headers.clone(),
+        b.html.len(),
+        bytes,
+        encoded,
+        Some("HIT-L2"),
     )
 }
 

@@ -129,3 +129,47 @@ test('an invalid [cors] fails the build before anything is written (F1)', () => 
   expect(r.err).toContain('cors.origins')
   expect(existsSync(out)).toBe(false)
 })
+
+function appWithCache(adapterSrc: string, extra = ''): string {
+  const dir = join(FIX, 'cf-app-cache')
+  rmSync(dir, { recursive: true, force: true })
+  cleanup.push(dir)
+  cpSync(APP, dir, { recursive: true })
+  writeFileSync(join(dir, 'brust.toml'), `${readFileSync(join(APP, 'brust.toml'), 'utf8')}\n[cache]\nadapter = "custom"\nmodule = "cache.ts"\n${extra}\n`)
+  writeFileSync(join(dir, 'cache.ts'), adapterSrc)
+  return dir
+}
+
+test('a pull custom adapter builds: CONFIG.cache (Workers get timeout 100) and the install wrapper', () => {
+  const dir = appWithCache(`import { memoryAdapter } from '@brust/core/cache-adapter'\nexport default () => memoryAdapter({ broadcast: 'pull' })\n`)
+  const out = join(outDir(), 'dist')
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])
+  expect(r.err).toBe('')
+  expect(r.code).toBe(0)
+  const c = configOf(out).cache as Record<string, unknown>
+  expect(c).toMatchObject({ adapter: 'custom', getTimeoutMs: 100, maxBodyBytes: 1048576, epochIntervalMs: 1000 })
+  expect(c.buildId).toMatch(/^[0-9a-f]{16}$/)
+  expect(readFileSync(join(out, 'cf', '.stage', 'brust-app.entry.js'), 'utf8')).toContain('installRuntime(rt, { adapter: CACHE')
+})
+
+test('a push-only custom adapter fails the build (R14)', () => {
+  const dir = appWithCache(`import { memoryAdapter } from '@brust/core/cache-adapter'\nexport default () => memoryAdapter({ broadcast: 'push' })\n`)
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', join(outDir(), 'dist')])
+  expect(r.code).toBe(1)
+  expect(r.err).toContain('error cf-smoke')
+  expect(r.err).toContain('push-only')
+})
+
+test('an adapter without "workers" in runtimes fails the build (R14)', () => {
+  const dir = appWithCache(`import { memoryAdapter } from '@brust/core/cache-adapter'\nexport default () => ({ ...memoryAdapter({ broadcast: 'pull' }), runtimes: ['bun'] })\n`)
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', join(outDir(), 'dist')])
+  expect(r.code).toBe(1)
+  expect(r.err).toContain('does not run on Cloudflare Workers')
+})
+
+test('an env: option is refused on --target cloudflare', () => {
+  const dir = appWithCache(`import { memoryAdapter } from '@brust/core/cache-adapter'\nexport default () => memoryAdapter({ broadcast: 'pull' })\n`, '[cache.options]\nurl = "env:URL"')
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', join(outDir(), 'dist')])
+  expect(r.code).toBe(1)
+  expect(r.err).toContain('"env:" values are not available on Cloudflare Workers')
+})

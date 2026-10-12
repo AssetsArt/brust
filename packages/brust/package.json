@@ -21,6 +21,8 @@
     "./server": "./src/server.ts",
     "./server-handlers": "./src/server-handlers.ts",
     "./server-handlers/actions": "./src/actions/load.ts",
+    "./cache-adapter": "./src/cache-adapter/index.ts",
+    "./cache-adapter/conformance": "./src/cache-adapter/conformance.ts",
     "./store": "./src/store/index.ts",
     "./store/react": "./src/store/react.ts",
     "./elysia": "./src/actions/elysia.ts",

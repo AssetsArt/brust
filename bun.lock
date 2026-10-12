@@ -174,8 +174,28 @@
         "react",
       ],
     },
+    "tests/fixtures/cf-l2": {
+      "name": "@brust/fixture-cf-l2",
+      "version": "0.0.0",
+      "dependencies": {
+        "@brust/core": "workspace:*",
+        "elysia": "2.0.0-beta.30",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+    },
     "tests/fixtures/cf-min": {
       "name": "@brust/fixture-cf-min",
+      "version": "0.0.0",
+      "dependencies": {
+        "@brust/core": "workspace:*",
+        "elysia": "2.0.0-beta.30",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
+    },
+    "tests/fixtures/l2-relay": {
+      "name": "@brust/fixture-l2-relay",
       "version": "0.0.0",
       "dependencies": {
         "@brust/core": "workspace:*",
@@ -209,7 +229,11 @@
 
     "@brust/example-pokedex": ["@brust/example-pokedex@workspace:examples/pokedex"],
 
+    "@brust/fixture-cf-l2": ["@brust/fixture-cf-l2@workspace:tests/fixtures/cf-l2"],
+
     "@brust/fixture-cf-min": ["@brust/fixture-cf-min@workspace:tests/fixtures/cf-min"],
+
+    "@brust/fixture-l2-relay": ["@brust/fixture-l2-relay@workspace:tests/fixtures/l2-relay"],
 
     "@brust/native-darwin-arm64": ["@brust/native-darwin-arm64@workspace:npm/darwin-arm64"],
 

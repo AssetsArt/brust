@@ -3,6 +3,7 @@
 use brust_core::cache::local::{WORKERS_JOB_CAPACITY, WORKERS_L1_CAPACITY};
 use brust_core::config::{ActionsConfig, CorsConfig, CrossSite};
 use brust_core::core::CoreConfig;
+use brust_core::l2::L2Config;
 use serde::Deserialize;
 
 /// `CONFIG` v1. Unknown keys refuse to boot: a new key means `abi` 2.
@@ -23,6 +24,35 @@ struct CfConfig {
     cors: Option<CfCors>,
     #[serde(default)]
     actions: Option<CfActions>,
+    /// The cache adapter (optional under abi 1, cache-adapter R13).
+    #[serde(default)]
+    cache: Option<CfCache>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CfCache {
+    adapter: String,
+    get_timeout_ms: u64,
+    max_body_bytes: usize,
+    namespace: String,
+    build_id: String,
+    epoch_interval_ms: u64,
+}
+
+/// The pull-broadcast cadence (`[cache] epoch_interval_ms`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EpochCfg {
+    pub interval_ms: u64,
+}
+
+/// Everything `CONFIG` sets.
+pub struct Parsed {
+    pub core: CoreConfig,
+    /// `/_brust/cache/stats` is served.
+    pub stats: bool,
+    /// A cache adapter is configured: its poll cadence.
+    pub epoch: Option<EpochCfg>,
 }
 
 #[derive(Deserialize)]
@@ -60,6 +90,11 @@ enum CfCrossSite {
 /// `CONFIG`'s JSON → the core's config (`https` is always true on Workers) and whether
 /// `/_brust/cache/stats` is served. The error names the offending field.
 pub fn parse(json: &str) -> Result<(CoreConfig, bool), String> {
+    parse_all(json).map(|p| (p.core, p.stats))
+}
+
+/// [`parse`] plus the cache adapter's epoch cadence.
+pub fn parse_all(json: &str) -> Result<Parsed, String> {
     let c: CfConfig = serde_json::from_str(json).map_err(|e| format!("CONFIG: {e}"))?;
     if c.abi != 1 {
         return Err(format!("CONFIG: abi {} unsupported (want 1)", c.abi));
@@ -70,6 +105,38 @@ pub fn parse(json: &str) -> Result<(CoreConfig, bool), String> {
             c.edge_cache
         ));
     }
+    let (l2, epoch) = match c.cache {
+        None => (None, None),
+        Some(k) => {
+            if !(1..=1000).contains(&k.get_timeout_ms) {
+                return Err(format!(
+                    "CONFIG: cache.getTimeoutMs {} must be in 1..=1000",
+                    k.get_timeout_ms
+                ));
+            }
+            if !(250..=60_000).contains(&k.epoch_interval_ms) {
+                return Err(format!(
+                    "CONFIG: cache.epochIntervalMs {} must be in 250..=60000",
+                    k.epoch_interval_ms
+                ));
+            }
+            if k.max_body_bytes == 0 {
+                return Err("CONFIG: cache.maxBodyBytes must be > 0".into());
+            }
+            (
+                Some(L2Config {
+                    adapter: k.adapter,
+                    get_timeout: std::time::Duration::from_millis(k.get_timeout_ms),
+                    max_body_bytes: k.max_body_bytes,
+                    namespace: k.namespace,
+                    build_id: k.build_id,
+                }),
+                Some(EpochCfg {
+                    interval_ms: k.epoch_interval_ms,
+                }),
+            )
+        }
+    };
     let core = CoreConfig {
         l1_capacity: c.l1_capacity.unwrap_or(WORKERS_L1_CAPACITY),
         job_cache_capacity: c.job_cache_capacity.unwrap_or(WORKERS_JOB_CAPACITY),
@@ -92,8 +159,13 @@ pub fn parse(json: &str) -> Result<(CoreConfig, bool), String> {
             },
         }),
         https: true,
+        l2,
     };
-    Ok((core, c.stats))
+    Ok(Parsed {
+        core,
+        stats: c.stats,
+        epoch,
+    })
 }
 
 #[cfg(test)]
@@ -138,5 +210,58 @@ mod tests {
         assert!(e.contains("edgeCache") && e.contains("M4-CF-7"), "{e}");
         let e = parse(&OK.replace("\"stats\"", "\"statz\"")).unwrap_err();
         assert!(e.contains("statz"), "{e}");
+    }
+
+    const CACHE: &str = r#","cache":{"adapter":"custom","getTimeoutMs":100,"maxBodyBytes":1048576,"namespace":"ns","buildId":"0123456789abcdef","epochIntervalMs":250}}"#;
+
+    fn with_cache(cache: &str) -> String {
+        format!("{}{}", &OK[..OK.len() - 1], cache)
+    }
+
+    #[test]
+    fn no_cache_is_no_l2() {
+        let p = parse_all(OK).unwrap();
+        assert!(p.core.l2.is_none() && p.epoch.is_none());
+    }
+
+    #[test]
+    fn a_cache_maps_to_l2_and_epoch() {
+        let p = parse_all(&with_cache(CACHE)).unwrap();
+        let l2 = p.core.l2.unwrap();
+        assert_eq!(
+            (
+                l2.adapter.as_str(),
+                l2.get_timeout.as_millis(),
+                l2.max_body_bytes
+            ),
+            ("custom", 100, 1_048_576)
+        );
+        assert_eq!(
+            (l2.namespace.as_str(), l2.build_id.as_str()),
+            ("ns", "0123456789abcdef")
+        );
+        assert_eq!(p.epoch, Some(EpochCfg { interval_ms: 250 }));
+    }
+
+    #[test]
+    fn a_bad_cache_names_the_field() {
+        let e = parse_all(&with_cache(
+            &CACHE.replace("\"getTimeoutMs\":100", "\"getTimeoutMs\":0"),
+        ))
+        .err()
+        .unwrap();
+        assert!(e.contains("getTimeoutMs"), "{e}");
+        let e = parse_all(&with_cache(
+            &CACHE.replace("\"epochIntervalMs\":250", "\"epochIntervalMs\":10"),
+        ))
+        .err()
+        .unwrap();
+        assert!(e.contains("epochIntervalMs"), "{e}");
+        let e = parse_all(&with_cache(
+            &CACHE.replace("\"namespace\"", "\"nameSpace\""),
+        ))
+        .err()
+        .unwrap();
+        assert!(e.contains("nameSpace"), "{e}");
     }
 }

@@ -20,9 +20,13 @@ use hyper::body::Incoming;
 
 use crate::cache::job_cache::JobCache;
 use crate::cache::l1::L1Cache;
-use crate::dispatch::{CallKind, call_worker, call_worker_fetch, call_worker_planned};
+use crate::dispatch::{
+    CallKind, call_worker, call_worker_cache_get, call_worker_cache_set, call_worker_fetch,
+    call_worker_planned,
+};
 use crate::pool::{PlanBox, WorkerPool};
 use crate::server::static_assets::static_asset_response;
+use brust_core::l2::{L2Counters, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta};
 
 /// The worker pool, the served `dist/` and the two call timeouts.
 pub(crate) struct NativeHost {
@@ -30,6 +34,8 @@ pub(crate) struct NativeHost {
     pub(crate) dist_dir: PathBuf,
     pub(crate) claim_timeout: Duration,
     pub(crate) call_timeout: Duration,
+    /// The cache adapter's `(get_timeout, max_body_bytes)`; `None` = no L2 calls.
+    pub(crate) l2: Option<(Duration, usize)>,
 }
 
 impl Clock for NativeHost {
@@ -38,6 +44,12 @@ impl Clock for NativeHost {
     fn now_ns(&self) -> u64 {
         static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
         EPOCH.elapsed().as_nanos() as u64
+    }
+
+    fn wall_ms(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64)
     }
 }
 
@@ -177,6 +189,45 @@ impl Host for NativeHost {
             head,
             false,
         ))
+    }
+
+    /// One `cache` `get` on any worker, the claim and the call bounded by `get_timeout` (R2, R7):
+    /// a timed-out call's remainder keeps its slot until JS settles (`Detach`), as any call's.
+    async fn l2_get(&self, p: &L2Probe<'_>) -> L2Lookup {
+        let Some((get_timeout, cap)) = self.l2 else {
+            return L2Lookup::Off;
+        };
+        let call = call_worker_cache_get(
+            &self.pool,
+            self.claim_timeout,
+            self.call_timeout,
+            &p.key.0,
+            cap,
+        );
+        match tokio::time::timeout(get_timeout, call).await {
+            Err(_) | Ok(Err(CallError::Deadline)) => L2Lookup::Timeout,
+            Ok(Err(e)) => L2Lookup::Failed(e.to_string()),
+            Ok(Ok(l)) => l,
+        }
+    }
+
+    /// A background `cache` `set` that never waits for a slot: none free → dropped (R2, R5).
+    fn l2_set(&self, key: L2Key, page: L2Page, meta: L2SetMeta, counters: &Arc<L2Counters>) {
+        let (pool, call_timeout, n) = (
+            Arc::clone(&self.pool),
+            self.call_timeout,
+            Arc::clone(counters),
+        );
+        tokio::spawn(async move {
+            let r = call_worker_cache_set(&pool, Duration::ZERO, call_timeout, &key.0, page, &meta)
+                .await;
+            n.bump(match r {
+                Ok(true) => "sets",
+                Ok(false) => "set_refused",
+                Err(CallError::Timeout | CallError::NoWorkers) => "set_dropped",
+                Err(_) => "errors",
+            });
+        });
     }
 }
 

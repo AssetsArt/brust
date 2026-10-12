@@ -179,7 +179,7 @@ jobs:
       - run: cd packages/brust && bun run build:debug
       - run: cd packages/brust && bun run typecheck
       # Unit files together; each server-starting file on its own (port/process hygiene).
-      - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/store-server-context.test.ts test/worker-store.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-client.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/run-options.test.ts test/actions-bridge.test.ts
+      - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/store-server-context.test.ts test/worker-store.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-client.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/run-options.test.ts test/actions-bridge.test.ts test/cache-adapter-memory.test.ts test/cache-adapter-bridge.test.ts test/cache-adapter-runtime.test.ts test/build-config-cache.test.ts test/build-cache.test.ts
       - run: cd packages/brust && bun test test/napi-server.test.ts
       - run: cd packages/brust && bun test test/build-manifest.test.ts
       - run: cd packages/brust && bun test test/cli.test.ts
@@ -198,6 +198,7 @@ jobs:
       - run: cd packages/create-app && bun test --timeout 600000 test/scaffold.test.ts
       - run: bunx playwright install --with-deps chromium
       - run: bun test --timeout 120000 tests/server/pokedex.test.ts
+      - run: bun test --timeout 120000 tests/server/cache-adapter.test.ts
       - run: bun test --timeout 120000 tests/server/hydrate.chromium.test.ts
       # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.
       - run: bun check -p bench

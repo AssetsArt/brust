@@ -18,6 +18,7 @@ use http::HeaderMap;
 
 use crate::cache::stamp::{InvalClock, ReadStamp};
 use crate::cache::{CacheKey, CacheStats, JobKey, RenderedBody};
+use crate::l2::{L2Counters, L2Key, L2Lookup, L2Page, L2Probe, L2SetMeta};
 use crate::plan::{PlanSeed, PlannedCall};
 use crate::protocol::{FetchResponse, JobsRequest, JobsResponse, LoaderRequest, LoaderResponse};
 
@@ -100,6 +101,10 @@ pub trait Clock {
     fn now_ms(&self) -> u64 {
         self.now_ns() / 1_000_000
     }
+    /// Wall-clock ms since the Unix epoch: the age of an L2 entry (`storedAt`). `0` = unknown.
+    fn wall_ms(&self) -> u64 {
+        0
+    }
 }
 
 /// `ms` (a JS `Date.now()`) in ns, never below the last reading in `last`: a reading that goes
@@ -170,6 +175,8 @@ pub trait PageCache {
     fn read_stamp(&self) -> ReadStamp;
     fn invalidate_tags(&self, tags: &[String]) -> usize;
     fn invalidate_path(&self, method: &str, path: &str) -> usize;
+    /// Drop every entry (an L2 broadcast gap); entries stamped before it are refused. The count.
+    fn clear_all(&self) -> usize;
     fn stats(&self) -> CacheStats;
 }
 
@@ -191,6 +198,8 @@ pub trait JobStore {
     fn read_stamp(&self) -> ReadStamp;
     fn invalidate_tags(&self, tags: &[String]) -> usize;
     fn invalidate_user_key(&self, user_key: &str) -> usize;
+    /// Drop every entry (an L2 broadcast gap); entries stamped before it are refused.
+    fn clear_all(&self);
     fn stats(&self) -> CacheStats;
 }
 
@@ -227,6 +236,14 @@ pub trait Host: Clock {
         headers: &HeaderMap,
         head: bool,
     ) -> impl Future<Output = Option<http::Response<Bytes>>>;
+    /// The cache adapter's `store.get` (read-through on an L1 MISS of a cacheable route), bounded
+    /// by `L2Config::get_timeout`. Default: no adapter.
+    fn l2_get(&self, _p: &L2Probe<'_>) -> impl Future<Output = L2Lookup> {
+        async { L2Lookup::Off }
+    }
+    /// The adapter's `store.set` (write-through after an L1 insert): fire and forget, never
+    /// awaited by the request; the outcome lands in `counters`. Default: no adapter.
+    fn l2_set(&self, _key: L2Key, _page: L2Page, _meta: L2SetMeta, _counters: &Arc<L2Counters>) {}
 }
 
 #[cfg(test)]

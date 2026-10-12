@@ -427,6 +427,10 @@ impl<T: Clock + Default> PageCache for LocalL1<T> {
         live
     }
 
+    fn clear_all(&self) -> usize {
+        LocalL1::clear(self)
+    }
+
     fn stats(&self) -> CacheStats {
         let now = self.time.now_ns();
         let mut st = self.store.borrow_mut();
@@ -579,6 +583,10 @@ impl<T: Clock + Default> JobStore for LocalJobs<T> {
         self.store
             .borrow_mut()
             .take_indexed(true, &[user_key.to_owned()])
+    }
+
+    fn clear_all(&self) {
+        LocalJobs::clear(self)
     }
 
     fn stats(&self) -> CacheStats {

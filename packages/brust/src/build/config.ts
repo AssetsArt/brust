@@ -5,6 +5,7 @@
 // such an import in client code, and every browser bundle refuses to include it.
 import { join } from 'node:path'
 import { DEFAULT_ACTION_PREFIX, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, MAX_ACTION_BYTES, prefixError } from '../actions/prefix'
+import { ADAPTER_NAMES, BUILTINS, installHint } from '../cache-adapter/load'
 import { BuildError } from './errors'
 
 // [actions] (opt-in, ruling R6): present table => actions on. Both byte caps cross napi as u32 (F82: 1..64 MiB / 256 KiB..64 MiB).
@@ -38,10 +39,113 @@ export interface CloudflareBuildConfig {
   alias: Record<string, string>
 }
 
+// [cache] (cache adapters, opt-in; spec §6): a shared second tier behind the in-process cache.
+//   adapter = "redis" | "dragonfly" | "cloudflare-kv" | "cloudflare-do" | "custom"   module = "lib/cache.ts" (custom)
+//   broadcast = "<built-in>"   namespace = "<package name>"   get_timeout_ms = 50 (native) / 100 (Workers)
+//   max_body_bytes = 1048576   epoch_interval_ms = 1000   [cache.redis] url = "env:REDIS_URL"   [cache.cloudflare]   [cache.options]
+const CACHE_KEYS = new Set(['adapter', 'broadcast', 'module', 'namespace', 'get_timeout_ms', 'max_body_bytes', 'epoch_interval_ms', 'redis', 'cloudflare', 'options'])
+export const MAX_L2_BODY_BYTES = 67_108_864
+
+export interface CacheBuildConfig {
+  adapter: (typeof ADAPTER_NAMES)[number]
+  /** `custom`: the module, app-root-relative as written. */
+  module: string | undefined
+  broadcast: string | undefined
+  /** The factory's options: `[cache.redis]` / `[cache.cloudflare]` for built-ins, `[cache.options]` for custom. */
+  options: Record<string, unknown>
+  broadcastOptions: Record<string, unknown> | undefined
+  namespace: string
+  /** Absent = the runtime default (native 50, Workers 100). */
+  getTimeoutMs: number | undefined
+  maxBodyBytes: number
+  epochIntervalMs: number
+}
+
 export interface BuildConfig {
   serverOnly: string[]
   actions: ActionsBuildConfig | null
   cloudflare: CloudflareBuildConfig | null
+  cache: CacheBuildConfig | null
+}
+
+const isTable = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
+
+function rangeInt(file: string, key: string, v: unknown, lo: number, hi: number, dflt: number): number {
+  if (v === undefined) return dflt
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < lo || v > hi)
+    throw new BuildError('cache', `${file}: cache.${key} must be an integer in ${lo}..${hi} (got ${String(v)})`)
+  return v
+}
+
+/** The option table a built-in reads. */
+function builtinOptions(name: string, t: Record<string, unknown>): Record<string, unknown> {
+  const key = name === 'redis' || name === 'dragonfly' ? 'redis' : 'cloudflare'
+  return { ...((t[key] as Record<string, unknown> | undefined) ?? {}) }
+}
+
+async function packageName(appRoot: string): Promise<string | undefined> {
+  const f = Bun.file(join(appRoot, 'package.json'))
+  if (!(await f.exists())) return undefined
+  try {
+    const n = ((await f.json()) as { name?: unknown }).name
+    return typeof n === 'string' && n.trim() ? n.trim() : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function parseCache(file: string, appRoot: string, raw: unknown): Promise<CacheBuildConfig | null> {
+  if (raw === undefined) return null
+  if (!isTable(raw)) throw new BuildError('cache', `${file}: [cache] must be a table`)
+  const t = raw
+  for (const k of Object.keys(t)) if (!CACHE_KEYS.has(k)) throw new BuildError('cache', `${file}: cache.${k} is not a known key`)
+  for (const k of ['redis', 'cloudflare', 'options'] as const)
+    if (t[k] !== undefined && !isTable(t[k])) throw new BuildError('cache', `${file}: [cache.${k}] must be a table`)
+  const adapter = t.adapter
+  if (typeof adapter !== 'string' || !(ADAPTER_NAMES as readonly string[]).includes(adapter))
+    throw new BuildError('cache', `${file}: cache.adapter must be one of ${ADAPTER_NAMES.map((n) => `"${n}"`).join(', ')} (got ${JSON.stringify(adapter)})`)
+  const name = adapter as CacheBuildConfig['adapter']
+  let module: string | undefined
+  if (name === 'custom') {
+    if (typeof t.module !== 'string' || t.module.trim() === '') throw new BuildError('cache', `${file}: cache.module is required for adapter "custom"`)
+    module = t.module.trim()
+  } else if (t.module !== undefined) throw new BuildError('cache', `${file}: cache.module is only for adapter "custom"`)
+  let broadcast: string | undefined
+  if (t.broadcast !== undefined) {
+    if (typeof t.broadcast !== 'string' || !(t.broadcast in BUILTINS))
+      throw new BuildError('cache', `${file}: cache.broadcast must name a built-in adapter (${Object.keys(BUILTINS).map((n) => `"${n}"`).join(', ')})`)
+    broadcast = t.broadcast
+  }
+  // `env:` indirection only: a literal URL may carry a password, so the error never echoes the value.
+  const redis = t.redis as Record<string, unknown> | undefined
+  if (redis?.url !== undefined && (typeof redis.url !== 'string' || !/^env:[A-Za-z_][A-Za-z0-9_]*$/.test(redis.url)))
+    throw new BuildError('cache', `${file}: cache.redis.url must be "env:NAME" (a literal URL is refused: it may hold a password)`)
+  for (const n of [name, broadcast]) {
+    if (n === undefined || n === 'custom') continue
+    try {
+      Bun.resolveSync(BUILTINS[n]!, appRoot)
+    } catch {
+      throw new BuildError('cache', `${file}: ${installHint(n)}`)
+    }
+  }
+  const options = name === 'custom' ? { ...((t.options as Record<string, unknown> | undefined) ?? {}) } : builtinOptions(name, t)
+  let namespace = (await packageName(appRoot)) ?? 'brust'
+  if (t.namespace !== undefined) {
+    if (typeof t.namespace !== 'string' || !/^[A-Za-z0-9@._/-]{1,64}$/.test(t.namespace))
+      throw new BuildError('cache', `${file}: cache.namespace must be 1..64 of [A-Za-z0-9@._/-]`)
+    namespace = t.namespace
+  }
+  return {
+    adapter: name,
+    module,
+    broadcast,
+    options,
+    broadcastOptions: broadcast ? builtinOptions(broadcast, t) : undefined,
+    namespace,
+    getTimeoutMs: t.get_timeout_ms === undefined ? undefined : rangeInt(file, 'get_timeout_ms', t.get_timeout_ms, 1, 1000, 50),
+    maxBodyBytes: rangeInt(file, 'max_body_bytes', t.max_body_bytes, 1, MAX_L2_BODY_BYTES, 1_048_576),
+    epochIntervalMs: rangeInt(file, 'epoch_interval_ms', t.epoch_interval_ms, 250, 60_000, 1000),
+  }
 }
 
 function cfCapacity(file: string, key: string, v: unknown, dflt: number): number {
@@ -142,7 +246,7 @@ const DEFAULT_ENTRY = 'actions.ts'
 export async function loadBuildConfig(appRoot: string): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -152,12 +256,13 @@ export async function loadBuildConfig(appRoot: string): Promise<BuildConfig> {
   const root = (parsed ?? {}) as Record<string, unknown>
   const actions = parseActions(file, root.actions)
   const cloudflare = parseCloudflare(file, appRoot, root.cloudflare)
+  const cache = await parseCache(file, appRoot, root.cache)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare }
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => p.trim().replace(/^\.\//, '')), actions, cloudflare }
+  return { serverOnly: so.map((p: string) => p.trim().replace(/^\.\//, '')), actions, cloudflare, cache }
 }

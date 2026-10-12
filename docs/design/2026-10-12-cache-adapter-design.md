@@ -2,6 +2,8 @@
 
 **Status: RULED by lead Detoro 2026-10-12 (R1-R14 in §11 all ACCEPTED as their recommended defaults) — awaiting the HUMAN'S review before lanes are cut.** Key rulings: R1 built-in Cloudflare adapters are opt-in packages; the brust runtime itself still needs only Workers (the §5 rule in the M4-CF spec is amended to say so). R2 one `CacheAdapter` with optional `store` + `broadcast` capabilities (push `subscribe` or pull `since`). R3 the shared tier holds rendered page bodies only; jobs stay local; `key` invalidations are broadcast-only. R4 native read-through via a dedicated `CallKind::Cache`; R5 background write-through, dropped when no worker slot is free; R6 worker 0 receives broadcasts; R7 fail-open budgets (get 50 ms native / 100 ms Workers, poll cap 500 ms); R8 `x-brust-cache: HIT-L2`; R9 KV refuses ttl < 300 s and is documented as a long-TTL store to pair with the DO broadcast; R10 the build generates a 3-line `worker/main.js` re-export so the DO class is bindable (generated, like the entry); R11 bindings are user-declared, the build verifies and prints the snippet; R12 no stampede protection in v1 (documented); R13 Redis/Dragonfly conformance via CI service containers; R14 no entry signing in v1 (documented). Lanes (§10): A `cache-adapter-core` (complex, Dew → Mellow) → B `cache-redis` ∥ C `cache-cloudflare` (standard) → D docs; branch from `m4cf`. The human decision this answers (2026-10-12): "ทำแค่ cache Adapter ไว้ให้ ให้เข้า custom เองได้ ส่วน build-in เราทำ Redis, dragonflydb, cloudflare kv, cloudflare do ไว้ให้". In short: brust defines an adapter interface that users implement themselves, and ships built-ins for Redis, Dragonfly, Cloudflare KV and Cloudflare DO. It supersedes the lane-7 drafts `m4cf-edge-cache` (brust-owned epoch DO) and `m4cf-epoch-hook` (app-supplied epoch hook). Their cursor/replay/ring design is reused here as the pull-model broadcast and as the `cloudflare-do` adapter.
 
+**Lane A landed @70c157f (lane `cache-adapter-core`, plan `docs/plans/2026-10-12-cache-adapter-core.md`, rulings R1-R16 + L1-L7):** the contract (`@brust/core/cache-adapter` + `/conformance`), the memory adapter, the native L2 hooks over `CallKind::Cache`, worker-0 push replay, the Workers bridge + pull cursor, the shared invalidation floor and `stats.l2`. §3, §6, §8 and §10 below are amended to what was built; the HIT path (`get_with`, the probe, `hit_response`) is byte-identical.
+
 Grounding: branch `m4cf` @**eea183f** in `/Users/detoro/code/brust-m4cf`. That commit includes the lane-3 merge 7d842e3 (`crates/brust-wasm`) and the §5 runtime-scope rule eea183f. Every `path:line` was verified there.
 
 Citation key:
@@ -80,12 +82,13 @@ Where the adapter lives:
 ### 3.1 TypeScript (exported from `@brust/core/cache-adapter`)
 ```ts
 export interface StoredPage { status: number; headers: [string, string][]; body: Uint8Array }  // identity body
-export interface SetMeta { ttlMs: number; tags: string[]; method: string; path: string; stamp: number }
-export interface GetResult { page: StoredPage | null; stamp: number | null; storedAt: number | null }
+export interface SetMeta { ttlMs: number; tags: string[]; method: string; path: string; stamp: number | null }  // null = unguarded
+export interface GetResult { page: StoredPage | null; stamp: number | null; entryStamp: number | null; storedAt: number | null }
+// stamp = the broadcast seq NOW (the base of the set that may follow); entryStamp = the stamp the entry was written under (L1)
 export interface CacheStore {
   get(key: string): Promise<GetResult>                       // stamp = broadcast seq now (write-guard base)
   set(key: string, page: StoredPage, meta: SetMeta): Promise<boolean>  // false = refused (stale stamp)
-  invalidate(args: InvalidateArgs): Promise<void>            // shared-side delete (tags/path); key → no-op
+  invalidate(args: InvalidateArgs): Promise<void>            // shared-side delete (tags/path); key → no-op; records the marker BEFORE deleting (L7b)
   readonly maxBodyBytes: number
 }
 export interface InvalidationEvent { seq: number; origin: string; args: InvalidateArgs }
@@ -110,8 +113,11 @@ Rules:
 - A broadcast with `subscribe` is push; one with `since` is pull.
 - On Workers only pull is allowed: no connection outlives a request. A push-only adapter is a build error under `--target cloudflare`.
 - `stamp` and `seq` share ONE sequence space per adapter (the broadcast's). A store without a broadcast returns `stamp: null`, and its writes are unguarded.
+- **Marker before delete (L7b).** `store.invalidate` records the per-tag / per-`method path` marker at the seq its publish will take (the reference memory adapter: current seq + 1) BEFORE deleting, and `set` refuses when a marker > its stamp. A stale `set` racing the invalidation is refused even before the publish (conformance case).
+- **Subpaths (R15).** `@brust/core/cache-adapter` (types, `memoryAdapter`, `defineCacheAdapter`; no `bun`/`bun:*` import, so it bundles into a Worker) and `@brust/core/cache-adapter/conformance` (`runConformance(make, { push?, pull?, guard? })`, bun:test).
 
 ### 3.2 Rust (`crates/brust-core`)
+- **As built** (`crates/brust-core/src/l2.rs`): `L2Config { adapter, get_timeout, max_body_bytes, namespace, build_id }`, `L2Key`, `L2Probe { key, path, tags }`, `L2Page`, `L2SetMeta`, `L2Lookup = Off | Miss{stamp} | Floor{stamp} | Hit{page, stamp, entry_stamp, stored_at_ms} | Timeout | Failed`, `L2Counters`/`L2Stats`, `remaining_ttl` (R6: `ttl − age`, clamped to [1 s, ttl]; expired = miss), and the **invalidation floor** `Floor`/`SharedFloor` (ruling L7c: shared by native and Workers; `Core::l2_replay(args, seq)` raises it, the pipeline checks it on every L2 hit, a same-generation gap sets a global floor, a new generation resets it). `PageCache`/`JobStore` gain `clear_all`; `Clock` gains `wall_ms`; `Core` gains `l2`, `l2_counters`, `l2_floor`, `l2_count`, `clear_local`, `l2_replay`. Write-through happens on any `Miss{stamp}`/`Floor{stamp}` (L2); `null` = unguarded; never on `Timeout`/`Failed`/`Off`. The L2 block is two `#[cold]` helpers behind one `Option` check.
 - **`CoreConfig`** (`core.rs:27-37`) gains `l2: Option<L2Config { get_timeout: Duration, max_body_bytes: usize, namespace: String, build_id: String }>`.
 - **`Host`** (`host.rs:189-224`) gains two methods with default bodies, so a host without L2 compiles unchanged:
   ```rust
@@ -119,8 +125,8 @@ Rules:
   fn l2_set(&self, key: L2Key, body: &Arc<RenderedBody>, meta: L2SetMeta) {}   // spawns; never awaited
   ```
   - `L2Lookup = Off | Miss { stamp: Option<u64> } | Hit { body: RenderedBody, stamp: Option<u64>, stored_at: Option<u64> } | Failed(L2Error)`.
-  - `L2Key` = `"<namespace>:<build_id>:p:" + hex(sha256(prefix ‖ 0 ‖ method ‖ 0 ‖ path ‖ 0 ‖ sorted_query))` over `CacheKey` (`cache/mod.rs:17-23`).
-  - `build_id` = sha256 of `manifest.json` + the template sources, computed at `Core::new`.
+  - `L2Key` = `"<namespace>:<build_id>:p:" + hex(blake3(prefix ‖ 0 ‖ method ‖ 0 ‖ path ‖ 0 ‖ sorted_query))` over `CacheKey` (`cache/mod.rs:17-23`) — blake3, already a dependency (R7).
+  - `build_id` = the first 16 hex chars of sha256 over the manifest (without `cache`), every `jinja/*.jinja` (by name), `jobs.js` and `actions.js`, computed **by the build** (R7) and written to `manifest.cache.buildId` / `CONFIG.cache.buildId`.
 - **`pipeline::page`** (`pipeline.rs:176`) changes in two places:
   1. after the stamp (:220), and only when `s.l2.is_some() && cache_key.is_some()` (bypass/uncached routes have none), it awaits `s.host.l2_get(..)` under `get_timeout`. A valid `Hit` → `RenderedBody` → `s.l1.insert(k, Arc::new(b), ttl, tags, since)` → `hit_response` + `x-brust-cache: HIT-L2`.
   2. at the L1 store (:473-480), when `insert` returned `true` and the L2 lookup produced a stamp → `s.host.l2_set(..)`.
@@ -130,14 +136,16 @@ Rules:
 - **`InvalidateArgs`** (`config.rs:160-171`) derives `Serialize, Clone, PartialEq`.
 
 ### 3.3 Native wire (`CallKind::Cache`)
-- **Request** (inline JSON, per the SAB rule `dispatch.rs:8-21`): `{"op":"get","key":…}` | `{"op":"set","key":…,"meta":{…},"heap":n}`. The set body waits in the call's `FetchCell`, and JS takes it with `takeFetchBody(slot)`.
+- **Request** (inline JSON, per the SAB rule `dispatch.rs:8-21`): `{"op":"get","key":…}` | `{"op":"set","key":…,"status":…,"headers":[…],"meta":{ttlMs,tags,method,path,stamp},"heap":n}`. The set body ALWAYS waits in the call's `CacheCell { body, reply, cap }` (the `FetchCell` twin; `take_fetch_body`/`put_fetch_reply` accept both, each with its own cap), and JS takes it with `takeFetchBody(slot)`. Only `get` and `set` cross Rust → JS (R2); invalidate/publish start in the JS `cache.invalidate` wrapper, subscribe at worker 0's boot.
 - **Response:**
   - `get` hit: `{"hit":true,"status":…,"headers":[…],"stamp":…,"storedAt":…,"heap":n}`, the body via `putFetchReply` (F82 framing, `decode_fetch_reply` `dispatch.rs:277-305`);
   - otherwise `{"hit":false,"stamp":…}`, or `{"error":…}`.
 - `worker.ts:47-69` `makeDispatch` gains `kind === 'cache'`, and `crates/brust-napi/src/dispatch.rs:57-62` `kind_str` gains `"cache"`.
 - **Claims.**
   - `get` uses the normal claim (`claim_timeout`, default 10 s, `server/mod.rs:73`) but is wrapped in `get_timeout`.
-  - `set` uses `try_claim_render_lockfree` (`pool.rs:480`). When no slot is free, the set is **dropped** and `l2.set_dropped`++, so background writes never queue behind page work.
+  - `set` claims with a zero wait (`claim_or_wait(.., Duration::ZERO, ..)` over `try_claim_render_lockfree`, `pool.rs:480`). When no slot is free, the set is **dropped** and `l2.set_dropped`++, so background writes never queue behind page work.
+- **napi** (as built): `StartOptions.l2`, `cacheReplay(args, seq)` (worker 0's replay: tier 1 + the floor, never re-published — L3), `cacheL2Count(name)`, `cacheClear()`. The JS bridge (`cache-adapter/bridge.ts` `runCache`) races `get` with `getTimeoutMs` and `set` with 5 s, so a hung adapter never pins a slot.
+- **Workers wire (as built, R11/R14).** `install(rt, ext)` gets `rt = { invalidate, l2Count }` and answers `{ cache: { origin, get?, set?, since? } }`: `get(key) → {json, body}`, `set(key, json, body)` (deferred with `waitUntil`), `since(seq) → string`. A Worker may not draw random values at start, so the isolate origin and the memory adapter's `gen` are made on first use. The pull cursor (`crates/brust-wasm/src/epoch/`) is polled at most once per `epoch_interval_ms`, single-flight, 500 ms cap, inside the per-request `catch_unwind` future (L6).
 
 ### 3.4 Workers wire
 - The generated entry imports the adapter module/factory and passes it to `install(rt, { cache })`. `install` returns `{ cache }`, and `bridge::install` keeps the JS functions.
@@ -172,6 +180,7 @@ The HIT path and every non-cacheable route are untouched.
    - KV: impossible (no CAS), so the stale window is ≤ ttl, documented.
 3. **Invalidation floor (Workers).** The cursor remembers, in a bounded LRU of 4096 entries, the last replayed seq per tag and per path. An L2 hit whose `stamp` is below the floor of one of its tags/path is discarded as a miss. This closes the KV+DO case where a colo still holds a deleted body.
 4. **Own echo.** Every event carries `origin` (the worker or isolate id). Replay skips its own events: tier 1 is already invalidated.
+   - **Own replay (review F1, lane A).** Between the tier-1 primitive and the store delete, a request on the origin can re-fill tier 1 from the old L2 body, and its echo is skipped. So once its publish settles, the origin replays its own invalidation exactly once through the host REPLAY primitive (napi `cacheReplay` / wasm `rt.replay` → `Core::l2_replay(args, seq)`): tier 1 again and the floor at the publish seq. It is never published again (L3). No broadcast or a failed publish → tier 1 only (`seq` null).
 5. **Gaps.**
    - Push: on (re)subscribe, and in a 10 s reconciliation that reads the store's seq, a seq beyond the last seen → `onGap` → clear tier 1.
    - Pull: `behind`, a `gen` change, a regression, or a count mismatch → clear (the cursor rules of the epoch-hook draft).
@@ -243,6 +252,7 @@ do_store = false
 kv_min_ttl_s = 300
 [cache.options]                # passed to a custom factory
 ```
+- **As built (R4, R8).** `max_body_bytes` defaults to 1048576 (1..=67108864). `module` (custom) must be a file inside the app; natively it is bundled to `dist/cache-adapter.js`, on Workers the generated entry imports the source. Built-ins resolve from the app root (`Bun.resolveSync`) with an install hint when missing: `redis` → `@brust/cache-redis`, `dragonfly` → `@brust/cache-redis/dragonfly`, `cloudflare-kv` → `@brust/cache-cloudflare/kv`, `cloudflare-do` → `@brust/cache-cloudflare/do` (each subpath's default export is a factory). `[cache.redis]` feeds redis/dragonfly, `[cache.cloudflare]` feeds kv/do, `[cache.options]` feeds custom. `[cache.redis].url` must be `env:NAME` (resolved from the worker's env at boot); any `env:` option on `--target cloudflare` is a build error. `broadcast` names a built-in only. Native accepts push broadcasts only (R1); Workers accept pull only (R14, checked by the build smoke).
 - Native: `brust start` reads `[cache]`, passes `L2Config` to `startServer` (a new `StartOptions.l2`, `crates/brust-napi/src/server.rs:146-171`), and each worker instantiates the adapter.
 - Workers: `brust build --target cloudflare` validates the runtime support, bundles the adapter, and writes `CONFIG.cache` (`cf-entry.ts:3-12`). The wasm `CfConfig` (`deny_unknown_fields`, `crates/brust-wasm/src/config.rs:10`) gains the field.
 
@@ -258,7 +268,7 @@ Core never depends on a Redis client or on Cloudflare types at runtime. Each nam
 ## 8. Metrics (`/_brust/cache/stats`, present only with an adapter)
 `"l2": {"adapter":"redis","hits":0,"misses":0,"timeouts":0,"errors":0,"rejected_floor":0,"sets":0,"set_refused":0,"set_dropped":0,"published":0,"publish_errors":0,"received":0,"skipped_own":0,"resets":0,"epoch_polls":0,"poll_errors":0}`
 
-- Rust counts the request-path fields. The JS side counts publish/receive per worker, and worker 0 reports them through `cacheStats` (napi `server.rs:332`).
+- **As built (R9):** `set_oversize` follows `set_dropped`. Rust counts the request-path fields (`hits`, `misses`, `timeouts`, `errors`, `rejected_floor`, `set_*`, native `sets`/`set_refused`, Workers `epoch_polls`/`poll_errors`/`received`/`skipped_own`, `resets` on every tier-1 clear). The JS side counts `published`/`publish_errors` (and native `received`/`skipped_own`, Workers `sets`/`set_refused`) through napi `cacheL2Count(name)` / `rt.l2Count(name)` into the one per-process (native) / per-isolate (Workers) object.
 - On Workers `/_brust/cache/stats` is gated by `[cloudflare] stats` (lane 3 R11), and the numbers are per isolate.
 
 ## 9. Tests
@@ -278,7 +288,7 @@ Core never depends on a Redis client or on Cloudflare types at runtime. Each nam
 ## 10. Lanes (branch from `v2` after `m4cf` merges, or from `m4cf`: R14)
 | # | slug | tier / review | boundary | goal |
 |---|---|---|---|---|
-| A | `cache-adapter-core` | complex / complex | `crates/brust-core/src/{host,core,config,pipeline}.rs`, `crates/brust-server/src/{dispatch,host}.rs`, `crates/brust-napi/src/{dispatch,server}.rs`, `crates/brust-wasm/src/{bridge,entry,host,config}.rs` + `epoch/**`, `packages/brust/src/{cache-adapter/**,worker.ts,cache.ts,config.ts,server-handlers.ts,build/{config,cf-entry,cloudflare}.ts}`, `bench/attribution.patch` | interface + conformance + in-memory adapter; Host L2 hooks + pipeline; `CallKind::Cache`; the Workers bridge + cursor; stats; `custom` works on both runtimes; bench within noise |
+| A | `cache-adapter-core` | complex / complex | (as built: plus `crates/brust-core/src/{l2,protocol}.rs`, `crates/brust-server/src/{actions,config,lib}.rs` + `tests/{l2.rs,common/**}`, `crates/brust-wasm/src/epoch/{cursor,sync}.rs`, `packages/brust/src/cache-adapter/{types,memory,conformance,runtime,bridge,load,workers}.ts`, `build/{bundle,manifest}.ts`, `run.ts`, `tests/fixtures/{l2-relay,cf-l2}`, `tests/server/{cache-adapter.test.ts,l2-relay.ts}`, `tests/cf/cache-adapter.test.ts`) `crates/brust-core/src/{host,core,config,pipeline}.rs`, `crates/brust-server/src/{dispatch,host}.rs`, `crates/brust-napi/src/{dispatch,server}.rs`, `crates/brust-wasm/src/{bridge,entry,host,config}.rs` + `epoch/**`, `packages/brust/src/{cache-adapter/**,worker.ts,cache.ts,config.ts,server-handlers.ts,build/{config,cf-entry,cloudflare}.ts}`, `bench/attribution.patch` | interface + conformance + in-memory adapter; Host L2 hooks + pipeline; `CallKind::Cache`; the Workers bridge + cursor; stats; `custom` works on both runtimes; bench within noise |
 | B | `cache-redis` | standard / standard | `packages/cache-redis/**`, `.github/workflows/ci.yml` (services), `tests/server/l2-redis.test.ts` | Redis + Dragonfly pass conformance; two-process e2e |
 | C | `cache-cloudflare` | standard / complex | `packages/cache-cloudflare/**`, `packages/brust/src/build/{cf-wrangler,cloudflare}.ts` (R10/R11), `tests/fixtures/cf-cache/**`, `tests/cf/**` | KV + DO (+ `do_store`) pass conformance under workerd; class export per R10 |
 | D | docs | docs-only | `docs/cache-adapters.md`, `docs/cloudflare.md`, spec §5 | the semantics table, cost tables (DO, KV), the custom-adapter guide, the Upstash example |

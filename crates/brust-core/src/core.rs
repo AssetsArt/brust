@@ -17,6 +17,7 @@ use crate::cache::stamp::InvalClock;
 use crate::config::{ActionsConfig, CorsConfig, InvalidateArgs, InvalidateResult, Stats};
 use crate::cors::ResolvedCors;
 use crate::host::{Host, JobStore, PageCache, RequestHead};
+use crate::l2::{L2Config, L2Counters, SharedFloor};
 use crate::manifest::{Loaded, Manifest};
 use crate::pipeline::PlanIndex;
 use crate::render::Renderer;
@@ -34,6 +35,8 @@ pub struct CoreConfig {
     pub actions: Option<ActionsConfig>,
     /// The host serves HTTPS: the scheme `cache.prefix`/`bypass` expressions see.
     pub https: bool,
+    /// The cache adapter (shared second tier); `None` = none, and nothing changes.
+    pub l2: Option<L2Config>,
 }
 
 /// The shared core state, one per server.
@@ -80,6 +83,15 @@ pub struct Core<H: Host> {
     pub(crate) powered_by: Option<HeaderValue>,
     /// The scheme the L1 key expressions see is `https`.
     pub(crate) https: bool,
+    /// The cache adapter; `None` = no L2 call is ever made.
+    #[doc(hidden)]
+    pub l2: Option<L2Config>,
+    /// `stats.l2`, shared with the host's background `l2_set` tasks.
+    #[doc(hidden)]
+    pub l2_counters: Arc<L2Counters>,
+    /// The invalidation floor raised by replayed broadcasts (spec §4.2.3, ruling L7c).
+    #[doc(hidden)]
+    pub l2_floor: SharedFloor,
 }
 
 impl<H: Host> Core<H> {
@@ -138,6 +150,9 @@ impl<H: Host> Core<H> {
             actions: cfg.actions,
             powered_by: powered_by(cfg.generator.as_deref()),
             https: cfg.https,
+            l2: cfg.l2,
+            l2_counters: Arc::default(),
+            l2_floor: SharedFloor::default(),
         })
     }
 
@@ -164,6 +179,30 @@ impl<H: Host> Core<H> {
         r
     }
 
+    /// A broadcast invalidation from another instance (seq `seq`): tier 1 as [`Core::invalidate`],
+    /// then the floor, so an older L2 body of those tags/paths is a miss here. Never re-published.
+    pub fn l2_replay(&self, args: InvalidateArgs, seq: Option<u64>) -> InvalidateResult {
+        if let Some(seq) = seq {
+            self.l2_floor.with(|f| f.raise(&args, seq));
+        }
+        self.invalidate(args)
+    }
+
+    /// Bump the `stats.l2` counter `name` (the JS side's counts); `false` = unknown name or no L2.
+    pub fn l2_count(&self, name: &str) -> bool {
+        self.l2.is_some() && self.l2_counters.bump(name)
+    }
+
+    /// Drop both tier-1 caches (an L2 broadcast gap); `resets`++ with an adapter. The L1 count.
+    pub fn clear_local(&self) -> usize {
+        let n = self.l1.clear_all();
+        self.jobs.clear_all();
+        if self.l2.is_some() {
+            self.l2_counters.bump("resets");
+        }
+        n
+    }
+
     pub fn stats(&self) -> Stats {
         Stats {
             l1: self.l1.stats(),
@@ -173,6 +212,10 @@ impl<H: Host> Core<H> {
             worker_calls: self.worker_calls.get(),
             timed_out_calls: self.timed_out_calls.load(Ordering::Relaxed),
             missing_slots: self.missing_slots.lock().map_or(0, |m| m.len() as u64),
+            l2: self
+                .l2
+                .as_ref()
+                .map(|c| self.l2_counters.snapshot(&c.adapter)),
         }
     }
 
