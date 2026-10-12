@@ -1,6 +1,6 @@
 // Introduction — what brust is, how a request is served, and the three tiers, with a live native demo.
 import CodeBlock from '../../components/CodeBlock'
-import CatchCard from '../../components/demos/CatchCard'
+import CatchCard from '../../components/landing/demos/CatchCard'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { artworkUrl, byId, dexNo, displayName, shinyUrl } from '../../lib/pokemon'
@@ -78,13 +78,11 @@ export default function Introduction({ blocks, demo }: IntroductionData) {
           <span>Live demo</span>
           <span className="lbl">CatchCard · native</span>
         </div>
-        <div className="vp">
-          <CatchCard no={demo.no} name={demo.name} type={demo.type} art={demo.art} shinyArt={demo.shinyArt} />
-        </div>
+        <CatchCard no={demo.no} name={demo.name} art={demo.art} shinyArt={demo.shinyArt} />
       </div>
       <CodeBlock code={blocks.card.code} lang={blocks.card.lang} file={blocks.card.file} html={blocks.card.html} />
       <p>
-        <code>useState</code>, a controlled checkbox and a click handler are all native-tier features, so this card ships no React. The <a href="/docs/rendering-tiers">Rendering tiers</a> page lists what lands where.
+        The live card is the landing page's CatchCard (it also logs each signal write). <code>useState</code>, a controlled checkbox and a click handler are all native-tier features, so this card ships no React. The <a href="/docs/rendering-tiers">Rendering tiers</a> page lists what lands where.
       </p>
 
       <h2 id="next">Where to go next</h2>

@@ -3,31 +3,12 @@
 // array would answer differently per worker, and a cookie also keeps each reader's team their own.
 import { brust } from '@brust/core/elysia'
 import { Elysia, problem, t } from 'elysia'
-import { byId, displayName, spriteUrl } from './lib/pokemon'
+import { MAX_TEAM, member, teamCookie, teamFromCookie } from './components/demos/team-cookie'
+import type { TeamMember } from './components/demos/team-store'
+import { byId } from './lib/pokemon'
 
-export const MAX_TEAM = 6
-const COOKIE = 'brust_docs_team'
-
-export interface TeamMember {
-  id: number
-  name: string
-  sprite: string
-}
-
-/** The team ids stored in the cookie header, unknown or repeated ids dropped, at most MAX_TEAM. */
-export function teamFromCookie(header: string | null | undefined): TeamMember[] {
-  const raw = (header ?? '').split(/;\s*/).find((c) => c.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1) ?? ''
-  const ids = [...new Set(decodeURIComponent(raw).split('.').map(Number))].filter((id) => byId(id) !== undefined)
-  return ids.slice(0, MAX_TEAM).map(member)
-}
-
-function member(id: number): TeamMember {
-  const p = byId(id)!
-  return { id, name: displayName(p.name), sprite: spriteUrl(id) }
-}
-
-function save(set: { headers: Record<string, string | number> }, team: TeamMember[]) {
-  set.headers['set-cookie'] = `${COOKIE}=${team.map((m) => m.id).join('.')}; Path=/; Max-Age=86400; SameSite=Lax; HttpOnly`
+function save(set: { headers: Record<string, unknown> }, team: TeamMember[]) {
+  set.headers['set-cookie'] = teamCookie(team)
   return { team, max: MAX_TEAM }
 }
 

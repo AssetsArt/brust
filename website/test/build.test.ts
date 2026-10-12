@@ -35,7 +35,8 @@ afterAll(() => {
 
 test('brust build routes.tsx: routes /, /docs (+ docs pages), *; the layout chrome is static with no jobs', () => {
   const m = build('routes.tsx', 'dist-test')
-  const patterns = m.routes.map((r) => r.pattern)
+  // the /demo/... routes (Guide demos) sit between / and the docs block
+  const patterns = m.routes.map((r) => r.pattern).filter((p) => !p.startsWith('/demo/'))
   expect(patterns.slice(0, 2)).toEqual(['/', '/docs'])
   expect(patterns.at(-1)).toBe('*')
   for (const name of ['Layout', 'SiteHeader', 'SiteFooter', 'NotFoundPage']) {

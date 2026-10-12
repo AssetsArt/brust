@@ -4,9 +4,9 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import CodeBlock from '../../components/CodeBlock'
 import Note from '../../components/docs/Note'
-import CatchCard from '../../components/demos/CatchCard'
-import PokemonCard from '../../components/demos/PokemonCard'
-import PokemonSearch from '../../components/demos/PokemonSearch'
+import CatchCard from '../../components/landing/demos/CatchCard'
+import PokemonCard from '../../components/landing/demos/PokemonCard'
+import PokemonSearch from '../../components/landing/demos/PokemonSearch'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { artworkUrl, byId, dexNo, displayName, POKEMON, shinyUrl, spriteUrl } from '../../lib/pokemon'
@@ -22,7 +22,7 @@ export interface RenderingTiersData {
   tiers: { card: Shipped; catch: Shipped; search: Shipped }
   cards: { no: string; name: string; art: string; types: string[] }[]
   catchMon: { no: string; name: string; type: string; art: string; shinyArt: string }
-  all: { id: number; no: string; name: string; sprite: string }[]
+  all: { id: number; no: string; label: string; name: string; sprite: string }[]
 }
 
 let manifest: { components: Record<string, { tier: string; client: string | null }> } | undefined
@@ -51,13 +51,13 @@ export async function renderingTiersLoader(): Promise<RenderingTiersData> {
       { id: 'see', title: 'See what you got' },
     ],
     blocks: {
-      warning: codeBlock({ lang: 'sh', cwd: '~/my-app', code: '$ bun run build\nwarning hook-unsupported components/PokemonSearch.tsx:16:16 hook useDebounced is not supported\n[brust] built dist in 120ms' }),
-      manifest: codeBlock({ lang: 'json', file: 'dist/manifest.json', code: '"pokemonSearch_ebcabefd": {\n  "tier": "react",\n  "client": "client/react-pokemonSearch_ebcabefd-….js",\n  "jobs": [{ "kind": "ssr", … }]\n}' }),
+      warning: codeBlock({ lang: 'sh', cwd: '~/pokedex', code: '$ bun run build\nwarning hook-unsupported components/TeamBuilder.tsx:12:26 hook useReducer is not supported\nwarning hook-unsupported components/UnifiedIsland.tsx:11:25 hook useReducer is not supported\n[brust] built dist in 73ms' }),
+      manifest: codeBlock({ lang: 'json', file: 'dist/manifest.json', code: '"pokemonSearch_<hash>": {\n  "tier": "react",\n  "client": "client/react-pokemonSearch_<hash>-<hash>.js",\n  "jobs": [{ "kind": "ssr", … }]\n}' }),
     },
     tiers: { card: shipped('pokemonCard'), catch: shipped('catchCard'), search: shipped('pokemonSearch') },
     cards: [mon(1), mon(4), mon(7)],
     catchMon: { no: dexNo(25), name: displayName(pika.name), type: pika.types[0]!, art: artworkUrl(25), shinyArt: shinyUrl(25) },
-    all: POKEMON.map((p) => ({ id: p.id, no: dexNo(p.id), name: displayName(p.name), sprite: spriteUrl(p.id) })),
+    all: POKEMON.map((p) => ({ id: p.id, no: dexNo(p.id), label: displayName(p.name), name: p.name, sprite: spriteUrl(p.id) })),
   }
 }
 
@@ -105,7 +105,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       </p>
 
       <h2 id="live">The three, live</h2>
-      <p>These are three components of this site. The tier and the shipped chunk under each one come from this build's manifest, read by the page's loader.</p>
+      <p>These are the landing page's three demo components. The tier and the shipped chunk under each one come from this build's manifest, read by the page's loader.</p>
       <div className="browser">
         <div className="url">
           <span>PokemonCard</span>
@@ -128,9 +128,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
             tier {tiers.catch.tier} · client {tiers.catch.client}
           </span>
         </div>
-        <div className="vp">
-          <CatchCard no={catchMon.no} name={catchMon.name} type={catchMon.type} art={catchMon.art} shinyArt={catchMon.shinyArt} />
-        </div>
+        <CatchCard no={catchMon.no} name={catchMon.name} art={catchMon.art} shinyArt={catchMon.shinyArt} />
       </div>
       <div className="browser">
         <div className="url">
@@ -139,9 +137,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
             tier {tiers.search.tier} · client {tiers.search.client}
           </span>
         </div>
-        <div className="vp">
-          <PokemonSearch all={all} />
-        </div>
+        <PokemonSearch all={all} />
       </div>
 
       <h2 id="hooks">What decides the tier</h2>
@@ -185,7 +181,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       </Note>
 
       <h2 id="see">See what you got</h2>
-      <p>Every fallback is printed once per component by the build, with the rule and the line:</p>
+      <p>Every fallback is printed once per component by the build, with the rule and the line. This is the pokedex example's build:</p>
       <CodeBlock code={blocks.warning.code} lang={blocks.warning.lang} cwd={blocks.warning.cwd} html={blocks.warning.html} />
       <p>
         The full answer is in <code>dist/manifest.json</code>: each component has a <code>tier</code>, the <code>client</code> chunk it ships (<code>null</code> when nothing ships) and its server <code>jobs</code>.

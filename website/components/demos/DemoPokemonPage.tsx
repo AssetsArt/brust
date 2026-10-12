@@ -2,7 +2,7 @@
 // 60 s under the tag `pokemon`, `?nocache=1` bypasses. The Caching and Loaders docs pages fetch and link it.
 import { type LoaderCtx, notFound, type Verdict } from '@brust/core/routes'
 import { artworkUrl, byName, dexNo, displayName } from '../../lib/pokemon'
-import PokemonCard from './PokemonCard'
+import PokemonCard from '../landing/demos/PokemonCard'
 
 export interface DemoPokemonData {
   title: string

@@ -1,7 +1,7 @@
 // Loaders and params — the loader context, how results reach components, verdicts; the demo IS this page's loader.
 import CodeBlock from '../../components/CodeBlock'
 import Note from '../../components/docs/Note'
-import PokemonCard from '../../components/demos/PokemonCard'
+import PokemonCard from '../../components/landing/demos/PokemonCard'
 import type { LoaderCtx } from '@brust/core/routes'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
