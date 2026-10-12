@@ -416,6 +416,27 @@ impl L1Cache {
         ReadStamp(self.inval_seq.load(Ordering::SeqCst))
     }
 
+    /// Take the next invalidation sequence number (F86).
+    fn next_inval(&self) -> u64 {
+        self.inval_seq.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// The `tag_inval` / `path_inval` slot of `v`.
+    fn slot<T: std::hash::Hash + ?Sized>(&self, v: &T) -> usize {
+        (self.hasher.hash_one(v) as usize) % INVAL_SLOTS
+    }
+
+    /// Whether a covering invalidation (`clear`, this key's method + path, or one of `tags`, each
+    /// by slot) took a sequence number after `since`.
+    fn invalidated_since(&self, key: &CacheKey, tags: &[String], since: ReadStamp) -> bool {
+        let after = |a: &AtomicU64| a.load(Ordering::SeqCst) > since.0;
+        after(&self.cleared_at)
+            || after(&self.path_inval[self.slot(&(key.method.as_str(), key.path.as_str()))])
+            || tags
+                .iter()
+                .any(|t| after(&self.tag_inval[self.slot(t.as_str())]))
+    }
+
     /// Since S10 a HIT serves `body` (with its headers): the render context and the loader's
     /// headers are not stored (ruling R-E; the parameters went with ledger F78). Returns `false`
     /// when the insert did not land: a covering invalidation came after `since` (F86).
@@ -442,6 +463,13 @@ impl L1Cache {
         // land in generation order (see `JobCache::insert`).
         let shard = shard_of(&self.hasher, &key);
         let _stripe = self.stripes[shard].lock();
+        // F86: the render behind this insert read its data at `since`. Checked under the gate (tag
+        // invalidation and `clear` publish under it exclusively) and the stripe (`invalidate_path`
+        // publishes, then scans this shard under it), held until the write below. A rejection
+        // writes nothing.
+        if self.invalidated_since(&key, tags, since) {
+            return false;
+        }
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         index_tags(&self.tag_index, &key, tags, generation);
         #[cfg(test)]
@@ -472,7 +500,6 @@ impl L1Cache {
                 generation,
             },
         );
-        let _ = since;
         true
     }
 
@@ -530,6 +557,10 @@ impl L1Cache {
     pub fn invalidate_tags(&self, tags: &[String]) -> usize {
         let n = {
             let _gate = self.gate.write(); // no insert is mid-way (see `insert`)
+            let seq = self.next_inval();
+            for t in tags {
+                self.tag_inval[self.slot(t.as_str())].fetch_max(seq, Ordering::SeqCst);
+            }
             let keys = take_tagged(&self.tag_index, tags);
             let n = keys.len();
             for k in keys {
@@ -553,6 +584,8 @@ impl L1Cache {
         // the listener prunes its index entry) or lands fresh after.
         {
             let _gate = self.gate.write();
+            self.cleared_at
+                .fetch_max(self.next_inval(), Ordering::SeqCst);
             self.tag_index.lock().clear();
             self.inner.invalidate_all();
             for s in self.front.iter() {
@@ -573,13 +606,13 @@ impl L1Cache {
     /// The `tag_inval` slot of `t` (test hook: tests pick non-colliding tags with it).
     #[cfg(test)]
     pub(crate) fn tag_slot(&self, t: &str) -> usize {
-        (self.hasher.hash_one(t) as usize) % INVAL_SLOTS
+        self.slot(t)
     }
 
     /// The `path_inval` slot of `(m, p)` (test hook, as `tag_slot`).
     #[cfg(test)]
     pub(crate) fn path_slot(&self, m: &str, p: &str) -> usize {
-        (self.hasher.hash_one((m, p)) as usize) % INVAL_SLOTS
+        self.slot(&(m, p))
     }
 
     /// Entries in the read front (test hook: it must track moka's).
