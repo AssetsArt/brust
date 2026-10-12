@@ -1,4 +1,6 @@
-//! brust v2 server. No Bun, no napi: the worker is a `RenderDispatch` trait object.
+//! brust v2 server: the native host over `brust-core` (tokio + hyper, the worker pool, `dist/` on
+//! disk, the moka caches). No Bun, no napi: the worker is a `RenderDispatch` trait object. Every
+//! path that resolved here before the core split still does (`tests/public_api.rs`).
 #![deny(clippy::all)]
 mod actions;
 pub mod cache;
