@@ -128,25 +128,27 @@ member for `cargo test` on the host.
 | Module (today, brust-server) | Verdict | Why (verified) |
 |---|---|---|
 | `routing/routes.rs` | **moves → core** | pure; `HeaderMap` comes from the `http` crate (`routes.rs:29,323`) |
-| `manifest.rs` | **moves** (+ new `Manifest::from_parts(json, templates)`); fs `load` stays native | `std::fs` only in `load` (`manifest.rs:334-385`) |
+| `manifest.rs` | **moves**, `load` included (an inherent method: the orphan rule keeps it in core; `std::fs` compiles on wasm32 and fails at runtime). `Manifest::from_parts(json, templates)` → **M4-CF-3**, its first caller (lane-1 R5) | `std::fs` only in `load` (`manifest.rs:334-385`) |
 | `render.rs` | **moves** | `Renderer::from_templates(&BTreeMap)` is already fs-free (`render.rs:95`) |
 | `inputs.rs`, `protocol.rs`, `cache/key_expr.rs`, `cache/stamp.rs` | **move** | pure; `stamp.rs` is an `AtomicU64` clock (`stamp.rs:6,17`) |
 | `pipeline.rs` (page, l1_decision, plan/merge/slots/render helpers) | **moves**, generic over `H: Host` | the only couplings are `Incoming` (`:18,73`), `tokio::fs` (`:225-257`, moves to host) and `call_worker*` (`:22`, becomes host methods) |
 | `pipeline.rs::plan_in_call`, `PlanCell` SAB read | **stays** native | sync napi re-entry over the SAB (`:1902`) |
-| `actions.rs` admission (`cross_site_verdict` `:147`, `ambiguous_path` `:192`, `encode_body` `:232`, `response_from_fetch` `:276`) | **moves** | pure over `http::Parts`/`HeaderMap` |
+| `actions.rs` admission (`cross_site_verdict` `:147`, `ambiguous_path` `:192`, `encode_body` `:232`, `response_from_fetch` `:276`) | **moves**; the A1 `FetchRequest` build (inline/heap body, header pairs, envelope) stays in the native host's `action` | pure over `RequestHead`/`HeaderMap` |
 | `actions.rs::read_capped` (`:213`, hyper `Incoming`) | **stays**; the host provides `read_body` | body source differs per host |
 | `server/cors.rs` | **moves** | `http` types only (`cors.rs:17-22,160`) |
 | `server/body.rs` error helpers (`:232-290`) | **move**, returning `http::Response<Bytes>` | `BoxBody` (`:28`) stays native; the native adapter boxes once, same allocation count as `full_body` today [I] |
 | `server/static_assets.rs` pure helpers, `safe_rel`/`is_hashed` | **move** | pure |
 | `http/compress.rs` `gzip`/`accepts_gzip` | **move**, behind `gzip` feature | `GZIP_CACHE` moka (`compress.rs:9,24`) stays native |
 | `config.rs` `CorsConfig`/`ActionsConfig`/`InvalidateArgs`/`Stats` | **move** | `Server` keeps `Notify`/addr/tls (`config.rs:16,237-282`) and becomes `Core<H>` + native extras |
-| `cache/l1.rs`, `cache/job_cache.rs` | **stay**, impl core traits | moka sync + `ShardedLock` + `Instant` (`l1.rs:39-41`, `job_cache.rs:27-30`) |
+| `cache/l1.rs`, `cache/job_cache.rs` | **stay**, impl `PageCache`/`JobStore` by `#[inline]` forwards; the entry/key/stats types (`CacheKey`, `RenderedBody`, `CacheStats`, `JobKey`, `build_cache_key`, `StripedCounter`) move to `brust_core::cache` | moka sync + `ShardedLock` + `Instant` (`l1.rs:39-41`, `job_cache.rs:27-30`) |
 | `pool.rs`, `dispatch.rs`, `server/mod.rs`, `tls.rs`, `coarse_timer.rs` | **stay** | tokio/threads/SAB by design (`dispatch.rs:68-130`) |
 | `brust-jinja` | unchanged | deps are `minijinja` + `serde` only (`crates/brust-jinja/Cargo.toml`) |
 | `brust-napi` | unchanged | uses the re-exports |
-| **new** `brust-core/src/host.rs` | `Host`, `PageCache`, `JobStore`, `Clock` | §4 |
+| **new** `brust-core/src/host.rs` | `Host`, `PageCache`, `JobStore`, `Clock` (+ `core.rs` `Core<H>`, `plan.rs` the planned-call data) | §4 |
 | **new** `brust-core/src/cache/local.rs` | `LocalL1`, `LocalJobs` | one shared conformance test suite runs against both impls (F81/F86/F89 cases) |
 | **new** `crates/brust-wasm` | `lib.rs` (`#[event(start)]`, `#[event(fetch)]`), `host.rs` (`WasmHost`), `bridge.rs` (raw_module externs) | §4 |
+
+**Status (2026-10-12):** M4-CF-1 done @15d1051 (lane `m4cf-core-split`): every "moves"/"stay" row above as amended, except the two "new" rows of later lanes (`cache/local.rs` → M4-CF-2, `brust-wasm` → M4-CF-3). `brust-server`'s public paths are pinned by `tests/public_api.rs`; `brust-napi` is unchanged.
 
 **Packages.** In `packages/brust`:
 - Split `worker.ts` into `handlers.ts`, which holds the pure `makeHandlers` plus helpers (`worker.ts:105-266`), and the Bun
@@ -171,28 +173,62 @@ The `Send` question:
 
 ## 4. Interfaces
 
-**Rust (brust-core)**
+**Rust (brust-core)** — as merged in M4-CF-1 @15d1051 (`crates/brust-core/src/host.rs`, `core.rs`).
+**Amended 2026-10-12 (lane-1 R9, ruled before dispatch):** seven deltas from the draft: (a) `RequestHead` gains `authority`
+(actions R8: the HTTP/2 host); (b) `Clock::now_ns` (+ default `now_ms`) with `Host: Clock` replaces `Host::now_ms`, so the
+`dur_ms` log keeps its precision; (c) `PageCache::with_clock` / `JobStore::with_clock`, so `Core::new` builds both caches on
+one invalidation clock; (d) `const PLAN_OFFER: bool` on `Host` (native `true`; Workers `false`, R4); (e) `Host::action` returns
+`FetchResponse` and `Core::handle` returns `http::Response<Bytes>` — `ActionReply::Passthrough`/`Outcome` arrive with M4-CF-3,
+no dead variant now; (f) `Host::static_file` gets a path already `safe_rel`-checked, and core stamps `immutable`/`nosniff`
+after it; (g) `X-Powered-By` is built in `Core::new`, so an invalid generator warns at `start`, not after bind.
 ```rust
-pub struct RequestHead<'a> { pub method: &'a str, pub full: &'a str /* path?query */, pub headers: &'a http::HeaderMap }
-pub trait Host {                                   // no Send bound (workers-rs futures are !Send)
+pub struct RequestHead<'a> { pub method: &'a str, pub full: &'a str /* path?query */, pub headers: &'a http::HeaderMap,
+                             pub authority: Option<&'a str> }
+pub struct ActionCall<'a> { pub method: &'a str, pub full: &'a str, pub headers: &'a http::HeaderMap,
+                            pub authority: Option<&'a str>, pub body: Option<bytes::Bytes> }
+pub enum ReadErr { TooLarge, Io, Slow }
+pub enum StaticRoot { Brust, Public }
+pub trait Clock { fn now_ns(&self) -> u64; fn now_ms(&self) -> u64 { self.now_ns() / 1_000_000 } }
+pub trait PageCache {                              // native: L1Cache (moka + sharded front)
+    fn with_clock(capacity: u64, clock: Arc<InvalClock>) -> Self where Self: Sized;
+    fn get_with<R>(&self, key: &CacheKey, f: impl FnOnce(&Arc<RenderedBody>) -> R) -> Option<R>;
+    fn insert(&self, key: CacheKey, body: Arc<RenderedBody>, ttl: Duration, tags: &[String], since: ReadStamp) -> bool;
+    fn read_stamp(&self) -> ReadStamp;
+    fn invalidate_tags(&self, tags: &[String]) -> usize;
+    fn invalidate_path(&self, method: &str, path: &str) -> usize;
+    fn stats(&self) -> CacheStats;
+}
+pub trait JobStore {                               // native: JobCache
+    fn with_clock(capacity: u64, clock: Arc<InvalClock>) -> Self where Self: Sized;
+    fn get(&self, k: &JobKey) -> Option<Arc<Node>>;
+    fn insert(&self, k: JobKey, v: Arc<Node>, ttl: Option<Duration>, tags: &[String], user_key: Option<&str>,
+              since: ReadStamp) -> bool;
+    fn read_stamp(&self) -> ReadStamp;
+    fn invalidate_tags(&self, tags: &[String]) -> usize;
+    fn invalidate_user_key(&self, user_key: &str) -> usize;
+    fn stats(&self) -> CacheStats;
+}
+pub trait Host: Clock {                            // no Send bound (workers-rs futures are !Send)
     type Body;                                     // hyper Incoming | worker::Request
     type L1: PageCache; type Jobs: JobStore;
-    fn now_ms(&self) -> u64;                       // native: coarse Instant; wasm: js_sys::Date::now()
+    const PLAN_OFFER: bool;                        // native true; Workers false (R4)
     fn loader(&self, req: &LoaderRequest<'_>, offer: Option<PlanSeed>)
-        -> impl Future<Output = Result<(LoaderResponse, Option<Planned>), CallError>>;
+        -> impl Future<Output = Result<(LoaderResponse, Option<PlannedCall>), CallError>>;
     fn jobs(&self, req: &JobsRequest<'_>) -> impl Future<Output = Result<JobsResponse, CallError>>;
-    fn read_body(&self, b: Self::Body, cap: usize) -> impl Future<Output = Result<bytes::Bytes, ReadErr>>;
-    fn action(&self, a: ActionCall<'_>) -> impl Future<Output = Result<ActionReply, CallError>>;
-    fn static_file(&self, root: StaticRoot, rel: &str, h: &http::HeaderMap, head: bool)
-        -> impl Future<Output = Option<http::Response<bytes::Bytes>>>;   // wasm: None → 404
+    fn read_body(&self, body: Self::Body, cap: usize) -> impl Future<Output = Result<bytes::Bytes, ReadErr>>;
+    fn action(&self, call: ActionCall<'_>) -> impl Future<Output = Result<FetchResponse, CallError>>;
+    fn static_file(&self, root: StaticRoot, rel: &str, headers: &http::HeaderMap, head: bool)
+        -> impl Future<Output = Option<http::Response<bytes::Bytes>>>;   // rel is safe_rel-checked; None → 404
 }
-pub enum ActionReply { Framed(FetchResponse) /* native A2 */, Passthrough(Box<dyn Any>) /* wasm: web Response */ }
-pub struct Core<H: Host> { /* routes, manifest, plans, renderer, l1: H::L1, jobs: H::Jobs, clock: InvalClock, cfg … */ }
+pub struct CoreConfig { pub l1_capacity: u64, pub job_cache_capacity: u64, pub cors: Option<CorsConfig>,
+                         pub generator: Option<String>, pub actions: Option<ActionsConfig>, pub https: bool }
+pub struct Core<H: Host> { /* host, routes, manifest, plans, renderer, l1: H::L1, jobs: H::Jobs, clock, counters, cors, actions, powered_by, https */ }
 impl<H: Host> Core<H> {
-    pub fn new(host: H, m: Loaded, cfg: CoreConfig) -> Result<Self, String>;   // start()'s validation, minus bind
-    pub async fn handle(&self, rq: RequestHead<'_>, body: H::Body) -> Outcome; // Outcome = Response<Bytes> | Passthrough
-    pub fn finish(&self, origin: Option<&HeaderValue>, h: &mut HeaderMap);    // x-powered-by + CORS stamp
-    pub fn invalidate(&self, a: InvalidateArgs) -> InvalidateResult;  pub fn stats(&self) -> Stats;
+    pub fn new(host: H, loaded: Loaded, cfg: CoreConfig) -> Result<Self, String>; // start()'s validation, minus bind
+    pub async fn handle(&self, rq: RequestHead<'_>, body: H::Body) -> http::Response<bytes::Bytes>;
+    pub fn finish(&self, origin: Option<&HeaderValue>, h: &mut HeaderMap);       // x-powered-by + CORS stamp
+    pub fn invalidate(&self, args: InvalidateArgs) -> InvalidateResult;  pub fn stats(&self) -> Stats;
+    pub fn cors(&self) -> Option<&CorsConfig>;  pub fn cors_enabled(&self) -> bool;
 }
 ```
 

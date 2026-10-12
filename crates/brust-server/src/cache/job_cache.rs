@@ -32,10 +32,7 @@ use parking_lot::{Mutex, RwLock};
 
 use super::l1::{CacheStats, TagIndex, index_tags, prune_tags, take_tagged};
 use super::stamp::{INVAL_SLOTS, InvalClock, ReadStamp, inval_slots};
-
-/// `job_key()` hex, or `"k:<componentId>/<jobId>/<user key>"` for `cache({key})`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct JobKey(pub String);
+pub use brust_core::cache::JobKey;
 
 /// What moka tracks per key: the policy side only (ttl, index names,
 /// generation). The payload lives in the read front (see [`JobCache`]).

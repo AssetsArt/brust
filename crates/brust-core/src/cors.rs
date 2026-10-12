@@ -14,6 +14,7 @@
 //!    bytes there, so stamping a per-request echoed Origin would bake it into a
 //!    SHARED cache entry (cross-origin cache poisoning).
 
+use bytes::Bytes;
 use http::header::{
     ACCESS_CONTROL_ALLOW_CREDENTIALS, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
     ACCESS_CONTROL_ALLOW_ORIGIN, ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE,
@@ -22,8 +23,8 @@ use http::header::{
 use http::{HeaderMap, HeaderValue, Response, StatusCode};
 use tracing::warn;
 
+use crate::body;
 use crate::config::CorsConfig;
-use crate::server::body::{self, ResponseBody, empty_body};
 
 /// Default preflight `Access-Control-Allow-Methods` when the config omits it.
 const DEFAULT_METHODS: &str = "GET,POST,PUT,PATCH,DELETE,OPTIONS";
@@ -112,10 +113,10 @@ impl ResolvedCors {
         &self,
         acao: HeaderValue,
         req_headers: &HeaderMap,
-    ) -> Response<ResponseBody> {
+    ) -> Response<Bytes> {
         let mut resp = Response::builder()
             .status(StatusCode::NO_CONTENT)
-            .body(empty_body())
+            .body(Bytes::new())
             .unwrap_or_else(|_| body::canned_500());
         let h = resp.headers_mut();
         h.insert(ACCESS_CONTROL_ALLOW_ORIGIN, acao);

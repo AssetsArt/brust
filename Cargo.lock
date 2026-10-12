@@ -134,6 +134,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "brust-core"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+ "brust-jinja",
+ "bytes",
+ "flate2",
+ "http",
+ "matchit",
+ "minijinja",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "brust-jinja"
 version = "0.0.0"
 dependencies = [
@@ -165,6 +183,7 @@ name = "brust-server"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "brust-core",
  "brust-jinja",
  "bytes",
  "criterion",

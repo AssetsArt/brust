@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// `JobCache::insert`. An insert does not land if a covering invalidation took a later value.
 #[must_use]
 #[derive(Debug, Clone, Copy)]
-pub struct ReadStamp(pub(crate) u64);
+pub struct ReadStamp(#[doc(hidden)] pub u64);
 
 /// The shared invalidation clock: monotonic, SeqCst on both sides.
 #[derive(Debug, Default)]
@@ -21,16 +21,19 @@ impl InvalClock {
         ReadStamp(self.0.load(Ordering::SeqCst))
     }
 
-    /// Take the next sequence number (an invalidation publishes it).
-    pub(crate) fn next(&self) -> u64 {
+    /// Take the next sequence number (an invalidation publishes it). Native-host seam, not an API.
+    #[doc(hidden)]
+    pub fn next(&self) -> u64 {
         self.0.fetch_add(1, Ordering::SeqCst) + 1
     }
 }
 
-/// Slots per invalidation-sequence array: 2 KiB each, constant.
-pub(crate) const INVAL_SLOTS: usize = 256;
+/// Slots per invalidation-sequence array: 2 KiB each, constant. Native-host seam, not an API.
+#[doc(hidden)]
+pub const INVAL_SLOTS: usize = 256;
 
-/// One zeroed invalidation-sequence array.
-pub(crate) fn inval_slots() -> Box<[AtomicU64]> {
+/// One zeroed invalidation-sequence array. Native-host seam, not an API.
+#[doc(hidden)]
+pub fn inval_slots() -> Box<[AtomicU64]> {
     (0..INVAL_SLOTS).map(|_| AtomicU64::new(0)).collect()
 }

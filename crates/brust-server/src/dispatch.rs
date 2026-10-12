@@ -36,6 +36,7 @@ use serde::de::DeserializeOwned;
 
 use crate::pool::{ClaimResult, PlanBox, RenderClaim, WorkerEntry, WorkerPool};
 use crate::protocol::{FetchMeta, FetchRequest, FetchResponse};
+pub use brust_core::host::CallError;
 
 /// Which worker entry point a [`RenderDispatch::call`] targets (spec §1 S1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -126,30 +127,6 @@ pub trait RenderDispatch: Send + Sync + 'static {
     fn buf_len(&self) -> usize {
         self.buf().1
     }
-}
-
-/// Why a [`call_worker`] round trip produced no response.
-#[derive(Debug, thiserror::Error)]
-pub enum CallError {
-    /// No workers registered at all — none will ever appear, so 503 at once.
-    #[error("no workers")]
-    NoWorkers,
-    /// Every worker stayed busy until the claim timeout — 503 last-resort.
-    #[error("all workers busy")]
-    Timeout,
-    /// The bridge enqueue failed; the worker was removed from the pool.
-    #[error("worker dead: {0}")]
-    Enqueue(String),
-    /// The worker's Promise rejected; the worker is still alive.
-    #[error("worker rejected: {0}")]
-    Rejected(String),
-    /// A claimed call did not settle within the call deadline — 504. The
-    /// detached remainder still holds the claim until the JS promise settles.
-    #[error("call deadline exceeded")]
-    Deadline,
-    /// Request serialisation, an out-of-bounds length, or unparsable JSON.
-    #[error("bad response: {0}")]
-    BadResponse(String),
 }
 
 /// Claim a worker slot, AWAITING a free one (up to `timeout`) on AllBusy

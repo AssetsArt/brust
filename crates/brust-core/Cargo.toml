@@ -1,0 +1,29 @@
+[package]
+name = "brust-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "brust v2 host-agnostic core: routing, manifest, render, caches' contracts and the request pipeline over a `Host`"
+
+[features]
+default = ["gzip"]
+# Page/asset gzip. Off: `compress::gzip` is `None`, every page is served identity.
+gzip = ["dep:flate2"]
+
+[dependencies]
+brust-jinja.workspace = true
+minijinja.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing = "0.1"
+http = "1"
+bytes = "1"
+matchit = "0.9"
+percent-encoding = "2.3"
+blake3 = "1"
+flate2 = { version = "1", optional = true }
+
+[lints]
+workspace = true
