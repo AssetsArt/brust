@@ -15,6 +15,8 @@ export interface ConformanceCaps {
   pull?: boolean
   /** The store refuses stale writes exactly (Redis Lua, DO, memory). */
   guard?: boolean
+  /** The store invalidates (default true); `false` skips the tag/path invalidation cases (Cloudflare KV alone never invalidates). */
+  invalidate?: boolean
 }
 
 const enc = new TextEncoder()
@@ -103,7 +105,7 @@ export function runConformance(make: () => CacheAdapter | Promise<CacheAdapter>,
       await until('expiry', async () => (await s.get(k)).page === null)
     })
 
-    test('tag invalidation drops tagged pages and keeps unrelated ones', async () => {
+    if (caps.invalidate !== false) test('tag invalidation drops tagged pages and keeps unrelated ones', async () => {
       const { s } = await store()
       const [k1, k2, k3] = [key(), key(), key()]
       await s.set(k1, page('1'), meta({ tags: ['items'], path: '/a' }))
@@ -115,7 +117,7 @@ export function runConformance(make: () => CacheAdapter | Promise<CacheAdapter>,
       expect((await s.get(k3)).page).not.toBeNull()
     })
 
-    test('path + method invalidation drops that page only', async () => {
+    if (caps.invalidate !== false) test('path + method invalidation drops that page only', async () => {
       const { s } = await store()
       const [k1, k2] = [key(), key()]
       await s.set(k1, page('1'), meta({ path: '/x' }))

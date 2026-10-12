@@ -125,6 +125,9 @@ export async function loadAdapter(
 /** `base`'s store with `other`'s broadcast; both are initialised and closed. Built explicitly (not a
  * spread) so a class-based adapter keeps its prototype methods. */
 export function compose(base: CacheAdapter, other: CacheAdapter): CacheAdapter {
+  // A broadcast that knows its store partner (the Cloudflare DO + KV floors) composes itself.
+  const own = (other as { composeWith?: (store: CacheAdapter) => CacheAdapter }).composeWith
+  if (typeof own === 'function') return own.call(other, base)
   return {
     name: base.name,
     runtimes: base.runtimes.filter(r => other.runtimes.includes(r)),
