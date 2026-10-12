@@ -1,0 +1,28 @@
+{
+  "function": "CountUp",
+  "params": 0,
+  "scopes": [
+    {
+      "id": 6,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t0",
+        "t1"
+      ]
+    },
+    {
+      "id": 8,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "shown",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t2"
+      ]
+    }
+  ]
+}

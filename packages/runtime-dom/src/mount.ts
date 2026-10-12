@@ -28,6 +28,7 @@ function mountHost(host: HTMLElement): void {
     try { inst.init(factory) } catch (e) { console.error(`[brust] init threw: ${name}`, e); inst.dispose(); instances.delete(host); return }
     bindHost(inst, host, {})
     inst.booted = true
+    if (!inst.start()) return   // F97: refs and handlers are bound; now the component's effects
     bindPropsFromParent(inst)
     // Children that mounted before this instance existed (parent chunk arrived late) link up now.
     host.querySelectorAll<HTMLElement>('[x-data]').forEach((h) => {

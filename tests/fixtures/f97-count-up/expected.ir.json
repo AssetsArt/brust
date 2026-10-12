@@ -1,0 +1,118 @@
+{
+  "id": "input_a5f5c4d0",
+  "source": "tests/fixtures/f97-count-up/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "shown",
+      "setter": "setShown",
+      "init": {
+        "Server": {
+          "loc": 355,
+          "kind": {
+            "Lit": {
+              "Str": "100"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [
+    {
+      "body": {
+        "loc": 374,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Block": {
+                "source": "() => {\n  if (!(\"IntersectionObserver\" in window))\n    return;\n  const seen = new IntersectionObserver((entries) => {\n    if (!entries[0]?.isIntersecting)\n      return;\n    seen.disconnect();\n    setShown(\"42\");\n  });\n  if (ref.current)\n    seen.observe(ref.current);\n  return () => seen.disconnect();\n}",
+                "captures_only": false
+              }
+            },
+            "captures": [
+              [
+                "window",
+                "Global"
+              ],
+              [
+                "IntersectionObserver",
+                "Global"
+              ],
+              [
+                "setShown",
+                "Setter"
+              ],
+              [
+                "ref",
+                "Local"
+              ]
+            ]
+          }
+        }
+      },
+      "deps": [],
+      "layout": false
+    }
+  ],
+  "handlers": [],
+  "refs": [
+    {
+      "name": "ref",
+      "init": {
+        "ClientOnly": {
+          "js": "null"
+        }
+      }
+    }
+  ],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 689,
+      "tag": "span",
+      "attrs": [
+        {
+          "Static": {
+            "name": "id",
+            "value": "v"
+          }
+        },
+        {
+          "Ref": {
+            "name": "ref"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Slot": {
+            "Server": {
+              "loc": 713,
+              "kind": {
+                "Ident": {
+                  "name": "shown",
+                  "kind": "State"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": "ref"
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

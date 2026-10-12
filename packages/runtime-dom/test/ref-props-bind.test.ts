@@ -97,3 +97,65 @@ test('unmount(subtree) leaves the observer running for the rest of the page', as
   await flush()
   expect(seen).toEqual(['late'])
 })
+
+// F97: mount effects run after the instance is bound (x-ref, x-on), like React's commit.
+test('F97: a mount effect sees ref.current and a listener it attaches fires (passive and layout shape)', () => {
+  const seen: Array<Element | null> = []
+  let fired = 0
+  defineBehavior('f97a', ({ ref, effect }) => {
+    const r = ref('box')
+    effect(() => { seen.push(r.current); r.current?.addEventListener('ping', () => { fired++ }) })   // useEffect
+    effect(() => { seen.push(r.current) })                                                          // useLayoutEffect (same ctx.effect)
+    return {}
+  })
+  document.body.innerHTML = `<div x-data="f97a"><i id="b" x-ref="box"></i></div>`
+  mount()
+  expect(seen.map((e) => e?.id)).toEqual(['b', 'b'])
+  document.getElementById('b')!.dispatchEvent(new Event('ping'))
+  expect(fired).toBe(1)
+})
+
+test('F97: x-on handlers are live before effects run; an instance disposed before its effects flush never runs them', () => {
+  const log: string[] = []
+  defineBehavior('f97b', ({ effect, el }) => {
+    effect(() => { (el.querySelector('button') as HTMLButtonElement).click(); log.push('effect') })
+    return { hit: () => log.push('hit') }
+  })
+  document.body.innerHTML = `<div x-data="f97b"><button x-on-click="hit"></button></div>`
+  mount()
+  expect(log).toEqual(['hit', 'effect'])
+})
+
+test('F97: a nested host (x-if clone) has its refs bound before its own effects', () => {
+  const seen: Array<string | undefined> = []
+  const open = signal(true)
+  defineBehavior('f97o', () => ({ open }))
+  defineBehavior('f97c', ({ ref, effect }) => { const r = ref('t'); effect(() => { seen.push(r.current?.id) }); return {} })
+  document.body.innerHTML = `<div x-data="f97o"><section x-if="open"><p x-data="f97c"><b id="t" x-ref="t"></b></p></section></div>`
+  mount()
+  expect(seen).toEqual(['t'])
+})
+
+test('F97: an instance disposed before its effects start never runs them', async () => {
+  const { Instance } = await import('../src/instance')
+  const inst = new Instance(document.createElement('div'), 'f97d', null, {})
+  let ran = 0
+  inst.ctx().effect(() => { ran++ })
+  inst.dispose()
+  inst.start()
+  expect(ran).toBe(0)
+})
+
+test('F97: a throwing mount effect is logged and does not stop later hosts from mounting', () => {
+  const errs: string[] = []; const orig = console.error; console.error = (m: string) => { errs.push(String(m)) }
+  try {
+    let hits = 0
+    defineBehavior('f97bad', ({ effect }) => { effect(() => { throw new Error('boom') }); return {} })
+    defineBehavior('f97good', ({ effect }) => { effect(() => { /* ok */ }); return { hit: () => { hits++ } } })
+    document.body.innerHTML = `<div x-data="f97bad"></div><div x-data="f97good"><button id="g" x-on-click="hit"></button></div>`
+    mount()
+    ;(document.getElementById('g') as HTMLButtonElement).click()
+    expect(hits).toBe(1)
+    expect(errs.some((e) => e.includes('effect threw: f97bad'))).toBe(true)
+  } finally { console.error = orig }
+})
