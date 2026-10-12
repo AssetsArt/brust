@@ -231,6 +231,8 @@ pub struct Server {
     pub(crate) renderer: Renderer,
     pub(crate) l1: L1Cache,
     pub(crate) jobs: JobCache,
+    /// The invalidation clock `l1` and `jobs` are built on (F89): one read stamp per page.
+    pub(crate) clock: Arc<crate::cache::stamp::InvalClock>,
     pub(crate) dist_dir: PathBuf,
     /// M3-P P7: striped (one cache line per stripe) — bumped on every loader page.
     pub(crate) loader_calls: crate::cache::l1::StripedCounter,

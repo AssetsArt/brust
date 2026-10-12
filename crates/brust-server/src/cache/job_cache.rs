@@ -23,6 +23,7 @@ use moka::sync::Cache;
 use parking_lot::{Mutex, RwLock};
 
 use super::l1::{CacheStats, TagIndex, index_tags, prune_tags, take_tagged};
+use super::stamp::{INVAL_SLOTS, InvalClock, ReadStamp, inval_slots};
 
 /// `job_key()` hex, or `"k:<componentId>/<jobId>/<user key>"` for `cache({key})`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -162,6 +163,15 @@ pub struct JobCache {
     /// moka insert"; exclusive for index-driven invalidation and `clear`.
     gate: RwLock<()>,
     next_generation: AtomicU64,
+    /// Invalidation clock, shared with L1 (F89): `invalidate_tags`, `invalidate_user_key` and
+    /// `clear` take its next value; a `ReadStamp` is its value when a request began.
+    clock: Arc<InvalClock>,
+    /// The latest clock value of a tag invalidation, per hashed tag slot.
+    tag_inval: Box<[AtomicU64]>,
+    /// The latest clock value of an `invalidate_user_key`, per hashed user-key slot.
+    key_inval: Box<[AtomicU64]>,
+    /// The clock value of the latest `clear`.
+    cleared_at: AtomicU64,
     hits: StripedCounter,
     misses: StripedCounter,
     capacity: u64,
@@ -171,6 +181,11 @@ pub struct JobCache {
 
 impl JobCache {
     pub fn new(max_capacity: u64) -> Self {
+        Self::with_clock(max_capacity, Arc::default())
+    }
+
+    /// As `new`, on a shared invalidation clock (`Server` builds L1 and this cache on one).
+    pub fn with_clock(max_capacity: u64, clock: Arc<InvalClock>) -> Self {
         let capacity = max_capacity.max(1);
         let tag_index: Arc<TagIndex<JobKey>> = Arc::new(Mutex::new(HashMap::new()));
         let key_index: Arc<TagIndex<JobKey>> = Arc::new(Mutex::new(HashMap::new()));
@@ -206,6 +221,10 @@ impl JobCache {
             key_index,
             gate: RwLock::new(()),
             next_generation: AtomicU64::new(0),
+            clock,
+            tag_inval: inval_slots(),
+            key_inval: inval_slots(),
+            cleared_at: AtomicU64::new(0),
             hits: StripedCounter::new(),
             misses: StripedCounter::new(),
             capacity,
@@ -247,8 +266,20 @@ impl JobCache {
         hit
     }
 
+    /// Stamp the start of a request (F89): take it before the request reads app data and pass it
+    /// to `insert`. `page()` takes `Server::clock` directly, which is the same clock.
+    pub fn read_stamp(&self) -> ReadStamp {
+        self.clock.stamp()
+    }
+
+    /// The `tag_inval` / `key_inval` slot of `v`.
+    fn slot<T: std::hash::Hash + ?Sized>(&self, v: &T) -> usize {
+        (self.hasher.hash_one(v) as usize) % INVAL_SLOTS
+    }
+
     /// `user_key`: the evaluated `cache({key})` value, indexed so
-    /// [`JobCache::invalidate_user_key`] finds this entry.
+    /// [`JobCache::invalidate_user_key`] finds this entry. Returns `false` when the insert did not
+    /// land: a covering invalidation came after `since` (F89).
     pub fn insert(
         &self,
         k: JobKey,
@@ -256,7 +287,8 @@ impl JobCache {
         ttl: Option<Duration>,
         tags: &[String],
         user_key: Option<&str>,
-    ) {
+        since: ReadStamp,
+    ) -> bool {
         // Index BEFORE the moka insert, under the shared gate (see
         // `L1Cache::insert`: without the gate an invalidation landing between
         // the two steps loses the entry from the index forever). The eviction
@@ -303,6 +335,8 @@ impl JobCache {
                 generation,
             },
         );
+        let _ = since;
+        true
     }
 
     /// Remove `k` from moka and the front, in that key's write order.
@@ -383,6 +417,18 @@ impl JobCache {
         self.key_index.lock().values().map(|s| s.len()).sum()
     }
 
+    /// The `tag_inval` slot of `t` (test hook: tests pick non-colliding tags with it).
+    #[cfg(test)]
+    pub(crate) fn tag_slot(&self, t: &str) -> usize {
+        self.slot(t)
+    }
+
+    /// The `key_inval` slot of `u` (test hook, as `tag_slot`).
+    #[cfg(test)]
+    pub(crate) fn key_slot(&self, u: &str) -> usize {
+        self.slot(u)
+    }
+
     /// Entries in the read front (test hook: it must track moka's).
     #[cfg(test)]
     pub(crate) fn front_len(&self) -> usize {
@@ -418,6 +464,7 @@ mod tests {
             None,
             &[],
             None,
+            s.read_stamp(),
         );
         assert_eq!(
             s.get(&k("k1")),
@@ -442,6 +489,7 @@ mod tests {
             Some(Duration::ZERO),
             &[],
             None,
+            s.read_stamp(),
         );
         assert!(s.get(&k("k")).is_none());
         assert_eq!(s.stats().misses, 1, "the read counts as a miss");
@@ -455,14 +503,29 @@ mod tests {
             Some(Duration::from_secs(60)),
             &[],
             None,
+            s.read_stamp(),
         );
         assert!(s.get(&k("k")).is_some());
     }
     #[test]
     fn invalidate_key_removes_one() {
         let s = store();
-        s.insert(k("a"), Arc::new(Node::from(json!("a"))), None, &[], None);
-        s.insert(k("b"), Arc::new(Node::from(json!("b"))), None, &[], None);
+        s.insert(
+            k("a"),
+            Arc::new(Node::from(json!("a"))),
+            None,
+            &[],
+            None,
+            s.read_stamp(),
+        );
+        s.insert(
+            k("b"),
+            Arc::new(Node::from(json!("b"))),
+            None,
+            &[],
+            None,
+            s.read_stamp(),
+        );
         assert!(s.invalidate_key(&k("a")));
         assert!(
             !s.invalidate_key(&k("a")),
@@ -481,6 +544,7 @@ mod tests {
             None,
             &["user:1".into()],
             None,
+            s.read_stamp(),
         );
         s.insert(
             k("b"),
@@ -488,6 +552,7 @@ mod tests {
             None,
             &["user:1".into()],
             None,
+            s.read_stamp(),
         );
         s.insert(
             k("c"),
@@ -495,6 +560,7 @@ mod tests {
             None,
             &["user:2".into()],
             None,
+            s.read_stamp(),
         );
         assert_eq!(s.invalidate_tags(&["user:1".into()]), 2);
         sync(&s);
@@ -511,6 +577,7 @@ mod tests {
             None,
             &["a".into(), "b".into()],
             None,
+            s.read_stamp(),
         );
         sync(&s);
         assert_eq!(s.tag_index_size(), 2);
@@ -528,6 +595,7 @@ mod tests {
             None,
             &["t".into()],
             None,
+            s.read_stamp(),
         );
         sync(&s);
         assert_eq!(s.tag_index_size(), 1);
@@ -544,6 +612,7 @@ mod tests {
             None,
             &["t".into()],
             None,
+            s.read_stamp(),
         );
         s.clear();
         assert!(s.get(&k("a")).is_none());
@@ -558,6 +627,7 @@ mod tests {
             None,
             &["t".into()],
             None,
+            s.read_stamp(),
         );
         s.insert(
             k("short"),
@@ -565,6 +635,7 @@ mod tests {
             Some(Duration::from_millis(1)),
             &[],
             None,
+            s.read_stamp(),
         );
         std::thread::sleep(Duration::from_millis(20));
         sync(&s);
@@ -581,6 +652,7 @@ mod tests {
             Some(Duration::from_secs(60)),
             &[],
             None,
+            s.read_stamp(),
         );
         s.insert(
             k("short"),
@@ -588,6 +660,7 @@ mod tests {
             None,
             &[],
             None,
+            s.read_stamp(),
         );
         assert!(s.get(&k("short")).is_some());
         assert_eq!(s.invalidate_tags(&["t".into()]), 1);
@@ -598,7 +671,14 @@ mod tests {
     #[test]
     fn stats_count_hits_and_misses() {
         let s = JobCache::new(7);
-        s.insert(k("a"), Arc::new(Node::from(json!(1))), None, &[], None);
+        s.insert(
+            k("a"),
+            Arc::new(Node::from(json!(1))),
+            None,
+            &[],
+            None,
+            s.read_stamp(),
+        );
         let _ = s.get(&k("a"));
         let _ = s.get(&k("a"));
         let _ = s.get(&k("missing"));
@@ -624,6 +704,7 @@ mod tests {
             None,
             &["t".into()],
             None,
+            s.read_stamp(),
         );
         s.insert(
             k("r"),
@@ -631,6 +712,7 @@ mod tests {
             None,
             &["t".into()],
             None,
+            s.read_stamp(),
         );
         sync(&s);
         assert_eq!(s.tag_index_size(), 1, "new entry stays indexed");
@@ -651,6 +733,7 @@ mod tests {
             None,
             &[],
             Some("5"),
+            s.read_stamp(),
         );
         s.insert(
             k("k:b/j0/5"),
@@ -658,6 +741,7 @@ mod tests {
             None,
             &[],
             Some("5"),
+            s.read_stamp(),
         );
         s.insert(
             k("k:b/j0/6"),
@@ -665,6 +749,7 @@ mod tests {
             None,
             &[],
             Some("6"),
+            s.read_stamp(),
         );
         assert_eq!(s.key_index_size(), 3);
         assert_eq!(s.invalidate_user_key("5"), 2);
@@ -681,6 +766,7 @@ mod tests {
             None,
             &[],
             Some("6"),
+            s.read_stamp(),
         );
         sync(&s);
         assert_eq!(s.key_index_size(), 1);
@@ -693,6 +779,7 @@ mod tests {
             None,
             &[],
             Some("7"),
+            s.read_stamp(),
         );
         s.clear();
         assert_eq!(s.key_index_size(), 0);
@@ -710,6 +797,7 @@ mod tests {
                 None,
                 &[],
                 None,
+                s.read_stamp(),
             );
         }
         let len = s.stats().len;
@@ -724,6 +812,7 @@ mod tests {
             Some(Duration::from_millis(1)),
             &[],
             None,
+            s.read_stamp(),
         );
         std::thread::sleep(Duration::from_millis(5));
         assert!(s.get(&k("t")).is_none());
@@ -746,6 +835,7 @@ mod tests {
                             None,
                             &["t".into()],
                             None,
+                            c.read_stamp(),
                         );
                         let _ = c.get(&k("r"));
                     }
@@ -779,6 +869,7 @@ mod tests {
                     None,
                     &["t".into()],
                     Some("u"),
+                    c2.read_stamp(),
                 )
             });
             rx.recv().unwrap();

@@ -16,9 +16,10 @@
 //! itself would un-index the NEWER entry, making it immune to tag invalidation.
 //!
 //! Read stamps (F86): an insert also carries the `ReadStamp` its render took before it read app
-//! data. Every invalidation (tags, path, `clear`) takes the next `inval_seq` and publishes it in a
-//! hashed per-tag / per-(method, path) slot (or `cleared_at`); an insert whose tags, method + path
-//! or `clear` were invalidated after its stamp does not land. Without it a render that read data
+//! data. Every invalidation (tags, path, `clear`) takes the next value of the clock shared with the
+//! job cache (`stamp.rs`) and publishes it in a hashed per-tag / per-(method, path) slot (or
+//! `cleared_at`); an insert whose tags, method + path or `clear` were invalidated after its stamp
+//! does not land. Without it a render that read data
 //! before a `POST` invalidated its tag could still be inserted after the invalidation and serve the
 //! old data until its ttl. A slot collision only skips caching one render.
 //!
@@ -42,6 +43,9 @@ use crossbeam_utils::sync::{ShardedLock, ShardedLockReadGuard, ShardedLockWriteG
 use bytes::Bytes;
 use parking_lot::Mutex;
 use serde::Serialize;
+
+pub use super::stamp::ReadStamp;
+use super::stamp::{INVAL_SLOTS, InvalClock, inval_slots};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
@@ -192,16 +196,6 @@ pub struct CacheStats {
     pub capacity: usize,
 }
 
-/// When an L1 render began, in invalidation-sequence time (F86): taken by `L1Cache::read_stamp`
-/// before the render reads app data, required by `L1Cache::insert`. The insert does not land if
-/// a covering invalidation took a later sequence number.
-#[must_use]
-#[derive(Debug, Clone, Copy)]
-pub struct ReadStamp(u64);
-
-/// Slots per invalidation-sequence array (`tag_inval`, `path_inval`): 2 KiB each, constant.
-const INVAL_SLOTS: usize = 256;
-
 /// tag → (key → generation of the insert that indexed it).
 pub(crate) type TagIndex<K> = Mutex<HashMap<String, HashMap<K, u64>>>;
 
@@ -281,7 +275,7 @@ pub(crate) fn take_tagged<K: Clone + Eq + std::hash::Hash>(
 /// and a shard's write lock, each alone, and never a stripe or the gate; it removes only a matching
 /// generation, so it cannot drop a newer entry.
 ///
-/// Read stamps (F86): an insert lands only if no covering invalidation took an `inval_seq` after its
+/// Read stamps (F86): an insert lands only if no covering invalidation took a clock value after its
 /// `ReadStamp`. A covering invalidation is a tag of the insert (by slot), its method+path (by slot),
 /// or `clear`. Tag invalidation and `clear` publish under the exclusive gate, and the insert checks
 /// under the shared gate. `invalidate_path` is gate-free on purpose: the front is a superset of moka
@@ -310,14 +304,14 @@ pub struct L1Cache {
     /// exclusively. Never held by the eviction listener.
     gate: parking_lot::RwLock<()>,
     next_generation: AtomicU64,
-    /// Invalidation sequence (F86): every tag/path invalidation and `clear` takes the next value;
-    /// a `ReadStamp` is its value when a render began.
-    inval_seq: AtomicU64,
-    /// The latest `inval_seq` of a tag invalidation, per hashed tag slot.
+    /// Invalidation clock (F86), shared with the job cache (F89): every tag/path invalidation and
+    /// `clear` takes the next value; a `ReadStamp` is its value when a render began.
+    clock: Arc<InvalClock>,
+    /// The latest clock value of a tag invalidation, per hashed tag slot.
     tag_inval: Box<[AtomicU64]>,
-    /// The latest `inval_seq` of an `invalidate_path`, per hashed (method, path) slot.
+    /// The latest clock value of an `invalidate_path`, per hashed (method, path) slot.
     path_inval: Box<[AtomicU64]>,
-    /// The `inval_seq` of the latest `clear`.
+    /// The clock value of the latest `clear`.
     cleared_at: AtomicU64,
     hits: StripedCounter,
     misses: StripedCounter,
@@ -337,6 +331,12 @@ impl L1Cache {
     /// Build an L1 cache with an explicit max-entry capacity. moka fixes
     /// capacity at construction. Capacity is floored at 1.
     pub fn with_capacity(max_capacity: u64) -> Self {
+        Self::with_clock(max_capacity, Arc::default())
+    }
+
+    /// As `with_capacity`, on a shared invalidation clock (`Server` builds L1 and the job cache on
+    /// one, F89).
+    pub fn with_clock(max_capacity: u64, clock: Arc<InvalClock>) -> Self {
         let capacity = max_capacity.max(1);
         let tag_index: Arc<TagIndex<CacheKey>> = Arc::new(Mutex::new(HashMap::new()));
         let front: Arc<[Shard]> = (0..SHARDS)
@@ -375,9 +375,9 @@ impl L1Cache {
             tag_index,
             gate: parking_lot::RwLock::new(()),
             next_generation: AtomicU64::new(0),
-            inval_seq: AtomicU64::new(0),
-            tag_inval: (0..INVAL_SLOTS).map(|_| AtomicU64::new(0)).collect(),
-            path_inval: (0..INVAL_SLOTS).map(|_| AtomicU64::new(0)).collect(),
+            clock,
+            tag_inval: inval_slots(),
+            path_inval: inval_slots(),
             cleared_at: AtomicU64::new(0),
             hits: StripedCounter::new(),
             misses: StripedCounter::new(),
@@ -434,12 +434,12 @@ impl L1Cache {
     /// Stamp the start of a render (F86): take it before the render reads app data and pass it to
     /// `insert`.
     pub fn read_stamp(&self) -> ReadStamp {
-        ReadStamp(self.inval_seq.load(Ordering::SeqCst))
+        self.clock.stamp()
     }
 
     /// Take the next invalidation sequence number (F86).
     fn next_inval(&self) -> u64 {
-        self.inval_seq.fetch_add(1, Ordering::SeqCst) + 1
+        self.clock.next()
     }
 
     /// The `tag_inval` / `path_inval` slot of `v`.

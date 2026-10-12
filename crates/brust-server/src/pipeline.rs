@@ -20,6 +20,7 @@ use hyper::body::Incoming;
 use crate::cache::job_cache::{JobCache, JobKey};
 use crate::cache::key_expr::EvalCtx;
 use crate::cache::l1::{CacheKey, RenderedBody, build_cache_key};
+use crate::cache::stamp::ReadStamp;
 use crate::config::Server;
 use crate::dispatch::{CallError, CallKind, call_worker, call_worker_planned};
 use crate::inputs::{self, Path};
@@ -322,10 +323,11 @@ async fn page(
             return r.unwrap_or_else(|b| hit_response(&b, gz));
         }
     }
-    // F86: the render starts here, after the probe missed and before the first worker call (the
-    // loader reads app data in it). A HIT returned above; a BYPASS has no key and takes no stamp.
-    // An invalidation covering this entry after the stamp keeps the insert below out of L1.
-    let since = cache_key.as_ref().map(|_| s.l1.read_stamp());
+    // F86/F89: the render starts here, after the probe missed and before the first worker call
+    // (the loader, and planned jobs, read app data in it). A HIT returned above; every other page
+    // stamps, BYPASS and uncached routes too (they still run jobs). One stamp guards both caches
+    // (one clock): an invalidation covering an entry after it keeps that insert out.
+    let since = s.clock.stamp();
 
     let envelope = rm.into_envelope("GET", full, headers, search);
 
@@ -496,7 +498,9 @@ async fn page(
             if !lookup.misses.is_empty() {
                 s.job_calls.fetch_add(1, Ordering::Relaxed);
                 let ids: Vec<&str> = pc.call_ids.iter().map(String::as_str).collect();
-                if let Err(resp) = apply_job_results(s, route, &plans, &mut lookup, &ids, results) {
+                if let Err(resp) =
+                    apply_job_results(s, route, &plans, &mut lookup, &ids, results, since)
+                {
                     return resp;
                 }
             }
@@ -548,7 +552,7 @@ async fn page(
                 };
                 let ids: Vec<&str> = req.jobs.iter().map(|c| c.id.as_str()).collect();
                 if let Err(resp) =
-                    apply_job_results(s, route, &plans, &mut lookup, &ids, resp.results)
+                    apply_job_results(s, route, &plans, &mut lookup, &ids, resp.results, since)
                 {
                     return resp;
                 }
@@ -603,7 +607,6 @@ async fn page(
     if store
         && let Some(k) = cache_key
         && let Some(c) = &route.cache
-        && let Some(since) = since
         && !s
             .l1
             .insert(k, body, Duration::from_secs(c.ttl_seconds), &c.tags, since)
@@ -626,6 +629,7 @@ fn apply_job_results(
     lookup: &mut Lookup,
     ids: &[&str],
     results: Vec<JobResult>,
+    since: ReadStamp,
 ) -> Result<(), Response<ResponseBody>> {
     let Lookup {
         values,
@@ -670,12 +674,13 @@ fn apply_job_results(
     for (v, &i) in fresh.into_iter().zip(misses.iter()) {
         let p = &plans[i];
         let v = Arc::new(v);
-        s.jobs.insert(
+        let _ = s.jobs.insert(
             p.key.clone(),
             Arc::clone(&v),
             p.ttl,
             p.tags,
             p.user_key.as_deref(),
+            since,
         );
         values[i] = Some(v);
     }
@@ -2217,6 +2222,7 @@ pub mod plan_stage {
                     p.ttl,
                     p.tags,
                     p.user_key.as_deref(),
+                    cache.read_stamp(),
                 );
             }
         }
@@ -3138,7 +3144,14 @@ mod tests {
         let plans = collect_jobs(&idx, &r2(&m).chain, &Node::map(want)).unwrap();
         for (i, p) in plans.iter().enumerate() {
             let v = Arc::new(n(json!({ "_s1": i })));
-            cache.insert(p.key.clone(), v, p.ttl, p.tags, p.user_key.as_deref());
+            cache.insert(
+                p.key.clone(),
+                v,
+                p.ttl,
+                p.tags,
+                p.user_key.as_deref(),
+                cache.read_stamp(),
+            );
         }
         let (pc, misses) = plan_response(&idx, &cache, r2(&m), base("pikachu"), PIKACHU).unwrap();
         assert_eq!(misses, "");
