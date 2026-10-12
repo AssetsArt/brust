@@ -145,3 +145,17 @@ test('F97: an instance disposed before its effects start never runs them', async
   inst.start()
   expect(ran).toBe(0)
 })
+
+test('F97: a throwing mount effect is logged and does not stop later hosts from mounting', () => {
+  const errs: string[] = []; const orig = console.error; console.error = (m: string) => { errs.push(String(m)) }
+  try {
+    let hits = 0
+    defineBehavior('f97bad', ({ effect }) => { effect(() => { throw new Error('boom') }); return {} })
+    defineBehavior('f97good', ({ effect }) => { effect(() => { /* ok */ }); return { hit: () => { hits++ } } })
+    document.body.innerHTML = `<div x-data="f97bad"></div><div x-data="f97good"><button id="g" x-on-click="hit"></button></div>`
+    mount()
+    ;(document.getElementById('g') as HTMLButtonElement).click()
+    expect(hits).toBe(1)
+    expect(errs.some((e) => e.includes('effect threw: f97bad'))).toBe(true)
+  } finally { console.error = orig }
+})
