@@ -143,6 +143,18 @@
         "elysia",
       ],
     },
+    "packages/cache-redis": {
+      "name": "@brust/cache-redis",
+      "version": "2.0.0-alpha.2",
+      "devDependencies": {
+        "@brust/core": "workspace:*",
+        "@types/bun": "^1.4.0",
+        "typescript": "^7.0.2",
+      },
+      "peerDependencies": {
+        "@brust/core": "workspace:*",
+      },
+    },
     "packages/create-app": {
       "name": "@brust/create-app",
       "version": "2.0.0-alpha.2",
@@ -220,6 +232,8 @@
     "@brust/bench-bun-serve": ["@brust/bench-bun-serve@workspace:bench/apps/bun-serve"],
 
     "@brust/bench-next": ["@brust/bench-next@workspace:bench/apps/next"],
+
+    "@brust/cache-redis": ["@brust/cache-redis@workspace:packages/cache-redis"],
 
     "@brust/core": ["@brust/core@workspace:packages/brust"],
 
