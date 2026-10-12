@@ -75,7 +75,7 @@ try {
   failed = true
   console.log(`[edge] FAILED: ${(e as Error).message}`)
 } finally {
-  const a = wr(['delete', '--name', N, '--force'])
+  const a = wr(['delete', N, '--force'])
   const b = wr(['d1', 'delete', N, '--skip-confirmation'])
   rmSync(DEPLOY_CFG, { force: true })
   console.log(`[edge] delete worker exit=${a.code}, delete d1 exit=${b.code}`)
@@ -84,7 +84,7 @@ try {
   console.log(`[edge] post-delete: deployments list exit=${l.code}, d1 info exit=${i.code} (both must be non-zero)`)
   if (l.code === 0 || i.code === 0) {
     console.log('[edge] something still exists: deleting again')
-    wr(['delete', '--name', N, '--force'])
+    wr(['delete', N, '--force'])
     wr(['d1', 'delete', N, '--skip-confirmation'])
     failed = true
   }
