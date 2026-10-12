@@ -530,19 +530,32 @@ impl L1Cache {
     /// of query string or vary values). Returns the number of live matching
     /// entries at the time of the call. Hits/misses counters are NOT reset.
     /// The entries are gone from the read front when this returns.
+    ///
+    /// Gate-free (see the struct invariant): it publishes its sequence number first, then scans
+    /// shard i under `stripes[i]`, so an insert of a matching key either landed before the scan
+    /// (and is removed) or checks after the publish (and is rejected).
     pub fn invalidate_path(&self, method: &str, path: &str) -> usize {
+        let seq = self.next_inval();
+        self.path_inval[self.slot(&(method, path))].fetch_max(seq, Ordering::SeqCst);
         let now = Instant::now();
-        let (mut keys, mut live) = (Vec::new(), 0);
-        for s in self.front.iter() {
-            for (k, e) in s.read().iter() {
-                if k.method == method && k.path == path {
-                    live += usize::from(e.expires_at.is_none_or(|t| now < t));
-                    keys.push(k.clone());
-                }
+        let mut live = 0;
+        for (shard, s) in self.front.iter().enumerate() {
+            let _stripe = self.stripes[shard].lock();
+            let keys: Vec<CacheKey> = {
+                let m = s.read();
+                m.iter()
+                    .filter(|(k, _)| k.method == method && k.path == path)
+                    .map(|(k, e)| {
+                        live += usize::from(e.expires_at.is_none_or(|t| now < t));
+                        k.clone()
+                    })
+                    .collect()
+            };
+            // No front guard across the moka call: its listener takes this shard's write lock.
+            for k in &keys {
+                self.inner.remove(k);
+                s.write().remove(k);
             }
-        }
-        for k in &keys {
-            self.remove(k);
         }
         self.inner.run_pending_tasks();
         live
@@ -1222,5 +1235,29 @@ mod tests {
         assert_eq!(html(&c, &k), Some(Bytes::from_static(b"new")));
         c.run_pending();
         assert_eq!(c.tag_index_size(), 1);
+    }
+
+    #[test]
+    fn invalidate_path_after_the_stamp_keeps_the_insert_out() {
+        let c = L1Cache::new();
+        let k = key("GET", "/p", "x=1");
+        let s = c.read_stamp();
+        c.invalidate_path("GET", "/p");
+        assert!(!c.insert(k.clone(), rb_of("old"), TTL, &[], s));
+        assert!(html(&c, &k).is_none());
+    }
+
+    #[test]
+    fn invalidate_path_of_another_path_does_not_reject() {
+        let c = L1Cache::new();
+        let k = key("GET", "/p", "x=1");
+        let q = (0..)
+            .map(|i| format!("/q{i}"))
+            .find(|q| c.path_slot("GET", q) != c.path_slot("GET", "/p"))
+            .unwrap();
+        let s = c.read_stamp();
+        c.invalidate_path("GET", &q);
+        assert!(c.insert(k.clone(), rb_of("v"), TTL, &[], s));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
     }
 }
