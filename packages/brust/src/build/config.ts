@@ -9,13 +9,14 @@ import { BuildError } from './errors'
 
 // [actions] (opt-in, ruling R6): present table => actions on. Crosses napi as u32.
 //   [actions]
-//   entry = "actions.ts"   prefix = "/_brust/action"   max_body_bytes = 262144
+//   entry = "actions.ts"   prefix = "/_brust/action"   max_body_bytes = 262144   cross_site = "reject" | "allow" (F87)
 const MAX_U32 = 0xffff_ffff
 
 export interface ActionsBuildConfig {
   entry: string
   prefix: string
   maxBodyBytes: number
+  crossSite: 'reject' | 'allow'
 }
 
 export interface BuildConfig {
@@ -45,7 +46,12 @@ function parseActions(file: string, raw: unknown): ActionsBuildConfig | null {
       throw new BuildError('config', `${file}: actions.max_body_bytes must be an integer in 1..${MAX_U32} (got ${String(n)})`)
     maxBodyBytes = n
   }
-  return { entry, prefix, maxBodyBytes }
+  let crossSite: 'reject' | 'allow' = 'reject'
+  if (t.cross_site !== undefined) {
+    if (t.cross_site !== 'reject' && t.cross_site !== 'allow') throw new BuildError('config', `${file}: actions.cross_site must be "reject" or "allow"`)
+    crossSite = t.cross_site
+  }
+  return { entry, prefix, maxBodyBytes, crossSite }
 }
 
 const DEFAULT_ENTRY = 'actions.ts'
