@@ -1,6 +1,6 @@
 {
   "name": "@brust/create-app",
-  "version": "2.0.0-alpha.2",
+  "version": "2.0.0-alpha.3",
   "description": "Scaffold a brust v2 app — bun create @brust/app <name>",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/AssetsArt/brust.git", "directory": "packages/create-app" },
