@@ -76,6 +76,7 @@ dist/cf/
   wrangler.jsonc            merged config (section 4.1)
   worker/                   the @brust/core-cf glue + wasm, copied verbatim
     brust-app.js            ONE Bun bundle of your app
+    main.js                 only with a Durable Object cache adapter: re-exports the Worker and BrustCacheDO
   assets/                   Workers Static Assets
     _brust/client/*         copies of dist/client
     public/*                copies of dist/public

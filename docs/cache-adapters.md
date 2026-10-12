@@ -190,28 +190,161 @@ runConformance(() => myAdapter(), { push: true, guard: true })
 
 ## 5. Redis and Dragonfly
 
-<!-- pending: lane B (cache-redis). Fill from that lane's merged package: config block and option table, key schema, write-guard semantics, reconnect and gap behaviour, Dragonfly notes, TLS and auth, Bun version, connections per process. -->
+Package `@brust/cache-redis` (`bun add @brust/cache-redis`). One implementation serves both servers: `adapter = "redis"` or `adapter = "dragonfly"`. It uses Bun's built-in `RedisClient`, so it adds no npm dependency. It needs Bun 1.2.23 or newer and a Redis-compatible server 7.2 or newer. Bun's Redis pub/sub is still marked experimental by Bun; the adapter turns any lost message into a tier-1 clear rather than a stale page (below).
 
-Summary of what the design promises, to be confirmed against the merged package: shared page bodies, an exact stale-write guard, and an immediate push broadcast to every subscribed process. Bun only. Not available on Workers (use a custom adapter, for example an HTTP-based Redis service).
+Bun only. It does not run on Workers, because a Worker has no TCP client the adapter can rely on. On Workers, use a custom adapter over an HTTP-based Redis service.
+
+```toml
+[cache]
+adapter = "redis"              # or "dragonfly"
+namespace = "my-app"
+
+[cache.redis]
+url = "env:REDIS_URL"          # always env:NAME; a literal URL is a build error
+```
+
+Run the app with `REDIS_URL` set, for example `rediss://user:password@host:6380/0`. Credentials live only inside the URL. The adapter's log lines show `host:port` and never the password.
+
+### Options (`[cache.redis]`)
+
+| Key | Default | Meaning |
+|---|---|---|
+| `url` | required | `redis://`, `rediss://`, `redis+tls://` or `redis+unix://`. Must be written as `env:NAME`. If the variable is unset the start fails and names the variable. |
+| `tls` | `false` | `true`, `false`, or a table with `reject_unauthorized`, `server_name`, `ca_file` (a path to a PEM file, read at start). |
+| `connect_timeout_ms` | 2000 | `100..60000`. One bounded connect at start. |
+| `max_body_bytes` | 1048576 | `1..67108864`. Larger pages are not stored. |
+| `marker_ttl_ms` | 86400000 | `60000..604800000`. How long an invalidation marker is remembered; it should be longer than your longest page TTL. |
+| `unlink_batch` | 500 | `1..10000`. Pages deleted per `UNLINK` after an invalidation. |
+| `reconnect_min_ms` | 100 | `10..60000`. First reconnect delay. |
+| `reconnect_max_ms` | 5000 | `10..600000`. Cap of the exponential backoff (plus or minus 20% jitter). |
+
+An unknown key stops the start with `cache-redis: unknown option "<key>"`.
+
+### What it keeps in the server
+
+Every key of a namespace carries the hash tag `{brust:<namespace>}`, so the scripts also work on Redis Cluster (all keys in one slot).
+
+| Key | Holds |
+|---|---|
+| `{brust:ns}:page:<key>` | One page: a small header and the identity body, expiring with the page TTL. The key includes the build id. |
+| `{brust:ns}:tag:<tag>`, `{brust:ns}:path:<METHOD> <path>` | Sets of the page keys under a tag or a path. |
+| `{brust:ns}:inval:tag:<tag>`, `{brust:ns}:inval:path:<METHOD> <path>` | The sequence number of the last invalidation of that name, kept `marker_ttl_ms`. |
+| `{brust:ns}:seq` | The invalidation counter. This is the stamp. |
+| `{brust:ns}:stage:<id>` | A 30-second staging key used while writing a page. |
+| channel `brust:<ns>:inval` | Pub/sub channel for invalidation events. |
+
+Only page keys are scoped by build id. The index sets, markers, counter and channel are shared by all builds, so a rolling deploy keeps invalidating across old and new instances.
+
+### Guard and invalidation
+
+- **A stale write is refused exactly.** `get` returns the counter as the stamp. `set` runs a Lua script that checks the invalidation markers of the page's tags and of its `METHOD path`, and refuses (returns false) if any is newer than the stamp. A page rendered before an invalidation therefore cannot be stored after it, even if the two race.
+- **Invalidate and publish are one script.** It increments the counter, raises the markers and drops the index sets. The adapter then deletes the pages (`UNLINK`, in batches) and publishes `{seq, origin, args}` on the channel. Every script declares all its keys, as Dragonfly requires.
+- **Receiving.** Worker 0 of each process holds the subscription and replays events into the process's tier 1. Events from the same process are skipped.
+
+### Connections
+
+Each Bun worker keeps one command connection. Worker 0 keeps one more for the subscription. A process with W workers therefore holds W + 1 connections to the server. Size `maxclients` for the number of processes times (W + 1).
+
+### Outages and what tier 1 does
+
+- If the server is unreachable at start, the app still starts: the adapter tries one bounded connect, logs a warning and keeps retrying in the background.
+- While disconnected, commands fail at once; they are not queued. Tier-2 `get`/`set` failures count as `errors`, failed publishes as `publish_errors`, and pages keep being served from tier 1 and rendered on a miss. Logged failures are rate-limited (the first, then every 10th).
+- After every re-subscribe the adapter reads the counter. If it moved beyond the last event this process saw, tier 1 is cleared once (`resets` +1), so an event missed during the outage cannot leave a stale page.
+
+Two limits you should know about (tracked as follow-ups):
+- **Out-of-order delivery under concurrent invalidation.** The publish happens after the script, so two processes invalidating at the same moment can deliver events out of order. Other instances read that as a gap and clear their tier 1. This costs hit rate under bursts of invalidations from several processes; it does not serve stale pages.
+- **Orphaned pages after a dropped `UNLINK` batch.** The index sets are deleted inside the script, but pages are deleted afterwards. If the connection drops in between, those pages stay in Redis, with no index entry, until their TTL. Instances that replayed the event reject them through the invalidation floor, so the cost is storage and an occasional extra render, not a stale page.
+
+### Dragonfly
+
+- Same package, `adapter = "dragonfly"`. It was run against Dragonfly v2.0.2 in brust's tests.
+- Dragonfly requires every key a script touches to be declared; the adapter's scripts do.
+- When running the container yourself, pass `--ulimit memlock=-1`.
 
 ## 6. Cloudflare KV and Durable Objects
 
-<!-- pending: lane C (cache-cloudflare). Fill from that lane's merged package: option tables, the required wrangler bindings and migration snippet, the generated worker/main.js re-export, the DO epoch and do_store designs, per-day cost drivers. -->
+Package `@brust/cache-cloudflare` (`bun add @brust/cache-cloudflare`). Workers only. It imports nothing from Bun. Three configurations:
 
-Both are Workers-only and are opt-in packages, so the Workers runtime itself still depends on nothing but Workers. The bindings are declared in your own `wrangler.jsonc`; the build checks them and prints the snippet that is missing.
+| `[cache]` | What it is |
+|---|---|
+| `adapter = "cloudflare-kv"` | Pages in Workers KV. A store with no broadcast. |
+| `adapter = "cloudflare-do"` | A Durable Object that carries invalidations (a pull broadcast). With `do_store = true` it also stores the pages, in 16 shard objects. |
+| `adapter = "cloudflare-kv"` and `broadcast = "cloudflare-do"` | **The recommended pair.** KV holds the bodies and the Durable Object tells every isolate what was invalidated. |
+
+```toml
+[cache]
+adapter = "cloudflare-kv"
+broadcast = "cloudflare-do"
+epoch_interval_ms = 5000
+
+[cache.cloudflare]
+kv_min_ttl_s = 300
+```
+
+### Bindings you declare
+
+brust adds no binding. Declare them in your own `wrangler.jsonc`. The build checks the top level and every `env.*` block, and if something is missing it fails and prints this snippet:
+
+```jsonc
+{
+  "kv_namespaces": [{ "binding": "BRUST_CACHE", "id": "<wrangler kv namespace create brust-cache>" }],
+  "durable_objects": { "bindings": [{ "name": "BRUST_CACHE_DO", "class_name": "BrustCacheDO" }] },
+  "migrations": [{ "tag": "brust-cache-v1", "new_sqlite_classes": ["BrustCacheDO"] }]
+}
+```
+
+`kv_namespaces` is needed for KV and the pair. The `durable_objects` binding and the migration are needed for `cloudflare-do` and the pair. `BrustCacheDO` must be a SQLite-backed class (`new_sqlite_classes`, or an `exports` entry with `"storage": "sqlite"`). Create the KV namespace with `wrangler kv namespace create`.
+
+When a Durable Object is configured, `brust build` also writes `dist/cf/worker/main.js`, a short generated file that re-exports the Worker and `BrustCacheDO` so Cloudflare can bind the class, and points `main` at it. Do not write your own. The build refuses if `@brust/core-cf` ever ships a `worker/main.js` itself.
+
+### Options (`[cache.cloudflare]`)
+
+| Key | Used by | Default | Meaning |
+|---|---|---|---|
+| `kv_binding` | KV, pair | `"BRUST_CACHE"` | Name of the KV binding. |
+| `kv_min_ttl_s` | KV, pair | `300` | `0..31536000`. A route whose TTL is smaller is not written to KV (KV's own floor is 60 s). |
+| `do_binding` | DO, pair | `"BRUST_CACHE_DO"` | Name of the Durable Object binding; its `class_name` must be `BrustCacheDO`. |
+| `do_store` | `cloudflare-do` | `false` | `true` stores pages in 16 Durable Object shards. Ignored with the pair. |
+
+An unknown key in this table is an error that names it. `env:` values are not allowed on this target.
+
+**Caveat: `[cache.cloudflare]` is ignored for `adapter = "custom"`.** The build reads `[cache.redis]` and `[cache.cloudflare]` only for built-in adapters, and without a warning. A custom adapter that calls `kvAdapter({ binding, min_ttl_s })`, `doAdapter({ binding, store })` or `combine(kv, do)` itself (all exported by `@brust/cache-cloudflare`) must pass its options through `[cache.options]` or in code. Use the same `kvAdapter`/`doAdapter` option names as the programmatic form: `binding`, `min_ttl_s`, `store`.
+
+**Caveat: migrations in `env` blocks.** The build accepts a `migrations` or `exports` declaration of the class at the top level for an `env.*` block. It has not been verified that `wrangler deploy --env <name>` applies a top-level `migrations` entry to that environment. If you deploy an `env`, declare the bindings and the migration inside that `env` block, and try `wrangler deploy --dry-run --env <name>` first.
+
+### What each configuration guarantees
+
+| Config | Store | Other isolates after `cache.invalidate` | A stale page served again? | Free-plan cost driver |
+|---|---|---|---|---|
+| `cloudflare-kv` alone | KV, unguarded | up to the page TTL (no broadcast) | **yes**, up to the TTL (at least 300 s by default) | 1 KV write per tier-1 miss |
+| `cloudflare-do`, `do_store = false` | none (tier 1 only) | within `epoch_interval_ms` plus one round trip | no | 1 DO request per poll per isolate |
+| `cloudflare-do`, `do_store = true` | DO shards, exact write guard | within `epoch_interval_ms` plus one round trip | no (the rows are deleted) | plus 1 DO request per tier-1 miss, about 18 per invalidation |
+| KV + `broadcast = "cloudflare-do"` | KV, guarded by per-isolate floors | within `epoch_interval_ms` plus one round trip | no, once the isolate knows the invalidation | 1 KV write per miss plus the DO polls |
+
+**KV alone never invalidates.** Tier-2 keys hash the route prefix, method, path and query, so KV cannot list the pages under a tag or a path without extra index writes. Use the pair unless a stale page for up to its TTL is acceptable.
+
+**How the pair stays correct.** Each isolate keeps, for every tag and path, the sequence number of the last invalidation it knows. It seeds this from the Durable Object when it starts and after a restart, raises it from every event it polls, and raises it from its own invalidations. A KV page whose write stamp is older than the floor of its tags or path, or which has no stamp, is treated as a miss. A stale write from a lagging isolate can land in KV, but every isolate that knows the invalidation, including a new one, rejects it. The cost is an extra render, never a stale page.
+
+### Things that behave in ways you should expect
+
+- **KV can hide a fresh page for up to 60 s per location.** The adapter reads KV with a 60-second `cacheTtl`, and KV allows one write per second per key. After an invalidation, a hot page's new value may stay invisible at a location's KV cache for up to a minute. Each isolate there then misses (the old value is rejected by the floor) and renders the page itself, and its write may get a 429 (the adapter returns false). This is correct, but expect a burst of renders after invalidating a popular page.
+- **Lagging stamps cost misses.** Writes are stamped with the sequence number this isolate last saw, which can trail the Durable Object by up to `epoch_interval_ms`. A page rendered right after a remote invalidation may be written below another isolate's floor and be rejected there: an extra miss, never a stale serve.
+- **A Durable Object restart clears every isolate once.** The Durable Object keeps its counters and floors in SQLite storage, so sequence numbers never go backward. Its event ring is in memory and it takes a new generation id each time it starts, for example after a deploy or after being evicted when idle. Every isolate sees the new generation on its next poll and clears its tier 1 once (`resets` +1). That is the safe behaviour. Expect it after quiet periods.
+- **KV is eventually consistent.** Local `wrangler dev` KV is strongly consistent, so the propagation lag is not covered by brust's local tests.
+- **A KV write is skipped** when the same isolate wrote an identical page less than 60 seconds earlier.
 
 ## 7. Semantics per backend
 
-What each backend gives, from the design (confirmed in the pages above once those lanes merge):
+What each backend gives (details in sections 5 and 6):
 
-| | Redis / Dragonfly | Cloudflare KV | Cloudflare Durable Object | Custom |
-|---|---|---|---|---|
-| Runs on | Bun | Workers | Workers | what `runtimes` says |
-| Store | shared bodies, expire by TTL | shared bodies, long-TTL only | optional, in DO storage | optional |
-| Stale-write guard | exact | none: a stale body can live up to its TTL | exact | whatever you implement |
-| Broadcast | push, immediate | none you can rely on | pull, ordered ring | push or pull |
-| Other instances after `cache.invalidate` | about pub/sub latency | up to the TTL when used alone | within about `epoch_interval_ms` plus one round trip | depends |
-| On failure | fail-open; a gap clears tier 1 | fail-open | fail-open; a restart changes `gen` and clears tier 1 once | |
+| | Redis / Dragonfly | KV alone | Durable Object | KV + Durable Object | Custom |
+|---|---|---|---|---|---|
+| Runs on | Bun | Workers | Workers | Workers | what `runtimes` says |
+| Store | shared bodies, expire by TTL | shared bodies, long-TTL only | optional (`do_store`), 16 shards | KV bodies | optional |
+| Stale-write guard | exact | none: a stale body can live up to its TTL | exact | floors in each isolate | whatever you implement |
+| Broadcast | push, immediate | none | pull, ordered ring | pull, ordered ring | push or pull |
+| Other instances after `cache.invalidate` | about pub/sub latency | up to the TTL | within about `epoch_interval_ms` plus one round trip | same | depends |
+| On failure | fail-open; a gap clears tier 1 | fail-open | fail-open; a restart clears tier 1 once | fail-open | |
 
 **KV is a long-TTL store, not an invalidation channel.** KV writes are visible in other locations "up to 60 seconds" later (source C9), and KV has no compare-and-set, so brust cannot refuse a stale write. The KV adapter therefore refuses to store pages with a TTL below 300 seconds by default, and the docs advise pairing it with the Durable Object broadcast (`broadcast = "cloudflare-do"`). Alone, a deleted page can still be read for a while from other locations.
 
@@ -269,7 +402,7 @@ On the Free plan with steady traffic, set `epoch_interval_ms` to 5000 or more. W
 
 **KV.** Free allows 1,000 writes and 100,000 reads per day. Paid includes 1 million writes and 10 million reads per month, then $5.00 and $0.50 per million (source C8). Write-through costs one KV write per tier-2 miss of a page that is long-lived enough to be stored, so the Free write quota is the binding limit: it is why the default minimum TTL is 300 s.
 
-**Redis and Dragonfly.** You pay for your own server. Each brust process opens one connection per worker plus one for the subscription (to be confirmed in section 5).
+**Redis and Dragonfly.** You pay for your own server. Each brust process opens one connection per worker plus one for the subscription (section 5).
 
 ## 10. What v1 does not do
 
