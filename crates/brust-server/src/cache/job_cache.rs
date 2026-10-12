@@ -277,6 +277,17 @@ impl JobCache {
         (self.hasher.hash_one(v) as usize) % INVAL_SLOTS
     }
 
+    /// Whether a covering invalidation (`clear`, `user_key`, or one of `tags`, each by slot) took
+    /// a clock value after `since`.
+    fn invalidated_since(&self, tags: &[String], user_key: Option<&str>, since: ReadStamp) -> bool {
+        let after = |a: &AtomicU64| a.load(Ordering::SeqCst) > since.0;
+        after(&self.cleared_at)
+            || user_key.is_some_and(|u| after(&self.key_inval[self.slot(u)]))
+            || tags
+                .iter()
+                .any(|t| after(&self.tag_inval[self.slot(t.as_str())]))
+    }
+
     /// `user_key`: the evaluated `cache({key})` value, indexed so
     /// [`JobCache::invalidate_user_key`] finds this entry. Returns `false` when the insert did not
     /// land: a covering invalidation came after `since` (F89).
@@ -294,7 +305,6 @@ impl JobCache {
         // the two steps loses the entry from the index forever). The eviction
         // listener prunes both indexes (and the front) when moka drops the
         // entry.
-        let user_key: Arc<[String]> = user_key.map(String::from).into_iter().collect();
         let _gate = self.gate.read();
         // The key's stripe covers generation, index and both stores, so
         // same-key inserts index and land in generation order. (Without it, a
@@ -303,6 +313,13 @@ impl JobCache {
         // generation 6 un-indexed and immune to tag invalidation.)
         let shard = shard_of(&self.hasher, &k);
         let _stripe = self.stripes[shard].lock();
+        // F89: the call behind this insert read its data at `since`. Checked under the gate (every
+        // covering invalidation publishes under it exclusively) and the stripe, both held until
+        // the write below. A rejection writes nothing.
+        if self.invalidated_since(tags, user_key, since) {
+            return false;
+        }
+        let user_key: Arc<[String]> = user_key.map(String::from).into_iter().collect();
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         index_tags(&self.tag_index, &k, tags, generation);
         index_tags(&self.key_index, &k, &user_key, generation);
@@ -335,7 +352,6 @@ impl JobCache {
                 generation,
             },
         );
-        let _ = since;
         true
     }
 
@@ -348,7 +364,8 @@ impl JobCache {
         held
     }
 
-    /// Remove one entry; `true` when moka held it (live or not yet reaped).
+    /// Remove one entry; `true` when moka held it (live or not yet reaped). It publishes no clock
+    /// value (no production caller), so it does not reject an in-flight insert of `k`.
     pub fn invalidate_key(&self, k: &JobKey) -> bool {
         self.remove(k)
     }
@@ -356,17 +373,27 @@ impl JobCache {
     /// Remove every entry carrying any of `tags`; returns the number of
     /// distinct keys collected from the index.
     pub fn invalidate_tags(&self, tags: &[String]) -> usize {
-        self.invalidate_indexed(&self.tag_index, tags)
+        self.invalidate_indexed(&self.tag_index, &self.tag_inval, tags)
     }
 
     /// Remove every entry stored under the `cache({key})` value `user_key`, in
     /// any component/job; returns the number of keys collected from the index.
     pub fn invalidate_user_key(&self, user_key: &str) -> usize {
-        self.invalidate_indexed(&self.key_index, &[user_key.to_string()])
+        self.invalidate_indexed(&self.key_index, &self.key_inval, &[user_key.to_string()])
     }
 
-    fn invalidate_indexed(&self, index: &TagIndex<JobKey>, names: &[String]) -> usize {
+    /// `slots`: where these names' invalidations publish (`tag_inval` / `key_inval`).
+    fn invalidate_indexed(
+        &self,
+        index: &TagIndex<JobKey>,
+        slots: &[AtomicU64],
+        names: &[String],
+    ) -> usize {
         let _gate = self.gate.write(); // no insert is mid-way (see `insert`)
+        let seq = self.clock.next();
+        for n in names {
+            slots[self.slot(n.as_str())].fetch_max(seq, Ordering::SeqCst);
+        }
         let keys = take_tagged(index, names);
         let n = keys.len();
         for k in keys {
@@ -383,6 +410,8 @@ impl JobCache {
         // index Mutex across moka's eviction callbacks would deadlock.
         {
             let _gate = self.gate.write();
+            self.cleared_at
+                .fetch_max(self.clock.next(), Ordering::SeqCst);
             self.cache.invalidate_all();
             for s in self.front.iter() {
                 s.0.write().clear();
@@ -967,6 +996,19 @@ mod tests {
         c.invalidate_user_key(&b);
         assert!(c.insert(k("k:a/j0/u"), val(json!("v")), None, &[], Some("u"), s0));
         assert!(c.get(&k("k:a/j0/u")).is_some());
+    }
+
+    #[test]
+    fn an_unrelated_tag_does_not_reject() {
+        let c = store();
+        let b = (0..)
+            .map(|i| format!("t{i}"))
+            .find(|b| c.tag_slot(b) != c.tag_slot("t"))
+            .unwrap();
+        let s0 = c.read_stamp();
+        c.invalidate_tags(&[b]);
+        assert!(c.insert(k("hash"), val(json!("v")), None, &tags(&["t"]), None, s0));
+        assert!(c.get(&k("hash")).is_some());
     }
 
     #[test]
