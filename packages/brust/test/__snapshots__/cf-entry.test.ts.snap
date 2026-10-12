@@ -16,6 +16,7 @@ export const jobs = jsonCall(h.jobs)
 export const action = (req) => fetchInScope(app, req)
 export const MANIFEST = JSON.stringify(M)
 export const TEMPLATES = T
+export { install } from "@brust/core/server-handlers"
 export const CONFIG = "{\\"abi\\":1,\\"generator\\":\\"brust/2.0.0-alpha.2\\",\\"l1Capacity\\":256,\\"jobCacheCapacity\\":512,\\"stats\\":false,\\"edgeCache\\":\\"off\\",\\"actions\\":{\\"prefix\\":\\"/_brust/action\\",\\"maxBodyBytes\\":1048576,\\"maxResponseBytes\\":8388608,\\"crossSite\\":\\"reject\\"}}"
 "
 `;
@@ -33,6 +34,7 @@ export const jobs = jsonCall(h.jobs)
 export const action = noActions
 export const MANIFEST = JSON.stringify(M)
 export const TEMPLATES = T
+export { install } from "@brust/core/server-handlers"
 export const CONFIG = "{\\"abi\\":1,\\"generator\\":\\"brust/2.0.0-alpha.2\\",\\"l1Capacity\\":256,\\"jobCacheCapacity\\":512,\\"stats\\":false,\\"edgeCache\\":\\"off\\"}"
 "
 `;
@@ -53,6 +55,7 @@ export const jobs = jsonCall(h.jobs)
 export const action = (req) => fetchInScope(app, req)
 export const MANIFEST = JSON.stringify(M)
 export const TEMPLATES = T
+export { install } from "@brust/core/server-handlers"
 export const CONFIG = "{\\"abi\\":1,\\"generator\\":\\"brust/2.0.0-alpha.2\\",\\"l1Capacity\\":256,\\"jobCacheCapacity\\":512,\\"stats\\":false,\\"edgeCache\\":\\"off\\",\\"actions\\":{\\"prefix\\":\\"/_brust/action\\",\\"maxBodyBytes\\":1048576,\\"maxResponseBytes\\":8388608,\\"crossSite\\":\\"reject\\"}}"
 "
 `;

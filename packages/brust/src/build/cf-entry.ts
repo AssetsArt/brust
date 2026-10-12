@@ -41,6 +41,7 @@ export function cfEntrySource(i: CfEntryInput): string {
     actions ? 'export const action = (req) => fetchInScope(app, req)' : 'export const action = noActions',
     'export const MANIFEST = JSON.stringify(M)',
     'export const TEMPLATES = T',
+    'export { install } from "@brust/core/server-handlers"',
     `export const CONFIG = ${q(JSON.stringify(i.config))}`,
   ].join('\n')}\n`
 }

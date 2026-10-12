@@ -53,6 +53,8 @@ test('brust-app.js is self-contained, honours [cloudflare] alias and stays small
   const { out } = build()
   const js = readFileSync(join(out, 'cf', 'worker', 'brust-app.js'), 'utf8')
   for (const bad of ['../native/index.js', '.node"', 'worker_threads', 'bun:']) expect(js).not.toContain(bad)
+  expect(js).toContain('installedRuntime().invalidate(a)')
+  expect(js).toMatch(/export \{[^}]*\binstall\b/)
   expect(js).toContain('D1_DB_MARKER')
   expect(js).not.toContain('BUN_DB_MARKER')
   expect(js.length).toBeLessThan(2 * 1024 * 1024)
@@ -75,4 +77,21 @@ test('--target nope is a usage error; without --target there is no dist/cf', () 
   const r = brust(APP, ['build', 'routes.tsx', '--out-dir', out])
   expect(r.code).toBe(0)
   expect(existsSync(join(out, 'cf'))).toBe(false)
+})
+
+test('cache.invalidate inside an action reaches the installed runtime (R8, ruling 19753649)', async () => {
+  const { out } = build()
+  const stage = join(out, 'cf', '.stage')
+  writeFileSync(
+    join(stage, 'invalidate-probe.ts'),
+    `const m = await import(${JSON.stringify(join(out, 'cf', 'worker', 'brust-app.js'))})
+const seen: unknown[] = []
+m.install({ invalidate: (a: unknown) => (seen.push(a), { l1Removed: 7, jobRemoved: 1 }) })
+const res = await m.action(new Request('http://x/api/invalidate'))
+console.log(JSON.stringify({ status: res.status, body: await res.json(), seen }))
+`,
+  )
+  const r = Bun.spawnSync([process.execPath, '--preload', join(stage, 'smoke-preload.ts'), join(stage, 'invalidate-probe.ts')], { cwd: APP, stdout: 'pipe', stderr: 'pipe' })
+  expect(r.stderr.toString()).toBe('')
+  expect(JSON.parse(r.stdout.toString())).toEqual({ status: 200, body: { l1Removed: 7, jobRemoved: 1 }, seen: [{ tags: ['x'] }] })
 })

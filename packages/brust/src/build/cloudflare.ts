@@ -108,7 +108,7 @@ function cfAlias(alias: Record<string, string>, sourceOf: SourceOf): BunPlugin {
 
 /** The CF bundle's stand-in for the napi addon (`native.ts` `require('../native/index.js')`, R8): every call
  * fails loudly, since a Worker has no addon. */
-function cfNativeStub(): BunPlugin {
+function cfNativeStub(handlersPath: string): BunPlugin {
   const names = ['startServer', 'registerWorker', 'untilReady', 'beginDrain', 'cacheInvalidate', 'cacheStats', 'localAddr', 'planJobs', 'takeFetchBody', 'putFetchReply']
   return {
     name: 'brust-cf-native',
@@ -116,8 +116,8 @@ function cfNativeStub(): BunPlugin {
       b.onResolve({ filter: /^\.\.\/native\/index\.js$/ }, (a) => (/[\\/]src[\\/]native\.ts$/.test(a.importer) ? { path: 'brust-cf-native', namespace: 'brust-cf' } : undefined))
       b.onLoad({ filter: /.*/, namespace: 'brust-cf' }, () => ({
         loader: 'js',
-        // TODO(M4-CF R8, blocked on lane 3 Task 2): cacheInvalidate forwards to the glue's `invalidate` once its mechanism is verified.
-        contents: `const no = (n) => () => { throw new Error(n + ' is not available on Cloudflare Workers') }\nmodule.exports = {${names.map((n) => `${n}: no(${JSON.stringify(n)})`).join(', ')}}\n`,
+        // cacheInvalidate -> the `rt.invalidate` the glue installed at start (ruling 19753649); the rest has no Worker meaning.
+        contents: `import { installedRuntime } from ${JSON.stringify(handlersPath)}\nconst no = (n) => () => { throw new Error(n + ' is not available on Cloudflare Workers') }\nmodule.exports = {${names.map((n) => (n === 'cacheInvalidate' ? 'cacheInvalidate: (a) => installedRuntime().invalidate(a)' : `${n}: no(${JSON.stringify(n)})`)).join(', ')}}\n`,
       }))
     },
   }
@@ -151,7 +151,7 @@ plugin({
   const smoke = `// generated: build-time smoke check of the CF bundle (child process; mock leaks are process-wide)
 const m = await import(${JSON.stringify(app)})
 const bad = []
-for (const k of ['loader', 'jobs', 'action']) if (typeof m[k] !== 'function') bad.push(k + ' is not a function')
+for (const k of ['loader', 'jobs', 'action', 'install']) if (typeof m[k] !== 'function') bad.push(k + ' is not a function')
 if (typeof m.MANIFEST !== 'string' || JSON.parse(m.MANIFEST).version !== 1) bad.push('MANIFEST.version !== 1')
 if (typeof m.CONFIG !== 'string' || JSON.parse(m.CONFIG).abi !== 1) bad.push('CONFIG.abi !== 1')
 if (typeof m.TEMPLATES !== 'object' || m.TEMPLATES === null) bad.push('TEMPLATES is not an object')
@@ -215,7 +215,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     define: PRODUCTION,
     minify: false,
     external: ['node:*', 'cloudflare:*', glueSpec],
-    plugins: [cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'])],
+    plugins: [cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'])],
   })
   if (violations.length > 0) throw new BuildError('cf-unsupported', `${[...new Set(violations)].join('\n')}\nthese modules do not exist on Cloudflare Workers; swap them with [cloudflare] alias`)
   if (!res.success) throw new BuildError('bundle', `cloudflare: ${res.logs.map(String).join('\n')}`)
