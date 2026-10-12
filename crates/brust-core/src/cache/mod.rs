@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use bytes::Bytes;
 use serde::Serialize;
 
+#[cfg(any(test, feature = "conformance"))]
+#[doc(hidden)]
+pub mod conformance;
 pub mod key_expr;
 pub mod stamp;
 
