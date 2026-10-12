@@ -17,7 +17,8 @@ use parking_lot::RwLock;
 
 use brust_server::{
     ActionsConfig, Config, CorsConfig, CrossSite, DEFAULT_ACTION_PREFIX,
-    DEFAULT_MAX_ACTION_BODY_BYTES, InvalidateArgs, Server, Tuning, start,
+    DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs, Server,
+    Tuning, start,
 };
 
 use crate::dispatch::{BufPtr, KindArg, TsfnDispatch, WorkerTsfn};
@@ -101,11 +102,13 @@ pub struct NapiCorsOptions {
     pub max_age_seconds: Option<u32>,
 }
 
-/// M3-F A3 consumer `{ prefix?, maxBodyBytes? }` (defaults `/_brust/action`, 262144). Present = actions on.
+/// M3-F A3 consumer `{ prefix?, maxBodyBytes?, maxResponseBytes? }` (defaults `/_brust/action`, 1 MiB, 8 MiB). Present = actions on.
 #[napi(object)]
 pub struct NapiActionsOptions {
     pub prefix: Option<String>,
     pub max_body_bytes: Option<u32>,
+    /// F82: cap on an action response body (default 8388608).
+    pub max_response_bytes: Option<u32>,
     /// `"reject"` (default) or `"allow"` (F87): cross-site mutating action requests.
     pub cross_site: Option<String>,
 }
@@ -129,6 +132,9 @@ fn actions_config(a: NapiActionsOptions) -> ActionsConfig {
         max_body_bytes: a
             .max_body_bytes
             .map_or(DEFAULT_MAX_ACTION_BODY_BYTES, |n| n as usize),
+        max_response_bytes: a
+            .max_response_bytes
+            .map_or(DEFAULT_MAX_ACTION_RESPONSE_BYTES, |n| n as usize),
         cross_site: match a.cross_site.as_deref() {
             Some("allow") => CrossSite::Allow,
             _ => CrossSite::Reject,
@@ -380,12 +386,15 @@ mod tests {
         let none = NapiActionsOptions {
             prefix: None,
             max_body_bytes: None,
+            max_response_bytes: None,
             cross_site: None,
         };
         assert_eq!(actions_config(none), ActionsConfig::default());
+        assert_eq!(ActionsConfig::default().max_response_bytes, 8_388_608);
         let set = NapiActionsOptions {
             prefix: Some("/api".into()),
             max_body_bytes: Some(1024),
+            max_response_bytes: Some(1 << 20),
             cross_site: Some("allow".into()),
         };
         assert_eq!(
@@ -393,6 +402,7 @@ mod tests {
             ActionsConfig {
                 prefix: "/api".into(),
                 max_body_bytes: 1024,
+                max_response_bytes: 1 << 20,
                 cross_site: CrossSite::Allow,
             }
         );
