@@ -1,6 +1,6 @@
 // The static tier panel: PokemonCard's source beside three of them rendered (no JavaScript, no hydration).
 import type { CodeBlockData } from '../../lib/highlight'
-import Code from './Code'
+import CodeBlock from '../CodeBlock'
 import PokemonCard from './demos/PokemonCard'
 import type { CardData } from './demoData'
 import Pipe from './Pipe'
@@ -10,7 +10,7 @@ export default function StaticPanel({ code, a, b, c }: { code: CodeBlockData; a:
     <div className="panel cr" role="tabpanel" id="p-static" aria-labelledby="tab-static">
       <Pipe file="PokemonCard.tsx" tier="static" />
       <div className="cr-grid">
-        <Code b={code} />
+        <CodeBlock code={code.code} lang={code.lang} file={code.file} cwd={code.cwd} html={code.html} />
         <div className="browser">
           <div className="url">
             <span>127.0.0.1:1337/pokedex</span>

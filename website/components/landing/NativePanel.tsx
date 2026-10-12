@@ -1,6 +1,6 @@
 // The native tier panel: CatchCard's source beside the live card (two signals, no React on the page).
 import type { CodeBlockData } from '../../lib/highlight'
-import Code from './Code'
+import CodeBlock from '../CodeBlock'
 import CatchCard from './demos/CatchCard'
 import type { CatchData } from './demoData'
 import Pipe from './Pipe'
@@ -10,7 +10,7 @@ export default function NativePanel({ code, card }: { code: CodeBlockData; card:
     <div className="panel cr" role="tabpanel" id="p-native" aria-labelledby="tab-native" hidden>
       <Pipe file="CatchCard.tsx" tier="native" />
       <div className="cr-grid">
-        <Code b={code} />
+        <CodeBlock code={code.code} lang={code.lang} file={code.file} cwd={code.cwd} html={code.html} />
         <div className="browser">
           <div className="url">
             <span>127.0.0.1:1337/pokemon/pikachu</span>

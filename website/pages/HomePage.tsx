@@ -19,7 +19,7 @@ import PokemonSearch from '../components/landing/demos/PokemonSearch'
 import Pipe from '../components/landing/Pipe'
 import StaticPanel from '../components/landing/StaticPanel'
 import TierTabs from '../components/landing/TierTabs'
-import Code from '../components/landing/Code'
+import CodeBlock from '../components/CodeBlock'
 import { type BenchData, loadBench } from '../lib/bench'
 
 export interface HomeData {
@@ -78,7 +78,7 @@ export default function HomePage(d: HomeData) {
           <div className="panel cr" role="tabpanel" id="p-react" aria-labelledby="tab-react" hidden>
             <Pipe file="PokemonSearch.tsx" tier="react" />
             <div className="cr-grid">
-              <Code b={d.code.reactDemo} />
+              <CodeBlock code={d.code.reactDemo.code} lang={d.code.reactDemo.lang} file={d.code.reactDemo.file} cwd={d.code.reactDemo.cwd} html={d.code.reactDemo.html} />
               <div className="browser">
                 <div className="url">
                   <span>127.0.0.1:1337/search</span>

@@ -1,6 +1,6 @@
 // "Data stays next to the route": the route entry and the invalidate call, with the numbered pins that tie them to the list.
 import type { CodeBlockData } from '../../lib/highlight'
-import Code from './Code'
+import CodeBlock from '../CodeBlock'
 
 export default function DataSection({ route, invalidate }: { route: CodeBlockData; invalidate: CodeBlockData }) {
   return (
@@ -39,8 +39,8 @@ export default function DataSection({ route, invalidate }: { route: CodeBlockDat
           </ol>
         </div>
         <div className="stack">
-          <Code b={route} />
-          <Code b={invalidate} />
+          <CodeBlock code={route.code} lang={route.lang} file={route.file} cwd={route.cwd} html={route.html} />
+          <CodeBlock code={invalidate.code} lang={invalidate.lang} file={invalidate.file} cwd={invalidate.cwd} html={invalidate.html} />
         </div>
       </div>
     </section>
