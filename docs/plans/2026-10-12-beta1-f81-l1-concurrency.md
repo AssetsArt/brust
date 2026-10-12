@@ -1,6 +1,6 @@
-# beta1-f81-l1-concurrency: commit the L1 concurrency probes as `tests/l1_concurrency.rs` and write down why `invalidate_path` is gate-free
+# beta1-f81-l1-concurrency: commit the L1 concurrency probes as `tests/l1_concurrency.rs`
 
-**RULED by lead Detoro 2026-10-12 (plan written by the lead; decisions final). Routine lane; no behaviour change in `l1.rs` beyond a doc comment. If a probe FINDS a defect, that is a `task challenge` with the failing test attached, never a fix in this lane. Dispatch after `beta1-release-prep` is READY (same implementer).**
+**RULED by lead Detoro 2026-10-12 (plan written by the lead; decisions final). Routine lane; this lane touches NO line of `l1.rs` — the gate-free rationale and the invariant comment are owned by lane `beta1-f86-l1-generation` (its ruling R6), which also changes the `insert` signature; if `beta1` already carries that change when you start, call `insert(key, body, ttl, tags, cache.read_stamp())` and check the return value where the plan says the insert must land. If a probe FINDS a defect, that is a `task challenge` with the failing test attached, never a fix in this lane. Dispatch after `beta1-release-prep` is READY (same implementer).**
 
 owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: beta1 · lane: beta1-f81-l1-concurrency · tier: routine · review: standard
 
@@ -10,7 +10,6 @@ Ledger row (docs/plans/m1a-followups.md:145, F81): "writer progress under ≥ 10
 
 **Goal.** After this lane merges into `beta1`:
 - `crates/brust-server/tests/l1_concurrency.rs` exists with two deterministic tests (no wall-clock latency assertions) that exercise the `L1Cache` API directly (`crates/brust-server/src/cache/l1.rs:295-508`: `new`, `with_capacity`, `get`, `get_with`, `insert`, `invalidate_path`, `invalidate_tags`, `clear`, `stats`, `build_cache_key` at :554).
-- The module/struct comment at `l1.rs:251-266` states the gate-free rule for `invalidate_path` and why.
 - Ledger row F81 starts with `DONE 2026-10-12 — …`.
 
 ## Decisions (lead rulings, final)
@@ -22,7 +21,7 @@ Ledger row (docs/plans/m1a-followups.md:145, F81): "writer progress under ≥ 10
 
 ## Boundary
 
-`crates/brust-server/tests/l1_concurrency.rs` (new), `crates/brust-server/src/cache/l1.rs` (doc comments at :251-266 and above `invalidate_path` :467 ONLY), `docs/plans/m1a-followups.md` (row F81 only).
+`crates/brust-server/tests/l1_concurrency.rs` (new), `docs/plans/m1a-followups.md` (row F81 only). NOT `l1.rs`.
 
 ## Tasks
 
@@ -46,19 +45,18 @@ Ledger row (docs/plans/m1a-followups.md:145, F81): "writer progress under ≥ 10
 - [ ] After all joins: `cache.clear()` returns the remaining count; then for a sample of 50 keys `get` is `None`; `stats()` entries == 0. No panic anywhere is the main oracle (the listener/stripe/gate invariants panic or deadlock when wrong — a deadlock is caught by the 30 s ceiling as in Task 2).
 - [ ] `cargo test -p brust-server --test l1_concurrency` → both pass, wall time printed by cargo < 5 s. Run 10× → 10/10. If a run fails: do not weaken the test — `conclave task challenge` with the output.
 
-### Task 4 — the doc comment and the ledger
+### Task 4 — fmt, ledger, READY
 
-- [ ] `l1.rs:251-266` (the struct doc): append a paragraph: `/// \`invalidate_path\` (and \`remove\`) take NO gate on purpose: the front is a superset of moka for a key, so removing the key's front entry and then moka's can never leave a stale front HIT; same-key writers serialize on the key stripe, and a concurrent \`insert\` of a NEWER generation is ordered by that stripe. Only tag invalidation and \`clear\` need the gate, because they span keys and must not interleave with an insert's "index tags, then write". A later edit that adds the gate here or scans moka is slower and not more correct (F81, 2026-10-12).` Adjust wording to what the code actually does after reading `invalidate_path` (:467-490) — if the code does take a stripe or gate there, describe THAT and raise a challenge if it contradicts the ledger.
 - [ ] `cargo fmt --all -- --check` and `cargo clippy -p brust-server --all-targets -- -D warnings` → clean (doc comment lines ≤ 120 chars if rustfmt complains).
-- [ ] `docs/plans/m1a-followups.md` F81 "what to do" cell → prefix `DONE 2026-10-12 — tests/l1_concurrency.rs (2 deterministic tests) + gate-free rationale in l1.rs; `.
-- [ ] Commit: `test(l1): commit the F81 concurrency probes as deterministic tests; document the gate-free invalidate_path` + `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
+- [ ] `docs/plans/m1a-followups.md` F81 "what to do" cell → prefix `DONE 2026-10-12 — tests/l1_concurrency.rs (2 deterministic tests); gate-free rationale documented by F86; `.
+- [ ] Commit: `test(l1): commit the F81 concurrency probes as deterministic tests` + `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 - [ ] `conclave task note … beta1-f81-l1-concurrency READY @<sha> — 2 tests, 10/10 × 2, <t> s; probes from Mellow: yes/no`.
 
 ## Acceptance (Afrojack, standard)
 
 1. `cargo test -p brust-server --test l1_concurrency` green; `for i in $(seq 10); do cargo test -p brust-server --test l1_concurrency -q || echo FAIL; done` → no FAIL; total time < 5 s per run.
 2. No `sleep`-based or elapsed-time-per-op assertion in the file; the only time check is the 30 s hard ceiling.
-3. `git diff beta1...lane/… -- crates/brust-server/src` touches comments only (`git diff -w --stat` and read it).
+3. `git diff beta1...lane/… -- crates/brust-server/src` is EMPTY.
 4. fmt + clippy clean; ledger F81 cell starts with `DONE`.
 
 ## Gates (lead, at merge)
