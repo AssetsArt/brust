@@ -6,6 +6,7 @@ license.workspace = true
 description = "brust v2 HTTP server: manifest routing, L1/job caches, minijinja render, worker dispatch seam"
 
 [dependencies]
+brust-core.workspace = true
 brust-jinja.workspace = true
 minijinja.workspace = true
 serde.workspace = true
