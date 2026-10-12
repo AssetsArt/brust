@@ -172,3 +172,13 @@ test('x-html update that writes x-data markup does not mount it', async () => {
   await flush()
   expect(ran).toEqual([])
 })
+
+test('a React island subtree is inert: x-on-click / x-data inside it are never bound or mounted (F94)', () => {
+  const ran: string[] = []
+  defineBehavior('outer3', () => ({ hit: () => ran.push('host') }))
+  defineBehavior('victim3', () => { ran.push('victim'); return {} })
+  document.body.innerHTML = `<div x-data="outer3"><brust-island data-id="nope"><button id="b" x-on-click="hit">go</button><i x-data="victim3"></i></brust-island></div>`
+  mount()
+  ;(document.getElementById('b') as HTMLButtonElement).click()
+  expect(ran).toEqual([])
+})

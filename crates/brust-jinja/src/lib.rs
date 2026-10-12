@@ -581,10 +581,11 @@ pub fn is_url_attr(html_name: &str) -> bool {
 }
 
 /// Attributes never rendered from component code: inline event handlers and
-/// `srcdoc` (the runtime refuses to bind them too).
+/// `srcdoc` (the runtime refuses to bind them too), and every `x-` name: those are
+/// runtime-dom directives, which only the compiler may emit (F94).
 pub fn is_refused_attr(html_name: &str) -> bool {
     let n = html_name.to_ascii_lowercase();
-    n.starts_with("on") || n == "srcdoc" || n == "x-html" || n == "x-raw"
+    n.starts_with("on") || n == "srcdoc" || n.starts_with("x-")
 }
 
 /// The runtime's URL rule: the scheme of `new URL(v, base)` is http(s),
@@ -1226,6 +1227,28 @@ mod tests {
         assert!(
             is_refused_attr("onclick") && is_refused_attr("srcdoc") && !is_refused_attr("title")
         );
+        // F94: every runtime directive family is reserved; near-misses stay allowed.
+        for d in [
+            "x-data",
+            "x-props",
+            "x-props-bind",
+            "x-on-click",
+            "x-bind-class",
+            "x-text",
+            "x-html",
+            "x-raw",
+            "x-if",
+            "x-for",
+            "x-show",
+            "x-model",
+            "x-ref",
+            "X-On-Click",
+        ] {
+            assert!(is_refused_attr(d), "{d}");
+        }
+        for ok in ["xlink:href", "data-x-foo", "x", "xmlns", "max"] {
+            assert!(!is_refused_attr(ok), "{ok}");
+        }
     }
 
     #[test]

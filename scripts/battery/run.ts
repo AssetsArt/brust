@@ -130,6 +130,8 @@ export function renderReport(results: Result[]): string {
   L.push(`| **Total** | ${total.n} | ${total.static} | ${total.native} | ${total.react} | ${total.error} | ${total.ce} | ${total.bf} | ${total.warn} |`, '')
   L.push('## Raw HTML (`dangerouslySetInnerHTML`)', '')
   L.push('`dangerouslySetInnerHTML={{ __html: v }}` works on every tier, with React\'s contract: `v` is the element\'s inner HTML, **unescaped**. The author is responsible for sanitising it; brust does not. `null`/`undefined` paint empty and any other non-string is `String(v)`. Static and native templates print it through the single `html_raw` filter (every other dynamic output stays `| e`); a value that reads state also gets an `x-html` directive that rewrites `innerHTML`. Children next to it, a void element, or an object without `__html` are build errors (React throws on each).', '')
+  L.push('## Reserved `x-*` attributes', '')
+  L.push('Every attribute whose name starts with `x-` written in component JSX is reserved for brust\'s runtime: it is never printed (static, dynamic or spread), and the build warns `reserved-attr`. Rename it (`data-x-…`) or move the component to React. The compiler emits its own directives itself; runtime-dom binds nothing else.', '')
   for (const [cat, title] of Object.entries(CATEGORIES)) {
     L.push(`## ${cat}. ${title}`, '')
     L.push('| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |', '|---|---|---|---|---|---|---|---|')
