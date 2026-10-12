@@ -86,6 +86,8 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     BRUST_RENDER_SLOTS: String(cfg.renderSlots),
     BRUST_DIST_DIR: distDir,
     BRUST_APP_ENTRY: entry,
+    // One cache-adapter origin per process: its workers' published events are not replayed here.
+    BRUST_CACHE_ORIGIN: crypto.randomUUID(),
   }
 
   let ready = false

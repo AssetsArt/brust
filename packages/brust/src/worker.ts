@@ -1,12 +1,14 @@
 // The Bun side of contract 7 (`crates/brust-server/src/protocol.rs`): requests arrive as inline
 // JSON, responses go into this worker's SharedArrayBuffer slot (SAB rule, `dispatch.rs`). A
 // handler NEVER rejects across the tsfn: every failure becomes `{error}` / `{id, error}`.
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { workerData } from 'node:worker_threads'
-import { runFetch, setActionsApp, setActionsLimits } from './actions-bridge'
+import { type HeapIo, runFetch, setActionsApp, setActionsLimits } from './actions-bridge'
 import { DEFAULT_MAX_RESPONSE_BYTES } from './actions/prefix'
+import { type CacheBridgeDeps, runCache } from './cache-adapter/bridge'
+import type { CacheManifest } from './cache-adapter/load'
 import { type Handlers, type JobsModule, type ManifestLike, makeHandlers, toJson } from './handlers'
-import { planJobs, registerWorker } from './native'
+import { cacheClear, cacheL2Count, cacheReplay, planJobs, putFetchReply, registerWorker, takeFetchBody } from './native'
 import { flattenRoutes, type Route } from './routes'
 
 export * from './handlers'
@@ -46,6 +48,7 @@ const PLANNED = { planned: true } as const
 export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan: PlanJobs = planJobs) {
   return async (kind: string, requestJson: string, slot: number): Promise<number> => {
     if (kind === 'fetch') return runFetch(requestJson, view, slot, slots)
+    if (kind === 'cache') return runCache(requestJson, view, slot, slots, cacheHeapIo, cacheDeps)
     let out: unknown
     try {
       const req = JSON.parse(requestJson)
@@ -67,6 +70,31 @@ export function makeDispatch(h: Handlers, view: Uint8Array, slots: number, plan:
     }
     return writeSlot(view, slot, slots, toJson(out))
   }
+}
+
+// ---- cache adapter (the `cache` call kind) ----
+
+const cacheHeapIo: HeapIo = { takeBody: (slot) => takeFetchBody(slot), putReply: (slot, body) => putFetchReply(slot, body) }
+const count = (name: string) => void cacheL2Count(name)
+let cacheDeps: CacheBridgeDeps = { store: undefined, getTimeoutMs: 50, maxBodyBytes: 1_048_576, count }
+
+/** The `cache` call's store (tests; `startWorker` sets it from `manifest.cache`). */
+export function setCacheBridge(d: CacheBridgeDeps): void {
+  cacheDeps = d
+}
+
+/** Load `manifest.cache`'s adapter in this worker (R8): a custom module from dist, a built-in from the
+ * app root; `init`, then `cache.invalidate` publishes through it. Worker 0 also subscribes after
+ * registering (R10). */
+async function startCacheAdapter(m: CacheManifest, dist: string, appDir: string, workerId: number) {
+  const { loadAdapter } = await import('./cache-adapter/load')
+  const { setCacheRuntime } = await import('./cache-adapter/runtime')
+  const adapter = await loadAdapter(m, 'bun', (spec, builtin) => import(builtin ? Bun.resolveSync(spec, appDir) : join(dist, spec)), process.env)
+  await adapter.init?.({ namespace: m.namespace, buildId: m.buildId, runtime: 'bun', workerId })
+  const origin = process.env.BRUST_CACHE_ORIGIN || crypto.randomUUID()
+  setCacheRuntime({ adapter, origin, defer: (p) => void p.catch(() => {}), count })
+  setCacheBridge({ store: adapter.store, getTimeoutMs: m.getTimeoutMs, maxBodyBytes: m.maxBodyBytes, count })
+  return { adapter, origin }
 }
 
 // ---- worker entry ----
@@ -95,7 +123,7 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
   const dist = resolve(env.BRUST_DIST_DIR ?? 'dist')
   const entry = env.BRUST_APP_ENTRY
   if (!entry) throw new Error('BRUST_APP_ENTRY is not set')
-  const manifest = (await Bun.file(join(dist, 'manifest.json')).json()) as ManifestLike
+  const manifest = (await Bun.file(join(dist, 'manifest.json')).json()) as ManifestLike & { cache?: CacheManifest | null }
   const app = await import(resolve(entry))
   const routes = (app.routes ?? app.default) as Route[] | undefined
   if (!Array.isArray(routes)) throw new Error(`${entry} exports no routes (export const routes or default)`)
@@ -107,6 +135,8 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
     setActionsApp(await loadActionsApp(join(dist, manifest.actions.entry), manifest.actions.prefix))
     setActionsLimits({ maxResponseBytes: manifest.actions.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES })
   }
+  const workerId = Number.parseInt(env.BRUST_WORKER_ID ?? '0', 10) || 0
+  const l2 = manifest.cache ? await startCacheAdapter(manifest.cache, dist, dirname(resolve(entry)), workerId) : null
   sab = opts.sab ?? new SharedArrayBuffer(SLOT_BYTES * slots)
   view = new Uint8Array(sab)
   const handlers = makeHandlers({
@@ -115,7 +145,12 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
     manifest,
     stores: (jobsMod.stores ?? {}) as Record<string, object>,
   })
-  return registerWorker(view, slots, makeDispatch(handlers, view, slots))
+  const id = registerWorker(view, slots, makeDispatch(handlers, view, slots))
+  if (l2 && env.BRUST_WORKER_ID === '0') {
+    const { startSubscriber } = await import('./cache-adapter/runtime')
+    await startSubscriber(l2.adapter, l2.origin, { replay: (args, seq) => void cacheReplay(args, seq), clear: () => void cacheClear(), count })
+  }
+  return id
 }
 
 // Auto-start only inside a Bun `Worker` spawned by `run()` (BRUST_WORKER_ID set). Not
