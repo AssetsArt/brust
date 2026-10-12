@@ -135,3 +135,13 @@ test('F97: a nested host (x-if clone) has its refs bound before its own effects'
   mount()
   expect(seen).toEqual(['t'])
 })
+
+test('F97: an instance disposed before its effects start never runs them', async () => {
+  const { Instance } = await import('../src/instance')
+  const inst = new Instance(document.createElement('div'), 'f97d', null, {})
+  let ran = 0
+  inst.ctx().effect(() => { ran++ })
+  inst.dispose()
+  inst.start()
+  expect(ran).toBe(0)
+})
