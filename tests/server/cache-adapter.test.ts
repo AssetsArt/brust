@@ -129,7 +129,9 @@ test('4 a hung get renders within the budget', async () => {
   expect(r.headers.get('x-brust-cache')).toBe('MISS')
   await r.text()
   expect(Date.now() - t0).toBeLessThan(2000)
-  expect((await B.l2()).timeouts).toBe(1)
+  const l2 = await B.l2()
+  expect(l2.timeouts).toBe(1)
+  console.log(`B stats.l2 ${JSON.stringify(l2)}`)
 })
 
 test('5 with the relay gone, pages still render (fail-open)', async () => {

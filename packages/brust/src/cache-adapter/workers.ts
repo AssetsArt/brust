@@ -56,12 +56,24 @@ export function installCache(rt: CfRuntimeBase, ext: CfInstallExt): CfCacheBridg
   // `init` may do I/O, which a Worker refuses at start: it runs on the first use, once.
   let ready: Promise<void> | null = null
   const ensure = () => (ready ??= Promise.resolve(a.init?.({ namespace: c.namespace, buildId: c.buildId, runtime: 'workers', workerId: 0 })))
-  const origin = crypto.randomUUID()
-  setCacheRuntime({ adapter: a, origin, defer: (p) => waitUntil(p), count, ready: ensure })
+  // A Worker may not draw random values at start (global scope): the origin is made on first read.
+  let origin: string | null = null
+  const getOrigin = () => (origin ??= crypto.randomUUID())
+  setCacheRuntime({
+    adapter: a,
+    get origin() {
+      return getOrigin()
+    },
+    defer: (p) => waitUntil(p),
+    count,
+    ready: ensure,
+  })
   const store = a.store
   const since = a.broadcast?.since?.bind(a.broadcast)
   return {
-    origin,
+    get origin() {
+      return getOrigin()
+    },
     ...(store
       ? {
           async get(key: string) {

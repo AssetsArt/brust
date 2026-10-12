@@ -102,15 +102,11 @@ pub fn install(core: &'static Core<WasmHost>) -> Result<(), String> {
             let (Some(get), Some(set)) = (func("get")?, func("set")?) else {
                 return Err("install: the cache bridge needs get and set".into());
             };
-            let origin = js_sys::Reflect::get(&cache, &"origin".into())
-                .map_err(js_string)?
-                .as_string()
-                .ok_or("install: the cache bridge has no origin")?;
             core.host.set_cache(CacheBridge {
                 get,
                 set,
                 since: func("since")?,
-                origin,
+                obj: cache,
                 get_timeout: l2.get_timeout,
             });
             Ok(())

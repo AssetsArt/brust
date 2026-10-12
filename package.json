@@ -12,7 +12,8 @@
     "bench/apps/bun-serve",
     "bench/apps/next",
     "tests/fixtures/cf-min",
-    "tests/fixtures/l2-relay"
+    "tests/fixtures/l2-relay",
+    "tests/fixtures/cf-l2"
   ],
   "scripts": {
     "bun-codegen": "bun scripts/bun-codegen.ts",

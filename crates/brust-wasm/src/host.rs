@@ -50,8 +50,19 @@ pub struct CacheBridge {
     pub get: js_sys::Function,
     pub set: js_sys::Function,
     pub since: Option<js_sys::Function>,
-    pub origin: String,
+    /// The bridge object: `origin` is read from it lazily (a Worker may not draw random values at
+    /// start, so the JS side makes it on first use, inside a request).
+    pub obj: wasm_bindgen::JsValue,
     pub get_timeout: Duration,
+}
+
+impl CacheBridge {
+    /// This isolate's origin (`crypto.randomUUID()`, made on first read).
+    pub fn origin(&self) -> Option<String> {
+        js_sys::Reflect::get(&self.obj, &"origin".into())
+            .ok()?
+            .as_string()
+    }
 }
 
 impl WasmHost {

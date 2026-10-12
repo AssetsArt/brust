@@ -65,7 +65,9 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
   const tagSeq = new Map<string, number>()
   const pathSeq = new Map<string, number>()
   let seq = 0
-  let gen = randomGen()
+  // Drawn on first use: a Workers module may not make random values at global scope.
+  let genValue: string | null = null
+  const gen = () => (genValue ??= randomGen())
   const ring: Slot[] = []
   let ringUsed = 0
   /** The highest seq no longer in the ring (a reader at or below seq-1 of it is behind). */
@@ -176,7 +178,7 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
       if (failing()) throw new Error('memory adapter: injected failure')
       const after = ring.filter(s => s.seq > from)
       const behind = from < dropped || after.some(s => s.event === null)
-      return { gen, seq, behind, events: behind ? [] : after.map(s => structuredClone(s.event!)) }
+      return { gen: gen(), seq, behind, events: behind ? [] : after.map(s => structuredClone(s.event!)) }
     }
   }
 
@@ -187,7 +189,7 @@ export function memoryAdapter(o: MemoryAdapterOptions = {}): MemoryAdapter {
     ...(mode === 'none' ? {} : { broadcast }),
     __test: {
       regen() {
-        gen = randomGen()
+        genValue = randomGen()
         ring.length = 0
         ringUsed = 0
         dropped = seq

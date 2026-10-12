@@ -49,7 +49,7 @@ fn boot() -> Result<(), String> {
     if let (Some(e), Some(b)) = (epoch_cfg, core.host.cache())
         && b.since.is_some()
     {
-        epoch::sync::init(b.origin, e.interval_ms);
+        epoch::sync::init(e.interval_ms);
     }
     Ok(())
 }

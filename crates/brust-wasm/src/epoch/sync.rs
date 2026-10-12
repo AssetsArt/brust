@@ -20,13 +20,21 @@ thread_local! {
     static WARNED: RefCell<f64> = const { RefCell::new(f64::NEG_INFINITY) };
 }
 
-/// At boot, for an adapter with a pull broadcast.
-pub fn init(origin: String, interval_ms: u64) {
-    CURSOR.with(|c| *c.borrow_mut() = Some(Cursor::new(origin, interval_ms)));
+/// At boot, for an adapter with a pull broadcast. The origin is learnt on the first poll.
+pub fn init(interval_ms: u64) {
+    CURSOR.with(|c| *c.borrow_mut() = Some(Cursor::new(String::new(), interval_ms)));
 }
 
 pub async fn maybe_sync(core: &Core<WasmHost>) {
     let now = js_sys::Date::now() as u64;
+    let unknown = CURSOR.with(|c| c.borrow().as_ref().is_some_and(|c| c.origin.is_empty()));
+    if unknown && let Some(o) = core.host.cache().and_then(|b| b.origin()) {
+        CURSOR.with(|c| {
+            if let Some(c) = c.borrow_mut().as_mut() {
+                c.origin = o;
+            }
+        });
+    }
     // No borrow survives this statement: the await below may run a JS action that re-enters.
     let Some(from) = CURSOR.with(|c| c.borrow_mut().as_mut().and_then(|c| c.begin(now))) else {
         return;
