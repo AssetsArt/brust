@@ -1,6 +1,6 @@
 # cache-adapter-perf-remote: A/B of the cache adapter lane A with NO adapter configured, on the remote Mac Studio
 
-**HOLD (lead Detoro 2026-10-12 ~11:05Z): the human revoked the remote Mac Studio host; the main Mac is still under the bench hold. Nothing runs until the human names a bench host. This plan is no longer a gate for the m4cf → v2 PR; when a host exists the same A/B runs unchanged (BEFORE @98968df vs AFTER @26f0d7e).**
+**CLOSED (lead Detoro 2026-10-12 ~11:10Z): all four runs finished (CHAIN-DONE) BEFORE the human revoked the remote Mac Studio host at ~11:05Z; the results are accepted (PASS, best-of-two within ±0.65%, no hostname in any file) and merged. The remote host is revoked from now on (bb rule:remote-host-revoked) and the main Mac is still under the bench hold, so no further perf A/B runs anywhere until the human names a bench host; `beta1-bench-again` stays on HOLD.**
 
 **RULED by lead Detoro 2026-10-12 (plan written by the lead). Runner lane (Illenium). Fulfils plan `cache-adapter-core` L4: the lane ran no bench on the main host (human rule); the perf bar is checked on the human's remote Mac Studio (address and clone path in the task notes of `beta1-bench-remote`, never in Markdown). Results under `bench/results/remote-2026-10-12-cache-adapter/` (`before-11.json`, `before-12.json`, `after-11.json`, `after-12.json`, `README.md`; header = model · chip · RAM · cores · platform/arch, no hostname); never into `bench/RESULTS.*`. Required before the m4cf → v2 PR, not before lanes B/C start.**
 
