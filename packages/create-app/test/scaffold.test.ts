@@ -58,6 +58,7 @@ test('blank: install → build → typecheck → start; / is the native counter;
   setOverrides(dir)
   sh(['bun', 'install'], dir)
   sh(['bun', 'run', 'build'], dir)
+  expect(existsSync(join(dir, 'dist/native'))).toBe(false) // F85: the addon resolves from @brust/native-<plat>, nothing is copied
   expect(sh(['bun', 'run', 'typecheck'], dir)).toMatch(/No type errors/)
   const app = await start(dir)
   const page = await fetch(`${app.base}/`)

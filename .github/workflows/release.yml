@@ -54,6 +54,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.4.2" }
       - run: bun install --frozen-lockfile
+      - name: Lockstep — every @brust/* package carries the same version (F88)
+        run: bun scripts/release-check.ts "$(bun -e "console.log(require('./packages/brust/package.json').version)")"
       - name: Generate the loader (index.js + index.d.ts) on the host
         run: cd packages/brust && bun run build:debug
       - uses: actions/download-artifact@v4
@@ -78,25 +80,24 @@ jobs:
     name: publish to npm (tag push only, environment-gated — a human action)
     needs: build
     # Never on workflow_dispatch (a dispatch on an existing tag must not publish); the `npm-publish` environment
-    # carries the required reviewers and BRUST_NPM_TOKEN as an environment secret.
+    # carries the required reviewers and BRUST_NPM_TOKEN as an environment secret. The first step checks the lockstep (release-check.ts).
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     environment: npm-publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - name: Guard — the tag must equal the package version and the commit must be on v2
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "1.4.2" }
+      - run: bun install --frozen-lockfile
+      - name: Guard — every @brust/* version must equal the tag (F88) and the commit must be on v2
         run: |
           set -e
-          VERSION=$(bun -e "console.log(require('./packages/brust/package.json').version)" 2>/dev/null || node -e "console.log(require('./packages/brust/package.json').version)")
-          [ "${GITHUB_REF_NAME}" = "v${VERSION}" ] || { echo "tag ${GITHUB_REF_NAME} != v${VERSION} (un-bumped commit?)"; exit 1; }
+          bun scripts/release-check.ts "${GITHUB_REF_NAME#v}"
           git fetch origin v2
           git merge-base --is-ancestor HEAD origin/v2 || { echo "tagged commit is not on origin/v2"; exit 1; }
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
-      - uses: oven-sh/setup-bun@v2
-        with: { bun-version: "1.4.2" }
-      - run: bun install --frozen-lockfile
       - run: cd packages/brust && bun run build:debug
       - uses: actions/download-artifact@v4
         with: { pattern: "bindings-*", path: packages/brust/native, merge-multiple: true }
