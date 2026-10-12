@@ -78,3 +78,44 @@ export async function checkParity(pages: { app: string; html: string }[], probe:
     if (d) throw new Error(`parity mismatch on probe ${probe} (${ref.app} vs ${other.app}):\n${d}`)
   }
 }
+
+export interface JsonResponse { app: string; status: number; contentType: string | null; body: string }
+
+/** The first path where `a` and `b` differ (`$`, `$[3].label`), or null when deep-equal. */
+function firstDiff(a: unknown, b: unknown, path = '$'): string | null {
+  if (Bun.deepEquals(a, b, true)) return null
+  if (Array.isArray(a) && Array.isArray(b)) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const d = firstDiff(a[i], b[i], `${path}[${i}]`)
+      if (d) return d
+    }
+  } else if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null && !Array.isArray(a) && !Array.isArray(b)) {
+    for (const k of [...new Set([...Object.keys(a), ...Object.keys(b)])]) {
+      const d = firstDiff((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${path}.${k}`)
+      if (d) return d
+    }
+  }
+  return path
+}
+
+/** A-probe parity: every app answers 200 application/json with a body deep-equal to `expected` (so the first app is the
+ * reference and two equally wrong apps still fail). Key order and whitespace do not matter. */
+export async function checkJsonParity(rs: JsonResponse[], probe: string, expected: unknown): Promise<void> {
+  const parsed: { app: string; value: unknown }[] = []
+  for (const r of rs) {
+    const fail = (why: string): never => { throw new Error(`json parity mismatch on probe ${probe} (${rs[0]?.app ?? '?'} vs ${r.app}): ${r.app} ${why}`) }
+    if (r.status !== 200) fail(`answered HTTP ${r.status}`)
+    if (!(r.contentType ?? '').startsWith('application/json')) fail(`content-type ${JSON.stringify(r.contentType)} does not start with application/json`)
+    let value: unknown
+    try { value = JSON.parse(r.body) } catch { fail(`body is not JSON: ${r.body.slice(0, 80)}`) }
+    parsed.push({ app: r.app, value })
+  }
+  const [ref] = parsed
+  if (!ref) throw new Error(`json parity ${probe}: no responses to compare`)
+  for (const other of parsed.slice(1)) {
+    const d = firstDiff(ref.value, other.value)
+    if (d) throw new Error(`json parity mismatch on probe ${probe} (${ref.app} vs ${other.app}): first difference at ${d}`)
+  }
+  const d = firstDiff(ref.value, expected)
+  if (d) throw new Error(`json parity mismatch on probe ${probe} (${ref.app} vs expected): first difference at ${d}`)
+}

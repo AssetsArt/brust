@@ -1,6 +1,6 @@
 // bench/lib/oha.ts — one oha run → numbers. Pure parse (`parseOha`) + the spawn (`runOha`).
 export type Encoding = 'identity' | 'gzip'
-export interface OhaOpts { conn: number; dur: string; enc: Encoding }
+export interface OhaOpts { conn: number; dur: string; enc: Encoding; method?: 'GET' | 'POST'; body?: string }
 export interface OhaNums { rps: number; p50: number; p95: number; p99: number; total: number; errors: number; /** status code → count, as oha saw it */ status: Record<string, number>; /** mean response body bytes (oha sizePerRequest) */ bytes: number }
 export interface OhaResult extends OhaNums { raw: unknown }
 
@@ -8,7 +8,9 @@ export interface OhaResult extends OhaNums { raw: unknown }
 const DEADLINE = 'aborted due to deadline'
 
 export function ohaArgs(url: string, o: OhaOpts): string[] {
-  return ['-c', String(o.conn), '-z', o.dur, '--no-tui', '--output-format', 'json', '-m', 'GET', '-H', `accept-encoding:${o.enc}`, url]
+  const args = ['-c', String(o.conn), '-z', o.dur, '--no-tui', '--output-format', 'json', '-m', o.method ?? 'GET', '-H', `accept-encoding:${o.enc}`]
+  if (o.body !== undefined) args.push('-d', o.body, '-H', 'content-type:application/json')
+  return [...args, url]
 }
 
 const sum = (rec: unknown, skip?: string): number =>
