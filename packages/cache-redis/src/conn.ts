@@ -19,6 +19,8 @@ export class Link {
     private readonly what: string,
     /** Runs on every successful connect (subscribe + gap check); a throw drops the connection and retries. */
     private readonly onUp?: (c: RedisClient) => Promise<void>,
+    /** Runs when a live connection is lost. */
+    private readonly onDown?: () => void,
   ) {}
 
   get connected(): boolean {
@@ -90,6 +92,7 @@ export class Link {
   private lost(cl: RedisClient, e?: unknown): void {
     if (this.client !== cl) return
     this.client = null
+    this.onDown?.()
     if (this.closing) return
     this.warn(e ?? new Error('connection lost'))
     this.schedule()

@@ -3,7 +3,9 @@ import { Link } from './conn'
 import { decodeFrame, encodeFrame } from './frame'
 import { type Keys, keys as makeKeys } from './keys'
 import { evalsha, SET_SCRIPT } from './lua'
+import { Pairing } from './pairing'
 import { parseOptions, type ResolvedOptions } from './options'
+import { type SubscriberState, startSubscriber } from './subscriber'
 
 const STAGE_TTL_MS = 30_000
 
@@ -27,7 +29,8 @@ export function createAdapter(name: 'redis' | 'dragonfly', raw: Record<string, u
   const fail = (): never => {
     throw new Error('cache-redis: used before init')
   }
-  const sub = { link: null as Link | null, subscribed: false, last: null as number | null }
+  const sub: SubscriberState = { link: null, subscribed: false, last: null }
+  const pairing = new Pairing(() => link().c, k, o.markerTtlMs)
 
   const store = {
     maxBodyBytes: o.maxBodyBytes,
@@ -62,13 +65,33 @@ export function createAdapter(name: 'redis' | 'dragonfly', raw: Record<string, u
       }
       return b.value === 1
     },
-    async invalidate(_args: InvalidateArgs): Promise<void> {},
+    async invalidate(args: InvalidateArgs): Promise<void> {
+      const { members } = await pairing.run(args, 'invalidate')
+      if (!members.length) return
+      const c = link().c
+      // UNLINK frees off the main thread (Dragonfly too); batched so one call never carries every key.
+      const jobs: Promise<number>[] = []
+      for (let i = 0; i < members.length; i += o.unlinkBatch) jobs.push(c.unlink(...members.slice(i, i + o.unlinkBatch)))
+      await Promise.all(jobs)
+    },
+  }
+
+  const broadcast = {
+    async publish(args: InvalidateArgs, origin: string): Promise<number> {
+      const { seq } = await pairing.run(args, 'publish')
+      await link().c.publish(k().channel, JSON.stringify({ seq, origin, args }))
+      return seq
+    },
+    async subscribe(on: (e: InvalidationEvent) => void, onGap: () => void): Promise<() => Promise<void>> {
+      return startSubscriber(o, k(), async () => Number((await link().c.get(k().seq)) ?? 0), sub, on, onGap)
+    },
   }
 
   const adapter: RedisAdapter = {
     name,
     runtimes: ['bun'],
     store,
+    broadcast,
     async init(ctx: CacheAdapterInit) {
       ks = makeKeys(ctx.namespace)
       cmd = new Link(o, 'commands')

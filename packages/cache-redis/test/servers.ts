@@ -29,6 +29,14 @@ export async function make(flavor: Flavor, url: string, extra: Record<string, un
   return a
 }
 
+/** An adapter for a URL that is expected to be dead: not tracked for the SCAN sweep. */
+export async function makeOffline(url: string, extra: Record<string, unknown> = {}): Promise<RedisAdapter> {
+  const a = createAdapter('redis', { url, ...extra })
+  await a.init!({ namespace: ns(), buildId: 'b1', runtime: 'bun', workerId: 0 })
+  open.push(a)
+  return a
+}
+
 export async function sweep(): Promise<void> {
   await Promise.allSettled(open.splice(0).map((a) => a.close?.()))
   for (const [url, spaces] of made) {
