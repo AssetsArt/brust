@@ -36,6 +36,7 @@ const app = new Elysia({ adapter: brust() })
     return { ok: true }
   })
   .get('/big', () => 'x'.repeat(300 * 1024))
+  .get('/huge', () => 'x'.repeat(1048577))
   .get('/url', ({ request }) => ({ path: new URL(request.url).pathname }))
 
 export default app

@@ -1,6 +1,7 @@
 [actions]
 prefix = "/api"
 max_body_bytes = 1024
+max_response_bytes = 1048576
 
 [cors]
 origins = ["https://app.example"]
