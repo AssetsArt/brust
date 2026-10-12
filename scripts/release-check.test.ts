@@ -25,7 +25,7 @@ describe('release-check', () => {
     const tmp = copyRoot()
     const r = run([coreVersion, '--root', tmp])
     expect(r.code).toBe(0)
-    expect(r.out).toContain(`✓ 11/11 packages at ${coreVersion}`)
+    expect(r.out).toContain(`✓ 12/12 packages at ${coreVersion}`)
   })
   test('one off-version file → exit 1 naming it', () => {
     const tmp = copyRoot()
@@ -44,7 +44,7 @@ describe('release-check', () => {
     expect(r.err).toContain(`npm/core-cf/package.json: 0.0.1-x (expected ${coreVersion})`)
   })
   test('FILES has the six natives, core-cf and the three packages', () => {
-    expect(FILES.length).toBe(11)
+    expect(FILES.length).toBe(12)
     expect(FILES).toContain('npm/core-cf/package.json')
   })
   test('wrong version against the real repo → exit 1 listing all eleven', () => {

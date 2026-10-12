@@ -92,7 +92,7 @@ jobs:
           set -e
           PLATS=$(bun -e "console.log(require('./scripts/release-files.ts').PLATS.join(' '))")
           bun scripts/core-cf-check.ts npm/core-cf --pack --versions crates/brust-wasm/Cargo.toml
-          for d in packages/runtime-dom $(printf 'npm/%s ' $PLATS) npm/core-cf packages/brust packages/create-app; do (cd "$d" && bun publish --dry-run --access public); done
+          for d in packages/runtime-dom $(printf 'npm/%s ' $PLATS) npm/core-cf packages/brust packages/cache-redis packages/cache-cloudflare packages/create-app; do (cd "$d" && bun publish --dry-run --access public); done
           cd packages/brust && bun pm pack --destination /tmp/pack && tar -xOf /tmp/pack/*.tgz package/package.json > /tmp/packed.json
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
           grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
@@ -146,7 +146,7 @@ jobs:
           grep -qx 'package/templates/pokedex/routes.tsx' /tmp/ca.txt
           grep -qx 'package/templates/blank/_gitignore' /tmp/ca.txt
           ! grep -Eq '/(node_modules|dist|test)/|team\.sqlite' /tmp/ca.txt || { echo 'dev leftovers in the @brust/create-app tarball'; exit 1; }
-      - name: Publish (runtime-dom → six natives → core-cf → core → create-app, so core never lands before its optional deps; re-runnable)
+      - name: Publish (runtime-dom → six natives → core-cf → core → cache adapters → create-app, so core never lands before its optional deps and the adapters never before their peer; re-runnable)
         run: |
           set -e
           printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$HOME/.npmrc"
@@ -160,6 +160,8 @@ jobs:
           for p in $PLATS; do pub "npm/$p" "@brust/native-$p"; done
           pub npm/core-cf @brust/core-cf
           pub packages/brust @brust/core
+          pub packages/cache-redis @brust/cache-redis
+          pub packages/cache-cloudflare @brust/cache-cloudflare
           pub packages/create-app @brust/create-app
-          if [[ "$VERSION" == *-* ]]; then for p in @brust/runtime-dom @brust/core-cf @brust/core @brust/create-app $(printf '@brust/native-%s ' $PLATS); do npm dist-tag add "$p@$VERSION" latest; done; fi
+          if [[ "$VERSION" == *-* ]]; then for p in @brust/runtime-dom @brust/core-cf @brust/core @brust/cache-redis @brust/cache-cloudflare @brust/create-app $(printf '@brust/native-%s ' $PLATS); do npm dist-tag add "$p@$VERSION" latest; done; fi
         env: { NPM_CONFIG_TOKEN: "${{ secrets.BRUST_NPM_TOKEN }}", NODE_AUTH_TOKEN: "${{ secrets.BRUST_NPM_TOKEN }}" }

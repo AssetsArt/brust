@@ -11,7 +11,7 @@ import { FILES, PLATS } from './release-files'
 const NEW = process.argv[2]; const RELEASE = process.argv.includes('--release')
 if (!NEW || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(NEW)) { console.error('usage: bun scripts/release-bump.ts <version> [--release]'); process.exit(1) }
 const ROOT = resolve(import.meta.dir, '..')
-const EXPECTED = FILES.length // 11
+const EXPECTED = FILES.length // 12
 function setVersion(text: string, v: string): { text: string; old: string | null } {
   const re = /("version"\s*:\s*")([^"]*)(")/; const m = text.match(re)
   return m ? { text: text.replace(re, `$1${v}$3`), old: m[2]! } : { text, old: null }
@@ -29,8 +29,10 @@ for (const f of FILES) { const j = JSON.parse(readFileSync(resolve(ROOT, f), 'ut
 const brust = JSON.parse(readFileSync(resolve(ROOT, 'packages/brust/package.json'), 'utf8'))
 for (const [k, v] of Object.entries({ ...brust.dependencies, ...brust.optionalDependencies }) as [string, string][])
   if (k.startsWith('@brust/') && v !== 'workspace:*') problems.push(`  packages/brust ${k} is "${v}", must be workspace:* (bun publish rewrites it)`)
-const cacheRedis = JSON.parse(readFileSync(resolve(ROOT, 'packages/cache-redis/package.json'), 'utf8'))
-if (cacheRedis.peerDependencies?.['@brust/core'] !== 'workspace:*') problems.push('  packages/cache-redis peerDependencies["@brust/core"] must be workspace:* (bun publish rewrites it)')
+for (const a of ['cache-redis', 'cache-cloudflare']) {
+  const j = JSON.parse(readFileSync(resolve(ROOT, `packages/${a}/package.json`), 'utf8'))
+  if (j.peerDependencies?.['@brust/core'] !== 'workspace:*') problems.push(`  packages/${a} peerDependencies["@brust/core"] must be workspace:* (bun publish rewrites it)`)
+}
 const want = [...PLATS.map((p) => `@brust/native-${p}`), '@brust/core-cf'].sort().join(',')
 if (Object.keys(brust.optionalDependencies ?? {}).sort().join(',') !== want) problems.push('  packages/brust optionalDependencies are not exactly the six @brust/native-* packages + @brust/core-cf')
 const createApp = JSON.parse(readFileSync(resolve(ROOT, 'packages/create-app/package.json'), 'utf8'))
