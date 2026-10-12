@@ -1,10 +1,11 @@
 // examples/pokedex/test/team-db.test.ts — the sqlite roster (M3-F E7): MAX 6, idempotent add, shared file, lazy open.
 import { afterAll, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { artwork } from '../lib/pokeapi'
 import { openTeamDb, teamDb, teamDbPath } from '../lib/team-db'
+import { TEAM_DDL } from '../lib/team-db.sqlite'
 import type { TeamMember } from '../lib/types'
 import { teamDbContract } from './team-db.contract'
 
@@ -66,4 +67,16 @@ test('importing lib/loaders.ts opens no database', async () => {
     if (prev === undefined) delete process.env.POKEDEX_TEAM_DB
     else process.env.POKEDEX_TEAM_DB = prev
   }
+})
+
+test('migrations/0001_team.sql is the sqlite DDL (D1 and sqlite share one schema)', () => {
+  const sql = readFileSync(join(import.meta.dir, '../migrations/0001_team.sql'), 'utf8')
+  const stmt = sql
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('--'))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/;$/, '')
+  expect(stmt).toBe(TEAM_DDL)
 })
