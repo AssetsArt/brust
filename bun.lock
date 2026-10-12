@@ -143,6 +143,18 @@
         "elysia",
       ],
     },
+    "packages/cache-cloudflare": {
+      "name": "@brust/cache-cloudflare",
+      "version": "2.0.0-alpha.2",
+      "devDependencies": {
+        "@brust/core": "workspace:*",
+        "@types/bun": "^1.4.0",
+        "typescript": "^7.0.2",
+      },
+      "peerDependencies": {
+        "@brust/core": "workspace:*",
+      },
+    },
     "packages/create-app": {
       "name": "@brust/create-app",
       "version": "2.0.0-alpha.2",
@@ -173,6 +185,17 @@
       "optionalPeers": [
         "react",
       ],
+    },
+    "tests/fixtures/cf-cache": {
+      "name": "@brust/fixture-cf-cache",
+      "version": "0.0.0",
+      "dependencies": {
+        "@brust/cache-cloudflare": "workspace:*",
+        "@brust/core": "workspace:*",
+        "elysia": "2.0.0-beta.30",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+      },
     },
     "tests/fixtures/cf-l2": {
       "name": "@brust/fixture-cf-l2",
@@ -221,6 +244,8 @@
 
     "@brust/bench-next": ["@brust/bench-next@workspace:bench/apps/next"],
 
+    "@brust/cache-cloudflare": ["@brust/cache-cloudflare@workspace:packages/cache-cloudflare"],
+
     "@brust/core": ["@brust/core@workspace:packages/brust"],
 
     "@brust/core-cf": ["@brust/core-cf@workspace:npm/core-cf"],
@@ -228,6 +253,8 @@
     "@brust/create-app": ["@brust/create-app@workspace:packages/create-app"],
 
     "@brust/example-pokedex": ["@brust/example-pokedex@workspace:examples/pokedex"],
+
+    "@brust/fixture-cf-cache": ["@brust/fixture-cf-cache@workspace:tests/fixtures/cf-cache"],
 
     "@brust/fixture-cf-l2": ["@brust/fixture-cf-l2@workspace:tests/fixtures/cf-l2"],
 
