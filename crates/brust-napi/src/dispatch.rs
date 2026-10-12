@@ -59,6 +59,7 @@ pub fn kind_str(k: CallKind) -> &'static str {
         CallKind::Loader => "loader",
         CallKind::Jobs => "jobs",
         CallKind::Fetch => "fetch",
+        CallKind::Cache => "cache",
     }
 }
 

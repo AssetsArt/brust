@@ -128,25 +128,31 @@ member for `cargo test` on the host.
 | Module (today, brust-server) | Verdict | Why (verified) |
 |---|---|---|
 | `routing/routes.rs` | **moves → core** | pure; `HeaderMap` comes from the `http` crate (`routes.rs:29,323`) |
-| `manifest.rs` | **moves** (+ new `Manifest::from_parts(json, templates)`); fs `load` stays native | `std::fs` only in `load` (`manifest.rs:334-385`) |
+| `manifest.rs` | **moves**, `load` included (an inherent method: the orphan rule keeps it in core; `std::fs` compiles on wasm32 and fails at runtime). `Manifest::from_parts(json, templates)` → **M4-CF-3**, its first caller (lane-1 R5) | `std::fs` only in `load` (`manifest.rs:334-385`) |
 | `render.rs` | **moves** | `Renderer::from_templates(&BTreeMap)` is already fs-free (`render.rs:95`) |
 | `inputs.rs`, `protocol.rs`, `cache/key_expr.rs`, `cache/stamp.rs` | **move** | pure; `stamp.rs` is an `AtomicU64` clock (`stamp.rs:6,17`) |
 | `pipeline.rs` (page, l1_decision, plan/merge/slots/render helpers) | **moves**, generic over `H: Host` | the only couplings are `Incoming` (`:18,73`), `tokio::fs` (`:225-257`, moves to host) and `call_worker*` (`:22`, becomes host methods) |
 | `pipeline.rs::plan_in_call`, `PlanCell` SAB read | **stays** native | sync napi re-entry over the SAB (`:1902`) |
-| `actions.rs` admission (`cross_site_verdict` `:147`, `ambiguous_path` `:192`, `encode_body` `:232`, `response_from_fetch` `:276`) | **moves** | pure over `http::Parts`/`HeaderMap` |
+| `actions.rs` admission (`cross_site_verdict` `:147`, `ambiguous_path` `:192`, `encode_body` `:232`, `response_from_fetch` `:276`) | **moves**; the A1 `FetchRequest` build (inline/heap body, header pairs, envelope) stays in the native host's `action` | pure over `RequestHead`/`HeaderMap` |
 | `actions.rs::read_capped` (`:213`, hyper `Incoming`) | **stays**; the host provides `read_body` | body source differs per host |
 | `server/cors.rs` | **moves** | `http` types only (`cors.rs:17-22,160`) |
 | `server/body.rs` error helpers (`:232-290`) | **move**, returning `http::Response<Bytes>` | `BoxBody` (`:28`) stays native; the native adapter boxes once, same allocation count as `full_body` today [I] |
 | `server/static_assets.rs` pure helpers, `safe_rel`/`is_hashed` | **move** | pure |
 | `http/compress.rs` `gzip`/`accepts_gzip` | **move**, behind `gzip` feature | `GZIP_CACHE` moka (`compress.rs:9,24`) stays native |
 | `config.rs` `CorsConfig`/`ActionsConfig`/`InvalidateArgs`/`Stats` | **move** | `Server` keeps `Notify`/addr/tls (`config.rs:16,237-282`) and becomes `Core<H>` + native extras |
-| `cache/l1.rs`, `cache/job_cache.rs` | **stay**, impl core traits | moka sync + `ShardedLock` + `Instant` (`l1.rs:39-41`, `job_cache.rs:27-30`) |
+| `cache/l1.rs`, `cache/job_cache.rs` | **stay**, impl `PageCache`/`JobStore` by `#[inline]` forwards; the entry/key/stats types (`CacheKey`, `RenderedBody`, `CacheStats`, `JobKey`, `build_cache_key`, `StripedCounter`) move to `brust_core::cache` | moka sync + `ShardedLock` + `Instant` (`l1.rs:39-41`, `job_cache.rs:27-30`) |
 | `pool.rs`, `dispatch.rs`, `server/mod.rs`, `tls.rs`, `coarse_timer.rs` | **stay** | tokio/threads/SAB by design (`dispatch.rs:68-130`) |
 | `brust-jinja` | unchanged | deps are `minijinja` + `serde` only (`crates/brust-jinja/Cargo.toml`) |
 | `brust-napi` | unchanged | uses the re-exports |
-| **new** `brust-core/src/host.rs` | `Host`, `PageCache`, `JobStore`, `Clock` | §4 |
+| **new** `brust-core/src/host.rs` | `Host`, `PageCache`, `JobStore`, `Clock` (+ `core.rs` `Core<H>`, `plan.rs` the planned-call data) | §4 |
 | **new** `brust-core/src/cache/local.rs` | `LocalL1`, `LocalJobs` | one shared conformance test suite runs against both impls (F81/F86/F89 cases) |
 | **new** `crates/brust-wasm` | `lib.rs` (`#[event(start)]`, `#[event(fetch)]`), `host.rs` (`WasmHost`), `bridge.rs` (raw_module externs) | §4 |
+
+**Status (2026-10-12):** M4-CF-1 done @15d1051 (lane `m4cf-core-split`): every "moves"/"stay" row above as amended, except the two "new" rows of later lanes (`cache/local.rs` → M4-CF-2, `brust-wasm` → M4-CF-3). `brust-server`'s public paths are pinned by `tests/public_api.rs`; `brust-napi` is unchanged.
+
+**Status (2026-10-12):** M4-CF-2 done @cb0b91b (lane `m4cf-core-wasm`): `cache/local.rs` `LocalL1`/`LocalJobs` (hand-rolled LRU, lazy TTL + 8-entry insert sweep, 256/512 entries + `L1_MAX_BODY_BYTES` 8 MiB) pass the 37-case `cache::conformance` suite that the native `L1Cache`/`JobCache` pass under the same names; `host::JsClock` (`js_sys::Date::now()`, monotone; js-sys wasm32-only, no `unsafe-eval`); wasm32-unknown-unknown has no `Manifest::load` and `env()` in a cache expression is a parse error there; CI checks/clippies brust-core for wasm32 and greps its tree.
+
+**Status (2026-10-12):** M4-CF-3 done @671bbb8 (lane `m4cf-worker-crate`): `crates/brust-wasm` (workers-rs 0.8.7, `worker-build --panic-unwind`, per-request `catch_unwind`), `Manifest::from_parts`, `ActionReply::{Fetch, Built}` (R4; brust-server = the `Fetch` wrap only, `pipeline.rs` untouched), the `brust-app.js` contract v1 (R2), import via the sentinel `cloudflare:brust-app` rewritten by `scripts/build.ts` (R1), invalidate via `install(rt)` called from `#[event(start)]` (ruling 19753649). `tests/cf/cf-min.test.ts` serves page/loader/job/island/action under local workerd (CI job `cf`).
 
 **Packages.** In `packages/brust`:
 - Split `worker.ts` into `handlers.ts`, which holds the pure `makeHandlers` plus helpers (`worker.ts:105-266`), and the Bun
@@ -171,46 +177,87 @@ The `Send` question:
 
 ## 4. Interfaces
 
-**Rust (brust-core)**
+**Rust (brust-core)** — as merged in M4-CF-1 @15d1051 (`crates/brust-core/src/host.rs`, `core.rs`).
+**Amended 2026-10-12 (lane-1 R9, ruled before dispatch):** seven deltas from the draft: (a) `RequestHead` gains `authority`
+(actions R8: the HTTP/2 host); (b) `Clock::now_ns` (+ default `now_ms`) with `Host: Clock` replaces `Host::now_ms`, so the
+`dur_ms` log keeps its precision; (c) `PageCache::with_clock` / `JobStore::with_clock`, so `Core::new` builds both caches on
+one invalidation clock; (d) `const PLAN_OFFER: bool` on `Host` (native `true`; Workers `false`, R4); (e) `Host::action` returns
+`FetchResponse` and `Core::handle` returns `http::Response<Bytes>` — `ActionReply::Passthrough`/`Outcome` arrive with M4-CF-3,
+no dead variant now; (f) `Host::static_file` gets a path already `safe_rel`-checked, and core stamps `immutable`/`nosniff`
+after it; (g) `X-Powered-By` is built in `Core::new`, so an invalid generator warns at `start`, not after bind.
 ```rust
-pub struct RequestHead<'a> { pub method: &'a str, pub full: &'a str /* path?query */, pub headers: &'a http::HeaderMap }
-pub trait Host {                                   // no Send bound (workers-rs futures are !Send)
+pub struct RequestHead<'a> { pub method: &'a str, pub full: &'a str /* path?query */, pub headers: &'a http::HeaderMap,
+                             pub authority: Option<&'a str> }
+pub struct ActionCall<'a> { pub method: &'a str, pub full: &'a str, pub headers: &'a http::HeaderMap,
+                            pub authority: Option<&'a str>, pub body: Option<bytes::Bytes> }
+pub enum ReadErr { TooLarge, Io, Slow }
+pub enum StaticRoot { Brust, Public }
+pub trait Clock { fn now_ns(&self) -> u64; fn now_ms(&self) -> u64 { self.now_ns() / 1_000_000 } }
+pub trait PageCache {                              // native: L1Cache (moka + sharded front)
+    fn with_clock(capacity: u64, clock: Arc<InvalClock>) -> Self where Self: Sized;
+    fn get_with<R>(&self, key: &CacheKey, f: impl FnOnce(&Arc<RenderedBody>) -> R) -> Option<R>;
+    fn insert(&self, key: CacheKey, body: Arc<RenderedBody>, ttl: Duration, tags: &[String], since: ReadStamp) -> bool;
+    fn read_stamp(&self) -> ReadStamp;
+    fn invalidate_tags(&self, tags: &[String]) -> usize;
+    fn invalidate_path(&self, method: &str, path: &str) -> usize;
+    fn stats(&self) -> CacheStats;
+}
+pub trait JobStore {                               // native: JobCache
+    fn with_clock(capacity: u64, clock: Arc<InvalClock>) -> Self where Self: Sized;
+    fn get(&self, k: &JobKey) -> Option<Arc<Node>>;
+    fn insert(&self, k: JobKey, v: Arc<Node>, ttl: Option<Duration>, tags: &[String], user_key: Option<&str>,
+              since: ReadStamp) -> bool;
+    fn read_stamp(&self) -> ReadStamp;
+    fn invalidate_tags(&self, tags: &[String]) -> usize;
+    fn invalidate_user_key(&self, user_key: &str) -> usize;
+    fn stats(&self) -> CacheStats;
+}
+pub trait Host: Clock {                            // no Send bound (workers-rs futures are !Send)
     type Body;                                     // hyper Incoming | worker::Request
     type L1: PageCache; type Jobs: JobStore;
-    fn now_ms(&self) -> u64;                       // native: coarse Instant; wasm: js_sys::Date::now()
+    const PLAN_OFFER: bool;                        // native true; Workers false (R4)
     fn loader(&self, req: &LoaderRequest<'_>, offer: Option<PlanSeed>)
-        -> impl Future<Output = Result<(LoaderResponse, Option<Planned>), CallError>>;
+        -> impl Future<Output = Result<(LoaderResponse, Option<PlannedCall>), CallError>>;
     fn jobs(&self, req: &JobsRequest<'_>) -> impl Future<Output = Result<JobsResponse, CallError>>;
-    fn read_body(&self, b: Self::Body, cap: usize) -> impl Future<Output = Result<bytes::Bytes, ReadErr>>;
-    fn action(&self, a: ActionCall<'_>) -> impl Future<Output = Result<ActionReply, CallError>>;
-    fn static_file(&self, root: StaticRoot, rel: &str, h: &http::HeaderMap, head: bool)
-        -> impl Future<Output = Option<http::Response<bytes::Bytes>>>;   // wasm: None → 404
+    fn read_body(&self, body: Self::Body, cap: usize) -> impl Future<Output = Result<bytes::Bytes, ReadErr>>;
+    fn action(&self, call: ActionCall<'_>) -> impl Future<Output = Result<FetchResponse, CallError>>;
+    fn static_file(&self, root: StaticRoot, rel: &str, headers: &http::HeaderMap, head: bool)
+        -> impl Future<Output = Option<http::Response<bytes::Bytes>>>;   // rel is safe_rel-checked; None → 404
 }
-pub enum ActionReply { Framed(FetchResponse) /* native A2 */, Passthrough(Box<dyn Any>) /* wasm: web Response */ }
-pub struct Core<H: Host> { /* routes, manifest, plans, renderer, l1: H::L1, jobs: H::Jobs, clock: InvalClock, cfg … */ }
+pub struct CoreConfig { pub l1_capacity: u64, pub job_cache_capacity: u64, pub cors: Option<CorsConfig>,
+                         pub generator: Option<String>, pub actions: Option<ActionsConfig>, pub https: bool }
+pub struct Core<H: Host> { /* host, routes, manifest, plans, renderer, l1: H::L1, jobs: H::Jobs, clock, counters, cors, actions, powered_by, https */ }
 impl<H: Host> Core<H> {
-    pub fn new(host: H, m: Loaded, cfg: CoreConfig) -> Result<Self, String>;   // start()'s validation, minus bind
-    pub async fn handle(&self, rq: RequestHead<'_>, body: H::Body) -> Outcome; // Outcome = Response<Bytes> | Passthrough
-    pub fn finish(&self, origin: Option<&HeaderValue>, h: &mut HeaderMap);    // x-powered-by + CORS stamp
-    pub fn invalidate(&self, a: InvalidateArgs) -> InvalidateResult;  pub fn stats(&self) -> Stats;
+    pub fn new(host: H, loaded: Loaded, cfg: CoreConfig) -> Result<Self, String>; // start()'s validation, minus bind
+    pub async fn handle(&self, rq: RequestHead<'_>, body: H::Body) -> http::Response<bytes::Bytes>;
+    pub fn finish(&self, origin: Option<&HeaderValue>, h: &mut HeaderMap);       // x-powered-by + CORS stamp
+    pub fn invalidate(&self, args: InvalidateArgs) -> InvalidateResult;  pub fn stats(&self) -> Stats;
+    pub fn cors(&self) -> Option<&CorsConfig>;  pub fn cors_enabled(&self) -> bool;
 }
 ```
 
 **wasm ↔ app JS: the import mechanism (R3).** `brust-wasm/src/bridge.rs`:
 ```rust
-#[wasm_bindgen(raw_module = "./brust-app.js")]
+#[wasm_bindgen(raw_module = "cloudflare:brust-app")]   // sentinel; scripts/build.ts rewrites it to "./brust-app.js"
 extern "C" {
-    #[wasm_bindgen(js_name = loader)] fn js_loader(req_json: &str) -> js_sys::Promise;   // → string
-    #[wasm_bindgen(js_name = jobs)]   fn js_jobs(req_json: &str) -> js_sys::Promise;     // → string
-    #[wasm_bindgen(js_name = action)] fn js_action(req: web_sys::Request) -> js_sys::Promise; // → Response
-    static MANIFEST: String; static TEMPLATES: js_sys::Object; static CONFIG: String;     // data exports
+    #[wasm_bindgen(catch, js_name = loader)]  fn js_loader(json: &str) -> Result<js_sys::Promise, JsValue>; // → string
+    #[wasm_bindgen(catch, js_name = jobs)]    fn js_jobs(json: &str) -> Result<js_sys::Promise, JsValue>;   // → string
+    #[wasm_bindgen(catch, js_name = action)]  fn js_action(req: &web_sys::Request) -> Result<js_sys::Promise, JsValue>; // → Response
+    #[wasm_bindgen(catch, js_name = install)] fn js_install(rt: &JsValue) -> Result<(), JsValue>;
+    #[wasm_bindgen(thread_local_v2)] static MANIFEST: js_sys::JsString;   // data exports
+    #[wasm_bindgen(thread_local_v2)] static TEMPLATES: js_sys::Object;
+    #[wasm_bindgen(thread_local_v2)] static CONFIG: js_sys::JsString;
 }
-#[wasm_bindgen] pub fn invalidate(args: JsValue) -> JsValue;  // export: cache.invalidate on CF resolves here (R5)
 ```
+The contract v1 table lives in `crates/brust-wasm/src/bridge.rs`. `invalidate` is **not** a glue export: worker-build's
+bundled `index.js` re-exports only its own names, so `#[event(start)]` calls `install({ invalidate })` once and
+`cache.invalidate` on CF resolves through that `rt` (ruling 19753649; the app must not call it at module top level).
 
 How the import works and why it was chosen:
-- `raw_module` tells wasm-bindgen to emit the specifier **verbatim** in the glue, i.e. `import { loader } from "./brust-app.js"`.
-  Nothing is copied at wasm build time. The prebuilt wasm is therefore app-independent, and `brust build` only has to place
+- `raw_module` tells wasm-bindgen to emit the specifier **verbatim** in the glue. worker-build's bundler would try to resolve a
+  relative `./brust-app.js` at wasm build time, so the crate names the sentinel `cloudflare:brust-app` (kept external) and
+  `scripts/build.ts` rewrites only the import specifiers to `./brust-app.js` (≥1 before, 0 after; the wasm imports-object
+  keys are untouched). Nothing is copied at wasm build time. The prebuilt wasm is therefore app-independent, and `brust build` only has to place
   `brust-app.js` next to the glue. Wrangler's esbuild then resolves and bundles it.
 - Async calls go through `wasm_bindgen_futures::JsFuture::from(js_loader(&json)).await`, then `as_string()`. Responses are parsed
   with the **same** serde types as native: one JSON string each way, no `serde-wasm-bindgen` tree walk. P2's one-pass
@@ -229,16 +276,22 @@ logic. It is about 25 lines, **~1.2 KB** before bundling [I]:
 ```js
 import * as R from '<app>/routes.tsx'; import J, { stores } from '../jobs.js'; import A from '../actions.js' // if [actions]
 import M from '../manifest.json'; import T from './templates.json'
-import { makeHandlers, flattenRoutes, mountActions, fetchInScope } from '@brust/core/server-handlers'
+import { fetchInScope, flattenRoutes, jsonCall, makeHandlers } from '@brust/core/server-handlers'
+import { mountActions } from '@brust/core/server-handlers/actions'
 const h = makeHandlers({ leaves: flattenRoutes(R.routes ?? R.default).leaves, jobs: J, manifest: M, stores })
-const app = mountActions(A, M.actions.prefix).compile()          // startup-phase compile (§8)
-export const loader = async (j) => JSON.stringify(await h.loader(JSON.parse(j)))
-export const jobs   = async (j) => JSON.stringify(await h.jobs(JSON.parse(j)))
+const app = mountActions(A, '<actions prefix>').compile()       // startup-phase compile (§8)
+export const loader = jsonCall(h.loader)                        // never rejects: an error resolves {"error": …}
+export const jobs = jsonCall(h.jobs)
 export const action = (req) => fetchInScope(app, req)
-export const MANIFEST = JSON.stringify(M), TEMPLATES = T, CONFIG = '<baked runtime config JSON>'
+export const MANIFEST = JSON.stringify(M)
+export const TEMPLATES = T
+export { install } from '@brust/core/server-handlers'          // (rt: { invalidate }) => void
+export const CONFIG = '<baked runtime config JSON, abi 1>'
 ```
+The exact text is pinned: `tests/cf/entry.test.ts` diffs lane 4's `cfEntrySource` against
+`tests/fixtures/cf-min/cf/brust-app.entry.js` (ruling D3).
 Bun bundles this (`target: 'browser'`, `conditions: ['workerd','worker','browser']`, externals `cloudflare:*`, `node:*`) into
-`dist/cf/brust-app.js`.
+`dist/cf/worker/brust-app.js`.
 
 Two checks on the condition set:
 - It resolves `react-dom/server` to `server.edge.js`, which exports `renderToString`
@@ -266,11 +319,11 @@ stats = false                     # expose /_brust/cache/stats (R11; native alwa
   `wrangler` as a devDependency.
 
 **Generated `dist/cf/`**
-- `shim.mjs`, `index.js`, `index_bg.wasm`: the worker-build output, copied from `@brust/core-cf`. The prebuilt is ~1.2–2 MB
-  after `wasm-opt -Oz` [I].
-- `brust-app.js`.
+- `worker/index.js`, `worker/index_bg.wasm` (+ worker-build's `worker/worker/shim.mjs`): the worker-build output, copied from
+  `@brust/core-cf`. cf-min measures 2.65 MB raw / 0.79 MB gzip; wrangler's dry-run Total Upload is ~4.2 MiB / ~1.1 MiB gzip.
+- `worker/brust-app.js`, beside the glue.
 - `wrangler.jsonc`, with:
-  - `main: "shim.mjs"`
+  - `main: "worker/index.js"`
   - `compatibility_date`
   - `assets: { directory: "assets", binding: "ASSETS", run_worker_first: false }`
   - the user's bindings merged from the app-root `wrangler.jsonc` if one exists (R8)
@@ -288,9 +341,14 @@ The app author needs only `wrangler`.
 
 ## 5. Caching and store semantics on Workers
 
+> **Runtime-scope rule (human, 2026-10-12): the brust runtime on Cloudflare depends on Workers only.** brust ships no Durable Object, KV or D1 of its own. Cross-isolate invalidation is therefore an OPTIONAL app-provided hook (`install(rt)` may pass `epoch: { since, publish }`; brust-wasm keeps only the cursor/replay logic, lane `m4cf-epoch-hook`). Without a hook, invalidation is isolate-local and a cached page may be served stale up to its `ttl` by other isolates — documented, with the advice to keep `ttl` short on Workers. A Durable Object epoch implementation is provided as a copy-paste EXAMPLE (user code) in `docs/cloudflare.md` and in the pokedex example. R5's "lane 7 required" is amended accordingly: the hook is required, the DO is not.
+>
+> **Amendment (human, 2026-10-12, later the same day): cache ADAPTERS.** The hook becomes a general `CacheAdapter` interface (user-implementable) with built-in adapters shipped as OPT-IN packages: Redis/Dragonfly (`@brust/cache-redis`), Cloudflare KV and Durable Object (`@brust/cache-cloudflare`). The runtime itself still depends on Workers only; an app that opts into the Cloudflare adapters declares the bindings in its own `wrangler.jsonc` (the build verifies and prints the snippet). Spec: `docs/design/2026-10-12-cache-adapter-design.md`.
+
+
 | Concern | Native (`brust start`) | Workers | Delta to document |
 |---|---|---|---|
-| L1 scope | one process, all workers share (`l1.rs:287`) | per isolate; many isolates per colo, recycled at will; JS heap + wasm memory share 128 MB [C limits#memory] | hit rate lower; capacity by entries is risky, so the CF default is 256 and lane 2 adds an optional byte weigher |
+| L1 scope | one process, all workers share (`l1.rs:287`) | per isolate; many isolates per colo, recycled at will; JS heap + wasm memory share 128 MB [C limits#memory] | hit rate lower; capacity by entries is risky, so the CF default is 256 and `L1_MAX_BODY_BYTES` 8 MiB (lane 2) |
 | `cache.invalidate` | coherent for the process (napi `cacheInvalidate`, `cache.ts:11-23`) | **only the isolate that ran the action**; others stale ≤ route `ttl` | R5; pokedex `/team` tag shows it |
 | F86/F89 read stamps | `InvalClock` (`stamp.rs`) | same clock per isolate, so same guarantees within one isolate | none inside an isolate |
 | TTL clock | `Instant` | `Date.now()`, which advances only across I/O on Workers [I] | TTLs coarse within one request: harmless |
@@ -328,6 +386,9 @@ only Rust bytes, never JS I/O objects, so "Cannot perform I/O on behalf of a dif
    code, which they already are.
 
 ## 6. Build, deploy, dev, CI
+
+> **Account rule (human, 2026-10-12).** A logged-in `wrangler` is available on the lead's host for test deploys. Lanes may deploy short-lived test Workers / D1 / KV named `brust-test-<slug>-<shortsha>` for the one proof local workerd cannot give, and MUST delete every resource they created at the end of the test, every time, recording the create and delete commands in the task note. Local workerd stays the default for e2e and CI. No account ids, zones or secrets in Markdown.
+
 
 **`brust build --target cloudflare`** (new `packages/brust/src/build/cloudflare.ts`):
 1. Run the normal build into `dist/`, unchanged (`build/index.ts:76-197`).
@@ -367,6 +428,8 @@ Tool choice:
   https://developers.cloudflare.com/workers/testing/vitest-integration/].
 - The job reuses the bun:test harness over HTTP rather than adopting Vitest.
 
+**Status (2026-10-12):** M4-CF-6 done (lane `m4cf-ci`): release.yml `build-core-cf` → `@brust/core-cf` in the lockstep (10/10); `@brust/core` optional dep; ci `cf` job (blocking, 45 min).
+
 ## 7. Pokedex-on-Cloudflare dogfood
 
 - `lib/team-db.ts`: `TeamDb` becomes **async** (`list(): Promise<TeamMember[]>` …).
@@ -384,6 +447,7 @@ Tool choice:
     with Eden types, a tag invalidate and a 409 problem body, all on one Worker.
   - The dataset is a 152,717-byte JSON import (`data/pokedex.json`), well inside the 64 MiB size limit.
   - It documents the R5 staleness live: a second isolate keeps `/team` up to `ttl` stale.
+- **Status:** M4-CF-5 done on `lane/m4cf-pokedex-d1`: async `TeamDb`, `lib/team-db.d1.ts` (one conditional-insert `batch()`), `[cloudflare.alias]`, `migrations/0001_team.sql`, `tests/cf/{team-db-d1,pokedex-d1}.test.ts` (contract on real local D1; pokedex on workerd).
 
 ## 8. Limits and risks
 
@@ -392,7 +456,7 @@ Tool choice:
 | Worker size | 64 MiB uncompressed, **no compressed limit** (Free and Paid) [C https://developers.cloudflare.com/workers/platform/limits/#worker-size] | the brief's compressed caps are obsolete; the estimate is wasm 1.2–2 MB [I] + `brust-app.js` ~1–1.5 MB (react-dom edge prod 292,617 B + legacy 286,554 B unminified, Elysia, app) [I] ⇒ <4 MB |
 | Startup | 1 s to parse and run global scope, error 10021 [C …/limits/#worker-startup-time] | `#[event(start)]` does manifest parse + template compile (pokedex: tens of templates, est. <30 ms [I]) + Elysia `.compile()`; CI dry-run reports `startup_time_ms` |
 | CPU / request | Free 10 ms; Paid default 30 s, max 5 min via `limits.cpu_ms` [C …/limits/#cpu-time] | native D costs ≈0.73 ms CPU/request (10 cores / 13,759 rps) [I]; wasm minijinja 1.5–3× plus JS ⇒ est. 1–4 ms, fits Free; HITs are µs |
-| Memory | 128 MB per isolate, JS + wasm [C …/limits/#memory] | per-isolate capacities (256/512) + optional byte weigher |
+| Memory | 128 MB per isolate, JS + wasm [C …/limits/#memory] | per-isolate capacities (256/512) + `L1_MAX_BODY_BYTES` 8 MiB (lane 2) |
 | Threads | none [C …/webassembly/#threading] | single-thread caches; no tokio |
 | eval / `new Function` | disallowed, except at **startup** (`allow_eval_during_startup`, default ≥ 2025-06-01) [C https://developers.cloudflare.com/workers/configuration/compatibility-flags/#enable-eval-during-startup] | **risk:** Elysia's JIT must compile at startup ⇒ generated `.compile()` (§4); a lazy compile on first request would throw. Elysia's CF guide is 1.x-only ("experimental" `CloudflareAdapter`, no `aot:false` since 1.4.7) [C https://elysiajs.com/integrations/cloudflare-worker]; installed 2.0.0-beta.30 ships only `adapter/bun` and `adapter/web-standard` (`node_modules/.bun/elysia@2.0.0-beta.30…/dist/adapter/`) but has a `test:cf` script (`package.json:194`). Lane 3 gate: the pokedex actions app round-trips under workerd |
 | Subrequests | Free 50, Paid 10,000 [C …/limits/#subrequests] | brust core makes none; D1 queries count (Free: 50 queries per invocation [C https://developers.cloudflare.com/d1/platform/limits/]) |

@@ -1,0 +1,6 @@
+{
+  // the user's own Cloudflare bindings
+  "name": "cf-app-fixture",
+  "kv_namespaces": [{ "binding": "KV", "id": "fixture-kv" }],
+  "vars": { "GREETING": "hi" },
+}

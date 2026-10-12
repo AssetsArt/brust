@@ -1,0 +1,9 @@
+// Bindings for `brust build --target cloudflare` (merged into dist/cf/wrangler.jsonc).
+// brust owns main, assets and compatibility_date. Add the database_id from `wrangler d1 create pokedex-team` before deploy.
+{
+  // To enable the shared cache tier (brust.toml [cache]), add these beside d1_databases:
+  //   "kv_namespaces": [{ "binding": "BRUST_CACHE", "id": "<wrangler kv namespace create brust-cache>" }],
+  //   "durable_objects": { "bindings": [{ "name": "BRUST_CACHE_DO", "class_name": "BrustCacheDO" }] },
+  //   "migrations": [{ "tag": "brust-cache-v1", "new_sqlite_classes": ["BrustCacheDO"] }],
+  "d1_databases": [{ "binding": "TEAM_DB", "database_name": "pokedex-team", "migrations_dir": "migrations" }]
+}

@@ -1,0 +1,11 @@
+# cf-min: the M4-CF-3 e2e fixture (tests/cf). Built with `bun scripts/build-cf.ts`.
+[actions]
+max_body_bytes = 1024
+
+[cors]
+origins = ["https://ok.example"]
+credentials = false
+
+[cloudflare]
+name = "brust-cf-min"
+stats = true

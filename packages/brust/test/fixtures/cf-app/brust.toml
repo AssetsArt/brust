@@ -1,0 +1,8 @@
+[actions]
+prefix = "/api"
+
+[cloudflare]
+l1_capacity = 64
+
+[cloudflare.alias]
+"lib/db.ts" = "lib/db.cf.ts"

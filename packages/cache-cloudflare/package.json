@@ -1,0 +1,35 @@
+{
+  "name": "@brust/cache-cloudflare",
+  "version": "2.0.0-alpha.2",
+  "description": "brust cache adapters for Cloudflare Workers: KV store, Durable Object broadcast/store, and their combination",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./kv": "./src/kv.ts",
+    "./do": "./src/do.ts"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bun check"
+  },
+  "peerDependencies": {
+    "@brust/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@brust/core": "workspace:*",
+    "@types/bun": "^1.4.0",
+    "typescript": "^7.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

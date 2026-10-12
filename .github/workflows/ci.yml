@@ -33,14 +33,77 @@ jobs:
       - run: cargo build --workspace
       # Invariant: the vendored path crate shadows the git one (only root lines are checked; bun_js_parser legitimately depends on it).
       - run: cargo tree -p brust-compiler -i bun_react_compiler | tee tree.txt && grep -q "^bun_react_compiler .*vendor/bun_react_compiler" tree.txt && ! grep -q "^bun_react_compiler .*github.com" tree.txt
+      # Invariant: brust-core stays host-agnostic (no tokio/hyper/moka/crossbeam/parking_lot in its normal deps).
+      - run: "! cargo tree -p brust-core -e normal | grep -E 'tokio|hyper|moka|crossbeam|parking_lot'"
       # --no-deps: the vendored Bun crate is not held to our lints (261 findings otherwise).
-      - run: cargo clippy -p brust-compiler -p brust-compiler-cli -p brust-jinja -p brust-server -p brust-napi --no-deps -- -D warnings
+      - run: cargo clippy -p brust-core -p brust-compiler -p brust-compiler-cli -p brust-jinja -p brust-server -p brust-napi -p brust-wasm --no-deps -- -D warnings
+      # brust-core builds for Cloudflare Workers (wasm32-unknown-unknown), with and without gzip.
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo check -p brust-core --target wasm32-unknown-unknown
+      - run: cargo check -p brust-core --target wasm32-unknown-unknown --no-default-features
+      - run: cargo clippy -p brust-core --target wasm32-unknown-unknown --no-default-features --no-deps -- -D warnings
+      - run: "! cargo tree -p brust-core --target wasm32-unknown-unknown -e normal | grep -E 'tokio|hyper|moka|crossbeam|parking_lot|getrandom'"
+      # brust-wasm (the Workers host) is held to the same lints on its real target.
+      - run: cargo clippy -p brust-wasm --target wasm32-unknown-unknown --no-deps -- -D warnings
       # The dual-evaluation harness (tests/dual_eval.rs) runs generated jobs and
       # chunks under bun against packages/runtime-dom and happy-dom.
       - run: bun install --frozen-lockfile
       # --exclude: the vendored crate's own lib-test cannot link (its native stubs live in brust-compiler).
       - run: cargo test --workspace --exclude bun_react_compiler
       - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
+  # M4-CF: ONE blocking job for every Cloudflare test. Order: the release-shape wasm first (a release-leg break shows on every PR),
+  # then workerd e2e (cf-min + pokedex on D1, tests/cf), the build-target unit tests, and the scaffold --target cloudflare case.
+  # No Cloudflare credentials: `deploy --dry-run` only; the real-edge proof is local-only.
+  # Making `cf` a required check is a human branch-protection setting.
+  cf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: nightly-2026-09-15, components: "rust-src", targets: wasm32-unknown-unknown }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: cargo-cf-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-cf-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "canary" }
+      # worker-build's version has ONE source: npm/core-cf/package.json brust.workerBuild (core-cf-check --versions pins it to Cargo.toml).
+      - id: wb
+        run: echo "v=$(bun -e "console.log(require('./npm/core-cf/package.json').brust.workerBuild)")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/worker-build
+            ~/.cache/worker-build
+          key: worker-build-${{ runner.os }}-${{ steps.wb.outputs.v }}
+      - run: worker-build --version 2>/dev/null | grep -qF "${{ steps.wb.outputs.v }}" || cargo install worker-build --version "${{ steps.wb.outputs.v }}" --locked --force
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cf-${{ runner.os }}-${{ hashFiles('bun.lock', 'tests/cf/tools.ts', 'packages/create-app/templates/blank/package.json.tmpl') }}
+      - run: bun install --frozen-lockfile
+      - run: cd packages/brust && bun run build:debug
+      # 1. the release-shape wasm (what release.yml build-core-cf runs) + its gate; the copy is the scaffold case's package source (R6).
+      - run: |
+          bun crates/brust-wasm/scripts/build.ts
+          bun scripts/core-cf-check.ts npm/core-cf --pack --versions crates/brust-wasm/Cargo.toml
+          cp -R npm/core-cf "$RUNNER_TEMP/core-cf"
+      # 2. workerd e2e: cf-min (lane 3) and pokedex on local D1 (lane 5); rebuilds an --e2e wasm into npm/core-cf/worker (never published).
+      - run: cd packages/cache-cloudflare && bun run typecheck && bun test
+      - run: BRUST_CF_E2E=1 bun test --timeout 900000 tests/cf
+      # 3. build-target unit tests (lane 4; fake core-cf fixture, no wasm). handlers/fetch-in-scope also run in the server job.
+      - run: cd packages/brust && bun test test/cf-*.test.ts
+      # 4. the scaffold case: blank from packed tarballs → `brust build --target cloudflare` (BRUST_CORE_CF_DIR unset in the app build) → wrangler deploy --dry-run.
+      - run: cd packages/create-app && BRUST_CORE_CF_DIR="$RUNNER_TEMP/core-cf" bun test --timeout 600000 test/scaffold.test.ts -t cloudflare
   runtime-dom:
     runs-on: ubuntu-latest
     steps:
@@ -98,6 +161,17 @@ jobs:
   server:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # cache-redis: the adapter's suites run against real servers; REQUIRED makes a missing URL a failure, not a skip.
+    services:
+      redis:
+        image: redis:7.4
+        ports: ["6379:6379"]
+        options: --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+      dragonfly:
+        image: docker.dragonflydb.io/dragonflydb/dragonfly:v2.0.2
+        ports: ["6380:6379"]
+        options: --ulimit memlock=-1
+    env: { BRUST_REDIS_URL: "redis://127.0.0.1:6379", BRUST_DRAGONFLY_URL: "redis://127.0.0.1:6380", BRUST_REDIS_REQUIRED: "1" }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -117,7 +191,7 @@ jobs:
       - run: cd packages/brust && bun run build:debug
       - run: cd packages/brust && bun run typecheck
       # Unit files together; each server-starting file on its own (port/process hygiene).
-      - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/store-server-context.test.ts test/worker-store.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-client.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/run-options.test.ts test/actions-bridge.test.ts
+      - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/store-server-context.test.ts test/worker-store.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-client.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/run-options.test.ts test/actions-bridge.test.ts test/cache-adapter-memory.test.ts test/cache-adapter-bridge.test.ts test/cache-adapter-runtime.test.ts test/build-config-cache.test.ts test/build-cache.test.ts
       - run: cd packages/brust && bun test test/napi-server.test.ts
       - run: cd packages/brust && bun test test/build-manifest.test.ts
       - run: cd packages/brust && bun test test/cli.test.ts
@@ -127,6 +201,7 @@ jobs:
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-actions.test.ts
       - run: cd packages/brust && bun test test/build-actions.test.ts
       - run: cd packages/brust && bun test test/actions-napi.test.ts
+      - run: cd packages/brust && bun test test/handlers.test.ts test/fetch-in-scope.test.ts
       # m2e: the pokedex dogfood (spec §10). Each server-starting file runs alone.
       - run: cd examples/pokedex && bun test
       - run: cd examples/pokedex && bun run typecheck
@@ -135,6 +210,9 @@ jobs:
       - run: cd packages/create-app && bun test --timeout 600000 test/scaffold.test.ts
       - run: bunx playwright install --with-deps chromium
       - run: bun test --timeout 120000 tests/server/pokedex.test.ts
+      - run: bun test --timeout 120000 tests/server/cache-adapter.test.ts
+      - run: cd packages/cache-redis && bun run typecheck && bun test
+      - run: bun test --timeout 180000 tests/server/cache-redis.test.ts
       - run: bun test --timeout 120000 tests/server/hydrate.chromium.test.ts
       # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.
       - run: bun check -p bench
@@ -144,4 +222,4 @@ jobs:
       # The exit report is generated: a diff means the committed one is stale.
       - run: bun run m2-exit && git diff --exit-code docs/plans/m2-exit-report.md
       - run: bun test scripts/m2-exit
-      - run: bun test scripts/release-check.test.ts
+      - run: bun test scripts/release-check.test.ts scripts/core-cf-check.test.ts

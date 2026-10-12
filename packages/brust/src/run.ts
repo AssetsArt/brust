@@ -23,9 +23,11 @@ export interface RunOptions {
 /** The manifest fields `run` needs (build/manifest.ts owns the full shape). */
 export interface RunManifest {
   actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null
+  /** `[cache]`: the server's L2 settings (the workers load the adapter itself). */
+  cache?: { adapter: string; getTimeoutMs: number; maxBodyBytes: number; namespace: string; buildId: string } | null
 }
 
-/** Pure: the napi `StartOptions`. No actions/cors → exactly the pre-actions keys. */
+/** Pure: the napi `StartOptions`. No actions/cors/cache → exactly the pre-actions keys. */
 export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, version: string): StartOptions {
   return {
     host: cfg.host,
@@ -37,6 +39,7 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     generator: `brust/${version}`,
     ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}) } } : {}),
     ...(cfg.cors ? { cors: cfg.cors } : {}),
+    ...(m.cache ? { l2: { adapter: m.cache.adapter, getTimeoutMs: m.cache.getTimeoutMs, maxBodyBytes: m.cache.maxBodyBytes, namespace: m.cache.namespace, buildId: m.cache.buildId } } : {}),
   }
 }
 
@@ -86,6 +89,8 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     BRUST_RENDER_SLOTS: String(cfg.renderSlots),
     BRUST_DIST_DIR: distDir,
     BRUST_APP_ENTRY: entry,
+    // One cache-adapter origin per process: its workers' published events are not replayed here.
+    BRUST_CACHE_ORIGIN: crypto.randomUUID(),
   }
 
   let ready = false

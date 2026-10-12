@@ -4,15 +4,16 @@
 // edited by hand. An out dir that could hold the app's own sources, or a non-empty one that is not
 // a previous brust dist (no `manifest.json` / `.brust` marker; `--force` overrides), is refused
 // before anything is written or removed.
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 import { BrustRouteError, validateRoutes } from '../routes'
-import { type BrowserCtx, buildActions, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
+import { type BrowserCtx, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
+import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import { compileApp } from './compile'
-import { type ActionsBuildConfig, loadBuildConfig } from './config'
+import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
-import { writeManifest } from './manifest'
+import { type CacheRecord, type ManifestJson, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
 
 export { BuildError } from './errors'
@@ -79,6 +80,10 @@ export async function runBuild(opts: {
   outDir: string
   /** Replace a non-empty out dir even without a previous build's marker. */
   force?: boolean
+  /** `cloudflare` also writes `<out>/cf/` (M4-CF); default `bun` = the unchanged build. */
+  target?: 'bun' | 'cloudflare'
+  /** `--wasm-from-source` (cloudflare only). */
+  wasmFromSource?: boolean
   log: (s: string) => void
 }): Promise<void> {
   const appRoot = resolve(opts.appRoot)
@@ -86,7 +91,7 @@ export async function runBuild(opts: {
   const dist = resolve(appRoot, opts.outDir)
   assertSafeOutDir(dist, appRoot, [entry, join(appRoot, 'public')])
   assertReplaceable(dist, opts.force)
-  const { serverOnly, actions } = await loadBuildConfig(appRoot)
+  const { serverOnly, actions, cloudflare, cache } = await loadBuildConfig(appRoot)
 
   // Everything that can fail on the app's own input runs before a byte is written.
   const { routes, componentFile } = await scanRoutes(entry)
@@ -114,7 +119,18 @@ export async function runBuild(opts: {
       }
     }
   }
-  assertSafeOutDir(dist, appRoot, [...componentFile.values(), ...(actionsEntry ? [actionsEntry] : [])])
+  let cacheModule: string | null = null
+  if (cache?.module !== undefined) {
+    cacheModule = resolve(appRoot, cache.module)
+    const rel = relative(appRoot, cacheModule)
+    if (isAbsolute(cache.module) || rel === '..' || rel.startsWith('../') || isAbsolute(rel) || !statOk(cacheModule)) {
+      throw new BuildError('cache', `cache.module ${cache.module} is not a file inside the app`)
+    }
+  }
+  assertSafeOutDir(dist, appRoot, [...componentFile.values(), ...(actionsEntry ? [actionsEntry] : []), ...(cacheModule ? [cacheModule] : [])])
+
+  // Config, @brust/core-cf resolution and the user's wrangler file fail here, before any write.
+  const cf = opts.target === 'cloudflare' ? await prepareCloudflare(appRoot, cloudflare, { fromSource: opts.wasmFromSource === true, env: process.env }) : null
 
   // Sibling of `dist` (same filesystem: the final rename is atomic), fixed name (no random bytes in
   // anything the bundler sees).
@@ -122,7 +138,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, serverOnly, actions, actionsEntry, log: opts.log })
+    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, serverOnly, actions, actionsEntry, cache, cacheModule, cf, log: opts.log })
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
     if (existsSync(dist)) {
       const old = join(dirname(dist), `.${basename(dist)}.brust-old`)
@@ -150,6 +166,10 @@ async function buildInto(
     actions: ActionsBuildConfig | null
     /** Absolute path of the actions entry (null when `[actions]` is off). */
     actionsEntry: string | null
+    cache: CacheBuildConfig | null
+    /** Absolute path of a custom cache adapter module. */
+    cacheModule: string | null
+    cf: CfPrepared | null
     log: (s: string) => void
   },
 ): Promise<void> {
@@ -177,11 +197,20 @@ async function buildInto(
     o.actions && o.actionsEntry
       ? { entry: await buildActions(out, o.actionsEntry), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite }
       : null
+  if (o.cache) manifest.cache = await cacheRecord(out, manifest, o.cache, o.cacheModule)
   writeFileSync(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   writeFileSync(join(out, MARKER), 'generated by `brust build`: this directory is replaced on every build\n')
 
   const pub = join(appRoot, 'public')
   if (existsSync(pub)) cpSync(pub, join(out, 'public'), { recursive: true })
+  if (o.cf) {
+    const warnings = await buildCloudflare(
+      out,
+      { appRoot, entry, dist: o.dist, compiled, manifest, sourceOf: ctx.sourceOf, actionsEntry: o.actionsEntry, cacheModule: o.cacheModule, cacheGetTimeoutMs: o.cache?.getTimeoutMs, log: o.log },
+      o.cf,
+    )
+    for (const w of warnings) o.log(w)
+  }
   const entryRel = relative(o.dist, entry)
   writeFileSync(
     join(out, 'index.js'),
@@ -196,4 +225,43 @@ async function buildInto(
       '',
     ].join('\n'),
   )
+}
+
+/** `manifest.cache` (R7, R8): the custom module bundled for the worker, the native defaults, and the
+ * build id every L2 key carries. */
+async function cacheRecord(out: string, manifest: ManifestJson, c: CacheBuildConfig, moduleAbs: string | null): Promise<CacheRecord> {
+  const module = moduleAbs ? await buildCacheAdapter(out, moduleAbs) : undefined
+  return {
+    adapter: c.adapter,
+    ...(module ? { module } : {}),
+    ...(c.broadcast ? { broadcast: c.broadcast, broadcastOptions: c.broadcastOptions ?? {} } : {}),
+    options: c.options,
+    namespace: c.namespace,
+    getTimeoutMs: c.getTimeoutMs ?? 50,
+    maxBodyBytes: c.maxBodyBytes,
+    epochIntervalMs: c.epochIntervalMs,
+    buildId: computeBuildId(out, manifest),
+  }
+}
+
+/** R7: the first 16 hex chars of sha256 over the manifest (without `cache`), every `jinja/*.jinja`
+ * (by name), `jobs.js` and `actions.js` when present: a rebuild of the same app keeps it, any change
+ * to what renders a page moves it (a deploy never serves an older build's L2 bodies). */
+export function computeBuildId(out: string, manifest: ManifestJson): string {
+  const h = new Bun.CryptoHasher('sha256')
+  const { cache: _, ...rest } = manifest
+  h.update(JSON.stringify(rest))
+  const jinja = join(out, 'jinja')
+  for (const f of (existsSync(jinja) ? readdirSync(jinja) : []).filter((f) => f.endsWith('.jinja')).sort()) {
+    h.update(`\0${f}\0`)
+    h.update(readFileSync(join(jinja, f)))
+  }
+  for (const f of ['jobs.js', 'actions.js']) {
+    const p = join(out, f)
+    if (existsSync(p)) {
+      h.update(`\0${f}\0`)
+      h.update(readFileSync(p))
+    }
+  }
+  return h.digest('hex').slice(0, 16)
 }

@@ -35,13 +35,14 @@ test('monorepo + target under a workspace glob (examples/demo) → workspace:*',
   expect(resolveBrustDep({ targetDir: join(root, 'examples/demo'), pkgRoot })).toEqual({ kind: 'workspace', spec: 'workspace:*' })
 })
 
-test('monorepo + target outside → file:<root>/packages/brust + overrides for runtime-dom and the six natives', () => {
+test('monorepo + target outside → file:<root>/packages/brust + overrides for runtime-dom, core-cf and the six natives', () => {
   const { root, pkgRoot } = fakeRepo()
   const d = resolveBrustDep({ targetDir: join(tmpdir(), 'elsewhere-app'), pkgRoot })
   expect(d.kind).toBe('file')
   expect(d.spec).toBe(`file:${root}/packages/brust`)
-  expect(Object.keys(d.overrides!).sort()).toEqual(['@brust/runtime-dom', ...PLATS.map((p) => `@brust/native-${p}`)].sort())
+  expect(Object.keys(d.overrides!).sort()).toEqual(['@brust/runtime-dom', '@brust/core-cf', ...PLATS.map((p) => `@brust/native-${p}`)].sort())
   expect(d.overrides!['@brust/runtime-dom']).toBe(`file:${root}/packages/runtime-dom`)
+  expect(d.overrides!['@brust/core-cf']).toBe(`file:${root}/npm/core-cf`)
   expect(d.overrides!['@brust/native-darwin-arm64']).toBe(`file:${root}/npm/darwin-arm64`)
 })
 

@@ -32,3 +32,10 @@ test('manifest.actions null → no actions key', () => {
   const o = startOptions(base, '/d', { actions: null }, 'v')
   expect('actions' in o).toBe(false)
 })
+
+test('manifest.cache → l2 { adapter, getTimeoutMs, maxBodyBytes, namespace, buildId } (camelCase)', () => {
+  const cache = { adapter: 'custom', module: 'cache-adapter.js', options: { a: 1 }, getTimeoutMs: 50, maxBodyBytes: 1048576, namespace: 'n', buildId: '0123456789abcdef', epochIntervalMs: 1000 }
+  const o = startOptions(base, '/d', { cache }, 'v')
+  expect(o.l2).toEqual({ adapter: 'custom', getTimeoutMs: 50, maxBodyBytes: 1048576, namespace: 'n', buildId: '0123456789abcdef' })
+  expect('l2' in startOptions(base, '/d', { cache: null }, 'v')).toBe(false)
+})

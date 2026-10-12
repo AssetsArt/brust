@@ -1,6 +1,8 @@
 // Component-level cache declaration (S4 / §5). The compiler reads `cache(Comp, opts)` statically;
 // at runtime it is identity. `cache.invalidate` drops L1 pages and job-cache entries in the
-// running server (napi `cacheInvalidate`).
+// running server (napi `cacheInvalidate`), then — with a cache adapter — the shared store and the
+// broadcast to every other instance (deferred, `cache-adapter/runtime.ts`).
+import { afterInvalidate } from './cache-adapter/runtime'
 import { cacheComponent } from './cache-core'
 import { type InvalidateArgs, type InvalidateResult, cacheInvalidate } from './native'
 
@@ -19,6 +21,7 @@ function invalidate(args: InvalidateArgs): InvalidateResult {
       throw new Error(`${NO_SERVER}: ${msg}`)
     throw e
   }
+  afterInvalidate(args)
   return { l1Removed: r.l1Removed, jobRemoved: r.jobRemoved }
 }
 

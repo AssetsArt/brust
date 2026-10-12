@@ -25,7 +25,7 @@ test('prepack generated templates/pokedex and it ships', () => {
   expect(names).toContain('package/templates/blank/package.json.tmpl')
 })
 test('no node_modules/, dist/, test/, team.sqlite, .gitignore or .npmrc anywhere in the tarball', () => {
-  expect(names.filter((n) => /\/(node_modules|dist|test)\//.test(n) || /team\.sqlite/.test(n) || /(^|\/)\.(gitignore|npmrc)$/.test(n))).toEqual([])
+  expect(names.filter((n) => /\/(node_modules|dist|test)\//.test(n) || /team\.sqlite/.test(n) || /(^|\/)\.(gitignore|npmrc)$/.test(n) || /(^|\/)\.wrangler\//.test(n) || /\.dev\.vars/.test(n) || /\.sqlite(-wal|-shm)?$/.test(n))).toEqual([])
 })
 test('packed package.json: bin create-app, no workspace:, no dependencies', () => {
   const pj = JSON.parse(Bun.spawnSync(['tar', '-xzOf', tgz, 'package/package.json']).stdout.toString())

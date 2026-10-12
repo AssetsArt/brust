@@ -1,0 +1,44 @@
+{
+  "name": "@brust/cache-redis",
+  "version": "2.0.0-alpha.2",
+  "description": "brust cache adapter for Redis and Dragonfly (Bun RedisClient, no npm dependency)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./dragonfly": {
+      "types": "./src/dragonfly.ts",
+      "default": "./src/dragonfly.ts"
+    }
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bun check"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@brust/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@brust/core": "workspace:*",
+    "@types/bun": "^1.4.0",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.2.23"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

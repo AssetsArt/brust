@@ -21,11 +21,11 @@ function copyRoot(): string {
 }
 
 describe('release-check', () => {
-  test('all nine at the expected version → exit 0', () => {
+  test('all eleven at the expected version → exit 0', () => {
     const tmp = copyRoot()
     const r = run([coreVersion, '--root', tmp])
     expect(r.code).toBe(0)
-    expect(r.out).toContain(`✓ 9/9 packages at ${coreVersion}`)
+    expect(r.out).toContain(`✓ 12/12 packages at ${coreVersion}`)
   })
   test('one off-version file → exit 1 naming it', () => {
     const tmp = copyRoot()
@@ -35,7 +35,19 @@ describe('release-check', () => {
     expect(r.code).toBe(1)
     expect(r.err).toContain(`npm/linux-x64-musl/package.json: 0.0.1-x (expected ${coreVersion})`)
   })
-  test('wrong version against the real repo → exit 1 listing all nine', () => {
+  test('core-cf off-version → exit 1 naming it', () => {
+    const tmp = copyRoot()
+    const f = join(tmp, 'npm/core-cf/package.json')
+    writeFileSync(f, readFileSync(f, 'utf8').replace(/("version"\s*:\s*")[^"]*(")/, '$10.0.1-x$2'))
+    const r = run([coreVersion, '--root', tmp])
+    expect(r.code).toBe(1)
+    expect(r.err).toContain(`npm/core-cf/package.json: 0.0.1-x (expected ${coreVersion})`)
+  })
+  test('FILES has the six natives, core-cf and the three packages', () => {
+    expect(FILES.length).toBe(12)
+    expect(FILES).toContain('npm/core-cf/package.json')
+  })
+  test('wrong version against the real repo → exit 1 listing all eleven', () => {
     const r = run(['9.9.9-nope'])
     expect(r.code).toBe(1)
     for (const f of FILES) expect(r.err).toContain(f)

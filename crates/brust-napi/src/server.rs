@@ -143,6 +143,29 @@ fn actions_config(a: NapiActionsOptions) -> ActionsConfig {
     }
 }
 
+/// The cache adapter (`[cache]`, cache-adapter lane A); built by `brust start` from `manifest.cache`.
+#[napi(object)]
+pub struct NapiL2Options {
+    pub adapter: String,
+    /// The `store.get` budget; absent = 50.
+    pub get_timeout_ms: Option<u32>,
+    /// A bigger rendered body is not written; absent = 1 048 576.
+    pub max_body_bytes: Option<u32>,
+    pub namespace: String,
+    pub build_id: String,
+}
+
+/// Absent keys take the native defaults (R4, spec §6).
+fn l2_config(o: NapiL2Options) -> brust_server::l2::L2Config {
+    brust_server::l2::L2Config {
+        adapter: o.adapter,
+        get_timeout: Duration::from_millis(u64::from(o.get_timeout_ms.unwrap_or(50).max(1))),
+        max_body_bytes: o.max_body_bytes.map_or(1_048_576, |n| n as usize),
+        namespace: o.namespace,
+        build_id: o.build_id,
+    }
+}
+
 #[napi(object)]
 pub struct StartOptions {
     pub host: String,
@@ -165,6 +188,8 @@ pub struct StartOptions {
     pub cors: Option<NapiCorsOptions>,
     /// The actions subtree (M3-F); absent = no actions (byte-identical server).
     pub actions: Option<NapiActionsOptions>,
+    /// The cache adapter; absent = none (byte-identical server).
+    pub l2: Option<NapiL2Options>,
 }
 
 /// Boot the server (manifest, routes, templates, bind). Throws on any boot
@@ -193,6 +218,7 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
         generator: opts.generator,
         cors: opts.cors.map(cors_config),
         actions: opts.actions.map(actions_config),
+        l2: opts.l2.map(l2_config),
         ..Config::default()
     };
     let s = start(cfg).map_err(napi::Error::from_reason)?;
@@ -328,6 +354,41 @@ pub fn cache_invalidate(args: NapiInvalidateArgs) -> napi::Result<NapiInvalidate
     })
 }
 
+/// A broadcast invalidation another process published (worker 0's subscriber, cache-adapter R10):
+/// tier 1 + the floor at `seq`. Never re-published (L3). Same args/result as `cache_invalidate`.
+#[napi]
+pub fn cache_replay(
+    args: NapiInvalidateArgs,
+    seq: Option<i64>,
+) -> napi::Result<NapiInvalidateResult> {
+    let r = current()?.l2_replay(
+        InvalidateArgs {
+            key: args.key,
+            tags: args.tags.unwrap_or_default(),
+            path: args.path,
+            method: args.method,
+        },
+        seq.and_then(|n| u64::try_from(n).ok()),
+    );
+    Ok(NapiInvalidateResult {
+        l1_removed: u32::try_from(r.l1_removed).unwrap_or(u32::MAX),
+        job_removed: u32::try_from(r.job_removed).unwrap_or(u32::MAX),
+    })
+}
+
+/// Bump the `stats.l2` counter `name` (the JS side's counts, R9). `false` = unknown name, no
+/// adapter, or no server. Never throws.
+#[napi]
+pub fn cache_l2_count(name: String) -> bool {
+    current().is_ok_and(|s| s.l2_count(&name))
+}
+
+/// Drop both tier-1 caches (a broadcast gap, R10); `stats.l2.resets`++. The L1 entries removed.
+#[napi]
+pub fn cache_clear() -> napi::Result<u32> {
+    Ok(u32::try_from(current()?.cache_clear()).unwrap_or(u32::MAX))
+}
+
 /// `/_brust/cache/stats` JSON (snake_case keys, as the server serialises it).
 #[napi]
 pub fn cache_stats() -> napi::Result<String> {
@@ -426,6 +487,38 @@ mod tests {
                 max_response_bytes: 1 << 20,
                 cross_site: CrossSite::Allow,
             }
+        );
+    }
+
+    #[test]
+    fn l2_options_default() {
+        let c = l2_config(NapiL2Options {
+            adapter: "custom".into(),
+            get_timeout_ms: None,
+            max_body_bytes: None,
+            namespace: "ns".into(),
+            build_id: "b".into(),
+        });
+        assert_eq!(c.get_timeout, Duration::from_millis(50));
+        assert_eq!(c.max_body_bytes, 1_048_576);
+        assert_eq!(
+            (
+                c.adapter.as_str(),
+                c.namespace.as_str(),
+                c.build_id.as_str()
+            ),
+            ("custom", "ns", "b")
+        );
+        let c = l2_config(NapiL2Options {
+            adapter: "redis".into(),
+            get_timeout_ms: Some(200),
+            max_body_bytes: Some(1024),
+            namespace: "ns".into(),
+            build_id: "b".into(),
+        });
+        assert_eq!(
+            (c.get_timeout, c.max_body_bytes),
+            (Duration::from_millis(200), 1024)
         );
     }
 

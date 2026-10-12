@@ -9,8 +9,8 @@ import type { BrowseData, DetailData, HomeData, TypeChartCellVM, TypeChartData, 
 
 const FEATURED = [{ id: 1, name: 'bulbasaur' }, { id: 4, name: 'charmander' }, { id: 7, name: 'squirtle' }, { id: 25, name: 'pikachu' }, { id: 39, name: 'jigglypuff' }, { id: 94, name: 'gengar' }, { id: 143, name: 'snorlax' }, { id: 150, name: 'mewtwo' }]
 /** Layout loader: seeds the request's store scope, so every layout page paints the DB roster (D4/E7). */
-export function layoutLoader(): void {
-  team.members.set(teamDb().list())
+export async function layoutLoader(): Promise<void> {
+  team.members.set(await teamDb().list())
   team.max.set(MAX_TEAM)
 }
 const NAV = [{ href: '/', label: 'Home' }, { href: '/pokedex', label: 'Pokédex' }, { href: '/type-chart', label: 'Type chart' }, { href: '/unified', label: 'Unified' }]

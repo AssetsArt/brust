@@ -13,11 +13,16 @@
   },
   "exports": {
     ".": {
+      "workerd": "./src/cf.ts",
       "browser": "./src/browser.ts",
       "default": "./src/index.ts"
     },
     "./routes": "./src/routes.ts",
     "./server": "./src/server.ts",
+    "./server-handlers": "./src/server-handlers.ts",
+    "./server-handlers/actions": "./src/actions/load.ts",
+    "./cache-adapter": "./src/cache-adapter/index.ts",
+    "./cache-adapter/conformance": "./src/cache-adapter/conformance.ts",
     "./store": "./src/store/index.ts",
     "./store/react": "./src/store/react.ts",
     "./elysia": "./src/actions/elysia.ts",
@@ -86,6 +91,7 @@
     "@brust/native-linux-x64-gnu": "workspace:*",
     "@brust/native-linux-arm64-gnu": "workspace:*",
     "@brust/native-linux-x64-musl": "workspace:*",
-    "@brust/native-linux-arm64-musl": "workspace:*"
+    "@brust/native-linux-arm64-musl": "workspace:*",
+    "@brust/core-cf": "workspace:*"
   }
 }

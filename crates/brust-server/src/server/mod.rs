@@ -1,8 +1,8 @@
 //! The hyper accept loop, carried from brust-core `server/mod.rs:33-442` @
-//! d04718f (`Tuning`, `start`, `serve_io`, `header_str`). The 0.1.x
+//! d04718f (`Tuning`, `start`, `serve_io`; `header_str` is `brust_core::body::header_str`). The 0.1.x
 //! `handle_request` is replaced by [`crate::pipeline::handle`].
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -14,18 +14,14 @@ use hyper_util::server::conn::auto;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
-use crate::cache::job_cache::JobCache;
-use crate::cache::l1::L1Cache;
-use crate::cache::stamp::InvalClock;
 use crate::config::{Config, Server};
+use crate::host::NativeHost;
 use crate::manifest::Manifest;
 use crate::pool::WorkerPool;
-use crate::render::Renderer;
-use crate::routing::RouteTable;
+use brust_core::core::{Core, CoreConfig};
 
 pub mod body;
 pub mod coarse_timer;
-pub(crate) mod cors;
 pub mod static_assets;
 pub mod tls;
 
@@ -88,7 +84,9 @@ impl Server {
     /// Slots whose plan cell holds something (tests: 0 when idle).
     #[doc(hidden)]
     pub fn plan_cells_in_use(&self) -> usize {
-        self.pool
+        self.core
+            .host
+            .pool
             .entries()
             .iter()
             .map(|e| {
@@ -100,6 +98,21 @@ impl Server {
     }
 }
 
+/// R1: the per-request pipeline future is spawned on the multi-thread runtime, so it must be
+/// `Send` — asserted here at compile time (auto traits leak through the host's RPITIT futures).
+#[allow(dead_code)]
+fn _pipeline_future_is_send(req: Request<Incoming>, s: &Server) {
+    fn is_send<T: Send>(_: &T) {}
+    let f = crate::pipeline::handle(req, s);
+    is_send(&f);
+}
+
+/// `Arc<Server>`/`Weak<Server>` live in napi statics.
+const _: () = {
+    const fn ok<T: Send + Sync>() {}
+    ok::<Server>();
+};
+
 /// Load the manifest, build the route table and renderer, bind, and run the
 /// accept loop on its own runtime thread. Returns once the bind (and TLS
 /// acceptor build) succeeded; the loop waits for `expected_workers`
@@ -108,67 +121,36 @@ impl Server {
 /// `"bind failed on {addr}: …"`, `"tls acceptor build failed: …"`.
 pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
     let loaded = Manifest::load(&cfg.dist_dir).map_err(|e| format!("manifest: {e}"))?;
-    let routes = RouteTable::from_manifest(&loaded.manifest).map_err(|e| format!("routes: {e}"))?;
-    let renderer =
-        Renderer::from_templates(&loaded.templates).map_err(|e| format!("render: {e}"))?;
-    let plans =
-        crate::pipeline::PlanIndex::new(&loaded.manifest).map_err(|e| format!("manifest: {e}"))?;
-    if let Some(c) = &cfg.cors {
-        c.validate().map_err(|e| format!("cors: {e}"))?;
-    }
-    if let Some(a) = &cfg.actions {
-        a.validate(&loaded.manifest)
-            .map_err(|e| format!("actions: {e}"))?;
-    }
     let tuning = cfg.tuning;
-    // One invalidation clock for both caches: `page()` stamps it once per request (F89).
-    let clock = Arc::new(InvalClock::default());
-    let state = Arc::new(Server {
+    let host = NativeHost {
         pool: Arc::new(WorkerPool::new()),
-        routes,
-        render_hints: (0..loaded.manifest.routes.len())
-            .map(|_| AtomicUsize::new(0))
-            .collect(),
-        plan_offer: (0..loaded.manifest.routes.len())
-            .map(|_| AtomicU32::new(0))
-            .collect(),
-        manifest: loaded.manifest,
-        plans,
-        renderer,
-        l1: L1Cache::with_clock(cfg.l1_capacity, Arc::clone(&clock)),
-        jobs: JobCache::with_clock(cfg.job_cache_capacity, Arc::clone(&clock)),
-        clock,
         dist_dir: cfg.dist_dir.clone(),
-        loader_calls: crate::cache::l1::StripedCounter::new(),
-        job_calls: AtomicU64::new(0),
-        worker_calls: crate::cache::l1::StripedCounter::new(),
-        timed_out_calls: AtomicU64::new(0),
-        missing_slots: Default::default(),
+        claim_timeout: Duration::from_millis(tuning.claim_timeout_ms),
+        call_timeout: Duration::from_millis(tuning.call_timeout_ms),
+        l2: cfg.l2.as_ref().map(|l| (l.get_timeout, l.max_body_bytes)),
+    };
+    let core = Core::new(
+        host,
+        loaded,
+        CoreConfig {
+            l1_capacity: cfg.l1_capacity,
+            job_cache_capacity: cfg.job_cache_capacity,
+            cors: cfg.cors,
+            generator: cfg.generator,
+            actions: cfg.actions,
+            https: cfg.tls.is_some(),
+            l2: cfg.l2,
+        },
+    )?;
+    let state = Arc::new(Server {
+        core,
         ready: Arc::new(Notify::new()),
         expected_workers: AtomicU32::new(cfg.expected_workers),
         drain_start: Arc::new(Notify::new()),
         drain_done: Arc::new(Notify::new()),
         drain_timeout_ms: AtomicU64::new(10_000),
         local_addr: OnceLock::new(),
-        cors_resolved: cfg.cors.as_ref().map(cors::ResolvedCors::from_config),
         tls: cfg.tls,
-        cors: cfg.cors,
-        generator: cfg.generator,
-        // A4 verbatim; a validated prefix holds only [A-Za-z0-9._~/-], so no escaping.
-        action_prefix_tag: cfg
-            .actions
-            .as_ref()
-            .filter(|a| !a.is_default_prefix())
-            .map(|a| {
-                format!(
-                    "<script>globalThis.__BRUST_ACTION_PREFIX__=\"{}\"</script>",
-                    a.prefix
-                )
-                .into_boxed_str()
-            }),
-        actions: cfg.actions,
-        claim_timeout: Duration::from_millis(tuning.claim_timeout_ms),
-        call_timeout: Duration::from_millis(tuning.call_timeout_ms),
     });
 
     // The accept-concurrency ceiling (0.1.x also folded `conn_workers` in; v2
@@ -237,7 +219,11 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             // keeps running below (ready gate + accept loop) in the background.
             let _ = boot_tx.send(Ok(local));
 
-            if state.expected_workers.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            if state
+                .expected_workers
+                .load(std::sync::atomic::Ordering::SeqCst)
+                == 0
+            {
                 state.ready.notify_one();
             }
             state.ready.notified().await; // wait until all workers registered
@@ -251,24 +237,6 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             // tokio's wheel (one global lock per register and per clear, on every request).
             let header_timer = coarse_timer::CoarseTimer::new(coarse_timer::TICK);
             let header_ticker = header_timer.spawn_ticker();
-
-            // X-Powered-By, stamped on EVERY response at the service layer.
-            // insert-if-absent: headers the pipeline set win. L1 holds JSON
-            // context, never a response, so stamping a HIT can never duplicate.
-            // M3-P P7: a static HeaderValue (the string leaked once per server), so stamping a
-            // response clones no refcounted `Bytes`.
-            let powered_by: Option<http::HeaderValue> =
-                state.generator.as_deref().and_then(|s| {
-                    match http::HeaderValue::from_str(s) {
-                        Ok(_) => Some(http::HeaderValue::from_static(Box::leak(
-                            s.to_owned().into_boxed_str(),
-                        ))),
-                        Err(e) => {
-                            warn!(value = %s, error = %e, "generator string rejected by HeaderValue — X-Powered-By disabled");
-                            None
-                        }
-                    }
-                });
 
             // Graceful drain wiring. `drain_sig` (watch) tells each in-flight
             // connection to finish its current request then close (refuse new
@@ -316,7 +284,6 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                 };
 
                 let state = Arc::clone(&state);
-                let powered_by = powered_by.clone();
                 let read_buf_cap = tuning.read_buf_cap;
                 let max_req = tuning.max_request_bytes;
                 let header_timeout = Duration::from_millis(tuning.header_read_timeout_ms.max(1));
@@ -327,31 +294,20 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                 tokio::spawn(async move {
                     let _permit = permit; // released when the connection ends
                     let _conn_token = conn_token; // drain barrier — held for the conn's life
-                    let svc = service_fn(move |req| {
-                        // M3-P P7: one `Arc<Server>` clone per request (moved into the pipeline); a
-                        // second only when CORS is configured.
+                    let svc = service_fn(move |req: Request<Incoming>| {
+                        // M3-P P7: one `Arc<Server>` clone per request (the pipeline borrows it).
                         let state = Arc::clone(&state);
-                        let powered_by = powered_by.clone();
                         async move {
-                            // CORS stamping happens HERE and ONLY here — the single
-                            // chokepoint that sees every response path (static
-                            // assets, error helpers, L1 HITs, rendered pages). Clone
-                            // the Origin header BEFORE `req` moves into the pipeline.
-                            let cors = state
-                                .cors_resolved
-                                .is_some()
-                                .then(|| (Arc::clone(&state), req.headers().get(http::header::ORIGIN).cloned()));
-                            let mut resp = crate::pipeline::handle(req, state).await;
-                            if let Some(v) = powered_by {
-                                resp.headers_mut()
-                                    .entry(http::header::HeaderName::from_static("x-powered-by"))
-                                    .or_insert(v);
-                            }
-                            if let Some((state, origin)) = &cors
-                                && let Some(c) = &state.cors_resolved
-                            {
-                                c.stamp_response(resp.headers_mut(), origin.as_ref());
-                            }
+                            // `Core::finish` is the single chokepoint that sees every response
+                            // path (static assets, error helpers, L1 HITs, rendered pages, actions).
+                            // Clone the Origin header BEFORE `req` moves into the pipeline.
+                            let origin = state
+                                .core
+                                .cors_enabled()
+                                .then(|| req.headers().get(http::header::ORIGIN).cloned())
+                                .flatten();
+                            let mut resp = crate::pipeline::handle(req, &state).await;
+                            state.core.finish(origin.as_ref(), resp.headers_mut());
                             Ok::<_, Infallible>(resp)
                         }
                     });
@@ -405,7 +361,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                                 header_timer,
                                 conn_drain,
                             )
-                                .await;
+                            .await;
                         }
                     }
                 });
@@ -494,14 +450,6 @@ async fn serve_io<I, S, B>(
             }
         }
     }
-}
-
-/// Case-insensitive single-header lookup as a trimmed `String`.
-pub(crate) fn header_str(headers: &http::HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get(name)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_string())
 }
 
 #[cfg(test)]

@@ -16,10 +16,11 @@ import { BuildError } from './errors'
 
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
 /** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). */
-const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify('production') }
+export const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify('production') }
 
 const matchesExternal = (spec: string, external: string[]) =>
-  external.some((p) => (p.endsWith('/*') ? spec.startsWith(p.slice(0, -1)) : spec === p))
+  // A trailing `*` is a prefix (`elysia/*`, `node:*`, `cloudflare:*`): the generated CF entry imports `cloudflare:workers`.
+  external.some((p) => (p.endsWith('*') ? spec.startsWith(p.slice(0, -1)) : spec === p))
 
 /** Staged artifact (by its absolute and its real path) → the component SOURCE file it was
  * generated from. */
@@ -339,6 +340,15 @@ export async function buildActions(dist: string, entry: string): Promise<string>
   if (!res.success) throw new BuildError('bundle', `actions: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'actions.js'), await res.outputs[0]!.text())
   return 'actions.js'
+}
+
+/** `dist/cache-adapter.js` (cache adapters R8): a custom adapter module for the worker (`target: 'bun'`), with
+ * the actions externals so it shares the app's dependencies. */
+export async function buildCacheAdapter(dist: string, entry: string): Promise<string> {
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS })
+  if (!res.success) throw new BuildError('bundle', `cache adapter: ${res.logs.map(String).join('\n')}`)
+  write(join(dist, 'cache-adapter.js'), await res.outputs[0]!.text())
+  return 'cache-adapter.js'
 }
 
 /** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export
