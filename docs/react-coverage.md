@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 22 | 16 | 4 | 2 | 0 | 0 | 0 | 0 |
+| A JSX basics | 26 | 16 | 7 | 3 | 0 | 0 | 0 | 0 |
 | B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 24 | 4 | 10 | 5 | 4 | 1 | 0 | 0 |
-| **Total** | 78 | 27 | 25 | 21 | 4 | 1 | 0 | 0 |
+| **Total** | 82 | 27 | 28 | 22 | 4 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -47,6 +47,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-inner-html-state | dangerouslySetInnerHTML driven by state | native | native | 0 | ok | — | spec §4.3 useState; x-html directive repaints innerHTML |
 | a-inner-html-react | dangerouslySetInnerHTML in a component that is React for another reason | react | react | ssr | ok | fallback:browser-global | browser-global forces the React tier; the markup is no longer a build error |
 | a-reserved-x-attr | x-* attribute written in JSX (F94) | static | static | 0 | ok | warning:reserved-attr | warning reserved-attr: runtime directives come only from compiler output; the attributes are dropped |
+| a-svg-class-state | state-driven class on an SVG element (F96a) | native | native | 0 | ok | — | F96a: x-bind-class uses setAttribute (SVG className is a getter-only SVGAnimatedString) |
+| a-state-spread-handler | spread of a state array in a handler and a helper (F96b) | native | native | precompute | ok | — | F96b: a verbatim body nested in a structured expression gets its captures bound (xs → xs()) |
+| a-state-list-static-child | static child listing a state-fed prop (F96d) | native | native | 0 | ok | — | F96d: the linked child repaints its own list (x-for over props()) |
+| a-linked-child-prop-precompute | state-fed prop derived with a callback in a linked child (F96d) | react | react | ssr | ok | fallback:linked-prop-precompute | F96d fail-closed: a server-computed value over a prop the parent changes would freeze; fallback linked-prop-precompute |
 | a-spread-host | spread props on a host element (F31) | react | react | ssr | ok | fallback:spread-props | fallback spread-props until the template backend can expand a known-shape spread |
 
 ## B. Composition

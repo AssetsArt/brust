@@ -16,7 +16,8 @@ BINDERS.push({
     inst.effect(() => {
       const r = read(inst, p, scope, attr); if (!r.ok) return
       const v = r.value
-      if (name === 'class') { (el as HTMLElement).className = v == null ? '' : String(v); return }
+      // setAttribute: `className` is a getter-only SVGAnimatedString on SVG elements (F96a).
+      if (name === 'class') { el.setAttribute('class', v == null ? '' : String(v)); return }
       if (name === 'value' && 'value' in el) { (el as HTMLInputElement).value = v == null ? '' : String(v); return }
       if (BOOLEAN.has(name)) {
         const on = Boolean(v)

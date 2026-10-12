@@ -373,8 +373,86 @@ pub fn client_js(r: &RawExpr, f: &Facts<'_>) -> String {
         | RawKind::Opaque {
             source, captures, ..
         } => wrap_source(source, captures, f, JsCtx::Client),
-        _ => r.to_js_with(JsCtx::Client, &names),
+        _ => bind_nested(r, f).to_js_with(JsCtx::Client, &names),
     }
+}
+
+/// F96b: a verbatim body (`Opaque`, block-bodied arrow) nested inside a structured expression
+/// (`items.set([...items, 4])`, `f(...items)`, `xs.map((x) => { … items … })`) is printed as
+/// written, so a state or setter it reads would be the chunk's signal itself. Wrap each such
+/// body like a top-level one, binding its captures to their current values.
+fn bind_nested(r: &RawExpr, f: &Facts<'_>) -> RawExpr {
+    let b = |e: &RawExpr| Box::new(bind_nested(e, f));
+    let kind = match &r.kind {
+        RawKind::Arrow {
+            body: ArrowBody::Block { source, .. },
+            captures,
+            ..
+        }
+        | RawKind::Opaque {
+            source, captures, ..
+        } if !captures.is_empty() => RawKind::Opaque {
+            source: wrap_source(source, captures, f, JsCtx::Client),
+            why: "nested verbatim body, captures bound".into(),
+            captures: Vec::new(),
+        },
+        RawKind::Member {
+            target,
+            name,
+            optional,
+        } => RawKind::Member {
+            target: b(target),
+            name: name.clone(),
+            optional: *optional,
+        },
+        RawKind::Index { target, index } => RawKind::Index {
+            target: b(target),
+            index: b(index),
+        },
+        RawKind::Call { callee, args } => RawKind::Call {
+            callee: b(callee),
+            args: args.iter().map(|a| bind_nested(a, f)).collect(),
+        },
+        RawKind::Binary { op, left, right } => RawKind::Binary {
+            op: *op,
+            left: b(left),
+            right: b(right),
+        },
+        RawKind::Unary { op, value } => RawKind::Unary {
+            op: *op,
+            value: b(value),
+        },
+        RawKind::Cond { test, yes, no } => RawKind::Cond {
+            test: b(test),
+            yes: b(yes),
+            no: b(no),
+        },
+        RawKind::Template { head, parts } => RawKind::Template {
+            head: head.clone(),
+            parts: parts
+                .iter()
+                .map(|(p, t)| (bind_nested(p, f), t.clone()))
+                .collect(),
+        },
+        RawKind::Array(items) => RawKind::Array(items.iter().map(|i| bind_nested(i, f)).collect()),
+        RawKind::Object(props) => RawKind::Object(
+            props
+                .iter()
+                .map(|(k, v)| (k.clone(), bind_nested(v, f)))
+                .collect(),
+        ),
+        RawKind::Arrow {
+            params,
+            body: ArrowBody::Expr(e),
+            captures,
+        } => RawKind::Arrow {
+            params: params.clone(),
+            body: ArrowBody::Expr(b(e)),
+            captures: captures.clone(),
+        },
+        other => other.clone(),
+    };
+    RawExpr { loc: r.loc, kind }
 }
 
 /// Prints `r` as a client **function** that binds its captures at each call

@@ -1,0 +1,217 @@
+{
+  "id": "input_c7026e6f",
+  "source": "tests/fixtures/f96-linked-list-child/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "log",
+      "setter": "setLog",
+      "init": {
+        "Server": {
+          "loc": 329,
+          "kind": {
+            "Array": [
+              {
+                "loc": 330,
+                "kind": {
+                  "Lit": {
+                    "Str": "a"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 380,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 386,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 386,
+                      "kind": {
+                        "Ident": {
+                          "name": "setLog",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 393,
+                        "kind": {
+                          "Call": {
+                            "callee": {
+                              "loc": 393,
+                              "kind": {
+                                "Member": {
+                                  "target": {
+                                    "loc": 393,
+                                    "kind": {
+                                      "Ident": {
+                                        "name": "log",
+                                        "kind": "State"
+                                      }
+                                    }
+                                  },
+                                  "name": "concat",
+                                  "optional": false
+                                }
+                              }
+                            },
+                            "args": [
+                              {
+                                "loc": 404,
+                                "kind": {
+                                  "Array": [
+                                    {
+                                      "loc": 405,
+                                      "kind": {
+                                        "Lit": {
+                                          "Str": "b"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setLog",
+                "Setter"
+              ],
+              [
+                "log",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 351,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 363,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "add"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Component": {
+            "loc": 432,
+            "name": "Entries",
+            "source": "./Entries",
+            "imported": "default",
+            "props": [
+              [
+                "log",
+                {
+                  "Server": {
+                    "loc": 446,
+                    "kind": {
+                      "Ident": {
+                        "name": "log",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": 1,
+            "tier": "Static"
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [
+    {
+      "id": 1,
+      "child": "entries_2200c262",
+      "props_member": "_p1",
+      "item_scoped": [],
+      "props": [
+        [
+          "log",
+          {
+            "Server": {
+              "loc": 446,
+              "kind": {
+                "Ident": {
+                  "name": "log",
+                  "kind": "State"
+                }
+              }
+            }
+          }
+        ]
+      ]
+    }
+  ],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [
+    {
+      "name": "Entries",
+      "id": "entries_2200c262",
+      "path": "tests/fixtures/f96-linked-list-child/Entries.tsx",
+      "tier": "Static"
+    }
+  ],
+  "diagnostics": []
+}

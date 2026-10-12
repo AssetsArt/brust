@@ -1,0 +1,187 @@
+{
+  "id": "input_560e4311",
+  "source": "tests/fixtures/f96-helper-spread/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "items",
+      "setter": "setItems",
+      "init": {
+        "Server": {
+          "loc": 299,
+          "kind": {
+            "Array": [
+              {
+                "loc": 300,
+                "kind": {
+                  "Lit": {
+                    "Num": 1.0
+                  }
+                }
+              },
+              {
+                "loc": 303,
+                "kind": {
+                  "Lit": {
+                    "Num": 2.0
+                  }
+                }
+              },
+              {
+                "loc": 306,
+                "kind": {
+                  "Lit": {
+                    "Num": 3.0
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "add",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => setItems(([...items, items.length + 1]))"
+        }
+      }
+    },
+    {
+      "name": "sorted",
+      "expr": {
+        "ClientOnly": {
+          "js": "() => ([...items]).sort((a, b) => b - a)"
+        }
+      }
+    }
+  ],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 440,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 452,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "add"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "add"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 493,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "n"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 504,
+                    "kind": {
+                      "Member": {
+                        "target": {
+                          "loc": 504,
+                          "kind": {
+                            "Ident": {
+                              "name": "items",
+                              "kind": "State"
+                            }
+                          }
+                        },
+                        "name": "length",
+                        "optional": false
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 528,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "top"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Precomputed": {
+                    "slot": "_s1",
+                    "js": "sorted()[0]",
+                    "client_js": "sorted()[0]",
+                    "inputs": [],
+                    "state_dependent": true,
+                    "per_item": null
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [],
+      "outputs": [
+        "_s1"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}
