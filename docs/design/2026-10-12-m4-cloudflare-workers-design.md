@@ -365,6 +365,9 @@ only Rust bytes, never JS I/O objects, so "Cannot perform I/O on behalf of a dif
 
 ## 6. Build, deploy, dev, CI
 
+> **Account rule (human, 2026-10-12).** A logged-in `wrangler` is available on the lead's host for test deploys. Lanes may deploy short-lived test Workers / D1 / KV named `brust-test-<slug>-<shortsha>` for the one proof local workerd cannot give, and MUST delete every resource they created at the end of the test, every time, recording the create and delete commands in the task note. Local workerd stays the default for e2e and CI. No account ids, zones or secrets in Markdown.
+
+
 **`brust build --target cloudflare`** (new `packages/brust/src/build/cloudflare.ts`):
 1. Run the normal build into `dist/`, unchanged (`build/index.ts:76-197`).
 2. Emit `templates.json` from `dist/jinja/*`.
