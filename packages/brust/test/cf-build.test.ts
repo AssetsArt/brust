@@ -53,6 +53,8 @@ test('brust-app.js is self-contained, honours [cloudflare] alias and stays small
   const { out } = build()
   const js = readFileSync(join(out, 'cf', 'worker', 'brust-app.js'), 'utf8')
   for (const bad of ['../native/index.js', '.node"', 'worker_threads', 'bun:']) expect(js).not.toContain(bad)
+  // `@brust/core` resolves to cf.ts under `workerd`, not browser.ts (ruling c30e2633): cache.invalidate is the live one.
+  expect(js).not.toContain('cache.invalidate is server-only')
   expect(js).toContain('installedRuntime().invalidate(a)')
   expect(js).toMatch(/export \{[^}]*\binstall\b/)
   expect(js).toContain('D1_DB_MARKER')

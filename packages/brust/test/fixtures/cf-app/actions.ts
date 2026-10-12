@@ -1,5 +1,5 @@
 import { brust } from '@brust/core/elysia'
-import { cache } from '@brust/core/server'
+import { cache } from '@brust/core'
 import { Elysia } from 'elysia'
 import { dbName } from './lib/db'
 

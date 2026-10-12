@@ -1,6 +1,6 @@
 // examples/pokedex/actions.ts — the team RPC surface (M3-F E7). One Elysia 2 app behind the Rust server
 // (brust.toml [actions]); never imported by browser code except as `import type { App }`.
-import { cache, type InvalidateArgs } from '@brust/core/server'
+import { cache, type InvalidateArgs } from '@brust/core'
 import { brust } from '@brust/core/elysia'
 import { Elysia, problem, t } from 'elysia'
 import { pokemonById } from './lib/pokeapi'
