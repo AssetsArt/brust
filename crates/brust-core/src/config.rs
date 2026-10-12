@@ -106,8 +106,7 @@ impl Default for ActionsConfig {
 }
 
 /// 0.1.x `path_under_action_prefix` (brust-core config.rs:358-363): `path` is `p` or lies under it.
-#[doc(hidden)]
-pub fn under(path: &str, p: &str) -> bool {
+pub(crate) fn under(path: &str, p: &str) -> bool {
     path == p || (path.len() > p.len() && path.as_bytes()[p.len()] == b'/' && path.starts_with(p))
 }
 

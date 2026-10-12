@@ -8,7 +8,8 @@
 //! application headers (Content-Type, Cache-Control, Vary, Set-Cookie, …) and never
 //! emit Content-Length / Transfer-Encoding / Connection.
 //!
-//! Native-host seam (`doc(hidden)`), not an API.
+//! `is_framing_header`, `header_str`, `resp` and `resp_head` are the native-host seam
+//! (`doc(hidden)`), not an API; the rest are crate-private.
 
 use bytes::Bytes;
 use http::{HeaderMap, HeaderName, HeaderValue, Response, StatusCode};
@@ -46,7 +47,7 @@ pub fn resp(
 /// order, minus the framing / content-type names and any name/value carrying
 /// a CR/LF/NUL. Built once per L1 entry so a HIT replays it without
 /// re-validating.
-pub fn header_map(content_type: &str, extra_headers: &[(String, String)]) -> HeaderMap {
+pub(crate) fn header_map(content_type: &str, extra_headers: &[(String, String)]) -> HeaderMap {
     let mut hm = HeaderMap::new();
     // The page type is a static value: a HIT clones this map per request, and a static value carries no
     // refcount (a `from_str` value is shared `Bytes`, one contended RMW pair per HIT).
@@ -84,7 +85,7 @@ pub fn header_map(content_type: &str, extra_headers: &[(String, String)]) -> Hea
 }
 
 /// A response from an already-built header map and a shared body (no copy).
-pub fn resp_with(status: u16, headers: HeaderMap, body: Bytes) -> Response<Bytes> {
+pub(crate) fn resp_with(status: u16, headers: HeaderMap, body: Bytes) -> Response<Bytes> {
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let mut r = Response::new(body);
     *r.status_mut() = status;
@@ -115,14 +116,14 @@ pub fn resp_head(
 
 // ----- canned typed error responses (byte-identical bodies to the old http::error_* builders) -----
 
-pub fn error_400() -> Response<Bytes> {
+pub(crate) fn error_400() -> Response<Bytes> {
     resp(400, "text/plain", &[], b"bad request".to_vec())
 }
-pub fn error_404() -> Response<Bytes> {
+pub(crate) fn error_404() -> Response<Bytes> {
     resp(404, "text/plain", &[], b"not found".to_vec())
 }
 /// RFC 9110 §15.5.6: a 405 lists the methods the target supports.
-pub fn error_405() -> Response<Bytes> {
+pub(crate) fn error_405() -> Response<Bytes> {
     resp(
         405,
         "text/plain",
@@ -132,14 +133,14 @@ pub fn error_405() -> Response<Bytes> {
 }
 // kept for parity with body.rs @ d04718f
 #[allow(dead_code)]
-pub fn error_411() -> Response<Bytes> {
+pub(crate) fn error_411() -> Response<Bytes> {
     resp(411, "text/plain", &[], b"length required".to_vec())
 }
-pub fn error_413() -> Response<Bytes> {
+pub(crate) fn error_413() -> Response<Bytes> {
     resp(413, "text/plain", &[], b"payload too large".to_vec())
 }
 /// F87: a cross-site mutating action request, refused before its body is read.
-pub fn error_403_cross_site(method: &str) -> Response<Bytes> {
+pub(crate) fn error_403_cross_site(method: &str) -> Response<Bytes> {
     let detail = format!(
         "cross-site {method} to an action is rejected; set [actions] cross_site = \"allow\", or list the exact origin in [cors].origins (a wildcard does not count)"
     );
@@ -156,10 +157,10 @@ pub fn error_403_cross_site(method: &str) -> Response<Bytes> {
         b.to_string().into_bytes(),
     )
 }
-pub fn error_415() -> Response<Bytes> {
+pub(crate) fn error_415() -> Response<Bytes> {
     resp(415, "text/plain", &[], b"unsupported media type".to_vec())
 }
-pub fn error_500() -> Response<Bytes> {
+pub(crate) fn error_500() -> Response<Bytes> {
     resp(
         500,
         "text/plain",
@@ -167,16 +168,16 @@ pub fn error_500() -> Response<Bytes> {
         b"500 Internal Server Error".to_vec(),
     )
 }
-pub fn error_503(msg: &str) -> Response<Bytes> {
+pub(crate) fn error_503(msg: &str) -> Response<Bytes> {
     resp(503, "text/plain", &[], msg.as_bytes().to_vec())
 }
-pub fn error_504(msg: &str) -> Response<Bytes> {
+pub(crate) fn error_504(msg: &str) -> Response<Bytes> {
     resp(504, "text/plain", &[], msg.as_bytes().to_vec())
 }
 
 /// Last-resort 500 for a builder whose header values fail validation (never, for
 /// builder-produced values): `Content-Type: text/plain`, body `500 Internal Server Error`.
-pub fn canned_500() -> Response<Bytes> {
+pub(crate) fn canned_500() -> Response<Bytes> {
     Response::builder()
         .status(StatusCode::INTERNAL_SERVER_ERROR)
         .header("content-type", "text/plain")
@@ -194,7 +195,7 @@ pub fn header_str(headers: &HeaderMap, name: &str) -> Option<String> {
 
 /// RFC 9110 §9.3.2: a HEAD carries the GET's Content-Length. Page and action bodies
 /// are fully buffered, so the length is exact.
-pub fn head_only(resp: Response<Bytes>) -> Response<Bytes> {
+pub(crate) fn head_only(resp: Response<Bytes>) -> Response<Bytes> {
     let (mut p, b) = resp.into_parts();
     p.headers
         .insert(http::header::CONTENT_LENGTH, b.len().into());

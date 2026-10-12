@@ -1,18 +1,19 @@
 //! Static-file path rules every host applies before it touches storage: percent-decoding,
 //! the `/_brust/` + `/public/` admission rule, content types and the content-hash test.
 //! Moved from `brust-server/src/server/static_assets.rs` and `pipeline.rs`.
-//! Native-host seam (`doc(hidden)`), not an API.
+//! `content_type_for` is the native-host seam (`doc(hidden)`), not an API; the rest are
+//! crate-private.
 
 use crate::host::StaticRoot;
 
 /// Immutable `Cache-Control` for content-hashed static files.
-pub const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+pub(crate) const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
 /// Percent-decode a URL **path** for static-asset manifest lookup. Identical to
 /// `percent_decode` for `%XX` escapes, but a `+` is a LITERAL plus in a path
 /// (only query strings map `+`→space). Manifest keys are raw filenames, so a
 /// request like `/img/a%20b.png` must decode to `/img/a b.png` to match.
-pub fn percent_decode_path(s: &str) -> String {
+pub(crate) fn percent_decode_path(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -34,7 +35,7 @@ pub fn percent_decode_path(s: &str) -> String {
 
 /// Manifest lookup key for `path_no_query`: percent-decoded only when it actually
 /// contains an escape, so the common no-escape path stays allocation-free.
-pub fn asset_lookup_key(path_no_query: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn asset_lookup_key(path_no_query: &str) -> std::borrow::Cow<'_, str> {
     if path_no_query.contains('%') {
         std::borrow::Cow::Owned(percent_decode_path(path_no_query))
     } else {
@@ -82,7 +83,7 @@ pub fn content_type_for(file_path: &std::path::Path) -> &'static str {
 /// Reject filenames containing path separators, leading dots, or anything
 /// outside `[A-Za-z0-9_.-]`. The filename MUST end in `.js`. This is the
 /// only sanitization between the request line and `tokio::fs::read`.
-pub fn is_safe_island_filename(name: &str) -> bool {
+pub(crate) fn is_safe_island_filename(name: &str) -> bool {
     if !name.ends_with(".js") {
         return false;
     }
@@ -102,7 +103,7 @@ pub fn is_safe_island_filename(name: &str) -> bool {
 /// Mirrors `is_safe_island_filename` but accepts `.css` extension. Keep the
 /// two functions structurally identical — anything that's safe as an island
 /// chunk filename is also safe as a CSS asset filename, modulo extension.
-pub fn is_safe_css_filename(name: &str) -> bool {
+pub(crate) fn is_safe_css_filename(name: &str) -> bool {
     if !name.ends_with(".css") {
         return false;
     }
@@ -121,7 +122,7 @@ pub fn is_safe_css_filename(name: &str) -> bool {
 /// `[A-Za-z0-9_.-]`. Under `/_brust/` only `client/<file>.js|.css` is served:
 /// the dist root also holds `manifest.json`, `jobs.js` (server-side) and
 /// `jinja/`, none of which may leave the server.
-pub fn safe_rel(rel: &str, root: StaticRoot) -> Option<&str> {
+pub(crate) fn safe_rel(rel: &str, root: StaticRoot) -> Option<&str> {
     let segs: Vec<&str> = rel.split('/').collect();
     let seg_ok = |s: &&str| {
         !s.is_empty()
@@ -146,7 +147,7 @@ pub fn safe_rel(rel: &str, root: StaticRoot) -> Option<&str> {
 /// `<stem>` ends in `-<hex6+>` (lowercase) holding at least one digit: a
 /// content-hashed file name. The digit rule keeps English words spelt in hex
 /// letters (`brand-facade.css`, `-decade`) from being marked immutable.
-pub fn is_hashed(file: &std::path::Path) -> bool {
+pub(crate) fn is_hashed(file: &std::path::Path) -> bool {
     let Some(stem) = file.file_stem().and_then(|s| s.to_str()) else {
         return false;
     };

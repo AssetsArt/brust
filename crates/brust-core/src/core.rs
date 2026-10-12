@@ -3,7 +3,8 @@
 //! by [`Core::new`] from a loaded manifest, minus everything that binds or spawns. A host owns one
 //! `Core` and hands each request to the pipeline with it.
 //!
-//! Fields are the native-host seam (`doc(hidden)`), not an API.
+//! The fields a host reads (`host`, `manifest`, `plans`, `jobs`, `actions`) are the native-host
+//! seam (`doc(hidden)`), not an API; the rest are crate-private.
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -39,62 +40,46 @@ pub struct CoreConfig {
 pub struct Core<H: Host> {
     #[doc(hidden)]
     pub host: H,
-    #[doc(hidden)]
-    pub routes: RouteTable,
+    pub(crate) routes: RouteTable,
     #[doc(hidden)]
     pub manifest: Manifest,
     /// Boot-time job-planning templates of `manifest`.
     #[doc(hidden)]
     pub plans: PlanIndex,
-    #[doc(hidden)]
-    pub renderer: Renderer,
-    #[doc(hidden)]
-    pub l1: H::L1,
+    pub(crate) renderer: Renderer,
+    pub(crate) l1: H::L1,
     #[doc(hidden)]
     pub jobs: H::Jobs,
     /// The invalidation clock `l1` and `jobs` are built on (F89): one read stamp per page.
-    #[doc(hidden)]
-    pub clock: Arc<InvalClock>,
+    pub(crate) clock: Arc<InvalClock>,
     /// M3-P P7: striped (one cache line per stripe) — bumped on every loader page.
-    #[doc(hidden)]
-    pub loader_calls: StripedCounter,
-    #[doc(hidden)]
-    pub job_calls: AtomicU64,
+    pub(crate) loader_calls: StripedCounter,
+    pub(crate) job_calls: AtomicU64,
     /// M3-P P7: striped, like `loader_calls`.
-    #[doc(hidden)]
-    pub worker_calls: StripedCounter,
-    #[doc(hidden)]
-    pub timed_out_calls: AtomicU64,
+    pub(crate) worker_calls: StripedCounter,
+    pub(crate) timed_out_calls: AtomicU64,
     /// (component, slot) pairs already warned about as missing from a job result.
-    #[doc(hidden)]
-    pub missing_slots: Mutex<HashSet<(String, String)>>,
-    #[doc(hidden)]
-    pub cors: Option<CorsConfig>,
+    pub(crate) missing_slots: Mutex<HashSet<(String, String)>>,
+    pub(crate) cors: Option<CorsConfig>,
     /// `cors` resolved into prebuilt header values once at `new` (per server,
     /// not a process global: several servers may live in one process).
-    #[doc(hidden)]
-    pub cors_resolved: Option<ResolvedCors>,
+    pub(crate) cors_resolved: Option<ResolvedCors>,
     /// M3-F: the validated actions subtree; `None` = no actions.
     #[doc(hidden)]
     pub actions: Option<ActionsConfig>,
     /// A4: `<script>globalThis.__BRUST_ACTION_PREFIX__="…"</script>`, prebuilt at `new` for a
     /// non-default prefix only.
-    #[doc(hidden)]
-    pub action_prefix_tag: Option<Box<str>>,
+    pub(crate) action_prefix_tag: Option<Box<str>>,
     /// Last document length per manifest route (+ slack): the capacity of the
     /// next render's buffer (M3-P P3). A size, never bytes.
-    #[doc(hidden)]
-    pub render_hints: Vec<AtomicUsize>,
+    pub(crate) render_hints: Vec<AtomicUsize>,
     /// M3-P P7 (R1): per route (manifest index), consecutive planned calls whose jobs all hit;
     /// at `pipeline::OFFER_STOP` the route stops offering the plan until a miss resets it.
-    #[doc(hidden)]
-    pub plan_offer: Box<[AtomicU32]>,
+    pub(crate) plan_offer: Box<[AtomicU32]>,
     /// `X-Powered-By`, stamped on every response by [`Core::finish`].
-    #[doc(hidden)]
-    pub powered_by: Option<HeaderValue>,
+    pub(crate) powered_by: Option<HeaderValue>,
     /// The scheme the L1 key expressions see is `https`.
-    #[doc(hidden)]
-    pub https: bool,
+    pub(crate) https: bool,
 }
 
 impl<H: Host> Core<H> {

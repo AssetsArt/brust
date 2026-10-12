@@ -2,6 +2,7 @@
 //! `brust-server` is the native host over it (tokio + hyper + the Bun worker pool); `brust-wasm`
 //! (Cloudflare Workers, later) is the second.
 #![deny(clippy::all)]
+#[doc(hidden)]
 pub mod actions;
 #[doc(hidden)]
 pub mod body;
@@ -10,8 +11,7 @@ pub mod compress;
 pub mod config;
 #[doc(hidden)]
 pub mod core;
-#[doc(hidden)]
-pub mod cors;
+mod cors;
 pub mod host;
 pub mod inputs;
 pub mod manifest;

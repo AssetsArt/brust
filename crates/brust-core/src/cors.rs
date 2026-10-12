@@ -33,8 +33,7 @@ const DEFAULT_MAX_AGE_SECONDS: u32 = 600;
 
 /// Boot-resolved CORS policy: prebuilt `HeaderValue`s, resolved once before the
 /// accept loop.
-#[doc(hidden)]
-pub struct ResolvedCors {
+pub(crate) struct ResolvedCors {
     /// Exact allowed origins (scheme+host+port). Ignored when `wildcard`.
     origins: Vec<String>,
     /// True when the configured list contained `"*"`: every origin is allowed
@@ -58,7 +57,7 @@ impl ResolvedCors {
     /// framework default with a warning (mirror of the `powered_by`
     /// warn-don't-drop posture) — unreachable for sane configs, but a relaxed
     /// future validator must surface the mistake, not silently change policy.
-    pub fn from_config(cfg: &CorsConfig) -> Self {
+    pub(crate) fn from_config(cfg: &CorsConfig) -> Self {
         let join = |list: &Option<Vec<String>>, label: &str| -> Option<HeaderValue> {
             let list = list.as_ref().filter(|l| !l.is_empty())?;
             let joined = list.join(",");
@@ -85,7 +84,7 @@ impl ResolvedCors {
     /// The `Access-Control-Allow-Origin` value for a request `Origin`, or
     /// `None` when the origin is not allowed: the literal `*` under a wildcard
     /// config, the echoed origin on an exact match.
-    pub fn allow_origin_value(&self, origin: &HeaderValue) -> Option<HeaderValue> {
+    pub(crate) fn allow_origin_value(&self, origin: &HeaderValue) -> Option<HeaderValue> {
         if self.wildcard {
             return Some(HeaderValue::from_static("*"));
         }
@@ -99,7 +98,7 @@ impl ResolvedCors {
 
     /// F87: the request `Origin` is listed in `origins` by name. A wildcard never counts here: the cross-site guard
     /// must not be switched off by `origins = ["*"]` (use `[actions] cross_site = "allow"` for that).
-    pub fn origin_listed(&self, origin: &HeaderValue) -> bool {
+    pub(crate) fn origin_listed(&self, origin: &HeaderValue) -> bool {
         origin.to_str().is_ok_and(|o| {
             self.origins
                 .iter()
@@ -110,7 +109,7 @@ impl ResolvedCors {
     /// Build the preflight 204. `acao` is the value `allow_origin_value`
     /// produced for the request's Origin (the caller has already established
     /// the origin is allowed).
-    pub fn preflight_response(
+    pub(crate) fn preflight_response(
         &self,
         acao: HeaderValue,
         req_headers: &HeaderMap,
@@ -159,7 +158,7 @@ impl ResolvedCors {
     ///   EVERY response when the config is non-wildcard, even when the request
     ///   carried no Origin — otherwise an intermediary caches the no-ACAO
     ///   variant and replays it cross-origin.
-    pub fn stamp_response(&self, headers: &mut HeaderMap, origin: Option<&HeaderValue>) {
+    pub(crate) fn stamp_response(&self, headers: &mut HeaderMap, origin: Option<&HeaderValue>) {
         if let Some(origin) = origin
             && let Some(acao) = self.allow_origin_value(origin)
         {
@@ -187,7 +186,7 @@ impl ResolvedCors {
 /// variance (CDN cache poisoning). No-op when the token (or `*`) is already
 /// present, so double-stamping (e.g. the preflight 204 passing back through the
 /// service chokepoint) never duplicates.
-pub fn append_vary_token(headers: &mut HeaderMap, token: &str) {
+pub(crate) fn append_vary_token(headers: &mut HeaderMap, token: &str) {
     // Fast path: no existing Vary (the overwhelming majority of responses) —
     // zero allocations on the per-response hot path.
     if !headers.contains_key(VARY) {
