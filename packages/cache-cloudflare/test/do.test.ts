@@ -34,24 +34,34 @@ describe('doAdapter', () => {
     f.epoch().fail = 2
     await expect(a.broadcast.publish({ tags: ['b'] }, 'o')).rejects.toThrow('boom')
   })
-  test('store mode: ONE epoch publish for store.invalidate + publish with the same args, either order', async () => {
-    for (const order of ['store-first', 'publish-first'] as const) {
-      const { f, a } = mk({ store: true })
-      await a.init!(init)
-      const args = { tags: ['x'] }
-      const calls = order === 'store-first' ? [a.store!.invalidate(args), a.broadcast.publish(args, 'real-origin')] : [a.broadcast.publish(args, 'real-origin'), a.store!.invalidate(args)]
-      await Promise.all(calls)
-      expect(f.epoch().publishes).toBe(1)
-      expect(f.epoch().ring.since(0).events[0]!.origin).toBe('real-origin')
-      const fan = Array.from({ length: 16 }, (_, i) => f.shard(i).invalidates.length)
-      expect(fan.every((n) => n === 1)).toBe(true)
-    }
+  test("store mode, lane A's order (store.invalidate then publish): ONE epoch publish with the real origin; markers at head + 1", async () => {
+    const { f, a } = mk({ store: true })
+    await a.init!(init)
+    const args = { tags: ['x'] }
+    await a.store!.invalidate(args)
+    expect(f.epoch().publishes).toBe(0)
+    expect(Array.from({ length: 16 }, (_, i) => f.shard(i).invalidates.map((x) => x.seq))).toEqual(Array.from({ length: 16 }, () => [1]))
+    expect(await a.broadcast.publish(args, 'real-origin')).toBe(1)
+    expect(f.epoch().publishes).toBe(1)
+    expect(f.epoch().ring.since(0).events[0]!.origin).toBe('real-origin')
+    // the real seq equalled the predicted one: no second round of shard markers
+    expect(Array.from({ length: 16 }, (_, i) => f.shard(i).invalidates.length).every((n) => n === 1)).toBe(true)
   })
-  test('only one of them called → one publish; without store no shard calls', async () => {
+  test('a publish that took a different seq than predicted re-marks the shards', async () => {
+    const { f, a } = mk({ store: true })
+    await a.init!(init)
+    const args = { tags: ['x'] }
+    await a.store!.invalidate(args)
+    await f.epoch().publish({ tags: ['other'] }, 'someone') // another isolate published in between
+    expect(await a.broadcast.publish(args, 'me')).toBe(2)
+    expect(f.shard(0).invalidates.map((x) => x.seq)).toEqual([1, 2])
+  })
+  test('publish alone → one publish and 16 shard markers; without store no shard calls', async () => {
     const a1 = mk({ store: true })
     await a1.a.init!(init)
-    await a1.a.store!.invalidate({ tags: ['x'] })
+    await a1.a.broadcast.publish({ tags: ['x'] }, 'o')
     expect(a1.f.epoch().publishes).toBe(1)
+    expect(Array.from({ length: 16 }, (_, i) => a1.f.shard(i).invalidates.length).every((n) => n === 1)).toBe(true)
     const a2 = mk()
     await a2.a.init!(init)
     await a2.a.broadcast.publish({ tags: ['x'] }, 'o')

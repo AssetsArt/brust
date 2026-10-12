@@ -1,0 +1,17 @@
+# cf-cache, variant do: Durable Object broadcast + 16-shard body store. scripts/build-cf.ts copies it to brust.toml.
+[actions]
+
+[cache]
+adapter = "cloudflare-do"
+namespace = "cfcache"
+epoch_interval_ms = 250
+
+[cache.cloudflare]
+do_store = true
+
+[cloudflare]
+name = "brust-cf-cache-do"
+stats = true
+
+[cloudflare.alias]
+"lib/do.ts" = "lib/do.cf.ts"

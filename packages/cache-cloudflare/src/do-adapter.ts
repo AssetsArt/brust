@@ -56,37 +56,32 @@ export function doAdapter(options: DoOptions = {}, deps: DoDeps = {}): DoAdapter
   const epoch = async () => (await ns()).getByName(`epoch:${namespace}`) as EpochStub
   const shard = async (i: number) => (await ns()).getByName(`store:${namespace}:${i}`) as ShardStub
 
-  // ONE epoch publish per `args` object, whichever of store.invalidate / broadcast.publish lane A calls first (R8).
-  const memo = new WeakMap<object, Promise<{ seq: number; fanout: Error | null }>>()
-  const publishOnce = (args: InvalidateArgs, origin: string) => {
-    let p = memo.get(args)
-    if (!p) {
-      p = (async () => {
-        const ep = await epoch()
-        let res: { gen: string; seq: number }
-        try {
-          res = await ep.publish(args, origin)
-        } catch {
-          await new Promise((r) => setTimeout(r, retryMs))
-          res = await ep.publish(args, origin)
-        }
-        seen(res.seq)
-        let fanout: Error | null = null
-        if (withStore) {
-          const out = await Promise.allSettled(Array.from({ length: SHARDS }, async (_, i) => (await shard(i)).invalidate(args, res.seq)))
-          const bad = out.filter((o) => o.status === 'rejected').length
-          if (bad > 0) fanout = new Error(`cloudflare-do: ${bad}/${SHARDS} shard invalidations failed`)
-        }
-        return { seq: res.seq, fanout }
-      })()
-      memo.set(args, p)
-    }
-    return p
+  // Lane A calls store.invalidate FIRST (delete, then publish: L7a), so the store side cannot publish (it does not know the runtime's origin).
+  // It writes its shard markers at the seq the publish is about to take (head + 1, L7b), and remembers that; publish then only re-marks when the
+  // real seq turned out different. Exactly ONE epoch publish happens per invalidation.
+  const pending = new WeakMap<object, number>()
+  const fanout = async (args: InvalidateArgs, seq: number): Promise<Error | null> => {
+    const out = await Promise.allSettled(Array.from({ length: SHARDS }, async (_, i) => (await shard(i)).invalidate(args, seq)))
+    const bad = out.filter((o) => o.status === 'rejected').length
+    return bad > 0 ? new Error(`cloudflare-do: ${bad}/${SHARDS} shard invalidations failed`) : null
   }
 
   const broadcast: DoAdapter['broadcast'] = {
     async publish(args, origin) {
-      return (await publishOnce(args, origin)).seq
+      const ep = await epoch()
+      let res: { gen: string; seq: number }
+      try {
+        res = await ep.publish(args, origin)
+      } catch {
+        await new Promise((r) => setTimeout(r, retryMs))
+        res = await ep.publish(args, origin)
+      }
+      seen(res.seq)
+      if (withStore && pending.get(args) !== res.seq) {
+        const err = await fanout(args, res.seq)
+        if (err) console.error(`[brust] ${err.message}`)
+      }
+      return res.seq
     },
     async since(seq) {
       const r = await (await epoch()).since(seq)
@@ -118,10 +113,11 @@ export function doAdapter(options: DoOptions = {}, deps: DoDeps = {}): DoAdapter
         return (await shard(shardIndex(key))).set(key, frame, { tags: meta.tags, method: meta.method, path: meta.path, expiresAt }, meta.stamp)
       },
       async invalidate(args: InvalidateArgs) {
-        // lane A calls store.invalidate and broadcast.publish in the same tick: let publish register its origin first.
-        await Promise.resolve()
-        const r = await (memo.get(args) ?? publishOnce(args, 'store'))
-        if (r.fanout) throw r.fanout
+        const head = await (await epoch()).head()
+        seen(head.seq)
+        pending.set(args, head.seq + 1)
+        const err = await fanout(args, head.seq + 1)
+        if (err) throw err
       },
     }
   }
