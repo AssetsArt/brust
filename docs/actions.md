@@ -37,11 +37,12 @@ Add the `[actions]` table to `brust.toml`. If the table is present actions are o
 [actions]
 entry = "actions.ts"         # project-relative path, default "actions.ts"
 prefix = "/_brust/action"    # default "/_brust/action"
-max_body_bytes = 262144      # request body cap, default 262144 (256 KiB)
+max_body_bytes = 1048576      # request body cap, default 1 MiB, 1..67108864
+max_response_bytes = 8388608  # response body cap, default 8 MiB, 262144..67108864
 cross_site = "reject"        # "reject" (default) or "allow": see Security posture
 ```
 
-`brust build` bundles the entry to `dist/actions.js` (with `elysia` kept external) and records `actions { entry, prefix, maxBodyBytes, crossSite }` in the manifest. The worker imports it at boot.
+`brust build` bundles the entry to `dist/actions.js` (with `elysia` kept external) and records `actions { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite }` in the manifest. The worker imports it at boot.
 
 The entry must default-export an Elysia app built with the `brust()` adapter. Also export the app's type so the client can be typed from it:
 
@@ -421,8 +422,9 @@ The pokedex example has no auth on purpose (it is a demo); it relies on the defa
 
 ## 10. Limits
 
-- **Request body** at most `max_body_bytes` (default 262144). Larger is **413**; an unsupported transfer is **415**. The body is buffered whole before your app runs, so there is no streaming upload.
-- **Response body** at most one worker slot (256 KiB). A larger body is a **500** with `brust: action response exceeds <n> bytes`, and a log line. Chunked and streamed responses are the known limit F82.
+- **Request body** at most `max_body_bytes` (default 1 MiB, up to 64 MiB). Larger is **413** `payload too large`, decided before your app runs; an unsupported transfer is **415**. A body of 256 KiB (262144 bytes) or less reaches the worker inline; a larger one crosses by heap transfer as raw bytes, and `await req.arrayBuffer()` returns exactly what was sent. The body is buffered whole before your app runs, so there is no streaming upload.
+- **Response body** at most `max_response_bytes` (default 8 MiB, up to 64 MiB). A response that fits the 256 KiB worker slot is framed there; a larger one crosses by heap transfer with its status and every header intact. A body over `max_response_bytes` is a **500** `text/plain` with `brust: action response exceeds <max_response_bytes> bytes`, and a log line. A heap transfer that fails any other way is a **500** `brust: action failed`. Responses are buffered whole, so there is no streaming download.
+- **Memory.** In-flight body memory is bounded by worker slots x (`max_body_bytes` + `max_response_bytes`): about 9 MiB per slot at the defaults, about 128 MiB per slot at the maximum caps.
 - **No streaming, SSE or WebSocket** from actions in this release.
 - **A string body has no `content-type`.** Elysia 2 does not add one for a plain string; return an object for JSON, or set the header yourself.
 - **Stores are per-request** inside an action (see Routes).
