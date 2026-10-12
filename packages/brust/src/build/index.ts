@@ -17,9 +17,6 @@ import { scanRoutes } from './scan'
 
 export { BuildError } from './errors'
 
-/** The napi addon(s) next to this package (`native/brust.<plat>.node`, built by `napi build`). */
-const NATIVE_DIR = resolve(import.meta.dir, '../../native')
-
 /** `p` with symlinks resolved as far as it exists (`/tmp` → `/private/tmp` on macOS). */
 function canonical(p: string): string {
   if (existsSync(p)) return realpathSync(p)
@@ -185,10 +182,6 @@ async function buildInto(
 
   const pub = join(appRoot, 'public')
   if (existsSync(pub)) cpSync(pub, join(out, 'public'), { recursive: true })
-  if (existsSync(NATIVE_DIR)) {
-    mkdirSync(join(out, 'native'), { recursive: true })
-    for (const f of readdirSync(NATIVE_DIR)) if (f.endsWith('.node')) cpSync(join(NATIVE_DIR, f), join(out, 'native', f))
-  }
   const entryRel = relative(o.dist, entry)
   writeFileSync(
     join(out, 'index.js'),

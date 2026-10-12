@@ -147,7 +147,7 @@ Tier is decided by the compiler per component (D3); there is no per-route switch
    per react-tier component (the original module + a hydrate shim, React externalised into one
    shared `dist/client/react.js`). `dist/jobs/*.server.ts` are bundled into one
    `dist/jobs.js` module exporting `{ [componentId]: { precompute?, ssr? } }`.
-4. Copy `public/` and the addon (`dist/native/brust.<plat>.node`), write
+4. Copy `public/` (the addon is NOT copied — `brust start` resolves it from `@brust/native-<plat>` through `@brust/core`; F85, 2026-10-12), write
    `dist/index.js` (the `brust start` entry with `BRUST_PREBUILT=1`, `BRUST_DIST_DIR`), and write
    **`dist/manifest.json`**.
 
