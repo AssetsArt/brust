@@ -97,6 +97,8 @@ jobs:
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
           grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
           bun -e "const p=require('/tmp/packed.json'); if (p.optionalDependencies?.['@brust/core-cf'] !== p.version) { console.error('packed @brust/core lacks @brust/core-cf@' + p.version + ' in optionalDependencies'); process.exit(1) }"
+          # The cache adapters peer on @brust/core: the packed peer must be the version, never workspace:* (spot-check F2).
+          for a in cache-redis cache-cloudflare; do (cd "$GITHUB_WORKSPACE/packages/$a" && bun pm pack --destination "/tmp/pack-$a" && tar -xOf "/tmp/pack-$a"/*.tgz package/package.json | bun -e "const p=await new Response(Bun.stdin.stream()).json(); const want=require('$GITHUB_WORKSPACE/packages/brust/package.json').version; if (p.peerDependencies?.['@brust/core'] !== want) { console.error('packed @brust/$a peers @brust/core ' + p.peerDependencies?.['@brust/core'] + ', want ' + want); process.exit(1) }"); done
           # @brust/create-app: the generated pokedex template ships, and no dev leftovers do (prepack runs on pack and publish).
           (cd "$GITHUB_WORKSPACE/packages/create-app" && bun pm pack --destination /tmp/pack-ca)
           tar -tzf /tmp/pack-ca/*.tgz > /tmp/ca.txt
@@ -140,6 +142,8 @@ jobs:
           ! grep -q 'workspace:' /tmp/packed.json || { echo 'packed @brust/core still contains workspace: deps'; exit 1; }
           grep -c '"@brust/native-' /tmp/packed.json | grep -qx 6
           bun -e "const p=require('/tmp/packed.json'); if (p.optionalDependencies?.['@brust/core-cf'] !== p.version) { console.error('packed @brust/core lacks @brust/core-cf@' + p.version + ' in optionalDependencies'); process.exit(1) }"
+          # The cache adapters peer on @brust/core: the packed peer must be the version, never workspace:* (spot-check F2).
+          for a in cache-redis cache-cloudflare; do (cd "$GITHUB_WORKSPACE/packages/$a" && bun pm pack --destination "/tmp/pack-$a" && tar -xOf "/tmp/pack-$a"/*.tgz package/package.json | bun -e "const p=await new Response(Bun.stdin.stream()).json(); const want=require('$GITHUB_WORKSPACE/packages/brust/package.json').version; if (p.peerDependencies?.['@brust/core'] !== want) { console.error('packed @brust/$a peers @brust/core ' + p.peerDependencies?.['@brust/core'] + ', want ' + want); process.exit(1) }"); done
           # @brust/create-app: the generated pokedex template ships, and no dev leftovers do (prepack runs on pack and publish).
           (cd "$GITHUB_WORKSPACE/packages/create-app" && bun pm pack --destination /tmp/pack-ca)
           tar -tzf /tmp/pack-ca/*.tgz > /tmp/ca.txt
