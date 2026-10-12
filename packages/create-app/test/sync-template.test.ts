@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { syncTemplate } from '../scripts/sync-template.ts'
@@ -12,12 +12,13 @@ afterEach(() => { for (const d of made.splice(0)) rmSync(d, { recursive: true, f
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'ca-sync-')); made.push(d); return d }
 const walk = (d: string, skipNm = true): string[] =>
   readdirSync(d, { withFileTypes: true }).flatMap((e) => (skipNm && e.name === 'node_modules' ? [] : e.isDirectory() ? walk(join(d, e.name), skipNm).map((x) => `${e.name}/${x}`) : [e.name]))
-const EXCLUDED_TOP = new Set(['dist', 'test', 'README.md', 'package.json', '.gitignore'])
+const EXCLUDED_TOP = new Set(['dist', 'test', 'README.md', 'package.json', '.gitignore', '.wrangler'])
+const blankWrangler = JSON.parse(readFileSync(join(import.meta.dir, '../templates/blank/package.json.tmpl'), 'utf8').replace('__BRUST_DEP__', '"x"')).devDependencies.wrangler as string
 
 test('every kept file is byte-equal to its source; excluded paths absent (R4 list)', () => {
   const to = join(tmp(), 'out')
   syncTemplate({ from: FROM, to, overlay: OVERLAY })
-  const src = walk(FROM).filter((f) => !EXCLUDED_TOP.has(f.split('/')[0]!) && !/^dist-/.test(f) && !/(^|\/)(\.DS_Store)$|\.tsbuildinfo$|^data\/team\.sqlite/.test(f))
+  const src = walk(FROM).filter((f) => !EXCLUDED_TOP.has(f.split('/')[0]!) && !/^dist-/.test(f) && !/(^|\/)(\.DS_Store)$|\.tsbuildinfo$|^data\/team\.sqlite|(^|\/)\.dev\.vars|\.sqlite(-wal|-shm)?$/.test(f))
   const out = walk(to).filter((f) => !['package.json.tmpl', '_gitignore', 'README.md.tmpl'].includes(f))
   expect(out.sort()).toEqual(src.sort())
   for (const f of src) expect(readFileSync(join(to, f)).equals(readFileSync(join(FROM, f))), f).toBe(true)
@@ -37,7 +38,8 @@ test('package.json.tmpl: name/version/private, @brust/core = __BRUST_DEP__ unquo
   expect(pkg.scripts.dev).toBe('brust build routes.tsx && brust start')
   expect(pkg.scripts.build).toBe(src.scripts.build)
   expect(pkg.dependencies).toEqual({ ...src.dependencies, '@brust/core': '^1.0.0' })
-  expect(pkg.devDependencies).toEqual(src.devDependencies)
+  expect(pkg.devDependencies).toEqual({ ...src.devDependencies, wrangler: blankWrangler })
+  for (const k of ['dev:cf', 'deploy:cf', 'cf:migrate:local', 'cf:migrate:remote']) expect(pkg.scripts[k], k).toBe(src.scripts[k])
 })
 
 test('_gitignore = node_modules/, dist/ + examples/pokedex/.gitignore lines, deduped', () => {
@@ -78,4 +80,22 @@ test('examples/pokedex is unchanged by a sync', () => {
   syncTemplate({ from: FROM, to: join(tmp(), 'out'), overlay: OVERLAY })
   expect(Bun.spawnSync(['git', 'status', '--porcelain', 'examples/pokedex'], { cwd: repo }).stdout.toString()).toBe(before)
   expect(relative(repo, FROM)).toBe('examples/pokedex')
+})
+
+test('local Cloudflare state never reaches the template; the D1 files do', () => {
+  const from = join(tmp(), 'from')
+  cpSync(FROM, from, { recursive: true, filter: (s) => !/node_modules/.test(s) })
+  mkdirSync(join(from, '.wrangler/state/v3/d1'), { recursive: true })
+  writeFileSync(join(from, '.wrangler/state/v3/d1/x.sqlite'), 'x')
+  writeFileSync(join(from, '.dev.vars'), 'SECRET=1')
+  writeFileSync(join(from, '.dev.vars.local'), 'SECRET=1')
+  writeFileSync(join(from, 'data/team.sqlite-wal'), 'x')
+  writeFileSync(join(from, 'data/other.sqlite-shm'), 'x')
+  const to = join(tmp(), 'out')
+  syncTemplate({ from, to, overlay: OVERLAY })
+  const out = walk(to)
+  expect(out.filter((f) => /(^|\/)\.wrangler\//.test(f) || /(^|\/)\.dev\.vars/.test(f) || /\.sqlite(-wal|-shm)?$/.test(f))).toEqual([])
+  expect(out).toContain('lib/team-db.sqlite.ts')
+  expect(out).toContain('migrations/0001_team.sql')
+  expect(out).toContain('wrangler.jsonc')
 })
