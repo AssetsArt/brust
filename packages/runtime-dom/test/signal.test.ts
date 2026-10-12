@@ -49,3 +49,24 @@ describe('signal', () => {
     expect(c()).toBe(5); expect(evals).toBe(2)
   })
 })
+
+test('F98: an effect that throws on its first run is disposed and does not re-run on a later write', () => {
+  const s = signal(0)
+  let runs = 0
+  expect(() => effect(() => { runs++; s(); throw new Error('boom') })).toThrow('boom')
+  expect(runs).toBe(1)
+  s.set(1)
+  expect(runs).toBe(1)
+})
+
+test('F98: a throw on a LATER run keeps the effect live (unchanged): it re-runs on the next write and dispose still stops it', () => {
+  const s = signal(0)
+  let runs = 0
+  const d = effect(() => { runs++; if (s() === 1) throw new Error('later') })
+  expect(() => s.set(1)).toThrow('later')
+  s.set(2)
+  expect(runs).toBe(3)
+  d()
+  s.set(3)
+  expect(runs).toBe(3)
+})
