@@ -80,9 +80,6 @@ async fn fetch(req: Request, _env: Env, _ctx: Context) -> worker::Result<Respons
         .then(|| headers.get(http::header::ORIGIN).cloned())
         .flatten();
     let is_head = method == "HEAD";
-    if option_env!("BRUST_WASM_E2E").is_some() && full == "/__brust_e2e/panic" {
-        panic!("brust e2e: deliberate panic");
-    }
     let resp = if !STATS.with(Cell::get) && head::is_stats(&method, &full) {
         body::resp(404, "text/plain", &[], b"not found".to_vec())
     } else {
@@ -92,7 +89,14 @@ async fn fetch(req: Request, _env: Env, _ctx: Context) -> worker::Result<Respons
             headers: &headers,
             authority: Some(authority),
         };
-        match AssertUnwindSafe(core.handle(rq, req)).catch_unwind().await {
+        let handled = async {
+            // The e2e build's deliberate panic runs inside the per-request guard it exercises.
+            if option_env!("BRUST_WASM_E2E").is_some() && full == "/__brust_e2e/panic" {
+                panic!("brust e2e: deliberate panic");
+            }
+            core.handle(rq, req).await
+        };
+        match AssertUnwindSafe(handled).catch_unwind().await {
             Ok(r) => r,
             // The panic hook already printed it.
             Err(_) => return internal_error(),
