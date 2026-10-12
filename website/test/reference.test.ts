@@ -23,7 +23,8 @@ const PAGES = NAV.filter((g) => GROUPS.includes(g.group)).flatMap((g) => g.items
 beforeAll(async () => {
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.stderr.toString()).toBe('')
-  expect(b.stdout.toString()).not.toContain('warning')
+  // the landing's react demo warns on purpose (hook-unsupported); no reference page may warn
+  expect(b.stdout.toString().split('\n').filter((l) => l.startsWith('warning') && l.includes('pages/docs/'))).toEqual([])
   expect(b.exitCode).toBe(0)
   manifest = JSON.parse(readFileSync(join(app, out, 'manifest.json'), 'utf8'))
   server = Bun.spawn([bin, 'start', '--dist-dir', out], {
