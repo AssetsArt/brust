@@ -18,3 +18,8 @@ Plans `cache-redis` and `cache-cloudflare` both handed their release lines to "w
 
 ## Guard
 Future plans: a new publishable package names the lane that edits `release.yml` + `release-files.ts` IN ITS OWN BOUNDARY, never "whichever merges later".
+
+## Spot-check (Mellow, 2026-10-12, note b7d0d523 on this task) — rulings
+- **F1 (human decision, pre-existing):** the `npm-publish` environment has no protection rules and `v2` is unprotected, so a `v*` tag publishes all 13 packages with no approval and no check that `ci.yml` passed on that SHA. Recommendation to the human: a required reviewer on `npm-publish` + branch protection on `v2`. Until then the procedural guard holds: the lead tags only on the human's explicit word, only on a SHA whose `ci.yml` run is green.
+- **F2 (done, m4cf @c46c77c):** both release jobs pack `cache-redis` and `cache-cloudflare` and assert the packed peer `@brust/core` equals the version.
+- **F3 (deferred):** `ci.yml` runs Bun canary, `release.yml` pins 1.4.2 for build/pack/publish; align when canary is promoted.
