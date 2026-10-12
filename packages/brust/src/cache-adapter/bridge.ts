@@ -13,6 +13,9 @@ export interface CacheBridgeDeps {
   count: (name: string) => void
 }
 
+/** A get is answered `{error}` this long after Rust's `get_timeout` gave up on it (the two timers must not race). */
+export const GET_SETTLE_SLACK_MS = 100
+
 /** A set gets this long before it is answered `{error}` (the slot is then released). */
 export const SET_TIMEOUT_MS = 5000
 
@@ -53,7 +56,8 @@ export async function runCache(requestJson: string, view: Uint8Array, slot: numb
     if (req.op === 'get') {
       const pending = store.get(req.key)
       pending.catch(() => {})
-      const r = await within(pending, deps.getTimeoutMs)
+      // Rust's own `get_timeout` answers the request (as a timeout); this later race only frees the slot.
+      const r = await within(pending, deps.getTimeoutMs + GET_SETTLE_SLACK_MS)
       if (r === TIMEOUT) return out({ error: 'get timed out' })
       if (!r.page) return out({ hit: false, stamp: r.stamp })
       const p = r.page
