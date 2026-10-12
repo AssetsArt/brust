@@ -9,7 +9,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use brust_server::Server;
@@ -35,6 +35,10 @@ pub struct FakeBun {
     pub fetch_calls: AtomicU32,
     /// The last `fetch` request received (parsed).
     pub last_fetch: Mutex<Option<Value>>,
+    /// F82: the heap request body of the last `fetch` call that carried `body: {"heap": n}`.
+    pub last_fetch_body: Mutex<Option<Vec<u8>>>,
+    /// F82: the `max_response_bytes` the fake's "worker" reports when `put_fetch_reply` declines.
+    resp_cap: AtomicUsize,
     /// When set, every call is counted and recorded but its future never resolves.
     pub never_complete: bool,
     /// When set, a call parks until [`Gate::settle_all`], then writes its reply
@@ -81,6 +85,8 @@ impl FakeBun {
             fetch: None,
             fetch_calls: AtomicU32::new(0),
             last_fetch: Mutex::new(None),
+            last_fetch_body: Mutex::new(None),
+            resp_cap: AtomicUsize::new(8_388_608),
             never_complete,
             gate: None,
             bound: OnceLock::new(),
@@ -127,6 +133,21 @@ impl FakeBun {
         self.last_fetch.lock().unwrap().clone()
     }
 
+    /// F82: the heap request body of the last `fetch` call that carried one.
+    pub fn last_fetch_body(&self) -> Option<Vec<u8>> {
+        self.last_fetch_body.lock().unwrap().clone()
+    }
+
+    /// F82: the cap named in the fake worker's 500 when `put_fetch_reply` declines.
+    pub fn set_response_cap(&self, n: usize) {
+        self.resp_cap.store(n, Ordering::SeqCst);
+    }
+
+    /// F82: the worker id this fake is bound to.
+    pub fn worker_id(&self) -> u32 {
+        self.bound.get().expect("FakeBun not bound").1
+    }
+
     /// Answers `fetch` calls with `f(request)` — the A2 frame bytes, written into the slot as is.
     pub fn with_fetch(
         self: Arc<Self>,
@@ -168,15 +189,53 @@ impl FakeBun {
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len()) };
     }
 
+    /// F82: a `fetch` call like the real worker's: take the heap request body (recorded), and
+    /// when the responder's frame does not fit the slot, `put_fetch_reply` its body and answer a
+    /// frame whose meta gains `heap` and whose body is empty (a declined put answers the 500).
+    fn reply_fetch(&self, req: Value, slot: u32) -> Vec<u8> {
+        let bound = self
+            .bound
+            .get()
+            .and_then(|(w, id)| w.upgrade().map(|s| (s, *id)));
+        if req["body"]["heap"].is_number()
+            && let Some((s, id)) = &bound
+        {
+            *self.last_fetch_body.lock().unwrap() = brust_server::take_fetch_body(s, *id, slot);
+        }
+        let out = (self.fetch.as_ref().expect("FakeBun: no fetch responder"))(req);
+        let (_, cap) = self.buf_slot(slot);
+        if out.len() <= cap {
+            return out;
+        }
+        let (s, id) = bound.expect("FakeBun: an over-slot reply needs a bound fake");
+        let n = u32::from_le_bytes(out[..4].try_into().unwrap()) as usize;
+        let mut meta: Value = serde_json::from_slice(&out[4..4 + n]).expect("meta JSON");
+        let body = &out[4 + n..];
+        if !brust_server::put_fetch_reply(&s, id, slot, body) {
+            let msg = format!(
+                "brust: action response exceeds {} bytes",
+                self.resp_cap.load(Ordering::SeqCst)
+            );
+            return super::frame(
+                500,
+                &[("content-type", "text/plain; charset=utf-8")],
+                msg.as_bytes(),
+            );
+        }
+        meta["heap"] = json!(body.len());
+        let meta = serde_json::to_vec(&meta).unwrap();
+        let mut f = (meta.len() as u32).to_le_bytes().to_vec();
+        f.extend_from_slice(&meta);
+        f
+    }
+
     /// The reply bytes for one call (written into the slot by the caller). A bound fake takes
     /// a `loader` plan offer when its loader answers `ok: true` data.
     fn reply(&self, kind: CallKind, req: Value, slot: u32) -> Vec<u8> {
         let respond = match kind {
             CallKind::Loader => &self.loader,
             CallKind::Jobs => &self.jobs,
-            CallKind::Fetch => {
-                return (self.fetch.as_ref().expect("FakeBun: no fetch responder"))(req);
-            }
+            CallKind::Fetch => return self.reply_fetch(req, slot),
         };
         let resp = respond(req.clone());
         if kind == CallKind::Loader

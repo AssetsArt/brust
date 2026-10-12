@@ -4,7 +4,7 @@
 import { expect, test } from 'bun:test'
 import { resolve } from 'node:path'
 import { beginDrain, localAddr, registerWorker, startServer, untilReady } from '../native/index.js'
-import { setActionsApp } from '../src/actions-bridge'
+import { setActionsApp, setActionsLimits } from '../src/actions-bridge'
 import type { StoreRecord } from '../src/store/core-adapter'
 import { getServerInstance } from '../src/store/server-context'
 import { type Handlers, type JobCall, makeDispatch, SLOT_BYTES } from '../src/worker'
@@ -43,6 +43,11 @@ const app = {
       return new Response(await req.arrayBuffer(), { headers })
     }
     if (pathname === '/api/big') return new Response(new Uint8Array(300 * 1024))
+    if (pathname === '/api/len') {
+      const b = new Uint8Array(await req.arrayBuffer())
+      return Response.json({ len: b.length, hash: String(Bun.hash(b)) })
+    }
+    if (pathname === '/api/huge') return new Response(new Uint8Array((2 << 20) + 1))
     if (pathname === '/api/store') return Response.json(getServerInstance('m3f-e2e', (): StoreRecord => ({ instance: { n: 7 } })).instance)
     return new Response('nope', { status: 404 })
   },
@@ -122,10 +127,10 @@ test('actions through the real Rust server and worker dispatch', async () => {
   expect(def.status).toBe(405)
   await def.text()
 
-  // Oversize answer: the worker's R10 500, relayed by Rust with the exact body.
-  const huge = await fetch(`${base}/api/big`)
-  expect(huge.status).toBe(500)
-  expect(await huge.text()).toBe(`brust: action response exceeds ${SLOT_BYTES} bytes`)
+  // A 300 KiB answer no longer fits the slot: it crosses by heap transfer (F82) in full.
+  const big300 = await fetch(`${base}/api/big`)
+  expect(big300.status).toBe(200)
+  expect((await big300.arrayBuffer()).byteLength).toBe(300 * 1024)
 
   // The fetch runs in a store scope.
   const store = await fetch(`${base}/api/store`)
@@ -135,4 +140,69 @@ test('actions through the real Rust server and worker dispatch', async () => {
   expect(seen).toEqual(['POST /api/team', 'POST /api/bin', 'GET /api/big', 'GET /api/store'])
   await beginDrain(2000)
   setActionsApp(null)
+})
+
+const patterned = (n: number, mul = 1) => Uint8Array.from({ length: n }, (_, i) => (i * mul) % 251)
+const same = (a: Uint8Array, b: Uint8Array) => Buffer.from(a).equals(Buffer.from(b))
+
+// F82: bodies over the slot cross by heap transfer, both directions, through the real addon.
+test('large action bodies cross by heap transfer, both directions (F82)', async () => {
+  seen.length = 0
+  startServer({
+    host: '127.0.0.1',
+    port: 0,
+    distDir: dist,
+    workers: 1,
+    claimTimeoutMs: 500,
+    actions: { prefix: '/api', maxBodyBytes: 4 << 20, maxResponseBytes: 2 << 20 },
+  })
+  setActionsApp(app)
+  setActionsLimits({ maxResponseBytes: 2 << 20 })
+  const view = new Uint8Array(new SharedArrayBuffer(SLOT_BYTES * 2))
+  expect(registerWorker(view, 2, makeDispatch(h, view, 2))).toBeGreaterThanOrEqual(0)
+  await untilReady(2000)
+  const base = `http://${localAddr()}`
+  const octet = { 'content-type': 'application/octet-stream' }
+
+  // 300 KiB binary echo, byte-equal.
+  const bin300 = patterned(300 * 1024)
+  const r1 = await fetch(`${base}/api/bin`, { method: 'POST', headers: octet, body: bin300 })
+  expect(r1.status).toBe(200)
+  expect(same(new Uint8Array(await r1.arrayBuffer()), bin300)).toBe(true)
+
+  // 1.5 MiB JSON: heap in and heap out (an echo of 3 MiB would exceed the 2 MiB response cap).
+  const text = 'y'.repeat(1536 << 10)
+  const r2 = await fetch(`${base}/api/team`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) })
+  expect(r2.status).toBe(201)
+  expect(((await r2.json()) as { echo: { text: string } }).echo.text === text).toBe(true)
+
+  // 3 MiB JSON in (heap request body, over the response cap): the app sees all of it.
+  const json3 = JSON.stringify({ text: 'z'.repeat(3 << 20) })
+  const r3 = await fetch(`${base}/api/len`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: json3 })
+  expect(r3.status).toBe(200)
+  expect(await r3.json()).toEqual({ len: json3.length, hash: String(Bun.hash(new TextEncoder().encode(json3))) })
+
+  // Over max_response_bytes: 500 with the cap in the text.
+  const huge = await fetch(`${base}/api/huge`)
+  expect(huge.status).toBe(500)
+  expect(await huge.text()).toBe('brust: action response exceeds 2097152 bytes')
+
+  // Over max_body_bytes: 413 before the worker.
+  const before = seen.length
+  const over = await fetch(`${base}/api/bin`, { method: 'POST', headers: octet, body: new Uint8Array((4 << 20) + 1) })
+  expect(over.status).toBe(413)
+  await over.text()
+  expect(seen.length).toBe(before)
+
+  // 8 concurrent 1 MiB echoes: each slot's cell is its own.
+  const bodies = Array.from({ length: 8 }, (_, k) => patterned(1 << 20, k + 1))
+  const rs = await Promise.all(bodies.map((b) => fetch(`${base}/api/bin`, { method: 'POST', headers: octet, body: b })))
+  for (const [k, r] of rs.entries()) {
+    expect(r.status).toBe(200)
+    expect(same(new Uint8Array(await r.arrayBuffer()), bodies[k] as Uint8Array)).toBe(true)
+  }
+
+  await beginDrain(2000)
+  setActionsApp(null)
+  setActionsLimits({ maxResponseBytes: 8_388_608 })
 })

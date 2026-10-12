@@ -41,10 +41,12 @@ export interface CorsOptions {
   credentials?: boolean
   maxAgeSeconds?: number
 }
-/** napi `NapiActionsOptions`; defaults `/_brust/action`, 262144. */
+/** napi `NapiActionsOptions`; defaults `/_brust/action`, 1048576, 8388608. */
 export interface ActionsOptions {
   prefix?: string
   maxBodyBytes?: number
+  /** F82: response body cap (bytes). Default 8388608. */
+  maxResponseBytes?: number
   /** F87: cross-site mutating requests. Default `reject`. */
   crossSite?: 'reject' | 'allow'
 }
@@ -59,6 +61,10 @@ export interface NativeBinding {
   localAddr(): string
   /** M3-P P6 — see crates/brust-napi/src/server.rs `plan_jobs`. Never throws. */
   planJobs(slot: number, len: number): string
+  /** F82 — the heap request body of the in-flight `fetch` call, once; null if none. Never throws. */
+  takeFetchBody(slot: number): Uint8Array | null
+  /** F82 — hand Rust a response body too large for the slot; false = declined. Never throws. */
+  putFetchReply(slot: number, body: Uint8Array): boolean
 }
 
 let binding: NativeBinding | null = null
@@ -85,3 +91,5 @@ export const cacheInvalidate = (args: InvalidateArgs): InvalidateResult => nativ
 export const cacheStats = (): string => native().cacheStats()
 export const localAddr = (): string => native().localAddr()
 export const planJobs = (slot: number, len: number): string => native().planJobs(slot, len)
+export const takeFetchBody = (slot: number): Uint8Array | null => native().takeFetchBody(slot)
+export const putFetchReply = (slot: number, body: Uint8Array): boolean => native().putFetchReply(slot, body)

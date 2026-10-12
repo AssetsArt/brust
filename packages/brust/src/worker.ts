@@ -3,7 +3,8 @@
 // handler NEVER rejects across the tsfn: every failure becomes `{error}` / `{id, error}`.
 import { join, resolve } from 'node:path'
 import { workerData } from 'node:worker_threads'
-import { runFetch, setActionsApp } from './actions-bridge'
+import { runFetch, setActionsApp, setActionsLimits } from './actions-bridge'
+import { DEFAULT_MAX_RESPONSE_BYTES } from './actions/prefix'
 import { planJobs, registerWorker } from './native'
 import { installServerResolver, type StoreSnapshot } from './store/core-adapter'
 import { collectSnapshot, getServerInstance, runInStoreContext, touchStores } from './store/server-context'
@@ -71,7 +72,7 @@ export interface ManifestLike {
   >
   jobs_module?: string
   /** `brust build` (M3-F A3): the actions entry, relative to dist. Absent/null = no actions. */
-  actions?: { entry: string; prefix: string; maxBodyBytes: number } | null
+  actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number } | null
 }
 
 // ---- SAB slot writer ----
@@ -327,6 +328,7 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
     // Lazy: elysia is an optional peer, so an app without [actions] must boot without it installed (R7).
     const { loadActionsApp } = await import('./actions/load')
     setActionsApp(await loadActionsApp(join(dist, manifest.actions.entry), manifest.actions.prefix))
+    setActionsLimits({ maxResponseBytes: manifest.actions.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES })
   }
   sab = opts.sab ?? new SharedArrayBuffer(SLOT_BYTES * slots)
   view = new Uint8Array(sab)

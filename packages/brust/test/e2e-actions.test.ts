@@ -110,10 +110,16 @@ test('6. a body over max_body_bytes is 413 before the worker', async () => {
   expect(after.worker_calls).toBe(before.worker_calls)
 })
 
-test('7. a response over the slot is a 500 naming the limit (F82)', async () => {
+test('7. /big (300 KiB, over the slot) is 200 and full length (F82 heap transfer)', async () => {
   const res = await fetch(`${base}/api/big`)
+  expect(res.status).toBe(200)
+  expect((await res.text()).length).toBe(300 * 1024)
+})
+
+test('7b. /huge (over max_response_bytes) is 500 naming the cap (F82)', async () => {
+  const res = await fetch(`${base}/api/huge`)
   expect(res.status).toBe(500)
-  expect(await res.text()).toContain('brust: action response exceeds')
+  expect(await res.text()).toBe('brust: action response exceeds 1048576 bytes')
 })
 
 test('8. CORS: preflight 204 with allow-origin + credentials; actual response carries them and expose-headers', async () => {
