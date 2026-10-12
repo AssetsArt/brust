@@ -3,8 +3,10 @@ import {
   type FetchRequest,
   getActionsApp,
   readFramed,
+  type HeapIo,
   runFetch,
   setActionsApp,
+  setActionsLimits,
   toRequest,
   writeFramed,
 } from '../src/actions-bridge'
@@ -25,7 +27,10 @@ const fr = (over: Partial<FetchRequest> = {}): FetchRequest => ({
 })
 const mk = (): StoreRecord => ({ instance: {} })
 
-afterEach(() => setActionsApp(null))
+afterEach(() => {
+  setActionsApp(null)
+  setActionsLimits({ maxResponseBytes: 8_388_608 })
+})
 
 // ---- framing (A2) ----
 
@@ -164,21 +169,120 @@ test('two interleaved fetches see their own scope', async () => {
   expect(dec.decode(readFramed(view, 1, 2, b).body)).toBe('fastfast')
 })
 
-test('oversize body → 500 frame', async () => {
-  setActionsApp({ fetch: () => new Response(new Uint8Array(SLOT_BYTES)) })
-  const view = new Uint8Array(new SharedArrayBuffer(SLOT_BYTES))
-  const err = spyOn(console, 'error').mockImplementation(() => {})
+// ---- heap transfer (F82, R1/R2/R5/R8) ----
+
+const TP: [string, string][] = [['content-type', 'text/plain; charset=utf-8']]
+const bytes = (n: number) => Uint8Array.from({ length: n }, (_, i) => i % 251)
+const mkIo = (over: Partial<HeapIo> = {}) => {
+  const putCalls: { slot: number; body: Uint8Array }[] = []
+  const io: HeapIo = {
+    takeBody: () => null,
+    putReply: (slot, body) => {
+      putCalls.push({ slot, body })
+      return true
+    },
+    ...over,
+  }
+  return { io, putCalls }
+}
+const quiet = () => spyOn(console, 'error').mockImplementation(() => {})
+
+test('heap request body: the app sees byte-equal arrayBuffer()', async () => {
+  const want = bytes(300_000)
+  let got: Uint8Array | null = null
+  setActionsApp({
+    async fetch(req) {
+      got = new Uint8Array(await req.arrayBuffer())
+      return new Response('ok')
+    },
+  })
+  const view = twoSlots()
+  const { io } = mkIo({ takeBody: (slot) => (slot === 1 ? want : null) })
+  const n = await runFetch(JSON.stringify(fr({ body: { heap: 300_000 } })), view, 1, 2, io)
+  expect(readFramed(view, 1, 2, n).meta.status).toBe(200)
+  expect(got).not.toBeNull()
+  expect(Buffer.from(got as unknown as Uint8Array).equals(Buffer.from(want))).toBe(true)
+})
+
+test('heap request body missing or of the wrong length → 500 brust: action failed + one log', async () => {
+  setActionsApp({ fetch: () => new Response('never') })
+  for (const taken of [null, bytes(10)]) {
+    const view = twoSlots()
+    const err = quiet()
+    try {
+      const n = await runFetch(JSON.stringify(fr({ body: { heap: 300_000 } })), view, 0, 2, mkIo({ takeBody: () => taken }).io)
+      const f = readFramed(view, 0, 2, n)
+      expect(f.meta).toEqual({ status: 500, headers: TP })
+      expect(dec.decode(f.body)).toBe('brust: action failed')
+      expect(err).toHaveBeenCalledTimes(1)
+    } finally {
+      err.mockRestore()
+    }
+  }
+})
+
+test('300 KiB response: putReply once with the body; meta carries heap, slot body empty', async () => {
+  const body = bytes(307_200)
+  setActionsApp({ fetch: () => new Response(body, { headers: { 'x-a': 'b' } }) })
+  const view = twoSlots()
+  const { io, putCalls } = mkIo()
+  const n = await runFetch(JSON.stringify(fr()), view, 1, 2, io)
+  expect(putCalls).toHaveLength(1)
+  expect(putCalls[0]?.slot).toBe(1)
+  expect(Buffer.from(putCalls[0]?.body as Uint8Array).equals(Buffer.from(body))).toBe(true)
+  const f = readFramed(view, 1, 2, n)
+  expect(f.meta).toEqual({ status: 200, headers: [...(f.meta.headers as [string, string][])], heap: 307_200 })
+  expect(f.meta.headers.some(([k, v]) => k === 'x-a' && v === 'b')).toBe(true)
+  expect(f.body.length).toBe(0)
+})
+
+test('response over max_response_bytes: putReply NOT called; 500 with the R8 text and log line', async () => {
+  setActionsApp({ fetch: () => new Response(new Uint8Array(262_145)) })
+  setActionsLimits({ maxResponseBytes: 262_144 })
+  const view = twoSlots()
+  const { io, putCalls } = mkIo()
+  const err = quiet()
   try {
-    const n = await runFetch(JSON.stringify(fr()), view, 0, 1)
-    const { meta, body } = readFramed(view, 0, 1, n)
-    expect(meta).toEqual({ status: 500, headers: [['content-type', 'text/plain; charset=utf-8']] })
-    expect(dec.decode(body)).toBe('brust: action response exceeds 262144 bytes')
+    const n = await runFetch(JSON.stringify(fr()), view, 0, 2, io)
+    const f = readFramed(view, 0, 2, n)
+    expect(f.meta).toEqual({ status: 500, headers: TP })
+    expect(dec.decode(f.body)).toBe('brust: action response exceeds 262144 bytes')
+    expect(putCalls).toHaveLength(0)
     expect(err).toHaveBeenCalledTimes(1)
-    expect(String(err.mock.calls[0]?.[0])).toMatch(/exceeds the 262144-byte slot/)
-    expect(String(err.mock.calls[0]?.[0])).toMatch(/^\[brust\] action response \d+ bytes exceeds the 262144-byte slot \(F82\) — answered 500$/)
+    expect(String(err.mock.calls[0]?.[0])).toBe('[brust] action response body 262145 bytes exceeds max_response_bytes 262144 — answered 500')
   } finally {
     err.mockRestore()
   }
+})
+
+test('putReply returns false → 500 brust: action failed', async () => {
+  setActionsApp({ fetch: () => new Response(new Uint8Array(300_000)) })
+  const view = twoSlots()
+  const err = quiet()
+  try {
+    const n = await runFetch(JSON.stringify(fr()), view, 0, 2, mkIo({ putReply: () => false }).io)
+    const f = readFramed(view, 0, 2, n)
+    expect(f.meta).toEqual({ status: 500, headers: TP })
+    expect(dec.decode(f.body)).toBe('brust: action failed')
+    expect(err).toHaveBeenCalledTimes(1)
+  } finally {
+    err.mockRestore()
+  }
+})
+
+test('a response that fits the slot: no putReply, slot bytes equal today\'s writeFramed output', async () => {
+  const body = bytes(1000)
+  setActionsApp({ fetch: () => new Response(body, { headers: { 'content-type': 'application/octet-stream' } }) })
+  const view = twoSlots()
+  const { io, putCalls } = mkIo()
+  const n = await runFetch(JSON.stringify(fr()), view, 1, 2, io)
+  expect(putCalls).toHaveLength(0)
+  const f = readFramed(view, 1, 2, n)
+  const ref = twoSlots()
+  const m = writeFramed(ref, 1, 2, f.meta.status, f.meta.headers, body)
+  expect(n).toBe(m)
+  expect(Buffer.from(view.subarray(SLOT_BYTES, SLOT_BYTES + n)).equals(Buffer.from(ref.subarray(SLOT_BYTES, SLOT_BYTES + m)))).toBe(true)
+  expect(Object.keys(f.meta)).toEqual(['status', 'headers'])
 })
 
 test('failures are 500 frames: no app, app throws, unparsable JSON', async () => {

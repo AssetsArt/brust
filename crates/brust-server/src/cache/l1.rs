@@ -15,6 +15,14 @@
 //! maintenance pass evicting the old entry right after the new insert indexed
 //! itself would un-index the NEWER entry, making it immune to tag invalidation.
 //!
+//! Read stamps (F86): an insert also carries the `ReadStamp` its render took before it read app
+//! data. Every invalidation (tags, path, `clear`) takes the next value of the clock shared with the
+//! job cache (`stamp.rs`) and publishes it in a hashed per-tag / per-(method, path) slot (or
+//! `cleared_at`); an insert whose tags, method + path or `clear` were invalidated after its stamp
+//! does not land. Without it a render that read data
+//! before a `POST` invalidated its tag could still be inserted after the invalidation and serve the
+//! old data until its ttl. A slot collision only skips caching one render.
+//!
 //! Read front (M3-P P4): reads are served from 64 sharded maps in front of moka,
 //! which stays the lifetime policy (capacity, admission, ttl reaping). The design
 //! is the job cache's (`JobCache`: generation-stamped entries with their own
@@ -35,6 +43,9 @@ use crossbeam_utils::sync::{ShardedLock, ShardedLockReadGuard, ShardedLockWriteG
 use bytes::Bytes;
 use parking_lot::Mutex;
 use serde::Serialize;
+
+pub use super::stamp::ReadStamp;
+use super::stamp::{INVAL_SLOTS, InvalClock, inval_slots};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
@@ -262,7 +273,16 @@ pub(crate) fn take_tagged<K: Clone + Eq + std::hash::Hash>(
 /// it across "stamp generation, index, front write, moka write", and release the front write guard
 /// BEFORE any moka call (moka may run the listener inline). The listener takes the tag-index mutex
 /// and a shard's write lock, each alone, and never a stripe or the gate; it removes only a matching
-/// generation, so it cannot drop a newer entry. Lock order: gate -> stripe -> (index | front).
+/// generation, so it cannot drop a newer entry.
+///
+/// Read stamps (F86): an insert lands only if no covering invalidation took a clock value after its
+/// `ReadStamp`. A covering invalidation is a tag of the insert (by slot), its method+path (by slot),
+/// or `clear`. Tag invalidation and `clear` publish under the exclusive gate, and the insert checks
+/// under the shared gate. `invalidate_path` is gate-free on purpose: the front is a superset of moka
+/// and the key stripe orders same-key writers. It publishes before scanning and scans shard i under
+/// `stripes[i]`, which an insert holds across check and write. A slot collision or an already-seen
+/// invalidation only skips caching one render. Lock order unchanged: gate -> stripe -> (index |
+/// front).
 pub struct L1Cache {
     inner: moka::sync::Cache<CacheKey, Slot>,
     front: Arc<[Shard]>,
@@ -284,11 +304,23 @@ pub struct L1Cache {
     /// exclusively. Never held by the eviction listener.
     gate: parking_lot::RwLock<()>,
     next_generation: AtomicU64,
+    /// Invalidation clock (F86), shared with the job cache (F89): every tag/path invalidation and
+    /// `clear` takes the next value; a `ReadStamp` is its value when a render began.
+    clock: Arc<InvalClock>,
+    /// The latest clock value of a tag invalidation, per hashed tag slot.
+    tag_inval: Box<[AtomicU64]>,
+    /// The latest clock value of an `invalidate_path`, per hashed (method, path) slot.
+    path_inval: Box<[AtomicU64]>,
+    /// The clock value of the latest `clear`.
+    cleared_at: AtomicU64,
     hits: StripedCounter,
     misses: StripedCounter,
     capacity: u64,
     #[cfg(test)]
     pub(crate) mid_insert: MidInsertHook,
+    /// Test-only hook run after `invalidate_path` scanned every shard.
+    #[cfg(test)]
+    pub(crate) after_path_scan: MidInsertHook,
 }
 
 impl L1Cache {
@@ -299,6 +331,12 @@ impl L1Cache {
     /// Build an L1 cache with an explicit max-entry capacity. moka fixes
     /// capacity at construction. Capacity is floored at 1.
     pub fn with_capacity(max_capacity: u64) -> Self {
+        Self::with_clock(max_capacity, Arc::default())
+    }
+
+    /// As `with_capacity`, on a shared invalidation clock (`Server` builds L1 and the job cache on
+    /// one, F89).
+    pub fn with_clock(max_capacity: u64, clock: Arc<InvalClock>) -> Self {
         let capacity = max_capacity.max(1);
         let tag_index: Arc<TagIndex<CacheKey>> = Arc::new(Mutex::new(HashMap::new()));
         let front: Arc<[Shard]> = (0..SHARDS)
@@ -337,11 +375,17 @@ impl L1Cache {
             tag_index,
             gate: parking_lot::RwLock::new(()),
             next_generation: AtomicU64::new(0),
+            clock,
+            tag_inval: inval_slots(),
+            path_inval: inval_slots(),
+            cleared_at: AtomicU64::new(0),
             hits: StripedCounter::new(),
             misses: StripedCounter::new(),
             capacity,
             #[cfg(test)]
             mid_insert: Mutex::new(None),
+            #[cfg(test)]
+            after_path_scan: Mutex::new(None),
         }
     }
 
@@ -387,9 +431,44 @@ impl L1Cache {
         self.get_with(key, Arc::clone)
     }
 
+    /// Stamp the start of a render (F86): take it before the render reads app data and pass it to
+    /// `insert`.
+    pub fn read_stamp(&self) -> ReadStamp {
+        self.clock.stamp()
+    }
+
+    /// Take the next invalidation sequence number (F86).
+    fn next_inval(&self) -> u64 {
+        self.clock.next()
+    }
+
+    /// The `tag_inval` / `path_inval` slot of `v`.
+    fn slot<T: std::hash::Hash + ?Sized>(&self, v: &T) -> usize {
+        (self.hasher.hash_one(v) as usize) % INVAL_SLOTS
+    }
+
+    /// Whether a covering invalidation (`clear`, this key's method + path, or one of `tags`, each
+    /// by slot) took a sequence number after `since`.
+    fn invalidated_since(&self, key: &CacheKey, tags: &[String], since: ReadStamp) -> bool {
+        let after = |a: &AtomicU64| a.load(Ordering::SeqCst) > since.0;
+        after(&self.cleared_at)
+            || after(&self.path_inval[self.slot(&(key.method.as_str(), key.path.as_str()))])
+            || tags
+                .iter()
+                .any(|t| after(&self.tag_inval[self.slot(t.as_str())]))
+    }
+
     /// Since S10 a HIT serves `body` (with its headers): the render context and the loader's
-    /// headers are not stored (ruling R-E; the parameters went with ledger F78).
-    pub fn insert(&self, key: CacheKey, body: Arc<RenderedBody>, ttl: Duration, tags: &[String]) {
+    /// headers are not stored (ruling R-E; the parameters went with ledger F78). Returns `false`
+    /// when the insert did not land: a covering invalidation came after `since` (F86).
+    pub fn insert(
+        &self,
+        key: CacheKey,
+        body: Arc<RenderedBody>,
+        ttl: Duration,
+        tags: &[String],
+        since: ReadStamp,
+    ) -> bool {
         // Ordering is load-bearing: index the tags BEFORE the moka insert (the
         // reverse could leave a live, un-indexed entry if a panic hit between
         // the two). Index-then-insert alone still raced `invalidate_tags`: an
@@ -405,6 +484,13 @@ impl L1Cache {
         // land in generation order (see `JobCache::insert`).
         let shard = shard_of(&self.hasher, &key);
         let _stripe = self.stripes[shard].lock();
+        // F86: the render behind this insert read its data at `since`. Checked under the gate (tag
+        // invalidation and `clear` publish under it exclusively) and the stripe (`invalidate_path`
+        // publishes, then scans this shard under it), held until the write below. A rejection
+        // writes nothing.
+        if self.invalidated_since(&key, tags, since) {
+            return false;
+        }
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         index_tags(&self.tag_index, &key, tags, generation);
         #[cfg(test)]
@@ -435,6 +521,7 @@ impl L1Cache {
                 generation,
             },
         );
+        true
     }
 
     /// Remove `k` from moka and the front, in that key's write order.
@@ -464,19 +551,36 @@ impl L1Cache {
     /// of query string or vary values). Returns the number of live matching
     /// entries at the time of the call. Hits/misses counters are NOT reset.
     /// The entries are gone from the read front when this returns.
+    ///
+    /// Gate-free (see the struct invariant): it publishes its sequence number first, then scans
+    /// shard i under `stripes[i]`, so an insert of a matching key either landed before the scan
+    /// (and is removed) or checks after the publish (and is rejected).
     pub fn invalidate_path(&self, method: &str, path: &str) -> usize {
+        let seq = self.next_inval();
+        self.path_inval[self.slot(&(method, path))].fetch_max(seq, Ordering::SeqCst);
         let now = Instant::now();
-        let (mut keys, mut live) = (Vec::new(), 0);
-        for s in self.front.iter() {
-            for (k, e) in s.read().iter() {
-                if k.method == method && k.path == path {
-                    live += usize::from(e.expires_at.is_none_or(|t| now < t));
-                    keys.push(k.clone());
-                }
+        let mut live = 0;
+        for (shard, s) in self.front.iter().enumerate() {
+            let _stripe = self.stripes[shard].lock();
+            let keys: Vec<CacheKey> = {
+                let m = s.read();
+                m.iter()
+                    .filter(|(k, _)| k.method == method && k.path == path)
+                    .map(|(k, e)| {
+                        live += usize::from(e.expires_at.is_none_or(|t| now < t));
+                        k.clone()
+                    })
+                    .collect()
+            };
+            // No front guard across the moka call: its listener takes this shard's write lock.
+            for k in &keys {
+                self.inner.remove(k);
+                s.write().remove(k);
             }
         }
-        for k in &keys {
-            self.remove(k);
+        #[cfg(test)]
+        if let Some(h) = &*self.after_path_scan.lock() {
+            h();
         }
         self.inner.run_pending_tasks();
         live
@@ -491,6 +595,10 @@ impl L1Cache {
     pub fn invalidate_tags(&self, tags: &[String]) -> usize {
         let n = {
             let _gate = self.gate.write(); // no insert is mid-way (see `insert`)
+            let seq = self.next_inval();
+            for t in tags {
+                self.tag_inval[self.slot(t.as_str())].fetch_max(seq, Ordering::SeqCst);
+            }
             let keys = take_tagged(&self.tag_index, tags);
             let n = keys.len();
             for k in keys {
@@ -514,6 +622,8 @@ impl L1Cache {
         // the listener prunes its index entry) or lands fresh after.
         {
             let _gate = self.gate.write();
+            self.cleared_at
+                .fetch_max(self.next_inval(), Ordering::SeqCst);
             self.tag_index.lock().clear();
             self.inner.invalidate_all();
             for s in self.front.iter() {
@@ -529,6 +639,18 @@ impl L1Cache {
     #[cfg(test)]
     pub(crate) fn tag_index_size(&self) -> usize {
         self.tag_index.lock().values().map(|s| s.len()).sum()
+    }
+
+    /// The `tag_inval` slot of `t` (test hook: tests pick non-colliding tags with it).
+    #[cfg(test)]
+    pub(crate) fn tag_slot(&self, t: &str) -> usize {
+        self.slot(t)
+    }
+
+    /// The `path_inval` slot of `(m, p)` (test hook, as `tag_slot`).
+    #[cfg(test)]
+    pub(crate) fn path_slot(&self, m: &str, p: &str) -> usize {
+        self.slot(&(m, p))
     }
 
     /// Entries in the read front (test hook: it must track moka's).
@@ -628,6 +750,7 @@ mod tests {
             rb_of("t"),
             Duration::from_secs(60),
             &["a".to_string(), "b".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 2);
@@ -648,12 +771,14 @@ mod tests {
             rb_of("1"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/p", "x=2"),
             rb_of("2"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 2);
@@ -674,6 +799,7 @@ mod tests {
             rb_of("w"),
             Duration::from_secs(60),
             &["t".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 1);
@@ -689,18 +815,21 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/a", "x=1"),
             rb_of("a-x"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/b", ""),
             rb_of("b"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.run_pending();
 
@@ -723,6 +852,7 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.invalidate_path("GET", "/missing"), 0);
@@ -739,18 +869,21 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/a", "x=1"),
             rb_of("a-x"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/b", ""),
             rb_of("b"),
             Duration::from_secs(60),
             &["other".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
 
@@ -773,6 +906,7 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         c.invalidate_tags(&["missing".to_string()]);
@@ -791,18 +925,21 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/b", ""),
             rb_of("b"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/c", ""),
             rb_of("c"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.run_pending();
         let removed = c.clear();
@@ -819,6 +956,7 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.run_pending();
         let _ = html(&c, &key("GET", "/a", "")); // hit
@@ -855,6 +993,7 @@ mod tests {
             rb_of("1"),
             Duration::from_millis(1),
             &["t".to_string()],
+            c.read_stamp(),
         );
         std::thread::sleep(Duration::from_millis(5));
         c.insert(
@@ -862,6 +1001,7 @@ mod tests {
             rb_of("2"),
             Duration::from_secs(60),
             &["t".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 1, "new entry stays indexed");
@@ -889,7 +1029,14 @@ mod tests {
         let k = key("GET", "/race", "");
         let (c2, k2) = (Arc::clone(&c), k.clone());
         let ins = std::thread::spawn(move || {
-            c2.insert(k2, rb_of("1"), Duration::from_secs(60), &["t".to_string()])
+            let since = c2.read_stamp();
+            c2.insert(
+                k2,
+                rb_of("1"),
+                Duration::from_secs(60),
+                &["t".to_string()],
+                since,
+            )
         });
         rx.recv().unwrap();
         c.invalidate_tags(&["t".to_string()]);
@@ -901,7 +1048,7 @@ mod tests {
 
     fn ins(c: &L1Cache, k: CacheKey, body: &str, ttl: Duration, tags: &[&str]) {
         let tags: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-        c.insert(k, rb_of(body), ttl, &tags);
+        c.insert(k, rb_of(body), ttl, &tags, c.read_stamp());
     }
 
     #[test]
@@ -1022,5 +1169,287 @@ mod tests {
             b.status
         });
         assert_eq!((r, calls.get()), (Some(200), 1));
+    }
+
+    // ----- F86: read stamps -----
+
+    const TTL: Duration = Duration::from_secs(60);
+
+    fn tags(ts: &[&str]) -> Vec<String> {
+        ts.iter().map(|t| t.to_string()).collect()
+    }
+
+    #[test]
+    fn an_invalidation_after_the_read_stamp_keeps_the_insert_out() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s = c.read_stamp();
+        c.invalidate_tags(&tags(&["t"]));
+        assert!(!c.insert(k.clone(), rb_of("old"), TTL, &tags(&["t"]), s));
+        assert!(html(&c, &k).is_none());
+        c.run_pending();
+        assert_eq!(
+            (c.front_len(), c.tag_index_size(), c.stats().len),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn an_insert_before_the_invalidation_is_still_evicted() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s = c.read_stamp();
+        assert!(c.insert(k.clone(), rb_of("v"), TTL, &tags(&["t"]), s));
+        assert_eq!(c.invalidate_tags(&tags(&["t"])), 1);
+        assert!(html(&c, &k).is_none());
+    }
+
+    #[test]
+    fn a_stamp_after_the_invalidation_lands() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        c.invalidate_tags(&tags(&["t"]));
+        let s = c.read_stamp();
+        assert!(c.insert(k.clone(), rb_of("new"), TTL, &tags(&["t"]), s));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"new")));
+    }
+
+    #[test]
+    fn an_untagged_insert_ignores_tag_invalidation() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s = c.read_stamp();
+        c.invalidate_tags(&tags(&["t"]));
+        assert!(c.insert(k.clone(), rb_of("v"), TTL, &[], s));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
+    }
+
+    #[test]
+    fn an_unrelated_tag_invalidation_does_not_reject() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let b = (0..)
+            .map(|i| format!("u{i}"))
+            .find(|b| c.tag_slot(b) != c.tag_slot("t"))
+            .unwrap();
+        let s = c.read_stamp();
+        c.invalidate_tags(&[b]);
+        assert!(c.insert(k.clone(), rb_of("v"), TTL, &tags(&["t"]), s));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
+    }
+
+    #[test]
+    fn clear_after_the_stamp_keeps_the_insert_out() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s = c.read_stamp();
+        c.clear();
+        assert!(!c.insert(k.clone(), rb_of("old"), TTL, &[], s));
+        assert!(html(&c, &k).is_none());
+    }
+
+    #[test]
+    fn a_rejected_insert_leaves_the_newer_entry() {
+        let c = L1Cache::new();
+        let k = key("GET", "/k", "");
+        let s1 = c.read_stamp();
+        c.invalidate_tags(&tags(&["t"]));
+        let s2 = c.read_stamp();
+        assert!(c.insert(k.clone(), rb_of("new"), TTL, &tags(&["t"]), s2));
+        assert!(!c.insert(k.clone(), rb_of("old"), TTL, &tags(&["t"]), s1));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"new")));
+        c.run_pending();
+        assert_eq!(c.tag_index_size(), 1);
+    }
+
+    #[test]
+    fn invalidate_path_after_the_stamp_keeps_the_insert_out() {
+        let c = L1Cache::new();
+        let k = key("GET", "/p", "x=1");
+        let s = c.read_stamp();
+        c.invalidate_path("GET", "/p");
+        assert!(!c.insert(k.clone(), rb_of("old"), TTL, &[], s));
+        assert!(html(&c, &k).is_none());
+    }
+
+    #[test]
+    fn invalidate_path_of_another_path_does_not_reject() {
+        let c = L1Cache::new();
+        let k = key("GET", "/p", "x=1");
+        let q = (0..)
+            .map(|i| format!("/q{i}"))
+            .find(|q| c.path_slot("GET", q) != c.path_slot("GET", "/p"))
+            .unwrap();
+        let s = c.read_stamp();
+        c.invalidate_path("GET", &q);
+        assert!(c.insert(k.clone(), rb_of("v"), TTL, &[], s));
+        assert_eq!(html(&c, &k), Some(Bytes::from_static(b"v")));
+    }
+
+    /// How the concurrency tests below invalidate: a tag (keys `/r{i}` tagged `t`) or a path (keys
+    /// `GET /r x={i}`, untagged).
+    #[derive(Clone, Copy)]
+    enum Inval {
+        Tag,
+        Path,
+    }
+
+    impl Inval {
+        fn key(self, i: usize) -> CacheKey {
+            match self {
+                Inval::Tag => key("GET", &format!("/r{i}"), ""),
+                Inval::Path => key("GET", "/r", &format!("x={i}")),
+            }
+        }
+
+        fn tags(self) -> Vec<String> {
+            match self {
+                Inval::Tag => tags(&["t"]),
+                Inval::Path => Vec::new(),
+            }
+        }
+
+        fn run(self, c: &L1Cache) {
+            match self {
+                Inval::Tag => {
+                    c.invalidate_tags(&tags(&["t"]));
+                }
+                Inval::Path => {
+                    c.invalidate_path("GET", "/r");
+                }
+            }
+        }
+    }
+
+    /// One render per thread per round, phased by barriers: every render stamps and reads `db`,
+    /// the mutation + invalidation runs, then every render inserts. No insert may land.
+    fn renders_racing_an_invalidation_phased(kind: Inval) {
+        const THREADS: usize = 8;
+        let c = L1Cache::new();
+        let db = AtomicU64::new(0);
+        let [read, mutated, inserted] =
+            std::array::from_fn::<_, 3, _>(|_| std::sync::Barrier::new(THREADS + 1));
+        let landed = AtomicUsize::new(0);
+        let stale = std::thread::scope(|sc| {
+            for i in 0..THREADS {
+                let (c, db, landed) = (&c, &db, &landed);
+                let (read, mutated, inserted) = (&read, &mutated, &inserted);
+                sc.spawn(move || {
+                    for _ in 0..200 {
+                        let since = c.read_stamp();
+                        let v = db.load(Ordering::SeqCst);
+                        read.wait();
+                        mutated.wait();
+                        let body = rb_of(&v.to_string());
+                        if c.insert(kind.key(i), body, TTL, &kind.tags(), since) {
+                            landed.fetch_add(1, Ordering::SeqCst);
+                        }
+                        inserted.wait();
+                    }
+                });
+            }
+            // Record, never panic in here: the renders would wait on the barriers forever.
+            let mut stale = Vec::new();
+            for _ in 0..200 {
+                read.wait();
+                db.fetch_add(1, Ordering::SeqCst);
+                kind.run(&c);
+                mutated.wait();
+                inserted.wait();
+                stale.extend((0..THREADS).filter(|&i| html(&c, &kind.key(i)).is_some()));
+            }
+            stale
+        });
+        assert_eq!(
+            landed.load(Ordering::SeqCst),
+            0,
+            "an insert stamped before the invalidation landed"
+        );
+        assert!(stale.is_empty(), "stale entries served: {}", stale.len());
+    }
+
+    /// Free-running renders on 16 keys against 500 mutation + invalidation pairs. When the last
+    /// pair is done, every entry holds the last value (a stale render never landed), and so does
+    /// every entry after one more pair and a fresh render per key; front and moka agree.
+    fn renders_racing_invalidations_end_fresh(kind: Inval) {
+        const KEYS: usize = 16;
+        let c = L1Cache::new();
+        let db = AtomicU64::new(0);
+        let render = |i: usize| {
+            let since = c.read_stamp();
+            let v = db.load(Ordering::SeqCst);
+            std::thread::yield_now();
+            c.insert(kind.key(i), rb_of(&v.to_string()), TTL, &kind.tags(), since);
+        };
+        let present = |c: &L1Cache, want: u64| {
+            for i in 0..KEYS {
+                if let Some(b) = html(c, &kind.key(i)) {
+                    assert_eq!(b, want.to_string().as_bytes(), "key {i}");
+                }
+            }
+        };
+        std::thread::scope(|sc| {
+            for t in 0..8 {
+                let render = &render;
+                sc.spawn(move || {
+                    for n in 0..2000 {
+                        render((t + n) % KEYS);
+                    }
+                });
+            }
+            sc.spawn(|| {
+                for _ in 0..500 {
+                    db.fetch_add(1, Ordering::SeqCst);
+                    kind.run(&c);
+                    std::thread::yield_now();
+                }
+            });
+        });
+        present(&c, 500);
+        db.fetch_add(1, Ordering::SeqCst);
+        kind.run(&c);
+        (0..KEYS).for_each(render);
+        present(&c, 501);
+        c.run_pending();
+        assert_eq!(c.front_len(), c.stats().len);
+        assert_eq!(c.front_len(), KEYS);
+    }
+
+    #[test]
+    fn renders_racing_a_tag_invalidation_never_land_stale_phased() {
+        renders_racing_an_invalidation_phased(Inval::Tag);
+    }
+
+    #[test]
+    fn renders_racing_tag_invalidations_end_fresh_free_running() {
+        renders_racing_invalidations_end_fresh(Inval::Tag);
+    }
+
+    #[test]
+    fn renders_racing_a_path_invalidation_never_land_stale_phased() {
+        renders_racing_an_invalidation_phased(Inval::Path);
+    }
+
+    #[test]
+    fn renders_racing_path_invalidations_end_fresh_free_running() {
+        renders_racing_invalidations_end_fresh(Inval::Path);
+    }
+
+    #[test]
+    fn invalidate_path_publishes_before_it_scans() {
+        // Deterministic: a render stamped before `invalidate_path` inserts once every shard was
+        // scanned. Publishing after the scan would let it land, stale, in an already-scanned shard.
+        let c = Arc::new(L1Cache::new());
+        let k = key("GET", "/p", "x=1");
+        let s = c.read_stamp();
+        let landed = Arc::new(Mutex::new(None));
+        let (c2, k2, landed2) = (Arc::downgrade(&c), k.clone(), Arc::clone(&landed));
+        *c.after_path_scan.lock() = Some(Box::new(move || {
+            let c = c2.upgrade().unwrap();
+            *landed2.lock() = Some(c.insert(k2.clone(), rb_of("old"), TTL, &[], s));
+        }));
+        c.invalidate_path("GET", "/p");
+        assert_eq!(*landed.lock(), Some(false));
+        assert!(html(&c, &k).is_none());
     }
 }

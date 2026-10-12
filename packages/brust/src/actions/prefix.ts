@@ -1,6 +1,8 @@
 // Browser-safe (the client imports it): no elysia import.
 export const DEFAULT_ACTION_PREFIX = '/_brust/action'
-export const DEFAULT_MAX_BODY_BYTES = 262_144
+export const DEFAULT_MAX_BODY_BYTES = 1_048_576
+export const DEFAULT_MAX_RESPONSE_BYTES = 8_388_608
+export const MAX_ACTION_BYTES = 67_108_864
 const SEG = /^[A-Za-z0-9._~-]+$/
 
 /** Why `p` cannot be the actions prefix, or null. Segment-safe like the server's match. */

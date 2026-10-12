@@ -261,6 +261,7 @@ fn bench_route(
         }),
         Duration::from_secs(3600),
         &[],
+        l1.read_stamp(),
     );
     // A HIT (S10 amendment): `L1Cache::get` + the stored body (its gzip made
     // by the first gzip-accepting HIT, here the warm-up) + the header map.
@@ -436,6 +437,7 @@ fn bench_hit_path(c: &mut Criterion, m: &Manifest) {
         }),
         Duration::from_secs(3600),
         &["types".to_string()],
+        l1.read_stamp(),
     );
     let matched = || {
         matches!(

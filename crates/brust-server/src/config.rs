@@ -82,7 +82,14 @@ impl CorsConfig {
 
 /// 0.1.x defaults (E1).
 pub const DEFAULT_ACTION_PREFIX: &str = "/_brust/action";
-pub const DEFAULT_MAX_ACTION_BODY_BYTES: usize = 262_144;
+pub const DEFAULT_MAX_ACTION_BODY_BYTES: usize = 1_048_576;
+/// F82: default cap on an action response body (the heap-transferred part).
+pub const DEFAULT_MAX_ACTION_RESPONSE_BYTES: usize = 8_388_608;
+/// F82: upper bound for both `max_body_bytes` and `max_response_bytes`.
+pub const MAX_ACTION_BYTES: usize = 67_108_864;
+/// F82: a request body of at most this many bytes crosses inline (`text`/`b64`); larger goes by
+/// heap transfer. Equals the worker's SAB slot size.
+pub const ACTION_INLINE_BODY_BYTES: usize = 262_144;
 /// Paths the actions prefix may not overlap in either direction (R7).
 const RESERVED: &[&str] = &["/ping", "/public", "/_brust/client", "/_brust/cache"];
 
@@ -91,6 +98,18 @@ const RESERVED: &[&str] = &["/ping", "/public", "/_brust/client", "/_brust/cache
 pub struct ActionsConfig {
     pub prefix: String,
     pub max_body_bytes: usize,
+    pub max_response_bytes: usize,
+    pub cross_site: CrossSite,
+}
+
+/// F87 / spec E10: what Rust does with a mutating action request whose browser-declared site is foreign.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrossSite {
+    /// 403 before the body is read, unless `[cors]` allows the `Origin`.
+    #[default]
+    Reject,
+    /// Forward everything (a public API consumed cross-origin).
+    Allow,
 }
 
 impl Default for ActionsConfig {
@@ -98,6 +117,8 @@ impl Default for ActionsConfig {
         Self {
             prefix: DEFAULT_ACTION_PREFIX.into(),
             max_body_bytes: DEFAULT_MAX_ACTION_BODY_BYTES,
+            max_response_bytes: DEFAULT_MAX_ACTION_RESPONSE_BYTES,
+            cross_site: CrossSite::default(),
         }
     }
 }
@@ -142,8 +163,13 @@ impl ActionsConfig {
         }) {
             return Err(format!("prefix {p:?} shadows route {:?}", rt.pattern));
         }
-        if self.max_body_bytes == 0 {
-            return Err("maxBodyBytes must be at least 1".into());
+        if !(1..=MAX_ACTION_BYTES).contains(&self.max_body_bytes) {
+            return Err(format!("maxBodyBytes must be in 1..={MAX_ACTION_BYTES}"));
+        }
+        if !(ACTION_INLINE_BODY_BYTES..=MAX_ACTION_BYTES).contains(&self.max_response_bytes) {
+            return Err(format!(
+                "maxResponseBytes must be in {ACTION_INLINE_BODY_BYTES}..={MAX_ACTION_BYTES}"
+            ));
         }
         Ok(())
     }
@@ -231,6 +257,8 @@ pub struct Server {
     pub(crate) renderer: Renderer,
     pub(crate) l1: L1Cache,
     pub(crate) jobs: JobCache,
+    /// The invalidation clock `l1` and `jobs` are built on (F89): one read stamp per page.
+    pub(crate) clock: Arc<crate::cache::stamp::InvalClock>,
     pub(crate) dist_dir: PathBuf,
     /// M3-P P7: striped (one cache line per stripe) — bumped on every loader page.
     pub(crate) loader_calls: crate::cache::l1::StripedCounter,
@@ -291,6 +319,8 @@ impl Server {
     /// through the job cache's user-key index); `tags` → both caches; `path` (+
     /// `method`, default `GET`) → L1 entries for that path, any query/prefix.
     /// L1 pages built from an invalidated job value are NOT evicted by `key`.
+    /// A job value computed by a call that began before the invalidation is not
+    /// cached, and its page is not stored in L1 (F89).
     pub fn invalidate(&self, args: InvalidateArgs) -> InvalidateResult {
         let mut r = InvalidateResult::default();
         if let Some(k) = &args.key {
@@ -423,6 +453,24 @@ mod tests {
             ..Default::default()
         };
         assert!(zero.validate(&m).is_err());
+        let body = |n: usize| ActionsConfig {
+            max_body_bytes: n,
+            ..Default::default()
+        };
+        assert_eq!(body(67_108_864).validate(&m), Ok(()));
+        let e = body(67_108_865).validate(&m).expect_err("body over cap");
+        assert!(e.contains("maxBodyBytes"), "{e}");
+        let resp = |n: usize| ActionsConfig {
+            max_response_bytes: n,
+            ..Default::default()
+        };
+        for n in [262_144, 8_388_608, 67_108_864] {
+            assert_eq!(resp(n).validate(&m), Ok(()), "{n}");
+        }
+        for n in [262_143, 67_108_865] {
+            let e = resp(n).validate(&m).expect_err("resp bounds");
+            assert!(e.contains("maxResponseBytes"), "{e}");
+        }
     }
 
     #[test]

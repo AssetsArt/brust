@@ -111,6 +111,9 @@ const TREE: [number, string, string][] = [
   [2, 'CW_SPAWN_SCHED', 'tokio::spawn → task runs'],
   [2, 'CW_DISPATCH', 'tsfn call_async → promise resolved'],
   [3, 'BRIDGE', 'tsfn bridge round trip (dispatch − JS handler)'],
+  [4, 'CW_RUST_TO_JS', 'wake out: tsfn enqueue → JS handler entry (F83, shared clock)'],
+  [4, 'CW_JS_TO_RUST', 'wake back: slot written → Rust resumes (F83, shared clock)'],
+  [4, 'BRIDGE_REST', 'bridge − both wakes (promise resolve + tsfn bookkeeping)'],
   [3, 'CW_JS_TOTAL', 'JS handler (entry → slot written)'],
   [4, 'CW_JS_PARSE', 'JSON.parse'],
   [4, 'CW_JS_HANDLER', 'chain loaders'],
@@ -122,6 +125,8 @@ const TREE: [number, string, string][] = [
   [4, 'CW_JS_STRINGIFY', 'JSON.stringify'],
   [4, 'CW_JS_WRITE', 'TextEncoder + SAB write'],
   [2, 'CW_READ_PARSE', 'SAB read + serde_json parse'],
+  [3, 'READ_UTF8', 'read: UTF-8 validate of the SAB bytes (F83)'],
+  [3, 'READ_SERDE', 'parse: serde_json::from_str (F83)'],
   [2, 'CW_JOIN', 'task done → caller resumes'],
   [1, 'MERGE_LOADER', 'merge loader data'],
   [1, 'COLLECT_JOBS', 'collect_jobs'],
@@ -172,12 +177,19 @@ for (const side of SIDES) {
       await h.arrayBuffer()
       if (p0 && p1) {
         const d0 = (k: string) => [(p1[k]?.[0] ?? 0) - (p0[k]?.[0] ?? 0), (p1[k]?.[1] ?? 0) - (p0[k]?.[1] ?? 0)] as const
-        // The two bridge legs cannot be split: Bun's performance.timeOrigin and Rust's SystemTime disagree by
-        // ~0.3-0.7 ms, so only their sum (dispatch wall − JS handler wall, same clocks each) is reported.
-        const d = (k: string) => (k === 'BRIDGE' ? ([d0('CW_DISPATCH')[0] - d0('CW_JS_TOTAL')[0], d0('CW_DISPATCH')[1]] as const) : d0(k))
+        // BRIDGE = dispatch wall − JS handler wall (same clock each). Its two legs (CW_RUST_TO_JS: tsfn enqueue → handler
+        // entry, CW_JS_TO_RUST: slot written → Rust resumes) are timed ACROSS threads, so they need one clock:
+        // before F83 they used Bun's performance.timeOrigin vs Rust's SystemTime, which disagree by ~0.3-0.7 ms and
+        // could not be split. The F83 attribution.patch has both sides read CLOCK_UPTIME_RAW (Rust via
+        // clock_gettime_nsec_np, the worker via bun:ffi), so the legs are real; BRIDGE_REST is what is left
+        // (promise resolution + tsfn bookkeeping). On a pre-F83 patch the leg values are meaningless: read BRIDGE only.
+        const d = (k: string) =>
+          k === 'BRIDGE' ? ([d0('CW_DISPATCH')[0] - d0('CW_JS_TOTAL')[0], d0('CW_DISPATCH')[1]] as const)
+          : k === 'BRIDGE_REST' ? ([d0('CW_DISPATCH')[0] - d0('CW_JS_TOTAL')[0] - d0('CW_RUST_TO_JS')[0] - d0('CW_JS_TO_RUST')[0], d0('CW_DISPATCH')[1]] as const)
+          : d0(k)
         const n = d('PAGE_TOTAL')[1]
         const svc = d('SVC_TOTAL')[0] / n / 1e3
-        row.stages = Object.fromEntries([...Object.keys(p1), 'BRIDGE'].map((k) => [k, { usPerReq: d(k)[0] / n / 1e3, perReq: d(k)[1] / n }]))
+        row.stages = Object.fromEntries([...Object.keys(p1), 'BRIDGE', 'BRIDGE_REST'].map((k) => [k, { usPerReq: d(k)[0] / n / 1e3, perReq: d(k)[1] / n }]))
         const lines = [`\n### ${side} ${probe} c=${conn} — ${Math.round(r.rps)} rps, ${n} page requests, load ${load.join(' ')}`, '', '| stage | µs/req | % of svc | calls/req |', '|---|---:|---:|---:|']
         for (const [lvl, k, label] of TREE) {
           const [sum, cnt] = d(k); if (cnt === 0) continue

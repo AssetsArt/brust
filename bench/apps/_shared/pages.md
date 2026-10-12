@@ -36,3 +36,10 @@ Counter is the ONE interactive component: `useReducer`, `'use client'` in Next, 
 `<Island ssr hydrate="load">` in 0.1.x, plain `renderToString` in bun-serve (no hydration — it is the ceiling).
 Text nodes: React emits `clicks<!-- -->: <!-- -->0`; the normalizer strips comments, so every app yields
 "clicks: 0".
+
+## A1 / A2 — JSON contract (`actions-app.ts`, no HTML)
+- A1 `GET /_brust/action/types` → 200 `application/json`, the 18 `data.types` rows of `data.json`, in order, as
+  `[{ "name": "normal", "label": "Normal", "tint": "#9099a1" }, …]`.
+- A2 `POST /_brust/action/team` with `content-type: application/json` and `{"id":25}` → 200 `application/json`
+  `{ "ok": true, "id": 25 }`. A non-number `id` is a 422 (not benchmarked).
+Parity: parsed JSON deep-equal across apps and equal to the expected value (key order and whitespace are free).

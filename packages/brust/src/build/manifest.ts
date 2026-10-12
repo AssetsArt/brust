@@ -51,11 +51,13 @@ export interface RouteRecord {
   catch_all: boolean
 }
 
-/** `manifest.actions` (A3): `entry` is relative to dist; `maxBodyBytes` is camelCase by contract. */
+/** `manifest.actions` (A3): `entry` is relative to dist; `maxBodyBytes`/`maxResponseBytes` are camelCase by contract. */
 export interface ActionsRecord {
   entry: string
   prefix: string
   maxBodyBytes: number
+  maxResponseBytes: number
+  crossSite: 'reject' | 'allow'
 }
 
 export interface ManifestJson {

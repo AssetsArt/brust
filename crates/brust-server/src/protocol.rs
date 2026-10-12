@@ -240,6 +240,8 @@ pub struct FetchRequest<'a> {
 pub enum FetchBody {
     Text(String),
     B64(String),
+    /// F82: more than the inline threshold; the bytes cross by heap transfer (`takeFetchBody`).
+    Heap(usize),
 }
 
 /// A2 meta `{ status, headers: [[k,v]…] }`; unknown keys ignored.
@@ -248,6 +250,9 @@ pub struct FetchMeta {
     pub status: u16,
     #[serde(default)]
     pub headers: Vec<(String, String)>,
+    /// F82: the body is `heap` bytes long and was put by `putFetchReply`, not framed.
+    #[serde(default)]
+    pub heap: Option<u64>,
 }
 
 /// A decoded `fetch` answer; `body` was copied out of the slot while the claim was held.
@@ -544,6 +549,8 @@ mod tests {
         );
         let b64 = serde_json::to_string(&fetch_req(Some(FetchBody::B64("AAE=".into())))).unwrap();
         assert!(b64.contains(r#""body":{"b64":"AAE="}"#), "{b64}");
+        let heap = serde_json::to_string(&fetch_req(Some(FetchBody::Heap(262_145)))).unwrap();
+        assert!(heap.contains(r#""body":{"heap":262145}"#), "{heap}");
         let none = serde_json::to_string(&fetch_req(None)).unwrap();
         assert!(none.contains(r#""body":null"#), "{none}");
     }
@@ -561,10 +568,14 @@ mod tests {
                 headers: vec![
                     ("set-cookie".into(), "a=1".into()),
                     ("set-cookie".into(), "b=2".into())
-                ]
+                ],
+                heap: None,
             }
         );
         let m: FetchMeta = serde_json::from_str(r#"{"status":204}"#).unwrap();
         assert!(m.headers.is_empty());
+        assert_eq!(m.heap, None);
+        let m: FetchMeta = serde_json::from_str(r#"{"status":200,"heap":5}"#).unwrap();
+        assert_eq!(m.heap, Some(5));
     }
 }

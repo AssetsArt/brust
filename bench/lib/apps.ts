@@ -1,13 +1,13 @@
-// bench/lib/apps.ts — the four comparators (spec §1.1 / §1.3). Every app in production mode; ports fixed per app;
+// bench/lib/apps.ts — the comparators (spec §1.1 / §1.3). Every app in production mode; ports fixed per app;
 // the runner restarts a server per (app, probe) so every row starts from a cold process.
 import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { AppId, AppSpec } from './app'
-import type { ProbeId } from './probes'
+import { probe as probeOf, type ProbeId } from './probes'
 
 export const ROOT = resolve(import.meta.dir, '../..')
-/** Fixed port per app (base 38300 + 1..4; the old M2 runner owns 38201-38204, lead rule bench-host-lock).
+/** Fixed port per app (base 38300 + 1..5 — +5 elysia-bun, ctrl +40…; bun-serve ctrl +20…; the old M2 runner owns 38201-38204, lead rule bench-host-lock).
  * BENCH_PORT_BASE shifts them. A concurrent bench still invalidates a measurement — the host lock and the load guard protect the numbers. */
 const PORT_BASE = Number.parseInt(process.env.BENCH_PORT_BASE ?? '38300', 10)
 const P = (n: number): number => PORT_BASE + n
@@ -31,7 +31,16 @@ export function nextServerJs(cwd: string): string {
 /** Review Focus 5: the brust app must serve S from L1 and D/I from the loader on ?nocache=1. */
 export async function brustSanity(base: string, probe: ProbeId): Promise<void> {
   const hdr = async (path: string) => (await fetch(`${base}${path}`)).headers.get('x-brust-cache')
-  if (probe === 'S') {
+  if (probe === 'A1' || probe === 'A2') {
+    // Actions never reach L1: a second request answers without an x-brust-cache header.
+    const call = async () => {
+      const pr = probeOf(probe)
+      return (await fetch(`${base}${pr.path}`, pr.method === 'POST' ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: pr.body } : undefined)).headers.get('x-brust-cache')
+    }
+    await call()
+    const second = await call()
+    if (second !== null) throw new Error(`brust sanity ${probe}: second action call answered x-brust-cache=${second}; actions must bypass L1`)
+  } else if (probe === 'S') {
     await hdr('/types')
     const second = await hdr('/types')
     if (second !== 'HIT') throw new Error(`brust sanity S: second /types answered x-brust-cache=${second}, expected HIT (cache: ttl_seconds on /types?)`)
@@ -76,6 +85,20 @@ const bunServe: AppSpec = {
   },
 }
 
+const elysiaBun: AppSpec = {
+  id: 'elysia-bun', label: 'Elysia 2 on Bun (default adapter)', cwd: join(ROOT, 'bench/apps/elysia-bun'), port: P(5),
+  available: () => ({ ok: true }),
+  build: async () => {},
+  // N copies on one port (reusePort) = brust's worker budget, like bun-serve. The ctrl range starts at +40 (bun-serve uses +20…).
+  startCmd: () => ({ cmd: ['bun', 'cluster.ts'], env: { BENCH_PORT: String(P(5)), BENCH_PROCS: workers(), BENCH_CTRL_BASE: String(P(40)), NODE_ENV: 'production' } }),
+  ready: /\[elysia-bun\] listening on http:\/\/127\.0\.0\.1:(\d+) procs=/,
+  version: async () => `elysia ${(await Bun.file(join(ROOT, 'bench/node_modules/elysia/package.json')).json()).version} · bun ${Bun.version}`,
+  distribution: async () => {
+    const n = Number.parseInt(workers(), 10)
+    return Promise.all(Array.from({ length: n }, async (_, i) => ((await (await fetch(`http://127.0.0.1:${P(40) + i}/_count`)).json()) as { count: number }).count))
+  },
+}
+
 const next: AppSpec = {
   id: 'next', label: 'Next.js 16.4.0 (standalone, Node)', cwd: join(ROOT, 'bench/apps/next'), port: P(3),
   available: () => ({ ok: true }),
@@ -105,5 +128,5 @@ const brust01x: AppSpec = {
   version: async () => (await Bun.file(join(process.env.BRUST_01X_DIR!, 'package.json')).json()).version,
 }
 
-export const APPS: Record<AppId, AppSpec> = { brust, 'bun-serve': bunServe, next, 'brust-01x': brust01x }
-export const APP_ORDER: AppId[] = ['brust', 'bun-serve', 'next', 'brust-01x']
+export const APPS: Record<AppId, AppSpec> = { brust, 'bun-serve': bunServe, next, 'brust-01x': brust01x, 'elysia-bun': elysiaBun }
+export const APP_ORDER: AppId[] = ['brust', 'bun-serve', 'next', 'brust-01x', 'elysia-bun']

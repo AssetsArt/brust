@@ -210,6 +210,21 @@ describe('team actions through Rust', () => {
     expect((await fetch(`${srv.base}/`, { method: 'POST' })).status).toBe(405)
   })
 
+  test('F87: a cross-site POST is a 403 problem from Rust and changes nothing; same-origin and Origin-less POSTs pass', async () => {
+    await reset()
+    const hdr = { 'content-type': 'application/json' }
+    const body = JSON.stringify({ id: 25 })
+    const evil = await srv.action('/team', { method: 'POST', headers: { ...hdr, origin: 'https://evil.example' }, body })
+    expect(evil.status).toBe(403)
+    expect(evil.headers.get('content-type')).toContain('application/problem+json')
+    expect(await evil.json()).toMatchObject({ title: 'CrossSiteRejected', status: 403 })
+    const form = await srv.action('/team', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'cross-site' }, body: 'id=25' })
+    expect(form.status).toBe(403)
+    expect(await roster()).toEqual([])
+    expect((await srv.action('/team', { method: 'POST', headers: { ...hdr, origin: new URL(srv.base).host.replace(/^/, 'http://') }, body })).status).toBe(200)
+    await reset()
+  })
+
   test('20 concurrent POSTs of distinct ids across 2 workers add exactly 6', async () => {
     await reset()
     const rs = await Promise.all(Array.from({ length: 20 }, (_, i) => jpost(i + 1)))

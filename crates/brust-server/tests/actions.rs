@@ -5,7 +5,7 @@ mod common;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use brust_server::{ActionsConfig, start};
+use brust_server::{ActionsConfig, CrossSite, start};
 use common::*;
 use serde_json::{Value, json};
 
@@ -117,7 +117,7 @@ fn body_over_cap_by_content_length_is_413() {
 
 #[test]
 fn chunked_body_over_cap_is_413() {
-    let (fake, s) = server(ok);
+    let (fake, s) = server_cap(ok, 262_144);
     let (status, _, body) = request_chunked(&s, "POST", URL, &[], vec![vec![b'a'; 1024]; 300]);
     assert_eq!((status, body.as_slice()), (413, &b"payload too large"[..]));
     assert_eq!(fake.fetch_count(), 0);
@@ -567,9 +567,18 @@ fn cors_action_post_is_stamped() {
 
 #[test]
 fn cors_disallowed_origin_is_processed_without_acao() {
-    // The server is not the enforcement point for a non-preflight request: the browser blocks
-    // the READ when ACAO is missing.
-    let (fake, s) = cors_server(note);
+    // With `cross_site = "allow"` the server is not the enforcement point for a non-preflight request: the
+    // browser blocks the READ when ACAO is missing. (Under the F87 default this POST is a 403: see below.)
+    let fake = fake().with_fetch(note);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig {
+            cross_site: CrossSite::Allow,
+            ..ActionsConfig::default()
+        },
+        Some(cors_policy()),
+    );
     let (status, h, _) = post_note(&s, EVIL);
     assert_eq!(status, 200);
     assert_eq!(hdr(&h, "access-control-allow-origin"), None);
@@ -747,4 +756,189 @@ fn dot_segments_and_backslashes_are_400() {
     let (status, _, _) = request_body(&s, "POST", "/_brust/action/a.b", &[], b"x".to_vec());
     assert_eq!(status, 200);
     assert_eq!(fake.fetch_count(), 1);
+}
+
+// ----- F87 / spec E10: cross-site mutating requests are refused in Rust, before the body and the worker -----
+
+fn post_with(
+    s: &brust_server::Server,
+    headers: &[(&str, &str)],
+) -> (u16, http::HeaderMap, Vec<u8>) {
+    request_body(s, "POST", ACTION, headers, br#"{"text":"hi"}"#.to_vec())
+}
+
+#[test]
+fn cross_site_post_is_403_and_the_worker_is_not_called() {
+    let (fake, s) = server(note);
+    let (st, h, b) = post_with(
+        &s,
+        &[("origin", EVIL), ("content-type", "application/json")],
+    );
+    assert_eq!(st, 403);
+    assert_eq!(hdr(&h, "content-type"), Some("application/problem+json"));
+    let v: Value = serde_json::from_slice(&b).unwrap();
+    assert_eq!(v["title"], "CrossSiteRejected");
+    assert_eq!(v["status"], 403);
+    assert!(
+        v["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("cross-site POST to an action is rejected")
+    );
+    assert_eq!(fake.fetch_count(), 0);
+    // Fetch Metadata alone (no Origin) is enough.
+    let (st, ..) = post_with(&s, &[("sec-fetch-site", "cross-site")]);
+    assert_eq!(st, 403);
+    assert_eq!(fake.fetch_count(), 0);
+}
+
+#[test]
+fn same_origin_headerless_and_get_requests_are_forwarded() {
+    let (fake, s) = server(note);
+    // `host: fx` is what the harness sends.
+    assert_eq!(post_with(&s, &[("origin", "http://fx")]).0, 200);
+    assert_eq!(post_with(&s, &[]).0, 200);
+    assert_eq!(
+        request_body(&s, "GET", ACTION, &[("origin", EVIL)], vec![]).0,
+        200
+    );
+    assert_eq!(fake.fetch_count(), 3);
+}
+
+#[test]
+fn cross_site_allow_forwards_a_foreign_post() {
+    let fake = fake().with_fetch(note);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig {
+            cross_site: CrossSite::Allow,
+            ..ActionsConfig::default()
+        },
+        None,
+    );
+    assert_eq!(post_with(&s, &[("origin", EVIL)]).0, 200);
+    assert_eq!(fake.fetch_count(), 1);
+}
+
+#[test]
+fn cross_site_cors_listed_origin_is_forwarded_and_stamped() {
+    let (fake, s) = cors_server(note);
+    let (st, h, _) = post_note(&s, ALLOWED);
+    assert_eq!(st, 200);
+    assert_eq!(hdr(&h, "access-control-allow-origin"), Some(ALLOWED));
+    assert_eq!(post_note(&s, EVIL).0, 403);
+    assert_eq!(fake.fetch_count(), 1);
+}
+
+// ---- F82: bodies larger than the slot cross by heap transfer ----
+
+fn server_resp_cap(
+    f: fn(Value) -> Vec<u8>,
+    max_response_bytes: usize,
+) -> (Arc<FakeBun>, Arc<brust_server::Server>) {
+    let fake = fake().with_fetch(f);
+    fake.set_response_cap(max_response_bytes);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        &fx(),
+        ActionsConfig {
+            max_response_bytes,
+            ..ActionsConfig::default()
+        },
+        None,
+    );
+    (fake, s)
+}
+
+#[test]
+fn body_at_threshold_is_inline_and_one_over_is_heap() {
+    let (fake, s) = server(ok);
+    let h = [("content-type", "text/plain")];
+    let at = vec![b'a'; 262_144];
+    let (status, _, _) = request_body(&s, "POST", URL, &h, at.clone());
+    assert_eq!(status, 200);
+    assert_eq!(
+        last(&fake)["body"],
+        json!({"text": String::from_utf8(at).unwrap()})
+    );
+    assert_eq!(fake.last_fetch_body(), None);
+    let over = vec![b'b'; 262_145];
+    let (status, _, _) = request_body(&s, "POST", URL, &h, over.clone());
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["body"], json!({"heap": 262_145}));
+    assert_eq!(fake.last_fetch_body().as_deref(), Some(&over[..]));
+}
+
+#[test]
+fn heap_body_binary_is_lossless() {
+    let (fake, s) = server(ok);
+    let bin: Vec<u8> = (0..300 * 1024).map(|i| (i % 251) as u8).collect();
+    let h = [("content-type", "application/octet-stream")];
+    let (status, _, _) = request_body(&s, "POST", URL, &h, bin.clone());
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["body"], json!({"heap": bin.len()}));
+    assert_eq!(fake.last_fetch_body().as_deref(), Some(&bin[..]));
+}
+
+#[test]
+fn response_over_slot_crosses_by_heap() {
+    let (_fake, s) = server(|_| {
+        frame(
+            200,
+            &[
+                ("content-type", "application/octet-stream"),
+                ("set-cookie", "a=1"),
+                ("set-cookie", "b=2"),
+            ],
+            &vec![7u8; 1 << 20],
+        )
+    });
+    let (status, h, body) = request_body(&s, "GET", URL, &[], Vec::<u8>::new());
+    assert_eq!(status, 200);
+    assert_eq!(body, vec![7u8; 1 << 20]);
+    let cookies: Vec<&str> = h
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap())
+        .collect();
+    assert_eq!(cookies, ["a=1", "b=2"]);
+    assert_eq!(hdr(&h, "content-length"), Some("1048576"));
+}
+
+#[test]
+fn heap_reply_over_max_response_bytes_is_declined() {
+    let (_fake, s) = server_resp_cap(
+        |_| frame(200, &[("content-type", "text/plain")], &vec![b'x'; 300_000]),
+        262_144,
+    );
+    let (status, h, body) = get(&s, URL, &[]);
+    assert_eq!(
+        (status, body.as_str()),
+        (500, "brust: action response exceeds 262144 bytes")
+    );
+    assert_eq!(hdr(&h, "content-type"), Some("text/plain; charset=utf-8"));
+}
+
+#[test]
+fn heap_meta_without_reply_is_500() {
+    let (_fake, s) = server(|_| {
+        let meta = br#"{"status":200,"heap":10}"#;
+        let mut f = (meta.len() as u32).to_le_bytes().to_vec();
+        f.extend_from_slice(meta);
+        f
+    });
+    let (status, _, body) = get(&s, URL, &[]);
+    assert_eq!((status, body.as_str()), (500, "500 Internal Server Error"));
+}
+
+#[test]
+fn put_fetch_reply_declines_outside_a_fetch_call() {
+    let (fake, s) = server(ok);
+    let id = fake.worker_id();
+    // Idle slot (no call in flight), then an unknown worker.
+    assert!(!brust_server::put_fetch_reply(&s, id, 0, b"x"));
+    assert!(!brust_server::put_fetch_reply(&s, id + 99, 0, b"x"));
+    assert_eq!(brust_server::take_fetch_body(&s, id, 0), None);
+    assert_eq!(brust_server::take_fetch_body(&s, id + 99, 0), None);
 }

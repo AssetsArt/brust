@@ -4,18 +4,20 @@
 // `server_only` is the app config `serverOnly` of the compiler spec (§8.2): the compiler refuses
 // such an import in client code, and every browser bundle refuses to include it.
 import { join } from 'node:path'
-import { DEFAULT_ACTION_PREFIX, DEFAULT_MAX_BODY_BYTES, prefixError } from '../actions/prefix'
+import { DEFAULT_ACTION_PREFIX, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, MAX_ACTION_BYTES, prefixError } from '../actions/prefix'
 import { BuildError } from './errors'
 
-// [actions] (opt-in, ruling R6): present table => actions on. Crosses napi as u32.
+// [actions] (opt-in, ruling R6): present table => actions on. Both byte caps cross napi as u32 (F82: 1..64 MiB / 256 KiB..64 MiB).
 //   [actions]
-//   entry = "actions.ts"   prefix = "/_brust/action"   max_body_bytes = 262144
-const MAX_U32 = 0xffff_ffff
+//   entry = "actions.ts"   prefix = "/_brust/action"   max_body_bytes = 1048576  max_response_bytes = 8388608   cross_site = "reject" | "allow" (F87)
+const MIN_RESPONSE_BYTES = 262_144
 
 export interface ActionsBuildConfig {
   entry: string
   prefix: string
   maxBodyBytes: number
+  maxResponseBytes: number
+  crossSite: 'reject' | 'allow'
 }
 
 export interface BuildConfig {
@@ -41,11 +43,23 @@ function parseActions(file: string, raw: unknown): ActionsBuildConfig | null {
   let maxBodyBytes = DEFAULT_MAX_BODY_BYTES
   if (t.max_body_bytes !== undefined) {
     const n = t.max_body_bytes
-    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > MAX_U32)
-      throw new BuildError('config', `${file}: actions.max_body_bytes must be an integer in 1..${MAX_U32} (got ${String(n)})`)
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > MAX_ACTION_BYTES)
+      throw new BuildError('config', `${file}: actions.max_body_bytes must be an integer in 1..${MAX_ACTION_BYTES} (got ${String(n)})`)
     maxBodyBytes = n
   }
-  return { entry, prefix, maxBodyBytes }
+  let maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES
+  if (t.max_response_bytes !== undefined) {
+    const n = t.max_response_bytes
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < MIN_RESPONSE_BYTES || n > MAX_ACTION_BYTES)
+      throw new BuildError('config', `${file}: actions.max_response_bytes must be an integer in ${MIN_RESPONSE_BYTES}..${MAX_ACTION_BYTES} (got ${String(n)})`)
+    maxResponseBytes = n
+  }
+  let crossSite: 'reject' | 'allow' = 'reject'
+  if (t.cross_site !== undefined) {
+    if (t.cross_site !== 'reject' && t.cross_site !== 'allow') throw new BuildError('config', `${file}: actions.cross_site must be "reject" or "allow"`)
+    crossSite = t.cross_site
+  }
+  return { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite }
 }
 
 const DEFAULT_ENTRY = 'actions.ts'

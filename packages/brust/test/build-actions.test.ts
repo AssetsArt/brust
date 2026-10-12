@@ -91,7 +91,7 @@ test('an app with [actions] gets manifest.actions and dist/actions.js', async ()
   const out = join(dir, 'dist')
   await build(dir, out)
   const m = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))
-  expect(m.actions).toEqual({ entry: 'actions.js', prefix: '/api', maxBodyBytes: 1024 })
+  expect(m.actions).toEqual({ entry: 'actions.js', prefix: '/api', maxBodyBytes: 1024, maxResponseBytes: 8388608, crossSite: 'reject' })
   expect(existsSync(join(out, 'actions.js'))).toBe(true)
 }, 60_000)
 

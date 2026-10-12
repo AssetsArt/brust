@@ -1,13 +1,13 @@
-# bench — brust v2 vs Bun.serve vs Next.js 16.4 vs brust 0.1.x
+# bench — brust v2 vs Bun.serve vs Next.js 16.4 vs brust 0.1.x, and Elysia 2 behind brust vs Elysia on Bun
 
-Three pages, four servers, one `oha`. `bench/run.ts` builds every app in production mode, checks the pages are the
+Three pages, four servers, one `oha` — plus two Elysia action probes (A1/A2, below). `bench/run.ts` builds every app in production mode, checks the pages are the
 SAME page (parity), then measures each (app, probe) on a freshly started server and writes `RESULTS.json` +
-`RESULTS.md` from the numbers alone (spec: `docs/design/2026-10-10-m3-perf-bench-design.md` §1).
+`RESULTS.md` from the numbers alone (spec: `docs/design/2026-10-10-m3-perf-bench-design.md` §1). The header names the machine model, chip, RAM, core count and platform/arch — never the hostname (repo rule).
 
 ```bash
 cd packages/brust && bun run build                 # RELEASE addon (not build:debug) — the runner cannot tell
 bun install                                        # once: pulls next@16.4.0 into the workspace
-BRUST_RELEASE_ADDON=1 bun run bench                # brust · bun-serve · next (0.1.x skipped)
+BRUST_RELEASE_ADDON=1 bun run bench                # brust · bun-serve · next · elysia-bun (0.1.x skipped); probes S,D,I,A1,A2
 BRUST_RELEASE_ADDON=1 BRUST_01X_DIR=/path/to/0.1.x bun run bench      # + 0.1.x → the F68 line is measured
 bun bench/run.ts --apps brust,next --probes D --dur 3s --enc identity --seed 7   # a quick partial run
 ```
@@ -22,6 +22,8 @@ for 0.1.x its release addon (`cd $BRUST_01X_DIR/runtime && bun run build`).
 | S | `/types` | 18 type tiles, cacheable | L1 HIT after the first request (`cache: { ttl_seconds: 3600 }`) | static (prerendered) |
 | D | `/dex?nocache=1` | loader reads `apps/_shared/data.json`, 151 rows, a `TypeBadge` per type | `bypass: 'query(nocache)'` → loader every request, jobs from the job cache | `dynamic = 'force-dynamic'` |
 | I | `/team?nocache=1` | one interactive `Counter` island (`useReducer`) | react tier: `ssr` job + idle hydration | `'use client'` in a dynamic page |
+| A1 | `GET /_brust/action/types` | the 18 `data.types` rows as JSON from one Elysia 2 route | `[actions]` entry, `brust()` adapter, answered through Rust and the worker `fetch` call kind | — (see Actions) |
+| A2 | `POST /_brust/action/team` body `{"id":25}` | TypeBox-validated `{ id: number }` → `{ ok: true, id }` | same | — (see Actions) |
 
 `?nocache=1` is honoured by brust only; the other servers never cache. The markup contract is
 `apps/_shared/pages.md`; the data is `apps/_shared/data.json` (regenerate with `bun bench/apps/_shared/gen-data.ts`).
@@ -40,6 +42,33 @@ for 0.1.x its release addon (`cd $BRUST_01X_DIR/runtime && bun run build`).
 - Parity runs before any load: `<main>` of every page is normalized (scripts/links/styles/comments dropped, island
   wrappers unwrapped, attributes ignored, whitespace collapsed) and compared by tag sequence + text; a mismatch aborts.
 
+## Actions (A1/A2)
+
+The same Elysia 2 app answers both probes on two stacks, so the route code is byte-identical:
+`apps/_shared/actions-app.ts` (`GET /types`, `POST /team`), imported by `apps/brust/actions.ts` (the `[actions]` entry,
+`brust()` adapter: Rust HTTP → worker `fetch` call kind → `app.fetch`) and by `apps/elysia-bun/index.ts` (Elysia's
+default Bun adapter, `app.listen`). Only `brust` (shown as `elysia-brust` in the Actions tables) and `elysia-bun` run A1/A2; the runner builds (app, probe) pairs from
+`Probe.apps`, so `elysia-bun` never gets S/D/I.
+
+- Same URL on both: `elysia-bun` mounts the app under `/_brust/action`, the exact shape brust's worker builds
+  (`new Elysia({ adapter: brust(), prefix }).use(app)`), so both route the same path through the same plugin tree.
+- Measured at `oha -c 120 -z 10s` and again at `-c 1`, identity only. A-probe parity is equal parsed JSON bodies (status
+  200, `application/json`), also checked against the expected value, so two equally wrong apps fail.
+- Handlers are functions on both routes: Elysia's Bun adapter promotes a non-function handler to a native `Bun.serve`
+  static route that runs no JS per request, and the `brust()` adapter never does. A value handler would compare Bun's
+  native static path against a JS handler, so that path is deliberately not exercised.
+- Budgets are not CPU-equal: brust = Rust tokio threads (= cores) + N Bun workers; elysia-bun = N Bun processes on one
+  port. The brust side crosses one extra hop (Rust → napi → worker → Rust) that the Bun side does not have: that hop is
+  what the c=1 p50 delta shows.
+- `reusePort` on macOS does not balance: `elysia-bun` gets the same `/_count` balance check as bun-serve (5% minimum
+  share, read after the c=120 row and before c=1), and an unbalanced row is labelled `1-proc` in RESULTS.md next to the
+  numbers. On such a host the elysia-bun row is in practice a single-process measurement.
+- Skipped on A: `next` (no Elysia; a Route Handler would be different code), `bun-serve` (the no-framework page
+  ceiling), `brust-01x` (0.1.x actions are `defineActions`, not Elysia).
+- `RESULTS.json` carries the A rows in a separate top-level `actions` block (`{ header, measurements[] }`, rows carry
+  `conn`); `writeResults` merges into the existing file and replaces only the blocks the run measured, so an A-only run
+  leaves `.header`/`.measurements` (F68, m2-exit) byte-identical.
+
 ## Host lock and ports
 
 Measurements on the shared host are serialised (lead rule `bench-host-lock`), in two layers, always on for `bun run bench`:
@@ -49,7 +78,7 @@ stale) and, with `BENCH_LOCK_WS=<workspace id>` + `BENCH_LOCK_ID='<slug> <agent>
 if still ours). Only the load phase is under the lock; the holder aborts itself after 20 min. The guards run twice
 (before the builds and again right before the load): 1- and 5-minute load average must not exceed the core count.
 Every row must be a clean measurement: a non-200 status or any transport error fails the run (exit 1).
-Ports are `BENCH_PORT_BASE` (default 38300) + 1 brust, 2 bun-serve, 3 next, 4 brust-01x; the old M2 runner owns
+Ports are `BENCH_PORT_BASE` (default 38300) + 1 brust, 2 bun-serve, 3 next, 4 brust-01x, 5 elysia-bun (control ports: bun-serve +20…, elysia-bun +40…); the old M2 runner owns
 38201-38204. Apps are spawned in their own process group and `stop()` signals only that group; `startApp` refuses a busy
 port by name and never kills a process it did not spawn. Probe order is seeded, apps are interleaved within each probe.
 
@@ -78,6 +107,14 @@ bar F68  : v2 vs 0.1.x  D +x.x%  I +y.y%   → MET / NOT MET        minimum bar:
 sanity   : v2 vs next   S ×a  D ×b  I ×c   → MET / NOT MET (≥ 2×)  v2 at least twice Next.js on every probe
 ceiling  : v2 / bun-serve  D p%  I q%        (target D ≥ 80%)      raw Bun.serve is the reference ceiling
 ```
+
+The Actions section adds one table per A probe (rows = app × connection count) and a verdict line:
+
+```
+actions  : elysia-brust / elysia-bun (c=120)  A1 x%  A2 y%   · c=1 p50 elysia-brust − elysia-bun  A1 +n µs  A2 +m µs
+```
+
+(elysia-brust is the `brust` app serving the Elysia routes — S/D/I rows keep the name `brust`; its rps as a percentage of elysia-bun's at c=120; the c=1 p50 difference is the per-request cost of the hop.)
 
 `errors` excludes oha's "aborted due to deadline" (requests cut by `-z`, not failures); the raw oha JSON is in
 `RESULTS.json`. macOS numbers are not Linux numbers.
