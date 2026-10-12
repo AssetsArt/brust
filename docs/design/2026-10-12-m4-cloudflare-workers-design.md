@@ -342,6 +342,8 @@ The app author needs only `wrangler`.
 ## 5. Caching and store semantics on Workers
 
 > **Runtime-scope rule (human, 2026-10-12): the brust runtime on Cloudflare depends on Workers only.** brust ships no Durable Object, KV or D1 of its own. Cross-isolate invalidation is therefore an OPTIONAL app-provided hook (`install(rt)` may pass `epoch: { since, publish }`; brust-wasm keeps only the cursor/replay logic, lane `m4cf-epoch-hook`). Without a hook, invalidation is isolate-local and a cached page may be served stale up to its `ttl` by other isolates — documented, with the advice to keep `ttl` short on Workers. A Durable Object epoch implementation is provided as a copy-paste EXAMPLE (user code) in `docs/cloudflare.md` and in the pokedex example. R5's "lane 7 required" is amended accordingly: the hook is required, the DO is not.
+>
+> **Amendment (human, 2026-10-12, later the same day): cache ADAPTERS.** The hook becomes a general `CacheAdapter` interface (user-implementable) with built-in adapters shipped as OPT-IN packages: Redis/Dragonfly (`@brust/cache-redis`), Cloudflare KV and Durable Object (`@brust/cache-cloudflare`). The runtime itself still depends on Workers only; an app that opts into the Cloudflare adapters declares the bindings in its own `wrangler.jsonc` (the build verifies and prints the snippet). Spec: `docs/design/2026-10-12-cache-adapter-design.md`.
 
 
 | Concern | Native (`brust start`) | Workers | Delta to document |
