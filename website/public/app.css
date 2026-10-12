@@ -427,3 +427,42 @@ footer.site p { margin-top: .5rem }
 @keyframes drift-x { to { transform: translateX(22px) } }
 @keyframes glide { to { transform: translate(26px, -8px) } }
 @keyframes sunrise { from { transform: translateY(2.5rem); opacity: 0 } }
+
+/* ===== guide pages (site-docs-guide): tables, ordered lists, and the live demos inside .browser frames ===== */
+.doc ol { margin: 0; padding-left: 1.4rem } .doc ol li { margin: .3rem 0 }
+.doc table { width: 100%; max-width: 68ch; border-collapse: collapse; font-size: 15px; display: block; overflow-x: auto }
+.doc th, .doc td { text-align: left; vertical-align: top; padding: .5rem .75rem .5rem 0; border-bottom: 1px solid var(--rule) }
+.doc th { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--ink-2); border-bottom-color: var(--ink) }
+.doc .browser .vp { min-height: 0 }
+.doc .browser .vp.nvp { padding: 1.25rem }
+.cmd { margin: .75rem 0 0; background: var(--term); color: var(--term-fg); border: 1px solid var(--term-rule); border-radius: 2px; padding: .8rem 1rem; font-size: 13px; line-height: 1.6; overflow-x: auto }
+.choices { border: 0; margin: 0 0 .75rem; padding: 0; display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; align-items: center }
+.choices legend { font-family: var(--mono); font-size: 12px; color: var(--ink-2); padding: 0; margin-bottom: .35rem; width: 100% }
+.choice { display: inline-flex; align-items: center; gap: .4rem; font-size: 15px; cursor: pointer }
+.choice img { image-rendering: pixelated }
+.choice input { accent-color: var(--amber-fill) }
+.tree { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 1rem; align-items: start }
+.tree-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .15rem; font-family: var(--mono); font-size: 13px }
+.tree-list button { font: inherit; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 2px; color: var(--ink-2); padding: .25rem .5rem; cursor: pointer }
+.tree-list button:hover { color: var(--ink) }
+.tree-list button[aria-pressed="true"] { color: var(--ink); background: var(--paper); border-color: var(--rule) }
+.tree-role p { font-size: 15px }
+.matcher, .builder, .probe, .picker, .switch { display: grid; gap: .75rem; min-width: 0 }
+.matcher .shipbar { border: 1px solid var(--rule) }
+.fields { display: flex; flex-wrap: wrap; gap: .75rem 1rem; align-items: end }
+.fields label { display: grid; gap: .25rem; font-family: var(--mono); font-size: 12px; color: var(--ink-2) }
+.fields .demo-in { width: 8rem }
+.fields label.sw { display: inline-flex; font-family: var(--text); font-size: 14.5px; color: var(--ink) }
+.sig-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; font-size: 13px }
+.sig-list code { overflow-wrap: anywhere }
+.sig-list .hint { color: var(--ink-2) }
+.picker .demo-list li { gap: .5rem }
+.picker .demo-btn, .team-island .demo-btn { padding: .35rem .7rem; font-size: 14px }
+.picker .demo-btn:disabled { opacity: .6; cursor: default }
+.team-badge { font-size: 1.1rem } .team-badge b { font-family: var(--display); font-size: 1.6rem; font-weight: 400 }
+.team-island { display: grid; gap: .75rem }
+.team-island .demo-list button { margin-left: auto }
+.switch .tabs button { padding: .55rem 1rem }
+.switch [role="tabpanel"] { padding-top: .75rem }
+.demo-page { padding-block: 2rem; display: grid; gap: 1rem; max-width: 40rem }
+@media (max-width: 560px) { .tree { grid-template-columns: 1fr } }
