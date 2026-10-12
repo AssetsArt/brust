@@ -1,43 +1,42 @@
-# bench — 2026-10-11
+# bench — 2026-10-12
 
-MacBook Pro · Apple M1 Pro · 16 GB · 10 cores · darwin/arm64 · bun 1.4.3 · oha 1.11.0 · node v22.23.1 · brust 0.0.0 @ 97b944a · bun-serve 1.4.3 · next 16.4.0 · brust-01x 0.1.69-alpha · seed 722459264 · `oha -c 120 -z 10s` · settle 1000 ms + warm-up 3s discarded · budgets brust workers=10, bun-serve procs=10, next procs=1 (as shipped), brust-01x workers=10 · load 5.7 8.5 10.3 (10 cores) · order bun-serve:S next:S brust:S brust-01x:S next:D bun-serve:D brust-01x:D brust:D brust:I brust-01x:I bun-serve:I next:I
+MacBook Pro · Apple M1 Pro · 16 GB · 10 cores · darwin/arm64 · bun 1.4.3 · oha 1.11.0 · node v22.23.1 · brust 2.0.0-alpha.2 @ daaea0a · bun-serve 1.4.3 · next 16.4.0 · seed 809326034 · `oha -c 120 -z 10s` · settle 1000 ms + warm-up 3s discarded · budgets brust workers=10, bun-serve procs=10, next procs=1 (as shipped) · load 8.9 6.9 5.6 (10 cores) · order bun-serve:D brust:D next:D brust:S next:S bun-serve:S brust:I next:I bun-serve:I
+
+skipped: brust-01x (BRUST_01X_DIR unset)
 
 ## S — `/types`
 
 | app | rps | p50 ms | p95 ms | p99 ms | errors | bytes/resp | gzip rps | gzip p50 | gzip p99 | gzip bytes/resp |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| brust | 113,744 | 1.05 | 1.19 | 1.29 | 0 | 1,703 | 114,219 | 1.04 | 1.28 | 1,703 |
-| bun-serve | 32,545 | 3.66 | 3.97 | 4.38 | 0 | 1,669 | 32,650 | 3.66 | 4.31 | 1,669 |
-| next | 6,984 | 16.89 | 18.13 | 25.05 | 0 | 9,512 | 5,671 | 20.75 | 28.77 | 2,484 |
-| brust-01x | 113,549 | 1.05 | 1.19 | 1.32 | 0 | 1,807 | 113,425 | 1.05 | 1.34 | 1,807 |
+| brust | 110,974 | 1.06 | 1.24 | 1.55 | 0 | 1,703 | 112,510 | 1.05 | 1.46 | 1,703 |
+| bun-serve | 31,420 | 3.69 | 4.40 | 7.56 | 0 | 1,669 | 31,459 | 3.71 | 7.29 | 1,669 |
+| next | 6,658 | 17.70 | 19.23 | 25.56 | 0 | 9,512 | 5,406 | 21.58 | 31.34 | 2,487 |
 
 ## D — `/dex?nocache=1`
 
 | app | rps | p50 ms | p95 ms | p99 ms | errors | bytes/resp | gzip rps | gzip p50 | gzip p99 | gzip bytes/resp |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| brust | 13,759 | 8.32 | 15.37 | 20.10 | 0 | 21,756 | 13,439 | 8.57 | 19.22 | 2,772 |
-| bun-serve | 4,689 | 25.42 | 26.98 | 28.61 | 0 | 21,730 | 4,760 | 25.05 | 28.27 | 21,730 |
-| next | 276 | 377.83 | 434.14 | 4641.43 | 0 | 79,885 | 274 | 433.09 | 1998.02 | 7,974 |
-| brust-01x | 12,751 | 8.24 | 17.01 | 23.91 | 0 | 21,860 | 12,940 | 8.08 | 23.94 | 21,860 |
+| brust | 13,980 | 8.24 | 14.92 | 19.06 | 0 | 21,756 | 13,169 | 8.74 | 20.00 | 2,772 |
+| bun-serve | 4,614 | 25.61 | 27.29 | 44.81 | 0 | 21,730 | 4,701 | 25.40 | 27.63 | 21,730 |
+| next | 273 | 384.63 | 439.96 | 4712.53 | 0 | 79,885 | 271 | 437.63 | 2052.96 | 7,975 |
 
 ## I — `/team?nocache=1`
 
 | app | rps | p50 ms | p95 ms | p99 ms | errors | bytes/resp | gzip rps | gzip p50 | gzip p99 | gzip bytes/resp |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| brust | 104,889 | 1.12 | 1.53 | 2.15 | 0 | 781 | 105,037 | 1.12 | 2.17 | 781 |
-| bun-serve | 45,633 | 2.58 | 2.97 | 3.36 | 0 | 459 | 45,566 | 2.58 | 3.49 | 459 |
-| next | 1,208 | 95.04 | 112.00 | 123.12 | 0 | 5,931 | 1,120 | 106.19 | 119.75 | 2,086 |
-| brust-01x | 102,550 | 1.07 | 2.03 | 3.00 | 0 | 1,004 | 103,536 | 1.07 | 2.91 | 1,004 |
+| brust | 91,850 | 1.19 | 2.10 | 3.68 | 0 | 781 | 100,926 | 1.14 | 2.58 | 781 |
+| bun-serve | 45,780 | 2.56 | 3.01 | 4.64 | 0 | 459 | 45,711 | 2.56 | 4.39 | 459 |
+| next | 1,155 | 99.63 | 118.82 | 136.38 | 0 | 5,931 | 1,080 | 110.28 | 131.23 | 2,089 |
 
 ```
-bar F68  : v2 vs 0.1.x  D +7.9%  I +2.3%   → MET
-sanity   : v2 vs next   S ×16.3  D ×49.9  I ×86.8   → MET (≥ 2×)
-ceiling  : v2 / bun-serve (1-proc: reusePort did not balance)  D 293.4%  I 229.9%        (target D ≥ 80%)
+bar F68  : v2 vs 0.1.x  D —  I —   → NOT MEASURED
+sanity   : v2 vs next   S ×16.7  D ×51.2  I ×79.6   → MET (≥ 2×)
+ceiling  : v2 / bun-serve (1-proc: reusePort did not balance)  D 303.0%  I 200.6%        (target D ≥ 80%)
 ```
 
 ## Actions
 
-MacBook Pro · Apple M1 Pro · 16 GB · 10 cores · darwin/arm64 · bun 1.4.3 · oha 1.11.0 · node v22.23.1 · brust 0.0.0 @ 1944dfb · elysia-bun elysia 2.0.0-beta.30 · bun 1.4.3 · seed 1012 · `oha -c 120 / 1 -z 10s`, identity only · settle 1000 ms + warm-up 3s discarded per row · budgets brust workers=10, elysia-bun procs=10 · load 8.8 9.1 14.4 (10 cores) · order brust:A2 elysia-bun:A2 elysia-bun:A1 brust:A1
+MacBook Pro · Apple M1 Pro · 16 GB · 10 cores · darwin/arm64 · bun 1.4.3 · oha 1.11.0 · node v22.23.1 · brust 2.0.0-alpha.2 @ daaea0a · elysia-bun elysia 2.0.0-beta.30 · bun 1.4.3 · seed 809326034 · `oha -c 120 / 1 -z 10s`, identity only · settle 1000 ms + warm-up 3s discarded per row · budgets brust workers=10, elysia-bun procs=10 · load 8.9 6.9 5.6 (10 cores) · order brust:A2 elysia-bun:A2 brust:A1 elysia-bun:A1
 
 elysia-bun reusePort balance: 1-proc (the load landed on one copy). macOS does not balance SO_REUSEPORT, so on this host the elysia-bun row is in practice a single-process measurement; read it against elysia-brust's 10 workers + tokio threads accordingly.
 
@@ -45,22 +44,22 @@ elysia-bun reusePort balance: 1-proc (the load landed on one copy). macOS does n
 
 | app | conn | rps | p50 ms | p95 ms | p99 ms | errors | bytes/resp |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| elysia-brust | c=120 | 101,274 | 1.169 | 1.393 | 1.747 | 0 | 913 |
-| elysia-brust | c=1 | 14,787 | 0.065 | 0.095 | 0.128 | 0 | 913 |
-| elysia-bun | c=120 | 80,078 | 1.492 | 1.708 | 2.868 | 0 | 913 |
-| elysia-bun | c=1 | 27,599 | 0.035 | 0.042 | 0.056 | 0 | 913 |
+| elysia-brust | c=120 | 98,741 | 1.150 | 1.794 | 3.041 | 0 | 913 |
+| elysia-brust | c=1 | 13,212 | 0.070 | 0.103 | 0.132 | 0 | 913 |
+| elysia-bun | c=120 | 79,715 | 1.495 | 1.813 | 2.946 | 0 | 913 |
+| elysia-bun | c=1 | 24,409 | 0.037 | 0.061 | 0.087 | 0 | 913 |
 
 ### A2 — `POST /_brust/action/team`
 
 | app | conn | rps | p50 ms | p95 ms | p99 ms | errors | bytes/resp |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| elysia-brust | c=120 | 102,438 | 1.127 | 1.646 | 2.653 | 0 | 19 |
-| elysia-brust | c=1 | 12,935 | 0.073 | 0.102 | 0.125 | 0 | 19 |
-| elysia-bun | c=120 | 69,347 | 1.714 | 1.933 | 3.229 | 0 | 19 |
-| elysia-bun | c=1 | 24,979 | 0.038 | 0.047 | 0.071 | 0 | 19 |
+| elysia-brust | c=120 | 105,221 | 1.048 | 1.893 | 3.235 | 0 | 19 |
+| elysia-brust | c=1 | 12,110 | 0.077 | 0.110 | 0.139 | 0 | 19 |
+| elysia-bun | c=120 | 67,249 | 1.751 | 2.088 | 3.407 | 0 | 19 |
+| elysia-bun | c=1 | 20,531 | 0.042 | 0.076 | 0.111 | 0 | 19 |
 
 ```
-actions  : elysia-brust / elysia-bun (1-proc: reusePort did not balance) (c=120)  A1 126.5%  A2 147.7%   · c=1 p50 elysia-brust − elysia-bun  A1 +30 µs  A2 +36 µs
+actions  : elysia-brust / elysia-bun (1-proc: reusePort did not balance) (c=120)  A1 123.9%  A2 156.5%   · c=1 p50 elysia-brust − elysia-bun  A1 +33 µs  A2 +35 µs
 ```
 
 Generated by `bun run bench` (`bench/run.ts`) from `RESULTS.json`; method and reading guide in `bench/README.md`.
