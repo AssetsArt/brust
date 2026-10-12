@@ -6,7 +6,7 @@ mod common;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use brust_server::{InvalidateArgs, Server};
+use brust_server::{InvalidateArgs, Server, start};
 use common::*;
 use serde_json::{Value, json};
 
@@ -188,4 +188,100 @@ fn an_invalidation_during_the_loader_keeps_that_render_out_of_l1() {
     );
     assert_eq!(f.counts().0, 2);
     assert_eq!(stats(&s)["l1"]["len"], 1);
+}
+
+/// An unbound fake: registered by hand, so it ignores the plan offer (the two-call path).
+fn boot_unbound(f: Arc<FakeBun>, dir: &std::path::Path) -> Arc<Server> {
+    let s = start(config(dir)).expect("start");
+    s.register_worker(Box::new(FakeBunHandle(f)));
+    s
+}
+
+/// F89: the first `jobs` batch invalidates `moveCard`'s `cache({key})` value (by key, or by its
+/// `moves` tag) while it computes it. That value was computed before the invalidation, so it must
+/// not land in the job cache: the next page recomputes it, and the recomputed value then caches.
+/// The page that raced the invalidation stays out of L1 too (R5). Planned and unplanned paths.
+#[test]
+fn a_job_invalidated_during_its_call_is_recomputed_by_the_next_page() {
+    for (planned, by_key) in [(true, true), (false, true), (true, false), (false, false)] {
+        let at = format!("planned={planned} by_key={by_key}");
+        let d = temp_dist(|m| {
+            m["components"]["moveCard_d4"]["jobs"][0]["cache"]["key"] = json!("move.name");
+        });
+        let srv: Arc<OnceLock<Arc<Server>>> = Default::default();
+        let (nb, srv2) = (Arc::new(AtomicU32::new(0)), Arc::clone(&srv));
+        let jobs = move |req: Value| {
+            let b = nb.fetch_add(1, Ordering::SeqCst) + 1;
+            if b == 1 {
+                srv2.get().unwrap().invalidate(if by_key {
+                    InvalidateArgs {
+                        key: Some("tackle".into()),
+                        ..Default::default()
+                    }
+                } else {
+                    InvalidateArgs {
+                        tags: vec!["moves".into()],
+                        ..Default::default()
+                    }
+                });
+            }
+            let results: Vec<Value> = req["jobs"]
+                .as_array()
+                .expect("jobs array")
+                .iter()
+                .map(|c| {
+                    let mut r = default_job(c);
+                    if c["componentId"] == "moveCard_d4" {
+                        let name = c["inputs"]["move"]["name"].as_str().unwrap_or("?");
+                        r["value"]["_s1"] = json!(format!("MOVE {name} b{b}"));
+                    }
+                    r
+                })
+                .collect();
+            json!({ "results": results })
+        };
+        let f = FakeBun::new(default_loader, jobs);
+        let s = if planned {
+            boot_in(f.clone(), d.path())
+        } else {
+            boot_unbound(f.clone(), d.path())
+        };
+        assert!(srv.set(Arc::clone(&s)).is_ok());
+        // Advance the clock through L1 only: a job cache on its own clock would then let the
+        // racing insert through, so this pins the shared wiring.
+        for _ in 0..3 {
+            s.invalidate(InvalidateArgs {
+                path: Some("/nowhere".into()),
+                ..Default::default()
+            });
+        }
+        let (st, _, b) = get(&s, "/pokemon/pikachu", &[]);
+        assert_eq!(st, 200, "{at}: {b}");
+        assert!(b.contains("tackle: MOVE tackle b1"), "{at}: {b}");
+        let (_, _, b) = get(&s, "/pokemon/raichu", &[]);
+        assert!(
+            b.contains("tackle: MOVE tackle b2"),
+            "{at}: the stale value was cached: {b}"
+        );
+        assert_eq!(f.counts().1, 2, "{at}");
+        let last = f.last_jobs().expect("a jobs call");
+        assert!(
+            last["jobs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["inputs"]["move"]["name"] == "tackle"),
+            "{at}: {last}"
+        );
+        let (_, _, b) = get(&s, "/pokemon/mew", &[]);
+        assert!(b.contains("tackle: MOVE tackle b2"), "{at}: {b}");
+        assert_eq!(f.counts().1, 2, "{at}: the recomputed value cached");
+        let (_, h, b) = get(&s, "/pokemon/pikachu", &[]);
+        assert_eq!(
+            cache_hdr(&h),
+            Some("MISS"),
+            "{at}: the racing page was stored in L1"
+        );
+        assert!(b.contains("tackle: MOVE tackle b2"), "{at}: {b}");
+    }
 }

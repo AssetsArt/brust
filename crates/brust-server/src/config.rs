@@ -243,6 +243,8 @@ pub struct Server {
     pub(crate) renderer: Renderer,
     pub(crate) l1: L1Cache,
     pub(crate) jobs: JobCache,
+    /// The invalidation clock `l1` and `jobs` are built on (F89): one read stamp per page.
+    pub(crate) clock: Arc<crate::cache::stamp::InvalClock>,
     pub(crate) dist_dir: PathBuf,
     /// M3-P P7: striped (one cache line per stripe) — bumped on every loader page.
     pub(crate) loader_calls: crate::cache::l1::StripedCounter,
@@ -303,6 +305,8 @@ impl Server {
     /// through the job cache's user-key index); `tags` → both caches; `path` (+
     /// `method`, default `GET`) → L1 entries for that path, any query/prefix.
     /// L1 pages built from an invalidated job value are NOT evicted by `key`.
+    /// A job value computed by a call that began before the invalidation is not
+    /// cached, and its page is not stored in L1 (F89).
     pub fn invalidate(&self, args: InvalidateArgs) -> InvalidateResult {
         let mut r = InvalidateResult::default();
         if let Some(k) = &args.key {
