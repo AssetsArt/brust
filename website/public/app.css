@@ -61,6 +61,7 @@ code, pre, kbd { font-family: var(--mono) }
 .muted { color: var(--ink-2) }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
 p code, li code, dd code { font-size: .88em; background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; padding: .05rem .3rem }
+pre code { background: none; border: 0; padding: 0; font-size: inherit; border-radius: 0 }
 .th { font-family: var(--display); font-weight: 400; font-size: 1.2rem; color: var(--ink); margin: 0 0 .9rem; line-height: 1.5 }
 
 /* ===== header ===== */

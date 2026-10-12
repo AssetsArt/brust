@@ -3,7 +3,7 @@ import { defineRoutes } from '@brust/core/routes'
 import DocsLayout, { docsLayoutLoader } from './components/docs/DocsLayout'
 import Layout, { layoutLoader } from './components/Layout'
 import { DOCS_HOME, PAGES } from './lib/nav'
-import HomePage from './pages/HomePage'
+import HomePage, { homeLoader } from './pages/HomePage'
 import NotFoundPage from './pages/NotFoundPage'
 import DemoPokemonPage, { demoPokemonLoader } from './components/demos/DemoPokemonPage'
 // brust build maps each route Component to its file through the DEFAULT imports of this file, so every docs page
@@ -42,7 +42,7 @@ export const routes = defineRoutes([
     Component: Layout,
     loader: layoutLoader,
     children: [
-      { path: '/', Component: HomePage },
+      { path: '/', Component: HomePage, loader: homeLoader },
       // Demo block (site-docs-guide): a cached route with a param, fetched by the Caching page and linked from Loaders.
       {
         path: '/demo/pokemon/{name}',
