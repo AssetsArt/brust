@@ -6,7 +6,7 @@ import { BuildError, runBuild } from './build'
 import { run } from './run'
 
 const USAGE = `usage:
-  brust build [entry=routes.tsx] [--out-dir dist] [--force]
+  brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare] [--wasm-from-source]
   brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
 
 Config precedence for start: env (BRUST_ADDR, BRUST_PORT, BRUST_WORKERS, BRUST_RENDER_SLOTS,
@@ -46,6 +46,8 @@ export async function main(argv: string[]): Promise<void> {
         port: { type: 'string' },
         workers: { type: 'string' },
         force: { type: 'boolean' },
+        target: { type: 'string' },
+        'wasm-from-source': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     })
@@ -58,6 +60,8 @@ export async function main(argv: string[]): Promise<void> {
     process.exit(0)
   }
   const str = (k: string) => values[k] as string | undefined
+  const target = str('target')
+  if (target !== undefined && target !== 'bun' && target !== 'cloudflare') usage(`--target must be bun or cloudflare (got ${JSON.stringify(target)})`)
 
   if (cmd === 'build') {
     if (positionals.length > 1) usage(`build takes one entry (got ${positionals.join(' ')})`)
@@ -68,6 +72,8 @@ export async function main(argv: string[]): Promise<void> {
         entry: positionals[0] ?? 'routes.tsx',
         outDir: str('out-dir') ?? 'dist',
         force: values.force === true,
+        target: target as 'bun' | 'cloudflare' | undefined,
+        wasmFromSource: values['wasm-from-source'] === true,
         log: (s) => console.log(s),
       })
     } catch (e) {

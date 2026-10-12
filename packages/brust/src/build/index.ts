@@ -9,6 +9,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 import { BrustRouteError, validateRoutes } from '../routes'
 import { type BrowserCtx, buildActions, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
+import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import { compileApp } from './compile'
 import { type ActionsBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
@@ -79,6 +80,10 @@ export async function runBuild(opts: {
   outDir: string
   /** Replace a non-empty out dir even without a previous build's marker. */
   force?: boolean
+  /** `cloudflare` also writes `<out>/cf/` (M4-CF); default `bun` = the unchanged build. */
+  target?: 'bun' | 'cloudflare'
+  /** `--wasm-from-source` (cloudflare only). */
+  wasmFromSource?: boolean
   log: (s: string) => void
 }): Promise<void> {
   const appRoot = resolve(opts.appRoot)
@@ -86,7 +91,7 @@ export async function runBuild(opts: {
   const dist = resolve(appRoot, opts.outDir)
   assertSafeOutDir(dist, appRoot, [entry, join(appRoot, 'public')])
   assertReplaceable(dist, opts.force)
-  const { serverOnly, actions } = await loadBuildConfig(appRoot)
+  const { serverOnly, actions, cloudflare } = await loadBuildConfig(appRoot)
 
   // Everything that can fail on the app's own input runs before a byte is written.
   const { routes, componentFile } = await scanRoutes(entry)
@@ -116,13 +121,16 @@ export async function runBuild(opts: {
   }
   assertSafeOutDir(dist, appRoot, [...componentFile.values(), ...(actionsEntry ? [actionsEntry] : [])])
 
+  // Config, @brust/core-cf resolution and the user's wrangler file fail here, before any write.
+  const cf = opts.target === 'cloudflare' ? await prepareCloudflare(appRoot, cloudflare, { fromSource: opts.wasmFromSource === true, env: process.env }) : null
+
   // Sibling of `dist` (same filesystem: the final rename is atomic), fixed name (no random bytes in
   // anything the bundler sees).
   const tmp = join(dirname(dist), `.${basename(dist)}.brust-tmp`)
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, serverOnly, actions, actionsEntry, log: opts.log })
+    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, serverOnly, actions, actionsEntry, cf, log: opts.log })
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
     if (existsSync(dist)) {
       const old = join(dirname(dist), `.${basename(dist)}.brust-old`)
@@ -150,6 +158,7 @@ async function buildInto(
     actions: ActionsBuildConfig | null
     /** Absolute path of the actions entry (null when `[actions]` is off). */
     actionsEntry: string | null
+    cf: CfPrepared | null
     log: (s: string) => void
   },
 ): Promise<void> {
@@ -182,6 +191,10 @@ async function buildInto(
 
   const pub = join(appRoot, 'public')
   if (existsSync(pub)) cpSync(pub, join(out, 'public'), { recursive: true })
+  if (o.cf) {
+    const warnings = await buildCloudflare(out, { appRoot, entry, dist: o.dist, compiled, manifest, sourceOf: ctx.sourceOf, actionsEntry: o.actionsEntry, log: o.log }, o.cf)
+    for (const w of warnings) o.log(w)
+  }
   const entryRel = relative(o.dist, entry)
   writeFileSync(
     join(out, 'index.js'),
