@@ -29,9 +29,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use brust_jinja::ctx::Node;
+
 use super::stamp::{INVAL_SLOTS, InvalClock, ReadStamp};
-use super::{CacheKey, CacheStats, RenderedBody};
-use crate::host::{Clock, PageCache};
+use super::{CacheKey, CacheStats, JobKey, RenderedBody};
+use crate::host::{Clock, JobStore, PageCache};
 
 /// `[cloudflare] l1_capacity` default (spec §4).
 pub const WORKERS_L1_CAPACITY: u64 = 256;
@@ -432,11 +434,166 @@ impl<T: Clock + Default> PageCache for LocalL1<T> {
     }
 }
 
+/// The single-thread job cache for hosts without threads. See the module docs. Bounded by entry
+/// count only (a `Node` has no cheap size).
+pub struct LocalJobs<T: Clock> {
+    store: RefCell<Store<JobKey, Arc<Node>>>,
+    time: T,
+    inval: Arc<InvalClock>,
+    tag_inval: Box<[Cell<u64>]>,
+    key_inval: Box<[Cell<u64>]>,
+    cleared_at: Cell<u64>,
+    hits: Cell<u64>,
+    misses: Cell<u64>,
+    capacity: u64,
+    hasher: Fixed,
+}
+
+impl<T: Clock> LocalJobs<T> {
+    /// `capacity` entries (at least 1) on `inval`, timed by `time`.
+    pub fn with_limits(capacity: u64, inval: Arc<InvalClock>, time: T) -> Self {
+        Self {
+            store: RefCell::new(Store::new()),
+            time,
+            inval,
+            tag_inval: slots(),
+            key_inval: slots(),
+            cleared_at: Cell::new(0),
+            hits: Cell::new(0),
+            misses: Cell::new(0),
+            capacity: capacity.max(1),
+            hasher: Fixed::default(),
+        }
+    }
+
+    fn slot(&self, v: &str) -> usize {
+        (self.hasher.hash_one(v) as usize) % INVAL_SLOTS
+    }
+
+    /// The tag invalidation slot of `t`.
+    pub fn tag_slot(&self, t: &str) -> usize {
+        self.slot(t)
+    }
+
+    /// The user-key invalidation slot of `u`.
+    pub fn key_slot(&self, u: &str) -> usize {
+        self.slot(u)
+    }
+
+    /// Keys indexed across all tags.
+    pub fn tag_index_size(&self) -> usize {
+        self.store.borrow().index_size(false)
+    }
+
+    /// Keys indexed across all user keys.
+    pub fn key_index_size(&self) -> usize {
+        self.store.borrow().index_size(true)
+    }
+
+    /// A covering invalidation (`clear`, `user_key`, one of `tags`) came after `since`
+    /// (`job_cache.rs` `invalidated_since`).
+    fn invalidated_since(&self, tags: &[String], user_key: Option<&str>, since: ReadStamp) -> bool {
+        let after = |c: &Cell<u64>| c.get() > since.0;
+        after(&self.cleared_at)
+            || user_key.is_some_and(|u| after(&self.key_inval[self.slot(u)]))
+            || tags.iter().any(|t| after(&self.tag_inval[self.slot(t)]))
+    }
+
+    /// Remove one key without an invalidation: no read stamp is affected (the native
+    /// `JobCache::invalidate_key`).
+    pub fn invalidate_key(&self, k: &JobKey) -> bool {
+        self.store.borrow_mut().remove(k).is_some()
+    }
+
+    /// Remove every entry. Hits/misses are kept.
+    pub fn clear(&self) {
+        self.cleared_at.set(self.inval.next());
+        self.store.borrow_mut().clear();
+    }
+}
+
+impl<T: Clock + Default> JobStore for LocalJobs<T> {
+    fn with_clock(capacity: u64, clock: Arc<InvalClock>) -> Self {
+        Self::with_limits(capacity, clock, T::default())
+    }
+
+    fn get(&self, k: &JobKey) -> Option<Arc<Node>> {
+        let now = self.time.now_ns();
+        let v = self.store.borrow_mut().get(k, now).map(Arc::clone);
+        let n = if v.is_some() {
+            &self.hits
+        } else {
+            &self.misses
+        };
+        n.set(n.get() + 1);
+        v
+    }
+
+    fn insert(
+        &self,
+        k: JobKey,
+        v: Arc<Node>,
+        ttl: Option<Duration>,
+        tags: &[String],
+        user_key: Option<&str>,
+        since: ReadStamp,
+    ) -> bool {
+        if self.invalidated_since(tags, user_key, since) {
+            return false;
+        }
+        let now = self.time.now_ns();
+        self.store.borrow_mut().insert(
+            k,
+            v,
+            ttl.and_then(|t| deadline(now, t)),
+            tags,
+            user_key,
+            0,
+            now,
+            self.capacity,
+            usize::MAX,
+        );
+        true
+    }
+
+    fn read_stamp(&self) -> ReadStamp {
+        self.inval.stamp()
+    }
+
+    fn invalidate_tags(&self, tags: &[String]) -> usize {
+        let seq = self.inval.next();
+        for t in tags {
+            publish(&self.tag_inval[self.slot(t)], seq);
+        }
+        self.store.borrow_mut().take_indexed(false, tags)
+    }
+
+    fn invalidate_user_key(&self, user_key: &str) -> usize {
+        publish(&self.key_inval[self.slot(user_key)], self.inval.next());
+        self.store
+            .borrow_mut()
+            .take_indexed(true, &[user_key.to_owned()])
+    }
+
+    fn stats(&self) -> CacheStats {
+        let now = self.time.now_ns();
+        let mut st = self.store.borrow_mut();
+        st.reap(now);
+        CacheStats {
+            hits: self.hits.get(),
+            misses: self.misses.get(),
+            len: st.entries.len(),
+            capacity: self.capacity as usize,
+        }
+    }
+}
+
 #[cfg(test)]
 mod conformance {
     use super::*;
-    use crate::cache::conformance::ConformL1;
-    use crate::host::ManualClock;
+    use crate::cache::JobKey;
+    use crate::cache::conformance::{ConformJobs, ConformL1};
+    use crate::host::{JobStore, ManualClock};
 
     impl ConformL1 for LocalL1<ManualClock> {
         fn clear(&self) -> usize {
@@ -454,4 +611,31 @@ mod conformance {
     }
 
     crate::page_cache_conformance!(<LocalL1<ManualClock> as PageCache>::with_clock);
+
+    impl ConformJobs for LocalJobs<ManualClock> {
+        fn clear(&self) {
+            LocalJobs::clear(self)
+        }
+        fn invalidate_key(&self, k: &JobKey) -> bool {
+            LocalJobs::invalidate_key(self, k)
+        }
+        fn tag_slot(&self, t: &str) -> usize {
+            LocalJobs::tag_slot(self, t)
+        }
+        fn key_slot(&self, u: &str) -> usize {
+            LocalJobs::key_slot(self, u)
+        }
+        fn tag_index_size(&self) -> usize {
+            LocalJobs::tag_index_size(self)
+        }
+        fn key_index_size(&self) -> usize {
+            LocalJobs::key_index_size(self)
+        }
+    }
+
+    crate::job_store_conformance!(<LocalJobs<ManualClock> as JobStore>::with_clock);
+    crate::shared_clock_conformance!(
+        <LocalL1<ManualClock> as PageCache>::with_clock,
+        <LocalJobs<ManualClock> as JobStore>::with_clock
+    );
 }
