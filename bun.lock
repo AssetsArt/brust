@@ -76,6 +76,10 @@
         "typescript": "^7.0.2",
       },
     },
+    "npm/core-cf": {
+      "name": "@brust/core-cf",
+      "version": "2.0.0-alpha.2",
+    },
     "npm/darwin-arm64": {
       "name": "@brust/native-darwin-arm64",
       "version": "2.0.0-alpha.2",
@@ -187,6 +191,8 @@
     "@brust/bench-next": ["@brust/bench-next@workspace:bench/apps/next"],
 
     "@brust/core": ["@brust/core@workspace:packages/brust"],
+
+    "@brust/core-cf": ["@brust/core-cf@workspace:npm/core-cf"],
 
     "@brust/create-app": ["@brust/create-app@workspace:packages/create-app"],
 

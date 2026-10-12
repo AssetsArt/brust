@@ -1,0 +1,26 @@
+{
+  "name": "@brust/core-cf",
+  "version": "2.0.0-alpha.2",
+  "description": "brust v2 on Cloudflare Workers — the prebuilt workers-rs host (wasm) that @brust/core's Cloudflare build target links",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git"
+  },
+  "files": [
+    "worker",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "brust": {
+    "abi": 1,
+    "main": "index.js",
+    "glue": "index.js",
+    "appModuleDir": ".",
+    "compatibilityDate": "2026-10-01",
+    "workerBuild": "0.8.7",
+    "wasmBindgen": "0.2.129"
+  }
+}
