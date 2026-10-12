@@ -1,0 +1,116 @@
+// Quickstart — the reference docs page (canon port): four steps from an empty folder to a page served by Rust.
+// Every code block is built in the loader (lib/highlight.ts); the CLI output is copied from a real run.
+// The root is one element (a fragment root gets wrapped in <brust-host>); display: contents keeps every block a grid
+// item of the docs article, so the article's rhythm applies.
+import CodeBlock from '../../components/CodeBlock'
+import Note from '../../components/docs/Note'
+import Step from '../../components/docs/Step'
+import { type CodeBlockData, codeBlock } from '../../lib/highlight'
+import type { TocItem } from '../../lib/nav'
+
+// Loader data merges with the layouts' (a page's keys win), so the blocks live under `blocks`: a top-level `version`
+// or `title` would replace the header's version or the page title.
+export interface QuickstartData {
+  toc: TocItem[]
+  blocks: Record<'version' | 'create' | 'page' | 'routes' | 'dev' | 'curl', CodeBlockData>
+}
+
+const HOME_PAGE = `export default function HomePage() {
+  return (
+    <section>
+      <h1>Hello from brust</h1>
+      <p>Edit pages/HomePage.tsx and run bun run dev again.</p>
+    </section>
+  )
+}`
+
+const ROUTES = `import { defineRoutes } from '@brust/core/routes'
+import Layout from './components/Layout'
+import HomePage from './pages/HomePage'
+
+export const routes = defineRoutes([
+  { Component: Layout, children: [{ path: '/', Component: HomePage }] },
+])`
+
+// Real output of `bun run dev` (= brust build && brust start) on a 10-core machine, server log lines trimmed.
+const DEV_OUTPUT = `$ bun run dev
+[brust] built dist in 176ms
+[brust] listening on 127.0.0.1:1337 (io: hyper(tokio))
+[brust] ready (10 workers)`
+
+// Real response headers, the body cut.
+const CURL_OUTPUT = `$ curl -i http://127.0.0.1:1337/
+HTTP/1.1 200 OK
+content-type: text/html; charset=utf-8
+x-powered-by: brust/2.0.0-alpha.3
+content-length: 1965`
+
+export async function quickstartLoader(): Promise<QuickstartData> {
+  return {
+    toc: [
+      { id: 'requirements', title: 'Check the requirements' },
+      { id: 'create', title: 'Create the project' },
+      { id: 'write', title: 'Write a page' },
+      { id: 'run', title: 'Run it' },
+      { id: 'next', title: 'Where to go next' },
+    ],
+    blocks: {
+      version: codeBlock({ lang: 'sh', cwd: '~/', code: '$ bun --version\n1.4.3' }),
+      create: codeBlock({ lang: 'sh', cwd: '~/', code: '$ bun create @brust/app@latest my-app\n$ cd my-app && bun install' }),
+      page: codeBlock({ lang: 'tsx', file: 'pages/HomePage.tsx', code: HOME_PAGE }),
+      routes: codeBlock({ lang: 'ts', file: 'routes.tsx', code: ROUTES }),
+      dev: codeBlock({ lang: 'sh', cwd: '~/my-app', code: DEV_OUTPUT }),
+      curl: codeBlock({ lang: 'sh', cwd: '~/my-app', code: CURL_OUTPUT }),
+    },
+  }
+}
+
+export default function Quickstart({ blocks }: QuickstartData) {
+  return (
+    <section style={{ display: 'contents' }}>
+      <h1>Quickstart</h1>
+      <p className="lead">From an empty folder to a page served by Rust. Four steps, each one a command or a file you can copy as is.</p>
+
+      <Step n={1} id="requirements" title="Check the requirements" />
+      <p>Bun 1.4 or newer. The Rust server ships prebuilt for macOS and Linux, so there is no Rust toolchain to install.</p>
+      <CodeBlock code={blocks.version.code} lang={blocks.version.lang} cwd={blocks.version.cwd} html={blocks.version.html} />
+
+      <Step n={2} id="create" title="Create the project" />
+      <p>The blank template has one layout, one page, and the scripts you will use every day.</p>
+      <CodeBlock code={blocks.create.code} lang={blocks.create.lang} cwd={blocks.create.cwd} html={blocks.create.html} />
+      <Note>
+        Keep the <code>@latest</code>. <code>bun create</code> caches the scaffolder, and a stale cache gives you an old template.
+      </Note>
+
+      <Step n={3} id="write" title="Write a page" />
+      <p>
+        A page is a plain React component. <code>routes.tsx</code> maps paths to components, and the layout wraps every page through <code>Outlet</code>.
+      </p>
+      <CodeBlock code={blocks.page.code} lang={blocks.page.lang} file={blocks.page.file} html={blocks.page.html} />
+      <CodeBlock code={blocks.routes.code} lang={blocks.routes.lang} file={blocks.routes.file} html={blocks.routes.html} />
+      <p>
+        This page has no state and no handlers, so the compiler marks it <span className="tier static">static</span>: rendered once, served as HTML, no client JavaScript.
+      </p>
+
+      <Step n={4} id="run" title="Run it" />
+      <p>
+        <code>bun run dev</code> builds and starts the server. Open the address it prints.
+      </p>
+      <CodeBlock code={blocks.dev.code} lang={blocks.dev.lang} cwd={blocks.dev.cwd} html={blocks.dev.html} />
+      <CodeBlock code={blocks.curl.code} lang={blocks.curl.lang} cwd={blocks.curl.cwd} html={blocks.curl.html} />
+
+      <Step n={5} id="next" title="Where to go next" />
+      <ul>
+        <li>
+          <a href="/docs/routing">Routing</a>: nested layouts, path params, the catch-all 404.
+        </li>
+        <li>
+          <a href="/docs/loaders">Loaders and params</a>: fetch data per route in Bun.
+        </li>
+        <li>
+          <a href="/docs/rendering-tiers">Rendering tiers</a>: what makes a component static, native, or a React island.
+        </li>
+      </ul>
+    </section>
+  )
+}

@@ -33,9 +33,11 @@ afterAll(() => {
   for (const o of outs) rmSync(o, { recursive: true, force: true })
 })
 
-test('brust build routes.tsx: routes /, /docs, *; the layout chrome is static with no jobs', () => {
+test('brust build routes.tsx: routes /, /docs (+ docs pages), *; the layout chrome is static with no jobs', () => {
   const m = build('routes.tsx', 'dist-test')
-  expect(m.routes.map((r) => r.pattern)).toEqual(['/', '/docs', '*'])
+  const patterns = m.routes.map((r) => r.pattern)
+  expect(patterns.slice(0, 2)).toEqual(['/', '/docs'])
+  expect(patterns.at(-1)).toBe('*')
   for (const name of ['Layout', 'SiteHeader', 'SiteFooter', 'NotFoundPage']) {
     const c = component(m, name)
     expect([name, c.tier, c.jobs.length, c.client]).toEqual([name, 'static', 0, null])
