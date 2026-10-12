@@ -217,6 +217,19 @@ describe.skipIf(!ENABLED)('cf-min on local workerd', () => {
     expect(statSync(join(CF, 'worker/index_bg.wasm')).size).toBeLessThan(4 * 1024 * 1024)
   })
 
+  test('14 dangerouslySetInnerHTML renders raw markup; null is empty, a number is its string; {text} stays escaped', async () => {
+    const raw = async (kind: string) => {
+      const r = await get(`/raw/${kind}`)
+      expect(r.status).toBe(200)
+      return r.text()
+    }
+    const html = await raw('html')
+    expect(html).toContain('<div id="raw"><b>x</b></div>')
+    expect(html).toContain('<p id="text">&lt;b&gt;x&lt;/b&gt;</p>')
+    expect(await raw('null')).toContain('<div id="raw"></div>')
+    expect(await raw('num')).toContain('<div id="raw">7</div>')
+  })
+
   test('p50 of 50 distinct-id MISSes', async () => {
     const ms: number[] = []
     for (let i = 0; i < 50; i++) {

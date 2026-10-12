@@ -1,0 +1,183 @@
+{
+  "id": "input_0df7be4d",
+  "source": "tests/fixtures/inner-html/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "on",
+      "setter": "setOn",
+      "init": {
+        "Server": {
+          "loc": 181,
+          "kind": {
+            "Lit": {
+              "Bool": true
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 231,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 237,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 237,
+                      "kind": {
+                        "Ident": {
+                          "name": "setOn",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 243,
+                        "kind": {
+                          "Unary": {
+                            "op": "Not",
+                            "value": {
+                              "loc": 244,
+                              "kind": {
+                                "Ident": {
+                                  "name": "on",
+                                  "kind": "State"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setOn",
+                "Setter"
+              ],
+              [
+                "on",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 202,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 214,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "swap"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 269,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "out"
+                }
+              },
+              {
+                "InnerHtml": {
+                  "value": {
+                    "Server": {
+                      "loc": 316,
+                      "kind": {
+                        "Cond": {
+                          "test": {
+                            "loc": 316,
+                            "kind": {
+                              "Ident": {
+                                "name": "on",
+                                "kind": "State"
+                              }
+                            }
+                          },
+                          "yes": {
+                            "loc": 321,
+                            "kind": {
+                              "Lit": {
+                                "Str": "<b>bold</b>"
+                              }
+                            }
+                          },
+                          "no": {
+                            "loc": 337,
+                            "kind": {
+                              "Lit": {
+                                "Str": "<i>ital</i>"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "children": [],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}
