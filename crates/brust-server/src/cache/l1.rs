@@ -185,6 +185,16 @@ pub struct CacheStats {
     pub capacity: usize,
 }
 
+/// When an L1 render began, in invalidation-sequence time (F86): taken by `L1Cache::read_stamp`
+/// before the render reads app data, required by `L1Cache::insert`. The insert does not land if
+/// a covering invalidation took a later sequence number.
+#[must_use]
+#[derive(Debug, Clone, Copy)]
+pub struct ReadStamp(u64);
+
+/// Slots per invalidation-sequence array (`tag_inval`, `path_inval`): 2 KiB each, constant.
+const INVAL_SLOTS: usize = 256;
+
 /// tag → (key → generation of the insert that indexed it).
 pub(crate) type TagIndex<K> = Mutex<HashMap<String, HashMap<K, u64>>>;
 
@@ -284,6 +294,15 @@ pub struct L1Cache {
     /// exclusively. Never held by the eviction listener.
     gate: parking_lot::RwLock<()>,
     next_generation: AtomicU64,
+    /// Invalidation sequence (F86): every tag/path invalidation and `clear` takes the next value;
+    /// a `ReadStamp` is its value when a render began.
+    inval_seq: AtomicU64,
+    /// The latest `inval_seq` of a tag invalidation, per hashed tag slot.
+    tag_inval: Box<[AtomicU64]>,
+    /// The latest `inval_seq` of an `invalidate_path`, per hashed (method, path) slot.
+    path_inval: Box<[AtomicU64]>,
+    /// The `inval_seq` of the latest `clear`.
+    cleared_at: AtomicU64,
     hits: StripedCounter,
     misses: StripedCounter,
     capacity: u64,
@@ -337,6 +356,10 @@ impl L1Cache {
             tag_index,
             gate: parking_lot::RwLock::new(()),
             next_generation: AtomicU64::new(0),
+            inval_seq: AtomicU64::new(0),
+            tag_inval: (0..INVAL_SLOTS).map(|_| AtomicU64::new(0)).collect(),
+            path_inval: (0..INVAL_SLOTS).map(|_| AtomicU64::new(0)).collect(),
+            cleared_at: AtomicU64::new(0),
             hits: StripedCounter::new(),
             misses: StripedCounter::new(),
             capacity,
@@ -387,9 +410,23 @@ impl L1Cache {
         self.get_with(key, Arc::clone)
     }
 
+    /// Stamp the start of a render (F86): take it before the render reads app data and pass it to
+    /// `insert`.
+    pub fn read_stamp(&self) -> ReadStamp {
+        ReadStamp(self.inval_seq.load(Ordering::SeqCst))
+    }
+
     /// Since S10 a HIT serves `body` (with its headers): the render context and the loader's
-    /// headers are not stored (ruling R-E; the parameters went with ledger F78).
-    pub fn insert(&self, key: CacheKey, body: Arc<RenderedBody>, ttl: Duration, tags: &[String]) {
+    /// headers are not stored (ruling R-E; the parameters went with ledger F78). Returns `false`
+    /// when the insert did not land: a covering invalidation came after `since` (F86).
+    pub fn insert(
+        &self,
+        key: CacheKey,
+        body: Arc<RenderedBody>,
+        ttl: Duration,
+        tags: &[String],
+        since: ReadStamp,
+    ) -> bool {
         // Ordering is load-bearing: index the tags BEFORE the moka insert (the
         // reverse could leave a live, un-indexed entry if a panic hit between
         // the two). Index-then-insert alone still raced `invalidate_tags`: an
@@ -435,6 +472,8 @@ impl L1Cache {
                 generation,
             },
         );
+        let _ = since;
+        true
     }
 
     /// Remove `k` from moka and the front, in that key's write order.
@@ -628,6 +667,7 @@ mod tests {
             rb_of("t"),
             Duration::from_secs(60),
             &["a".to_string(), "b".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 2);
@@ -648,12 +688,14 @@ mod tests {
             rb_of("1"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/p", "x=2"),
             rb_of("2"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 2);
@@ -674,6 +716,7 @@ mod tests {
             rb_of("w"),
             Duration::from_secs(60),
             &["t".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 1);
@@ -689,18 +732,21 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/a", "x=1"),
             rb_of("a-x"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/b", ""),
             rb_of("b"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.run_pending();
 
@@ -723,6 +769,7 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.invalidate_path("GET", "/missing"), 0);
@@ -739,18 +786,21 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/a", "x=1"),
             rb_of("a-x"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/b", ""),
             rb_of("b"),
             Duration::from_secs(60),
             &["other".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
 
@@ -773,6 +823,7 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &["grp".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         c.invalidate_tags(&["missing".to_string()]);
@@ -791,18 +842,21 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/b", ""),
             rb_of("b"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.insert(
             key("GET", "/c", ""),
             rb_of("c"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.run_pending();
         let removed = c.clear();
@@ -819,6 +873,7 @@ mod tests {
             rb_of("a"),
             Duration::from_secs(60),
             &[],
+            c.read_stamp(),
         );
         c.run_pending();
         let _ = html(&c, &key("GET", "/a", "")); // hit
@@ -855,6 +910,7 @@ mod tests {
             rb_of("1"),
             Duration::from_millis(1),
             &["t".to_string()],
+            c.read_stamp(),
         );
         std::thread::sleep(Duration::from_millis(5));
         c.insert(
@@ -862,6 +918,7 @@ mod tests {
             rb_of("2"),
             Duration::from_secs(60),
             &["t".to_string()],
+            c.read_stamp(),
         );
         c.run_pending();
         assert_eq!(c.tag_index_size(), 1, "new entry stays indexed");
@@ -889,7 +946,14 @@ mod tests {
         let k = key("GET", "/race", "");
         let (c2, k2) = (Arc::clone(&c), k.clone());
         let ins = std::thread::spawn(move || {
-            c2.insert(k2, rb_of("1"), Duration::from_secs(60), &["t".to_string()])
+            let since = c2.read_stamp();
+            c2.insert(
+                k2,
+                rb_of("1"),
+                Duration::from_secs(60),
+                &["t".to_string()],
+                since,
+            )
         });
         rx.recv().unwrap();
         c.invalidate_tags(&["t".to_string()]);
@@ -901,7 +965,7 @@ mod tests {
 
     fn ins(c: &L1Cache, k: CacheKey, body: &str, ttl: Duration, tags: &[&str]) {
         let tags: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-        c.insert(k, rb_of(body), ttl, &tags);
+        c.insert(k, rb_of(body), ttl, &tags, c.read_stamp());
     }
 
     #[test]
