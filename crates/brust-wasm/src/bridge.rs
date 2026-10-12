@@ -62,8 +62,13 @@ pub fn templates() -> BTreeMap<String, String> {
 
 /// Hand the app `{ invalidate }` (R2a). The closure lives for the isolate.
 pub fn install(core: &'static Core<WasmHost>) -> Result<(), String> {
+    // A panic inside unwinds to the JS caller (the action rejects → its 500); the core is
+    // per-isolate state the next request reads afresh.
+    let core = std::panic::AssertUnwindSafe(core);
     let f = Closure::<dyn Fn(JsValue) -> Result<JsValue, JsValue>>::new(move |args: JsValue| {
-        invalidate(core, args)
+        // `&core` moves the whole wrapper in (a bare `core.0` would capture the field alone).
+        let core = &core;
+        invalidate(core.0, args)
     })
     .into_js_value();
     let rt = js_sys::Object::new();
