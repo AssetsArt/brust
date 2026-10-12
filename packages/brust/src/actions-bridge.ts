@@ -1,6 +1,7 @@
 // The worker side of the `fetch` call kind (design E4/E5, contracts A1/A2). Rust forwards the actions prefix subtree
 // here; the app registered with `setActionsApp` (Elysia 2 via brust() — m3f-actions-elysia) answers a web Request
 // with a web Response, framed into this worker's SAB slot. No Elysia import: the app is anything with `fetch`.
+import { putFetchReply, takeFetchBody } from './native'
 import type { LoaderReq } from './routes'
 import { runInStoreContext } from './store/server-context'
 
@@ -9,6 +10,7 @@ export interface ActionsManifest {
   entry: string
   prefix: string
   maxBodyBytes: number
+  maxResponseBytes?: number
 }
 /** What the worker drives: an Elysia 2 app (`app.fetch`, web-standard), or anything with that shape. */
 export interface ActionsApp {
@@ -20,13 +22,30 @@ export interface FetchRequest {
   method: string
   url: string
   headers: [string, string][]
-  body: { text: string } | { b64: string } | null
+  /** `{heap: n}` (F82): more than 262144 bytes, fetched with `takeFetchBody(slot)`. */
+  body: { text: string } | { b64: string } | { heap: number } | null
   req: LoaderReq
 }
-/** A2 meta: exactly these two keys (never a store). */
+/** A2 meta: `status`, `headers`, and (F82) `heap` — the byte length of a response body that crossed by
+ * `putFetchReply` instead of the slot (the slot body is then empty). Never a store. */
 export interface FetchMeta {
   status: number
   headers: [string, string][]
+  heap?: number
+}
+
+/** F82: the worker→Rust heap channel for the in-flight `fetch` call of a slot. The default is the napi addon,
+ * loaded lazily (so a fetch that never needs it never touches the binding). */
+export interface HeapIo {
+  takeBody(slot: number): Uint8Array | null
+  putReply(slot: number, body: Uint8Array): boolean
+}
+const nativeHeapIo: HeapIo = { takeBody: (slot) => takeFetchBody(slot), putReply: (slot, body) => putFetchReply(slot, body) }
+
+let maxResponseBytes = 8_388_608
+/** `startWorker` sets the manifest's `actions.maxResponseBytes` (R5). Default 8388608. */
+export function setActionsLimits(l: { maxResponseBytes: number }): void {
+  maxResponseBytes = l.maxResponseBytes
 }
 
 let app: ActionsApp | null = null
@@ -49,21 +68,22 @@ const TEXT_PLAIN: [string, string][] = [['content-type', 'text/plain; charset=ut
 
 /** A1 → web Request (R8 origin: `http://<host>` when the host pair is sane, else `localhost`). Bytes, never a
  * string body, so no content-type is invented. GET/HEAD never carry a body (R4; `new Request` forbids one). */
-export function toRequest(r: FetchRequest): Request {
+export function toRequest(r: FetchRequest, heapBody?: Uint8Array): Request {
   const host = r.headers.find(([k]) => k === 'host')?.[1]
   const origin = `http://${host && HOST.test(host) ? host : 'localhost'}`
   const bodyless = r.method === 'GET' || r.method === 'HEAD'
-  const body = bodyless || !r.body ? undefined : 'text' in r.body ? enc.encode(r.body.text) : Buffer.from(r.body.b64, 'base64')
+  const b = r.body
+  const body = bodyless || !b ? undefined : 'heap' in b ? (heapBody as BodyInit | undefined) : 'text' in b ? enc.encode(b.text) : Buffer.from(b.b64, 'base64')
   return new Request(origin + r.url, { method: r.method, headers: r.headers, body })
 }
 
 /** A2 writer at `slot`'s sub-region `[slot*sub, slot*sub+sub)`, `sub = floor(view.byteLength / slots)`:
  * `[u32 LE meta_len][meta JSON][body]`; returns the byte length. A frame that does not fit becomes R10's 500
  * (always fits a real slot); 0 when not even that fits (Rust: BadResponse → 500). */
-export function writeFramed(view: Uint8Array, slot: number, slots: number, status: number, headers: [string, string][], body: Uint8Array): number {
+export function writeFramed(view: Uint8Array, slot: number, slots: number, status: number, headers: [string, string][], body: Uint8Array, heap?: number): number {
   const sub = Math.floor(view.byteLength / Math.max(1, slots))
   const dst = view.subarray(slot * sub, slot * sub + sub)
-  const meta = enc.encode(JSON.stringify({ status, headers } satisfies FetchMeta))
+  const meta = enc.encode(JSON.stringify((heap === undefined ? { status, headers } : { status, headers, heap }) satisfies FetchMeta))
   const total = 4 + meta.length + body.length
   if (total <= sub) return put(dst, meta, body)
   console.error(`[brust] action response ${total} bytes exceeds the ${sub}-byte slot (F82) — answered 500`)
@@ -92,12 +112,21 @@ export function readFramed(view: Uint8Array, slot: number, slots: number, len: n
 
 const fail = (view: Uint8Array, slot: number, slots: number, msg: string) => writeFramed(view, slot, slots, 500, TEXT_PLAIN, enc.encode(msg))
 
-/** The `fetch` call (makeDispatch). Never rejects, never writes JSON: every outcome is a frame. */
-export async function runFetch(requestJson: string, view: Uint8Array, slot: number, slots: number): Promise<number> {
+/** The `fetch` call (makeDispatch). Never rejects, never writes JSON: every outcome is a frame. A body of
+ * more than 262144 bytes arrives by `io.takeBody` (A1 `{heap}`); a response that does not fit the slot leaves
+ * by `io.putReply` with only status/headers/`heap` in the slot (F82), unless it exceeds `max_response_bytes`. */
+export async function runFetch(requestJson: string, view: Uint8Array, slot: number, slots: number, io: HeapIo = nativeHeapIo): Promise<number> {
   const a = app
   if (!a) return fail(view, slot, slots, 'brust: actions are not configured in this worker')
   try {
-    const req = toRequest(JSON.parse(requestJson) as FetchRequest)
+    const fr = JSON.parse(requestJson) as FetchRequest
+    let heapBody: Uint8Array | undefined
+    if (fr.body && 'heap' in fr.body) {
+      const got = io.takeBody(slot)
+      if (!got || got.length !== fr.body.heap) throw new Error(`heap request body ${got ? `${got.length} != ${fr.body.heap}` : 'missing'} bytes (F82)`)
+      heapBody = got
+    }
+    const req = toRequest(fr, heapBody)
     // R1/E5: one store scope around the handler AND the body read (a lazy body may still touch stores).
     const out = await runInStoreContext(async () => {
       const res = await a.fetch(req)
@@ -108,7 +137,17 @@ export async function runFetch(requestJson: string, view: Uint8Array, slot: numb
       for (const c of res.headers.getSetCookie()) pairs.push(['set-cookie', c])
       return { status: res.status, pairs, body: new Uint8Array(await res.arrayBuffer()) }
     })
-    return writeFramed(view, slot, slots, out.status, out.pairs, out.body)
+    const sub = Math.floor(view.byteLength / Math.max(1, slots))
+    const metaLen = (m: FetchMeta) => enc.encode(JSON.stringify(m)).length
+    if (4 + metaLen({ status: out.status, headers: out.pairs }) + out.body.length <= sub) return writeFramed(view, slot, slots, out.status, out.pairs, out.body)
+    if (out.body.length > maxResponseBytes) {
+      console.error(`[brust] action response body ${out.body.length} bytes exceeds max_response_bytes ${maxResponseBytes} — answered 500`)
+      return writeFramed(view, slot, slots, 500, TEXT_PLAIN, enc.encode(`brust: action response exceeds ${maxResponseBytes} bytes`))
+    }
+    // The meta alone must fit; otherwise writeFramed's own 500 (R10) answers.
+    if (4 + metaLen({ status: out.status, headers: out.pairs, heap: out.body.length }) > sub) return writeFramed(view, slot, slots, out.status, out.pairs, out.body)
+    if (!io.putReply(slot, out.body)) throw new Error('heap reply declined by the server (F82)')
+    return writeFramed(view, slot, slots, out.status, out.pairs, new Uint8Array(0), out.body.length)
   } catch (e) {
     console.error(`[brust] action failed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`)
     return fail(view, slot, slots, 'brust: action failed')
