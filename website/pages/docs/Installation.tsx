@@ -53,7 +53,7 @@ export default function Installation({ blocks, starters }: InstallationData) {
       <p>The generator copies a template into a new folder. It has no dependencies of its own, so running it downloads nothing else.</p>
       <CodeBlock code={blocks.create.code} lang={blocks.create.lang} cwd={blocks.create.cwd} html={blocks.create.html} />
       <p>
-        In a terminal it asks for one thing, the template: <code>blank</code> (one page, a native counter, an Elysia hello action) or <code>pokedex</code>. An empty answer picks <code>blank</code>. Pick a starter below to see the commands for your own project.
+        In a terminal it asks for one thing, the template: <code>blank</code> (a starter page with the brust mark, a native counter and links to these docs, plus an Elysia hello action) or <code>pokedex</code>. An empty answer picks <code>blank</code>. Pick a starter below to see the commands for your own project.
       </p>
       <div className="browser">
         <div className="url">
