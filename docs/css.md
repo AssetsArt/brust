@@ -71,7 +71,7 @@ Types ship with `@brust/core`: `import styles from './x.module.css'` types as `{
 
 ## 6. Tailwind CSS v4
 
-Tailwind is built in through the official `bun-plugin-tailwind`. Install it and Tailwind as your app's own dev dependencies (`bun create @brust/app my-app --tailwind` does this):
+Tailwind is built in through the official `bun-plugin-tailwind`. Install it and Tailwind as your app's own dev dependencies (`bun create @brust/app my-app` already does this: the `blank` template ships Tailwind by default, and `--tailwind` is accepted but does nothing):
 
 ```sh
 bun add -d tailwindcss@4 bun-plugin-tailwind

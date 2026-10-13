@@ -22,7 +22,7 @@ export interface QuickstartData {
 const TEMPLATE = join(import.meta.dir, '../../../packages/create-app/templates/blank')
 const templateFile = (rel: string): string => readFileSync(join(TEMPLATE, rel), 'utf8').trimEnd()
 
-// Real output of `bun run dev` (= brust build && brust start) on a 10-core machine, server log lines trimmed.
+// Real output of `bun run dev` (runs `brust dev routes.tsx`) on a 10-core machine, server log lines trimmed.
 const DEV_OUTPUT = `$ bun run dev
 [brust] built dist in 176ms
 [brust] listening on 127.0.0.1:1337 (io: hyper(tokio))
