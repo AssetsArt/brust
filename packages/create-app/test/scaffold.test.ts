@@ -81,6 +81,27 @@ test('blank: install → build → typecheck → start; / is the native counter;
   await stopOne(app)
 }, T)
 
+test('blank --tailwind (L21): install → build → start; the layout links one minified Tailwind stylesheet with the used utilities', async () => {
+  const dir = join(work, 'apps', 'tw-app')
+  const out = sh(['bun', 'create', '@brust/app', 'tw-app', '--template', 'blank', '--tailwind', '--dir', dir, '--brust-dep', `file:${tgz.core}`, '--yes'], hostDir)
+  expect(out).toContain('template: blank + tailwind')
+  const pkg = readPkg(dir)
+  expect([pkg.devDependencies.tailwindcss, pkg.devDependencies['bun-plugin-tailwind']]).toEqual(['4.3.3', '0.1.2'])
+  setOverrides(dir)
+  sh(['bun', 'install'], dir)
+  sh(['bun', 'run', 'build'], dir)
+  expect(sh(['bun', 'run', 'typecheck'], dir)).toMatch(/No type errors/)
+  const app = await start(dir)
+  const html = await (await fetch(`${app.base}/`)).text()
+  const links = [...html.matchAll(/<link rel="stylesheet" href="(\/_brust\/client\/app-[0-9a-f]{10}\.css)" data-brust-css>/g)].map((m) => m[1]!)
+  expect(links.length).toBe(1)
+  expect(html).not.toContain('/public/app.css')
+  const css = await (await fetch(new URL(links[0]!, app.base))).text()
+  expect(css).toContain('.max-w-2xl{')
+  expect(css).toContain('--color-brand:')
+  await stopOne(app)
+}, T)
+
 test('pokedex: scaffold → install → build → start; /pokemon/pikachu renders; POST adds; SSR team shows it; a restart keeps it', async () => {
   const dir = scaffold('dex-app', 'pokedex')
   expect(existsSync(join(dir, 'data/pokedex.json'))).toBe(true)
