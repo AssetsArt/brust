@@ -108,6 +108,10 @@ struct Child {
     spread: SpreadSink,
     /// The child's polymorphic tag (`asChild`, R34.28): the call site must resolve it.
     poly: Option<PolyTag>,
+    /// The polymorphic element spreads an object of keys known only at render (a props path, not the
+    /// props or their rest): a class or style the `asChild` child brings cannot be merged with it at
+    /// compile time.
+    poly_runtime_spread: bool,
     /// What else the child does with those keys, for a handler the parent may bind (shadcn S1.3).
     onward: HandlerSink,
     /// The props roots the compiled child's jobs read (the server feeds each instance these).
@@ -141,6 +145,36 @@ impl HandlerSink {
             components: SpreadSink::of_where(ir, false),
             reads: (!roots.contains("*")).then_some(roots),
         }
+    }
+}
+
+/// The polymorphic element of `n` carries a spread that is neither the props nor their rest (a
+/// props path such as `{...attrs}`): its keys are known only at render.
+fn poly_has_runtime_spread(n: &Node) -> bool {
+    match n {
+        Node::Element {
+            poly,
+            attrs,
+            children,
+            ..
+        } => {
+            (*poly
+                && attrs.iter().any(|a| match a {
+                    Attr::Spread(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => !matches!(
+                        &r.kind,
+                        RawKind::Ident { name, kind: IdentKind::Prop }
+                            if name == "*" || name == crate::ir::REST_PROPS
+                    ),
+                    Attr::Spread(_) => true,
+                    _ => false,
+                }))
+                || children.iter().any(poly_has_runtime_spread)
+        }
+        Node::Fragment(cs) => cs.iter().any(poly_has_runtime_spread),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(poly_has_runtime_spread),
+        Node::For { body, .. } => body.iter().any(poly_has_runtime_spread),
+        Node::Component { children, .. } => children.iter().any(poly_has_runtime_spread),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
     }
 }
 
@@ -417,6 +451,7 @@ impl Walker<'_, '_> {
                     prop_precompute: false,
                     spread: SpreadSink::None,
                     poly: None,
+                    poly_runtime_spread: false,
                     onward: HandlerSink::default(),
                     job_roots: BTreeSet::new(),
                 };
@@ -458,6 +493,7 @@ impl Walker<'_, '_> {
                 prop_precompute: false,
                 spread: SpreadSink::None,
                 poly: None,
+                poly_runtime_spread: false,
                 onward: HandlerSink::default(),
                 job_roots: BTreeSet::new(),
             };
@@ -503,6 +539,7 @@ impl Walker<'_, '_> {
                         prop_precompute: false,
                         spread: SpreadSink::None,
                         poly: None,
+                        poly_runtime_spread: false,
                         onward: HandlerSink::default(),
                         job_roots: BTreeSet::new(),
                     };
@@ -543,6 +580,7 @@ impl Walker<'_, '_> {
         let mut prop_precompute = false;
         let mut spread = SpreadSink::None;
         let mut poly = None;
+        let mut poly_runtime_spread = false;
         let mut onward = HandlerSink::default();
         let mut job_roots = BTreeSet::new();
         let tier = match lookup {
@@ -559,6 +597,7 @@ impl Walker<'_, '_> {
                     .collect();
                 spread = SpreadSink::of(&ir);
                 poly = ir.poly.clone();
+                poly_runtime_spread = poly.is_some() && poly_has_runtime_spread(&ir.template);
                 if matches!(ir.tier, Tier::Static) {
                     onward = HandlerSink::of(&ir);
                 }
@@ -624,6 +663,7 @@ impl Walker<'_, '_> {
             prop_precompute,
             spread,
             poly,
+            poly_runtime_spread,
             onward,
             job_roots,
         }
@@ -1076,6 +1116,7 @@ impl Walker<'_, '_> {
             return;
         };
         let Node::Element {
+            tag: child_tag,
             attrs,
             poly: nested,
             ..
@@ -1095,6 +1136,40 @@ impl Walker<'_, '_> {
             ));
             return;
         };
+        // A raw-text body (`<style>`, `<script>`) is printed as text, not as markup.
+        if matches!(child_tag.as_str(), "style" | "script") {
+            self.diagnostics.push(refuse(
+                "slot-child-shape",
+                format!(
+                    "the child of <{name}> with `{}` is a <{child_tag}> element",
+                    poly.flag
+                ),
+                "pass an element such as <a>, or keep the page on React",
+            ));
+            return;
+        }
+        // The component spreads keys known only at render and the child brings a class or style: the
+        // merge needs both sides at compile time (valid React never becomes a build error).
+        let brings_merge_key = attrs.iter().any(|a| match a {
+            Attr::Static { name, .. } | Attr::Dynamic { name, .. } => {
+                matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "class" | "classname" | "style"
+                )
+            }
+            _ => false,
+        });
+        if child.poly_runtime_spread && brings_merge_key {
+            self.diagnostics.push(refuse(
+                "slot-merge",
+                format!(
+                    "<{name}> spreads an object of keys known only at render, and the child under `{}` has a class or style that would merge with it",
+                    poly.flag
+                ),
+                "move the class or style to the component call, or keep the page on React",
+            ));
+            return;
+        }
         let bad = attrs.iter().find_map(|a| match a {
             Attr::Static { .. } => None,
             Attr::Dynamic { value, .. } => self

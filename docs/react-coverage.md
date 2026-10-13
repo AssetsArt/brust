@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 48 | 22 | 6 | 20 | 0 | 0 | 0 | 0 |
+| B Composition | 50 | 22 | 6 | 22 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 4 | 1 | 23 | 1 | 0 | 0 | 0 |
 | E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 187 | 73 | 41 | 67 | 5 | 1 | 0 | 0 |
+| **Total** | 189 | 73 | 41 | 69 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -126,6 +126,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-aschild-slot-handler | a handler passed to a component with asChild | react | react | ssr | ok | fallback:slot-handler | shadcn S1.4 R34.31 (Q2, Q4): fallback slot-handler until the parent-scope binding of S1.3 is on main |
 | b-aschild-ref-child | asChild whose child has a ref | react | react | ssr | ok | fallback:slot-ref | shadcn S1.4 R34.31: fallback slot-ref |
 | b-aschild-stateful | asChild on a component with state of its own | react | react | ssr | ok | fallback:slot-native | shadcn S1.4 R34.31: fallback slot-native |
+| b-aschild-runtime-spread | asChild child with class/style into a component that spreads an object of unknown keys | react | react | ssr | ok | fallback:slot-merge | shadcn S1.4 R34.31: fallback slot-merge (the merge needs both sides at compile time; never a build error) |
+| b-aschild-raw-text-child | asChild whose child is a <style> element | react | react | ssr | ok | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape (a raw-text body is not markup) |
 | b-local-comp-ternary | a const tag that is a ternary of two components, not a Radix Slot | react | react | ssr | ok | fallback:island-children | shadcn S1.4 R34.28: any other initializer keeps fallback local-component |
 | b-local-comp-foreign-slot | a Slot imported from a module that is not Radix | react | react | ssr | ok | fallback:island-children | shadcn S1.4 R34.28 (Q5): only radix-ui and @radix-ui/react-slot are recognised; fallback local-component |
 

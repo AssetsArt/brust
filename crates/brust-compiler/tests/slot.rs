@@ -243,3 +243,40 @@ fn a_prop_the_call_site_omits_is_undefined_for_the_childs_job() {
         "{child_job}"
     );
 }
+
+#[test]
+fn a_runtime_spread_with_a_class_or_style_under_as_child_is_a_fallback_not_a_build_error() {
+    // Bag spreads `attrs` (keys known only at render); the child brings class/style that would merge with it.
+    let page = |kid: &str, attrs: &str| {
+        format!(
+            "import Bag from './Bag'\nexport default function P({{ data }}: any) {{ return <main><Bag asChild{attrs}>{kid}</Bag></main> }}"
+        )
+    };
+    for kid in [
+        "<a className=\"kid\" style={{ color: 'red' }}>x</a>",
+        "<a className=\"kid\">x</a>",
+        "<a style={{ color: 'red' }}>x</a>",
+    ] {
+        let o = lower("P.tsx", &page(kid, " attrs={data}"));
+        assert!(react_with(&o, "slot-merge"), "{kid}: {:?}", o.diags);
+        assert!(
+            !o.diags.iter().any(|(c, _)| *c == DiagClass::Error),
+            "{kid}: {:?}",
+            o.diags
+        );
+    }
+    // No class or style on the child: nothing to merge, the page stays static.
+    let o = lower("P.tsx", &page("<a href=\"/x\">x</a>", " attrs={data}"));
+    assert_eq!(o.tier, Tier::Static, "{:?}", o.diags);
+}
+
+#[test]
+fn a_raw_text_child_under_as_child_stays_on_react() {
+    for kid in [
+        "<style>{'a > b { color: red }'}</style>",
+        "<script>{'if (a > b) {}'}</script>",
+    ] {
+        let o = lower("P.tsx", &page(&format!("<Btn asChild>{kid}</Btn>")));
+        assert!(react_with(&o, "slot-child-shape"), "{kid}: {:?}", o.diags);
+    }
+}

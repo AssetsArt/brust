@@ -1044,7 +1044,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                         "slot-merge",
                         format!("`{k}` of the <{tag}> element cannot be merged with the child's at compile time"),
                         0,
-                        "write the attribute on one side",
+                        "report this compiler bug (check_poly keeps this case on React)",
                     ));
                 }
             }
