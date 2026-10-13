@@ -17,6 +17,7 @@ import { BuildError } from './errors'
 import { type CacheRecord, type ManifestJson, tierOf, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
 import { type ExprReads, prepareStatic, writeStatic } from './static'
+import { writeStaticWorker } from './static-worker'
 
 export { BuildError } from './errors'
 
@@ -142,11 +143,13 @@ export async function runBuild(opts: {
   // R9.3/R9.4: every reason to refuse a static build, before any write.
   const ssgPlan =
     opts.target === 'static'
-      ? await prepareStatic(leaves, actions !== null, opts.exprReads ?? (await import('../native')).cacheExprReads, opts.log)
+      ? await prepareStatic(leaves, actions !== null, opts.exprReads ?? (await import('../native')).cacheExprReads, opts.log, cache)
       : null
 
   // Config, @brust/core-cf resolution and the user's wrangler file fail here, before any write.
-  const cf = opts.target === 'cloudflare' ? await prepareCloudflare(appRoot, cloudflare, { fromSource: opts.wasmFromSource === true, env: process.env }) : null
+  // L12: a static build with `[actions]` also builds the Cloudflare worker (its Pages `_worker.js`).
+  const hybrid = ssgPlan !== null && actions !== null
+  const cf = opts.target === 'cloudflare' || hybrid ? await prepareCloudflare(appRoot, cloudflare, { fromSource: opts.wasmFromSource === true, env: process.env }) : null
 
   // Sibling of `dist` (same filesystem: the final rename is atomic), fixed name (no random bytes in
   // anything the bundler sees).
@@ -154,11 +157,12 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, cssGlobal, log: opts.log })
+    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
       await writeStatic(tmp, { entry, appRoot, plan: ssgPlan, version, strict: opts.strict === true, log: opts.log, shownDir: join(dist, 'static') })
+      if (hybrid && cf && actions) writeStaticWorker(tmp, actions, cf, opts.log)
     }
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
     if (existsSync(dist)) {
@@ -196,6 +200,8 @@ async function buildInto(
     cf: CfPrepared | null
     /** `[css] global` as written (app-root relative). */
     cssGlobal: string[]
+    /** `--target static` with `[actions]`: the worker is built without the cache (static pages are never cached). */
+    hybrid: boolean
     log: (s: string) => void
   },
 ): Promise<void> {
@@ -248,7 +254,19 @@ async function buildInto(
   if (o.cf) {
     const warnings = await buildCloudflare(
       out,
-      { appRoot, entry, dist: o.dist, compiled, manifest, sourceOf: ctx.sourceOf, actionsEntry: o.actionsEntry, cacheModule: o.cacheModule, cacheGetTimeoutMs: o.cache?.getTimeoutMs, cssMaps: css.maps, log: o.log },
+      {
+        appRoot,
+        entry,
+        dist: o.dist,
+        compiled,
+        manifest: o.hybrid ? { ...manifest, cache: undefined } : manifest,
+        sourceOf: ctx.sourceOf,
+        actionsEntry: o.actionsEntry,
+        cacheModule: o.hybrid ? null : o.cacheModule,
+        cacheGetTimeoutMs: o.hybrid ? undefined : o.cache?.getTimeoutMs,
+        cssMaps: css.maps,
+        log: o.log,
+      },
       o.cf,
     )
     for (const w of warnings) o.log(w)
