@@ -3,7 +3,7 @@
 import { expect, test } from 'bun:test'
 import { BuildError } from '../src/build/errors'
 import { fileFor, NOT_FOUND_PATH, planStatic } from '../src/build/ssg'
-import { prepareStatic } from '../src/build/static'
+import { prepareStatic, redirectSource } from '../src/build/static'
 import { type SsgRecord, ssgRequest } from '../src/handlers'
 import { BrustRouteError, flattenRoutes, type Route, validateRoutes } from '../src/routes'
 
@@ -21,7 +21,7 @@ const rule = async (f: () => unknown): Promise<string> => {
 }
 
 test('file names: / is index.html, pretty URLs, decoded segments', () => {
-  expect(['/', '/docs', '/docs/x', '/p/100%25', '/p/%E0%B9%84%E0%B8%97%E0%B8%A2'].map(fileFor)).toEqual(['index.html', 'docs.html', 'docs/x.html', 'p/100%.html', 'p/ไทย.html'])
+  expect(['/', '/docs', '/docs/x', '/p/100%25', '/p/%E0%B9%84%E0%B8%97%E0%B8%A2'].map((p) => fileFor(p))).toEqual(['index.html', 'docs.html', 'docs/x.html', 'p/100%.html', 'p/ไทย.html'])
 })
 
 test('static and dynamic routes are planned; values are encoded in the request and decoded in the file', () => {
@@ -115,4 +115,38 @@ test('R9.5: the loader sees an empty request, and every read is recorded', () =>
     { kind: 'read', routeId: 'r1', path: '/a', field: 'cookies', key: 'theme' },
     { kind: 'read', routeId: 'r1', path: '/a', field: 'search', key: '*' },
   ])
+})
+
+test('review N1: a stray % or an unencodable value is ssg-param-encoding naming the route, never a URIError', async () => {
+  expect(await rule(() => planStatic(leaves([{ path: '/sale/50%off', Component: C }]), new Map()))).toBe(
+    'ssg-param-encoding: route r0 (/sale/50%off): path segment "50%off" is not valid percent-encoding (write a literal % as %25)',
+  )
+  const one = leaves([{ path: '/p/{name}', Component: C, ssg: { params: () => [] } }])
+  expect(await rule(() => planStatic(one, new Map([['r0', [{ name: 'a\uD800' }]]])))).toBe(
+    'ssg-param-encoding: route r0 (/p/{name}) ssg.params()[0].name = "a\\ud800" is not encodable (a lone UTF-16 surrogate)',
+  )
+})
+
+test('review N2: paths that differ only by case are ssg-path-collision', async () => {
+  const ls = leaves([
+    { path: '/About', Component: C },
+    { path: '/p/{name}', Component: C, ssg: { params: () => [] } },
+  ])
+  // different directories: no collision
+  expect(planStatic(ls, new Map([['r1', [{ name: 'about' }]]])).pages.map((p) => p.file)).toEqual(['About.html', 'p/about.html'])
+  const two = leaves([
+    { path: '/About', Component: C },
+    { path: '/{name}', Component: C, ssg: { params: () => [] } },
+  ])
+  expect(await rule(() => planStatic(two, new Map([['r1', [{ name: 'about' }]]])))).toBe(
+    'ssg-path-collision: /About (route r0, About.html) and /about (route r1, about.html) differ only by case: on a case-insensitive file system one file overwrites the other',
+  )
+})
+
+test('review N4: a _redirects source is the decoded path; only whitespace, controls and % are escaped', () => {
+  expect(redirectSource('/old')).toBe('/old')
+  expect(redirectSource(`/${encodeURIComponent('เก่า')}`)).toBe('/เก่า')
+  expect(redirectSource('/เก่า')).toBe('/เก่า')
+  expect(redirectSource('/a%20b/100%25')).toBe('/a%20b/100%25')
+  expect(redirectSource('/bad%zz')).toBe('/bad%25zz')
 })

@@ -38,15 +38,31 @@ export function patternParams(pattern: string): { name: string; rest: boolean }[
 }
 
 /** The file a request path is written to: `/` → `index.html`, `/a/b` → `a/b.html` (decoded, so a
- * host that decodes the URL finds it). */
-export function fileFor(path: string): string {
+ * host that decodes the URL finds it). A segment that is not valid percent-encoding (a stray `%`)
+ * is a `ssg-param-encoding` error naming `where` (review N1), never a URIError. */
+export function fileFor(path: string, where = path): string {
   if (path === '/') return 'index.html'
   const decoded = path
     .slice(1)
     .split('/')
-    .map((s) => decodeURIComponent(s))
+    .map((s) => {
+      try {
+        return decodeURIComponent(s)
+      } catch {
+        throw new BuildError('ssg-param-encoding', `${where}: path segment ${JSON.stringify(s)} is not valid percent-encoding (write a literal % as %25)`)
+      }
+    })
     .join('/')
   return `${decoded}.html`
+}
+
+/** `encodeURIComponent`, as an `ssg-param-encoding` error naming `where` for a lone surrogate (review N1). */
+function encodeSegment(v: string, where: string): string {
+  try {
+    return encodeURIComponent(v)
+  } catch {
+    throw new BuildError('ssg-param-encoding', `${where} = ${JSON.stringify(v)} is not encodable (a lone UTF-16 surrogate)`)
+  }
 }
 
 /** One `{name}` value: a non-empty string; `/` only in a `{*rest}` value, and never an empty, `.`
@@ -77,7 +93,7 @@ export function planStatic(leaves: FlatRoute[], params: Map<string, unknown>): S
     }
     const names = patternParams(leaf.pattern)
     if (names.length === 0) {
-      pages.push({ path: leaf.pattern, file: fileFor(leaf.pattern), routeId: leaf.id, pattern: leaf.pattern, expect: 200 })
+      pages.push({ path: leaf.pattern, file: fileFor(leaf.pattern, `route ${leaf.id} (${leaf.pattern})`), routeId: leaf.id, pattern: leaf.pattern, expect: 200 })
       continue
     }
     if (!ssg || ssg.params === undefined)
@@ -94,16 +110,27 @@ export function planStatic(leaves: FlatRoute[], params: Map<string, unknown>): S
       const path = leaf.pattern.replace(SEGMENT, () => {
         const { name, rest } = names[k++]!
         const v = checkValue(leaf, i, name, rest, r[name])
-        return v.split('/').map(encodeURIComponent).join('/')
+        return v
+          .split('/')
+          .map((seg) => encodeSegment(seg, `route ${leaf.id} (${leaf.pattern}) ssg.params()[${i}].${name}`))
+          .join('/')
       })
-      pages.push({ path, file: fileFor(path), routeId: leaf.id, pattern: leaf.pattern, expect: 200 })
+      pages.push({ path, file: fileFor(path, `route ${leaf.id} (${leaf.pattern})`), routeId: leaf.id, pattern: leaf.pattern, expect: 200 })
     })
   }
   const seen = new Map<string, PlannedPage>()
+  // Keyed case-folded (review N2): macOS and Windows file systems are case-insensitive, so `/A` and
+  // `/a` would overwrite each other's file.
   for (const p of pages) {
-    const prev = seen.get(p.file)
-    if (prev) throw new BuildError('ssg-params', `${prev.path} (route ${prev.routeId}) and ${p.path} (route ${p.routeId}) both write ${p.file}`)
-    seen.set(p.file, p)
+    const key = p.file.toLowerCase()
+    const prev = seen.get(key)
+    if (prev && prev.file === p.file) throw new BuildError('ssg-params', `${prev.path} (route ${prev.routeId}) and ${p.path} (route ${p.routeId}) both write ${p.file}`)
+    if (prev)
+      throw new BuildError(
+        'ssg-path-collision',
+        `${prev.path} (route ${prev.routeId}, ${prev.file}) and ${p.path} (route ${p.routeId}, ${p.file}) differ only by case: on a case-insensitive file system one file overwrites the other`,
+      )
+    seen.set(key, p)
   }
   if (seen.has('404.html')) throw new BuildError('ssg-params', `${seen.get('404.html')!.path} would overwrite 404.html`)
   if (catchAll) pages.push({ path: NOT_FOUND_PATH, file: '404.html', routeId: catchAll.id, pattern: catchAll.pattern, expect: 404 })

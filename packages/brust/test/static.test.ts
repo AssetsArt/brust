@@ -16,7 +16,10 @@ let buildLog = ''
 const copies: string[] = []
 
 function build(cwd: string, ...args: string[]) {
-  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--target', 'static', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_PORT: '', BRUST_ADDR: '' } })
+  return buildEnv(cwd, {}, ...args)
+}
+function buildEnv(cwd: string, extra: Record<string, string>, ...args: string[]) {
+  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--target', 'static', ...args], { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_PORT: '', BRUST_ADDR: '', ...extra } })
   return { code: b.exitCode, stdout: b.stdout.toString(), stderr: b.stderr.toString() }
 }
 
@@ -54,8 +57,9 @@ beforeAll(() => {
     port: 0,
     hostname: '127.0.0.1',
     fetch(req) {
+      // Pages matches a _redirects source against the decoded path.
       const path = new URL(req.url).pathname
-      const r = redirects.find(([from]) => from === path)
+      const r = redirects.find(([from]) => decodeURIComponent(from!) === decodeURIComponent(path))
       if (r) return new Response(null, { status: Number(r[2]), headers: { location: r[1]! } })
       const file = resolve(path)
       return file ? new Response(Bun.file(file)) : new Response(Bun.file(join(out, '404.html')), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8' } })
@@ -86,18 +90,21 @@ test('layout: one file per page, 404.html, assets at their URL paths, _headers/_
   for (const f of ['manifest.json', 'index.js', 'jobs.js', 'jinja']) expect([f, existsSync(join(out, f))]).toEqual([f, false])
   // the normal dist is still there for `brust start`
   for (const f of ['manifest.json', 'index.js', 'jobs.js', 'jinja']) expect([f, existsSync(join(fixture, 'dist', f))]).toEqual([f, true])
-  expect(readFileSync(join(out, '_redirects'), 'utf8')).toBe('/old /docs 301\n')
+  expect(readFileSync(join(out, '_redirects'), 'utf8')).toBe('/old /docs 301\n/go/ไทย /docs/intro 302\n')
   expect(readFileSync(join(out, '_headers'), 'utf8')).toContain('/_brust/client/*\n  Cache-Control: public, max-age=31536000, immutable')
   const report = JSON.parse(readFileSync(join(out, 'ssg.json'), 'utf8'))
-  expect(report.skipped).toEqual([{ routeId: 'r6', pattern: '/live/{id}' }])
-  expect(report.notFound).toEqual({ file: '404.html', routeId: 'r8' })
-  expect(report.redirects).toEqual([{ from: '/old', to: '/docs', status: 301 }])
-  expect(buildLog).toContain('[brust] static: 7 page(s), 1 redirect(s), 404.html, 1 route(s) ssg: false -> ')
+  expect(report.skipped).toEqual([{ routeId: 'r7', pattern: '/live/{id}' }])
+  expect(report.notFound).toEqual({ file: '404.html', routeId: 'r9' })
+  expect(report.redirects).toEqual([
+    { from: '/old', to: '/docs', status: 301 },
+    { from: `/go/${encodeURIComponent('ไทย')}`, to: '/docs/intro', status: 302 },
+  ])
+  expect(buildLog).toContain('[brust] static: 7 page(s), 2 redirect(s), 404.html, 1 route(s) ssg: false -> ')
   expect(buildLog).not.toContain('brust-tmp')
 })
 
 test('R9.5: a loader reading the request warns and the page is the no-cookie one', () => {
-  expect(buildLog).toContain('[brust] warning ssg-request-read route r7 (/reads) reads req.cookies["theme"] (at /reads)')
+  expect(buildLog).toContain('[brust] warning ssg-request-read route r8 (/reads) reads req.cookies["theme"] (at /reads)')
   expect(readFileSync(join(out, 'reads.html'), 'utf8')).toContain('<p class="theme">none</p>')
 })
 
@@ -135,6 +142,8 @@ test('served like Pages: pages 200 (encoded paths too), the redirect 301, unknow
   expect(await (await fetch(`${base}/poke/100%25`)).text()).toContain('<h1 class="poke">100%</h1>')
   const red = await fetch(`${base}/old`, { redirect: 'manual' })
   expect([red.status, red.headers.get('location')]).toEqual([301, '/docs'])
+  const thai = await fetch(`${base}/go/${encodeURIComponent('ไทย')}`, { redirect: 'manual' })
+  expect([thai.status, thai.headers.get('location')]).toEqual([302, '/docs/intro'])
   for (const p of ['/nope', '/live/1', '/poke/agumon']) {
     const r = await fetch(base + p)
     expect([p, r.status]).toEqual([p, 404])
@@ -146,7 +155,7 @@ test('--strict: a loader reading the request fails the build, and the previous d
   const before = readFileSync(join(out, 'index.html'), 'utf8')
   const b = build(fixture, '--strict')
   expect(b.code).toBe(1)
-  expect(b.stderr).toContain('error ssg-request-read route r7 (/reads) reads req.cookies["theme"]')
+  expect(b.stderr).toContain('error ssg-request-read route r8 (/reads) reads req.cookies["theme"]')
   expect(readFileSync(join(out, 'index.html'), 'utf8')).toBe(before)
 })
 
@@ -168,6 +177,19 @@ test('R9.4: [actions] is ssg-actions, a cache key that reads a cookie is ssg-var
   expect(existsSync(join(varies, 'dist'))).toBe(false)
 })
 
+test('review N3: a page past BRUST_SSG_PAGE_TIMEOUT_MS, or a render past BRUST_SSG_TIMEOUT_MS, is ssg-timeout naming the path', () => {
+  const slow = variant('slow', (d) => {
+    const src = readFileSync(join(d, 'routes.tsx'), 'utf8')
+    writeFileSync(join(d, 'routes.tsx'), src.replace("{ path: '/', Component: Home },", "{ path: '/', Component: Home },\n      { path: '/slow', Component: Home, loader: async () => { await Bun.sleep(20_000); return {} } },"))
+  })
+  const page = buildEnv(slow, { BRUST_SSG_PAGE_TIMEOUT_MS: '500' })
+  expect([page.code, page.stderr.trim()]).toEqual([1, 'error ssg-timeout GET /slow did not answer within 500 ms (BRUST_SSG_PAGE_TIMEOUT_MS)'])
+  expect(existsSync(join(slow, 'dist'))).toBe(false)
+  const total = buildEnv(slow, { BRUST_SSG_TIMEOUT_MS: '4000' })
+  expect([total.code, total.stderr.trim()]).toEqual([1, 'error ssg-timeout the render took longer than 4000 ms (BRUST_SSG_TIMEOUT_MS); it was rendering /slow'])
+  expect(existsSync(join(slow, 'dist'))).toBe(false)
+}, 120_000)
+
 test('R9.3: a dynamic route without params fails; no * route writes a default 404.html with a warning', () => {
   const missing = variant('missing', (d) => {
     const src = readFileSync(join(d, 'routes.tsx'), 'utf8')
@@ -175,7 +197,7 @@ test('R9.3: a dynamic route without params fails; no * route writes a default 40
   })
   const m = build(missing)
   expect(m.code).toBe(1)
-  expect(m.stderr).toContain("error ssg-params-missing route r6 (/live/{id}) is dynamic: add ssg: { params: () => [{ id: '…' }] } or ssg: false")
+  expect(m.stderr).toContain("error ssg-params-missing route r7 (/live/{id}) is dynamic: add ssg: { params: () => [{ id: '…' }] } or ssg: false")
   const no404 = variant('no404', (d) => {
     const src = readFileSync(join(d, 'routes.tsx'), 'utf8')
     writeFileSync(join(d, 'routes.tsx'), src.replace("      { path: '*', Component: NotFound },\n", '').replace("import NotFound from './NotFound'\n", ''))

@@ -39,7 +39,7 @@ beforeAll(async () => {
     hostname: '127.0.0.1',
     fetch(req) {
       const path = new URL(req.url).pathname
-      const r = redirects.find(([from]) => from === path)
+      const r = redirects.find(([from]) => decodeURIComponent(from!) === decodeURIComponent(path))
       if (r) return new Response(null, { status: Number(r[2]), headers: { location: r[1]! } })
       const file = resolve(path)
       return file ? new Response(Bun.file(file)) : new Response(Bun.file(join(out, '404.html')), { status: 404, headers: { 'content-type': 'text/html; charset=utf-8' } })

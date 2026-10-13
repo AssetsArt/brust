@@ -79,6 +79,19 @@ type SsgRecord =
 const DEFAULT_404 =
   '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>404 Not Found</title></head><body><h1>404 Not Found</h1></body></html>\n'
 
+/** A `_redirects` source as Cloudflare Pages matches it (review N4): the decoded path, with only what
+ * the file format or the decoding needs escaped (whitespace and control characters, and `%`, so a
+ * literal `%` is not read as an escape). Non-ASCII stays as UTF-8. */
+export function redirectSource(path: string): string {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(path)
+  } catch {
+    decoded = path
+  }
+  return decoded.replace(/[\s%\u0000-\u001f\u007f]/gu, (c) => encodeURIComponent(c))
+}
+
 const text = (r: Rendered) => Buffer.from(r.body, 'base64').toString('utf8')
 const excerpt = (s: string) => (s.length > 300 ? `${s.slice(0, 300)}…` : s).replace(/\s+/g, ' ').trim()
 
@@ -90,8 +103,10 @@ async function render(dist: string, entry: string, cwd: string, paths: string[])
   const plan = join(stage, 'plan.json')
   const out = join(stage, 'rendered.json')
   const logFile = join(stage, 'records.jsonl')
+  const progress = join(stage, 'progress.txt')
   writeFileSync(plan, JSON.stringify(paths))
   writeFileSync(logFile, '')
+  writeFileSync(progress, '')
   const proc = Bun.spawn([process.execPath, join(import.meta.dir, 'ssg-render.ts')], {
     cwd,
     env: {
@@ -102,15 +117,35 @@ async function render(dist: string, entry: string, cwd: string, paths: string[])
       BRUST_SSG_PLAN: plan,
       BRUST_SSG_OUT: out,
       BRUST_SSG_LOG: logFile,
+      BRUST_SSG_PROGRESS: progress,
       BRUST_ADDR: '127.0.0.1',
       BRUST_PORT: '',
     },
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  const [code, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()])
-  if (code !== 0 || !existsSync(out)) throw new BuildError('ssg-render', `the render server failed (exit ${code}):\n${(stderr || stdout).trim()}`)
-  const { addr, pages: rendered } = JSON.parse(readFileSync(out, 'utf8')) as { addr: string; pages: Rendered[] }
+  // Review N3: the whole render is bounded too; past it the child (our own PID) is killed.
+  const totalMs = Number(process.env.BRUST_SSG_TIMEOUT_MS) || 600_000
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<'late'>((r) => {
+    timer = setTimeout(() => r('late'), totalMs)
+  })
+  const texts = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+  const first = await Promise.race([proc.exited, late])
+  clearTimeout(timer)
+  if (first === 'late') {
+    proc.kill('SIGKILL')
+    await proc.exited
+    const last = readFileSync(progress, 'utf8').trim().split('\n').pop() || '(before the first page)'
+    throw new BuildError('ssg-timeout', `the render took longer than ${totalMs} ms (BRUST_SSG_TIMEOUT_MS); it was rendering ${last}`)
+  }
+  const code = first
+  const [stdout, stderr] = await texts
+  const result = existsSync(out) ? (JSON.parse(readFileSync(out, 'utf8')) as { addr: string; pages?: Rendered[]; timeout?: { path: string; ms: number } }) : null
+  if (result?.timeout)
+    throw new BuildError('ssg-timeout', `GET ${result.timeout.path} did not answer within ${result.timeout.ms} ms (BRUST_SSG_PAGE_TIMEOUT_MS)`)
+  if (code !== 0 || !result?.pages) throw new BuildError('ssg-render', `the render server failed (exit ${code}):\n${(stderr || stdout).trim()}`)
+  const { addr, pages: rendered } = result as { addr: string; pages: Rendered[] }
   const records = readFileSync(logFile, 'utf8')
     .split('\n')
     .filter((l) => l !== '')
@@ -186,7 +221,7 @@ export async function writeStatic(
     write('404.html', Buffer.from(DEFAULT_404))
     warn("[brust] warning ssg-404 no '*' route: wrote a default 404.html (without one, Cloudflare Pages serves every unknown path as the home page)")
   }
-  writeFileSync(join(dir, '_redirects'), report.redirects.map((r) => `${r.from} ${r.to} ${r.status}\n`).join(''))
+  writeFileSync(join(dir, '_redirects'), report.redirects.map((r) => `${redirectSource(r.from)} ${r.to} ${r.status}\n`).join(''))
 
   const seen = new Set<string>()
   const reads: string[] = []

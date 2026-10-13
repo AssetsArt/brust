@@ -31,7 +31,7 @@ The build starts a child Bun process. It boots the same napi server as `brust st
 { path: '/live/{id}', Component: Live, ssg: false },
 ```
 
-`params` may be async and runs once, in the build. Each record needs a non-empty string for every `{name}` of the pattern. A `{name}` value is one path segment, so `/` is refused. A `{*rest}` value may contain `/`. Empty, `.` and `..` segments are refused (`ssg-params`). Values are percent-encoded in the request and decoded in the file name: `100%` is requested as `/poke/100%25` and written to `poke/100%.html`, and a Thai name is written under its Thai file name. Two records that write the same file are an error.
+`params` may be async and runs once, in the build. Each record needs a non-empty string for every `{name}` of the pattern. A `{name}` value is one path segment, so `/` is refused. A `{*rest}` value may contain `/`. Empty, `.` and `..` segments are refused (`ssg-params`). Values are percent-encoded in the request and decoded in the file name: `100%` is requested as `/poke/100%25` and written to `poke/100%.html`, and a Thai name is written under its Thai file name. Two records that write the same file are an error. A path segment that is not valid percent-encoding (a stray `%` in a static pattern) or a value that cannot be encoded is `ssg-param-encoding`. Two files that differ only by case (`About.html` and `about.html`) are `ssg-path-collision`, because macOS and Windows file systems would keep only one.
 
 The server and Cloudflare targets ignore the `ssg` field. It is allowed only on leaf routes.
 
@@ -58,9 +58,11 @@ Without a `*` route, the build writes a minimal `404.html` and warns `ssg-404`. 
 | The server answers | The build |
 |---|---|
 | 200 | Writes the file. |
-| `redirect(location, status)` | Adds `<path> <location> <status>` to `_redirects`. |
+| `redirect(location, status)` | Adds `<path> <location> <status>` to `_redirects`. The source is the decoded path, with only whitespace, control characters and `%` escaped, the form Pages matches (`/go/ไทย`). |
 | Any other status on a planned path | Error `ssg-render`, with an excerpt of the body. |
 | A body or `Location` naming the render server's loopback origin | Error `ssg-render`. A static page must not link back to the build machine. |
+| No answer within `BRUST_SSG_PAGE_TIMEOUT_MS` (default 30 000) | Error `ssg-timeout` naming the path. |
+| The whole render past `BRUST_SSG_TIMEOUT_MS` (default 600 000) | The render process is stopped; error `ssg-timeout` naming the path it was on. |
 | Response headers set by a loader | Dropped, with warning `ssg-headers`. A static file carries none. |
 
 ## 5. Loaders see an empty request
