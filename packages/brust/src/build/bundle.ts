@@ -269,6 +269,15 @@ function stage(sourceOf: SourceOf, file: string, c: Compiled): void {
 
 const isReact = (c: Compiled) => typeof c.ir.tier === 'object' && c.ir.tier !== null && 'React' in c.ir.tier
 
+/** The `import` line that brings a react-tier component's code in as `local`: its own module, or
+ * for a package export (L22) the export itself. */
+export function componentImport(c: Compiled, local: string): string {
+  const ext = c.ir.external
+  if (!ext) return `import ${local} from ${JSON.stringify(c.file)}`
+  const from = JSON.stringify(ext.source)
+  return ext.export === 'default' ? `import ${local} from ${from}` : `import { ${JSON.stringify(ext.export).replace(/^"|"$/g, '')} as ${local} } from ${from}`
+}
+
 /** The island entry of a react-tier component: registers `(host, props) => …` under its id. A
  * `client_only` component was never server-rendered (its host is empty), so it mounts with
  * `createRoot`; hydrating it would fail (React #418). Everything else hydrates the SSR markup. */
@@ -278,7 +287,7 @@ export function islandShim(c: Compiled): string {
     ? ['createRoot', `createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }).render(createElement(Comp, props))`]
     : ['hydrateRoot', `hydrateRoot(host, createElement(Comp, props), { identifierPrefix: ${JSON.stringify(c.id)} })`]
   return (
-    `import { ${api} } from 'react-dom/client'\nimport { createElement } from 'react'\nimport Comp from ${JSON.stringify(c.file)}\n` +
+    `import { ${api} } from 'react-dom/client'\nimport { createElement } from 'react'\n${componentImport(c, 'Comp')}\n` +
     `;((globalThis as any).__brustIslands ||= []).push([${JSON.stringify(c.id)}, (host: Element, props: any) => { ${mount} }])\n` +
     `;(globalThis as any).__brustIslandReady?.()\n`
   )
@@ -374,7 +383,7 @@ export async function buildJobs(dist: string, compiled: Map<string, Compiled>, s
       fns.push(`precompute: j${n}.precompute`)
     }
     if (isReact(c) && !c.ir.tier.React.client_only) {
-      imports.push(`import C${n} from ${JSON.stringify(c.file)}`)
+      imports.push(componentImport(c, `C${n}`))
       // Ruling 2bf3775a (R1): the island's component id prefixes React's useId on BOTH sides
       // (the shim's hydrateRoot passes the same prefix), so ids differ across islands.
       fns.push(`ssr: (props: any) => renderToString(createElement(C${n}, props), { identifierPrefix: ${JSON.stringify(c.id)} })`)

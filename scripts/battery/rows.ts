@@ -217,6 +217,9 @@ export const rows: Row[] = [
     snippet: `import { Children } from 'react'\nexport default function C(props: any) { return <ul>{Children.map(props.children, (c: any) => <li>{c}</li>)}</ul> }` },
 
   // ---- E. v2 specifics ------------------------------------------------------
+  { id: 'e-package-component', category: 'E', authoring: 'component from a package in a static parent', expect: 'static', jobs: 1,
+    snippet: `import { Heart } from 'icons'\nexport default function C() { return <p>love <Heart size={16} /></p> }`,
+    note: 'L22: a package export renders as a React island (one ssr job); the parent stays static' },
   { id: 'e-precompute-props', category: 'E', authoring: 'props-only value outside the template subset', expect: 'static', jobs: 1,
     snippet: `import { fmt } from './fmt'\nexport default function C({ price }: any) { return <p>{fmt(price)}</p> }`,
     files: { 'fmt.ts': `export const fmt = (n: number) => n.toFixed(2)` },

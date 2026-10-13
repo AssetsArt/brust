@@ -118,6 +118,16 @@ pub struct ChildRef {
     pub tier: crate::ir::Tier,
 }
 
+/// A component that lives in a package, rendered as a React island: the island's code is the
+/// package export itself (`import { Heart } from 'lucide-react'`), not a compiled module.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ExternalRef {
+    /// The import specifier, as written (`lucide-react`).
+    pub source: String,
+    /// The export: a name, or `default`.
+    pub export: String,
+}
+
 /// One `useStore(handle)` binding of the component (M3-F D7).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StoreUse {

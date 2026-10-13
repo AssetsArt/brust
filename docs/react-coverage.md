@@ -11,8 +11,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 24 | 4 | 10 | 5 | 4 | 1 | 0 | 0 |
-| **Total** | 82 | 27 | 28 | 22 | 4 | 1 | 0 | 0 |
+| E v2 specifics | 25 | 5 | 10 | 5 | 4 | 1 | 0 | 0 |
+| **Total** | 83 | 28 | 28 | 22 | 4 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -104,6 +104,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
+| e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
 | e-precompute-props | props-only value outside the template subset | static | static | precompute | ok | — | spec §6.4 precompute |
 | e-precompute-state | state-dependent value from a module helper | native | native | precompute | ok | — | spec §6.4 precompute |
 | e-precompute-per-item | per-item precompute in a list | static | static | precompute | ok | — | spec §6.4 precompute |

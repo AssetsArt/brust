@@ -398,3 +398,62 @@ fn row_only_links_keep_their_ids() {
         (2, "_p2")
     );
 }
+
+// L22: a package component is a synthetic React-tier component the build resolves as the export.
+#[test]
+fn a_package_component_gets_an_island_id_and_an_ssr_job() {
+    let a = analyze(
+        "import { Heart } from 'tiny-icons'\nexport default function P() { return <p><Heart size={16} /></p> }",
+    );
+    let heart = a.children.iter().find(|c| c.name == "Heart").unwrap();
+    let id = heart.id.clone().expect("a package component has an island id");
+    assert!(id.starts_with("heart_"), "{id}");
+    assert!(matches!(heart.tier, Tier::React { .. }));
+    assert!(heart.path.is_none());
+    assert_eq!(a.tier, Tier::Static);
+    let job = a
+        .jobs
+        .iter()
+        .find(|j| matches!(j.kind, JobKind::Ssr { .. }))
+        .expect("an ssr job renders the island");
+    assert_eq!(job.outputs, vec![format!("_ssr_{id}")]);
+    assert_eq!(job.literals.get("size"), Some(&serde_json::json!(16)));
+    // The same export is the same island from another parent; another package or export is not.
+    let again = analyze(
+        "import { Heart } from 'tiny-icons'\nexport default function Q() { return <b><Heart /></b> }",
+    );
+    assert_eq!(again.children[0].id.as_deref(), Some(id.as_str()));
+    let other_pkg = analyze(
+        "import { Heart } from 'other-icons'\nexport default function P() { return <p><Heart /></p> }",
+    );
+    assert_ne!(other_pkg.children[0].id.as_deref(), Some(id.as_str()));
+    let default_export = analyze(
+        "import Icon from 'tiny-icons'\nexport default function P() { return <p><Icon /></p> }",
+    );
+    assert!(default_export.children[0].id.is_some());
+}
+
+#[test]
+fn the_synthetic_component_names_the_package_export() {
+    use brust_compiler::analyze::component::AnalyzeOptions;
+    use brust_compiler::pipeline::compile_tree;
+    let tree = run_on_compiler_thread(|| {
+        compile_tree(
+            "tests/fixtures/parent-counter/Ext.tsx",
+            Some(b"import { Heart as H } from 'tiny-icons'\nexport default function P() { return <p><H /></p> }".to_vec()),
+            &AnalyzeOptions {
+                root: root(),
+                ..Default::default()
+            },
+            brust_compiler::lower::DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|l| (l.ir.external.clone(), l.ir.id.clone(), l.artifacts.jinja))
+        .collect::<Vec<_>>()
+    });
+    let ext = tree.iter().find(|(e, _, _)| e.is_some()).expect("a synthetic component");
+    let e = ext.0.as_ref().unwrap();
+    assert_eq!((e.source.as_str(), e.export.as_str()), ("tiny-icons", "Heart"));
+    assert!(ext.2.contains(&format!("_ssr_{}", ext.1)), "{}", ext.2);
+}
