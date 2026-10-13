@@ -570,7 +570,7 @@ The lane adds the three missing pieces below and documents the whole flow as one
 - Every non-action path answers 404 as `application/problem+json`.
 - **Bun:** `brust start` serves the dist unchanged.
 - **Cloudflare:** a Worker serving only actions. Reuse the CF target (`docs/cloudflare.md` §6); `wrangler.jsonc` without Static Assets.
-- **R16.4 Root prefix.** Only in an actions-only build, `prefix = "/"` is allowed, so `https://api.example.com/team` maps to the app's `/team`.
+- **R16.4 Root prefix.** Only in an actions-only build, `prefix = "/"` is allowed, so `https://api.example.com/team` maps to the app's `/team`. Amended 2026-10-13 (Mellow N3 on the review of @42c7faa): a page-only build that points at a root-prefix remote actions origin may also set `prefix = "/"`, because it mounts no actions locally; a build that serves pages and actions from one origin still may not.
   - `prefixError` (`actions/prefix.ts`) keeps refusing `/` in a normal build, where page routes would be unreachable.
   - The server's prefix match and the worker mount must handle the root without a double slash. `request.url` stays the real URL.
 - `[cache]` and route options are ignored with an info line. Loaders don't exist in this mode.
