@@ -1,0 +1,6 @@
+[actions]
+entry = "actions.ts"
+prefix = "/api"
+
+[cloudflare]
+name = "brust-static-actions"
