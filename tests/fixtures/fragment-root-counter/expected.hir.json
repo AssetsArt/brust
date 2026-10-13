@@ -1,0 +1,19 @@
+{
+  "function": "Pair",
+  "params": 0,
+  "scopes": [
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "n",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t0"
+      ]
+    }
+  ]
+}

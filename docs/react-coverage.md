@@ -33,7 +33,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-style-object | style object from props | static | static | 0 | ok | — | spec §6.2 style object |
 | a-and-guard | && guard on a prop | static | static | 0 | ok | — | spec §6.2 && guard |
 | a-ternary | ternary on a prop | static | static | 0 | ok | — | spec §6.2 ternary |
-| a-fragment | fragment root | static | static | 0 | ok | warning:fragment-root | warning fragment-root: wrapped in <brust-host> |
+| a-fragment | fragment root | static | static | 0 | ok | — | static fragment root: no <brust-host>, no warning (gaps L8) |
 | a-list-keys | keyed list from a prop | static | static | 0 | ok | — | spec §6.2 keyed list |
 | a-nested-list | nested keyed lists | static | static | 0 | ok | — | table rows |
 | a-cond-attribute | conditional attribute via ternary | static | static | 0 | ok | — | spec §6.2 conditional attribute |
@@ -60,15 +60,15 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-child-static | static child component | static | static | 0 | ok | — | spec §3.1 inlined child |
 | b-child-props | child with props | static | static | 0 | ok | — | spec §3.1 inlined child with props |
 | b-child-dir-index | child imported from a directory (./widgets → widgets/index.ts) | static | static | 0 | ok | — | spec §3.1 inlined child; Bun resolves <dir>/index.ts; compiler matches (M3-F store lane) |
-| b-children-slot | children passed through a slot | static | static | 0 | ok | warning:fragment-root | spec §3.1 children slot |
+| b-children-slot | children passed through a slot | static | static | 0 | ok | — | spec §3.1 children slot |
 | b-reactive-props | state flows into a native child as a reactive prop | native | native | 0 | ok | — | spec §7.4 reactive props (D8) |
 | b-function-prop | function prop to a native child | native | native | 0 | ok | — | spec §7.4 function prop between native components |
 | b-react-child-island | react child inside a native parent (island) | static | static | ssr | ok | — | the parent stays static; its one job is the child island SSR render |
-| b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component, warning:fragment-root |  |
+| b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component |  |
 | b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
 | b-forwardref | forwardRef component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
-| b-spread-child | spread props onto a component (F31) | react | react | ssr | ok | fallback:spread-props, warning:fragment-root |  |
+| b-spread-child | spread props onto a component (F31) | react | react | ssr | ok | fallback:spread-props |  |
 
 ## C. Hooks
 
@@ -97,8 +97,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
 | d-cache | cache() around a server helper | static | static | precompute | ok | — | spec §3.4 cache() |
-| d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:jsx-expression, fallback:local-component, warning:fragment-root | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
-| d-createcontext | createContext provider | react | react | ssr | ok | fallback:member-tag, warning:fragment-root |  |
+| d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:jsx-expression, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
+| d-createcontext | createContext provider | react | react | ssr | ok | fallback:member-tag |  |
 | d-clone-element | cloneElement | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-expression |  |
 
@@ -116,7 +116,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-request-prop | request state read in render | error | error | precompute | refused | error:request-state-in-render |  |
 | e-missing-key | list without key | error | error | 0 | refused | error:list-key |  |
 | e-use-client | 'use client' leftover | static | static | 0 | ok | warning:use-client-leftover | spec §8.1 use-client-leftover (F41) |
-| e-fragment-root | fragment root with state | native | native | 0 | ok | warning:fragment-root | warning fragment-root |
+| e-fragment-root | fragment root with state | native | native | 0 | ok | — | keeps <brust-host>; the fragment-root warning comes from lowering (not in ir.diagnostics) |
 | e-if-in-table | state-driven row inside a table | native | native | 0 | ok | — | spec §7.1 x-if |
 | e-raw-text-child | dynamic child of <script> | react | react | ssr | ok | fallback:raw-text-child | raw-text-child: the template would HTML-escape a dynamic value inside raw text (F35) |
 | e-static-list-child | static child with row-only props in a prop list (F70) | static | static | 0 | ok | — | ledger F70: no link, no chunk, no x-* — the row cannot change on the client |

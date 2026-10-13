@@ -508,6 +508,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                 attrs,
                 children,
                 host,
+                synthetic,
+                loc,
                 ..
             },
             Node::Element {
@@ -519,6 +521,21 @@ impl<'a, 'c> Printer<'a, 'c> {
         else {
             return;
         };
+        if *synthetic && *host && root && !self.native && extra.is_none() {
+            // A static root that was not one element: no wrapper, so child combinators and content
+            // models (`<tr>` in `<tbody>`, `<li>`, `<option>`) see the real elements.
+            self.nodes(children, schildren);
+            return;
+        }
+        if *synthetic && *host && root && self.inline.is_none() {
+            self.diagnostics.push(Diagnostic::warning(
+                "fragment-root",
+                "an interactive component does not return a single element, so it is wrapped in <brust-host style=\"display:contents\">; \
+                 that breaks child combinators (`>`) and table/list parents (`<tbody>`, `<ul>`, `<select>`)",
+                *loc,
+                "return one element",
+            ));
+        }
         let mut open = format!("<{tag}");
         if let Some(x) = extra {
             open.push_str(x);
@@ -1088,7 +1105,15 @@ impl<'a, 'c> Printer<'a, 'c> {
             return false;
         };
         let id = child.id.clone().unwrap_or_else(|| name.clone());
-        (self.ctx.resolve)(&id).is_some_and(|c| matches!(c.template, Node::Element { .. }))
+        (self.ctx.resolve)(&id).is_some_and(|c| {
+            matches!(
+                c.template,
+                Node::Element {
+                    synthetic: false,
+                    ..
+                }
+            )
+        })
     }
 
     /// Whether `n` (or anything below it) is an inlined component with a job or `useId` values.

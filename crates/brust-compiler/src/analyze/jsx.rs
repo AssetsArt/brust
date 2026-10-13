@@ -181,6 +181,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             children,
             host: false,
             ref_name,
+            synthetic: false,
         },
         Tag::Fragment => Node::Fragment(children),
         Tag::Outlet => Node::Outlet,
