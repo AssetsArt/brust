@@ -5,6 +5,7 @@
 use super::deps::{Deps, minimal_paths};
 use super::{PassCtx, PassState, run_passes};
 use crate::analyze::component::finish_diagnostics;
+use crate::analyze::exports::declared_in;
 use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
 use crate::ir::{
     Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind,
@@ -286,6 +287,8 @@ impl Walker<'_, '_> {
             None | Some("default") => Export::Default,
             Some(n) => Export::Named(n.to_string()),
         };
+        // The component is the one the export is declared by, however many barrels it crosses (R34.11).
+        let (path, export) = declared_in(&path, &export, ctx.opts);
         let id = match &export {
             Export::Default => component_id(&path),
             Export::Named(n) => named_component_id(&path, n),
@@ -357,6 +360,18 @@ impl Walker<'_, '_> {
         let mut prop_precompute = false;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
+                if matches!(&ir.tier, Tier::React { reason, .. } if reason == crate::analyze::modules::OPAQUE_EXPORT)
+                {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "child-component",
+                        format!(
+                            "<{name}> renders as a React island: {} is not a function declaration",
+                            ir.source
+                        ),
+                        loc,
+                        "declare the child as `export function Name(props) { … }`",
+                    ));
+                }
                 // An island's ssr job reads `__store` whether or not the wrapper reads a store (L4).
                 stores = ir.stores.iter().any(|s| s.resolved.is_some())
                     || ir

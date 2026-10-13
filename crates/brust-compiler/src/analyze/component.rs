@@ -456,7 +456,7 @@ fn has_outlet(n: &Node) -> bool {
 }
 
 /// The module-level `function <name>` (exported or not).
-fn module_fn<'x>(ast: &'x js_ast::Ast<'_>, name: &str) -> Option<&'x js_ast::G::Fn> {
+pub(crate) fn module_fn<'x>(ast: &'x js_ast::Ast<'_>, name: &str) -> Option<&'x js_ast::G::Fn> {
     let symbols = ast.symbols.as_slice();
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
@@ -491,8 +491,13 @@ pub fn analyze_named_component_in(
     let found = parsed.with_ast(|ast| {
         let func = module_fn(ast, name)?;
         read_function(parsed, ast, opts, func, &mut ir);
+        ir.unexported = matches!(
+            crate::analyze::exports::find(ast, name),
+            crate::analyze::exports::Binding::Local(_)
+        );
         Some(())
     });
+    ir.export = Some(name.to_string());
     found.map(|_| ir)
 }
 

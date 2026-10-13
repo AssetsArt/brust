@@ -145,14 +145,29 @@ fn compile_uncached(
     let mut ir = match export {
         Export::Default => analyze_component_in(&parsed, Some(opts))?,
         Export::Named(name) => {
-            analyze_named_component_in(&parsed, name, Some(opts)).ok_or_else(|| {
-                Diagnostic::fallback(
-                    "export-shape",
-                    format!("{path} has no function declaration `{name}`"),
-                    0,
-                    "export the component as `export function Name(props) { … }`",
-                )
-            })?
+            use crate::analyze::exports::{Binding, find};
+            let binding = parsed.with_ast(|ast| find(ast, name));
+            let unexported = matches!(binding, Binding::Local(_));
+            let local = match binding {
+                Binding::Fn(l) | Binding::Local(l) => l,
+                // Declared, but not as a function the compiler reads: an island that imports the binding.
+                Binding::Opaque => return Ok(opaque_island(path, name)),
+                _ => name.clone(),
+            };
+            let mut ir =
+                analyze_named_component_in(&parsed, &local, Some(opts)).ok_or_else(|| {
+                    Diagnostic::fallback(
+                        "export-shape",
+                        format!("{path} has no function declaration `{local}`"),
+                        0,
+                        "export the component as `export function Name(props) { … }`",
+                    )
+                })?;
+            // The component is known by the binding the importer used, whatever it is called here.
+            ir.id = crate::ir::named_component_id(path, name);
+            ir.export = Some(name.clone());
+            ir.unexported = unexported;
+            ir
         }
     };
     let local = |name: &str| analyze_named_component_in(&parsed, name, Some(opts));
@@ -234,6 +249,22 @@ pub fn normalize(p: &str) -> String {
     } else {
         joined
     }
+}
+
+/// Why an export the compiler cannot read is a React island.
+pub const OPAQUE_EXPORT: &str = "export is not a function declaration";
+
+/// The React island of an export the compiler cannot read (`export const X = () => …`,
+/// `export const X = forwardRef(…)`): the build imports the binding itself (R34.10, fail closed).
+fn opaque_island(path: &str, name: &str) -> ComponentIR {
+    let mut ir = ComponentIR::new(crate::ir::named_component_id(path, name), path.to_string());
+    ir.export = Some(name.to_string());
+    ir.tier = crate::ir::Tier::React {
+        reason: OPAQUE_EXPORT.into(),
+        client_only: false,
+    };
+    crate::analyze::passes::tier::react_jobs(&mut ir);
+    ir
 }
 
 #[cfg(test)]

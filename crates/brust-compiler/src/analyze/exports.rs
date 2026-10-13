@@ -1,0 +1,159 @@
+//! Export bindings of a component module (shadcn S1.1, R34.11): which declaration an import of
+//! `{ X }` names. `export function X`, `export { A as X }`, `export const X = …` and
+//! `export { X } from './x'` (an `index.ts` barrel) all spell "the component X of this project", and an
+//! island imports it by that binding. Everything that cannot be proven falls back to the binding itself
+//! (an opaque island), never to a guess.
+use crate::analyze::component::{AnalyzeOptions, module_fn};
+use crate::analyze::modules::{Export, resolve};
+use crate::analyze::stores::Module;
+use bun_ast as js_ast;
+use js_ast::b::B;
+use js_ast::expr::Data as E;
+use js_ast::stmt::Data as S;
+
+/// How many modules a re-export chain may cross before the reader gives up.
+const MAX_DEPTH: usize = 8;
+
+/// What an export of a module is.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Binding {
+    /// Declared here by the module-level function of this local name.
+    Fn(String),
+    /// A module-level function of this name that nothing exports (a helper component of the module).
+    Local(String),
+    /// Declared here, but not as a function declaration the compiler reads (`export const X = () => …`,
+    /// `export const X = forwardRef(…)`, a namespace import): the component is an island.
+    Opaque,
+    /// `export default …`: the default export is read by the default path.
+    Default,
+    /// Re-exported from another module: `(specifier, name there)`; `default` there is the default.
+    Follow(String, String),
+    /// `export * from …` clauses that may carry it.
+    Stars(Vec<String>),
+    /// Nothing exports it.
+    Absent,
+}
+
+/// What the export `export` of the module `ast` is.
+pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
+    let m = Module::new(ast);
+    let records = ast.import_records.as_slice();
+    let spec_of = |i: u32| {
+        records
+            .get(i as usize)
+            .map(|r| String::from_utf8_lossy(r.path.text).into_owned())
+    };
+    let mut stars = Vec::new();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            match &stmt.data {
+                S::SLocal(l) if l.is_export => {
+                    for d in l.decls.iter() {
+                        if let B::BIdentifier(id) = d.binding.data
+                            && m.name(id.r#ref) == export
+                        {
+                            return match d.value.map(|v| v.data) {
+                                Some(E::EImportIdentifier(i)) => m.reexport(i.ref_),
+                                _ => Binding::Opaque,
+                            };
+                        }
+                    }
+                }
+                S::SExportDefault(_) if export == "default" => return Binding::Default,
+                S::SExportClause(c) => {
+                    for item in c.items.slice() {
+                        if item.alias.slice() == export.as_bytes() {
+                            let r = item.name.ref_;
+                            let local = m.name(r);
+                            return match m.reexport(r) {
+                                Binding::Opaque if module_fn(ast, &local).is_some() => {
+                                    Binding::Fn(local)
+                                }
+                                b => b,
+                            };
+                        }
+                    }
+                }
+                S::SExportFrom(f) => {
+                    for item in f.items.slice() {
+                        if item.alias.slice() == export.as_bytes()
+                            && let Some(spec) = spec_of(f.import_record_index)
+                        {
+                            let original = String::from_utf8_lossy(item.original_name.slice());
+                            return Binding::Follow(spec, original.into_owned());
+                        }
+                    }
+                }
+                // `export *` never re-exports the default (ES spec).
+                S::SExportStar(st) if st.alias.is_none() && export != "default" => {
+                    stars.extend(spec_of(st.import_record_index));
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(f) = module_fn(ast, export) {
+        let exported = f.flags.contains(js_ast::flags::Function::IsExport);
+        return if exported {
+            Binding::Fn(export.to_string())
+        } else {
+            Binding::Local(export.to_string())
+        };
+    }
+    if stars.is_empty() {
+        Binding::Absent
+    } else {
+        Binding::Stars(stars)
+    }
+}
+
+impl Module<'_> {
+    /// An exported binding that is itself an import is a re-export; anything else is declared here.
+    fn reexport(&self, r: js_ast::Ref) -> Binding {
+        match self.import_of(r) {
+            Some((_, "*")) | None => Binding::Opaque,
+            Some((spec, imported)) => Binding::Follow(spec.to_string(), imported.to_string()),
+        }
+    }
+}
+
+/// The module that declares `export` of the project module at `path`, and the export there: follows
+/// `export { X } from`, `export * from` and import-then-export through relative specifiers. A chain that
+/// cannot be followed (a package, a missing file, a cycle) stops where it is: the caller then compiles
+/// (or fails closed on) the export at the module it was imported from.
+pub fn declared_in(path: &str, export: &Export, opts: &AnalyzeOptions) -> (String, Export) {
+    follow(path, export, opts, 0).unwrap_or_else(|| (path.to_string(), export.clone()))
+}
+
+fn follow(
+    path: &str,
+    export: &Export,
+    opts: &AnalyzeOptions,
+    depth: usize,
+) -> Option<(String, Export)> {
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    let bytes = std::fs::read(opts.root.join(path)).ok()?;
+    let parsed = crate::parse::parse_tsx(path, bytes).ok()?;
+    let name = match export {
+        Export::Default => "default",
+        Export::Named(n) => n,
+    };
+    let found = parsed.with_ast(|ast| find(ast, name));
+    let next = |spec: &str, there: &str| {
+        let target = resolve(path, spec, opts)?;
+        let export = if there == "default" {
+            Export::Default
+        } else {
+            Export::Named(there.to_string())
+        };
+        follow(&target, &export, opts, depth + 1)
+    };
+    match found {
+        Binding::Follow(spec, there) => next(&spec, &there),
+        Binding::Stars(specs) => specs.iter().find_map(|s| next(s, name)),
+        Binding::Absent => None,
+        _ => Some((path.to_string(), export.clone())),
+    }
+}
