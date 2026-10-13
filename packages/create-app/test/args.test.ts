@@ -31,7 +31,7 @@ test('parseArgs: yes defaults false, template undefined', () => {
   const r = parseArgs(['x'])
   expect([r.yes, r.template, r.brustDep, r.tailwind, r.help]).toEqual([false, undefined, undefined, false, false])
 })
-test('parseArgs: --tailwind sets tailwind (L21)', () => expect(parseArgs(['x', '--tailwind']).tailwind).toBe(true))
+test('parseArgs: --tailwind is still accepted (L21; a no-op since L28)', () => expect(parseArgs(['x', '--tailwind']).tailwind).toBe(true))
 test('parseArgs: --brust-dep <spec> and --brust-dep=<spec> set brustDep; empty throws', () => {
   expect(parseArgs(['x', '--brust-dep', 'file:/a']).brustDep).toBe('file:/a')
   expect(parseArgs(['x', '--brust-dep=file:/b']).brustDep).toBe('file:/b')

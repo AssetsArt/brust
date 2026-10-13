@@ -26,6 +26,7 @@ test('selectTemplate: TTY + three invalid answers → default blank', () => {
 // ---- blank template pins ----
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { TAILWIND_DEV_DEPS } from '../src/tailwind.ts'
 
 const repo = join(import.meta.dir, '../../..')
 const blank = join(import.meta.dir, '../templates/blank')
@@ -33,19 +34,36 @@ const json = (p: string) => JSON.parse(readFileSync(p, 'utf8'))
 const blankPkg = () => JSON.parse(readFileSync(join(blank, 'package.json.tmpl'), 'utf8').replace('__BRUST_DEP__', '"x"'))
 
 test('blank has the E8 file set', () => {
-  for (const f of ['package.json.tmpl', 'README.md.tmpl', '_gitignore', 'brust.toml', 'tsconfig.json', 'routes.tsx', 'actions.ts', 'components/Layout.tsx', 'components/Counter.tsx', 'pages/HomePage.tsx', 'public/app.css', 'public/favicon.svg']) {
+  for (const f of ['package.json.tmpl', 'README.md.tmpl', '_gitignore', 'brust.toml', 'tsconfig.json', 'routes.tsx', 'actions.ts', 'components/Layout.tsx', 'components/Counter.tsx', 'pages/HomePage.tsx', 'app.css', 'public/favicon.svg']) {
     expect(existsSync(join(blank, f)), f).toBe(true)
   }
+  // L28 R29.1: Tailwind CSS v4 is the blank template; the plain stylesheet is gone
+  expect(existsSync(join(blank, 'public/app.css'))).toBe(false)
 })
 test('R25.2: the blank favicon is the docs site favicon, byte for byte (sha256 pinned; the docs-site branch is not in CI)', () => {
   const bytes = readFileSync(join(blank, 'public/favicon.svg'))
   expect(new Bun.CryptoHasher('sha256').update(bytes).digest('hex')).toBe('529a1fa41828e326ab3cb7351d6bf1d3c2a681c9b2b3d37da5ae7f95fd73771a')
 })
-test('R25.1: the starter page loads no font, CDN or remote stylesheet', () => {
-  const css = readFileSync(join(blank, 'public/app.css'), 'utf8')
+test('R25.1 / R29.2: the starter page loads no font, CDN or remote stylesheet; its one import is Tailwind', () => {
+  const css = readFileSync(join(blank, 'app.css'), 'utf8')
   const layout = readFileSync(join(blank, 'components/Layout.tsx'), 'utf8')
-  expect(css).not.toMatch(/@import|url\(|@font-face/)
+  expect([...css.matchAll(/@import\s+([^;]+);/g)].map((m) => m[1])).toEqual(['"tailwindcss"'])
+  expect(css).not.toMatch(/url\(|@font-face|https?:/)
   expect(layout).not.toMatch(/href="https?:/)
+  expect(layout).toContain("import '../app.css'\n")
+  expect(layout).not.toContain('/public/app.css')
+})
+test('R29.3: app.css holds the docs palette as @theme tokens with a dark override of the same tokens; no tailwind.config', () => {
+  const css = readFileSync(join(blank, 'app.css'), 'utf8')
+  const tokens = ['paper', 'sheet', 'ink', 'ink-2', 'rule', 'amber', 'amber-ink'].map((t) => `--color-${t}:`)
+  const [theme, dark] = css.split('@media (prefers-color-scheme: dark)')
+  for (const t of tokens) expect([t, theme!.includes(t), dark!.includes(t)]).toEqual([t, true, true])
+  for (const f of ['tailwind.config.js', 'tailwind.config.ts']) expect(existsSync(join(blank, f)), f).toBe(false)
+})
+test('R29.2: the blank template pins the Tailwind dev dependencies to the versions brust builds with', () => {
+  expect({ 'bun-plugin-tailwind': blankPkg().devDependencies['bun-plugin-tailwind'], tailwindcss: blankPkg().devDependencies.tailwindcss }).toEqual(TAILWIND_DEV_DEPS)
+  const root = json(join(repo, 'package.json'))
+  expect({ 'bun-plugin-tailwind': root.devDependencies['bun-plugin-tailwind'], tailwindcss: root.devDependencies.tailwindcss }).toEqual(TAILWIND_DEV_DEPS)
 })
 test('blank pins equal the repo', () => {
   const core = json(join(repo, 'packages/brust/package.json'))

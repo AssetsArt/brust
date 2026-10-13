@@ -69,8 +69,17 @@ test('blank: install → build → typecheck → start; / is the native counter;
   const html = await page.text()
   expect(html).toContain('count is')
   expect(html).toContain('x-data="counter_')
-  expect(html).toContain('<svg class="mark"') // R25: the brust mark is inline, not an <img>
+  expect(html).toMatch(/<svg class="flex-none" viewBox="0 0 32 32"/) // R25: the brust mark is inline, not an <img>
   expect(html).toContain('/public/favicon.svg')
+  // L28 R29.3/R29.4: Tailwind CSS v4 by default: one hashed, minified stylesheet linked by brust, with the utilities the page uses
+  const links = [...html.matchAll(/<link rel="stylesheet" href="(\/_brust\/client\/app-[0-9a-f]{10}\.css)" data-brust-css>/g)].map((m) => m[1]!)
+  expect(links.length).toBe(1)
+  expect(html).not.toContain('/public/app.css')
+  expect(html).toContain('class="bg-paper font-sans text-ink')
+  const css = await (await fetch(new URL(links[0]!, app.base))).text()
+  expect(css).toContain('@layer theme,base,components,utilities;') // after '@layer properties;' when a utility needs @property
+  for (const u of ['.bg-paper{', '.text-ink{', '.max-w-2xl{', '.rounded-2xl{', '.bg-amber{', '--color-amber-ink:']) expect([u, css.includes(u)]).toEqual([u, true])
+  expect(css).toContain('prefers-color-scheme:dark')
   // R25.4: HomePage static, Counter native, no react chunk.
   const manifest = JSON.parse(readFileSync(join(dir, 'dist/manifest.json'), 'utf8')) as { components: Record<string, { tier?: string }> }
   const tierOf = (prefix: string) => Object.entries(manifest.components).find(([id]) => id.startsWith(prefix))?.[1].tier
@@ -88,10 +97,11 @@ test('blank: install → build → typecheck → start; / is the native counter;
   await stopOne(app)
 }, T)
 
-test('blank --tailwind (L21): install → build → start; the layout links one minified Tailwind stylesheet with the used utilities', async () => {
+test('blank --tailwind (L21, a no-op since L28 R29.1): accepted, says so, and builds the same Tailwind starter', async () => {
   const dir = join(work, 'apps', 'tw-app')
   const out = sh(['bun', 'create', '@brust/app', 'tw-app', '--template', 'blank', '--tailwind', '--dir', dir, '--brust-dep', `file:${tgz.core}`, '--yes'], hostDir)
-  expect(out).toContain('template: blank + tailwind')
+  expect(out).toContain('Tailwind CSS v4 is the default; the --tailwind flag does nothing')
+  expect(out).toContain('(template: blank)')
   const pkg = readPkg(dir)
   expect([pkg.devDependencies.tailwindcss, pkg.devDependencies['bun-plugin-tailwind']]).toEqual(['4.3.3', '0.1.2'])
   setOverrides(dir)
@@ -105,8 +115,8 @@ test('blank --tailwind (L21): install → build → start; the layout links one 
   expect(html).not.toContain('/public/app.css')
   const css = await (await fetch(new URL(links[0]!, app.base))).text()
   // only the utilities the app uses (Tailwind v4 also drops theme tokens nothing reads)
-  for (const u of ['.mx-auto{', '.max-w-2xl{', '.p-6{', '.font-sans{']) expect([u, css.includes(u)]).toEqual([u, true])
-  expect(css).toStartWith('@layer theme,base,components,utilities;')
+  for (const u of ['.mx-auto{', '.max-w-2xl{', '.font-sans{', '.bg-sheet{']) expect([u, css.includes(u)]).toEqual([u, true])
+  expect(css).toContain('@layer theme,base,components,utilities;') // after '@layer properties;' when a utility needs @property
   await stopOne(app)
 }, T)
 
