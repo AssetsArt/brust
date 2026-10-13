@@ -25,5 +25,9 @@
     "bench": "bun bench/run.ts",
     "m2-exit": "bun scripts/m2-exit/run.ts",
     "bench:test": "bun check -p bench && bun test bench/lib"
+  },
+  "devDependencies": {
+    "bun-plugin-tailwind": "0.1.2",
+    "tailwindcss": "4.3.3"
   }
 }

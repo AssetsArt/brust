@@ -253,6 +253,18 @@ pub struct ModuleDecl {
     pub names: Vec<String>,
     /// The printed statement without a leading `export`.
     pub source: String,
+    /// The `const name = value` bindings it declares, read as expressions (G5/G9/G10):
+    /// the placer folds a value it can prove constant into the template.
+    pub consts: Vec<ConstVal>,
+}
+
+/// A module-level `const` with its initializer read as an expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstVal {
+    pub name: String,
+    pub value: RawExpr,
+    /// The binding has a use that is not a proven read (R1.1a): an array or object must not fold.
+    pub mutated: bool,
 }
 
 /// The structural parts of a `ComponentIR` before placement.

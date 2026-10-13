@@ -1,0 +1,59 @@
+{
+  "id": "input_1143904b",
+  "source": "tests/fixtures/module-const-child-job/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 333,
+      "tag": "main",
+      "attrs": [],
+      "children": [
+        {
+          "Component": {
+            "loc": 346,
+            "name": "Panel",
+            "source": null,
+            "imported": null,
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": "Static"
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "instances": [
+    {
+      "child_id": "panel_6cae9645",
+      "k": 1,
+      "loops": [],
+      "props": {}
+    }
+  ],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [
+    {
+      "name": "Panel",
+      "id": "panel_6cae9645",
+      "path": "tests/fixtures/module-const-child-job/input.tsx",
+      "tier": "Static"
+    }
+  ],
+  "diagnostics": []
+}

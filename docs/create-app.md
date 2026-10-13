@@ -21,6 +21,7 @@ Requires Bun 1.4 or newer on a platform that has a native package (`@brust/nativ
 |---|---|
 | `<name>` | The project name and, by default, the directory. Lowercase letters, digits, `-` and `_`; it starts with a letter or digit; at most 50 characters. |
 | `--template blank\|pokedex` | The starting point. Default `blank`. Without the flag, an interactive terminal shows a picker; `--yes` or a non-interactive shell takes `blank`. |
+| `--tailwind` | The `blank` template with Tailwind CSS v4 (see section 3). Only with `blank`. |
 | `--dir <path>` | Scaffold into `<path>` instead of `./<name>`. |
 | `--yes` | Accept defaults and never prompt. |
 | `--brust-dep <spec>` | The `@brust/core` dependency to write (see section 4). For CI and tarball tests. |
@@ -33,6 +34,7 @@ The target directory must be empty or absent; a directory that has files is refu
 ## 3. Templates
 
 - **`blank`**: one layout, one page, one `useState` counter (compiled to a native component: a signal in the browser, no React shipped), and `actions.ts`, an Elysia 2 app on `brust()` with a `GET /hello` endpoint. `brust.toml` has `[server]` and `[actions]`.
+- **`blank --tailwind`**: the same app with Tailwind CSS v4. `app.css` starts with `@import "tailwindcss";` and a `@theme` block. The layout imports it, and brust builds, minifies and links it (see [CSS](./css.md)). `public/app.css` is not included. `tailwindcss` and `bun-plugin-tailwind` are pinned dev dependencies.
 - **`pokedex`**: the `examples/pokedex` app from this repository: loaders over an offline dataset, the L1 page cache, native components and a React island, and a persistent team (SQLite + Elysia actions + the unified store). It is generated from the example when the package is packed, so it never drifts from it. Its tests are not included.
 
 Scripts in both: `dev` (build, then start, until `brust dev` ships), `build` (`brust build routes.tsx`), `start` (`brust start`), `typecheck` (`bun check`). `blank` also has `dev:cf` (build for Cloudflare Workers and run `wrangler dev`) and `deploy:cf` (build, then `wrangler deploy` of `dist/cf`).
