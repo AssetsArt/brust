@@ -46,6 +46,8 @@ pub struct FakeBun {
     /// When set, a call parks until [`Gate::settle_all`], then writes its reply
     /// into the slot and resolves (a late settle).
     gate: Option<tokio::sync::watch::Receiver<bool>>,
+    /// L10: bound, but never takes the plan offer (the two-call path), so `jobs` is its own call.
+    no_plan: bool,
     /// The server and worker id this fake plans for ([`FakeBun::bind`]).
     bound: OnceLock<(Weak<Server>, u32)>,
     /// Runs between `plan_in_call` and the reply ([`FakeBun::with_after_plan`]).
@@ -95,6 +97,7 @@ impl FakeBun {
             resp_cap: AtomicUsize::new(8_388_608),
             never_complete,
             gate: None,
+            no_plan: false,
             bound: OnceLock::new(),
             after_plan: None,
             l2: None,
@@ -171,6 +174,13 @@ impl FakeBun {
     /// loader response into the slot, `plan_in_call`, run the misses, answer `{planned, results}`.
     pub fn bind(&self, s: &Arc<Server>, worker: u32) {
         let _ = self.bound.set((Arc::downgrade(s), worker));
+    }
+
+    /// Bound (so it can hand over heap replies) but declining every plan offer: the two-call path.
+    pub fn declining_plan(self: Arc<Self>) -> Arc<Self> {
+        let mut b = Arc::into_inner(self).expect("declining_plan before the fake is shared");
+        b.no_plan = true;
+        Arc::new(b)
     }
 
     /// Runs between `plan_in_call` and the reply (tests of the plan-to-render window).
@@ -335,6 +345,31 @@ impl FakeBun {
         f
     }
 
+    /// L10: `bytes` as the real worker writes a loader/jobs reply: inline when it fits the slot, else
+    /// handed over with `put_fetch_reply` and answered as the 5-byte marker `[0x00][u32 LE n]`
+    /// (a declined put, or an unbound fake, answers the slot-size `{error}`).
+    fn slot_or_heap(&self, bytes: Vec<u8>, slot: u32) -> Vec<u8> {
+        let (_, cap) = self.buf_slot(slot);
+        if bytes.len() <= cap {
+            return bytes;
+        }
+        let bound = self
+            .bound
+            .get()
+            .and_then(|(w, id)| w.upgrade().map(|s| (s, *id)));
+        if let Some((s, id)) = bound
+            && brust_server::put_fetch_reply(&s, id, slot, &bytes)
+        {
+            let mut m = vec![0u8];
+            m.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            return m;
+        }
+        serde_json::to_vec(
+            &json!({"error": format!("response too large: {} > {cap}", bytes.len())}),
+        )
+        .expect("FakeBun: response serialises")
+    }
+
     /// The reply bytes for one call (written into the slot by the caller). A bound fake takes
     /// a `loader` plan offer when its loader answers `ok: true` data.
     fn reply(&self, kind: CallKind, req: Value, slot: u32) -> Vec<u8> {
@@ -348,16 +383,23 @@ impl FakeBun {
         if kind == CallKind::Loader
             && req["plan"] == true
             && resp["ok"] == true
+            && !self.no_plan
             && let Some((s, id)) = self
                 .bound
                 .get()
                 .and_then(|(w, id)| w.upgrade().map(|s| (s, *id)))
         {
             let first = serde_json::to_vec(&resp).expect("FakeBun: response serialises");
-            self.write(slot, &first);
-            let misses = brust_server::plan_in_call(&s, id, slot, first.len() as u32);
+            let (_, cap) = self.buf_slot(slot);
+            let misses = if first.len() <= cap {
+                self.write(slot, &first);
+                brust_server::plan_in_call(&s, id, slot, first.len() as u32)
+            } else {
+                // L10: a ctx too large for the slot is planned from the bytes.
+                brust_server::plan_in_call_buf(&s, id, slot, &first)
+            };
             if misses == brust_server::PLAN_DECLINED {
-                return first;
+                return self.slot_or_heap(first, slot);
             }
             let results = if misses.is_empty() {
                 json!([])
@@ -376,10 +418,16 @@ impl FakeBun {
             if let Some(f) = &self.after_plan {
                 f();
             }
-            return serde_json::to_vec(&json!({"planned": true, "results": results}))
-                .expect("FakeBun: response serialises");
+            return self.slot_or_heap(
+                serde_json::to_vec(&json!({"planned": true, "results": results}))
+                    .expect("FakeBun: response serialises"),
+                slot,
+            );
         }
-        serde_json::to_vec(&resp).expect("FakeBun: response serialises")
+        self.slot_or_heap(
+            serde_json::to_vec(&resp).expect("FakeBun: response serialises"),
+            slot,
+        )
     }
 }
 

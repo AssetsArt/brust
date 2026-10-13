@@ -1,5 +1,5 @@
 //! Server bindings: `startServer`, `registerWorker`, `untilReady`, `beginDrain`,
-//! `cacheInvalidate`, `cacheStats`, `localAddr`, `planJobs`, `takeFetchBody`, `putFetchReply`
+//! `cacheInvalidate`, `cacheStats`, `localAddr`, `planJobs`, `planJobsBuf`, `takeFetchBody`, `putFetchReply`
 //! over `brust_server`.
 //!
 //! The CURRENT server lives in a `RwLock<Option<Arc<Server>>>` rather than a
@@ -177,6 +177,9 @@ pub struct StartOptions {
     /// A claimed worker call that has not settled after this long answers
     /// 504 (the slot stays claimed until JS settles). Absent = 30 000.
     pub call_timeout_ms: Option<u32>,
+    /// L10: the biggest loader/jobs reply that may cross the heap when it does not fit the slot
+    /// (256 KiB..=64 MiB; boot error otherwise). Absent = 8 MiB.
+    pub max_loader_response_bytes: Option<u32>,
     /// tokio threads of the HTTP runtime (every page renders there); absent =
     /// one per core (`Tuning::default`).
     pub worker_threads: Option<u32>,
@@ -204,6 +207,9 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
     }
     if let Some(ms) = opts.call_timeout_ms {
         tuning.call_timeout_ms = u64::from(ms.max(1));
+    }
+    if let Some(n) = opts.max_loader_response_bytes {
+        tuning.max_loader_response_bytes = n as usize;
     }
     if let Some(n) = opts.worker_threads {
         tuning.worker_threads = n.max(1) as usize;
@@ -275,6 +281,17 @@ pub fn register_worker(
 pub fn plan_jobs(slot: u32, len: u32) -> String {
     match BOUND.with_borrow(bound) {
         Some((s, id)) => brust_server::plan_in_call(&s, id, slot, len),
+        None => brust_server::PLAN_DECLINED.to_string(),
+    }
+}
+
+/// L10: [`plan_jobs`] for a loader response too large for the slot: the worker hands the bytes
+/// over in `buf` instead of writing them to the slot. Same answers (`""`, the misses' JSON, or
+/// `"!"`); a declined plan leaves the response for the worker to hand over with `putFetchReply`.
+#[napi]
+pub fn plan_jobs_buf(slot: u32, buf: Uint8Array) -> String {
+    match BOUND.with_borrow(bound) {
+        Some((s, id)) => brust_server::plan_in_call_buf(&s, id, slot, &buf),
         None => brust_server::PLAN_DECLINED.to_string(),
     }
 }

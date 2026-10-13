@@ -11,6 +11,7 @@ import { BuildError } from './errors'
 // [actions] (opt-in, ruling R6): present table => actions on. Both byte caps cross napi as u32 (F82: 1..64 MiB / 256 KiB..64 MiB).
 //   [actions]
 //   entry = "actions.ts"   prefix = "/_brust/action"   max_body_bytes = 1048576  max_response_bytes = 8388608   cross_site = "reject" | "allow" (F87)
+// `ACTION_INLINE_BODY_BYTES` (Rust): the inline/heap threshold of an action body, independent of the response slot size (`slotBytes`).
 const MIN_RESPONSE_BYTES = 262_144
 
 export interface ActionsBuildConfig {

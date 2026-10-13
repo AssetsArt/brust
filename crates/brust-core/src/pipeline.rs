@@ -92,7 +92,7 @@ pub async fn handle<H: Host>(
     // ----- actions (M3-F E3): the whole prefix subtree, any method, before the method gate and the
     // `/_brust/` static root (the default prefix lives under it). The body is read ONLY here.
     if let Some(a) = &s.actions
-        && a.is_under(path_only)
+        && a.is_under(&crate::routing::routes::normalize_request_path(path_only))
     {
         return crate::actions::handle(s, a, &rq, incoming, method == "HEAD").await;
     }

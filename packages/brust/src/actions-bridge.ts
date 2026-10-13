@@ -22,7 +22,7 @@ export interface FetchRequest {
   method: string
   url: string
   headers: [string, string][]
-  /** `{heap: n}` (F82): more than 262144 bytes, fetched with `takeFetchBody(slot)`. */
+  /** `{heap: n}` (F82): more than 262144 bytes (`ACTION_INLINE_BODY_BYTES`, independent of the slot size), fetched with `takeFetchBody(slot)`. */
   body: { text: string } | { b64: string } | { heap: number } | null
   req: LoaderReq
 }
@@ -139,7 +139,7 @@ export const noActions = async (_: Request): Promise<Response> =>
   new Response('brust: actions are not configured in this worker', { status: 500, headers: { 'content-type': 'text/plain; charset=utf-8' } })
 
 /** The `fetch` call (makeDispatch). Never rejects, never writes JSON: every outcome is a frame. A body of
- * more than 262144 bytes arrives by `io.takeBody` (A1 `{heap}`); a response that does not fit the slot leaves
+ * more than 262144 bytes (`ACTION_INLINE_BODY_BYTES`, not the slot size) arrives by `io.takeBody` (A1 `{heap}`); a response that does not fit the slot leaves
  * by `io.putReply` with only status/headers/`heap` in the slot (F82), unless it exceeds `max_response_bytes`. */
 export async function runFetch(requestJson: string, view: Uint8Array, slot: number, slots: number, io: HeapIo = nativeHeapIo): Promise<number> {
   const a = app

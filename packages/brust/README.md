@@ -92,10 +92,20 @@ build **or a failed boot** keeps the old child serving and shows the error as an
 Prints `[brust] listening on <addr>` then `[brust] ready (N workers)`. `--port 0` picks a free port.
 SIGINT/SIGTERM drains gracefully (`BRUST_DRAIN_TIMEOUT_MS`); a second signal exits at once.
 Config precedence: env (`BRUST_ADDR`, `BRUST_PORT`, `BRUST_WORKERS`, `BRUST_RENDER_SLOTS`,
-`BRUST_DRAIN_TIMEOUT_MS`, `BRUST_BOOT_TIMEOUT_MS`, `BRUST_CALL_TIMEOUT_MS`, `BRUST_DIST_DIR`, `BRUST_APP_ENTRY`) > flags
-(`--port`, `--workers`, `--dist-dir`, `--entry`) > `brust.toml` (`[server] address/port`,
-`[workers] count`) > defaults (`localhost:1337`, one worker per CPU, `min(cores, 16)` slots per worker (each slot is a 256 KiB shared response buffer, so 10 slots = 2.5 MiB per worker), 10 s drain, 30 s
-worker boot timeout, 30 s call timeout).
+`BRUST_DRAIN_TIMEOUT_MS`, `BRUST_BOOT_TIMEOUT_MS`, `BRUST_CALL_TIMEOUT_MS`, `BRUST_SLOT_BYTES`,
+`BRUST_MAX_LOADER_RESPONSE_BYTES`, `BRUST_DIST_DIR`, `BRUST_APP_ENTRY`) > flags
+(`--port`, `--workers`, `--dist-dir`, `--entry`) and `run({ config })` > `brust.toml` (`[server] address/port/max_loader_response_bytes`,
+`[workers] count/slot_bytes`, `[cors]`) > defaults (`localhost:1337`, one worker per CPU, `min(cores, 16)` slots per worker (each slot is a `slotBytes` shared response buffer, 256 KiB by default, so 10 slots = 2.5 MiB per worker), 10 s drain, 30 s
+worker boot timeout, 30 s call timeout, 8 MiB loader response limit).
+`slotBytes` (`[workers] slot_bytes`, env `BRUST_SLOT_BYTES`, `run({ config: { slotBytes } })`) is 64 KiB..16 MiB.
+A loader, jobs or planned reply that does not fit its slot is not an error: the worker hands it to the server
+over the heap, up to `maxLoaderResponseBytes` (`[server] max_loader_response_bytes`, env
+`BRUST_MAX_LOADER_RESPONSE_BYTES`, `run({ config: { maxLoaderResponseBytes } })`; 256 KiB..64 MiB, default 8 MiB).
+A bigger reply answers `{"error":"response too large: <n> > <limit> (maxLoaderResponseBytes)"}` (a 500). This
+limit applies to loader and jobs replies; `[actions]` has its own `max_response_bytes`.
+`[cors]` can also be given as `run({ config: { cors: { origins, methods, headers, exposeHeaders, credentials,
+maxAgeSeconds } } })` (camelCase, an unknown key is rejected). It replaces a `brust.toml` `[cors]` as a whole,
+never merging with it; `cors: null` turns the toml table off.
 A loader or job call that has not settled within `BRUST_CALL_TIMEOUT_MS` answers **504**; its worker
 slot stays claimed until the call settles (the late result is discarded), so a stuck call costs one
 slot, never a frozen worker. Waiting for a free slot is the separate 503 "all workers busy".
@@ -105,7 +115,11 @@ slot, never a frozen worker. Waiting for a free slot is the separate 503 "all wo
 ## Worker wire (contract 7, `crates/brust-server/src/protocol.rs`)
 
 Requests arrive as inline JSON; responses go into the worker's SharedArrayBuffer slot (never
-past `floor(len / slots)` bytes: an oversize response becomes `{"error":…}`). A handler never rejects.
+past `floor(len / slots)` bytes). A `loader`/`jobs` reply that does not fit crosses by heap: the worker
+puts the bytes with `putFetchReply` and writes the 5-byte marker `[0x00][u32 LE n]` into the slot (JSON
+never starts with 0x00); the server reads the `n` bytes it was handed. A loader context too large for the
+slot is planned from the bytes (`planJobsBuf`). Over `maxLoaderResponseBytes` the reply becomes
+`{"error":…}`. A handler never rejects.
 
 `loader` `{routeId, params, path, req}` → `{ok:true, data}` | `{verdict, …}` | `{error}`;
 `jobs` `{jobs:[{id, componentId, kind, inputs, target?, row?}]}` → `{results:[{id, value}|{id, error}]}`

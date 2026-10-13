@@ -23,14 +23,21 @@ pub fn take_fetch_body(s: &Server, worker: u32, slot: u32) -> Option<Vec<u8>> {
     Some(Vec::from(taken))
 }
 
-/// F82: hand Rust a response body too large for the slot. `false` = declined: the slot is not in a
-/// `fetch` or `cache` call, the body is over that call's cap (`fetch`: `max_response_bytes`, and
-/// no actions config declines; `cache`: the adapter's `max_body_bytes`), or a reply was already put.
+/// F82 + L10: hand Rust a response body too large for the slot. `false` = declined.
+///
+/// - Slot in a `fetch` or `cache` call: the body goes to that call's reply cell, capped by that
+///   call (`fetch`: `max_response_bytes`, and no actions config declines; `cache`: the adapter's
+///   `max_body_bytes`); a reply already put declines.
+/// - Slot in any other claimed call (`loader`, `jobs`, the planned reply): the body is the call's
+///   heap reply, capped by `max_loader_response_bytes`; the worker then writes the 5-byte heap
+///   marker into the slot (`dispatch::decode_heap_marker`). A second put declines.
+/// - Idle slot, over the cap: declined.
 pub fn put_fetch_reply(s: &Server, worker: u32, slot: u32, body: &[u8]) -> bool {
     let fetch_cap = s.core.actions.as_ref().map(|a| a.max_response_bytes);
     let cache_cap = s.core.l2.as_ref().map(|l| l.max_body_bytes);
+    let loader_cap = s.core.host.max_loader_response_bytes;
     // Copy before taking the lock, unless no cell type could accept it.
-    if body.len() > fetch_cap.max(cache_cap).unwrap_or(0) {
+    if body.len() > fetch_cap.max(cache_cap).unwrap_or(0).max(loader_cap) {
         return false;
     }
     let copy = Bytes::copy_from_slice(body);
@@ -38,28 +45,30 @@ pub fn put_fetch_reply(s: &Server, worker: u32, slot: u32, body: &[u8]) -> bool 
         let Some(entry) = s.core.host.pool.entry(worker) else {
             return false;
         };
-        let Some(cell) = entry.claimed_plan_cell(slot) else {
+        let Some(claimed) = entry.claimed_slot(slot) else {
             return false;
         };
-        let g = cell.lock();
-        let Some(b) = g.as_ref() else {
-            return false;
-        };
-        let (reply, cap) = if let Some(fc) = b.downcast_ref::<FetchCell>() {
-            (&fc.reply, fetch_cap)
-        } else if let Some(cc) = b.downcast_ref::<CacheCell>() {
-            (&cc.reply, Some(cc.cap))
-        } else {
-            return false;
+        let g = claimed.plan.lock();
+        let typed = g.as_ref().and_then(|b| {
+            if let Some(fc) = b.downcast_ref::<FetchCell>() {
+                Some((&fc.reply, fetch_cap))
+            } else {
+                b.downcast_ref::<CacheCell>()
+                    .map(|cc| (&cc.reply, Some(cc.cap)))
+            }
+        });
+        let (put, cap) = match typed {
+            Some((reply, cap)) => (reply as &parking_lot::Mutex<Option<Bytes>>, cap),
+            None => (&claimed.heap_reply, Some(loader_cap)),
         };
         if cap.is_none_or(|c| copy.len() > c) {
             return false;
         }
-        let mut reply = reply.lock();
-        if reply.is_some() {
+        let mut put = put.lock();
+        if put.is_some() {
             return false;
         }
-        *reply = Some(copy);
+        *put = Some(copy);
         true
     }))
     .unwrap_or(false)
