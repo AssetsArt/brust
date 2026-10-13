@@ -9,6 +9,7 @@ import type { FlatRoute } from '../routes'
 import { layoutAssets } from './cf-assets'
 import { BuildError } from './errors'
 import type { Rendered } from './ssg-render'
+import { assertNoCacheBindings } from './static-worker'
 import { NOT_FOUND_PATH, type PlannedPage, type StaticPlan, paramRoutes, planStatic, ssgOf } from './ssg'
 
 export interface StaticOptions {
@@ -21,12 +22,15 @@ export type ExprReads = (expr: string) => string[]
 
 /** R9.3/R9.4: everything that refuses a static build, checked before a byte is written; then the
  * resolved plan. `actions`: whether `[actions]` is configured. */
-export async function prepareStatic(leaves: FlatRoute[], actions: boolean, reads: ExprReads, log: (s: string) => void): Promise<StaticPlan> {
-  if (actions)
-    throw new BuildError(
-      'ssg-actions',
-      '[actions] is configured: --target static writes no server, so actions would have nowhere to run (static pages with actions on Pages is gaps-round L12); build without [actions], or use --target bun / cloudflare',
-    )
+export async function prepareStatic(
+  leaves: FlatRoute[],
+  actions: boolean,
+  reads: ExprReads,
+  log: (s: string) => void,
+  cache?: Parameters<typeof assertNoCacheBindings>[0],
+): Promise<StaticPlan> {
+  // L12: `[actions]` makes the output hybrid (static pages + a Pages Worker for the action prefix).
+  if (actions) assertNoCacheBindings(cache)
   let cacheInfo = false
   for (const leaf of leaves) {
     const cache = leaf.chain[leaf.chain.length - 1]?.cache

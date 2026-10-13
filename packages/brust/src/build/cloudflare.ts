@@ -169,7 +169,7 @@ function cfEntryCache(c: CacheRecord, customModule: string | null) {
 }
 
 /** R2/R10: which Cloudflare bindings the configured cache needs (`[cache.cloudflare]` keys land in the adapter's options), or null. */
-export function cacheNeeds(c: CacheRecord | undefined): CacheNeed | null {
+export function cacheNeeds(c: Pick<CacheRecord, 'adapter' | 'broadcast' | 'options' | 'broadcastOptions'> | undefined): CacheNeed | null {
   if (!c) return null
   const opt = (o: Record<string, unknown> | undefined, k: string) => (typeof o?.[k] === 'string' ? (o[k] as string) : undefined)
   const all = [c.options, c.broadcastOptions]
