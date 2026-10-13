@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { componentImport, islandEntries } from '../src/build/bundle'
+import type { Compiled } from '../src/build/compile'
 
 const stub = (external: { source: string; export: string; member?: string[] }) => ({ ir: { external }, file: '/x.tsx' }) as never
 
@@ -43,11 +44,11 @@ test('a member the package does not have throws the named error when the module 
 })
 
 const comp = (id: string, tier: unknown, children: { id: string | null }[] = [], external?: object) =>
-  [id, { id, ir: { tier, children, external } }] as never
+  [id, { id, ir: { tier, children, external } } as unknown as Compiled] as const
 
 test('a package member only gets an island entry when a static or native component embeds it', () => {
   const react = { React: { reason: 'x', client_only: false } }
-  const compiled = new Map([
+  const compiled = new Map<string, Compiled>([
     comp('page', 'Static', [{ id: 'placed' }]),
     comp('placed', react, [], { source: 'radix-ui', export: 'Dialog', member: ['Root'] }),
     comp('wrapper', react, [{ id: 'inside' }]),
