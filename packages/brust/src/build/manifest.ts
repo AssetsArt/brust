@@ -66,13 +66,20 @@ export interface ActionsRecord {
   crossSite: 'reject' | 'allow'
 }
 
+/** The manifest format the Rust loader accepts (`MANIFEST_VERSION` in brust-core `manifest.rs`): the one place TS names it. */
+export const MANIFEST_VERSION = 2 as const
+
 export interface ManifestJson {
-  version: 2
+  version: typeof MANIFEST_VERSION
   routes: RouteRecord[]
   components: Record<string, ComponentRecord>
   assets: { runtime: string }
   jobs_module: string
   actions: ActionsRecord | null
+  /** L16 R16.3: an actions-only build (no routes, no templates); everything but the prefix is a 404 problem+json. */
+  actions_only?: true
+  /** L16 R16.4b: a page-only build: no local actions app, `base_url` points at the deployment that has it. */
+  actions_remote?: { prefix: string }
   /** `[cache]` (cache adapters); absent without one (the manifest is then byte-identical). */
   cache?: CacheRecord
 }
@@ -314,7 +321,7 @@ export function writeManifest(opts: {
     }
   })
   linkNativeChunks(routes, compiled, components)
-  return { version: 2, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
+  return { version: MANIFEST_VERSION, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
 }
 
 /** S6 amendment (F66): the server's asset injection walks only each chain component's direct

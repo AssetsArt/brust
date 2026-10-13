@@ -35,12 +35,12 @@ test('no [actions] table -> actions null, even with an actions.ts present (R6)',
 
 test('empty [actions] -> defaults', async () => {
   const c = await loadBuildConfig(tmpApp('[actions]\n'))
-  expect(c.actions).toEqual({ entry: 'actions.ts', prefix: '/_brust/action', maxBodyBytes: 1048576, maxResponseBytes: 8388608, crossSite: 'reject' })
+  expect(c.actions).toEqual({ entry: 'actions.ts', prefix: '/_brust/action', maxBodyBytes: 1048576, maxResponseBytes: 8388608, crossSite: 'reject', baseUrl: undefined, credentials: 'same-origin', entryExplicit: false })
 })
 
 test('explicit values; leading ./ stripped from entry', async () => {
   const c = await loadBuildConfig(tmpApp('[actions]\nentry = "./server/api.ts"\nprefix = "/api"\nmax_body_bytes = 1024\nmax_response_bytes = 1048576\n'))
-  expect(c.actions).toEqual({ entry: 'server/api.ts', prefix: '/api', maxBodyBytes: 1024, maxResponseBytes: 1048576, crossSite: 'reject' })
+  expect(c.actions).toEqual({ entry: 'server/api.ts', prefix: '/api', maxBodyBytes: 1024, maxResponseBytes: 1048576, crossSite: 'reject', baseUrl: undefined, credentials: 'same-origin', entryExplicit: true })
 })
 
 test('cross_site: "allow" is kept, "reject" is the default, anything else is a build error (F87)', async () => {

@@ -4,13 +4,15 @@
 // `server_only` is the app config `serverOnly` of the compiler spec (§8.2): the compiler refuses
 // such an import in client code, and every browser bundle refuses to include it.
 import { join } from 'node:path'
-import { DEFAULT_ACTION_PREFIX, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, MAX_ACTION_BYTES, prefixError } from '../actions/prefix'
+import { ACTION_CREDENTIALS, type ActionCredentials, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, MAX_ACTION_BYTES, baseUrlError, prefixError } from '../actions/prefix'
 import { ADAPTER_NAMES, BUILTINS, installHint } from '../cache-adapter/load'
 import { BuildError } from './errors'
 
 // [actions] (opt-in, ruling R6): present table => actions on. Both byte caps cross napi as u32 (F82: 1..64 MiB / 256 KiB..64 MiB).
 //   [actions]
 //   entry = "actions.ts"   prefix = "/_brust/action"   max_body_bytes = 1048576  max_response_bytes = 8388608   cross_site = "reject" | "allow" (F87)
+//   base_url = "https://api.example.com"  credentials = "same-origin" | "include" | "omit"   (L16: the browser client's target; runtime settings, validated here too)
+// `prefix = "/"` is accepted only for an actions-only build (L16 R16.4).
 // `ACTION_INLINE_BODY_BYTES` (Rust): the inline/heap threshold of an action body, independent of the response slot size (`slotBytes`).
 const MIN_RESPONSE_BYTES = 262_144
 
@@ -20,6 +22,11 @@ export interface ActionsBuildConfig {
   maxBodyBytes: number
   maxResponseBytes: number
   crossSite: 'reject' | 'allow'
+  /** `[actions] base_url`; with no actions file present the build is page-only (L16 R16.4b). */
+  baseUrl: string | undefined
+  credentials: ActionCredentials
+  /** `entry` was written in brust.toml (a missing file is then an error, never a page-only build). */
+  entryExplicit: boolean
 }
 
 // [cloudflare] (M4-CF; only read by `--target cloudflare`, validated always so errors surface early):
@@ -235,7 +242,7 @@ function resolveAlias(file: string, appRoot: string, p: string): string {
   }
 }
 
-function parseActions(file: string, raw: unknown): ActionsBuildConfig | null {
+function parseActions(file: string, raw: unknown, actionsOnly: boolean): ActionsBuildConfig | null {
   if (raw === undefined) return null
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new BuildError('config', `${file}: [actions] must be a table`)
   const t = raw as Record<string, unknown>
@@ -246,7 +253,8 @@ function parseActions(file: string, raw: unknown): ActionsBuildConfig | null {
   }
   let prefix = DEFAULT_ACTION_PREFIX
   if (t.prefix !== undefined) {
-    const why = prefixError(t.prefix)
+    // `/` is the prefix of an actions-only deployment; a page-only build (base_url, no local app) may name it too.
+    const why = prefixError(t.prefix, actionsOnly || t.base_url !== undefined)
     if (why) throw new BuildError('config', `${file}: actions.prefix ${why}`)
     prefix = t.prefix as string
   }
@@ -269,7 +277,19 @@ function parseActions(file: string, raw: unknown): ActionsBuildConfig | null {
     if (t.cross_site !== 'reject' && t.cross_site !== 'allow') throw new BuildError('config', `${file}: actions.cross_site must be "reject" or "allow"`)
     crossSite = t.cross_site
   }
-  return { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite }
+  let baseUrl: string | undefined
+  if (t.base_url !== undefined) {
+    const why = baseUrlError(t.base_url)
+    if (why) throw new BuildError('config', `${file}: actions.base_url ${why}`)
+    baseUrl = t.base_url as string
+  }
+  let credentials: ActionCredentials = 'same-origin'
+  if (t.credentials !== undefined) {
+    if (typeof t.credentials !== 'string' || !ACTION_CREDENTIALS.includes(t.credentials as ActionCredentials))
+      throw new BuildError('config', `${file}: actions.credentials must be one of ${ACTION_CREDENTIALS.join(', ')} (got ${JSON.stringify(t.credentials)})`)
+    credentials = t.credentials as ActionCredentials
+  }
+  return { entry, prefix, maxBodyBytes, maxResponseBytes, crossSite, baseUrl, credentials, entryExplicit: t.entry !== undefined }
 }
 
 const DEFAULT_ENTRY = 'actions.ts'
@@ -286,7 +306,7 @@ function parseCss(file: string, raw: unknown): string[] {
   return g.map((p: string) => p.trim())
 }
 
-export async function loadBuildConfig(appRoot: string): Promise<BuildConfig> {
+export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
   if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [] }
@@ -297,7 +317,7 @@ export async function loadBuildConfig(appRoot: string): Promise<BuildConfig> {
     throw new BuildError('config', `failed to parse ${file}: ${(e as Error).message}`)
   }
   const root = (parsed ?? {}) as Record<string, unknown>
-  const actions = parseActions(file, root.actions)
+  const actions = parseActions(file, root.actions, o.actionsOnly === true)
   const cloudflare = parseCloudflare(file, appRoot, root.cloudflare)
   const cache = await parseCache(file, appRoot, root.cache)
   const cssGlobal = parseCss(file, root.css)

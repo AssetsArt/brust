@@ -106,6 +106,108 @@ impl Default for ActionsConfig {
     }
 }
 
+/// L16 R16.2: the `fetch` credentials the browser client defaults to (`[actions] credentials`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ActionCredentials {
+    #[default]
+    SameOrigin,
+    Include,
+    Omit,
+}
+
+impl ActionCredentials {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SameOrigin => "same-origin",
+            Self::Include => "include",
+            Self::Omit => "omit",
+        }
+    }
+}
+
+/// L16 R16.1/R16.2: what the page tells the browser's `client()`: where the actions live. Independent of
+/// [`ActionsConfig`]: a page-only build points at a remote app and mounts no local one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ActionsClient {
+    /// Injected only when not the default prefix.
+    pub prefix: Option<String>,
+    /// An absolute http(s) origin, no path, query or fragment.
+    pub base_url: Option<String>,
+    pub credentials: ActionCredentials,
+}
+
+impl ActionsClient {
+    /// `start` prefixes the message with `actions: `.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(b) = &self.base_url {
+            let rest = b
+                .strip_prefix("https://")
+                .or_else(|| b.strip_prefix("http://"))
+                .ok_or_else(|| format!("base_url must be an absolute http(s) origin: {b:?}"))?;
+            if rest.is_empty()
+                || rest.bytes().any(|c| {
+                    matches!(c, b'/' | b'?' | b'#' | b'@' | b'\\') || c <= b' ' || c == 0x7f
+                })
+            {
+                return Err(format!(
+                    "base_url must be an origin only (scheme, host, optional port; no path, query, fragment or credentials): {b:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The `<script>` tags for the page head: the prefix one (unchanged since M3-F A4), then one for the base
+    /// and the credentials default. A JSON string literal with `<`, `>`, `&`, U+2028 and U+2029 escaped.
+    pub fn tags(&self) -> Option<String> {
+        let mut out = String::new();
+        if let Some(p) = self
+            .prefix
+            .as_deref()
+            .filter(|p| *p != DEFAULT_ACTION_PREFIX)
+        {
+            out.push_str(&format!(
+                "<script>globalThis.__BRUST_ACTION_PREFIX__=\"{p}\"</script>"
+            ));
+        }
+        let mut stmts = Vec::new();
+        if let Some(b) = &self.base_url {
+            stmts.push(format!("globalThis.__BRUST_ACTION_BASE__={}", js_string(b)));
+        }
+        if self.credentials != ActionCredentials::SameOrigin {
+            stmts.push(format!(
+                "globalThis.__BRUST_ACTION_CREDENTIALS__={}",
+                js_string(self.credentials.as_str())
+            ));
+        }
+        if !stmts.is_empty() {
+            out.push_str(&format!("<script>{}</script>", stmts.join(";")));
+        }
+        (!out.is_empty()).then_some(out)
+    }
+}
+
+/// A JS string literal that is also safe inside `<script>`.
+fn js_string(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '<' => o.push_str("\\u003c"),
+            '>' => o.push_str("\\u003e"),
+            '&' => o.push_str("\\u0026"),
+            '\u{2028}' => o.push_str("\\u2028"),
+            '\u{2029}' => o.push_str("\\u2029"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
 /// 0.1.x `path_under_action_prefix` (brust-core config.rs:358-363): `path` is `p` or lies under it.
 pub(crate) fn under(path: &str, p: &str) -> bool {
     path == p || (path.len() > p.len() && path.as_bytes()[p.len()] == b'/' && path.starts_with(p))
@@ -113,6 +215,13 @@ pub(crate) fn under(path: &str, p: &str) -> bool {
 
 impl ActionsConfig {
     pub fn is_under(&self, path: &str) -> bool {
+        if self.prefix == "/" {
+            // L16 R16.4: the root prefix of an actions-only build answers everything but the server's own paths.
+            return path.starts_with('/')
+                && path != "/ping"
+                && !under(path, "/_brust")
+                && !under(path, "/public");
+        }
         under(path, &self.prefix)
     }
 
@@ -123,6 +232,16 @@ impl ActionsConfig {
     /// R7; `start` prefixes the message with `actions: `.
     pub fn validate(&self, m: &Manifest) -> Result<(), String> {
         let p = self.prefix.as_str();
+        if p == "/" {
+            // L16 R16.4: only an actions-only build (no page routes) may mount at the root.
+            if !m.actions_only {
+                return Err(
+                    "prefix \"/\" is only allowed in an actions-only build (brust build --actions-only)"
+                        .into(),
+                );
+            }
+            return self.validate_limits();
+        }
         let seg_ok = |s: &str| {
             !s.is_empty()
                 && s != "."
@@ -146,6 +265,10 @@ impl ActionsConfig {
         }) {
             return Err(format!("prefix {p:?} shadows route {:?}", rt.pattern));
         }
+        self.validate_limits()
+    }
+
+    fn validate_limits(&self) -> Result<(), String> {
         if !(1..=MAX_ACTION_BYTES).contains(&self.max_body_bytes) {
             return Err(format!("maxBodyBytes must be in 1..={MAX_ACTION_BYTES}"));
         }
@@ -205,6 +328,67 @@ mod tests {
         let dist = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../brust-server/tests/fixtures/dist");
         Manifest::load(&dist).expect("fixture manifest").manifest
+    }
+
+    #[test]
+    fn client_tags_escape_and_validate() {
+        let c = ActionsClient {
+            prefix: Some("/api".into()),
+            base_url: Some("https://api.example.com:8443".into()),
+            credentials: ActionCredentials::Include,
+        };
+        assert!(c.validate().is_ok());
+        assert_eq!(
+            c.tags().unwrap(),
+            "<script>globalThis.__BRUST_ACTION_PREFIX__=\"/api\"</script><script>globalThis.__BRUST_ACTION_BASE__=\"https://api.example.com:8443\";globalThis.__BRUST_ACTION_CREDENTIALS__=\"include\"</script>"
+        );
+        assert_eq!(ActionsClient::default().tags(), None);
+        let d = ActionsClient {
+            prefix: Some(DEFAULT_ACTION_PREFIX.into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            d.tags(),
+            None,
+            "the default prefix and same-origin inject nothing"
+        );
+        // the escape table
+        assert_eq!(
+            js_string("a<b>&\"\\\u{2028}\u{2029}\n"),
+            "\"a\\u003cb\\u003e\\u0026\\\"\\\\\\u2028\\u2029\\u000a\""
+        );
+        for bad in [
+            "x.com",
+            "https://",
+            "http://a/b",
+            "http://a?x",
+            "http://a#x",
+            "http://u@a",
+            "http://a b",
+            "ws://a",
+        ] {
+            let c = ActionsClient {
+                base_url: Some(bad.into()),
+                ..Default::default()
+            };
+            assert!(c.validate().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn root_prefix_matches_everything_but_the_servers_own_paths() {
+        let a = with_prefix("/");
+        for p in ["/", "/team", "/a/b/c"] {
+            assert!(a.is_under(p), "{p}");
+        }
+        for p in [
+            "/ping",
+            "/_brust/cache/stats",
+            "/_brust/client/x.js",
+            "/public/a.css",
+        ] {
+            assert!(!a.is_under(p), "{p}");
+        }
     }
 
     fn with_prefix(p: &str) -> ActionsConfig {

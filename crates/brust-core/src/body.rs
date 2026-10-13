@@ -122,6 +122,21 @@ pub(crate) fn error_400() -> Response<Bytes> {
 pub(crate) fn error_404() -> Response<Bytes> {
     resp(404, "text/plain", &[], b"not found".to_vec())
 }
+/// L16 (R16.3): a path outside the actions prefix of an actions-only deployment.
+pub(crate) fn error_404_problem() -> Response<Bytes> {
+    let b = serde_json::json!({
+        "type": "about:blank",
+        "title": "Not Found",
+        "status": 404,
+        "detail": "this deployment serves actions only",
+    });
+    resp(
+        404,
+        "application/problem+json",
+        &[],
+        b.to_string().into_bytes(),
+    )
+}
 /// RFC 9110 §15.5.6: a 405 lists the methods the target supports.
 pub(crate) fn error_405() -> Response<Bytes> {
     resp(

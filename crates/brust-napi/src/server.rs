@@ -17,9 +17,9 @@ use napi_derive::napi;
 use parking_lot::RwLock;
 
 use brust_server::{
-    ActionsConfig, Config, CorsConfig, CrossSite, DEFAULT_ACTION_PREFIX,
-    DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs, Server,
-    Tuning, start,
+    ActionCredentials, ActionsClient, ActionsConfig, Config, CorsConfig, CrossSite,
+    DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES,
+    InvalidateArgs, Server, Tuning, start,
 };
 
 use crate::dispatch::{BufPtr, KindArg, TsfnDispatch, WorkerTsfn};
@@ -114,6 +114,31 @@ pub struct NapiActionsOptions {
     pub cross_site: Option<String>,
 }
 
+/// L16: what the page tells the browser client. `credentials`: `"same-origin"` (default), `"include"` or `"omit"`.
+#[napi(object)]
+pub struct NapiActionsClient {
+    pub prefix: Option<String>,
+    pub base_url: Option<String>,
+    pub credentials: Option<String>,
+}
+
+fn actions_client(c: NapiActionsClient) -> Result<ActionsClient, String> {
+    Ok(ActionsClient {
+        prefix: c.prefix,
+        base_url: c.base_url,
+        credentials: match c.credentials.as_deref() {
+            None | Some("same-origin") => ActionCredentials::SameOrigin,
+            Some("include") => ActionCredentials::Include,
+            Some("omit") => ActionCredentials::Omit,
+            Some(o) => {
+                return Err(format!(
+                    "actions: credentials must be \"same-origin\", \"include\" or \"omit\" (got {o:?})"
+                ));
+            }
+        },
+    })
+}
+
 /// Field for field; an absent `credentials` is `false`.
 fn cors_config(c: NapiCorsOptions) -> CorsConfig {
     CorsConfig {
@@ -191,6 +216,8 @@ pub struct StartOptions {
     pub cors: Option<NapiCorsOptions>,
     /// The actions subtree (M3-F); absent = no actions (byte-identical server).
     pub actions: Option<NapiActionsOptions>,
+    /// L16: base URL / credentials / prefix injected for the browser `client()`; absent = from `actions` alone.
+    pub actions_client: Option<NapiActionsClient>,
     /// The cache adapter; absent = none (byte-identical server).
     pub l2: Option<NapiL2Options>,
     /// `brust dev` only (L14): a request carrying this token in `x-brust-dev-token` is traced. Absent in production.
@@ -226,6 +253,11 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
         generator: opts.generator,
         cors: opts.cors.map(cors_config),
         actions: opts.actions.map(actions_config),
+        actions_client: opts
+            .actions_client
+            .map(actions_client)
+            .transpose()
+            .map_err(napi::Error::from_reason)?,
         l2: opts.l2.map(l2_config),
         dev_token: opts.dev_token,
         ..Config::default()

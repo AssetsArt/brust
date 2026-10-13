@@ -14,7 +14,9 @@ use http::{HeaderMap, HeaderName, HeaderValue, Response};
 
 use crate::cache::StripedCounter;
 use crate::cache::stamp::InvalClock;
-use crate::config::{ActionsConfig, CorsConfig, InvalidateArgs, InvalidateResult, Stats};
+use crate::config::{
+    ActionsClient, ActionsConfig, CorsConfig, InvalidateArgs, InvalidateResult, Stats,
+};
 use crate::cors::ResolvedCors;
 use crate::host::{Host, JobStore, PageCache, RequestHead};
 use crate::l2::{L2Config, L2Counters, SharedFloor};
@@ -33,6 +35,9 @@ pub struct CoreConfig {
     pub generator: Option<String>,
     /// M3-F: the actions subtree; `None` = no actions.
     pub actions: Option<ActionsConfig>,
+    /// L16: what the page tells the browser client (base URL, credentials, a non-default prefix). `None` = derived
+    /// from `actions` alone (the prefix script of M3-F A4).
+    pub actions_client: Option<ActionsClient>,
     /// The host serves HTTPS: the scheme `cache.prefix`/`bypass` expressions see.
     pub https: bool,
     /// The cache adapter (shared second tier); `None` = none, and nothing changes.
@@ -128,6 +133,9 @@ impl<H: Host> Core<H> {
             a.validate(&loaded.manifest)
                 .map_err(|e| format!("actions: {e}"))?;
         }
+        if let Some(c) = &cfg.actions_client {
+            c.validate().map_err(|e| format!("actions: {e}"))?;
+        }
         // One invalidation clock for both caches: `page()` stamps it once per request (F89).
         let clock = Arc::new(InvalClock::default());
         Ok(Core {
@@ -153,18 +161,18 @@ impl<H: Host> Core<H> {
             missing_slots: Default::default(),
             cors_resolved: cfg.cors.as_ref().map(ResolvedCors::from_config),
             cors: cfg.cors,
-            // A4 verbatim; a validated prefix holds only [A-Za-z0-9._~/-], so no escaping.
-            action_prefix_tag: cfg
-                .actions
-                .as_ref()
-                .filter(|a| !a.is_default_prefix())
-                .map(|a| {
-                    format!(
-                        "<script>globalThis.__BRUST_ACTION_PREFIX__=\"{}\"</script>",
-                        a.prefix
-                    )
-                    .into_boxed_str()
+            // A4 verbatim (a validated prefix holds only [A-Za-z0-9._~/-], so no escaping); L16 adds the base.
+            action_prefix_tag: match &cfg.actions_client {
+                Some(c) => c.tags(),
+                None => cfg.actions.as_ref().and_then(|a| {
+                    ActionsClient {
+                        prefix: Some(a.prefix.clone()),
+                        ..Default::default()
+                    }
+                    .tags()
                 }),
+            }
+            .map(String::into_boxed_str),
             actions: cfg.actions,
             powered_by: powered_by(cfg.generator.as_deref()),
             https: cfg.https,

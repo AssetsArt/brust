@@ -101,6 +101,11 @@ pub async fn handle<H: Host>(
         return crate::actions::handle(s, a, &rq, incoming, method == "HEAD").await;
     }
 
+    // L16 (R16.3): an actions-only deployment has no pages; its own paths stay (`/ping`, stats).
+    if s.manifest.actions_only && path_only != "/ping" && path_only != "/_brust/cache/stats" {
+        return body::error_404_problem();
+    }
+
     let head = method == "HEAD";
     if !(method == "GET" || head) {
         return body::error_405();

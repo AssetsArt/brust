@@ -175,6 +175,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             cors: cfg.cors,
             generator: cfg.generator,
             actions: cfg.actions,
+            actions_client: cfg.actions_client,
             https: cfg.tls.is_some(),
             l2: cfg.l2,
             dev_token: cfg.dev_token,

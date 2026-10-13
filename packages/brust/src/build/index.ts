@@ -9,6 +9,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 import { BrustRouteError, type FlatRoute, validateRoutes } from '../routes'
 import { type BrowserCtx, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
+import { runActionsOnly } from './actions-only'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import { type Compiled, compileApp } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
@@ -92,6 +93,8 @@ export async function runBuild(opts: {
   exprReads?: ExprReads
   /** `--wasm-from-source` (cloudflare only). */
   wasmFromSource?: boolean
+  /** `--actions-only` (L16 R16.3): no pages, only the `[actions]` app; with `bun` (default) or `cloudflare`. */
+  actionsOnly?: boolean
   /** `brust build --dev` (L14, used by `brust dev`): also writes `dev.json` and builds the client runtime with `__BRUST_DEV__`. */
   dev?: boolean
   log: (s: string) => void
@@ -102,7 +105,16 @@ export async function runBuild(opts: {
   const dist = resolve(appRoot, opts.outDir)
   assertSafeOutDir(dist, appRoot, [entry, join(appRoot, 'public')])
   assertReplaceable(dist, opts.force)
-  const { serverOnly, actions, cloudflare, cache, cssGlobal } = await loadBuildConfig(appRoot)
+  const built = await loadBuildConfig(appRoot, { actionsOnly: opts.actionsOnly === true })
+  if (opts.actionsOnly)
+    return runActionsOnly({ appRoot, dist, config: built, target: opts.target, wasmFromSource: opts.wasmFromSource === true, statOk, assertSafeOutDir, log: opts.log })
+  const { serverOnly, cloudflare, cache, cssGlobal } = built
+  // L16 R16.4b: `[actions]` with a `base_url` and no actions file (the default name, not one written in the toml)
+  // is a page-only build: the app is deployed elsewhere, so nothing is bundled or mounted here.
+  const remote =
+    built.actions !== null && built.actions.baseUrl !== undefined && !built.actions.entryExplicit && !statOk(resolve(appRoot, built.actions.entry)) ? built.actions : null
+  const actions = remote ? null : built.actions
+  if (actions?.prefix === '/') throw new BuildError('config', 'actions.prefix "/" is only for an actions-only build (brust build --actions-only) or a page-only build that points at one')
 
   // Everything that can fail on the app's own input runs before a byte is written.
   const { routes, componentFile, componentIssue } = await scanRoutes(entry, appRoot)
@@ -157,7 +169,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, log: opts.log })
+    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -200,6 +212,8 @@ async function buildInto(
     cf: CfPrepared | null
     /** `[css] global` as written (app-root relative). */
     cssGlobal: string[]
+    /** L16 R16.4b: the prefix of an actions app deployed elsewhere (a page-only build); absent = a local app or none. */
+    actionsRemote: string | null
     /** `--target static` with `[actions]`: the worker is built without the cache (static pages are never cached). */
     hybrid: boolean
     log: (s: string) => void
@@ -244,6 +258,7 @@ async function buildInto(
     o.actions && o.actionsEntry
       ? { entry: await buildActions(out, o.actionsEntry, css.maps), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite }
       : null
+  if (o.actionsRemote !== null) manifest.actions_remote = { prefix: o.actionsRemote }
   if (o.cache) manifest.cache = await cacheRecord(out, manifest, o.cache, o.cacheModule, css.maps)
   writeFileSync(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   if (o.dev) writeFileSync(join(out, 'dev.json'), `${JSON.stringify(devJson(appRoot, compiled), null, 2)}\n`)

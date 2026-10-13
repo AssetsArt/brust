@@ -2,8 +2,9 @@
 //   env (BRUST_ADDR / BRUST_PORT / BRUST_WORKERS / BRUST_RENDER_SLOTS / BRUST_DRAIN_TIMEOUT_MS /
 //        BRUST_BOOT_TIMEOUT_MS / BRUST_CALL_TIMEOUT_MS / BRUST_SLOT_BYTES / BRUST_MAX_LOADER_RESPONSE_BYTES)
 //   > CLI flags (`brust start --port/--workers`) and `run({ config })`
-//   > brust.toml ([server] address / port / max_loader_response_bytes, [workers] count / slot_bytes, [cors])
+//   > brust.toml ([server] address / port / max_loader_response_bytes, [workers] count / slot_bytes, [cors], [actions] base_url / credentials)
 //   > defaults (localhost, 1337, availableParallelism(), 1, 10000, 30000, 30000, 262144, 8388608).
+// L16 R16.1: `actionsBaseUrl` follows env (BRUST_ACTIONS_BASE_URL) > run({ config }) > toml `[actions] base_url`.
 // `cors` has no env layer; `run({ config: { cors } })` replaces a toml `[cors]` as a whole (never merged), and
 // `cors: null` turns a toml `[cors]` off.
 // `brust start`'s BRUST_DIST_DIR / BRUST_APP_ENTRY follow the same env > flag rule (run.ts).
@@ -11,6 +12,7 @@
 // 0.1.x `runtime/config.ts`.
 import { availableParallelism } from 'node:os'
 import { join } from 'node:path'
+import { ACTION_CREDENTIALS, type ActionCredentials, baseUrlError } from './actions/prefix'
 
 /** `[cors]` in brust.toml; same shape and validation as the Rust `CorsConfig` (crates/brust-server/src/config.rs). */
 export interface CorsConfig {
@@ -41,6 +43,10 @@ export interface BrustConfig {
   maxLoaderResponseBytes: number
   /** `run({ config: { cors } })` over brust.toml `[cors]` (a whole-object replace); absent = CORS off. No env layer. */
   cors?: CorsConfig
+  /** L16 R16.1: the origin the browser `client()` calls (page script `__BRUST_ACTION_BASE__`); absent = same origin. */
+  actionsBaseUrl?: string
+  /** L16 R16.2: the client's default `RequestInit.credentials` (`__BRUST_ACTION_CREDENTIALS__`); absent = `same-origin`. */
+  actionsCredentials?: ActionCredentials
 }
 
 /** What `run({ config })` / `loadConfig`'s `cli` accepts: any setting, and `cors: null` to turn a toml `[cors]` off. */
@@ -106,8 +112,12 @@ export async function loadConfig(cwd: string = process.cwd(), cli: ConfigOverrid
     maxLoaderResponseBytes: env.maxLoaderResponseBytes ?? cli.maxLoaderResponseBytes ?? fromToml.maxLoaderResponseBytes ?? DEFAULTS.maxLoaderResponseBytes,
     ioThreads: env.ioThreads ?? cli.ioThreads,
     ...(cors ? { cors } : {}),
+    ...pick('actionsBaseUrl', env.actionsBaseUrl ?? cli.actionsBaseUrl ?? fromToml.actionsBaseUrl),
+    ...pick('actionsCredentials', cli.actionsCredentials ?? fromToml.actionsCredentials),
   }
 }
+
+const pick = <K extends string, V>(k: K, v: V | undefined) => (v === undefined ? {} : ({ [k]: v } as { [P in K]: V }))
 
 /** `[cors]` of brust.toml and nothing else (no env, no cli): what the Cloudflare build ships in CONFIG.
  * Throws `BrustConfigError` on a bad table, exactly like `loadConfig`. */
@@ -140,6 +150,12 @@ function checkCli(cli: ConfigOverrides): void {
   check('ioThreads', cli.ioThreads, 1, MAX_IO_THREADS)
   check('slotBytes', cli.slotBytes, MIN_SLOT_BYTES, MAX_SLOT_BYTES)
   check('maxLoaderResponseBytes', cli.maxLoaderResponseBytes, MIN_LOADER_RESPONSE_BYTES, MAX_LOADER_RESPONSE_BYTES)
+  if (cli.actionsBaseUrl !== undefined) {
+    const why = baseUrlError(cli.actionsBaseUrl)
+    if (why) throw new BrustConfigError(`config.actionsBaseUrl ${why}`, null)
+  }
+  if (cli.actionsCredentials !== undefined && !ACTION_CREDENTIALS.includes(cli.actionsCredentials))
+    throw new BrustConfigError(`config.actionsCredentials must be one of ${ACTION_CREDENTIALS.join(', ')} (got ${JSON.stringify(cli.actionsCredentials)})`, null)
 }
 
 function table(v: unknown, what: string, file: string): Record<string, unknown> {
@@ -185,6 +201,19 @@ function fromTomlTable(parsed: unknown, file: string): Partial<BrustConfig> {
     }
   }
   if ('cors' in root) out.cors = parseCors(root.cors, file)
+  if ('actions' in root) {
+    const a = table(root.actions, '[actions]', file)
+    if (a.base_url !== undefined) {
+      const why = baseUrlError(a.base_url)
+      if (why) throw new BrustConfigError(`${file}: actions.base_url ${why}`, file)
+      out.actionsBaseUrl = a.base_url as string
+    }
+    if (a.credentials !== undefined) {
+      if (typeof a.credentials !== 'string' || !ACTION_CREDENTIALS.includes(a.credentials as ActionCredentials))
+        throw new BrustConfigError(`${file}: actions.credentials must be one of ${ACTION_CREDENTIALS.join(', ')} (got ${JSON.stringify(a.credentials)})`, file)
+      out.actionsCredentials = a.credentials as ActionCredentials
+    }
+  }
   return out
 }
 
@@ -263,5 +292,11 @@ function fromEnv(): Partial<BrustConfig> {
   out.slotBytes = envInt('BRUST_SLOT_BYTES', MIN_SLOT_BYTES, MAX_SLOT_BYTES, `an integer in ${MIN_SLOT_BYTES}..${MAX_SLOT_BYTES}`)
   out.maxLoaderResponseBytes = envInt('BRUST_MAX_LOADER_RESPONSE_BYTES', MIN_LOADER_RESPONSE_BYTES, MAX_LOADER_RESPONSE_BYTES, `an integer in ${MIN_LOADER_RESPONSE_BYTES}..${MAX_LOADER_RESPONSE_BYTES}`)
   out.ioThreads = envInt('BRUST_WORKER_THREADS', 1, MAX_IO_THREADS, `an integer in 1..${MAX_IO_THREADS}`)
+  const base = process.env.BRUST_ACTIONS_BASE_URL
+  if (base !== undefined && base !== '') {
+    const why = baseUrlError(base)
+    if (why) throw new BrustConfigError(`BRUST_ACTIONS_BASE_URL ${why}`, null)
+    out.actionsBaseUrl = base
+  }
   return out
 }

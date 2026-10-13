@@ -2,7 +2,7 @@
 // elysia is type-only here. Differences from 0.1.x runtime/treaty.ts: docs/actions.md "The client".
 import { type Treaty, treaty } from '@elysia/eden/treaty2'
 import type { AnyElysia } from 'elysia'
-import { DEFAULT_ACTION_PREFIX } from './prefix'
+import { type ActionCredentials, DEFAULT_ACTION_PREFIX } from './prefix'
 
 export { DEFAULT_ACTION_PREFIX }
 export type { Treaty }
@@ -19,7 +19,17 @@ export interface ClientOptions<Head extends Record<string, unknown> = {}>
   init?: Treaty.Config<Head>['fetch']
 }
 
-/** 0.1.x runtime/treaty.ts:86-93, verbatim order. */
+interface PageGlobals {
+  __BRUST_ACTION_PREFIX__?: string
+  /** L16 R16.1: injected from `[actions] base_url` / BRUST_ACTIONS_BASE_URL / run({ config: { actionsBaseUrl } }). */
+  __BRUST_ACTION_BASE__?: string
+  /** L16 R16.2: injected from `[actions] credentials`. */
+  __BRUST_ACTION_CREDENTIALS__?: ActionCredentials
+}
+const page = () => globalThis as PageGlobals
+
+/** 0.1.x runtime/treaty.ts:86-93, verbatim order. A per-call `baseUrl` keeps the default prefix; a base that comes
+ * from the page global (L16) pairs with the page's injected prefix, both being the same deployment's config. */
 export function resolvePrefix(opts?: { prefix?: string; baseUrl?: string }): string {
   if (opts?.prefix) return opts.prefix
   if (opts?.baseUrl !== undefined) return DEFAULT_ACTION_PREFIX
@@ -31,7 +41,8 @@ export function resolvePrefix(opts?: { prefix?: string; baseUrl?: string }): str
 
 /** 0.1.x runtime/treaty.ts:95-106; message names `client`. */
 export function resolveBaseUrl(opts?: { baseUrl?: string }): string {
-  const b = opts?.baseUrl
+  // R16.1 order: opts.baseUrl, the page's __BRUST_ACTION_BASE__, relative.
+  const b = opts?.baseUrl ?? page().__BRUST_ACTION_BASE__
   if (b === undefined) return ''
   if (!/^https?:\/\//.test(b))
     throw new Error(
@@ -44,11 +55,17 @@ export function client<const App extends AnyElysia, Head extends Record<string, 
   opts: ClientOptions<Head> = {},
 ): Treaty.Instance<App, Head> {
   const { prefix: _p, baseUrl: _b, fetch: fetcher, init, ...rest } = opts
+  // R16.2: the page's credentials default (`opts.init` wins); only when it differs from the browser default.
+  const creds = page().__BRUST_ACTION_CREDENTIALS__
+  const defaults = creds !== undefined && creds !== 'same-origin' && typeof init !== 'function' ? { credentials: creds } : undefined
   // keepDomain: Eden would rewrite a relative base to `https:///…` (probe kd.ts).
-  return treaty<App, Head>(resolveBaseUrl(opts) + resolvePrefix(opts), {
+  // The root prefix (an actions-only deployment) adds nothing to the base: `https://api.example.com/team`, not `//team`.
+  const base = resolveBaseUrl(opts)
+  const prefix = resolvePrefix(opts)
+  return treaty<App, Head>(base !== '' && prefix === '/' ? base : base + prefix, {
     ...rest,
     keepDomain: true,
     ...(fetcher ? { fetcher } : {}),
-    ...(init ? { fetch: init } : {}),
+    ...(init || defaults ? { fetch: typeof init === 'function' ? init : { ...defaults, ...init } } : {}),
   })
 }
