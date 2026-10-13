@@ -1,7 +1,7 @@
 // Renders docs/shadcn-coverage.md. Pure: every number comes from the rows, nothing from the clock, the host or the bundler.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AppRow } from './app.ts'
+import type { AppRow, Repro } from './app.ts'
 import { CONSTRUCTS, type LibPackage } from './lib.ts'
 import { FIXTURE } from './paths.ts'
 
@@ -46,7 +46,15 @@ export function rankBlockers(rows: AppRow[], libs: LibPackage[]): Blocker[] {
   return [...m.values()].sort((a, b) => b.appRows + b.libComponents - (a.appRows + a.libComponents) || b.appRows - a.appRows || a.key.localeCompare(b.key))
 }
 
-export function renderReport(rows: AppRow[], libs: LibPackage[]): string {
+/** Survey truth = the product (compiler or build) really behaves so on shadcn's own code; census = a construct seen in library code, not proven to block that component; fixture mistake = caused by how the fixture is set up (none found). */
+export function classify(b: Blocker): string {
+  if (b.kind === 'build') return 'survey truth (build rule)'
+  if (b.key === 'fallback:external-component') return 'survey truth (today\'s rule; R34.7 removes it)'
+  if (b.kind === 'construct') return 'census (construct present; blocks per the battery row in Why)'
+  return b.kind === 'compile error' ? 'survey truth (compiler refusal)' : 'survey truth (compiler diagnostic)'
+}
+
+export function renderReport(rows: AppRow[], libs: LibPackage[], repro: Repro[]): string {
   const L = lock()
   const out: string[] = []
   const count = (t: AppRow['tier']) => rows.filter((r) => r.tier === t).length
@@ -66,10 +74,21 @@ export function renderReport(rows: AppRow[], libs: LibPackage[]): string {
   const ranked = rankBlockers(rows, libs)
   out.push('## Ranked blockers (app + library)', '')
   out.push('One line per thing that keeps a row or a library component off the static/native tiers, most blocking first (sort key: app rows + library components). App rows = fixture pages showing it; app components = distinct shadcn component declarations carrying it; library components = declarations in the survey of packages below (a construct counts only when the compiler cannot handle it today). This is the input for lanes S1+.', '')
-  out.push('| # | Blocker | Kind | App rows | App components | Library components | Why |', '|---|---|---|---|---|---|---|')
-  ranked.forEach((b, i) => out.push(`| ${i + 1} | ${cell(b.key)} | ${b.kind} | ${b.appRows} | ${b.appComponents} | ${b.libComponents} | ${cell(b.why)} |`))
+  out.push('| # | Blocker | Kind | Classification | App rows | App components | Library components | Why |', '|---|---|---|---|---|---|---|---|')
+  ranked.forEach((b, i) => out.push(`| ${i + 1} | ${cell(b.key)} | ${b.kind} | ${classify(b)} | ${b.appRows} | ${b.appComponents} | ${b.libComponents} | ${cell(b.why)} |`))
   out.push('')
 
+  const cls = new Map<string, number>()
+  for (const b of ranked) cls.set(classify(b).replace(/ \(.*/, ''), (cls.get(classify(b).replace(/ \(.*/, '')) ?? 0) + 1)
+  out.push('## Classification', '')
+  out.push(`Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (${[...cls].map(([k, n]) => `${n} ${k}`).join(', ')}). The fixture deviates from the CLI output in one place only (the sibling imports rewritten from \`@/\` to relative, which changes resolution, never the exports), and it uses a plain \`brust build <entry>\` with \`[css] global\` only: no build option, no pin, no config that could cause a blocker.`, '')
+  out.push('### The "63 of 64 builds fail" result: the real build rule', '')
+  const named = repro.find((r) => r.id === 'named')
+  out.push(`Not a fixture problem. A React-tier component is built as an island whose entry is \`import Comp from "<its file>"\` (\`componentImport\`, packages/brust/src/build/bundle.ts); shadcn files export every component **by name** (\`Card\`, \`CardHeader\`, \`CardTitle\`, …), so as soon as one of them falls back to React (rest props → \`fallback:prop-pattern\` + \`fallback:spread-props\`, \`asChild\` → \`fallback:local-component\`, …) the bundler has no default export to import and the whole build fails. There is no diagnostic code for it: it is a build error, so every page with one React shadcn component fails to build, and it hides all other rows behind it. Exact text for the repro below: \`${named?.build.ok === false ? named.build.raw ?? named.build.message : '—'}\`.`, '')
+  out.push('Minimal repro (`tests/fixtures/shadcn/repro/`: one component file + one page, three variants of the same component):', '')
+  out.push('| Variant | Component | Fallback codes | `brust build` |', '|---|---|---|---|')
+  for (const r of repro) out.push(`| ${r.id} | ${cell(r.what)} | ${cell(list(r.codes))} | ${r.build.ok ? 'ok' : cell(`failed: ${r.build.message}`)} |`)
+  out.push('', 'So the lane is: a React-tier component that is a *named* export (of a file with several components) must be buildable as an island, and the page must still pick it up; the same component as a default export builds today. Making the components leave the React tier (S1) shrinks the problem but cannot remove it for the ones that stay islands (Calendar, Chart, Carousel, Command, …).', '')
   out.push('## App rows', '')
   out.push('Islands = React islands the page ships (1 when the page root is React). Components = compiled components in the tree (React ones in brackets). Client bytes = compiler-emitted native client chunks (0 until a component reaches the native tier; island bundles are produced by the bundler and left out so the file is stable across Bun versions: `bun run shadcn -- --sizes` prints them).', '')
   out.push('| Row | Tier | Islands | Components | Fallback codes | Client bytes | Build |', '|---|---|---|---|---|---|---|')

@@ -27,7 +27,7 @@ export interface AppRow {
   clientBytes: number
   /** per blocked component: `Name (file) rule…` for the ranked list */
   blocked: { name: string; file: string; codes: string[] }[]
-  build: { ok: true } | { ok: false; message: string }
+  build: { ok: true } | { ok: false; message: string; raw?: string }
   /** island bundle bytes (`dist/client/*.js`) when the build worked; measured by the bundler, so NOT written to the doc */
   bundleBytes: number | null
   /** compile error text when `compileTree` itself refused (an Error diagnostic) */
@@ -90,15 +90,42 @@ export function analysePage(id: string): Omit<AppRow, 'build' | 'bundleBytes'> {
   }
 }
 
+export interface Repro { id: string; what: string; build: AppRow['build']; codes: string[] }
+
+/** The three-file repro behind the ranked "island component is not a default export" blocker: the same shadcn-shaped
+ * component (rest props) exported by name, exported as default, and without rest props (static). */
+export function surveyRepro(): Repro[] {
+  const cases = [
+    { id: 'named', what: '`export function Box({ className, ...props })` in ui.tsx, used by a page' },
+    { id: 'default', what: 'the same component as `export default function Box`' },
+    { id: 'static', what: '`export function Box({ className })` (no rest props: static, inlined)' },
+  ]
+  return cases.map((c) => {
+    const tree = compileTree(`repro/page-${c.id}.tsx`, FIXTURE, '/_brust/runtime.js', [])
+    const codes = [...new Set(tree.components.flatMap((x) => x.diagnostics.filter((d) => d.class === 'fallback').map((d) => d.rule)))].sort()
+    return { ...c, codes, build: buildEntry(`repro/r-${c.id}.tsx`, `repro-${c.id}`).build }
+  })
+}
+
 /** One page, one `brust build` (its own entry and dist under `.rows/`, both removed after). */
 export function buildPage(id: string): { build: AppRow['build']; bundleBytes: number | null } {
   const dir = join(FIXTURE, '.rows')
   mkdirSync(dir, { recursive: true })
   const entry = join(dir, `${id}.routes.tsx`)
-  const out = join(dir, `dist-${id}`)
   writeFileSync(entry, `import { defineRoutes } from '@brust/core/routes'\nimport Page from '../pages/${id}'\nexport const routes = defineRoutes([{ path: '/${id}', Component: Page }])\n`)
   try {
-    const p = spawnSync(process.execPath, [join(repo, 'packages/brust/bin/brust'), 'build', `.rows/${id}.routes.tsx`, '--out-dir', `.rows/dist-${id}`], { cwd: FIXTURE, encoding: 'utf8' })
+    return buildEntry(`.rows/${id}.routes.tsx`, id)
+  } finally {
+    rmSync(entry, { force: true })
+  }
+}
+
+/** `brust build <entry>` in the fixture, into a throwaway dist. */
+function buildEntry(entryRel: string, id: string): { build: AppRow['build']; bundleBytes: number | null } {
+  const out = join(FIXTURE, '.rows', `dist-${id}`)
+  mkdirSync(join(FIXTURE, '.rows'), { recursive: true })
+  try {
+    const p = spawnSync(process.execPath, [join(repo, 'packages/brust/bin/brust'), 'build', entryRel, '--out-dir', `.rows/dist-${id}`], { cwd: FIXTURE, encoding: 'utf8' })
     if (p.status === 0) {
       const client = join(out, 'client')
       const bytes = readdirSync(client).filter((f) => f.endsWith('.js')).reduce((n, f) => n + Bun.file(join(client, f)).size, 0)
@@ -106,11 +133,10 @@ export function buildPage(id: string): { build: AppRow['build']; bundleBytes: nu
     }
     const text = (p.stderr || p.stdout).replaceAll(FIXTURE, '.')
     // The bundler wants `export default` for a React island's component file; shadcn files export by name.
-    if (/No matching export in "[^"]+" for import "default"/.test(text)) return { build: { ok: false, message: 'bundle: island component is not a default export' }, bundleBytes: null }
+    if (/No matching export in "[^"]+" for import "default"/.test(text)) return { build: { ok: false, message: 'bundle: island component is not a default export', raw: `${text.split('\n').find((l) => /^error /.test(l))} / ${text.split('\n').find((l) => /^BuildMessage/.test(l))}` }, bundleBytes: null }
     const line = text.split('\n').find((l) => /^error /.test(l))
     return { build: { ok: false, message: line ? line.replace(/^error /, '') : `exit ${p.status}` }, bundleBytes: null }
   } finally {
-    rmSync(entry, { force: true })
     rmSync(out, { recursive: true, force: true })
   }
 }
