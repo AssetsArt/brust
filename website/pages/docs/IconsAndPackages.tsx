@@ -88,7 +88,7 @@ export async function packagesLoader(): Promise<PackagesData> {
   }
 }
 
-export default function Packages({ blocks }: PackagesData) {
+export default function IconsAndPackages({ blocks }: PackagesData) {
   return (
     <section style={{ display: 'contents' }}>
       <h1>Icons and packages</h1>

@@ -37,8 +37,7 @@ test('the page has every section, its table-of-contents entry and the sidebar li
 
 test('tiers: the demo is native, the page is static', () => {
   expect(component(manifest, 'IconAttrs').tier).toBe('native')
-  const tiers = Object.entries(manifest.components).filter(([k]) => k.startsWith('packages_')).map(([, c]) => c.tier)
-  expect(tiers).toContain('static')
+  expect(component(manifest, 'IconsAndPackages').tier).toBe('static')
 })
 
 test('the demo (Chromium): undefined falls back to the default, a value is applied, no page errors', async () => {
@@ -68,7 +67,7 @@ test('the demo (Chromium): undefined falls back to the default, a value is appli
 
 test('every cited source exists, and every line resolves', () => {
   const root = join(import.meta.dir, '..', '..')
-  const src = readFileSync(join(import.meta.dir, '..', 'pages/docs/Packages.tsx'), 'utf8')
+  const src = readFileSync(join(import.meta.dir, '..', 'pages/docs/IconsAndPackages.tsx'), 'utf8')
   const FULL: Record<string, string> = { 'children.rs': 'crates/brust-compiler/src/analyze/passes/children.rs' }
   let cites = 0
   for (const line of src.split('\n').filter((l) => /source:|observed:/.test(l))) {

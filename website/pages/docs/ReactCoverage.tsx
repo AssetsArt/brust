@@ -39,7 +39,9 @@ const TIER: Record<Status, string> = {
 function plainNote(e: Entry): string {
   const n = e.note
     .replace(/^spec §[\d.]+(?: react tier)?:?\s*/, '')
+    .replace(/outside §[\d.]+/g, 'outside the supported hooks')
     .replace(/\b(spec §[\d.]+|F\d+)\b:?\s*/g, '')
+    .replace(/\s*§[\d.]+/g, '')
     .trim()
   return n === e.name || n === `<${e.name}>` ? '' : n
 }

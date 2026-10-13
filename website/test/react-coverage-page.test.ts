@@ -37,6 +37,6 @@ test('every group has its heading, table and anchor, and every entry links to it
 })
 
 test('the page states no internal spec references and is static', () => {
-  expect(html).not.toMatch(/spec §/)
+  expect(html).not.toMatch(/§/)
   expect(component(manifest, 'ReactCoverage').tier).toBe('static')
 })

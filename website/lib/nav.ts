@@ -12,7 +12,7 @@ import Installation, { installationLoader } from '../pages/docs/Installation'
 import Introduction, { introductionLoader } from '../pages/docs/Introduction'
 import Loaders, { loadersLoader } from '../pages/docs/Loaders'
 import Migrating, { migratingLoader } from '../pages/docs/Migrating'
-import Packages, { packagesLoader } from '../pages/docs/Packages'
+import IconsAndPackages, { packagesLoader } from '../pages/docs/IconsAndPackages'
 import ProjectStructure, { projectStructureLoader } from '../pages/docs/ProjectStructure'
 import Quickstart, { quickstartLoader } from '../pages/docs/Quickstart'
 import ReactCoverage, { reactCoverageLoader } from '../pages/docs/ReactCoverage'
@@ -61,7 +61,7 @@ export const NAV: NavGroup[] = [
       { slug: 'caching', title: 'Caching', file: 'pages/docs/Caching.tsx', Component: Caching, loader: cachingLoader },
       { slug: 'actions', title: 'Actions', file: 'pages/docs/Actions.tsx', Component: Actions, loader: actionsLoader },
       { slug: 'store', title: 'Store', file: 'pages/docs/Store.tsx', Component: Store, loader: storeLoader },
-      { slug: 'packages', title: 'Icons and packages', file: 'pages/docs/Packages.tsx', Component: Packages, loader: packagesLoader },
+      { slug: 'packages', title: 'Icons and packages', file: 'pages/docs/IconsAndPackages.tsx', Component: IconsAndPackages, loader: packagesLoader },
       { slug: 'react-coverage', title: 'React coverage', file: 'pages/docs/ReactCoverage.tsx', Component: ReactCoverage, loader: reactCoverageLoader },
       { slug: 'configuration', title: 'Configuration', file: 'pages/docs/Configuration.tsx', Component: Configuration, loader: configurationLoader },
       { slug: 'cli', title: 'CLI', file: 'pages/docs/Cli.tsx', Component: Cli, loader: cliLoader },
