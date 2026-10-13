@@ -71,10 +71,10 @@ Types ship with `@brust/core`: `import styles from './x.module.css'` types as `{
 
 ## 6. Tailwind CSS v4
 
-Tailwind is built in through the official `bun-plugin-tailwind`. Install it and Tailwind as your app's own dev dependencies (`bun create @brust/app my-app` already does this: the `blank` template ships Tailwind by default, and `--tailwind` is accepted but does nothing):
+Tailwind is built in: brust runs the Tailwind compiler the way the official integrations do (`@tailwindcss/node` compiles, `@tailwindcss/oxide` scans), using the packages installed in your app, so the build compiles with exactly the `tailwindcss` version you pinned. Install the three as your app's own dev dependencies, at one version (`bun create @brust/app my-app` already does this: the `blank` template ships Tailwind by default, and `--tailwind` is accepted but does nothing):
 
 ```sh
-bun add -d tailwindcss@4 bun-plugin-tailwind
+bun add -d --exact tailwindcss@4.3.3 @tailwindcss/node@4.3.3 @tailwindcss/oxide@4.3.3
 ```
 
 ```css
@@ -94,7 +94,8 @@ import './app.css'
 ```
 
 - **When it loads.** brust loads Tailwind only when a stylesheet, or a file it `@import`s, contains `@import "tailwindcss"`, `@apply`, `@reference`, `@theme` or `@plugin`. If the packages are missing, the build fails with `tailwind-missing` and prints the `bun add -d` command above.
-- **What it scans.** Tailwind scans the app root for class names. Utilities you use in `.tsx` files end up in the stylesheet, minified like every other.
+- **One version.** `@tailwindcss/node` depends on its own exact `tailwindcss`. If your `tailwindcss` is a different version, the package manager installs a second copy for the compiler, so your pinned version would not be the one that compiles. brust checks this and prints a `tailwind-version` warning with the `bun add -d --exact …` command that aligns all three.
+- **What it scans.** Tailwind scans the whole app root for class names, not only `.tsx` files: comments, `test/`, `README.md` and any other text file count (files your `.gitignore` lists and `node_modules` do not). Utilities you use end up in the stylesheet, minified like every other. A word that names a utility ships its CSS wherever it is written, and a built-in animation utility brings Tailwind's own `@keyframes` (for example `pulse`), emitted after your rules, so it replaces a keyframe of yours with the same name. Skip files with `@source not "./README.md";` in the stylesheet, and give your own keyframes a prefix (`@keyframes app-pulse`).
 - **One import.** Import `tailwindcss` once, in the stylesheet your root layout imports. The build warns if more than one file has `@import "tailwindcss"`, because each one ships the whole of Tailwind.
 - **`@apply` in a CSS Module.** The module must reference your Tailwind entry itself. This is standard in v4, and brust does not add it for you:
 

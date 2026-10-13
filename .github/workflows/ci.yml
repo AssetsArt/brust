@@ -248,7 +248,7 @@ jobs:
       - run: cd packages/brust && bun test --timeout 300000 test/static.test.ts
       # gaps round L19: CSS (global, modules, injection) end to end on test/fixtures/css-app.
       - run: cd packages/brust && bun test --timeout 300000 test/css.test.ts
-      # gaps round L21: Tailwind CSS v4 (bun-plugin-tailwind, the repo's pinned dev dependencies).
+      # gaps round L21 + L32: Tailwind CSS v4 (brust's plugin over the repo's pinned tailwindcss, @tailwindcss/node, @tailwindcss/oxide).
       - run: cd packages/brust && bun test --timeout 300000 test/tailwind.test.ts
       # m2e: the pokedex dogfood (spec §10). Each server-starting file runs alone.
       - run: cd examples/pokedex && bun test
