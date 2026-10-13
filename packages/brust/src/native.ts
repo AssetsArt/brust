@@ -22,6 +22,8 @@ export interface StartOptions {
   workers: number
   claimTimeoutMs?: number
   callTimeoutMs?: number
+  /** L10: the biggest loader/jobs reply that may cross the heap when it does not fit the slot; absent = 8388608. */
+  maxLoaderResponseBytes?: number
   /** tokio I/O threads; absent = one per core. */
   workerThreads?: number
   l1Capacity?: number
@@ -71,6 +73,8 @@ export interface NativeBinding {
   localAddr(): string
   /** M3-P P6 — see crates/brust-napi/src/server.rs `plan_jobs`. Never throws. */
   planJobs(slot: number, len: number): string
+  /** L10 — `planJobs` for a loader response too large for the slot: the bytes are handed over directly. Never throws. */
+  planJobsBuf(slot: number, buf: Uint8Array): string
   /** F82 — the heap request body of the in-flight `fetch` call, once; null if none. Never throws. */
   takeFetchBody(slot: number): Uint8Array | null
   /** F82 — hand Rust a response body too large for the slot; false = declined. Never throws. */
@@ -107,6 +111,7 @@ export const cacheInvalidate = (args: InvalidateArgs): InvalidateResult => nativ
 export const cacheStats = (): string => native().cacheStats()
 export const localAddr = (): string => native().localAddr()
 export const planJobs = (slot: number, len: number): string => native().planJobs(slot, len)
+export const planJobsBuf = (slot: number, buf: Uint8Array): string => native().planJobsBuf(slot, buf)
 export const takeFetchBody = (slot: number): Uint8Array | null => native().takeFetchBody(slot)
 export const putFetchReply = (slot: number, body: Uint8Array): boolean => native().putFetchReply(slot, body)
 export const cacheReplay = (args: InvalidateArgs, seq: number | null): InvalidateResult => native().cacheReplay(args, seq)

@@ -63,7 +63,7 @@ edge_cache = "off"                # the only accepted value today
 | `edge_cache` | `"off"` | Reserved. `"workers-cache"` is refused: the build says it lands later. |
 | `alias` | none | Module swaps, see below. |
 
-`[actions]`, `[cors]` and `[cache]` are read as on native. `[build] server_only` is honoured too.
+`[actions]`, `[cors]` and `[cache]` are read as on native. Only the `brust.toml` `[cors]` is read: `run({ config: { cors } })` does not exist on Workers. A Worker has no response slots, so `slotBytes` and `max_loader_response_bytes` do not apply and loader/job replies have no such limit. `[build] server_only` is honoured too.
 
 ### `[cloudflare.alias]`
 
