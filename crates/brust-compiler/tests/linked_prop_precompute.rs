@@ -95,3 +95,52 @@ fn row_child_with_callback_derived_value_in_a_state_fed_list_falls_back() {
             .any(|d| d.rule == "linked-prop-precompute")
     );
 }
+
+fn analyze_pair(child: &str, parent: &str) -> brust_compiler::ir::ComponentIR {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("brust-lpp-pair-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Child.tsx"), child).unwrap();
+    let path = dir.join("T.tsx").to_string_lossy().into_owned();
+    let src = parent.to_string();
+    run_on_compiler_thread(move || {
+        analyze_source(
+            &path,
+            src.into_bytes(),
+            &AnalyzeOptions {
+                root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    })
+}
+
+/// F105 step 1: once the parent falls back to React it renders the child itself, so it must not
+/// keep the child's instance records (the build would fail `instance-prop-path`) or links.
+#[test]
+fn a_react_fallback_parent_drops_child_instances_and_links() {
+    let child = "export default function Child({ code }: any) { return <pre>{code.split('\\n').filter((l: any) => l.length > 0).length}</pre> }";
+    // Shared state: the prop is not a props path.
+    let ir = analyze_pair(
+        child,
+        "import { useState } from 'react'\nimport Child from './Child'\nexport default function T({ src }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}><Child code={src + n} /></div> }",
+    );
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert!(
+        ir.diagnostics.iter().any(|d| d.rule == "linked-prop-precompute"),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(ir.instances.is_empty(), "{:?}", ir.instances);
+    assert!(ir.child_links.is_empty(), "{:?}", ir.child_links);
+    // Per row: a state-fed list re-creates the rows.
+    let ir = analyze_pair(
+        child,
+        "import { useState } from 'react'\nimport Child from './Child'\nexport default function T() { const [items, setItems] = useState<any[]>([]); return <ul onClick={() => setItems(items.concat([{ id: 1, code: '' }]))}>{items.map((it) => <Child key={it.id} code={it.code} />)}</ul> }",
+    );
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert!(ir.instances.is_empty(), "{:?}", ir.instances);
+    assert!(ir.child_links.is_empty(), "{:?}", ir.child_links);
+}
