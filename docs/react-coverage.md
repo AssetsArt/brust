@@ -11,8 +11,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 23 | 15 | 3 | 5 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 4 | 1 | 23 | 1 | 0 | 0 | 0 |
-| E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 162 | 66 | 38 | 52 | 5 | 1 | 0 | 0 |
+| E v2 specifics | 43 | 15 | 10 | 12 | 5 | 1 | 0 | 0 |
+| **Total** | 174 | 71 | 38 | 58 | 6 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -178,6 +178,18 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
 | e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
+| e-member-named-alias | member of a renamed named import (`<D.Root>`) in a static parent | static | static | ssr | ok | fallback:external-component | S1.4 R34.35: resolved to the package member, an island (external-component), no member-tag |
+| e-member-namespace | member of a namespace import (`<P.Group>`) | static | static | ssr | ok | fallback:external-component |  |
+| e-member-default | member of a default import (`<P.Item>`) | static | static | ssr | ok | fallback:external-component |  |
+| e-member-two | two members of one import are two islands | static | static | ssr, ssr | ok | fallback:external-component |  |
+| e-member-alias-const | module-level `const R = D.Root` used as a tag | static | static | ssr | ok | fallback:external-component |  |
+| e-member-alias-let | `let R = D.Root` (reassignable) used as a tag stays local-component | react | react | ssr | ok | fallback:local-component |  |
+| e-member-deeper | a member tag deeper than one level (`<D.Sub.Trigger>`) | react | react | ssr | ok | fallback:member-tag |  |
+| e-member-local-object | member of a local object (`<o.Tag>`) | react | react | ssr | ok | fallback:member-tag |  |
+| e-member-shadowed | a prop shadows the import (`<D.Root>` with `{ D }` destructured) | react | react | ssr | ok | fallback:member-tag | resolved by symbol, not by spelling: the prop is not the import |
+| e-member-relative-namespace | member of a relative namespace import (`<UI.Button>`) stays member-tag | react | react | ssr | ok | fallback:member-tag | F-row: resolve it to that module's named export so it compiles instead of becoming an island |
+| e-member-react-namespace | member of the react namespace (`<R.Fragment>`) | react | react | ssr | ok | fallback:member-tag |  |
+| e-member-island-prop | function prop on a member island (the existing island-prop refusal) | error | error | 0 | refused | error:island-prop, fallback:external-component |  |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |

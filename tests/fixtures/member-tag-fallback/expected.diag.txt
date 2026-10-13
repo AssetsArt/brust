@@ -1,0 +1,5 @@
+fallback member-tag tests/fixtures/member-tag-fallback/input.tsx:11:7 a member of a module imported from a relative path or from react is not resolved; import the component by name — import the component under its own name
+fallback member-tag tests/fixtures/member-tag-fallback/input.tsx:12:7 a member tag deeper than one level (`<A.B.C>`) is not resolved; import the component by name — import the component under its own name
+fallback member-tag tests/fixtures/member-tag-fallback/input.tsx:13:7 a member of a local object (`<Ctx.Provider>`, a context provider) is not supported natively; context components are the context lane — import the component under its own name
+fallback member-tag tests/fixtures/member-tag-fallback/input.tsx:16:7 a member of a local object (`<Ctx.Provider>`, a context provider) is not supported natively; context components are the context lane — import the component under its own name
+fallback local-component tests/fixtures/member-tag-fallback/input.tsx:17:7 <Reassigned> is not a function declaration in this module — declare it as `function Name(props) { … }`

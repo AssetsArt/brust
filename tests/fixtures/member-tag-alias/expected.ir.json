@@ -1,0 +1,200 @@
+{
+  "id": "input_5a5f3f27",
+  "source": "tests/fixtures/member-tag-alias/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 149,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Component": {
+            "loc": 161,
+            "name": "Root",
+            "source": "./ui",
+            "imported": "Root",
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "external component",
+                "client_only": false
+              }
+            }
+          }
+        },
+        {
+          "Component": {
+            "loc": 176,
+            "name": "Trigger",
+            "source": "./ui",
+            "imported": "Trigger",
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "external component",
+                "client_only": false
+              }
+            }
+          }
+        },
+        {
+          "Component": {
+            "loc": 194,
+            "name": "Close",
+            "source": "radix-ui",
+            "imported": "Dialog",
+            "member": [
+              "Close"
+            ],
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "external component",
+                "client_only": false
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_dialogRoot_39cc22ba"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
+    },
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_dialogTrigger_f8e0079d"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
+    },
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_dialogClose_b5a8d051"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [
+    {
+      "name": "Root",
+      "id": "dialogRoot_39cc22ba",
+      "path": null,
+      "tier": {
+        "React": {
+          "reason": "external component",
+          "client_only": false
+        }
+      }
+    },
+    {
+      "name": "Trigger",
+      "id": "dialogTrigger_f8e0079d",
+      "path": null,
+      "tier": {
+        "React": {
+          "reason": "external component",
+          "client_only": false
+        }
+      }
+    },
+    {
+      "name": "Close",
+      "id": "dialogClose_b5a8d051",
+      "path": null,
+      "tier": {
+        "React": {
+          "reason": "external component",
+          "client_only": false
+        }
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "external-component",
+      "message": "<Root> comes from the package radix-ui (Dialog.Root); it renders as a React island",
+      "loc": 161,
+      "line": 9,
+      "col": 7,
+      "remediation": "use a component from this project to keep it native"
+    },
+    {
+      "class": "Fallback",
+      "rule": "external-component",
+      "message": "<Trigger> comes from the package radix-ui (Dialog.Trigger); it renders as a React island",
+      "loc": 176,
+      "line": 10,
+      "col": 7,
+      "remediation": "use a component from this project to keep it native"
+    },
+    {
+      "class": "Fallback",
+      "rule": "external-component",
+      "message": "<Close> comes from the package radix-ui (Dialog.Close); it renders as a React island",
+      "loc": 194,
+      "line": 11,
+      "col": 7,
+      "remediation": "use a component from this project to keep it native"
+    }
+  ]
+}

@@ -132,8 +132,11 @@ pub struct ChildRef {
 pub struct ExternalRef {
     /// The import specifier, as written (`lucide-react`).
     pub source: String,
-    /// The export: a name, or `default`.
+    /// The export: a name, `default`, or `*` (a namespace import).
     pub export: String,
+    /// Members read off the export (`Dialog` + `["Root"]` is `Dialog.Root`); absent for a plain export.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub member: Vec<String>,
 }
 
 /// A lucide-react icon the build should render to inline SVG (L23): the first compile leaves it as

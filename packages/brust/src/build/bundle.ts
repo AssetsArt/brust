@@ -323,8 +323,21 @@ const bindingName = (name: string) => (/^[A-Za-z_$][\w$]*$/.test(name) ? name : 
  * entry; the bundler keeps ONE instance of the file for all of them (splitting). */
 export function componentImport(c: Compiled, local: string): string {
   const ext = c.ir.external
+  if (ext?.member?.length) return memberImport(ext as { source: string; export: string; member: string[] }, local)
   const [from, binding] = ext ? [JSON.stringify(ext.source), ext.export] : [JSON.stringify(c.file), c.ir.export ?? 'default']
   return binding === 'default' ? `import ${local} from ${from}` : `import { ${bindingName(binding)} as ${local} } from ${from}`
+}
+
+/** A member of a package import (`<DialogPrimitive.Root>`, S1.4 R34.35): the export (a name, `default`, or `*` for a
+ * namespace import) is bound once and the member is read off it. A path the package does not have is `undefined`
+ * (the bundler does not check member access), so it throws a named error when the island entry or the SSR job loads. */
+function memberImport(ext: { source: string; export: string; member: string[] }, local: string): string {
+  const ns = `${local}__ns`
+  const from = JSON.stringify(ext.source)
+  const head = ext.export === 'default' ? `import ${ns} from ${from}` : ext.export === '*' ? `import * as ${ns} from ${from}` : `import { ${bindingName(ext.export)} as ${ns} } from ${from}`
+  const path = (ext.export === '*' ? ext.member : [ext.export, ...ext.member]).join('.')
+  const read = ext.member.map((m) => (/^[A-Za-z_$][\w$]*$/.test(m) ? `.${m}` : `[${JSON.stringify(m)}]`)).join('')
+  return `${head}\nconst ${local} = ${ns}${read}\nif (${local} === undefined) throw new Error(${JSON.stringify(`brust: ${ext.source} has no export ${path}`)})`
 }
 
 /** A helper component its module does not export (`ir.unexported`: `function SheetOverlay() {…}` rendered by an exported
@@ -366,10 +379,22 @@ export function islandShim(c: Compiled): string {
 
 /** One island chunk per react-tier component (`react-<id>-<hex>.js`, contract 3), React split
  * into a shared chunk the island chunks import relatively. */
+/** The react-tier components that get an island entry: all of them, except a package export (S1.4: every member of a
+ * package import is one) that no static or native component embeds. Inside a React component it is an ordinary
+ * element of that component's own tree, not an island, and an entry for it only reshuffles the shared chunks
+ * (measured: +11-24 KB gzip on a page that never loads it). */
+export function islandEntries(compiled: Map<string, Compiled>): Compiled[] {
+  const embedded = new Set<string>()
+  for (const p of compiled.values()) {
+    if (isReact(p)) continue
+    for (const ref of (p.ir.children ?? []) as { id: string | null }[]) if (ref.id) embedded.add(ref.id)
+  }
+  return [...compiled.values()].filter((c) => isReact(c) && (!c.ir.external || embedded.has(c.id)))
+}
+
 export async function buildReactChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls): Promise<Map<string, string>> {
   const entrypoints: string[] = []
-  for (const c of compiled.values()) {
-    if (!isReact(c)) continue
+  for (const c of islandEntries(compiled)) {
     const file = join(dist, '.stage', 'react', `react-${c.id}.tsx`)
     write(file, islandShim(c))
     stage(ctx.sourceOf, file, c)

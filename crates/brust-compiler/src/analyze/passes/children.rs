@@ -5,7 +5,7 @@
 use super::deps::{Deps, minimal_paths};
 use super::{PassCtx, PassState, run_passes};
 use crate::analyze::component::finish_diagnostics;
-use crate::analyze::exports::declared_in;
+use crate::analyze::exports::{declared_in, package_member};
 use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
 use crate::ir::{
     Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind,
@@ -215,20 +215,33 @@ fn linked_prop_precompute(name: &str, loc: u32) -> Diagnostic {
 }
 
 /// `lucide-react` + `Heart` → `heart_1a2b3c4d`: the export's name and a hash of where it is from.
-fn external_component_id(source: &str, export: &str) -> String {
+fn external_component_id(source: &str, export: &str, member: &[String]) -> String {
     let base = if export == "default" {
         source.rsplit('/').next().unwrap_or(source)
+    } else if export == "*" {
+        ""
     } else {
         export
     };
-    let mut name: String = base.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let mut name: String = base
+        .chars()
+        .chain(member.iter().flat_map(|m| m.chars()))
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
     if let Some(first) = name.get(..1).map(str::to_ascii_lowercase) {
         name.replace_range(..1, &first);
     }
     if name.is_empty() {
         name = "external".into();
     }
-    named_component_id(&format!("package:{source}"), &name)
+    // A member path is part of the identity: `Dialog.Root` and `Dialog.Trigger` are two components, and
+    // a plain export keeps the id it always had.
+    let scope = if member.is_empty() {
+        format!("package:{source}")
+    } else {
+        format!("package:{source}:{export}:{}", member.join("."))
+    };
+    named_component_id(&scope, &name)
 }
 
 fn react(reason: &str) -> Tier {
@@ -316,11 +329,78 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// A component that lives in a package, rendered as a React island (L22); a member path
+    /// (`Dialog` + `["Root"]`, R34.35) selects a value off the export.
+    fn external_child(
+        &mut self,
+        name: &str,
+        source: &str,
+        export: &str,
+        member: &[String],
+        loc: u32,
+    ) -> Child {
+        let ctx = self.ctx;
+        let at = if member.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({}{})",
+                if export == "*" {
+                    String::new()
+                } else {
+                    format!("{export}.")
+                },
+                member.join(".")
+            )
+        };
+        self.diagnostics.push(Diagnostic::fallback(
+            "external-component",
+            format!("<{name}> comes from the package {source}{at}; it renders as a React island"),
+            loc,
+            "use a component from this project to keep it native",
+        ));
+        // The island is the package export itself: a synthetic React-tier component the
+        // build resolves as `{package, export}` (L22).
+        let id = external_component_id(source, export, member);
+        // Not a path: the key and `source` only need to be unique and safe as a file stem.
+        let key: String = format!(
+            "package {source} {export}{}",
+            member.iter().map(|m| format!(" {m}")).collect::<String>()
+        )
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+        let known = ctx.modules.borrow().get(&key).is_some();
+        if !known {
+            let mut synthetic = ComponentIR::new(id.clone(), key.clone());
+            synthetic.external = Some(ExternalRef {
+                source: source.to_string(),
+                export: export.to_string(),
+                member: member.to_vec(),
+            });
+            synthetic.tier = react("external component");
+            super::tier::react_jobs(&mut synthetic);
+            ctx.modules
+                .borrow_mut()
+                .insert(key, Entry::Done(Rc::new(synthetic)));
+        }
+        Child {
+            id: Some(id),
+            path: None,
+            tier: react("external component"),
+            fed: false,
+            stores: false,
+            prop_precompute: false,
+            spread: SpreadSink::None,
+        }
+    }
+
     fn resolve_child(
         &mut self,
         name: &str,
         source: Option<&str>,
         imported: Option<&str>,
+        member: &[String],
         loc: u32,
     ) -> Child {
         let ctx = self.ctx;
@@ -345,43 +425,8 @@ impl Walker<'_, '_> {
                     spread: SpreadSink::None,
                 };
             }
-            self.diagnostics.push(Diagnostic::fallback(
-                "external-component",
-                format!("<{name}> comes from the package {source}; it renders as a React island"),
-                loc,
-                "use a component from this project to keep it native",
-            ));
-            // The island is the package export itself: a synthetic React-tier component the
-            // build resolves as `{package, export}` (L22).
-            let export = imported.unwrap_or("default");
-            let id = external_component_id(source, export);
-            // Not a path: the key and `source` only need to be unique and safe as a file stem.
-            let key: String = format!("package {source} {export}")
-                .chars()
-                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-                .collect();
-            let known = ctx.modules.borrow().get(&key).is_some();
-            if !known {
-                let mut synthetic = ComponentIR::new(id.clone(), key.clone());
-                synthetic.external = Some(ExternalRef {
-                    source: source.to_string(),
-                    export: export.to_string(),
-                });
-                synthetic.tier = react("external component");
-                super::tier::react_jobs(&mut synthetic);
-                ctx.modules
-                    .borrow_mut()
-                    .insert(key, Entry::Done(Rc::new(synthetic)));
-            }
-            return Child {
-                id: Some(id),
-                path: None,
-                tier: react("external component"),
-                fed: false,
-                stores: false,
-                prop_precompute: false,
-                spread: SpreadSink::None,
-            };
+            // A package export (a member of one included): the island is the export itself.
+            return self.external_child(name, source, imported.unwrap_or("default"), member, loc);
         };
         let export = match imported {
             None | Some("default") => Export::Default,
@@ -389,6 +434,10 @@ impl Walker<'_, '_> {
         };
         // The component is the one the export is declared by, however many barrels it crosses (R34.11).
         let (path, export) = declared_in(&path, &export, ctx.opts);
+        // `export { Root }` after `const Root = DialogPrimitive.Root`: the component is the package member.
+        if let Some(m) = package_member(&path, &export, ctx.opts) {
+            return self.external_child(name, &m.source, &m.imported, &m.member, loc);
+        }
         let id = match &export {
             Export::Default => component_id(&path),
             Export::Named(n) => named_component_id(&path, n),
@@ -627,6 +676,7 @@ impl Walker<'_, '_> {
             name,
             source,
             imported,
+            member,
             props,
             children,
             link,
@@ -639,7 +689,7 @@ impl Walker<'_, '_> {
             children.iter_mut().for_each(|c| self.node(c));
             return;
         }
-        let child = self.resolve_child(name, source.as_deref(), imported.as_deref(), *loc);
+        let child = self.resolve_child(name, source.as_deref(), imported.as_deref(), member, *loc);
         // L23: a lucide icon with reactive props is inlined by the second compile; only if it is
         // still a component then (`icons_final`) is a prop it cannot hydrate from an error.
         let pending_icon = !self.ctx.opts.icons_final

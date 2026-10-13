@@ -17,7 +17,7 @@ export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }
   'b-spread-event-handler': { ledger: 'F141', observed: 'react' },
 }
 /** Rows that must produce an `Error` diagnostic and refuse to build. */
-export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key', 'd-profiler'] as const
+export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key', 'd-profiler', 'e-member-island-prop'] as const
 export const COMPILE_ERROR_ROWS = ['e-parse-error'] as const
 
 /** Gaps still open after `m2a-compiler` (ledger ids in docs/plans/m1a-followups.md). F33, F35, F37, F39, F40 and F32 (single-root) are closed. */

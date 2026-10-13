@@ -1,0 +1,208 @@
+{
+  "id": "input_05859a5c",
+  "source": "tests/fixtures/member-tag-fallback/input.tsx",
+  "tier": {
+    "React": {
+      "reason": "a member of a module imported from a relative path or from react is not resolved; import the component by name",
+      "client_only": false
+    }
+  },
+  "props": [
+    {
+      "name": "Tag",
+      "local": "Tag",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 223,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Component": {
+            "loc": 235,
+            "name": "<member>",
+            "source": null,
+            "imported": null,
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": "Pending"
+          }
+        },
+        {
+          "Component": {
+            "loc": 255,
+            "name": "<member>",
+            "source": null,
+            "imported": null,
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": "Pending"
+          }
+        },
+        {
+          "Component": {
+            "loc": 284,
+            "name": "<member>",
+            "source": null,
+            "imported": null,
+            "props": [
+              [
+                "value",
+                {
+                  "Server": {
+                    "loc": 305,
+                    "kind": {
+                      "Lit": {
+                        "Num": 1.0
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [
+              {
+                "Element": {
+                  "loc": 317,
+                  "tag": "i",
+                  "attrs": [],
+                  "children": [],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "link": null,
+            "tier": "Pending"
+          }
+        },
+        {
+          "Component": {
+            "loc": 351,
+            "name": "<member>",
+            "source": null,
+            "imported": null,
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": "Pending"
+          }
+        },
+        {
+          "Component": {
+            "loc": 371,
+            "name": "Reassigned",
+            "source": null,
+            "imported": null,
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "local component",
+                "client_only": false
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*",
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_input_05859a5c"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [
+    {
+      "name": "Reassigned",
+      "id": null,
+      "path": "tests/fixtures/member-tag-fallback/input.tsx",
+      "tier": {
+        "React": {
+          "reason": "local component",
+          "client_only": false
+        }
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "member-tag",
+      "message": "a member of a module imported from a relative path or from react is not resolved; import the component by name",
+      "loc": 235,
+      "line": 11,
+      "col": 7,
+      "remediation": "import the component under its own name"
+    },
+    {
+      "class": "Fallback",
+      "rule": "member-tag",
+      "message": "a member tag deeper than one level (`<A.B.C>`) is not resolved; import the component by name",
+      "loc": 255,
+      "line": 12,
+      "col": 7,
+      "remediation": "import the component under its own name"
+    },
+    {
+      "class": "Fallback",
+      "rule": "member-tag",
+      "message": "a member of a local object (`<Ctx.Provider>`, a context provider) is not supported natively; context components are the context lane",
+      "loc": 284,
+      "line": 13,
+      "col": 7,
+      "remediation": "import the component under its own name"
+    },
+    {
+      "class": "Fallback",
+      "rule": "member-tag",
+      "message": "a member of a local object (`<Ctx.Provider>`, a context provider) is not supported natively; context components are the context lane",
+      "loc": 351,
+      "line": 16,
+      "col": 7,
+      "remediation": "import the component under its own name"
+    },
+    {
+      "class": "Fallback",
+      "rule": "local-component",
+      "message": "<Reassigned> is not a function declaration in this module",
+      "loc": 371,
+      "line": 17,
+      "col": 7,
+      "remediation": "declare it as `function Name(props) { … }`"
+    }
+  ]
+}
