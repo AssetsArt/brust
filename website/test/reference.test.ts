@@ -58,3 +58,44 @@ test('every reference page is the static tier with no jobs', () => {
 test('an unknown docs route is 404', async () => {
   expect((await fetch(`${base}/docs/cookbook/no-such-recipe`)).status).toBe(404)
 })
+
+// ---- Configuration (docs-config-from-code): configure from code, what only brust.toml sets, response size ----
+test('Configuration: the new sections exist with their anchors, and the page links them in its table of contents', async () => {
+  const html = await (await fetch(`${base}/docs/configuration`)).text()
+  for (const [id, title] of [['code', 'Configure from code'], ['toml-only', 'What only brust.toml sets'], ['size', 'Response size']] as const) {
+    expect([id, html.includes(`id="${id}"`)]).toEqual([id, true])
+    expect([id, html.includes(title)]).toEqual([id, true])
+    expect([id, html.includes(`href="#${id}"`)]).toEqual([id, true])
+  }
+})
+
+test('Configuration: the server.ts example names every run() field, and the size facts are on the page', async () => {
+  const html = await (await fetch(`${base}/docs/configuration`)).text()
+  for (const field of ['distDir', 'entry', 'host', 'port', 'workers', 'renderSlots', 'ioThreads', 'callTimeoutMs', 'drainTimeoutMs', 'bootTimeoutMs']) expect([field, html.includes(field)]).toEqual([field, true])
+  expect(html).toContain('bun server.ts')
+  expect(html).toContain('256 KiB × render slots × workers')
+  expect(html).toContain('response too large: 300029 &gt; 262144')
+  expect(html).toContain('8 MiB')
+  expect(html).not.toContain('{ config }</code>, then')
+})
+
+test('Configuration: every `source:` comment cites a file and line that exist in this repo', () => {
+  const { readFileSync, existsSync } = require('node:fs') as typeof import('node:fs')
+  const { join } = require('node:path') as typeof import('node:path')
+  const root = join(import.meta.dir, '..', '..')
+  const src = readFileSync(join(import.meta.dir, '..', 'pages/docs/Configuration.tsx'), 'utf8')
+  const comments = src.split('\n').filter((l) => l.includes('source:'))
+  expect(comments.length).toBeGreaterThanOrEqual(10)
+  let cites = 0
+  for (const line of comments) {
+    for (const m of line.matchAll(/((?:packages|crates|docs)\/[\w./-]+\.\w+)(?::(\d+))?/g)) {
+      const file = join(root, m[1]!)
+      expect([m[1], existsSync(file)]).toEqual([m[1], true])
+      if (m[2]) {
+        expect([m[0], Number(m[2]) <= readFileSync(file, 'utf8').split('\n').length]).toEqual([m[0], true])
+        cites++
+      }
+    }
+  }
+  expect(cites).toBeGreaterThanOrEqual(12)
+})
