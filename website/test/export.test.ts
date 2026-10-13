@@ -182,6 +182,7 @@ test('loader lookup: buttons repaint the card and the URL, ?pokemon= is read on 
   await page.locator('.loader-demo button', { hasText: 'snorlax' }).click()
   await page.locator('.loader-demo h4', { hasText: 'Snorlax' }).waitFor()
   expect(new URL(page.url()).search).toBe('?pokemon=snorlax')
+  expect(await page.locator('.loader-demo img').getAttribute('src')).toEndWith('/official-artwork/143.png')
   expect(await page.locator('.loader-demo .url span').first().textContent()).toBe('/docs/loaders?pokemon=snorlax')
   await page.locator('.loader-demo button', { hasText: 'agumon' }).click()
   await page.locator('.loader-demo .vp-note', { hasText: 'Not in this demo set' }).waitFor()
