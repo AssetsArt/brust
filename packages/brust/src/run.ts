@@ -8,16 +8,16 @@
 // does not end it, so every exit is an explicit `process.exit`.
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { type BrustConfig, loadConfig } from './config'
+import { type BrustConfig, type ConfigOverrides, loadConfig } from './config'
 import { beginDrain, type StartOptions, startServer, untilReady } from './native'
-import { SLOT_BYTES } from './worker'
+import { DEFAULT_MAX_LOADER_RESPONSE_BYTES } from './worker'
 
 export interface RunOptions {
   distDir?: string
   /** The routes module the workers import (`export const routes` or default). */
   entry?: string
   /** Overrides below env (CLI flags): see config.ts (incl. `bootTimeoutMs`, default 30000). */
-  config?: Partial<BrustConfig>
+  config?: ConfigOverrides
 }
 
 /** The manifest fields `run` needs (build/manifest.ts owns the full shape). */
@@ -35,6 +35,7 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     distDir,
     workers: cfg.workers,
     callTimeoutMs: cfg.callTimeoutMs,
+    ...(cfg.maxLoaderResponseBytes !== undefined && cfg.maxLoaderResponseBytes !== DEFAULT_MAX_LOADER_RESPONSE_BYTES ? { maxLoaderResponseBytes: cfg.maxLoaderResponseBytes } : {}),
     workerThreads: cfg.ioThreads,
     generator: `brust/${version}`,
     ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}) } } : {}),
@@ -87,6 +88,8 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     ...process.env,
     NODE_ENV: process.env.NODE_ENV,
     BRUST_RENDER_SLOTS: String(cfg.renderSlots),
+    BRUST_SLOT_BYTES: String(cfg.slotBytes),
+    BRUST_MAX_LOADER_RESPONSE_BYTES: String(cfg.maxLoaderResponseBytes),
     BRUST_DIST_DIR: distDir,
     BRUST_APP_ENTRY: entry,
     // One cache-adapter origin per process: its workers' published events are not replayed here.
@@ -115,7 +118,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   for (let i = 0; i < cfg.workers; i++) {
     // The response buffer is owned HERE, for the process lifetime: the Rust dispatcher keeps a raw
     // pointer into it, so it must not be freed with the worker (crates/brust-napi dispatch.rs).
-    const sab = new SharedArrayBuffer(SLOT_BYTES * cfg.renderSlots)
+    const sab = new SharedArrayBuffer(cfg.slotBytes * cfg.renderSlots)
     workerBuffers.push(sab)
     const w = new Worker(url, { env: { ...env, BRUST_WORKER_ID: String(i) }, workerData: { sab } } as WorkerOptions)
     // No respawn in M2: a worker that fails to boot or dies later takes the process down loudly

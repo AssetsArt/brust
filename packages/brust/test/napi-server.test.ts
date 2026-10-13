@@ -105,3 +105,40 @@ test('a worker that takes the plan offer answers a loader page with misses in ON
   expect(JSON.parse(cacheStats())).toMatchObject({ loader_calls: 2, job_calls: 1, worker_calls: 2 })
   await beginDrain(1000)
 })
+
+// L10: the real addon, the real worker dispatch: loader / jobs / planned replies over the 256 KiB slot.
+test('L10: a 300 KB loader ctx and a 300 KB job result cross the heap through the real addon (planJobsBuf + putFetchReply)', async () => {
+  const { makeDispatch, makeHandlers } = await import('../src/worker')
+  const { defineRoutes, flattenRoutes } = await import('../src/routes')
+  const pad = 'p'.repeat(300_000)
+  const leaves = flattenRoutes(
+    defineRoutes([
+      {
+        Component: () => null,
+        children: [
+          {
+            path: '/pokemon/{name}',
+            Component: () => null,
+            loader: async ({ params }: { params: { name: string } }) => ({ pokemon: { name: params.name, stats: { hp: 35 }, moves: [{ name: 'tackle' }, { name: 'growl' }] }, team: ['a'], who: 'anon', pad }),
+          },
+        ],
+      },
+    ]),
+  ).leaves
+  // `leaves` route ids are the fixture's `r2`? The dispatch looks them up by routeId: re-key to the dist's ids.
+  const keyed = leaves.map((l) => ({ ...l, id: 'r2' }))
+  const jobs = {
+    detailPage_c3: { precompute: () => ({ _s1: `HP 35 ${pad}` }) },
+    moveCard_d4: { precompute: (p: { move: { name: string } }) => ({ _s1: `MOVE ${p.move.name}` }) },
+  }
+  startServer({ host: '127.0.0.1', port: 0, distDir: dist, workers: 1, claimTimeoutMs: 2000 })
+  const view = new Uint8Array(new SharedArrayBuffer(256 * 1024))
+  // biome-ignore lint/suspicious/noExplicitAny: handler fixtures
+  registerWorker(view, 1, makeDispatch(makeHandlers({ leaves: keyed as any, jobs: jobs as any }), view, 1))
+  await untilReady(2000)
+  const body = await (await fetch(`http://${localAddr()}/pokemon/pikachu`)).text()
+  expect(body).toContain(`HP 35 ${pad}`)
+  expect(body).toContain('<li>tackle: MOVE tackle</li><li>growl: MOVE growl</li>')
+  expect(JSON.parse(cacheStats())).toMatchObject({ loader_calls: 1, job_calls: 1, worker_calls: 1 })
+  await beginDrain(1000)
+})
