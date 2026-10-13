@@ -468,6 +468,22 @@ handler, an effect or a state-dependent value is `build-time-client`. At runtime
 just returns `fn()`, so the job path and the baked path give the same output (the dual-run test
 builds both and compares the pages). Objects keep their key order across the recompile.
 
+**lucide-react icons (L23).** An icon imported from `lucide-react` (a named export, an alias such as
+`Edit`, or a deep `lucide-react/**/icons/<name>` default import) renders as inline SVG in static and
+native components: no React, no island, no worker. The compiler records an `IconRequest` for each
+icon (constant props, the names of the props that are not constant, the constant props of the
+enclosing `LucideProvider`s) and keeps the L22 island; `brust build` renders each request with
+`react-dom/server` from the app's own `react` and `lucide-react` (so the markup is exactly the
+installed version's, 0.4xx or 1.x: `nonScalingStroke`, `__iconData` and `LucideProvider` come for
+free) and compiles again with the markup (`AnalyzeOptions.icon_svgs`). That pass runs before the
+structural snapshot and turns the markup into ordinary elements. A prop that is not a constant
+(`size`, `color`, `strokeWidth`, `className`) is rendered as a sentinel and lowered back to a
+dynamic attribute: a Jinja expression in a static component, an `x-bind` in a native one;
+`className` becomes a template over the prop. Any other non-constant prop is `icon-dynamic-prop`
+and the icon stays an island. A `LucideProvider` whose props are all constants is applied at build
+and disappears; a dynamic one is `icon-provider-dynamic` and its icons stay islands. A dynamic
+choice of icon (`const I = cond ? Plus : Minus`) is not inlined (it stays an island).
+
 ### 6.4 Precompute
 
 For every `Precomputed` first-paint value the server backend emits one slot in the

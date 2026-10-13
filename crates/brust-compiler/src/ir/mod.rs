@@ -207,6 +207,9 @@ pub struct ComponentIR {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub uses_outlet: bool,
     pub jobs: Vec<JobDecl>,
+    /// lucide icons the build should render to inline SVG (L23); empty when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub icon_requests: Vec<IconRequest>,
     /// Slots the build may evaluate once (L2); empty when none qualifies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub build_eval: Vec<BuildEvalSlot>,
@@ -297,6 +300,7 @@ impl ComponentIR {
             template: Node::Fragment(vec![]),
             uses_outlet: false,
             jobs: vec![],
+            icon_requests: vec![],
             build_eval: vec![],
             child_links: vec![],
             instances: vec![],

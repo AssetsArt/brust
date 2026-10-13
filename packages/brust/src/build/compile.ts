@@ -99,10 +99,15 @@ export function compileApp(opts: {
   /** L20: every CSS Module's class map by absolute source path; `styles.x` folds to the literal class. */
   cssMaps?: Map<string, Record<string, string>>
   log: (s: string) => void
+  /** SVG markup the build rendered for lucide icon requests (L23), by `ir.icon_requests[].key`. */
+  iconSvgs?: Record<string, { svg: string; base: string }>
+  /** The compile after icons were rendered (even if none could be): icons still components are judged as islands. */
+  iconsFinal?: boolean
   /** Values the build computed for `ir.build_eval` slots, by key (L2): the slots become literals. */
   slotValues?: Record<string, unknown>
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
+  const iconSvgsJson = opts.iconsFinal ? JSON.stringify({ final: true, svgs: opts.iconSvgs ?? {} }) : undefined
   const slotValuesJson = opts.slotValues && Object.keys(opts.slotValues).length > 0 ? JSON.stringify(opts.slotValues) : undefined
   // The Rust side keys each map by its path relative to the app root (`/`-separated), like an import resolves.
   const cssModules = Object.fromEntries([...(opts.cssMaps ?? [])].map(([abs, map]) => [relative(realpathSync(appRoot), abs).split(sep).join('/'), map]))
@@ -123,7 +128,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).

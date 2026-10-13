@@ -7,6 +7,7 @@ pub mod build_eval;
 pub mod captures;
 pub mod children;
 pub mod deps;
+pub mod icons;
 pub mod placement;
 pub mod projection;
 pub mod server_expr;
@@ -86,6 +87,8 @@ impl PassState {
 
 /// Runs every pass on `ir` (a structural IR from `analyze_component`).
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
+    // lucide icons become elements before anything snapshots or places the template (L23).
+    icons::inline(ir, ctx);
     // First: `DepsCx` reads the resolved stores.
     stores::resolve(ir, ctx);
     // Before placement: a refused render read never becomes a placed value.

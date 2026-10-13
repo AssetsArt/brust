@@ -11,8 +11,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 14 | 7 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 4 | 1 | 23 | 1 | 0 | 0 | 0 |
-| E v2 specifics | 29 | 8 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 143 | 47 | 38 | 52 | 5 | 1 | 0 | 0 |
+| E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
+| **Total** | 145 | 49 | 38 | 52 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -162,6 +162,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 |---|---|---|---|---|---|---|---|
 | e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
+| e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
+| e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |
 | e-precompute-props | props-only value outside the template subset | static | static | precompute | ok | — | spec §6.4 precompute |
 | e-precompute-state | state-dependent value from a module helper | native | native | precompute | ok | — | spec §6.4 precompute |
 | e-precompute-per-item | per-item precompute in a list | static | static | precompute | ok | — | spec §6.4 precompute |

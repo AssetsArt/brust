@@ -136,6 +136,27 @@ pub struct ExternalRef {
     pub export: String,
 }
 
+/// A lucide-react icon the build should render to inline SVG (L23): the first compile leaves it as
+/// a component and records this; the build renders it (`react-dom/server`, the installed version)
+/// and the next compile inlines the markup (`AnalyzeOptions.icon_svgs`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct IconRequest {
+    /// `<source path>@<byte offset of the element>`.
+    pub key: String,
+    /// The import specifier (`lucide-react`, or `lucide-react/icons/heart`).
+    pub source: String,
+    /// The export (`Heart`, `Edit`, `default`).
+    pub export: String,
+    /// Constant props, as JSON.
+    pub props: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Props that are rendered as sentinels (size / color / strokeWidth / className).
+    pub dynamic: Vec<String>,
+    /// Constant props of the enclosing `LucideProvider`s.
+    pub provider: std::collections::BTreeMap<String, serde_json::Value>,
+    pub line: u32,
+    pub col: u32,
+}
+
 /// A precompute slot the build may evaluate once instead of running it per request (L2): it reads
 /// nothing request- or time-dependent. The build evaluates `ComponentArtifacts.eval_ts` for `key`
 /// and recompiles with the value (`AnalyzeOptions.slot_values`).

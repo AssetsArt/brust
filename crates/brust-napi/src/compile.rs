@@ -54,7 +54,25 @@ pub(crate) fn compile_tree_impl(
     server_only: Vec<String>,
     slot_values: Option<String>,
     css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    icon_svgs: Option<String>,
 ) -> CompiledTree {
+    // `{ "final": bool, "svgs": { "<key>": "<svg markup>" } }`: lucide icons the build rendered (L23).
+    let (icon_svgs, icons_final): (
+        std::collections::HashMap<String, brust_compiler::analyze::component::IconMarkup>,
+        bool,
+    ) = icon_svgs
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .map(|v| {
+            let svgs = v
+                .get("svgs")
+                .and_then(|s| serde_json::from_value(s.clone()).ok())
+                .unwrap_or_default();
+            (
+                svgs,
+                v.get("final").and_then(|f| f.as_bool()).unwrap_or(false),
+            )
+        })
+        .unwrap_or_default();
     // `{ "<key>": <json> }`, the values the build computed for precompute slots (L2).
     let slot_values: std::collections::HashMap<String, serde_json::Value> = slot_values
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -64,6 +82,8 @@ pub(crate) fn compile_tree_impl(
         root: std::path::PathBuf::from(root),
         slot_values,
         css_modules,
+        icon_svgs,
+        icons_final,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -110,6 +130,7 @@ pub fn compile_tree(
     css_modules: Option<
         std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     >,
+    icon_svgs: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
     compile_tree_impl(
@@ -119,6 +140,7 @@ pub fn compile_tree(
         server_only,
         slot_values,
         css_modules.unwrap_or_default(),
+        icon_svgs,
     )
 }
 
@@ -134,6 +156,7 @@ mod tests {
             vec![],
             None,
             Default::default(),
+            None,
         );
         assert!(t.error.is_none(), "{:?}", t.error);
         let c = &t.components[0];
@@ -153,6 +176,7 @@ mod tests {
             vec![],
             None,
             Default::default(),
+            None,
         );
         assert_eq!(t.error.as_ref().map(|d| d.class.as_str()), Some("error"));
     }
