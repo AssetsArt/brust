@@ -252,7 +252,8 @@ impl Floor {
             self.raise_name(tag_name(t), seq);
         }
         if let Some(p) = &args.path {
-            self.raise_name(path_name(args.method.as_deref().unwrap_or("GET"), p), seq);
+            let p = crate::routing::routes::normalize_request_path(p);
+            self.raise_name(path_name(args.method.as_deref().unwrap_or("GET"), &p), seq);
         }
     }
 

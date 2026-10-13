@@ -29,15 +29,21 @@ export interface LoaderCtx<P = Record<string, string>> {
   req: LoaderReq
 }
 
+/** `brust build --target static` (gaps round R9.2): `params` lists the values of a dynamic route's
+ * `{name}` segments, one record per page; `false` leaves the route out of the static output. The
+ * server and Cloudflare targets ignore it. */
+export type RouteSsgConfig<P = Record<string, string>> = { params?: () => P[] | Promise<P[]> } | false
+
 export interface Route<P = Record<string, string>, D = unknown> {
   path?: string
   Component?: ComponentType<any>
   loader?: (ctx: LoaderCtx<P>) => Promise<D> | D
   cache?: RouteCacheConfig
+  ssg?: RouteSsgConfig<P>
   children?: Route<any, any>[]
 }
 
-export const ALLOWED_ROUTE_FIELDS = ['path', 'Component', 'loader', 'cache', 'children'] as const
+export const ALLOWED_ROUTE_FIELDS = ['path', 'Component', 'loader', 'cache', 'ssg', 'children'] as const
 const ALLOWED_CACHE_FIELDS = ['ttl_seconds', 'prefix', 'bypass', 'tags'] as const
 const M3_CACHE_FIELDS = ['key', 'key_ttl_seconds'] as const
 
@@ -61,6 +67,18 @@ function validate(node: Route, where: string): void {
   if (node.path !== undefined && typeof node.path !== 'string') throw new BrustRouteError(`route ${where}: path must be a string`)
   if (node.loader !== undefined && typeof node.loader !== 'function')
     throw new BrustRouteError(`route ${where}: loader must be a function`)
+  if (node.ssg !== undefined) {
+    const ssg = node.ssg as unknown
+    if (ssg !== false && (typeof ssg !== 'object' || ssg === null || Array.isArray(ssg)))
+      throw new BrustRouteError(`route ${where}: ssg must be false or { params }`)
+    if (ssg !== false) {
+      for (const k of Object.keys(ssg as object))
+        if (k !== 'params') throw new BrustRouteError(`route ${where}: unknown ssg field ssg.${k} (allowed: params)`)
+      const params = (ssg as { params?: unknown }).params
+      if (params !== undefined && typeof params !== 'function') throw new BrustRouteError(`route ${where}: ssg.params must be a function`)
+    }
+    if (node.children !== undefined) throw new BrustRouteError(`route ${where}: ssg on a layout route is not supported (put it on each leaf)`)
+  }
   if (node.cache !== undefined) {
     if (typeof node.cache !== 'object' || node.cache === null) throw new BrustRouteError(`route ${where}: cache must be an object`)
     for (const k of Object.keys(node.cache)) {

@@ -50,6 +50,8 @@ const NO_DIRECTIVES: &[&str] = &[
     // F70: a static child in a row the client cannot re-create has no directives.
     "keyed-list-child-job",
     "static-list-child",
+    // L6: a static list with conditional element arms has no directives.
+    "list-cond-element",
 ];
 
 fn fixture_dirs() -> Vec<PathBuf> {

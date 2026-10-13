@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { type BrustConfig, type ConfigOverrides, loadConfig } from './config'
-import { beginDrain, type StartOptions, startServer, untilReady } from './native'
+import { beginDrain, localAddr, type StartOptions, startServer, untilReady } from './native'
 import { DEFAULT_MAX_LOADER_RESPONSE_BYTES } from './worker'
 
 export interface RunOptions {
@@ -18,6 +18,9 @@ export interface RunOptions {
   entry?: string
   /** Overrides below env (CLI flags): see config.ts (incl. `bootTimeoutMs`, default 30000). */
   config?: ConfigOverrides
+  /** Static output (gaps round L9): runs once every worker is ready, with the bound `host:port`;
+   * then the server drains and the process exits with the returned code. */
+  onReady?: (addr: string) => Promise<number>
 }
 
 /** The manifest fields `run` needs (build/manifest.ts owns the full shape). */
@@ -162,5 +165,14 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   }
   ready = true
   console.log(`[brust] ready (${cfg.workers} worker${cfg.workers === 1 ? '' : 's'})`)
+  if (opts.onReady) {
+    let code = 1
+    try {
+      code = await opts.onReady(localAddr())
+    } catch (e) {
+      console.error(`[brust] ${(e as Error).stack ?? String(e)}`)
+    }
+    if (!draining) drainThenExit(code)
+  }
   await new Promise<never>(() => {})
 }

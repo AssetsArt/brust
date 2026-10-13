@@ -422,6 +422,16 @@ pub fn local_addr() -> napi::Result<String> {
     Ok(current()?.local_addr().to_string())
 }
 
+/// Static output (gaps round R9.4): the request reads of one `cache.prefix` / `cache.bypass`
+/// expression (`header(x)`, `cookie(x)`, `query(x)`, `request(host)`), parsed by the server's own
+/// grammar. Errors when the expression does not parse. Needs no running server.
+#[napi]
+pub fn cache_expr_reads(src: String) -> napi::Result<Vec<String>> {
+    brust_core::cache::key_expr::Expr::parse(&src)
+        .map(|e| e.request_reads())
+        .map_err(napi::Error::from_reason)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -141,6 +141,39 @@ function verdictJson(v: Verdict, parent: Record<string, unknown>): LoaderRespons
   return { verdict: 'redirect', location: v.headers?.Location ?? '/', status: v.status }
 }
 
+/** What a loader did during a static render (gaps round R9.5) that a static file cannot honour. */
+export type SsgRecord =
+  | { kind: 'read'; routeId: string; path: string; field: 'headers' | 'cookies' | 'search'; key: string }
+  | { kind: 'headers'; routeId: string; path: string; names: string[] }
+
+/** R9.5: the request a loader sees while rendering static output: a visitor with no headers, cookies
+ * or query. Every read of `headers` / `cookies` / `search` (a key, `in`, or a listing: key `*`) is
+ * recorded, so the build can warn that the page written ignores it. */
+export function ssgRequest(req: LoaderReq, routeId: string, path: string, record: (r: SsgRecord) => void): LoaderReq {
+  const watched = (field: 'headers' | 'cookies' | 'search') => {
+    const read = (key: string) => record({ kind: 'read', routeId, path, field, key })
+    return new Proxy(Object.create(null) as Record<string, string>, {
+      get: (t, k) => {
+        if (typeof k === 'string') read(k)
+        return Reflect.get(t, k)
+      },
+      has: (t, k) => {
+        if (typeof k === 'string') read(k)
+        return Reflect.has(t, k)
+      },
+      ownKeys: (t) => {
+        read('*')
+        return Reflect.ownKeys(t)
+      },
+      getOwnPropertyDescriptor: (t, k) => {
+        if (typeof k === 'string') read(k)
+        return Reflect.getOwnPropertyDescriptor(t, k)
+      },
+    })
+  }
+  return { method: 'GET', url: req.url, headers: watched('headers'), cookies: watched('cookies'), search: watched('search') }
+}
+
 export interface Handlers {
   loader(req: LoaderRequest): Promise<LoaderResponse>
   jobs(req: JobsRequest): Promise<JobsResponse>
@@ -154,6 +187,8 @@ export function makeHandlers(opts: {
   manifest?: ManifestLike
   /** `jobs.js` `stores` table (R2): C3 path -> module namespace. */
   stores?: Record<string, object>
+  /** Static output (R9.5): loaders see `ssgRequest`, and what a static file drops is recorded. */
+  ssg?: (r: SsgRecord) => void
 }): Handlers {
   const byId = new Map(opts.leaves.map((l) => [l.id, l]))
   const literals = literalsIndex(opts.manifest)
@@ -206,7 +241,8 @@ export function makeHandlers(opts: {
             if (!node.loader) continue
             let r: unknown
             try {
-              r = await node.loader({ params: req.params, path: req.path, req: req.req })
+              const lreq = opts.ssg ? ssgRequest(req.req, req.routeId, req.path, opts.ssg) : req.req
+              r = await node.loader({ params: req.params, path: req.path, req: lreq })
             } catch (e) {
               if (isHttpErrorTrigger(e)) return { verdict: 'httpError', status: e.status, body: e.body } as LoaderResponse
               throw e
@@ -217,7 +253,10 @@ export function makeHandlers(opts: {
             }
             if (r && typeof r === 'object') Object.assign(merged, r)
           }
-          return withStore({ ok: true, data: merged } as LoaderResponse)
+          const ok = withStore({ ok: true, data: merged } as LoaderResponse)
+          const headers = (ok as { headers?: Record<string, string> }).headers
+          if (opts.ssg && headers && Object.keys(headers).length > 0) opts.ssg({ kind: 'headers', routeId: req.routeId, path: req.path, names: Object.keys(headers) })
+          return ok
         } catch (e) {
           return { error: String(e) } as LoaderResponse
         }
