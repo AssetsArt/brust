@@ -41,13 +41,14 @@ async function open(path: string): Promise<Page> {
 const errorsOf = (p: Page) => (p as Page & { errors: string[] }).errors
 
 test('every Guide page is 200 with its title, a live demo frame and no compiler warning besides the react demos', async () => {
-  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'css', 'configuration', 'cli', 'dev-mode', 'deployment', 'migrating'])
+  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'css', 'packages', 'react-coverage', 'configuration', 'cli', 'dev-mode', 'deployment', 'migrating'])
   for (const p of GUIDE) {
     const r = await fetch(`${base}/docs/${p.slug}`)
     expect([p.slug, r.status]).toEqual([p.slug, 200])
     const html = await r.text()
     expect(html).toContain(`<title>${p.title} · brust docs</title>`)
-    expect([p.slug, html.includes('class="browser"')]).toEqual([p.slug, true])
+    // the coverage page is a reference table generated from docs/react-coverage.json: it has no demo frame
+    expect([p.slug, p.slug === 'react-coverage' || html.includes('class="browser"')]).toEqual([p.slug, true])
   }
 }, TEST_MS)
 

@@ -35,7 +35,7 @@ test('routes: /docs plus one /docs/{slug} per nav entry, in nav order; the canon
   // /docs/routes is a permanent redirect to /docs/routing (the blank template's starter links it), not a nav entry
   expect(patterns).toEqual(['/', '/docs', ...PAGES.map((p) => `/docs/${p.slug}`), '/docs/routes', '*'])
   expect(NAV.map((g) => [g.group, g.items.length])).toEqual([
-    ['Guide', 16],
+    ['Guide', 18],
     ['Cloudflare', 3],
     ['Cache adapters', 4],
     ['Cookbook', 5],
