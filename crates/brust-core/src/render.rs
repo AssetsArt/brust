@@ -469,6 +469,12 @@ pub fn inject_document_assets_into(
             }
             for ch in &c.children {
                 visit(&ch.id);
+                // An island inside an inlined child is that child's ssr job target (L4).
+                if let Some(cc) = m.components.get(&ch.id) {
+                    for t in cc.jobs.iter().filter_map(|j| j.target.as_deref()) {
+                        visit(t);
+                    }
+                }
             }
         }
     }

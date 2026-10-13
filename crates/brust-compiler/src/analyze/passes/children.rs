@@ -90,12 +90,14 @@ struct Child {
     id: Option<String>,
     path: Option<String>,
     tier: Tier,
-    /// The compiled child has a precompute job or `useId` values the server must feed per instance.
+    /// The compiled child has a precompute job, an island's ssr render or `useId` values the server
+    /// must feed per instance (`ir::is_fed`).
     fed: bool,
-    /// The compiled child reads a resolved store at render (its jobs read `__store`, C5).
+    /// The compiled child reads a resolved store at render, or a job of its reads `__store` (C5; an
+    /// island's ssr render always does).
     stores: bool,
-    /// The compiled child has a precompute job over its props: the server computes it once, so a
-    /// link that changes those props later would leave its slots stale (F96d).
+    /// The compiled child has a precompute job (or an island's ssr render, L4) over its props: the
+    /// server computes it once, so a link that changes those props later would leave it stale (F96d).
     prop_precompute: bool,
 }
 
@@ -355,14 +357,16 @@ impl Walker<'_, '_> {
         let mut prop_precompute = false;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
-                stores = ir.stores.iter().any(|s| s.resolved.is_some());
-                fed = ir.use_id_slots > 0
+                // An island's ssr job reads `__store` whether or not the wrapper reads a store (L4).
+                stores = ir.stores.iter().any(|s| s.resolved.is_some())
                     || ir
                         .jobs
                         .iter()
-                        .any(|j| matches!(j.kind, JobKind::Precompute));
+                        .any(|j| j.inputs.iter().any(|i| i == "__store"));
+                fed = crate::ir::is_fed(&ir);
+                // An island's ssr render over the wrapper's props is computed once too (L4).
                 prop_precompute = ir.jobs.iter().any(|j| {
-                    matches!(j.kind, JobKind::Precompute) && j.inputs.iter().any(|i| i != "__store")
+                    crate::ir::feeds_instances(j) && j.inputs.iter().any(|i| i != "__store")
                 });
                 ir.tier.clone()
             }

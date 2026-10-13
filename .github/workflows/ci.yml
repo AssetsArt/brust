@@ -12,6 +12,9 @@ on:
 concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
+# sccache cold start (L27b): the first run on a new key set loses many cache WRITES (the GHA cache service answers RateLimited to
+# the hundreds of tiny entries five jobs create at once; keys themselves are stable run to run), so a cold run is slow and the next
+# run is the warm one. Do not read the first run's hit rate as the steady state.
 # sccache cannot cache incremental builds (workspace and path crates would always miss), so incremental is off for every job.
 env:
   CARGO_INCREMENTAL: "0"
@@ -266,6 +269,7 @@ jobs:
       - run: bun test --timeout 180000 tests/server/cache-redis.test.ts
       - run: bun test --timeout 120000 tests/server/hydrate.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/external-island.chromium.test.ts tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/island-in-inlined.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/css.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/tailwind.chromium.test.ts
