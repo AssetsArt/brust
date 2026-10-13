@@ -165,16 +165,24 @@ fn function_declarations_and_plain_props() {
 }
 
 #[test]
-fn fragment_root_is_wrapped_and_diagnostics_have_positions() {
+fn fragment_root_is_a_synthetic_wrapper_and_diagnostics_have_positions() {
     let ir = ir(
         "export default function R({ items }: any) {\n  return <>\n    <ul>{items.map((i: any) => <li>{i}</li>)}</ul>\n  </>\n}",
     );
-    let Node::Element { tag, host, .. } = &ir.template else {
+    let Node::Element {
+        tag,
+        host,
+        synthetic,
+        ..
+    } = &ir.template
+    else {
         panic!()
     };
     assert_eq!(tag, "brust-host");
     assert!(host);
-    assert!(ir.diagnostics.iter().any(|d| d.rule == "fragment-root"));
+    // The wrapper is flagged; lowering decides (static: dropped, interactive: kept + warned).
+    assert!(synthetic);
+    assert!(ir.diagnostics.iter().all(|d| d.rule != "fragment-root"));
     let key = ir
         .diagnostics
         .iter()
@@ -296,4 +304,310 @@ fn nested_hook_calls_fall_back() {
         "{PRE}export default function T() {{ const [n] = useState(0); const r = useRef(null); return <p ref={{r}}>{{n}}</p> }}"
     ));
     assert!(top.diagnostics.is_empty(), "{:?}", top.diagnostics);
+}
+
+// ---- G3 (plan L5): native-safe custom hooks are inlined ---------------------------
+
+/// The full analysis (tier included) of `entry` in a temporary project made of `files`.
+fn project(files: &[(&str, &str)], entry: &str) -> ComponentIR {
+    use brust_compiler::analyze::component::{AnalyzeOptions, analyze_file};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "brust-hooks-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    for (path, src) in files {
+        let p = root.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, src).unwrap();
+    }
+    let opts = AnalyzeOptions {
+        root: root.clone(),
+        ..Default::default()
+    };
+    let entry = entry.to_string();
+    let ir = run_on_compiler_thread(move || analyze_file(&entry, &opts).unwrap());
+    std::fs::remove_dir_all(root).ok();
+    ir
+}
+
+fn fallbacks(ir: &ComponentIR) -> Vec<&Diagnostic> {
+    ir.diagnostics
+        .iter()
+        .filter(|d| d.class == DiagClass::Fallback)
+        .collect()
+}
+
+const COUNTER: &str = "import { useState } from 'react'\nfunction useCounter() { const [n, setN] = useState(0); return [n, () => setN(n + 1)] as const }\n";
+
+#[test]
+fn same_file_hook_inlines_with_renamed_locals() {
+    let ir = ir(&format!(
+        "{COUNTER}export default function C() {{ const [n, inc] = useCounter(); return <button onClick={{inc}}>{{n}}</button> }}"
+    ));
+    assert!(ir.diagnostics.is_empty(), "{:?}", ir.diagnostics);
+    assert_eq!(ir.state.len(), 1);
+    assert_eq!(ir.state[0].name, "n_useCounter1");
+    assert_eq!(ir.state[0].setter.as_deref(), Some("setN_useCounter1"));
+    // `n` is the hook's state itself; `inc` is derived from the returned arrow.
+    assert_eq!(
+        ir.derived
+            .iter()
+            .map(|d| d.name.as_str())
+            .collect::<Vec<_>>(),
+        ["inc"]
+    );
+    let Expr::Raw(RawExpr {
+        kind: RawKind::Arrow { captures, .. },
+        ..
+    }) = &ir.derived[0].expr
+    else {
+        panic!("{:?}", ir.derived[0].expr)
+    };
+    assert!(
+        captures
+            .iter()
+            .any(|(n, k)| n == "setN_useCounter1" && *k == IdentKind::Setter),
+        "{captures:?}"
+    );
+}
+
+#[test]
+fn hook_names_avoid_collisions_and_two_calls_get_their_own() {
+    // The component already declares `n_useCounter1`: the call takes the next free `n`.
+    let ir = ir(&format!(
+        "{COUNTER}export default function C() {{ const n_useCounter1 = 5; const [a, incA] = useCounter(); const [b, incB] = useCounter(); return <p><i onClick={{incA}}>{{a}}</i><b onClick={{incB}}>{{b + n_useCounter1}}</b></p> }}"
+    ));
+    assert!(ir.diagnostics.is_empty(), "{:?}", ir.diagnostics);
+    assert_eq!(
+        ir.state.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+        ["n_useCounter2", "n_useCounter3"]
+    );
+}
+
+#[test]
+fn hook_arguments_alias_identifiers_and_derive_the_rest() {
+    let ir = ir(
+        "import { useState, useEffect } from 'react'\nfunction useDebounced(value, ms) { const [d, setD] = useState(value); useEffect(() => { const t = setTimeout(() => setD(value), ms); return () => clearTimeout(t) }, [value, ms]); return d }\nexport default function S() { const [q, setQ] = useState(''); const d = useDebounced(q, 300); return <input value={q} onInput={(e) => setQ(e.currentTarget.value)} title={d} /> }",
+    );
+    assert!(ir.diagnostics.is_empty(), "{:?}", ir.diagnostics);
+    assert_eq!(
+        ir.state.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+        ["q", "d_useDebounced1"]
+    );
+    // `value` is the caller's `q`; `ms` is computed once at the call site.
+    assert_eq!(ir.derived[0].name, "ms_useDebounced1");
+    let deps = ir.effects[0].deps.as_ref().unwrap();
+    assert!(
+        matches!(&deps[0].kind, RawKind::Ident { name, kind: IdentKind::State } if name == "q"),
+        "{deps:?}"
+    );
+    let printed = format!("{:?}", ir.effects[0].body);
+    assert!(printed.contains("setD_useDebounced1(q)"), "{printed}");
+    assert!(printed.contains("t_useDebounced1"), "{printed}");
+}
+
+#[test]
+fn hook_calling_hook_and_recursion() {
+    let ok = ir(&format!(
+        "{COUNTER}function useTwice() {{ const [n, inc] = useCounter(); return {{ n, twice: n * 2, inc }} }}\nexport default function C() {{ const {{ twice, inc }} = useTwice(); return <button onClick={{inc}}>{{twice}}</button> }}"
+    ));
+    assert!(ok.diagnostics.is_empty(), "{:?}", ok.diagnostics);
+    assert_eq!(ok.state[0].name, "n_useCounter1");
+    assert!(ok.derived.iter().any(|d| d.name == "twice"));
+    let rec = ir(
+        "function useA(n) { const x = useB(n); return x }\nfunction useB(n) { const y = useA(n); return y }\nexport default function C({ n }: any) { const v = useA(n); return <p>{v}</p> }",
+    );
+    let f = fallbacks(&rec);
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].rule, "hook-recursive");
+    assert!(
+        f[0].message.contains("useA → useB → useA"),
+        "{}",
+        f[0].message
+    );
+    assert_eq!(f[0].line, 3, "reported at the component's call site");
+}
+
+#[test]
+fn unsupported_hook_inside_a_custom_hook_names_the_chain() {
+    let ir = ir(
+        "import { useReducer } from 'react'\nfunction useCart() {\n  const [s, d] = useReducer((a: number, b: number) => a + b, 0)\n  return s\n}\nexport default function C() { const s = useCart(); return <p>{s}</p> }",
+    );
+    let f = fallbacks(&ir);
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].rule, "hook-unsupported");
+    assert_eq!(
+        f[0].message,
+        "hook useReducer is not supported (in custom hook useCart, H.tsx:3)"
+    );
+    assert_eq!((f[0].line, f[0].col), (6, 41));
+}
+
+#[test]
+fn custom_hook_shapes_that_fall_back() {
+    for (src, rule) in [
+        // JSX in the hook
+        (
+            "function useX() { return <i /> }\nexport default function C() { const x = useX(); return <p>{x}</p> }",
+            "hook-shape",
+        ),
+        // early return
+        (
+            "function useX(a) { return a\n const b = 1 }\nexport default function C({ a }: any) { const x = useX(a); return <p>{x}</p> }",
+            "stmt-after-return",
+        ),
+        // default parameter
+        (
+            "function useX(a = 1) { return a }\nexport default function C() { const x = useX(); return <p>{x}</p> }",
+            "hook-shape",
+        ),
+        // array pattern against a non-literal return
+        (
+            "function useX(a) { return a }\nexport default function C({ a }: any) { const [x] = useX(a); return <p>{x}</p> }",
+            "hook-return-shape",
+        ),
+        // the hook reads a module name the component shadows
+        (
+            "const k = 1\nfunction useX() { return k + 1 }\nexport default function C() { const k = 2; const x = useX(); return <p>{x + k}</p> }",
+            "hook-shape",
+        ),
+        // the hook writes its parameter
+        (
+            "import { useEffect } from 'react'\nfunction useX(a) { useEffect(() => { a = 2 }, []); return 1 }\nexport default function C({ a }: any) { const x = useX(a); return <p>{x}</p> }",
+            "hook-shape",
+        ),
+    ] {
+        let ir = ir(src);
+        assert!(
+            fallbacks(&ir).iter().any(|d| d.rule == rule),
+            "{src}: {:?}",
+            ir.diagnostics
+        );
+    }
+}
+
+#[test]
+fn imported_hook_inlines_and_its_module_captures_fall_back() {
+    let hook = "import { useState } from 'react'\nexport function useToggle(init) { const [on, setOn] = useState(init); return [on, () => setOn(!on)] as const }\n";
+    let ir = project(
+        &[
+            ("hooks/toggle.ts", hook),
+            (
+                "C.tsx",
+                "import { useToggle } from './hooks/toggle'\nexport default function C() { const [on, flip] = useToggle(false); return <button onClick={flip}>{on ? 'on' : 'off'}</button> }",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(fallbacks(&ir).is_empty(), "{:?}", ir.diagnostics);
+    assert_eq!(ir.tier, Tier::Native);
+    assert_eq!(ir.state[0].name, "on_useToggle1");
+    let ir = project(
+        &[
+            (
+                "hooks/toggle.ts",
+                "import { fmt } from './fmt'\nexport default function useLabel(n) { return fmt(n) }\n",
+            ),
+            ("hooks/fmt.ts", "export const fmt = (n) => String(n)\n"),
+            (
+                "C.tsx",
+                "import useLabel from './hooks/toggle'\nexport default function C({ n }: any) { const l = useLabel(n); return <p>{l}</p> }",
+            ),
+        ],
+        "C.tsx",
+    );
+    let f = fallbacks(&ir);
+    assert!(
+        f.iter()
+            .any(|d| d.rule == "hook-shape"
+                && d.message.contains("reads `fmt` from hooks/toggle.ts")),
+        "{f:?}"
+    );
+    assert!(f.iter().all(|d| d.line == 2), "{f:?}");
+}
+
+#[test]
+fn a_hook_inside_an_imported_module_keeps_that_modules_rules() {
+    // `useInner` is local to the imported module: it inlines, and it may not read `LIMIT`.
+    let ok = project(
+        &[
+            (
+                "h.ts",
+                "import { useState } from 'react'\nfunction useInner(init) { const [n, setN] = useState(init); return [n, setN] as const }\nexport function useOuter() { const [n, setN] = useInner(1); return [n, () => setN(n + 1)] as const }\n",
+            ),
+            (
+                "C.tsx",
+                "import { useOuter } from './h'\nexport default function C() { const [n, inc] = useOuter(); return <button onClick={inc}>{n}</button> }",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(fallbacks(&ok).is_empty(), "{:?}", ok.diagnostics);
+    assert_eq!(ok.tier, Tier::Native);
+    assert_eq!(ok.state[0].name, "n_useInner1");
+    let bad = project(
+        &[
+            (
+                "h.ts",
+                "const LIMIT = 3\nfunction useInner() { return LIMIT }\nexport function useOuter() { const l = useInner(); return l }\n",
+            ),
+            (
+                "C.tsx",
+                "import { useOuter } from './h'\nexport default function C() { const l = useOuter(); return <p>{l}</p> }",
+            ),
+        ],
+        "C.tsx",
+    );
+    let f = fallbacks(&bad);
+    assert!(
+        f.iter()
+            .any(|d| d.rule == "hook-shape" && d.message.contains("reads `LIMIT` from h.ts")),
+        "{f:?}"
+    );
+    assert!(f.iter().all(|d| d.line == 2), "{f:?}");
+}
+
+/// Review F1 (Mellow, round 1): a global a foreign hook reads must not bind to the component
+/// module's own import or const of that name once inlined.
+#[test]
+fn a_foreign_hooks_global_does_not_bind_to_the_component_modules_names() {
+    let hook = "import { useState } from 'react'\nexport function useBack(label) { const [n, setN] = useState(0); const go = () => { history.back(); setN(n + 1) }; return [label + n, go] as const }\n";
+    for component in [
+        "import { useEffect } from 'react'\nimport { history } from './myhistory'\nimport { useBack } from './useNav'\nexport default function C({ title }: any) { const [text, back] = useBack(title); useEffect(() => { history.push('/x') }, []); return <button onClick={back}>{text}</button> }",
+        "import { useBack } from './useNav'\nconst history = { back() {} }\nexport default function C({ title }: any) { const [text, back] = useBack(title); return <button onClick={back}>{text}</button> }",
+    ] {
+        let ir = project(
+            &[
+                ("useNav.ts", hook),
+                (
+                    "myhistory.ts",
+                    "export const history = { back() {}, push(_p: string) {} }\n",
+                ),
+                ("C.tsx", component),
+            ],
+            "C.tsx",
+        );
+        let f = fallbacks(&ir);
+        assert!(
+            f.iter().any(|d| d.rule == "hook-shape" && d.message.contains("reads the global `history`")),
+            "{component}: {f:?}"
+        );
+        assert_ne!(ir.tier, Tier::Native);
+    }
+    // The same hook in a module that declares no `history` still inlines.
+    let ok = project(
+        &[
+            ("useNav.ts", hook),
+            (
+                "C.tsx",
+                "import { useBack } from './useNav'\nexport default function C({ title }: any) { const [text, back] = useBack(title); return <button onClick={back}>{text}</button> }",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(fallbacks(&ok).is_empty(), "{:?}", ok.diagnostics);
+    assert_eq!(ok.tier, Tier::Native);
 }

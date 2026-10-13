@@ -193,6 +193,24 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         ));
     }
 
+    // L2: `buildTime(…)` is evaluated at build (or, as a job, on the server); the closure never ships.
+    if let Some(u) = uses.iter().find(|u| {
+        u.deps
+            .imports
+            .contains(&("@brust/core".to_string(), "buildTime".to_string()))
+    }) {
+        ir.diagnostics.push(Diagnostic::error(
+            "build-time-client",
+            format!(
+                "buildTime(…) is used by {} at line {}; the browser would run the closure",
+                u.what,
+                ctx.line(u.loc)
+            ),
+            u.loc,
+            "call buildTime in render, outside handlers, effects and state-dependent values",
+        ));
+    }
+
     // §3.2 rule 1: request state read in render, a job, or client code.
     let read: Vec<(u32, &super::deps::Deps)> = st
         .painted

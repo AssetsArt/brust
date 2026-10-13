@@ -175,3 +175,422 @@ fn truthiness_guard_contributes_the_prop_root_to_job_inputs() {
         .expect("precompute job");
     assert_eq!(job.inputs, vec!["user".to_string()], "{:?}", job.inputs);
 }
+
+// L1 (gap-const-fold): module consts fold into the template; anything unprovable stays a slot.
+
+fn module_const(head: &str, body: &str) -> ComponentIR {
+    analyze(
+        "C.tsx",
+        &format!("{head}\nexport default function C() {{ {body} }}"),
+    )
+}
+
+fn painted(ir: &ComponentIR) -> Vec<Expr> {
+    let mut s = Vec::new();
+    slots(&ir.template, &mut s);
+    s
+}
+
+#[test]
+fn module_const_folds_to_a_server_value_with_no_job() {
+    let ir = module_const(
+        "const A = 2\nconst B = A * 3\nconst O = { k: [1, B] }",
+        "return <p>{O.k[1]}</p>",
+    );
+    assert!(painted(&ir).iter().all(|e| matches!(e, Expr::Server(_))));
+    assert!(ir.jobs.is_empty() && !ir.needs_worker, "{:?}", ir.jobs);
+}
+
+#[test]
+fn module_const_used_by_use_state_folds() {
+    let ir = module_const(
+        "import { useState } from 'react'\nconst START = 5",
+        "const [n] = useState(START); return <p>{n}</p>",
+    );
+    assert!(
+        matches!(ir.state[0].init, Expr::Server(_)),
+        "{:?}",
+        ir.state
+    );
+    assert!(ir.jobs.is_empty() && !ir.needs_worker);
+}
+
+#[test]
+fn mutated_array_const_stays_a_slot_but_a_primitive_folds() {
+    for head in [
+        "const A = [1]\nA.push(2)",
+        "const A = [1]\nA[0] = 9",
+        "const A = [1]\nconst B = A\nB.sort()",
+        "const A = [1]\nfunction touch(x: number[]) { x.length = 0 }\ntouch(A)",
+        // R1.1a: a written `.length` is a mutation
+        "const A = [1]\nA.length = 0",
+        "const A = [1]\nA.length++",
+        "const A = [1]\nA.length -= 1",
+        // R1.1a: element aliases and literal containers
+        "const A = [{ v: 1 }]\nfor (const x of A) x.v = 2",
+        "const A = [{ v: 1 }]\nA.forEach((x) => { x.v = 2 })",
+        "const A = [{ v: 1 }]\nconst BOX = { items: A }\nBOX.items.push({ v: 2 })",
+        "const A = [{ v: 1 }]\nconst B = [A]\nB[0].push({ v: 2 })",
+        "const A = [{ v: 1 }]\nA.map((x) => { x.v = 2; return x })",
+        "const A = [{ v: 1 }]\nA.find((x) => x.v === 1)!.v = 3",
+        "const A = [{ v: 1 }]\nconst first = A[0]\nfirst.v = 4",
+        "const A = [{ v: 1 }]\nObject.values(A)[0].v = 5",
+        "const A = [{ v: 1 }]\nfunction f() { return A }\nf().push({ v: 2 })",
+    ] {
+        let ir = module_const(head, "return <p>{A.length}</p>");
+        assert!(ir.needs_worker, "{head}: must stay a job");
+    }
+    let ir = module_const("const A = [1]\nconsole.log(A)", "return <p>{A.length}</p>");
+    assert!(ir.needs_worker, "an array handed to a call stays a job");
+    // Proven read-only uses keep the fold.
+    for head in [
+        "const A = [{ v: 1 }]\nconst n = A.filter((x) => x.v > 0).length",
+        "const A = [{ v: 1 }]\nconst s = [...A]\nconst k = Object.keys(A)",
+        "const A = [{ v: 1 }]\nA.some((x) => x.v === 1)",
+    ] {
+        let ir = module_const(head, "return <p>{A.length}</p>");
+        assert!(!ir.needs_worker, "{head}: read-only uses still fold");
+    }
+    let ir = module_const("const N = 4\nconsole.log(N)", "return <p>{N}</p>");
+    assert!(
+        !ir.needs_worker,
+        "a primitive folds even when passed to a call"
+    );
+}
+
+#[test]
+fn const_with_a_call_global_or_let_stays_a_slot() {
+    for head in [
+        "const A = Date.now()",
+        "const A = [3, 1].slice()",
+        "let A = 1",
+        "const A = process.env.X",
+        "const A = new Map()",
+    ] {
+        let ir = module_const(head, "return <p>{A}</p>");
+        assert!(ir.needs_worker, "{head}: must stay a job");
+    }
+}
+
+#[test]
+fn a_body_local_shadowing_a_const_wins() {
+    let ir = analyze(
+        "C.tsx",
+        "const label = 'module'\nexport default function C({ name }: { name: string }) { const label = name.toUpperCase(); return <p>{label}</p> }",
+    );
+    let src = format!("{:?}", painted(&ir));
+    assert!(!src.contains("module"), "{src}");
+}
+
+#[test]
+fn a_cycle_and_a_deep_chain_do_not_fold_or_hang() {
+    let ir = module_const("const A = B + 1\nconst B = A + 1", "return <p>{A}</p>");
+    assert!(ir.needs_worker);
+    let chain: String = (0..20)
+        .map(|i| {
+            format!(
+                "const C{} = {}",
+                i + 1,
+                if i == 0 {
+                    "1".into()
+                } else {
+                    format!("C{i} + 1")
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ir = module_const(&chain, "return <p>{C20}</p>");
+    assert!(ir.needs_worker, "a chain deeper than 16 stays a job");
+    let ir = module_const(&chain, "return <p>{C10}</p>");
+    assert!(!ir.needs_worker, "a chain within 16 folds");
+}
+
+// L2 (gap-build-eval): which precompute slots the build may evaluate once.
+
+fn eval_slots(head: &str, body: &str) -> Vec<(String, bool)> {
+    module_const(head, body)
+        .build_eval
+        .iter()
+        .map(|b| (b.slot.clone(), b.build_time))
+        .collect()
+}
+
+#[test]
+fn a_pure_helper_called_with_constants_is_a_build_eval_candidate() {
+    let r = eval_slots(
+        "function fmt(n: number) { return n.toFixed(2) }\nconst K = 3",
+        "return <p>{fmt(K)}</p>",
+    );
+    assert_eq!(r, vec![("_s1".to_string(), false)]);
+}
+
+#[test]
+fn impure_or_request_dependent_slots_are_not_candidates() {
+    for (head, body) in [
+        ("function f() { return Date.now() }", "return <p>{f()}</p>"),
+        (
+            "function f() { return new Intl.NumberFormat().format(1) }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "function f() { return process.env.X }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "function f() { return Math.random() }",
+            "return <p>{Math.random()}</p>",
+        ),
+        (
+            "let n = 1\nfunction f() { return n }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "var n = 1\nfunction f() { return n }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "import { g } from 'pkg'\nfunction f() { return g() }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "function f(x: number) { return x * 2 }",
+            "return <p>{f(props.n)}</p>",
+        ),
+    ] {
+        let src = head.to_string();
+        let ir = analyze(
+            "C.tsx",
+            &format!("{src}\nexport default function C(props: any) {{ {body} }}"),
+        );
+        assert!(
+            ir.build_eval.is_empty(),
+            "{head} / {body}: {:?}",
+            ir.build_eval
+        );
+    }
+    // inside a condition or a list, and state-dependent values, stay jobs
+    assert!(
+        eval_slots(
+            "function f() { return 1 }",
+            "return <p>{props.ok && f()}</p>"
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn build_time_is_recognised_only_from_core_and_allows_package_imports() {
+    let ok = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nimport { hl } from 'pkg'\nexport default function C() { const h = buildTime(async () => hl('x')); return <p>{h}</p> }",
+    );
+    assert_eq!(ok.build_eval.len(), 1, "{:?}", ok.diagnostics);
+    assert!(ok.build_eval[0].build_time);
+    // a function that merely has the name is not the opt-in
+    let named = analyze(
+        "C.tsx",
+        "import { buildTime } from './mine'\nimport { hl } from 'pkg'\nexport default function C() { const h = buildTime(() => hl('x')); return <p>{h}</p> }",
+    );
+    assert!(named.build_eval.is_empty());
+}
+
+#[test]
+fn build_time_that_reads_props_warns_and_stays_a_job() {
+    let ir = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nexport default function C({ code }: any) { const h = buildTime(() => code.toUpperCase()); return <p>{h}</p> }",
+    );
+    assert!(ir.build_eval.is_empty());
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "build-time-input")
+        .unwrap();
+    assert!(d.message.contains("code"), "{}", d.message);
+    assert!(d.line > 0, "a real location");
+    assert!(
+        ir.jobs
+            .iter()
+            .any(|j| matches!(j.kind, JobKind::Precompute))
+    );
+}
+
+#[test]
+fn import_meta_is_build_host_input_like_process_env() {
+    // a same-file helper
+    assert!(
+        eval_slots(
+            "function api() { return String(import.meta.env.API_URL) }",
+            "return <p>{api()}</p>"
+        )
+        .is_empty()
+    );
+    assert!(
+        eval_slots(
+            "function where() { return import.meta.dir }",
+            "return <p>{where()}</p>"
+        )
+        .is_empty()
+    );
+    // and inside buildTime(…) it is refused, not evaluated
+    let ir = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nexport default function C() { const h = buildTime(() => import.meta.url); return <p>{h}</p> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "build-time-impure")
+        .unwrap();
+    assert!(d.message.contains("import.meta"), "{}", d.message);
+}
+
+#[test]
+fn build_time_reading_time_or_randomness_is_an_error() {
+    let ir = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nexport default function C() { const h = buildTime(() => Date.now()); return <p>{h}</p> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "build-time-impure")
+        .unwrap();
+    assert_eq!(d.class, DiagClass::Error);
+    assert!(d.message.contains("Date"), "{}", d.message);
+}
+
+#[test]
+fn build_time_in_client_code_is_an_error() {
+    let ir = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nimport { useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); return <button onClick={() => setN(buildTime(() => n + 1))}>{n}</button> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "build-time-client")
+        .unwrap();
+    assert_eq!(d.class, DiagClass::Error);
+}
+
+#[test]
+fn a_slot_value_from_the_build_replaces_the_slot_with_a_literal_and_drops_the_job() {
+    use brust_compiler::analyze::component::{AnalyzeOptions, analyze_source};
+    use brust_compiler::parse::run_on_compiler_thread;
+    let src = "function f() { return 6 * 7 }\nexport default function C() { return <p>{f()}</p> }";
+    let first = analyze("C.tsx", src);
+    let key = first.build_eval[0].key.clone();
+    assert!(first.needs_worker);
+    // objects use the build's `{"$": [[key, value]…]}` encoding (key order survives serde_json)
+    let mut values = std::collections::HashMap::new();
+    values.insert(key, serde_json::json!(42));
+    let s = src.to_string();
+    let second = run_on_compiler_thread(move || {
+        analyze_source(
+            "C.tsx",
+            s.into_bytes(),
+            &AnalyzeOptions {
+                slot_values: values,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    });
+    assert!(
+        second.jobs.is_empty() && !second.needs_worker,
+        "{:?}",
+        second.jobs
+    );
+    assert!(second.build_eval.is_empty());
+    let mut s = Vec::new();
+    slots(&second.template, &mut s);
+    assert!(
+        matches!(&s[0], Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Lit(Literal::Num(n)) if *n == 42.0)),
+        "{s:?}"
+    );
+}
+
+#[test]
+fn a_relatively_imported_helper_is_read_before_it_counts_as_pure() {
+    use brust_compiler::analyze::component::{AnalyzeOptions, analyze_source};
+    use brust_compiler::parse::run_on_compiler_thread;
+    let dir = std::env::temp_dir().join(format!("brustc-be-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = [
+        ("pure.ts", "export const twice = (n: number) => n * 2"),
+        (
+            "deep.ts",
+            "import { twice } from './pure'\nexport const four = () => twice(2)",
+        ),
+        (
+            "env.ts",
+            "export const home = () => String(process.env.HOME)",
+        ),
+        ("state.ts", "let n = 0\nexport const next = () => ++n"),
+        (
+            "fs.ts",
+            "import { readFileSync } from 'node:fs'\nexport const size = () => readFileSync('x').length",
+        ),
+        (
+            "pkg.ts",
+            "import { g } from 'pkg'\nexport const h = () => g()",
+        ),
+        ("req.ts", "export const r = () => require('fs')"),
+        ("rand.ts", "export const r = () => Math.random()"),
+        ("dyn.ts", "export const r = () => import('./pure')"),
+        (
+            "badchain.ts",
+            "import { home } from './env'\nexport const x = () => home()",
+        ),
+    ];
+    for (f, src) in files {
+        std::fs::write(dir.join(f), src).unwrap();
+    }
+    let check = |file: &str, import: &str, call: &str| -> usize {
+        let root = dir.clone();
+        let src = format!(
+            "import {{ {import} }} from './{file}'\nexport default function C() {{ return <p>{{{call}}}</p> }}"
+        );
+        run_on_compiler_thread(move || {
+            analyze_source(
+                "C.tsx",
+                src.into_bytes(),
+                &AnalyzeOptions {
+                    root,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .build_eval
+            .len()
+        })
+    };
+    assert_eq!(
+        check("pure", "twice", "twice(3)"),
+        1,
+        "a pure relative helper is a candidate"
+    );
+    assert_eq!(
+        check("deep", "four", "four()"),
+        1,
+        "its own pure relative imports are read too"
+    );
+    for (file, import, call) in [
+        ("env", "home", "home()"),
+        ("state", "next", "next()"),
+        ("fs", "size", "size()"),
+        ("pkg", "h", "h()"),
+        ("req", "r", "r()"),
+        ("rand", "r", "r()"),
+        ("dyn", "r", "r()"),
+        ("badchain", "x", "x()"),
+        ("meta", "api", "api()"),
+        ("url", "where", "where()"),
+    ] {
+        assert_eq!(check(file, import, call), 0, "{file}: must stay a job");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

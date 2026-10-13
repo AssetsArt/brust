@@ -1,6 +1,6 @@
 //! Reads Bun's visited expressions into brust-owned `RawExpr`s. Total: any shape
 //! outside the §6.2 grammar becomes `Opaque` with the printed JS and the reason.
-use crate::analyze::names::{NameTable, binding_refs};
+use crate::analyze::names::{Aliases, NameTable, binding_refs};
 use crate::ir::{
     ArrowBody, BinOp, Diagnostic, HandlerDecl, IdentKind, Literal, RawExpr, RawKind, UnOp,
 };
@@ -16,7 +16,7 @@ use std::collections::HashSet;
 /// sources, diagnostics, and inline event handlers waiting to be named (`_hN`).
 pub struct Reader<'r, 'a> {
     pub names: &'r mut NameTable<'a>,
-    print: &'r dyn Fn(Js<'_>) -> String,
+    print: &'r Printer<'r>,
     pub diagnostics: Vec<Diagnostic>,
     /// Inline handlers in encounter order; index `i` is `<pending:i>` and becomes `_h{i+1}`.
     pub pending_handlers: Vec<HandlerDecl>,
@@ -28,7 +28,7 @@ pub struct Reader<'r, 'a> {
 }
 
 impl<'r, 'a> Reader<'r, 'a> {
-    pub fn new(names: &'r mut NameTable<'a>, print: &'r dyn Fn(Js<'_>) -> String) -> Self {
+    pub fn new(names: &'r mut NameTable<'a>, print: &'r Printer<'r>) -> Self {
         Reader {
             names,
             print,
@@ -40,11 +40,11 @@ impl<'r, 'a> Reader<'r, 'a> {
     }
 
     pub fn print(&self, e: &js_ast::Expr) -> String {
-        (self.print)(Js::Expr(e))
+        (self.print)(Js::Expr(e), self.names.print_aliases())
     }
 
     pub fn print_stmt(&self, s: &js_ast::Stmt) -> String {
-        (self.print)(Js::Stmt(s))
+        (self.print)(Js::Stmt(s), self.names.print_aliases())
     }
 
     /// `e` as printed JS. Its captures come from the same walk as an arrow's;
@@ -245,7 +245,7 @@ impl<'r, 'a> Reader<'r, 'a> {
         let body = match stmts {
             [only] if a.prefer_expr => match &only.data {
                 S::SReturn(r) => match &r.value {
-                    Some(v) if list_body && crate::analyze::jsx::is_jsx(v) => {
+                    Some(v) if list_body && crate::analyze::jsx::is_list_body(v) => {
                         let node = crate::analyze::jsx::read_list_body(self, v);
                         ArrowBody::Expr(Box::new(RawExpr {
                             loc: loc_of(v),
@@ -323,6 +323,10 @@ impl<'r, 'a> Reader<'r, 'a> {
             .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element));
         let mut seen: Vec<js_ast::Ref> = Vec::new();
         let mut out = Vec::new();
+        if w.import_meta {
+            // Seen by the dependency pass as a global no build-time slot may read.
+            out.push(("import.meta".to_string(), IdentKind::Global));
+        }
         for r in w.used {
             if self.names.is_jsx_runtime(r)
                 || w.declared.iter().any(|d| self.names.same(*d, r))
@@ -340,7 +344,7 @@ impl<'r, 'a> Reader<'r, 'a> {
     /// identifier-bound `const`/`let`/`var` (exported or not).
     #[allow(clippy::type_complexity)]
     pub fn module_scope(
-        &self,
+        &mut self,
         ast: &js_ast::Ast<'_>,
     ) -> (
         Vec<(String, Vec<(String, IdentKind)>)>,
@@ -348,14 +352,13 @@ impl<'r, 'a> Reader<'r, 'a> {
     ) {
         let mut out = Vec::new();
         let mut decls = Vec::new();
-        let source = |stmt: &js_ast::Stmt| {
-            let s = self.print_stmt(stmt);
-            s.strip_prefix("export ").map(str::to_string).unwrap_or(s)
-        };
+        let mutated = crate::analyze::use_scan::unsafe_to_fold(ast, &*self.names);
+        let strip = |s: String| s.strip_prefix("export ").map(str::to_string).unwrap_or(s);
         for part in ast.parts.iter() {
             for stmt in part.stmts.slice() {
                 match &stmt.data {
                     S::SFunction(f) => {
+                        let stmt_source = strip(self.print_stmt(stmt));
                         if let Some(n) = &f.func.name {
                             let (captures, _) =
                                 self.captures_of(f.func.args.slice(), f.func.body.stmts.slice());
@@ -363,12 +366,15 @@ impl<'r, 'a> Reader<'r, 'a> {
                             out.push((name.clone(), captures));
                             decls.push(crate::ir::ModuleDecl {
                                 names: vec![name],
-                                source: source(stmt),
+                                source: stmt_source,
+                                consts: vec![],
                             });
                         }
                     }
                     S::SLocal(l) => {
+                        let stmt_source = strip(self.print_stmt(stmt));
                         let mut names = Vec::new();
+                        let mut consts = Vec::new();
                         for d in l.decls.iter() {
                             if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) {
                                 let mut w = Walk::default();
@@ -376,13 +382,28 @@ impl<'r, 'a> Reader<'r, 'a> {
                                 let (captures, _) = self.captured(w);
                                 let name = self.names.name(id.r#ref);
                                 names.push(name.clone());
+                                if matches!(l.kind, js_ast::S::Kind::KConst) {
+                                    // Reading the initializer must leave no diagnostic or
+                                    // handler behind: it is only a candidate for folding.
+                                    let (nd, nh) =
+                                        (self.diagnostics.len(), self.pending_handlers.len());
+                                    let value = self.expr(v);
+                                    self.diagnostics.truncate(nd);
+                                    self.pending_handlers.truncate(nh);
+                                    consts.push(crate::ir::ConstVal {
+                                        name: name.clone(),
+                                        value,
+                                        mutated: mutated.contains(&id.r#ref.inner_index()),
+                                    });
+                                }
                                 out.push((name, captures));
                             }
                         }
                         if !names.is_empty() {
                             decls.push(crate::ir::ModuleDecl {
                                 names,
-                                source: source(stmt),
+                                source: stmt_source,
+                                consts,
                             });
                         }
                     }
@@ -450,11 +471,7 @@ impl<'r, 'a> Reader<'r, 'a> {
 
 /// Reads one expression with no surrounding component context (no handler
 /// hoisting, no loop scope). Never fails: unknown shapes are `Opaque`.
-pub fn read_expr(
-    e: &js_ast::Expr,
-    names: &mut NameTable<'_>,
-    printer: &dyn Fn(Js<'_>) -> String,
-) -> RawExpr {
+pub fn read_expr(e: &js_ast::Expr, names: &mut NameTable<'_>, printer: &Printer<'_>) -> RawExpr {
     Reader::new(names, printer).expr(e)
 }
 
@@ -557,9 +574,30 @@ pub struct Walk {
     /// Location of the first dynamic `import()` reached (F38): the printer
     /// cannot print one (no import record), so such code is never printed.
     pub dynamic_import: Option<u32>,
+    /// `import.meta` (`.env`, `.url`, `.dir`) is read: ambient input of the build host (L2).
+    pub import_meta: bool,
+    /// Identifiers written by an assignment or `++`/`--` (the left side's own bindings, not
+    /// a member target's object).
+    pub assigned: Vec<js_ast::Ref>,
 }
 
 impl Walk {
+    fn assign_target(&mut self, e: &js_ast::Expr) {
+        match &e.data {
+            E::EIdentifier(id) => self.assigned.push(id.ref_),
+            E::EImportIdentifier(id) => self.assigned.push(id.ref_),
+            E::EArray(a) => a.items.iter().for_each(|x| self.assign_target(x)),
+            E::EObject(o) => o
+                .properties
+                .iter()
+                .filter_map(|p| p.value.as_ref())
+                .for_each(|v| self.assign_target(v)),
+            E::ESpread(sp) => self.assign_target(&sp.value),
+            E::EBinary(b) if matches!(b.op, OpCode::BinAssign) => self.assign_target(&b.left),
+            _ => {}
+        }
+    }
+
     pub fn declare_binding(&mut self, b: &js_ast::Binding) {
         binding_refs(b, &mut self.declared);
         self.binding_defaults(b);
@@ -643,6 +681,10 @@ impl Walk {
                     }
                 }
             }
+            S::SExportDefault(ed) => match &ed.value {
+                js_ast::StmtOrExpr::Expr(e) => self.expr(e),
+                js_ast::StmtOrExpr::Stmt(s) => self.stmt(s),
+            },
             S::SReturn(r) => {
                 if let Some(v) = &r.value {
                     self.expr(v);
@@ -719,8 +761,19 @@ impl Walk {
             E::EIdentifier(id) => self.used.push(id.ref_),
             E::EImportIdentifier(id) => self.used.push(id.ref_),
             E::EArray(a) => a.items.iter().for_each(|x| self.expr(x)),
-            E::EUnary(u) => self.expr(&u.value),
+            E::EUnary(u) => {
+                if !matches!(
+                    OpCode::unary_assign_target(u.op),
+                    js_ast::AssignTarget::None
+                ) {
+                    self.assign_target(&u.value);
+                }
+                self.expr(&u.value)
+            }
             E::EBinary(b) => {
+                if !matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None) {
+                    self.assign_target(&b.left);
+                }
                 self.expr(&b.left);
                 self.expr(&b.right);
             }
@@ -771,6 +824,7 @@ impl Walk {
                     self.expr(&p.value);
                 }
             }
+            E::EImportMeta(_) | E::EImportMetaMain(_) => self.import_meta = true,
             E::EImport(i) => {
                 self.dynamic_import.get_or_insert(loc_of(e));
                 self.expr(&i.expr);
@@ -801,6 +855,9 @@ pub fn declared_in(stmts: &[js_ast::Stmt]) -> HashSet<u32> {
 /// The source recorded for code that contains a dynamic `import()`.
 pub const DYNAMIC_IMPORT_SOURCE: &str = "/* dynamic import */";
 
+/// A [`Reader`]'s printer: JavaScript for `js`, with the renamed symbols of its name table.
+pub type Printer<'p> = dyn Fn(Js<'_>, &Aliases) -> String + 'p;
+
 /// What a [`Reader`]'s printer can print.
 #[derive(Clone, Copy)]
 pub enum Js<'x> {
@@ -810,6 +867,16 @@ pub enum Js<'x> {
 
 /// Prints `js` as JavaScript; see [`print_expr_js`].
 pub fn print_js(parsed: &Parsed, ast: &js_ast::Ast<'_>, js: Js<'_>) -> String {
+    print_js_with(parsed, ast, &Aliases::new(), js)
+}
+
+/// [`print_js`] with renamed symbols (G3): each symbol index in `aliases` prints as its name.
+pub fn print_js_with(
+    parsed: &Parsed,
+    ast: &js_ast::Ast<'_>,
+    aliases: &Aliases,
+    js: Js<'_>,
+) -> String {
     // A dynamic `import()` makes the printer assert (no import record for it):
     // never print one; the component falls back with a `dynamic-import` diagnostic.
     let mut w = Walk::default();
@@ -823,8 +890,8 @@ pub fn print_js(parsed: &Parsed, ast: &js_ast::Ast<'_>, js: Js<'_>) -> String {
     // F42 backstop: the Bun printer asserts on shapes this crate does not foresee; a panic
     // there must degrade the component to a React island, never abort the process.
     let printed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match js {
-        Js::Expr(e) => print_expr_js(parsed, ast, e),
-        Js::Stmt(s) => print_with(parsed, ast, || *s),
+        Js::Expr(e) => print_expr_with(parsed, ast, aliases, e),
+        Js::Stmt(s) => print_with(parsed, ast, aliases, || *s),
     }));
     match printed {
         Ok(text) => text,
@@ -852,7 +919,16 @@ pub fn take_printer_panic() -> bool {
 /// strips the `return ` / `;` around it. Import records are left out on
 /// purpose: the printer then prints every import binding by its local name.
 pub fn print_expr_js(parsed: &Parsed, ast: &js_ast::Ast<'_>, e: &js_ast::Expr) -> String {
-    let text = print_with(parsed, ast, || {
+    print_expr_with(parsed, ast, &Aliases::new(), e)
+}
+
+fn print_expr_with(
+    parsed: &Parsed,
+    ast: &js_ast::Ast<'_>,
+    aliases: &Aliases,
+    e: &js_ast::Expr,
+) -> String {
+    let text = print_with(parsed, ast, aliases, || {
         js_ast::Stmt::alloc(js_ast::S::Return { value: Some(*e) }, e.loc)
     });
     let text = text.strip_suffix(';').unwrap_or(&text);
@@ -865,6 +941,7 @@ pub fn print_expr_js(parsed: &Parsed, ast: &js_ast::Ast<'_>, e: &js_ast::Expr) -
 fn print_with(
     parsed: &Parsed,
     ast: &js_ast::Ast<'_>,
+    aliases: &Aliases,
     make: impl FnOnce() -> js_ast::Stmt,
 ) -> String {
     let arena = parsed.arena();
@@ -881,8 +958,13 @@ fn print_with(
         .symbols
         .as_slice()
         .iter()
-        .map(|s| js_ast::Symbol {
-            original_name: s.original_name,
+        .enumerate()
+        .map(|(i, s)| js_ast::Symbol {
+            // `aliases` outlives the printer, so its names can stand in for the source's.
+            original_name: match aliases.get(&(i as u32)) {
+                Some(a) => js_ast::StoreStr::new(a.as_bytes()),
+                None => s.original_name,
+            },
             link: core::cell::Cell::new(s.link.get()),
             kind: s.kind,
             import_item_status: s.import_item_status,

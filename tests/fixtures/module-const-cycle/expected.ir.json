@@ -1,0 +1,62 @@
+{
+  "id": "input_4dcb8095",
+  "source": "tests/fixtures/module-const-cycle/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 75,
+      "tag": "p",
+      "attrs": [],
+      "children": [
+        {
+          "Slot": {
+            "Precomputed": {
+              "slot": "_s1",
+              "js": "A",
+              "client_js": null,
+              "inputs": [],
+              "state_dependent": false,
+              "per_item": null
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [],
+      "outputs": [
+        "_s1"
+      ],
+      "per_item": null
+    }
+  ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-const-cycle/input.tsx@79",
+      "slot": "_s1",
+      "build_time": false,
+      "line": 5,
+      "col": 14
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

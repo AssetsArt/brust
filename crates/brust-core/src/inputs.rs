@@ -2,9 +2,10 @@
 //! projection of the values a job reads, and blake3 canonical job keys.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use brust_jinja::ctx::{MapInner, Node};
+use minijinja::{Environment, Expression, Value};
 
 /// One segment of an input path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,30 +203,109 @@ pub fn child_props(
 }
 
 /// A `props` map (`{ childProp: parent path }`) parsed once (at boot);
-/// [`PropsMap::eval`] is [`child_props`] without the parsing.
+/// [`PropsMap::eval`] is [`child_props`] without the parsing. A child record adds
+/// constant props and jinja expressions ([`PropsMap::child`], F105).
 #[derive(Debug, Clone)]
-pub struct PropsMap(Vec<(String, Path, String)>);
+pub struct PropsMap {
+    props: Vec<(String, Bound)>,
+    /// A per-row child's list: the row item an expression reads as `__row`.
+    rows: Option<Path>,
+}
+
+#[derive(Debug, Clone)]
+enum Bound {
+    /// A parent path and its source text (for errors).
+    Path(Path, String),
+    Lit(Node),
+    Expr(Arc<Expression<'static, 'static>>, String),
+}
+
+/// The environment child-prop expressions compile in: the render's filters and undefined rules.
+static EXPR_ENV: LazyLock<Environment<'static>> = LazyLock::new(|| {
+    let mut env = Environment::new();
+    brust_jinja::register(&mut env);
+    env
+});
+
+/// Compiles a child-prop expression (`ChildRecord.exprs`); the error is minijinja's message.
+pub fn compile_expr(src: &str) -> Result<Expression<'static, 'static>, String> {
+    EXPR_ENV
+        .compile_expression_owned(src.to_string())
+        .map_err(|e| e.to_string())
+}
 
 impl PropsMap {
     pub fn new(props: &BTreeMap<String, String>) -> Result<PropsMap, String> {
-        props
-            .iter()
-            .map(|(name, src)| Ok((name.clone(), Path::parse(src)?, src.clone())))
-            .collect::<Result<_, String>>()
-            .map(PropsMap)
+        PropsMap::child(props, &BTreeMap::new(), &BTreeMap::new(), None)
+    }
+
+    /// A child record's bindings: paths, literals and expressions (`rows` = its per-row list).
+    pub fn child(
+        props: &BTreeMap<String, String>,
+        literals: &BTreeMap<String, serde_json::Value>,
+        exprs: &BTreeMap<String, String>,
+        rows: Option<Path>,
+    ) -> Result<PropsMap, String> {
+        let mut out = Vec::with_capacity(props.len() + literals.len() + exprs.len());
+        for (name, src) in props {
+            out.push((name.clone(), Bound::Path(Path::parse(src)?, src.clone())));
+        }
+        for (name, v) in literals {
+            out.push((name.clone(), Bound::Lit(Node::from(v.clone()))));
+        }
+        for (name, src) in exprs {
+            let e = compile_expr(src).map_err(|e| format!("child prop {name:?} = {src:?}: {e}"))?;
+            out.push((name.clone(), Bound::Expr(Arc::new(e), src.clone())));
+        }
+        Ok(PropsMap { props: out, rows })
     }
 
     pub fn eval(&self, parent_ctx: &Node, idx: Option<usize>) -> Result<Node, String> {
         let mut out = MapInner::new();
-        for (name, p, src) in &self.0 {
-            if idx.is_none() && p.has_idx() {
-                return Err(format!(
-                    "child prop {name:?} = {src:?}: [idx] outside a per-row instance"
-                ));
-            }
-            out.insert(Arc::from(name.as_str()), p.get(parent_ctx, idx).clone());
+        let mut scope = None;
+        for (name, b) in &self.props {
+            let v = match b {
+                Bound::Path(p, src) => {
+                    if idx.is_none() && p.has_idx() {
+                        return Err(format!(
+                            "child prop {name:?} = {src:?}: [idx] outside a per-row instance"
+                        ));
+                    }
+                    p.get(parent_ctx, idx).clone()
+                }
+                Bound::Lit(n) => n.clone(),
+                Bound::Expr(e, src) => {
+                    let scope = scope.get_or_insert_with(|| self.scope(parent_ctx, idx));
+                    let v = e
+                        .eval(scope.clone())
+                        .map_err(|err| format!("child prop {name:?} = {src:?}: {err}"))?;
+                    // An undefined value is a prop the child does not get (JS `undefined`).
+                    if v.is_undefined() {
+                        continue;
+                    }
+                    let json = serde_json::to_value(&v)
+                        .map_err(|err| format!("child prop {name:?} = {src:?}: {err}"))?;
+                    Node::from(json)
+                }
+            };
+            out.insert(Arc::from(name.as_str()), v);
         }
         Ok(Node::map(out))
+    }
+
+    /// What an expression reads: `__props` (the parent context), and per row `__row`/`__idx`.
+    fn scope(&self, parent_ctx: &Node, idx: Option<usize>) -> Value {
+        let mut vars = vec![("__props", parent_ctx.to_value())];
+        if let (Some(list), Some(i)) = (&self.rows, idx) {
+            let row = list
+                .get(parent_ctx, None)
+                .index(i)
+                .cloned()
+                .unwrap_or(Node::Null);
+            vars.push(("__row", row.to_value()));
+            vars.push(("__idx", Value::from(i)));
+        }
+        Value::from_pairs(vars)
     }
 }
 
@@ -435,5 +515,67 @@ mod tests {
         assert!(project(&n(json!({})), &["a[".into()], None).is_err());
         let props = [("x".to_string(), "".to_string())].into_iter().collect();
         assert!(child_props(&n(json!({})), &props, None).is_err());
+    }
+
+    fn map<V: Clone + Into<W>, W>(kv: &[(&str, V)]) -> BTreeMap<String, W> {
+        kv.iter()
+            .map(|(k, v)| (k.to_string(), v.clone().into()))
+            .collect()
+    }
+
+    #[test]
+    fn child_literals_and_exprs_join_the_props() {
+        let ctx = n(json!({"src": "a\nb", "n": 2, "items": [{"code": "x"}, {"code": "y"}]}));
+        let pm = PropsMap::child(
+            &map(&[("n", "n")]),
+            &map(&[("lang", json!("ts")), ("opts", json!({"wrap": true}))]),
+            &map(&[("code", "(__props.src ~ \"!\")"), ("gone", "__undefined")]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            pm.eval(&ctx, None).unwrap(),
+            n(json!({"n": 2, "lang": "ts", "opts": {"wrap": true}, "code": "a\nb!"}))
+        );
+        // Per row: `__row` is the row item, `__idx` its index.
+        let pm = PropsMap::child(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &map(&[("label", "(__row.code | upper) ~ (__idx | js_string)")]),
+            Some(Path::parse("items").unwrap()),
+        )
+        .unwrap();
+        assert_eq!(pm.eval(&ctx, Some(1)).unwrap(), n(json!({"label": "Y1"})));
+        // Distinct literals project to distinct inputs, so distinct job keys (R3.1).
+        let a = PropsMap::child(
+            &BTreeMap::new(),
+            &map(&[("code", json!("a"))]),
+            &BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .eval(&ctx, None)
+        .unwrap();
+        let b = PropsMap::child(
+            &BTreeMap::new(),
+            &map(&[("code", json!("b"))]),
+            &BTreeMap::new(),
+            None,
+        )
+        .unwrap()
+        .eval(&ctx, None)
+        .unwrap();
+        assert_ne!(job_key("c", "j0", &a), job_key("c", "j0", &b));
+    }
+
+    #[test]
+    fn a_bad_child_expr_fails_at_construction() {
+        let e = PropsMap::child(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &map(&[("x", "(")]),
+            None,
+        );
+        assert!(e.unwrap_err().contains("child prop \"x\""));
     }
 }

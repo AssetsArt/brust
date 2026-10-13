@@ -1,0 +1,353 @@
+{
+  "id": "input_9eb001a4",
+  "source": "tests/fixtures/list-cond-element-state/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "items",
+      "local": "items",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "linked",
+      "setter": "setLinked",
+      "init": {
+        "Server": {
+          "loc": 192,
+          "kind": {
+            "Lit": {
+              "Bool": true
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 242,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 248,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 248,
+                      "kind": {
+                        "Ident": {
+                          "name": "setLinked",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 258,
+                        "kind": {
+                          "Unary": {
+                            "op": "Not",
+                            "value": {
+                              "loc": 259,
+                              "kind": {
+                                "Ident": {
+                                  "name": "linked",
+                                  "kind": "State"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setLinked",
+                "Setter"
+              ],
+              [
+                "linked",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 213,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 225,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "toggle"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 290,
+            "tag": "ul",
+            "attrs": [],
+            "children": [
+              {
+                "For": {
+                  "source": {
+                    "Server": {
+                      "loc": 304,
+                      "kind": {
+                        "Ident": {
+                          "name": "items",
+                          "kind": "Prop"
+                        }
+                      }
+                    }
+                  },
+                  "item": "it",
+                  "index": null,
+                  "key": {
+                    "Server": {
+                      "loc": 375,
+                      "kind": {
+                        "Member": {
+                          "target": {
+                            "loc": 375,
+                            "kind": {
+                              "Ident": {
+                                "name": "it",
+                                "kind": "LoopBinding"
+                              }
+                            }
+                          },
+                          "name": "id",
+                          "optional": false
+                        }
+                      }
+                    }
+                  },
+                  "body": [
+                    {
+                      "If": {
+                        "cond": {
+                          "Server": {
+                            "loc": 332,
+                            "kind": {
+                              "Binary": {
+                                "op": "And",
+                                "left": {
+                                  "loc": 332,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "linked",
+                                      "kind": "State"
+                                    }
+                                  }
+                                },
+                                "right": {
+                                  "loc": 342,
+                                  "kind": {
+                                    "Member": {
+                                      "target": {
+                                        "loc": 342,
+                                        "kind": {
+                                          "Ident": {
+                                            "name": "it",
+                                            "kind": "LoopBinding"
+                                          }
+                                        }
+                                      },
+                                      "name": "href",
+                                      "optional": false
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "then": [
+                          {
+                            "Element": {
+                              "loc": 366,
+                              "tag": "li",
+                              "attrs": [],
+                              "children": [
+                                {
+                                  "Element": {
+                                    "loc": 397,
+                                    "tag": "a",
+                                    "attrs": [
+                                      {
+                                        "Dynamic": {
+                                          "name": "href",
+                                          "value": {
+                                            "Server": {
+                                              "loc": 406,
+                                              "kind": {
+                                                "Member": {
+                                                  "target": {
+                                                    "loc": 406,
+                                                    "kind": {
+                                                      "Ident": {
+                                                        "name": "it",
+                                                        "kind": "LoopBinding"
+                                                      }
+                                                    }
+                                                  },
+                                                  "name": "href",
+                                                  "optional": false
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "children": [
+                                      {
+                                        "Slot": {
+                                          "Server": {
+                                            "loc": 416,
+                                            "kind": {
+                                              "Member": {
+                                                "target": {
+                                                  "loc": 416,
+                                                  "kind": {
+                                                    "Ident": {
+                                                      "name": "it",
+                                                      "kind": "LoopBinding"
+                                                    }
+                                                  }
+                                                },
+                                                "name": "title",
+                                                "optional": false
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "host": false,
+                                    "ref_name": null
+                                  }
+                                }
+                              ],
+                              "host": false,
+                              "ref_name": null
+                            }
+                          }
+                        ],
+                        "else_": [
+                          {
+                            "Element": {
+                              "loc": 476,
+                              "tag": "li",
+                              "attrs": [],
+                              "children": [
+                                {
+                                  "Element": {
+                                    "loc": 507,
+                                    "tag": "h4",
+                                    "attrs": [],
+                                    "children": [
+                                      {
+                                        "Slot": {
+                                          "Server": {
+                                            "loc": 512,
+                                            "kind": {
+                                              "Member": {
+                                                "target": {
+                                                  "loc": 512,
+                                                  "kind": {
+                                                    "Ident": {
+                                                      "name": "it",
+                                                      "kind": "LoopBinding"
+                                                    }
+                                                  }
+                                                },
+                                                "name": "title",
+                                                "optional": false
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    ],
+                                    "host": false,
+                                    "ref_name": null
+                                  }
+                                }
+                              ],
+                              "host": false,
+                              "ref_name": null
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [
+    "items"
+  ],
+  "client_prop_projections": {
+    "items": [
+      "href",
+      "id",
+      "title"
+    ]
+  },
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

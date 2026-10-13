@@ -14,7 +14,8 @@ export function mountActions(app: unknown, prefix: string, what = 'actions entry
     throw new Error(
       `${what}: build the app with new Elysia({ adapter: brust() }) — import { brust } from '@brust/core/elysia'`,
     )
-  return new Elysia({ adapter: brust(), prefix }).use(app)
+  // L16 R16.4: the root prefix of an actions-only build is no prefix at all (`prefix: '/'` would double the slash).
+  return new Elysia({ adapter: brust(), ...(prefix === '/' ? {} : { prefix }) }).use(app)
 }
 
 export async function loadActionsApp(file: string, prefix: string): Promise<AnyElysia> {

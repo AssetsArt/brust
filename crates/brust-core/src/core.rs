@@ -14,7 +14,9 @@ use http::{HeaderMap, HeaderName, HeaderValue, Response};
 
 use crate::cache::StripedCounter;
 use crate::cache::stamp::InvalClock;
-use crate::config::{ActionsConfig, CorsConfig, InvalidateArgs, InvalidateResult, Stats};
+use crate::config::{
+    ActionsClient, ActionsConfig, CorsConfig, InvalidateArgs, InvalidateResult, Stats,
+};
 use crate::cors::ResolvedCors;
 use crate::host::{Host, JobStore, PageCache, RequestHead};
 use crate::l2::{L2Config, L2Counters, SharedFloor};
@@ -33,10 +35,16 @@ pub struct CoreConfig {
     pub generator: Option<String>,
     /// M3-F: the actions subtree; `None` = no actions.
     pub actions: Option<ActionsConfig>,
+    /// L16: what the page tells the browser client (base URL, credentials, a non-default prefix). `None` = derived
+    /// from `actions` alone (the prefix script of M3-F A4).
+    pub actions_client: Option<ActionsClient>,
     /// The host serves HTTPS: the scheme `cache.prefix`/`bypass` expressions see.
     pub https: bool,
     /// The cache adapter (shared second tier); `None` = none, and nothing changes.
     pub l2: Option<L2Config>,
+    /// `brust dev` only (L14): a request carrying this token in `x-brust-dev-token` gets a trace header, and
+    /// every rendered chain level is wrapped in `<!--brust:id-->` markers. `None` in production.
+    pub dev_token: Option<String>,
 }
 
 /// The shared core state, one per server.
@@ -50,6 +58,8 @@ pub struct Core<H: Host> {
     #[doc(hidden)]
     pub plans: PlanIndex,
     pub(crate) renderer: Renderer,
+    /// `brust dev` (L14): the token a request must carry to be traced; `None` = never.
+    pub(crate) dev_token: Option<String>,
     pub(crate) l1: H::L1,
     #[doc(hidden)]
     pub jobs: H::Jobs,
@@ -101,8 +111,20 @@ impl<H: Host> Core<H> {
     pub fn new(host: H, loaded: Loaded, cfg: CoreConfig) -> Result<Self, String> {
         let routes =
             RouteTable::from_manifest(&loaded.manifest).map_err(|e| format!("routes: {e}"))?;
-        let renderer =
+        let mut renderer =
             Renderer::from_templates(&loaded.templates).map_err(|e| format!("render: {e}"))?;
+        if cfg.dev_token.is_some() {
+            // Islands (react tier) are hydrated by React: nothing is ever injected inside or between their nodes.
+            renderer.set_dev_markers(
+                loaded
+                    .manifest
+                    .components
+                    .iter()
+                    .filter(|(_, c)| c.tier == crate::manifest::Tier::React)
+                    .map(|(id, _)| id.clone())
+                    .collect(),
+            );
+        }
         let plans = PlanIndex::new(&loaded.manifest).map_err(|e| format!("manifest: {e}"))?;
         if let Some(c) = &cfg.cors {
             c.validate().map_err(|e| format!("cors: {e}"))?;
@@ -110,6 +132,9 @@ impl<H: Host> Core<H> {
         if let Some(a) = &cfg.actions {
             a.validate(&loaded.manifest)
                 .map_err(|e| format!("actions: {e}"))?;
+        }
+        if let Some(c) = &cfg.actions_client {
+            c.validate().map_err(|e| format!("actions: {e}"))?;
         }
         // One invalidation clock for both caches: `page()` stamps it once per request (F89).
         let clock = Arc::new(InvalClock::default());
@@ -125,6 +150,7 @@ impl<H: Host> Core<H> {
             manifest: loaded.manifest,
             plans,
             renderer,
+            dev_token: cfg.dev_token.clone(),
             l1: H::L1::with_clock(cfg.l1_capacity, Arc::clone(&clock)),
             jobs: H::Jobs::with_clock(cfg.job_cache_capacity, Arc::clone(&clock)),
             clock,
@@ -135,18 +161,18 @@ impl<H: Host> Core<H> {
             missing_slots: Default::default(),
             cors_resolved: cfg.cors.as_ref().map(ResolvedCors::from_config),
             cors: cfg.cors,
-            // A4 verbatim; a validated prefix holds only [A-Za-z0-9._~/-], so no escaping.
-            action_prefix_tag: cfg
-                .actions
-                .as_ref()
-                .filter(|a| !a.is_default_prefix())
-                .map(|a| {
-                    format!(
-                        "<script>globalThis.__BRUST_ACTION_PREFIX__=\"{}\"</script>",
-                        a.prefix
-                    )
-                    .into_boxed_str()
+            // A4 verbatim (a validated prefix holds only [A-Za-z0-9._~/-], so no escaping); L16 adds the base.
+            action_prefix_tag: match &cfg.actions_client {
+                Some(c) => c.tags(),
+                None => cfg.actions.as_ref().and_then(|a| {
+                    ActionsClient {
+                        prefix: Some(a.prefix.clone()),
+                        ..Default::default()
+                    }
+                    .tags()
                 }),
+            }
+            .map(String::into_boxed_str),
             actions: cfg.actions,
             powered_by: powered_by(cfg.generator.as_deref()),
             https: cfg.https,
@@ -174,7 +200,10 @@ impl<H: Host> Core<H> {
         }
         if let Some(p) = &args.path {
             let m = args.method.as_deref().unwrap_or("GET");
-            r.l1_removed += self.l1.invalidate_path(m, p);
+            // L24: the key's spelling (browser percent-encoding), whatever the caller wrote.
+            r.l1_removed += self
+                .l1
+                .invalidate_path(m, &crate::routing::routes::normalize_request_path(p));
         }
         r
     }

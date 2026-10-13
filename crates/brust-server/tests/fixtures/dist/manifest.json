@@ -1,4 +1,4 @@
-{ "version": 1,
+{ "version": 2,
   "routes": [
     { "id": "r1", "pattern": "/",               "chain": ["appLayout_a1", "homePage_b2"],     "loaders": [],     "cache": null, "catch_all": false },
     { "id": "r2", "pattern": "/pokemon/{name}", "chain": ["appLayout_a1", "detailPage_c3"],   "loaders": ["r2"], "cache": { "ttl_seconds": 60, "prefix": null, "bypass": null, "tags": ["pokemon"] }, "catch_all": false },

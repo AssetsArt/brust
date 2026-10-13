@@ -22,6 +22,8 @@ export interface StartOptions {
   workers: number
   claimTimeoutMs?: number
   callTimeoutMs?: number
+  /** L10: the biggest loader/jobs reply that may cross the heap when it does not fit the slot; absent = 8388608. */
+  maxLoaderResponseBytes?: number
   /** tokio I/O threads; absent = one per core. */
   workerThreads?: number
   l1Capacity?: number
@@ -31,8 +33,12 @@ export interface StartOptions {
   cors?: CorsOptions
   /** The actions subtree (M3-F A3); absent = no actions. Boot error `actions: …` when invalid. */
   actions?: ActionsOptions
+  /** L16: what the page tells the browser `client()` (base URL, credentials, a non-default prefix); absent = from `actions` alone. */
+  actionsClient?: ActionsClientOptions
   /** The cache adapter (`manifest.cache`); absent = none (byte-identical server). */
   l2?: L2Options
+  /** `brust dev` only (L14): a request carrying this token (`x-brust-dev-token`) is traced; absent in production. */
+  devToken?: string
 }
 /** napi `NapiL2Options`; defaults 50 ms, 1048576 bytes. */
 export interface L2Options {
@@ -50,6 +56,12 @@ export interface CorsOptions {
   exposeHeaders?: string[]
   credentials?: boolean
   maxAgeSeconds?: number
+}
+/** napi `NapiActionsClient`. */
+export interface ActionsClientOptions {
+  prefix?: string
+  baseUrl?: string
+  credentials?: 'same-origin' | 'include' | 'omit'
 }
 /** napi `NapiActionsOptions`; defaults `/_brust/action`, 1048576, 8388608. */
 export interface ActionsOptions {
@@ -71,6 +83,8 @@ export interface NativeBinding {
   localAddr(): string
   /** M3-P P6 — see crates/brust-napi/src/server.rs `plan_jobs`. Never throws. */
   planJobs(slot: number, len: number): string
+  /** L10 — `planJobs` for a loader response too large for the slot: the bytes are handed over directly. Never throws. */
+  planJobsBuf(slot: number, buf: Uint8Array): string
   /** F82 — the heap request body of the in-flight `fetch` call, once; null if none. Never throws. */
   takeFetchBody(slot: number): Uint8Array | null
   /** F82 — hand Rust a response body too large for the slot; false = declined. Never throws. */
@@ -81,6 +95,8 @@ export interface NativeBinding {
   cacheL2Count(name: string): boolean
   /** cache adapter R10 — drop both tier-1 caches (a broadcast gap); the L1 entries removed. */
   cacheClear(): number
+  /** Static output (gaps round R9.4): the request reads of a cache key expression; throws when it does not parse. */
+  cacheExprReads(src: string): string[]
 }
 
 let binding: NativeBinding | null = null
@@ -107,8 +123,10 @@ export const cacheInvalidate = (args: InvalidateArgs): InvalidateResult => nativ
 export const cacheStats = (): string => native().cacheStats()
 export const localAddr = (): string => native().localAddr()
 export const planJobs = (slot: number, len: number): string => native().planJobs(slot, len)
+export const planJobsBuf = (slot: number, buf: Uint8Array): string => native().planJobsBuf(slot, buf)
 export const takeFetchBody = (slot: number): Uint8Array | null => native().takeFetchBody(slot)
 export const putFetchReply = (slot: number, body: Uint8Array): boolean => native().putFetchReply(slot, body)
 export const cacheReplay = (args: InvalidateArgs, seq: number | null): InvalidateResult => native().cacheReplay(args, seq)
 export const cacheL2Count = (name: string): boolean => native().cacheL2Count(name)
 export const cacheClear = (): number => native().cacheClear()
+export const cacheExprReads = (src: string): string[] => native().cacheExprReads(src)

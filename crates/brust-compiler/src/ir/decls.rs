@@ -103,8 +103,16 @@ pub struct InstanceRecord {
     /// (`items`); `None` when the list is not a plain props path. Empty = a static instance.
     pub loops: Vec<Option<String>>,
     /// Each child prop → the parent props path it is bound to, `[idx]` standing for the
-    /// current row of the innermost list; `None` for anything not a plain path.
+    /// current row of the innermost list; `None` for anything that is neither a plain path,
+    /// a literal nor an expression the server evaluates.
     pub props: std::collections::BTreeMap<String, Option<String>>,
+    /// Constant props (`code="a"`): part of the child's job inputs and keys (F105).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub literals: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Props the server computes from the parent's props: jinja over `__props`, and in a row
+    /// `__row` (the item) and `__idx` (F105, ledger F60).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub exprs: std::collections::BTreeMap<String, String>,
 }
 
 /// One child component used by the template (deduplicated by name).
@@ -116,6 +124,31 @@ pub struct ChildRef {
     /// Source path of the child module, `None` for a package import.
     pub path: Option<String>,
     pub tier: crate::ir::Tier,
+}
+
+/// A component that lives in a package, rendered as a React island: the island's code is the
+/// package export itself (`import { Heart } from 'lucide-react'`), not a compiled module.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ExternalRef {
+    /// The import specifier, as written (`lucide-react`).
+    pub source: String,
+    /// The export: a name, or `default`.
+    pub export: String,
+}
+
+/// A precompute slot the build may evaluate once instead of running it per request (L2): it reads
+/// nothing request- or time-dependent. The build evaluates `ComponentArtifacts.eval_ts` for `key`
+/// and recompiles with the value (`AnalyzeOptions.slot_values`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct BuildEvalSlot {
+    /// `<source>@<byte offset>`: stable across the recompile, unlike the `_sN` name.
+    pub key: String,
+    /// The slot this is in the first compile.
+    pub slot: String,
+    /// `buildTime(() => …)`: package imports and `async` allowed, failures are build errors.
+    pub build_time: bool,
+    pub line: u32,
+    pub col: u32,
 }
 
 /// One `useStore(handle)` binding of the component (M3-F D7).

@@ -185,6 +185,11 @@ and never asks Bun what a route is:
 - `children[]` records carry `"props": { "<childProp>": "<parent context path>" }` where the
   literal `[idx]` stands for the current row of `per_instance` (`"move": "pokemon.moves[idx]"`);
   it must cover the root of every input of the child's jobs (boot rule `UncoveredInput`).
+  Manifest version 2 (F105, gaps round L3) adds `"literals": { "<childProp>": <json> }` and
+  `"exprs": { "<childProp>": "<jinja expression>" }` (over `__props` = the parent context, and per
+  row `__row`/`__idx`); the three maps bind disjoint props, all count for `UncoveredInput`, and the
+  server merges them into the child's props before projection, so they are part of the job key.
+  The server refuses any other version ("rebuild the app").
   `children[].instances` stays the STRING form of the example above: `"static"` or
   `"per-row:<list context path>"` (e.g. `"per-row:pokemon.moves"`). `k` is NOT on the wire: both
   sides derive it as the 1-based ordinal of that child id within `children` in template order, and
@@ -227,7 +232,13 @@ and never asks Bun what a route is:
   `literals` (the key is path-derived; literals are constant per job); the WORKER merges them over
   the server-built inputs for ssr jobs, found by `<componentId>/<jobId>` from `JobCall.id`.
 - A react child under two or more loops (or inside a per-row inlined child) is the compile Error
-  `nested-instance`, like every other nested instance (spot-check 05c677eb).
+  `nested-instance`, like every other nested instance (spot-check 05c677eb). **Amended by L4
+  (F108, 2026-10-13):** a react child inside an inlined native/static child makes that child a fed
+  instance: the ssr job stays in the CHILD's `jobs[]` (its props are the child's), the parent gets
+  the child's `children[]` record (`per-row` when the child sits in one list), and the template reads
+  the render from the instance's slot dict (`__<childId>_<k>[_i1]["_ssr_<id>"]`). The server's asset
+  injection also walks each `children[].id` record's job `target`s. Only an island repeated by a list
+  INSIDE the inlined child (a 2-D slot) stays `nested-instance`.
 - Every inlined NATIVE child whose component has a client chunk and no `instances[]` record of its
   own (no job, no `useId` — e.g. a `useState` toggle) is ALSO linked through a static `children[]`
   entry `{ id, instances: "static", props: {} }` written by the build ON THE CHAIN COMPONENT'S record

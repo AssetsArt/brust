@@ -5,9 +5,17 @@ import { CATEGORIES, type Expect } from './rows.ts'
 import type { Result } from './run.ts'
 
 /** Rows whose observed tier is accepted to differ from (or whose checks are relaxed against) the spec, by ledger id. Set-equal to the rows carrying `knownGap`. */
-export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }> = {}
+export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }> = {
+  // L18 (F115): React reference entries whose observed behaviour disagrees with the spec; each row's knownGap says what and what it should do.
+  'c-useformstatus-child': { ledger: 'F115', observed: 'static' },
+  'a-form-action': { ledger: 'F115', observed: 'static' },
+  'd-flushsync': { ledger: 'F115', observed: 'native' },
+  'e-use-server': { ledger: 'F115', observed: 'static' },
+  'e-server-component-async': { ledger: 'F115', observed: 'static' },
+  'e-server-function-prop': { ledger: 'F115', observed: 'static' },
+}
 /** Rows that must produce an `Error` diagnostic and refuse to build. */
-export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key'] as const
+export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key', 'd-profiler'] as const
 export const COMPILE_ERROR_ROWS = ['e-parse-error'] as const
 
 /** Gaps still open after `m2a-compiler` (ledger ids in docs/plans/m1a-followups.md). F33, F35, F37, F39, F40 and F32 (single-root) are closed. */
@@ -19,11 +27,11 @@ export const DECLARED_GAPS: { id: string; what: string; owner: string }[] = [
 /** Gaps the battery itself found: none open (F37, F39, F40 closed by `m2a-compiler`; F38 by `m1-hotfix-dynamic-import`). */
 export const BATTERY_GAPS: { id: string; what: string }[] = []
 
-export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'keyed-list-child', 'controlled-input', 'nested-list', 'truthiness', 'table-rows', 'guarded-slot', 'reactive-list-rows', 'linked-list-child-rows', 'linked-card-tags', 'inner-html', 'f96-helper-spread', 'f96-linked-list-child', 'f97-count-up']
+export const BROWSER_CASES = ['theme-toggle', 'product-card', 'parent-counter', 'keyed-list', 'keyed-list-child', 'controlled-input', 'nested-list', 'truthiness', 'table-rows', 'guarded-slot', 'reactive-list-rows', 'linked-list-child-rows', 'linked-card-tags', 'inner-html', 'f96-helper-spread', 'f96-linked-list-child', 'f97-count-up', 'custom-hook-debounce', 'fragment-root-counter', 'list-cond-element-state']
 
 /** Rust-side pins of `crates/brust-compiler/tests/dual_eval.rs`; keep in sync with dual_eval.rs. */
 export const DUAL_EVAL_NO_SAMPLES = ['arrow-default', 'client-only', 'fragment-root', 'import-cycle', 'jsx-shapes', 'lazy-import', 'missing-key', 'react-child', 'react-hook', 'server-leak', 'store-unresolved-fallback']
-export const DUAL_EVAL_NO_DIRECTIVES = ['static-text', 'cached-card', 'outlet-layout', 'keyed-list-child-job', 'static-list-child']
+export const DUAL_EVAL_NO_DIRECTIVES = ['static-text', 'cached-card', 'outlet-layout', 'keyed-list-child-job', 'static-list-child', 'list-cond-element']
 
 export function renderExitReport(results: Result[]): string {
   const n = (f: (r: Result) => boolean) => results.filter(f).length

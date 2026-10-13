@@ -17,13 +17,22 @@ export type ComponentIR = Record<string, any> & {
   tier: any
   // biome-ignore lint/suspicious/noExplicitAny: IR JSON
   jobs: any[]
-  instances: { child_id: string; k: number; loops: (string | null)[]; props: Record<string, string | null> }[]
+  instances: {
+    child_id: string
+    k: number
+    loops: (string | null)[]
+    props: Record<string, string | null>
+    literals?: Record<string, unknown>
+    exprs?: Record<string, string>
+  }[]
   use_id_slots: number
   uses_outlet: boolean
   needs_worker: boolean
   /** `useStore(handle)` bindings (`decls.rs` `StoreUse`); `resolved` = `StoreRef`, `null` when
    * unresolved (the component falls back). `module` is root-relative (C3). */
   stores?: { handle: string; resolved: { name: string; module: string } | null }[]
+  /** A package export rendered as a React island (L22): `source` is then not a file. */
+  external?: { source: string; export: string }
 }
 
 export interface Compiled {
@@ -33,7 +42,11 @@ export interface Compiled {
   ir: ComponentIR
   jinja: string
   serverTs?: string
+  /** Build-time evaluation module (L2): one thunk per `ir.build_eval` slot. */
+  evalTs?: string
   clientJs?: string
+  /** The compiler's diagnostics for this component (`dev.json`, L14). */
+  diagnostics?: { class: string; rule: string; message: string; line: number; col: number; remediation: string }[]
 }
 
 type Diag = NonNullable<CompiledTree['error']>
@@ -78,11 +91,16 @@ export function compileApp(opts: {
   appRoot: string
   leaves: FlatRoute[]
   componentFile: Map<Function, string>
+  /** Why a Component the scan saw has no file (named export only, outside the root); optional. */
+  componentIssue?: Map<Function, string>
   runtimeImport: string
   serverOnly: string[]
   log: (s: string) => void
+  /** Values the build computed for `ir.build_eval` slots, by key (L2): the slots become literals. */
+  slotValues?: Record<string, unknown>
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
+  const slotValuesJson = opts.slotValues && Object.keys(opts.slotValues).length > 0 ? JSON.stringify(opts.slotValues) : undefined
   const seen = new Map<string, Seen>()
   const rootIdOfFile = new Map<string, string>()
   const routeComponent = new Map<string, string>()
@@ -95,12 +113,12 @@ export function compileApp(opts: {
     if (!file)
       throw new BuildError(
         'component-source',
-        `${route.Component!.name || '(anonymous)'} is not a default import of a .tsx file (route ${routeId})`,
+        `${opts.componentIssue?.get(route.Component!) ?? `${route.Component!.name || '(anonymous)'} is not the default export of a .tsx file in the import graph`} (route ${routeId})`,
       )
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).
@@ -132,8 +150,17 @@ export function compileApp(opts: {
       ir,
       jinja: c.jinja,
       serverTs: c.serverTs,
+      evalTs: c.evalTs,
       clientJs: c.clientJs,
+      diagnostics: c.diagnostics.map((d) => ({ class: d.class, rule: d.rule, message: d.message, line: d.line, col: d.col, remediation: d.remediation })),
     })
+  }
+  // A package export has no file of its own: bare imports in its island entries resolve from a
+  // component that uses it (the first one in build order).
+  for (const c of compiled.values()) {
+    if (!c.ir.external) continue
+    const user = [...compiled.values()].find((p) => !p.ir.external && (p.ir.children ?? []).some((ref: { id: string | null }) => ref.id === c.id))
+    c.file = user?.file ?? c.file
   }
   for (const [routeId, route] of nodes) {
     const rootId = routeComponent.get(routeId)!

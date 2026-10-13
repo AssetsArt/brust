@@ -19,9 +19,9 @@ use crate::server::Tuning;
 pub use crate::server::tls::TlsConfig;
 pub use brust_core::cache::CacheStats;
 pub use brust_core::config::{
-    ACTION_INLINE_BODY_BYTES, ActionsConfig, CorsConfig, CrossSite, DEFAULT_ACTION_PREFIX,
-    DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs,
-    InvalidateResult, MAX_ACTION_BYTES, Stats,
+    ACTION_INLINE_BODY_BYTES, ActionCredentials, ActionsClient, ActionsConfig, CorsConfig,
+    CrossSite, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES,
+    DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs, InvalidateResult, MAX_ACTION_BYTES, Stats,
 };
 use brust_core::core::Core;
 
@@ -42,8 +42,12 @@ pub struct Config {
     pub generator: Option<String>,
     /// M3-F: the actions subtree; `None` = no actions.
     pub actions: Option<ActionsConfig>,
+    /// L16: base URL / credentials / prefix the page tells the browser client; `None` = from `actions` alone.
+    pub actions_client: Option<ActionsClient>,
     /// The cache adapter (shared second tier); `None` = none.
     pub l2: Option<brust_core::l2::L2Config>,
+    /// `brust dev` only (L14): requests carrying this token get a trace header and the pages get DOM markers.
+    pub dev_token: Option<String>,
 }
 
 impl Default for Config {
@@ -59,7 +63,9 @@ impl Default for Config {
             cors: None,
             generator: None,
             actions: None,
+            actions_client: None,
             l2: None,
+            dev_token: None,
         }
     }
 }

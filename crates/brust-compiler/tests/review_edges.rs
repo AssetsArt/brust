@@ -651,8 +651,10 @@ fn array_from_over_an_iterable_or_a_shadowed_array_is_not_a_list() {
         "export default function L(props: any) { const Array = { from: (a: any, f: any) => [f(a[0], 0)] }; return <ul>{Array.from(props.xs, (x: any) => <li key={x}>{x}</li>)}</ul> }",
     ] {
         let ir = analyze(src);
+        // L6: a real `Array.from` over a non-array source now names itself (`list-shape`).
         assert!(
-            rules(&ir).contains(&(DiagClass::Fallback, "jsx-expression".into())),
+            rules(&ir).contains(&(DiagClass::Fallback, "jsx-expression".into()))
+                || rules(&ir).contains(&(DiagClass::Fallback, "list-shape".into())),
             "{src}: {:?}",
             rules(&ir)
         );
@@ -701,9 +703,25 @@ fn outlet_in_a_react_tier_component_is_an_error() {
     );
 }
 
-/// M2a3: a react child inside an inlined native child that is itself per-row is `nested-instance`.
+fn compile_err_or_jinja(dir: std::path::PathBuf) -> Result<String, brust_compiler::ir::Diagnostic> {
+    run_on_compiler_thread(move || {
+        brust_compiler::pipeline::compile_tree(
+            "input.tsx",
+            None,
+            &AnalyzeOptions {
+                root: dir,
+                ..Default::default()
+            },
+            brust_compiler::lower::DEFAULT_RUNTIME_IMPORT,
+        )
+        .map(|out| out[0].artifacts.jinja.clone())
+    })
+}
+
+/// M2a3 made a react child inside an inlined child `nested-instance`; L4 (F108) serves it from the
+/// instance's job: one level of rows reads the island from the row's slot dict.
 #[test]
-fn react_grandchild_under_an_inlined_row_is_a_nested_instance_error() {
+fn react_grandchild_under_an_inlined_row_renders_from_the_row_slot() {
     let dir = root(
         "react-grandchild",
         &[
@@ -721,17 +739,47 @@ fn react_grandchild_under_an_inlined_row_is_a_nested_instance_error() {
             ),
         ],
     );
-    let err = run_on_compiler_thread(move || {
-        brust_compiler::pipeline::compile_tree(
-            "input.tsx",
-            None,
-            &AnalyzeOptions {
-                root: dir,
-                ..Default::default()
-            },
-            brust_compiler::lower::DEFAULT_RUNTIME_IMPORT,
-        )
-        .err()
-    });
-    assert_eq!(err.expect("lowering must fail").rule, "nested-instance");
+    let jinja = compile_err_or_jinja(dir).expect("one level of rows compiles");
+    assert!(
+        jinja.contains("[_i1][\"_ssr_reviews_"),
+        "the island reads the row instance's slot: {jinja}"
+    );
+}
+
+/// L4: an island repeated by a list INSIDE an inlined child would need a 2-D slot: still `nested-instance`.
+#[test]
+fn island_per_item_inside_an_inlined_child_is_a_nested_instance_error() {
+    let dir = root(
+        "island-per-item-inlined",
+        &[
+            (
+                "input.tsx",
+                "import Panel from './Panel'\nexport default function P(props: { tags: string[] }) { return <main><Panel tags={props.tags} /></main> }",
+            ),
+            (
+                "Panel.tsx",
+                "import Tag from './Tag'\nexport default function Panel(props: { tags: string[] }) { return <ul>{props.tags.map((t) => <li key={t}><Tag name={t} /></li>)}</ul> }",
+            ),
+            (
+                "Tag.tsx",
+                "import { useReducer } from 'react'\nexport default function Tag({ name }: { name: string }) { const [n, bump] = useReducer((x: number) => x + 1, 0); return <b onClick={() => bump()}>{name}{n}</b> }",
+            ),
+        ],
+    );
+    let err = compile_err_or_jinja(dir).expect_err("a per-item island in an inlined child");
+    assert_eq!(err.rule, "nested-instance", "{err:?}");
+}
+
+#[test]
+fn outlet_in_react_names_the_construct_that_made_the_layout_react() {
+    let ir = analyze(
+        "import { Outlet } from '@brust/core/routes'\nexport default function L({ xs }: any) { return <div>{xs.map((x: any) => { const t = x; return <i key={t}>{t}</i> })}<Outlet/></div> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "outlet-in-react")
+        .unwrap_or_else(|| panic!("{:?}", ir.diagnostics));
+    assert!(d.message.contains("list-shape"), "{}", d.message);
+    assert!(d.loc > 0, "a real location, not 0");
 }

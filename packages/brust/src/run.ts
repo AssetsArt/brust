@@ -8,39 +8,57 @@
 // does not end it, so every exit is an explicit `process.exit`.
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { type BrustConfig, loadConfig } from './config'
-import { beginDrain, type StartOptions, startServer, untilReady } from './native'
-import { SLOT_BYTES } from './worker'
+import { type BrustConfig, type ConfigOverrides, loadConfig } from './config'
+import { beginDrain, localAddr, type StartOptions, startServer, untilReady } from './native'
+import { DEFAULT_MAX_LOADER_RESPONSE_BYTES } from './worker'
 
 export interface RunOptions {
   distDir?: string
   /** The routes module the workers import (`export const routes` or default). */
   entry?: string
   /** Overrides below env (CLI flags): see config.ts (incl. `bootTimeoutMs`, default 30000). */
-  config?: Partial<BrustConfig>
+  config?: ConfigOverrides
+  /** Static output (gaps round L9): runs once every worker is ready, with the bound `host:port`;
+   * then the server drains and the process exits with the returned code. */
+  onReady?: (addr: string) => Promise<number>
 }
 
 /** The manifest fields `run` needs (build/manifest.ts owns the full shape). */
 export interface RunManifest {
   actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null
+  /** L16 R16.3: `brust build --actions-only`: no page routes and no routes entry. */
+  actions_only?: boolean
+  /** L16 R16.4b: a page-only build; the actions app is deployed elsewhere (`[actions] base_url`). */
+  actions_remote?: { prefix: string } | null
   /** `[cache]`: the server's L2 settings (the workers load the adapter itself). */
   cache?: { adapter: string; getTimeoutMs: number; maxBodyBytes: number; namespace: string; buildId: string } | null
 }
 
 /** Pure: the napi `StartOptions`. No actions/cors/cache → exactly the pre-actions keys. */
-export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, version: string): StartOptions {
+export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, version: string, devToken?: string): StartOptions {
   return {
     host: cfg.host,
     port: cfg.port,
     distDir,
     workers: cfg.workers,
     callTimeoutMs: cfg.callTimeoutMs,
+    ...(cfg.maxLoaderResponseBytes !== undefined && cfg.maxLoaderResponseBytes !== DEFAULT_MAX_LOADER_RESPONSE_BYTES ? { maxLoaderResponseBytes: cfg.maxLoaderResponseBytes } : {}),
     workerThreads: cfg.ioThreads,
     generator: `brust/${version}`,
     ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}) } } : {}),
+    ...(actionsClient(cfg, m) ? { actionsClient: actionsClient(cfg, m) } : {}),
     ...(cfg.cors ? { cors: cfg.cors } : {}),
+    ...(devToken ? { devToken } : {}),
     ...(m.cache ? { l2: { adapter: m.cache.adapter, getTimeoutMs: m.cache.getTimeoutMs, maxBodyBytes: m.cache.maxBodyBytes, namespace: m.cache.namespace, buildId: m.cache.buildId } } : {}),
   }
+}
+
+/** L16: what the page tells the browser `client()` (R16.1/R16.2); absent while it would only repeat the prefix script. */
+function actionsClient(cfg: BrustConfig, m: RunManifest): NonNullable<StartOptions['actionsClient']> | undefined {
+  const credentials = cfg.actionsCredentials !== undefined && cfg.actionsCredentials !== 'same-origin' ? cfg.actionsCredentials : undefined
+  if (cfg.actionsBaseUrl === undefined && credentials === undefined && !m.actions_remote) return undefined
+  const prefix = m.actions?.prefix ?? m.actions_remote?.prefix
+  return { ...(prefix ? { prefix } : {}), ...(cfg.actionsBaseUrl !== undefined ? { baseUrl: cfg.actionsBaseUrl } : {}), ...(credentials ? { credentials } : {}) }
 }
 
 /** Every worker's response buffer, kept reachable until the process exits (see run()). */
@@ -63,7 +81,8 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     fail(`bad manifest ${manifest}: ${(e as Error).message}`)
   }
   const entry = resolve(process.env.BRUST_APP_ENTRY || opts.entry || 'routes.tsx')
-  if (!existsSync(entry)) fail(`routes entry ${entry} not found`)
+  // R16.3: an actions-only dist has no pages, so no routes module either.
+  if (!m.actions_only && !existsSync(entry)) fail(`routes entry ${entry} not found`)
 
   let cfg: BrustConfig
   try {
@@ -72,9 +91,11 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     fail((e as Error).message)
   }
 
+  if (m.actions_remote && cfg.actionsBaseUrl === undefined)
+    fail('this build has no local actions app: set [actions] base_url (or BRUST_ACTIONS_BASE_URL) to the deployment that serves them')
   const version: string = (await Bun.file(join(import.meta.dir, '../package.json')).json()).version
   try {
-    startServer(startOptions(cfg, distDir, m, version))
+    startServer(startOptions(cfg, distDir, m, version, process.env.BRUST_DEV_TOKEN || undefined))
   } catch (e) {
     fail((e as Error).message)
   }
@@ -87,6 +108,8 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     ...process.env,
     NODE_ENV: process.env.NODE_ENV,
     BRUST_RENDER_SLOTS: String(cfg.renderSlots),
+    BRUST_SLOT_BYTES: String(cfg.slotBytes),
+    BRUST_MAX_LOADER_RESPONSE_BYTES: String(cfg.maxLoaderResponseBytes),
     BRUST_DIST_DIR: distDir,
     BRUST_APP_ENTRY: entry,
     // One cache-adapter origin per process: its workers' published events are not replayed here.
@@ -115,7 +138,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   for (let i = 0; i < cfg.workers; i++) {
     // The response buffer is owned HERE, for the process lifetime: the Rust dispatcher keeps a raw
     // pointer into it, so it must not be freed with the worker (crates/brust-napi dispatch.rs).
-    const sab = new SharedArrayBuffer(SLOT_BYTES * cfg.renderSlots)
+    const sab = new SharedArrayBuffer(cfg.slotBytes * cfg.renderSlots)
     workerBuffers.push(sab)
     const w = new Worker(url, { env: { ...env, BRUST_WORKER_ID: String(i) }, workerData: { sab } } as WorkerOptions)
     // No respawn in M2: a worker that fails to boot or dies later takes the process down loudly
@@ -158,5 +181,14 @@ export async function run(opts: RunOptions = {}): Promise<void> {
   }
   ready = true
   console.log(`[brust] ready (${cfg.workers} worker${cfg.workers === 1 ? '' : 's'})`)
+  if (opts.onReady) {
+    let code = 1
+    try {
+      code = await opts.onReady(localAddr())
+    } catch (e) {
+      console.error(`[brust] ${(e as Error).stack ?? String(e)}`)
+    }
+    if (!draining) drainThenExit(code)
+  }
   await new Promise<never>(() => {})
 }

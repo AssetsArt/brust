@@ -25,10 +25,11 @@ pub mod bench {
 
 pub use actions::{put_fetch_reply, take_fetch_body};
 pub use config::{
-    ACTION_INLINE_BODY_BYTES, ActionsConfig, Config, CorsConfig, CrossSite, DEFAULT_ACTION_PREFIX,
-    DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs,
-    InvalidateResult, MAX_ACTION_BYTES, Server, Stats,
+    ACTION_INLINE_BODY_BYTES, ActionCredentials, ActionsClient, ActionsConfig, Config, CorsConfig,
+    CrossSite, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES,
+    DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs, InvalidateResult, MAX_ACTION_BYTES, Server,
+    Stats,
 };
 pub use dispatch::{CallKind, DispatchError, RenderDispatch};
-pub use pipeline::{PLAN_DECLINED, plan_in_call};
+pub use pipeline::{PLAN_DECLINED, plan_in_call, plan_in_call_buf};
 pub use server::{Tuning, start};

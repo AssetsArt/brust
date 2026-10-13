@@ -29,6 +29,10 @@ export interface ChildRecord {
   id: string
   instances: string
   props: Record<string, string>
+  /** F105: constant props; part of the child's job keys. */
+  literals?: Record<string, unknown>
+  /** F105: jinja over `__props` (and `__row`/`__idx` per row) the server evaluates. */
+  exprs?: Record<string, string>
 }
 
 export interface ComponentRecord {
@@ -49,6 +53,8 @@ export interface RouteRecord {
   loaders: string[]
   cache: { ttl_seconds: number; prefix: string | null; bypass: true | string | null; tags: string[] } | null
   catch_all: boolean
+  /** L19 (R19.3): `client/<file>.css` in cascade order; absent when the route has none. */
+  css?: string[]
 }
 
 /** `manifest.actions` (A3): `entry` is relative to dist; `maxBodyBytes`/`maxResponseBytes` are camelCase by contract. */
@@ -60,13 +66,20 @@ export interface ActionsRecord {
   crossSite: 'reject' | 'allow'
 }
 
+/** The manifest format the Rust loader accepts (`MANIFEST_VERSION` in brust-core `manifest.rs`): the one place TS names it. */
+export const MANIFEST_VERSION = 2 as const
+
 export interface ManifestJson {
-  version: 1
+  version: typeof MANIFEST_VERSION
   routes: RouteRecord[]
   components: Record<string, ComponentRecord>
   assets: { runtime: string }
   jobs_module: string
   actions: ActionsRecord | null
+  /** L16 R16.3: an actions-only build (no routes, no templates); everything but the prefix is a 404 problem+json. */
+  actions_only?: true
+  /** L16 R16.4b: a page-only build: no local actions app, `base_url` points at the deployment that has it. */
+  actions_remote?: { prefix: string }
   /** `[cache]` (cache adapters); absent without one (the manifest is then byte-identical). */
   cache?: CacheRecord
 }
@@ -231,10 +244,16 @@ export function childRecords(c: Compiled, clientOnly: string[] = []): ChildRecor
     const props: Record<string, string> = {}
     for (const [name, path] of Object.entries(inst.props)) {
       if (path === null)
-        throw new BuildError('instance-prop-path', `${ir.id}: child ${inst.child_id} prop ${name} is not a props path`)
+        throw new BuildError(
+          'instance-prop-path',
+          `${ir.id}: child ${inst.child_id} prop ${name} is not a props path, a JSON literal or a template expression over props; compute it in a loader, or wrap the child's derived value in cache()`,
+        )
       props[name] = path
     }
-    return { id: inst.child_id, instances: list === undefined ? 'static' : `per-row:${list}`, props }
+    const rec: ChildRecord = { id: inst.child_id, instances: list === undefined ? 'static' : `per-row:${list}`, props }
+    if (inst.literals && Object.keys(inst.literals).length > 0) rec.literals = { ...inst.literals }
+    if (inst.exprs && Object.keys(inst.exprs).length > 0) rec.exprs = { ...inst.exprs }
+    return rec
   })
   for (const id of clientOnly) out.push({ id, instances: 'static', props: {} })
   return out
@@ -302,7 +321,7 @@ export function writeManifest(opts: {
     }
   })
   linkNativeChunks(routes, compiled, components)
-  return { version: 1, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
+  return { version: MANIFEST_VERSION, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
 }
 
 /** S6 amendment (F66): the server's asset injection walks only each chain component's direct

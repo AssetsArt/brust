@@ -1,5 +1,5 @@
 //! Server bindings: `startServer`, `registerWorker`, `untilReady`, `beginDrain`,
-//! `cacheInvalidate`, `cacheStats`, `localAddr`, `planJobs`, `takeFetchBody`, `putFetchReply`
+//! `cacheInvalidate`, `cacheStats`, `localAddr`, `planJobs`, `planJobsBuf`, `takeFetchBody`, `putFetchReply`
 //! over `brust_server`.
 //!
 //! The CURRENT server lives in a `RwLock<Option<Arc<Server>>>` rather than a
@@ -17,9 +17,9 @@ use napi_derive::napi;
 use parking_lot::RwLock;
 
 use brust_server::{
-    ActionsConfig, Config, CorsConfig, CrossSite, DEFAULT_ACTION_PREFIX,
-    DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES, InvalidateArgs, Server,
-    Tuning, start,
+    ActionCredentials, ActionsClient, ActionsConfig, Config, CorsConfig, CrossSite,
+    DEFAULT_ACTION_PREFIX, DEFAULT_MAX_ACTION_BODY_BYTES, DEFAULT_MAX_ACTION_RESPONSE_BYTES,
+    InvalidateArgs, Server, Tuning, start,
 };
 
 use crate::dispatch::{BufPtr, KindArg, TsfnDispatch, WorkerTsfn};
@@ -114,6 +114,31 @@ pub struct NapiActionsOptions {
     pub cross_site: Option<String>,
 }
 
+/// L16: what the page tells the browser client. `credentials`: `"same-origin"` (default), `"include"` or `"omit"`.
+#[napi(object)]
+pub struct NapiActionsClient {
+    pub prefix: Option<String>,
+    pub base_url: Option<String>,
+    pub credentials: Option<String>,
+}
+
+fn actions_client(c: NapiActionsClient) -> Result<ActionsClient, String> {
+    Ok(ActionsClient {
+        prefix: c.prefix,
+        base_url: c.base_url,
+        credentials: match c.credentials.as_deref() {
+            None | Some("same-origin") => ActionCredentials::SameOrigin,
+            Some("include") => ActionCredentials::Include,
+            Some("omit") => ActionCredentials::Omit,
+            Some(o) => {
+                return Err(format!(
+                    "actions: credentials must be \"same-origin\", \"include\" or \"omit\" (got {o:?})"
+                ));
+            }
+        },
+    })
+}
+
 /// Field for field; an absent `credentials` is `false`.
 fn cors_config(c: NapiCorsOptions) -> CorsConfig {
     CorsConfig {
@@ -177,6 +202,9 @@ pub struct StartOptions {
     /// A claimed worker call that has not settled after this long answers
     /// 504 (the slot stays claimed until JS settles). Absent = 30 000.
     pub call_timeout_ms: Option<u32>,
+    /// L10: the biggest loader/jobs reply that may cross the heap when it does not fit the slot
+    /// (256 KiB..=64 MiB; boot error otherwise). Absent = 8 MiB.
+    pub max_loader_response_bytes: Option<u32>,
     /// tokio threads of the HTTP runtime (every page renders there); absent =
     /// one per core (`Tuning::default`).
     pub worker_threads: Option<u32>,
@@ -188,8 +216,12 @@ pub struct StartOptions {
     pub cors: Option<NapiCorsOptions>,
     /// The actions subtree (M3-F); absent = no actions (byte-identical server).
     pub actions: Option<NapiActionsOptions>,
+    /// L16: base URL / credentials / prefix injected for the browser `client()`; absent = from `actions` alone.
+    pub actions_client: Option<NapiActionsClient>,
     /// The cache adapter; absent = none (byte-identical server).
     pub l2: Option<NapiL2Options>,
+    /// `brust dev` only (L14): a request carrying this token in `x-brust-dev-token` is traced. Absent in production.
+    pub dev_token: Option<String>,
 }
 
 /// Boot the server (manifest, routes, templates, bind). Throws on any boot
@@ -205,6 +237,9 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
     if let Some(ms) = opts.call_timeout_ms {
         tuning.call_timeout_ms = u64::from(ms.max(1));
     }
+    if let Some(n) = opts.max_loader_response_bytes {
+        tuning.max_loader_response_bytes = n as usize;
+    }
     if let Some(n) = opts.worker_threads {
         tuning.worker_threads = n.max(1) as usize;
     }
@@ -218,7 +253,13 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
         generator: opts.generator,
         cors: opts.cors.map(cors_config),
         actions: opts.actions.map(actions_config),
+        actions_client: opts
+            .actions_client
+            .map(actions_client)
+            .transpose()
+            .map_err(napi::Error::from_reason)?,
         l2: opts.l2.map(l2_config),
+        dev_token: opts.dev_token,
         ..Config::default()
     };
     let s = start(cfg).map_err(napi::Error::from_reason)?;
@@ -275,6 +316,17 @@ pub fn register_worker(
 pub fn plan_jobs(slot: u32, len: u32) -> String {
     match BOUND.with_borrow(bound) {
         Some((s, id)) => brust_server::plan_in_call(&s, id, slot, len),
+        None => brust_server::PLAN_DECLINED.to_string(),
+    }
+}
+
+/// L10: [`plan_jobs`] for a loader response too large for the slot: the worker hands the bytes
+/// over in `buf` instead of writing them to the slot. Same answers (`""`, the misses' JSON, or
+/// `"!"`); a declined plan leaves the response for the worker to hand over with `putFetchReply`.
+#[napi]
+pub fn plan_jobs_buf(slot: u32, buf: Uint8Array) -> String {
+    match BOUND.with_borrow(bound) {
+        Some((s, id)) => brust_server::plan_in_call_buf(&s, id, slot, &buf),
         None => brust_server::PLAN_DECLINED.to_string(),
     }
 }
@@ -400,6 +452,16 @@ pub fn cache_stats() -> napi::Result<String> {
 #[napi]
 pub fn local_addr() -> napi::Result<String> {
     Ok(current()?.local_addr().to_string())
+}
+
+/// Static output (gaps round R9.4): the request reads of one `cache.prefix` / `cache.bypass`
+/// expression (`header(x)`, `cookie(x)`, `query(x)`, `request(host)`), parsed by the server's own
+/// grammar. Errors when the expression does not parse. Needs no running server.
+#[napi]
+pub fn cache_expr_reads(src: String) -> napi::Result<Vec<String>> {
+    brust_core::cache::key_expr::Expr::parse(&src)
+        .map(|e| e.request_reads())
+        .map_err(napi::Error::from_reason)
 }
 
 #[cfg(test)]

@@ -34,6 +34,8 @@ pub(crate) struct NativeHost {
     pub(crate) dist_dir: PathBuf,
     pub(crate) claim_timeout: Duration,
     pub(crate) call_timeout: Duration,
+    /// L10: the cap `put_fetch_reply` applies to a loader/jobs heap reply.
+    pub(crate) max_loader_response_bytes: usize,
     /// The cache adapter's `(get_timeout, max_body_bytes)`; `None` = no L2 calls.
     pub(crate) l2: Option<(Duration, usize)>,
 }
@@ -121,7 +123,10 @@ impl Host for NativeHost {
         let mut pairs: Vec<(Cow<str>, Cow<str>)> = call
             .headers
             .iter()
-            .filter(|(n, _)| !is_framing_header(n.as_str()))
+            .filter(|(n, _)| {
+                !is_framing_header(n.as_str())
+                    && n.as_str() != brust_core::trace::REQUEST_TOKEN_HEADER
+            })
             .map(|(n, v)| {
                 (
                     Cow::Borrowed(n.as_str()),

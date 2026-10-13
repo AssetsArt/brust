@@ -119,7 +119,7 @@ export default function TeamBuilder() {
 }
 ```
 
-`useStore` is `useSyncExternalStore`. During the server render it reads a scope seeded from the page snapshot, so the first client snapshot equals the server HTML: no `mounted` switch, no hydration mismatch, and the count is right with JavaScript disabled. A write anywhere re-renders the island only when a value it reads changed.
+`useStore` is `useSyncExternalStore`. During the server render it reads a scope seeded from the page snapshot, so the first client snapshot equals the server HTML: no `mounted` switch, no hydration mismatch, and the count is right with JavaScript disabled. A write anywhere re-renders the island only when a value it reads changed. In the browser the first client snapshot is the one the page was seeded with (the SSR snapshot), not the live value: a native component that writes the store before an idle island hydrates no longer causes a mismatch (React #418). The island hydrates against the seeded markup, then re-renders to the live value.
 
 Note: `useStore` alone compiles to the native tier. An island needs another React feature (the pokedex uses `useReducer`) to land on the React tier.
 

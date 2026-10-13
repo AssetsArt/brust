@@ -239,10 +239,22 @@ The analyzer never mutates the AST. It produces the IR (§5) plus diagnostics.
 | `useLayoutEffect` | same as `useEffect` but runs before the chunk's first DOM write | none |
 | `useRef(init)` | `{ current: init }`; when passed as `ref={r}` to an element, bound to the node via `x-ref` after mount | none |
 | `useId()` | server generates, client reads it from the DOM | deterministic per component instance |
-| anything else (`useContext`, `use`, `useReducer`, `useTransition`, `useSyncExternalStore`, custom `useX`) | → tier `react` | — |
+| custom `useX(…)` (G3) | inlined at the call site: the hook's locals are renamed `<local>_<hook><n>` (`d_useDebounced1`), an identifier argument reads the caller's binding, any other argument is a derived const; the result binds to `const x`, or to an array/object pattern matched against a literal `return [..]` / `return {..}` | as its inlined body |
+| anything else (`useContext`, `use`, `useReducer`, `useTransition`, `useSyncExternalStore`) | → tier `react` | — |
 
 Hooks must be called unconditionally at the top level of the component (React's own
 rule); the HIR already rejects violations.
+
+A custom hook is inlined when its callee is a `function` in the same module, or a named or
+default import of a function from a **relative** module (G3, plan 2026-10-13-gaps-round L5).
+Hooks calling hooks are inlined recursively (8 deep; a cycle is `hook-recursive`). It stays
+`react` (the fallback is reported at the call site and names the hook, e.g. `hook useReducer is
+not supported (in custom hook useCart, hooks/useCart.ts:4)`) when the hook: calls a hook brust
+does not support; builds JSX or returns early; has a default, rest or destructured parameter
+or assigns one (`hook-shape`); is destructured against a return that is not a literal of that
+shape (`hook-return-shape`); is imported and reads its own module's bindings or imports
+(other than React hooks), reads a global the component's module also declares, or uses
+`useStore` (import paths are not rebased); or reads a module name the component shadows.
 
 ### 4.4 Lower
 
@@ -405,6 +417,22 @@ optional chaining beyond `?.member` (lowered to `and` chains), destructuring in 
 template. The list is extended only by adding a lowering to BOTH printers and a
 golden test; never by special-casing a backend.
 
+**Module consts fold (L1, gap round 2026-10-13).** A module-level `const` whose value is
+built only from literals, template literals, `!`/`-`, binary operators, ternaries, arrays,
+objects, member / literal-index reads and other folding consts (chain depth ≤ 16, cycle-safe)
+is substituted into the template, so `{LABEL}`, `{ITEMS.map(…)}` and `useState(START)` need no
+precompute job. Consts imported by a relative path (named or default) fold only when primitive (another importer could mutate an array or object); calls,
+globals (`Date`, `process.env`), `new`, regex, functions, JSX, `let`/`var`, destructured consts and
+package imports do not (the value stays a precompute slot, as before). An array or object const
+folds only if every use in its module is a proven read: member / index reads, non-mutating array
+methods (`map`, `filter`, `find`, `some`, `every`, `includes`, `indexOf`, `join`, `slice`, `concat`, `at`)
+with callbacks that write nothing reachable from their parameters, `Object.keys` / `entries` / `values`,
+spread into a new literal, a `useState` argument, JSX or template reads. Any other use (a `for-of`
+source, a declaration or assignment, a return, an element of another literal, any other call) keeps it a
+job; a primitive always folds. A folded value that prints to
+more than 8 KiB of Jinja per use stays a slot. `NaN` / `Infinity` print as React prints them.
+The client chunk is unchanged: it still reads the const.
+
 ### 6.3 Seeding guarantee
 
 The seed of each state and the initial value of each painted slot are computed once
@@ -414,6 +442,31 @@ slot) on mount, so its signals start equal to what was painted; the directive ru
 then only writes to the DOM when a signal changes. There is no hydration diff and no
 mismatch class of bug — if the two evaluations disagree, that is a compiler bug
 caught by the golden test that renders both and compares.
+
+**Build-time evaluation (L2, gap round 2026-10-13).** A precompute slot that reads nothing
+request- or time-dependent is computed once by `brust build` instead of per request. It qualifies
+when it has no inputs, is not state-dependent, sits in no list or condition and is pure: only
+`Math` (not `random`), `JSON`, `String`, `Number`, `Array`, `Object`, `RegExp`,
+`encodeURIComponent` and `decodeURIComponent` as globals, no module `let` / `var` captures, and no
+package imports. A relatively imported helper counts only after its module is read: no package or
+`node:` import, no module `let` / `var`, no dynamic `import()`, no global outside the allowlist
+(`process`, `require`, `Date`, …), no `Math.random`, and the same for its own relative imports. The compiler lists the candidates in
+`ir.build_eval` and emits one thunk per slot (`ComponentArtifacts.eval_ts`); the build bundles them,
+runs them once in a Bun subprocess (`TZ=UTC`, 2 s per slot, JSON-only values of at most 64 KiB, and
+a runtime guard that throws on `Date.now()` / `new Date()` / `Math.random()` / `crypto` /
+`performance.now()` / `fetch`), then compiles again with the values
+(`AnalyzeOptions.slot_values`): the slot becomes a literal like any module const (L1), and a job
+left with no slots is dropped. A helper that throws, times out or returns something that is not
+JSON keeps its job and logs `warning build-eval <file>:<line>:<col> <reason>`.
+
+`buildTime(() => …)` from `@brust/core` is the explicit opt-in that lifts the limits: the closure
+may use package imports and be `async` (10 s, 256 KiB); the time/random/host rules still apply
+(`build-time-impure`). When the closure reads props, state, a store or a loop value it cannot run
+at build: it stays a per-request job and warns `build-time-input` naming the input. A throwing,
+timing-out or non-JSON closure is a build error (`build-time <file>:<line>:<col>`); a use in a
+handler, an effect or a state-dependent value is `build-time-client`. At runtime `buildTime(fn)`
+just returns `fn()`, so the job path and the baked path give the same output (the dual-run test
+builds both and compares the pages). Objects keep their key order across the recompile.
 
 ### 6.4 Precompute
 

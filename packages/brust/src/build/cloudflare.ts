@@ -14,6 +14,7 @@ import { type CacheNeed, mergeWrangler, readUserWrangler, renderWrangler, type U
 import { type CloudflareBuildConfig, CF_MIN_COMPAT_DATE } from './config'
 import { PRODUCTION, type SourceOf, sourceDirPlugin } from './bundle'
 import type { Compiled } from './compile'
+import { cssPlugin } from './css'
 import { BuildError } from './errors'
 import type { CacheRecord } from './manifest'
 import { BUILTINS as CACHE_BUILTINS } from '../cache-adapter/load'
@@ -76,10 +77,14 @@ export interface CfBuildCtx {
   manifest: { components: Record<string, { template: string }>; actions?: { prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null; cache?: CacheRecord }
   sourceOf: SourceOf
   actionsEntry: string | null
+  /** L16 R16.3: an actions-only Worker: no pages (no routes entry, no jobs, no templates), no Static Assets. */
+  actionsOnly?: boolean
   /** A custom cache adapter's source module (absolute). */
   cacheModule?: string | null
   /** `[cache] get_timeout_ms` as written (absent → the Workers default, 100). */
   cacheGetTimeoutMs?: number
+  /** L19: CSS Module class maps (the worker reads the same map as the browser). */
+  cssMaps?: Map<string, Record<string, string>>
   log: (s: string) => void
 }
 
@@ -124,7 +129,7 @@ function cfAlias(alias: Record<string, string>, sourceOf: SourceOf): BunPlugin {
 /** The CF bundle's stand-in for the napi addon (`native.ts` `require('../native/index.js')`, R8): every call
  * fails loudly, since a Worker has no addon. */
 function cfNativeStub(handlersPath: string): BunPlugin {
-  const names = ['startServer', 'registerWorker', 'untilReady', 'beginDrain', 'cacheInvalidate', 'cacheStats', 'localAddr', 'planJobs', 'takeFetchBody', 'putFetchReply', 'cacheReplay', 'cacheL2Count', 'cacheClear']
+  const names = ['startServer', 'registerWorker', 'untilReady', 'beginDrain', 'cacheInvalidate', 'cacheStats', 'localAddr', 'planJobs', 'planJobsBuf', 'takeFetchBody', 'putFetchReply', 'cacheReplay', 'cacheL2Count', 'cacheClear']
   return {
     name: 'brust-cf-native',
     setup(b) {
@@ -166,7 +171,7 @@ function cfEntryCache(c: CacheRecord, customModule: string | null) {
 }
 
 /** R2/R10: which Cloudflare bindings the configured cache needs (`[cache.cloudflare]` keys land in the adapter's options), or null. */
-export function cacheNeeds(c: CacheRecord | undefined): CacheNeed | null {
+export function cacheNeeds(c: Pick<CacheRecord, 'adapter' | 'broadcast' | 'options' | 'broadcastOptions'> | undefined): CacheNeed | null {
   if (!c) return null
   const opt = (o: Record<string, unknown> | undefined, k: string) => (typeof o?.[k] === 'string' ? (o[k] as string) : undefined)
   const all = [c.options, c.broadcastOptions]
@@ -191,7 +196,7 @@ plugin({
 const m = await import(${JSON.stringify(app)})
 const bad = []
 for (const k of ['loader', 'jobs', 'action', 'install']) if (typeof m[k] !== 'function') bad.push(k + ' is not a function')
-if (typeof m.MANIFEST !== 'string' || JSON.parse(m.MANIFEST).version !== 1) bad.push('MANIFEST.version !== 1')
+if (typeof m.MANIFEST !== 'string' || JSON.parse(m.MANIFEST).version !== 2) bad.push('MANIFEST.version !== 2')
 if (typeof m.CONFIG !== 'string' || JSON.parse(m.CONFIG).abi !== 1) bad.push('CONFIG.abi !== 1')
 if (typeof m.TEMPLATES !== 'object' || m.TEMPLATES === null) bad.push('TEMPLATES is not an object')
 const r = await m.loader('{}')
@@ -247,11 +252,11 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   const jobsEntry = join(out, '.stage', 'jobs.ts')
   writeFileSync(
     entryPath,
-    cfEntrySource({ entry: ctx.entry, jobsEntry, actionsEntry: a ? ctx.actionsEntry : null, prefix: a?.prefix ?? '', manifestPath: join(out, 'manifest.json'), templatesPath, config, cache: entryCache, doClass }),
+    cfEntrySource({ entry: ctx.entry, jobsEntry, actionsOnly: ctx.actionsOnly === true, actionsEntry: a ? ctx.actionsEntry : null, prefix: a?.prefix ?? '', manifestPath: join(out, 'manifest.json'), templatesPath, config, cache: entryCache, doClass }),
   )
   // Bare imports of the generated files resolve from the app root (an --out-dir outside the app has no node_modules above it).
   // (registered by absolute AND real path: the bundler reports the real one, e.g. /private/var on macOS)
-  for (const f of [entryPath, jobsEntry]) {
+  for (const f of ctx.actionsOnly ? [entryPath] : [entryPath, jobsEntry]) {
     ctx.sourceOf.set(f, ctx.entry)
     ctx.sourceOf.set(realpathSync(f), ctx.entry)
   }
@@ -269,7 +274,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     define: PRODUCTION,
     minify: false,
     external: ['node:*', 'cloudflare:*', glueSpec],
-    plugins: [cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'])],
+    plugins: [cssPlugin(ctx.cssMaps ?? new Map()), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'])],
   })
   if (violations.length > 0) throw new BuildError('cf-unsupported', `${[...new Set(violations)].join('\n')}\nthese modules do not exist on Cloudflare Workers; swap them with [cloudflare] alias`)
   if (!res.success) throw new BuildError('bundle', `cloudflare: ${res.logs.map(String).join('\n')}`)
@@ -280,8 +285,8 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
   mkdirSync(appDir, { recursive: true })
   writeFileSync(appFile, await js[0]!.text())
 
-  const assets = layoutAssets(out, cfDir, p.coreVersion)
-  warnings.push(...assets.warnings)
+  // An actions-only Worker has no pages and so no Static Assets (no `assets` binding in its wrangler.jsonc either).
+  if (!ctx.actionsOnly) warnings.push(...layoutAssets(out, cfDir, p.coreVersion).warnings)
   const compatibilityDate = p.cfg.compatibilityDate ?? p.core.meta.compatibilityDate
   if (compatibilityDate < CF_MIN_COMPAT_DATE) throw new BuildError('config', `compatibility_date ${compatibilityDate} is older than ${CF_MIN_COMPAT_DATE}`)
   if (doClass) {
@@ -292,7 +297,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
       `// generated by brust build --target cloudflare (do not edit)\nexport * from "./${p.core.meta.main}"\nexport { default } from "./${p.core.meta.main}"\nexport { BrustCacheDO } from "./${appRel}"\n`,
     )
   }
-  const merged = mergeWrangler(p.user, { appRoot: ctx.appRoot, cfDir: join(ctx.dist, 'cf'), name: p.cfg.name, pkgName: p.pkgName, compatibilityDate, main: doClass ? 'main.js' : p.core.meta.main, version: p.coreVersion })
+  const merged = mergeWrangler(p.user, { appRoot: ctx.appRoot, cfDir: join(ctx.dist, 'cf'), name: p.cfg.name, pkgName: p.pkgName, compatibilityDate, main: doClass ? 'main.js' : p.core.meta.main, version: p.coreVersion, ...(ctx.actionsOnly ? { noAssets: true } : {}) })
   warnings.push(...merged.warnings)
   writeFileSync(join(cfDir, 'wrangler.jsonc'), renderWrangler(merged.config))
 

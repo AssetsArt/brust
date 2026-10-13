@@ -37,6 +37,16 @@ test('blank has the E8 file set', () => {
     expect(existsSync(join(blank, f)), f).toBe(true)
   }
 })
+test('R25.2: the blank favicon is the docs site favicon, byte for byte (sha256 pinned; the docs-site branch is not in CI)', () => {
+  const bytes = readFileSync(join(blank, 'public/favicon.svg'))
+  expect(new Bun.CryptoHasher('sha256').update(bytes).digest('hex')).toBe('529a1fa41828e326ab3cb7351d6bf1d3c2a681c9b2b3d37da5ae7f95fd73771a')
+})
+test('R25.1: the starter page loads no font, CDN or remote stylesheet', () => {
+  const css = readFileSync(join(blank, 'public/app.css'), 'utf8')
+  const layout = readFileSync(join(blank, 'components/Layout.tsx'), 'utf8')
+  expect(css).not.toMatch(/@import|url\(|@font-face/)
+  expect(layout).not.toMatch(/href="https?:/)
+})
 test('blank pins equal the repo', () => {
   const core = json(join(repo, 'packages/brust/package.json'))
   const pokedex = json(join(repo, 'examples/pokedex/package.json'))
@@ -48,7 +58,7 @@ test('blank pins equal the repo', () => {
 })
 test('blank scripts are dev/build/start/typecheck per R6 plus the Cloudflare pair (M4-CF R11)', () => {
   expect(blankPkg().scripts).toEqual({
-    dev: 'brust build routes.tsx && brust start',
+    dev: 'brust dev routes.tsx',
     build: 'brust build routes.tsx',
     start: 'brust start',
     typecheck: 'bun check',

@@ -186,6 +186,10 @@ fn is_zero(n: &usize) -> bool {
 pub struct ComponentIR {
     pub id: String,
     pub source: String,
+    /// Set on the synthetic React-tier component of a package export (`source` is then
+    /// `package_<specifier>_<export>` made filename-safe, not a file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalRef>,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     pub state: Vec<StateDecl>,
@@ -203,6 +207,9 @@ pub struct ComponentIR {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub uses_outlet: bool,
     pub jobs: Vec<JobDecl>,
+    /// Slots the build may evaluate once (L2); empty when none qualifies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build_eval: Vec<BuildEvalSlot>,
     pub child_links: Vec<ChildLink>,
     /// Inlined child instances with a precompute job or `useId` values (S6 `children[].instances`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -249,6 +256,18 @@ pub struct ModuleDecl {
     pub names: Vec<String>,
     /// The printed statement without a leading `export`.
     pub source: String,
+    /// The `const name = value` bindings it declares, read as expressions (G5/G9/G10):
+    /// the placer folds a value it can prove constant into the template.
+    pub consts: Vec<ConstVal>,
+}
+
+/// A module-level `const` with its initializer read as an expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstVal {
+    pub name: String,
+    pub value: RawExpr,
+    /// The binding has a use that is not a proven read (R1.1a): an array or object must not fold.
+    pub mutated: bool,
 }
 
 /// The structural parts of a `ComponentIR` before placement.
@@ -265,6 +284,7 @@ impl ComponentIR {
         Self {
             id,
             source,
+            external: None,
             tier: Tier::Pending,
             props: vec![],
             state: vec![],
@@ -277,6 +297,7 @@ impl ComponentIR {
             template: Node::Fragment(vec![]),
             uses_outlet: false,
             jobs: vec![],
+            build_eval: vec![],
             child_links: vec![],
             instances: vec![],
             client_props: vec![],
@@ -299,4 +320,20 @@ impl Default for ComponentIR {
     fn default() -> Self {
         Self::new(String::new(), String::new())
     }
+}
+
+/// A job the server runs per inlined instance of its component: a precompute job, or the ssr
+/// render of a React island the component holds (L4; a client-only island has no render).
+pub fn feeds_instances(j: &JobDecl) -> bool {
+    matches!(
+        j.kind,
+        JobKind::Precompute | JobKind::Ssr { client_only: false }
+    )
+}
+
+/// A native/static component whose inlined instances the server must feed: a job of its own
+/// (`feeds_instances`) or `useId` values. A React component renders as its own island instead.
+pub fn is_fed(ir: &ComponentIR) -> bool {
+    !matches!(ir.tier, Tier::React { .. })
+        && (ir.use_id_slots > 0 || ir.jobs.iter().any(feeds_instances))
 }

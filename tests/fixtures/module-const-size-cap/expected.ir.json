@@ -1,0 +1,121 @@
+{
+  "id": "input_f6d1d680",
+  "source": "tests/fixtures/module-const-size-cap/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 13765,
+      "tag": "ul",
+      "attrs": [],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Precomputed": {
+                "slot": "_s1",
+                "js": "BIG",
+                "client_js": null,
+                "inputs": [],
+                "state_dependent": false,
+                "per_item": null
+              }
+            },
+            "item": "it",
+            "index": null,
+            "key": {
+              "Server": {
+                "loc": 13812,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 13812,
+                      "kind": {
+                        "Ident": {
+                          "name": "it",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "id",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Element": {
+                  "loc": 13803,
+                  "tag": "li",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Server": {
+                          "loc": 13820,
+                          "kind": {
+                            "Member": {
+                              "target": {
+                                "loc": 13820,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "it",
+                                    "kind": "LoopBinding"
+                                  }
+                                }
+                              },
+                              "name": "title",
+                              "optional": false
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [],
+      "outputs": [
+        "_s1"
+      ],
+      "per_item": null
+    }
+  ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-const-size-cap/input.tsx@13777",
+      "slot": "_s1",
+      "build_time": false,
+      "line": 167,
+      "col": 8
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}
