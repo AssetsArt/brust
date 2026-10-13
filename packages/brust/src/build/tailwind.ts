@@ -49,6 +49,20 @@ export function tailwindVersions(appRoot: string): { app?: string; compiler?: st
   return { app: versionFrom('tailwindcss', appRoot), compiler, node: versionFrom('@tailwindcss/node', appRoot), oxide: versionFrom('@tailwindcss/oxide', appRoot) }
 }
 
+/** The oldest Tailwind this plugin runs (review F1): 4.0's `compile()` has no `sources` (it takes globs), so its build
+ * would crash mid-way; 4.1.0 is the first with the API the official integrations use today. */
+export const TAILWIND_FLOOR = '4.1.0'
+/** The version brust is tested with (create-app pins the same); the command that lifts an app off an old Tailwind names it. */
+export const TAILWIND_TESTED = '4.3.3'
+
+/** `a < b` for plain `major.minor.patch` versions (a pre-release suffix counts as its base version). */
+export function versionBelow(a: string, b: string): boolean {
+  const n = (v: string) => v.split('-')[0]!.split('.').map((x) => Number(x) || 0)
+  const [x, y] = [n(a), n(b)]
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0)
+  return false
+}
+
 const addCommand = (v: string) => `bun add -d --exact ${TAILWIND_PACKAGES.map((p) => `${p}@${v}`).join(' ')}`
 
 /** The Tailwind plugin of the CSS build, resolved from the app. Missing packages → `tailwind-missing` with the
@@ -62,6 +76,19 @@ export async function loadTailwind(appRoot: string, usedBy: string, uses: (file:
     throw new BuildError(
       'tailwind-missing',
       `${relative(appRoot, usedBy)} uses Tailwind CSS, but ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} not installed in the app: run \`${v.app ? addCommand(v.app) : `bun add -d ${TAILWIND_PACKAGES.map((p) => `${p}@4`).join(' ')}`}\``,
+    )
+  const old = (
+    [
+      ['tailwindcss', v.app],
+      ['the compiler tailwindcss', v.compiler],
+      ['@tailwindcss/node', v.node],
+      ['@tailwindcss/oxide', v.oxide],
+    ] as const
+  ).filter(([, ver]) => ver !== undefined && versionBelow(ver, TAILWIND_FLOOR))
+  if (old.length > 0)
+    throw new BuildError(
+      'tailwind-version',
+      `${relative(appRoot, usedBy)} uses Tailwind CSS, but ${old.map(([p, ver]) => `${p} ${ver}`).join(', ')} ${old.length > 1 ? 'are' : 'is'} older than ${TAILWIND_FLOOR}, the oldest brust builds with: run \`${addCommand(TAILWIND_TESTED)}\``,
     )
   if (new Set([v.app, v.compiler, v.node, v.oxide]).size > 1)
     log?.(
