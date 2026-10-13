@@ -1,8 +1,7 @@
 // React islands: the server paints <brust-island data-id x-props>HTML</brust-island>; the island's
 // chunk registers a hydrate function through a global queue (no import of the runtime); the runtime
 // hydrates each host once, when idle (spec S12). Load order between runtime and chunks is free.
-import { warnOnce } from './warn'
-import { insideRaw } from './directives/common'
+import { warnOnce, insideRaw } from './core-api'
 
 export type IslandHydrate = (host: HTMLElement, props: Record<string, unknown>) => void
 type QueueEntry = [string, IslandHydrate]

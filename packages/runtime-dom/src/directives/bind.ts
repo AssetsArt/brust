@@ -1,6 +1,4 @@
-import { BINDERS } from './index'
-import { parsed, read } from './common'
-import { warnOnce } from '../warn'
+import { BINDERS, parsed, read, warnOnce } from '../core-api'
 
 // Attributes that execute or load code from a string; a bound value must never reach them as-is.
 const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'poster', 'data', 'xlink:href', 'ping'])

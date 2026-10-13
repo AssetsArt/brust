@@ -1,4 +1,4 @@
-import { BINDERS } from './index'
+import { BINDERS } from '../core-api'
 BINDERS.push({
   match: (a) => a === 'x-ref',
   bind: ({ inst, el, raw }) => {
