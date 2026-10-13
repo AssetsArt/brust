@@ -13,7 +13,7 @@ export interface ParsedArgs {
   template?: string
   yes: boolean
   brustDep?: string
-  /** `--tailwind` (L21): the blank template with Tailwind CSS v4. */
+  /** `--tailwind` (L21): accepted and ignored since L28: the blank template uses Tailwind CSS v4 by default. */
   tailwind: boolean
   help: boolean
 }
