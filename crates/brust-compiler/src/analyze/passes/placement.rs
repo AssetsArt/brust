@@ -90,6 +90,11 @@ struct Placer<'s> {
     jsx_flagged: bool,
     /// Locations of `list-shape` fallbacks: the reader already named the construct there.
     list_shape_locs: BTreeSet<u32>,
+    /// L2: module path, source text, module declarations and build-computed slot values.
+    path: String,
+    text: &'s [u8],
+    module_decls: Vec<crate::ir::ModuleDecl>,
+    slot_values: &'s std::collections::HashMap<String, serde_json::Value>,
 }
 
 pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>) {
@@ -179,6 +184,10 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
             .filter(|d| d.rule == "list-shape")
             .map(|d| d.loc)
             .collect(),
+        path: ctx.path.to_string(),
+        text: ctx.text,
+        module_decls: ir.module_decls.clone(),
+        slot_values: &ctx.opts.slot_values,
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     p.node(&mut template);
@@ -210,6 +219,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         }
     }
     ir.diagnostics.append(&mut p.diagnostics);
+    ir.build_eval = std::mem::take(&mut p.st.build_eval);
 
     // One precompute job over every slot.
     let mut outputs = Vec::new();
@@ -485,6 +495,13 @@ impl Placer<'_> {
     }
 
     fn slot(&mut self, r: &RawExpr) -> Expr {
+        // L2: the build computed this slot once; it is a literal now (no job, no worker).
+        let key = format!("{}@{}", self.path, r.loc);
+        if let Some(v) = self.slot_values.get(&key)
+            && let Some(lit) = crate::analyze::const_fold::json_to_raw(v, r.loc)
+        {
+            return Expr::Server(crate::ir::ServerExpr(lit));
+        }
         let deps = self.st.cx.deps(r, &self.loop_scope);
         self.next_slot += 1;
         let slot = format!("_s{}", self.next_slot);
@@ -507,6 +524,15 @@ impl Placer<'_> {
                 state_dependent |= l.stateful;
             }
         }
+        self.classify_for_build(
+            r,
+            &deps,
+            &slot,
+            &key,
+            &inputs,
+            state_dependent,
+            per_item.is_some(),
+        );
         self.st.slots.insert(
             slot.clone(),
             SlotInfo {
@@ -523,6 +549,50 @@ impl Placer<'_> {
             inputs: minimal_paths(inputs),
             state_dependent,
             per_item,
+        }
+    }
+
+    /// L2: records the slot as a build-evaluation candidate, or says why a `buildTime(…)` is not one.
+    #[allow(clippy::too_many_arguments)]
+    fn classify_for_build(
+        &mut self,
+        r: &RawExpr,
+        deps: &Deps,
+        slot: &str,
+        key: &str,
+        inputs: &[String],
+        state_dependent: bool,
+        per_item: bool,
+    ) {
+        use super::build_eval::{Verdict, classify};
+        let placed = inputs.is_empty() && !state_dependent && !per_item && self.guards.is_empty();
+        let (line, col) = crate::ir::line_col(self.text, r.loc);
+        let candidate = |build_time: bool| crate::ir::BuildEvalSlot {
+            key: key.to_string(),
+            slot: slot.to_string(),
+            build_time,
+            line,
+            col,
+        };
+        match classify(r, deps, placed, &self.module_decls) {
+            Verdict::Not => {}
+            Verdict::Pure => self.st.build_eval.push(candidate(false)),
+            Verdict::BuildTime => self.st.build_eval.push(candidate(true)),
+            Verdict::BuildTimeInput(what) => self.diagnostics.push(Diagnostic::warning(
+                "build-time-input",
+                format!(
+                    "buildTime(…) reads {}; it cannot run at build and stays a per-request job",
+                    what.join(", ")
+                ),
+                r.loc,
+                "read only constants inside buildTime, or compute it from props in a loader",
+            )),
+            Verdict::BuildTimeImpure(g) => self.diagnostics.push(Diagnostic::error(
+                "build-time-impure",
+                format!("buildTime(…) reads `{g}`, which differs between runs"),
+                r.loc,
+                "buildTime is evaluated once at build: remove time and randomness from the closure",
+            )),
         }
     }
 

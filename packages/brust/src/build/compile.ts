@@ -35,6 +35,8 @@ export interface Compiled {
   ir: ComponentIR
   jinja: string
   serverTs?: string
+  /** Build-time evaluation module (L2): one thunk per `ir.build_eval` slot. */
+  evalTs?: string
   clientJs?: string
   /** The compiler's diagnostics for this component (`dev.json`, L14). */
   diagnostics?: { class: string; rule: string; message: string; line: number; col: number; remediation: string }[]
@@ -87,8 +89,11 @@ export function compileApp(opts: {
   runtimeImport: string
   serverOnly: string[]
   log: (s: string) => void
+  /** Values the build computed for `ir.build_eval` slots, by key (L2): the slots become literals. */
+  slotValues?: Record<string, unknown>
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
+  const slotValuesJson = opts.slotValues && Object.keys(opts.slotValues).length > 0 ? JSON.stringify(opts.slotValues) : undefined
   const seen = new Map<string, Seen>()
   const rootIdOfFile = new Map<string, string>()
   const routeComponent = new Map<string, string>()
@@ -106,7 +111,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).
@@ -138,6 +143,7 @@ export function compileApp(opts: {
       ir,
       jinja: c.jinja,
       serverTs: c.serverTs,
+      evalTs: c.evalTs,
       clientJs: c.clientJs,
       diagnostics: c.diagnostics.map((d) => ({ class: d.class, rule: d.rule, message: d.message, line: d.line, col: d.col, remediation: d.remediation })),
     })

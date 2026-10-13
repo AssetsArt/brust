@@ -305,3 +305,179 @@ fn a_cycle_and_a_deep_chain_do_not_fold_or_hang() {
     let ir = module_const(&chain, "return <p>{C10}</p>");
     assert!(!ir.needs_worker, "a chain within 16 folds");
 }
+
+// L2 (gap-build-eval): which precompute slots the build may evaluate once.
+
+fn eval_slots(head: &str, body: &str) -> Vec<(String, bool)> {
+    module_const(head, body)
+        .build_eval
+        .iter()
+        .map(|b| (b.slot.clone(), b.build_time))
+        .collect()
+}
+
+#[test]
+fn a_pure_helper_called_with_constants_is_a_build_eval_candidate() {
+    let r = eval_slots(
+        "function fmt(n: number) { return n.toFixed(2) }\nconst K = 3",
+        "return <p>{fmt(K)}</p>",
+    );
+    assert_eq!(r, vec![("_s1".to_string(), false)]);
+}
+
+#[test]
+fn impure_or_request_dependent_slots_are_not_candidates() {
+    for (head, body) in [
+        ("function f() { return Date.now() }", "return <p>{f()}</p>"),
+        (
+            "function f() { return new Intl.NumberFormat().format(1) }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "function f() { return process.env.X }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "function f() { return Math.random() }",
+            "return <p>{Math.random()}</p>",
+        ),
+        (
+            "let n = 1\nfunction f() { return n }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "var n = 1\nfunction f() { return n }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "import { g } from 'pkg'\nfunction f() { return g() }",
+            "return <p>{f()}</p>",
+        ),
+        (
+            "function f(x: number) { return x * 2 }",
+            "return <p>{f(props.n)}</p>",
+        ),
+    ] {
+        let src = head.to_string();
+        let ir = analyze(
+            "C.tsx",
+            &format!("{src}\nexport default function C(props: any) {{ {body} }}"),
+        );
+        assert!(
+            ir.build_eval.is_empty(),
+            "{head} / {body}: {:?}",
+            ir.build_eval
+        );
+    }
+    // inside a condition or a list, and state-dependent values, stay jobs
+    assert!(
+        eval_slots(
+            "function f() { return 1 }",
+            "return <p>{props.ok && f()}</p>"
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn build_time_is_recognised_only_from_core_and_allows_package_imports() {
+    let ok = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nimport { hl } from 'pkg'\nexport default function C() { const h = buildTime(async () => hl('x')); return <p>{h}</p> }",
+    );
+    assert_eq!(ok.build_eval.len(), 1, "{:?}", ok.diagnostics);
+    assert!(ok.build_eval[0].build_time);
+    // a function that merely has the name is not the opt-in
+    let named = analyze(
+        "C.tsx",
+        "import { buildTime } from './mine'\nimport { hl } from 'pkg'\nexport default function C() { const h = buildTime(() => hl('x')); return <p>{h}</p> }",
+    );
+    assert!(named.build_eval.is_empty());
+}
+
+#[test]
+fn build_time_that_reads_props_warns_and_stays_a_job() {
+    let ir = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nexport default function C({ code }: any) { const h = buildTime(() => code.toUpperCase()); return <p>{h}</p> }",
+    );
+    assert!(ir.build_eval.is_empty());
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "build-time-input")
+        .unwrap();
+    assert!(d.message.contains("code"), "{}", d.message);
+    assert!(d.line > 0, "a real location");
+    assert!(
+        ir.jobs
+            .iter()
+            .any(|j| matches!(j.kind, JobKind::Precompute))
+    );
+}
+
+#[test]
+fn build_time_reading_time_or_randomness_is_an_error() {
+    let ir = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nexport default function C() { const h = buildTime(() => Date.now()); return <p>{h}</p> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "build-time-impure")
+        .unwrap();
+    assert_eq!(d.class, DiagClass::Error);
+    assert!(d.message.contains("Date"), "{}", d.message);
+}
+
+#[test]
+fn build_time_in_client_code_is_an_error() {
+    let ir = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nimport { useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); return <button onClick={() => setN(buildTime(() => n + 1))}>{n}</button> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "build-time-client")
+        .unwrap();
+    assert_eq!(d.class, DiagClass::Error);
+}
+
+#[test]
+fn a_slot_value_from_the_build_replaces_the_slot_with_a_literal_and_drops_the_job() {
+    use brust_compiler::analyze::component::{AnalyzeOptions, analyze_source};
+    use brust_compiler::parse::run_on_compiler_thread;
+    let src = "function f() { return 6 * 7 }\nexport default function C() { return <p>{f()}</p> }";
+    let first = analyze("C.tsx", src);
+    let key = first.build_eval[0].key.clone();
+    assert!(first.needs_worker);
+    // objects use the build's `{"$": [[key, value]…]}` encoding (key order survives serde_json)
+    let mut values = std::collections::HashMap::new();
+    values.insert(key, serde_json::json!(42));
+    let s = src.to_string();
+    let second = run_on_compiler_thread(move || {
+        analyze_source(
+            "C.tsx",
+            s.into_bytes(),
+            &AnalyzeOptions {
+                slot_values: values,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    });
+    assert!(
+        second.jobs.is_empty() && !second.needs_worker,
+        "{:?}",
+        second.jobs
+    );
+    assert!(second.build_eval.is_empty());
+    let mut s = Vec::new();
+    slots(&second.template, &mut s);
+    assert!(
+        matches!(&s[0], Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Lit(Literal::Num(n)) if *n == 42.0)),
+        "{s:?}"
+    );
+}

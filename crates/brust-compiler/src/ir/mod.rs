@@ -207,6 +207,9 @@ pub struct ComponentIR {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub uses_outlet: bool,
     pub jobs: Vec<JobDecl>,
+    /// Slots the build may evaluate once (L2); empty when none qualifies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build_eval: Vec<BuildEvalSlot>,
     pub child_links: Vec<ChildLink>,
     /// Inlined child instances with a precompute job or `useId` values (S6 `children[].instances`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -294,6 +297,7 @@ impl ComponentIR {
             template: Node::Fragment(vec![]),
             uses_outlet: false,
             jobs: vec![],
+            build_eval: vec![],
             child_links: vec![],
             instances: vec![],
             client_props: vec![],

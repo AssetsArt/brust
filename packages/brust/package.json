@@ -17,6 +17,7 @@
       "browser": "./src/browser.ts",
       "default": "./src/index.ts"
     },
+    "./build-time": "./src/build-time.ts",
     "./routes": "./src/routes.ts",
     "./server": "./src/server.ts",
     "./server-handlers": "./src/server-handlers.ts",

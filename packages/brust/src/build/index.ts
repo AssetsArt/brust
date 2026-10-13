@@ -10,6 +10,7 @@ import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'n
 import { BrustRouteError, type FlatRoute, validateRoutes } from '../routes'
 import { type BrowserCtx, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
+import { evaluateBuildSlots } from './build-eval'
 import { type Compiled, compileApp } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
@@ -219,15 +220,19 @@ async function buildInto(
   const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps }
   // The runtime first: its hashed URL is the `runtimeImport` every client chunk is compiled with.
   const runtime = await buildRuntime(out, ctx)
-  const { compiled, routeComponent } = compileApp({
+  const compileOpts = {
     appRoot,
     leaves,
     componentFile: o.componentFile,
     componentIssue: o.componentIssue,
     runtimeImport: `/_brust/${runtime}`,
     serverOnly: o.serverOnly,
-    log: o.log,
-  })
+  }
+  let { compiled, routeComponent } = compileApp({ ...compileOpts, log: o.log })
+  // L2: slots that read nothing request- or time-dependent are computed once, here, and the app is
+  // compiled again with their values (a slot with a value is a literal: no job, no worker).
+  const slotValues = await evaluateBuildSlots(out, compiled, ctx.sourceOf, appRoot, o.log)
+  if (Object.keys(slotValues).length > 0) ({ compiled, routeComponent } = compileApp({ ...compileOpts, slotValues, log: () => {} }))
 
   mkdirSync(join(out, 'jinja'), { recursive: true })
   for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)

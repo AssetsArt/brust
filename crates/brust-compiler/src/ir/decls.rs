@@ -128,6 +128,21 @@ pub struct ExternalRef {
     pub export: String,
 }
 
+/// A precompute slot the build may evaluate once instead of running it per request (L2): it reads
+/// nothing request- or time-dependent. The build evaluates `ComponentArtifacts.eval_ts` for `key`
+/// and recompiles with the value (`AnalyzeOptions.slot_values`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct BuildEvalSlot {
+    /// `<source>@<byte offset>`: stable across the recompile, unlike the `_sN` name.
+    pub key: String,
+    /// The slot this is in the first compile.
+    pub slot: String,
+    /// `buildTime(() => …)`: package imports and `async` allowed, failures are build errors.
+    pub build_time: bool,
+    pub line: u32,
+    pub col: u32,
+}
+
 /// One `useStore(handle)` binding of the component (M3-F D7).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StoreUse {

@@ -315,3 +315,39 @@ fn exported_const_name(ast: &js_ast::Ast<'_>, export: &str) -> Option<String> {
     }
     None
 }
+
+/// A JSON value as a literal expression (a build-computed slot, L2); `None` for a shape the
+/// literal cannot hold.
+pub fn json_to_raw(v: &serde_json::Value, loc: u32) -> Option<RawExpr> {
+    use crate::ir::Literal;
+    use serde_json::Value;
+    let kind = match v {
+        Value::Null => RawKind::Lit(Literal::Null),
+        Value::Bool(b) => RawKind::Lit(Literal::Bool(*b)),
+        Value::Number(n) => RawKind::Lit(Literal::Num(n.as_f64()?)),
+        Value::String(s) => RawKind::Lit(Literal::Str(s.clone())),
+        Value::Array(items) => RawKind::Array(
+            items
+                .iter()
+                .map(|i| json_to_raw(i, loc))
+                .collect::<Option<_>>()?,
+        ),
+        // The build encodes every object as `{"$": [[key, value], …]}` so key order survives
+        // `serde_json` (no `preserve_order`): a plain object is not a valid value here.
+        Value::Object(o) => {
+            let pairs = o.get("$")?.as_array()?;
+            RawKind::Object(
+                pairs
+                    .iter()
+                    .map(|p| {
+                        let [k, v] = p.as_array()?.as_slice() else {
+                            return None;
+                        };
+                        Some((k.as_str()?.to_string(), json_to_raw(v, loc)?))
+                    })
+                    .collect::<Option<_>>()?,
+            )
+        }
+    };
+    Some(RawExpr { loc, kind })
+}
