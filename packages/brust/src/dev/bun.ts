@@ -85,6 +85,8 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
   let last: { method: string; path: string; status: number } | undefined
   let stopping = false
   let url = ''
+  /** Processes spawned by an in-flight cycle (a build, a booting child): `stop()` must reach them (R13.5, own PIDs only). */
+  const inflight = new Set<ReturnType<typeof Bun.spawn>>()
 
   const publish = () =>
     tui.setStatus({
@@ -125,7 +127,9 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       stdout: 'pipe',
       stderr: 'pipe',
     })
+    inflight.add(p)
     const [so, se, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+    inflight.delete(p)
     return { ok: code === 0, text: `${so}\n${se}`, ms: Math.round(performance.now() - t0) }
   }
 
@@ -146,6 +150,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       stdout: 'pipe',
       stderr: 'pipe',
     })
+    inflight.add(proc)
     const tail: string[] = []
     let ready = false
     return new Promise<Child>((resolveBoot, reject) => {
@@ -165,6 +170,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       pumpLines(proc.stdout as ReadableStream<Uint8Array>, line)
       pumpLines(proc.stderr as ReadableStream<Uint8Array>, line)
       void proc.exited.then((code) => {
+        inflight.delete(proc)
         clearTimeout(timer)
         if (!ready) reject(new Error(`the new build exited with code ${code} before it was ready\n${tail.join('\n')}`))
         else if (active?.proc === proc && !stopping) tui.log(`[brust] the server process exited (code ${code})`)
@@ -196,6 +202,10 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
     const g = ++counter
     const dir = join(devRoot, `g${g}`)
     const b = await build(dir)
+    if (stopping) {
+      rmSync(dir, { recursive: true, force: true })
+      return
+    }
     warnings = parseWarnings(b.text)
     if (!b.ok) {
       rmSync(dir, { recursive: true, force: true })
@@ -207,8 +217,14 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       child = await boot(dir)
     } catch (e) {
       rmSync(dir, { recursive: true, force: true })
+      if (stopping) return
       const raw = (e as Error).message
       fail({ rule: 'boot', message: raw.split('\n')[0] ?? raw, raw })
+      return
+    }
+    // Stopped while this child booted, or a newer generation already took over: this child must not be adopted.
+    if (stopping || g < gen) {
+      await stopChild(child)
       return
     }
     const old = active
@@ -259,6 +275,12 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       process.stdin.pause()
     }
     tui.close()
+    // A build or a booting child of an in-flight cycle: SIGINT, then SIGKILL (own PIDs only).
+    const mid = [...inflight]
+    for (const p of mid) p.kill('SIGINT')
+    await Promise.all(mid.map(async (p) => {
+      if ((await Promise.race([p.exited, Bun.sleep(4000).then(() => undefined)])) === undefined) p.kill('SIGKILL')
+    }))
     if (active) await stopChild(active)
     rmSync(devRoot, { recursive: true, force: true })
     exit(0)
@@ -284,6 +306,9 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
 
   tui.log(`[brust] dev server on ${url} — ${HOTKEYS}`)
   publish()
-  await cycle()
+  // The first build goes through the loop too, so it is single-flight with every later one: an edit saved while it
+  // runs waits for it and then builds on top (never a second cycle racing the first).
+  loop.trigger('.')
+  void loop.idle()
   return done
 }
