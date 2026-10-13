@@ -50,7 +50,32 @@ function htmlPage(status: number, title: string, body: string, gen: number): Res
   return new Response(html, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } })
 }
 
-export function startProxy(o: { hostname: string; port: number }, view: DevView): DevProxy {
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+
+/** The `Host` names the dev server answers to (DNS-rebinding guard): loopback, the configured bind host, and
+ * `BRUST_DEV_ALLOWED_HOSTS` (comma separated) for a tunnel or a custom local name. */
+export function allowedHosts(bind: string, extra: string | undefined): Set<string> {
+  return new Set([...LOOPBACK, bind.toLowerCase(), ...(extra ?? '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)])
+}
+
+const hostName = (hostHeader: string): string => {
+  const h = hostHeader.toLowerCase()
+  return h.startsWith('[') ? h.slice(0, h.indexOf(']') + 1) : (h.split(':')[0] ?? '')
+}
+
+/** A WebSocket (or any request) from a page of ANOTHER origin must not reach the dev channel: `Origin`, when sent,
+ * has to be the host the request was addressed to. */
+export function sameOriginOrNone(origin: string | null, hostHeader: string | null): boolean {
+  if (origin === null) return true
+  try {
+    return new URL(origin).host.toLowerCase() === (hostHeader ?? '').toLowerCase()
+  } catch {
+    return false
+  }
+}
+
+export function startProxy(o: { hostname: string; port: number; allowedHosts?: string }, view: DevView): DevProxy {
+  const allowed = allowedHosts(o.hostname, o.allowedHosts ?? process.env.BRUST_DEV_ALLOWED_HOSTS)
   const sockets = new Set<ServerWebSocket<undefined>>()
   const send = (ws: ServerWebSocket<undefined>, msg: unknown) => {
     try {
@@ -105,6 +130,10 @@ export function startProxy(o: { hostname: string; port: number }, view: DevView)
     port: o.port,
     async fetch(req, srv) {
       const url = new URL(req.url)
+      // DNS rebinding: a page on evil.example whose name resolves to 127.0.0.1 would otherwise read the app and the
+      // source paths in build errors. Only the dev server's own names are answered.
+      if (!allowed.has(hostName(req.headers.get('host') ?? ''))) return new Response('brust dev: unexpected Host header (set BRUST_DEV_ALLOWED_HOSTS to allow it)', { status: 421 })
+      if (url.pathname === WS_PATH && !sameOriginOrNone(req.headers.get('origin'), req.headers.get('host'))) return new Response('brust dev: cross-origin WebSocket refused', { status: 403 })
       if (url.pathname === WS_PATH) return srv.upgrade(req, { data: undefined }) ? undefined : new Response('websocket expected', { status: 426 })
       if (url.pathname === CLIENT_PATH) return new Response(DEV_CLIENT_JS, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } })
       const t0 = performance.now()

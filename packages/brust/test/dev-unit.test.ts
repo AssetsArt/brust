@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseBuildError, parseWarnings } from '../src/dev/diag'
-import { inject } from '../src/dev/proxy'
+import { allowedHosts, inject, sameOriginOrNone } from '../src/dev/proxy'
 import { HOTKEYS, MAX_STATUS_LINES, renderStatus, rowsFor, Tui, tuiMode } from '../src/dev/tui'
 import { defaultIgnored, watchLoop } from '../src/dev/watch'
 
@@ -152,7 +152,9 @@ test('watchLoop: reading a directory (atime) is not a change; a file written in 
     writeFileSync(join(dir, 'public', 'a.css'), 'a')
     let runs = 0
     const loop = watchLoop({ root: dir, ignored: () => false, debounceMs: 20, run: async () => void runs++ })
-    await Bun.sleep(100)
+    await Bun.sleep(500) // FSEvents may still deliver the setup writes
+    await loop.idle()
+    runs = 0
     readdirSync(join(dir, 'public'))
     readFileSync(join(dir, 'public', 'a.css'))
     await Bun.sleep(300)
@@ -165,4 +167,14 @@ test('watchLoop: reading a directory (atime) is not a change; a file written in 
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('allowedHosts / sameOriginOrNone: the DNS-rebinding and cross-site WebSocket guards', () => {
+  const a = allowedHosts('localhost', 'dev.test, tunnel.example')
+  for (const h of ['localhost', '127.0.0.1', '[::1]', 'dev.test', 'tunnel.example']) expect(a.has(h)).toBe(true)
+  expect(a.has('evil.example')).toBe(false)
+  expect(sameOriginOrNone(null, 'localhost:1337')).toBe(true)
+  expect(sameOriginOrNone('http://localhost:1337', 'localhost:1337')).toBe(true)
+  expect(sameOriginOrNone('https://evil.example', 'localhost:1337')).toBe(false)
+  expect(sameOriginOrNone('null', 'localhost:1337')).toBe(false)
 })

@@ -245,6 +245,23 @@ test('plain mode (stdout is not a TTY): line logs only, no escape codes, request
   expect(log).not.toContain('\x1b[')
 })
 
+test('security: a foreign Host (DNS rebinding) and a cross-origin WebSocket are refused', async () => {
+  const rebound = await fetch(`${base}/`, { headers: { host: 'evil.example' } })
+  expect(rebound.status).toBe(421)
+  const ws = (origin?: string) =>
+    new Promise<string>((resolve) => {
+      const w = new WebSocket(`${base.replace('http', 'ws')}/_brust/dev/ws`, { headers: origin ? { origin } : {} } as never)
+      w.onmessage = () => {
+        resolve('open')
+        w.close()
+      }
+      w.onerror = () => resolve('refused')
+      setTimeout(() => resolve('timeout'), 5000)
+    })
+  expect(await ws('https://evil.example')).toBe('refused')
+  expect(await ws(base)).toBe('open')
+}, 60_000)
+
 test('Ctrl+C (SIGINT) quits cleanly: exit 0 and the generation directories are gone', async () => {
   expect(existsSync(join(app, '.brust/dev'))).toBe(true)
   proc.kill('SIGINT')
