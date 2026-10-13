@@ -580,6 +580,8 @@ The changes per lane:
 | L12, L16 | Deployment and Actions pages. |
 | L13–L15 | A new "Dev mode" page, plus the CLI page. |
 
+The site's production domain is **https://brust.dev** (human, 2026-10-13). With the L9 switch, the site gets one `SITE_URL` constant in `website/lib`, canonical and `og:url` tags, `sitemap.xml` and `llms.txt`, all from that constant. It is still not deployed until the human says so.
+
 Each pass gets screenshots in light, dark and at 400px, plus the website tests. It is a direct commit on docs-site (no PR), as before.
 
 ## Waves and conflicts
