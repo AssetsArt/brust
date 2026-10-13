@@ -402,7 +402,7 @@ fn read_function(
         .return_expr
         .map(root_node)
         .unwrap_or(Node::Fragment(vec![]));
-    ir.template = host_root(root, root_loc, &mut ir.diagnostics);
+    ir.template = host_root(root, root_loc);
     ir.uses_outlet = has_outlet(&ir.template);
     check_printer_panic(ir);
 }
@@ -526,8 +526,9 @@ fn arm(raw: RawExpr) -> Vec<Node> {
 }
 
 /// Spec §5.2: a single returned element is the mount host; anything else is
-/// wrapped in `<brust-host style="display:contents">` with a warning.
-fn host_root(node: Node, loc: u32, diagnostics: &mut Vec<Diagnostic>) -> Node {
+/// wrapped in a synthetic `<brust-host style="display:contents">`; lowering keeps it only for an
+/// interactive component (and warns there).
+fn host_root(node: Node, loc: u32) -> Node {
     if let Node::Element { .. } = node {
         return mark_host(node);
     }
@@ -535,12 +536,8 @@ fn host_root(node: Node, loc: u32, diagnostics: &mut Vec<Diagnostic>) -> Node {
         Node::Fragment(children) => children,
         other => vec![other],
     };
-    diagnostics.push(Diagnostic::warning(
-        "fragment-root",
-        "the component does not return a single element; it is wrapped in <brust-host>",
-        loc,
-        "return one element",
-    ));
+    // The wrapper is synthetic: lowering drops it for a static component and warns when an interactive
+    // one keeps it (the tier is not known here).
     Node::Element {
         loc,
         tag: "brust-host".into(),
@@ -551,6 +548,7 @@ fn host_root(node: Node, loc: u32, diagnostics: &mut Vec<Diagnostic>) -> Node {
         children,
         host: true,
         ref_name: None,
+        synthetic: true,
     }
 }
 
@@ -625,6 +623,7 @@ fn mark_host(node: Node) -> Node {
             attrs,
             children,
             ref_name,
+            synthetic,
             ..
         } => Node::Element {
             loc,
@@ -633,6 +632,7 @@ fn mark_host(node: Node) -> Node {
             children,
             host: true,
             ref_name,
+            synthetic,
         },
         other => other,
     }

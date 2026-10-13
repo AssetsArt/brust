@@ -41,6 +41,7 @@ The example components of the design doc, built by `brustc --emit all`, painted 
 - f96-linked-list-child
 - f97-count-up
 - custom-hook-debounce
+- fragment-root-counter
 - list-cond-element-state
 
 Each case asserts first-paint equality (no `console.warn` / `console.error`, no visible DOM change on mount), its interactions, and that the interactions raised no warning. `harness-self-test` is the harness's negative control.
@@ -51,7 +52,7 @@ What each gate checks (the pinned sets are compared by set equality, so changing
 
 - Battery (`scripts/battery/exit.test.ts`): no row disagrees with its expected tier or job count unless it is in `KNOWN_GAP_ROWS` (empty), each of which must still observe its pinned tier (none today); `ERROR_ROWS` (e-function-prop-react-child, e-server-only-handler, e-request-prop, e-missing-key) are the only rows expecting `error` and each must be refused; `COMPILE_ERROR_ROWS` (e-parse-error); every row that reaches lowering must not `fail`; every `react` row carries a fallback diagnostic and no error.
 - Dual evaluation (`dual_eval.rs`): fails without `bun` (`BRUST_DUAL_EVAL_SKIP=1` is local-only); fixtures without samples are pinned in `NO_SAMPLES` (arrow-default, client-only, fragment-root, import-cycle, jsx-shapes, lazy-import, missing-key, react-child, react-hook, server-leak, store-unresolved-fallback); sampled fixtures with nothing to compare are pinned in `NO_DIRECTIVES` (static-text, cached-card, outlet-layout, keyed-list-child-job, static-list-child, list-cond-element); every other sampled fixture contributes at least one check.
-- Browser (`tests/browser`, happy-dom): 19 example cases plus the harness self-test, run as separate files by the exit test.
+- Browser (`tests/browser`, happy-dom): 20 example cases plus the harness self-test, run as separate files by the exit test.
 
 ## Known gaps
 

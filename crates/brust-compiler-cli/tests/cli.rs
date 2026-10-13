@@ -88,7 +88,8 @@ fn emit_diag_exits_1_on_error_and_0_otherwise() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("warning fragment-root "));
+    // G8: the wrapper is dropped for a static root; the warning moved to lowering (interactive roots only).
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
 }
 
 /// M1b-2 acceptance: a server-only import reached from a handler fails the build,

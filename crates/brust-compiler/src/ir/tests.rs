@@ -32,6 +32,7 @@ fn component_ir_round_trips_through_json() {
         }))],
         host: true,
         ref_name: None,
+        synthetic: false,
     };
     ir.diagnostics.push(Diagnostic::warning(
         "fragment-root",
