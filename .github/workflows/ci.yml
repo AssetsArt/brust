@@ -12,6 +12,9 @@ on:
 concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
+# sccache cannot cache incremental builds (workspace and path crates would always miss), so incremental is off for every job.
+env:
+  CARGO_INCREMENTAL: "0"
 jobs:
   rust:
     runs-on: ubuntu-latest
@@ -51,6 +54,8 @@ jobs:
       # --exclude: the vendored crate's own lib-test cannot link (its native stubs live in brust-compiler).
       - run: cargo test --workspace --exclude bun_react_compiler
       - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
+      - run: sccache --show-stats
+        if: always()
   # M4-CF: ONE blocking job for every Cloudflare test. Order: the release-shape wasm first (a release-leg break shows on every PR),
   # then workerd e2e (cf-min + pokedex on D1, tests/cf), the build-target unit tests, and the scaffold --target cloudflare case.
   # No Cloudflare credentials: `deploy --dry-run` only; the real-edge proof is local-only.
@@ -111,6 +116,8 @@ jobs:
       - run: cd packages/brust && bun test test/cf-*.test.ts
       # 4. the scaffold case: blank from packed tarballs → `brust build --target cloudflare` (BRUST_CORE_CF_DIR unset in the app build) → wrangler deploy --dry-run.
       - run: cd packages/create-app && BRUST_CORE_CF_DIR="$RUNNER_TEMP/core-cf" bun test --timeout 600000 test/scaffold.test.ts -t cloudflare
+      - run: sccache --show-stats
+        if: always()
   runtime-dom:
     runs-on: ubuntu-latest
     steps:
@@ -145,6 +152,8 @@ jobs:
       - run: git diff --exit-code docs/react-coverage.md docs/plans/m1-exit-report.md
       # Exit criteria checked by code (also re-runs dual evaluation and the browser cases).
       - run: bun test scripts/battery
+      - run: sccache --show-stats
+        if: always()
   browser:
     runs-on: ubuntu-latest
     env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
@@ -164,6 +173,8 @@ jobs:
           restore-keys: cargo-reg-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run browser-test
+      - run: sccache --show-stats
+        if: always()
   # ONE addon build per run (L27): server and cf download the artifact instead of compiling it again.
   # All jobs run on ubuntu-latest, so the .node is portable between them.
   addon:
@@ -187,6 +198,8 @@ jobs:
       - run: cd packages/brust && bun run build:debug
       - uses: actions/upload-artifact@v4
         with: { name: addon-linux-x64, path: packages/brust/native, retention-days: 1, if-no-files-found: error }
+      - run: sccache --show-stats
+        if: always()
   # @brust/core: the napi addon (built with `napi build` on this runner), the package's unit
   # tests and the end-to-end run of the real CLI (build the fixture app, start it, assert from the
   # outside). The addon itself comes from the `addon` job (artifact); this job compiles no Rust.
