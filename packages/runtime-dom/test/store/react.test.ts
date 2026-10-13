@@ -4,10 +4,11 @@ import { join } from 'node:path'
 import * as React from 'react'
 // react-dom/server, NOT react-dom/client: islands tests mock 'react-dom/client' process-wide, and a
 // server render exercises useSyncExternalStore's server-snapshot path without a mounted root.
+import { hydrateRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server.node'
-import { signal } from '../../src/signal'
+import { computed, signal } from '../../src/signal'
 import { defineStore } from '../../src/store/define-store'
-import { __setServerResolver, _resetStores } from '../../src/store/registry'
+import { __setServerResolver, _resetStores, applyStoreSnapshot } from '../../src/store/registry'
 import { useStore } from '../../src/store/react'
 
 afterEach(() => {
@@ -27,7 +28,8 @@ test('useStore renders the store snapshot and reflects writes; server snapshot m
   expect(renderToString(React.createElement(View))).toContain('>0</span>')
   expect(team.snapshot().score).toBe(0)
   team.bump()
-  expect(renderToString(React.createElement(View))).toContain('>1</span>')
+  // The server snapshot is the SSR one (G13): a write after load does not change what hydration expects.
+  expect(renderToString(React.createElement(View))).toContain('>0</span>')
   expect(team.snapshot().score).toBe(1)
 })
 
@@ -48,4 +50,58 @@ test('react.ts has no value import from the core', () => {
   const rel = src.split('\n').filter((l) => /from '\.\.?\//.test(l))
   expect(rel.length).toBeGreaterThan(0)
   for (const l of rel) expect(l.trimStart().startsWith('import type')).toBe(true)
+})
+
+// G13: a native mount effect writes the store before an island hydrates. The island must hydrate against the
+// snapshot the server rendered (then catch up with the live value), not the live one: React #418 otherwise.
+function seeded(name: string, state: object) {
+  document.body.innerHTML = `<script type="application/json" data-brust-store="${name}">${JSON.stringify(state)}</script><div id="root"></div>`
+  return document.getElementById('root') as HTMLElement
+}
+const until = async (ok: () => boolean) => {
+  for (let i = 0; i < 100 && !ok(); i++) await new Promise((r) => setTimeout(r, 10))
+}
+
+test('hydrateRoot after a store write hydrates the SSR value without recoverable errors, then shows the live one', async () => {
+  const store = defineStore('rt-hydrate', () => {
+    const score = signal(0)
+    return { score }
+  })
+  const root = seeded('rt-hydrate', { score: 5 })
+  root.innerHTML = '<span id="score">5</span>' // what the server rendered from the seed
+  function View() {
+    return React.createElement('span', { id: 'score' }, String(useStore(store).score))
+  }
+  expect(store.score()).toBe(5) // first access seeds from the script tag
+  store.score.set(9) // the native mount effect, before idle hydration
+  const errors: unknown[] = []
+  hydrateRoot(root, React.createElement(View), { onRecoverableError: (e) => errors.push(e) })
+  await until(() => root.textContent === '9')
+  expect(errors).toEqual([])
+  expect(root.textContent).toBe('9')
+})
+
+test('the ssr snapshot includes computeds, is identity-stable, and ignores later writes', () => {
+  const s = defineStore('rt-ssr-id', () => {
+    const n = signal(1)
+    return { n, double: computed(() => n() * 2) }
+  })
+  seeded('rt-ssr-id', { n: 3 })
+  const ssr = (s as unknown as Record<symbol, () => { n: number; double: number }>)[Symbol.for('brust.ssrSnapshot')]!
+  const first = ssr()
+  expect(first).toEqual({ n: 3, double: 6 })
+  expect(ssr()).toBe(first)
+  expect(s.snapshot()).toBe(first) // reused as rec.snap until the first write
+  s.n.set(4)
+  expect(ssr()).toBe(first)
+  expect(s.snapshot()).toEqual({ n: 4, double: 8 })
+})
+
+test('applyStoreSnapshot refreshes the ssr snapshot (R11.1)', () => {
+  const s = defineStore('rt-ssr-nav', () => ({ n: signal(0) }))
+  seeded('rt-ssr-nav', { n: 1 })
+  const ssr = (s as unknown as Record<symbol, () => { n: number }>)[Symbol.for('brust.ssrSnapshot')]!
+  expect(ssr().n).toBe(1)
+  applyStoreSnapshot({ 'rt-ssr-nav': { n: 7 } })
+  expect(ssr().n).toBe(7)
 })

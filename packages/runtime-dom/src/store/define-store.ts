@@ -1,7 +1,7 @@
 // defineStore (M3-F D1): the 0.1.x `brustjs/store` handle on the shared reactive core and the
 // globalThis registry. Resolution (browser registry / server resolver) lives in ./registry.
-import { type Computed, type Signal, isComputed, isSignal } from '../signal'
-import { type StoreInstanceRecord, resolveRecord } from './registry'
+import { type Computed, type Signal, isSignal } from '../signal'
+import { type StoreInstanceRecord, computeSnapshot, resolveRecord } from './registry'
 
 // Unwrap a Signal/Computed to its value type; `never` if it is neither. Uses `infer` (not
 // `extends Signal<unknown>`): `Signal<T>.set(next: T)` is contravariant in T, so
@@ -80,15 +80,10 @@ export function defineStore<S extends object>(name: string, factory: () => S): S
   }
   handle.snapshot = () => {
     const rec = resolve()
-    if (rec.snap && rec.snap.version === rec.version.n) return rec.snap.value as Snapshot<S>
-    const out: Record<string, unknown> = {}
-    for (const key of Object.keys(rec.instance)) {
-      const v = (rec.instance as Record<string, unknown>)[key]
-      if (isSignal(v) || isComputed(v)) out[key] = v()
-    }
-    rec.snap = { value: out, version: rec.version.n }
-    return out as Snapshot<S>
+    return computeSnapshot(rec) as Snapshot<S>
   }
+  // The snapshot the SSR HTML was rendered from (browser); React islands hydrate against it. Absent on the server.
+  ;(handle as unknown as Record<symbol, unknown>)[Symbol.for('brust.ssrSnapshot')] = () => resolve().ssr ?? handle.snapshot()
   handle.serialize = () => {
     const out: Record<string, unknown> = {}
     for (const [k, s] of Object.entries(resolve().instance)) {

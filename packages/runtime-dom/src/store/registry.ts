@@ -1,5 +1,6 @@
 // Browser store registry + the server-resolver hook (M3-F D3/D6/C7).
 // The registry lives on globalThis (C7) so two copies of this module share one instance per name.
+import { isComputed, isSignal, untracked } from '../signal'
 import { parseStoreScript } from './serialize'
 
 // The resolved per-scope store record, shared by the browser registry and the server per-request
@@ -11,7 +12,21 @@ export interface StoreInstanceRecord {
   subs: Set<() => void>
   version: { n: number }
   snap: { value: Record<string, unknown>; version: number } | null
+  /** Browser only: the snapshot the SSR HTML was rendered from (script seed applied, nothing written since). Islands hydrate against it (G13). */
+  ssr?: Record<string, unknown>
   handle?: { serialize(): Record<string, unknown> }
+}
+
+/** Plain-value view of a record (signals and computeds read, actions dropped), memoized in `rec.snap` per version. */
+export function computeSnapshot(rec: StoreInstanceRecord): Record<string, unknown> {
+  if (rec.snap && rec.snap.version === rec.version.n) return rec.snap.value
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(rec.instance)) {
+    const v = (rec.instance as Record<string, unknown>)[key]
+    if (isSignal(v) || isComputed(v)) out[key] = v()
+  }
+  rec.snap = { value: out, version: rec.version.n }
+  return out
 }
 
 export type ServerResolver = (name: string, create: () => StoreInstanceRecord) => StoreInstanceRecord
@@ -58,9 +73,11 @@ export function resolveRecord(
   const reg = browserRegistry()
   let rec = reg[name]
   if (!rec) {
-    rec = reg[name] = create(false)
+    const made = (rec = reg[name] = create(false))
     const el = seedScript(name)
     if (el) seed(rec, parseStoreScript(el))
+    // Identity-stable: the same object stays `rec.snap` until the first write.
+    rec.ssr = untracked(() => computeSnapshot(made)) // a first access inside an effect must not subscribe it
   }
   return rec
 }
@@ -77,6 +94,7 @@ export function applyStoreSnapshot(snap: Record<string, Record<string, unknown>>
       const v = inst[key]
       if (v && typeof v.set === 'function') v.set(state[key])
     }
+    entry.ssr = untracked(() => computeSnapshot(entry)) // R11.1: the payload is the new server truth for islands hydrating later
   }
 }
 
