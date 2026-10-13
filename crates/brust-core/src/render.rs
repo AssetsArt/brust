@@ -86,6 +86,9 @@ fn render_into(
 
 pub struct Renderer {
     env: Environment<'static>,
+    /// `brust dev` (L14): wrap each chain level in `<!--brust:<id>-->…<!--/brust-->`, except these ids (react
+    /// islands, which React hydrates and which must not get a node injected). `None` = never (production).
+    dev_markers: Option<std::collections::HashSet<String>>,
 }
 
 impl Renderer {
@@ -107,7 +110,15 @@ impl Renderer {
             env.add_template(name, source)
                 .map_err(|e| render_err(id, &e))?;
         }
-        Ok(Renderer { env })
+        Ok(Renderer {
+            env,
+            dev_markers: None,
+        })
+    }
+
+    /// Turn on the dev DOM markers (L14); `skip` = component ids that never get one.
+    pub fn set_dev_markers(&mut self, skip: std::collections::HashSet<String>) {
+        self.dev_markers = Some(skip);
     }
 
     /// `Environment::get_template` for the render benches (a separate crate, so
@@ -159,14 +170,26 @@ impl Renderer {
                 .env
                 .get_template(id)
                 .map_err(|_| RenderError::Unknown(id.clone()))?;
+            let mark = self
+                .dev_markers
+                .as_ref()
+                .is_some_and(|skip| !skip.contains(id));
             if pos == 0 {
                 render_into(&tmpl, scope, out).map_err(|e| render_err(id, &e))?;
+                if mark {
+                    out.insert_str(0, &format!("<!--brust:{id}-->"));
+                    out.push_str("<!--/brust-->");
+                }
             } else {
                 // An inner level: its output becomes the parent's `__outlet`
                 // (an Arc<str> copy inside minijinja — unavoidable); sized like
                 // the document, which bounds it.
                 let mut s = String::with_capacity(cap);
                 render_into(&tmpl, scope, &mut s).map_err(|e| render_err(id, &e))?;
+                if mark {
+                    s.insert_str(0, &format!("<!--brust:{id}-->"));
+                    s.push_str("<!--/brust-->");
+                }
                 outlet = Some(s);
             }
         }
@@ -319,6 +342,29 @@ pub fn inject_page_assets_into(
     store: Option<&Node>,
 ) {
     inject_document_assets_into(html, chain, m, store, None);
+}
+
+/// The components a page is made of, in the order the asset injection walks them: each chain level, the react
+/// children its jobs target, and its native children (L14 trace).
+pub fn page_components(chain: &[String], m: &Manifest) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut add = |id: &str| {
+        if !out.iter().any(|x| x == id) {
+            out.push(id.to_string());
+        }
+    };
+    for id in chain {
+        add(id);
+        if let Some(c) = m.components.get(id) {
+            for t in c.jobs.iter().filter_map(|j| j.target.as_deref()) {
+                add(t);
+            }
+            for ch in &c.children {
+                add(&ch.id);
+            }
+        }
+    }
+    out
 }
 
 /// M3-F A4: as [`inject_page_assets_into`], with `prefix_tag` (the server's prebuilt

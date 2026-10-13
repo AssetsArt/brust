@@ -35,6 +35,8 @@ export interface StartOptions {
   actions?: ActionsOptions
   /** The cache adapter (`manifest.cache`); absent = none (byte-identical server). */
   l2?: L2Options
+  /** `brust dev` only (L14): a request carrying this token (`x-brust-dev-token`) is traced; absent in production. */
+  devToken?: string
 }
 /** napi `NapiL2Options`; defaults 50 ms, 1048576 bytes. */
 export interface L2Options {

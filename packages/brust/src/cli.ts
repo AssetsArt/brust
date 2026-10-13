@@ -8,7 +8,7 @@ import { runDev } from './dev'
 import { run } from './run'
 
 const USAGE = `usage:
-  brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare] [--wasm-from-source]
+  brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare] [--wasm-from-source] [--dev]
   brust dev [entry=routes.tsx] [--port N] [--workers N]    (Bun target: proxy + hot reload + inline TUI)
   brust dev [entry=routes.tsx] --target cloudflare [--out-dir dist] [--port N] [--wasm-from-source] [-- <wrangler args>]
   brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
@@ -55,6 +55,7 @@ export async function main(argv: string[]): Promise<void> {
         force: { type: 'boolean' },
         target: { type: 'string' },
         'wasm-from-source': { type: 'boolean' },
+        dev: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
     })
@@ -81,6 +82,7 @@ export async function main(argv: string[]): Promise<void> {
         force: values.force === true,
         target: target as 'bun' | 'cloudflare' | undefined,
         wasmFromSource: values['wasm-from-source'] === true,
+        dev: values.dev === true,
         log: (s) => console.log(s),
       })
     } catch (e) {

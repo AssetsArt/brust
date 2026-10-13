@@ -193,6 +193,8 @@ pub struct StartOptions {
     pub actions: Option<NapiActionsOptions>,
     /// The cache adapter; absent = none (byte-identical server).
     pub l2: Option<NapiL2Options>,
+    /// `brust dev` only (L14): a request carrying this token in `x-brust-dev-token` is traced. Absent in production.
+    pub dev_token: Option<String>,
 }
 
 /// Boot the server (manifest, routes, templates, bind). Throws on any boot
@@ -225,6 +227,7 @@ pub fn start_server(opts: StartOptions) -> napi::Result<()> {
         cors: opts.cors.map(cors_config),
         actions: opts.actions.map(actions_config),
         l2: opts.l2.map(l2_config),
+        dev_token: opts.dev_token,
         ..Config::default()
     };
     let s = start(cfg).map_err(napi::Error::from_reason)?;
