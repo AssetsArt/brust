@@ -41,7 +41,7 @@ async function open(path: string): Promise<Page> {
 const errorsOf = (p: Page) => (p as Page & { errors: string[] }).errors
 
 test('every Guide page is 200 with its title, a live demo frame and no compiler warning besides the react demos', async () => {
-  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'css', 'packages', 'react-coverage', 'configuration', 'cli', 'deployment', 'migrating'])
+  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'css', 'packages', 'react-coverage', 'configuration', 'cli', 'dev-mode', 'deployment', 'migrating'])
   for (const p of GUIDE) {
     const r = await fetch(`${base}/docs/${p.slug}`)
     expect([p.slug, r.status]).toEqual([p.slug, 200])
@@ -176,7 +176,7 @@ test('Installation, Project structure, Configuration, CLI, Deployment, Migrating
   await page.context().close()
 
   for (const [path, tab, text] of [
-    ['/docs/cli', 'brust dev', 'only --target cloudflare'],
+    ['/docs/cli', 'brust dev', 'css public/app.css (no reload)'],
     ['/docs/deployment', 'Cloudflare Workers', 'wrangler deploy'],
     ['/docs/migrating', '2.x', "from '@brust/core/routes'"],
   ] as const) {
