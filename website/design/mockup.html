@@ -1,0 +1,1089 @@
+<title>brust docs mockup</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600;700&family=Chakra+Petch:wght@300;400;500;600;700&family=Noto+Serif+Thai:wght@400;500;600&family=Zen+Old+Mincho:wght@400;500;600;700&display=swap">
+<style>
+/* Layout concept: "a developer's screen". Light, cool paper for reading; the code lives in dark terminal panes.
+   The hero is a tmux session (three panes + status bar) that plays the quickstart. Sections are left-aligned on a 1160px
+   grid; sequences (steps) use a numbered rail, comparisons use one shared scale. Amber is the only accent: the tmux status
+   bar, the active pane, step markers, link underlines. Type: Archivo at two widths (expanded for display, normal for text),
+   Fragment Mono for code. */
+:root {
+  /* neo-mirai skin: warm paper with a 112px grid, gold + sun-orange, deep teal night bands.
+     Chakra Petch (display, covers Thai), Zen Old Mincho -> Noto Serif Thai (text), Azeret Mono (code, labels). */
+  --paper: oklch(94% 0.035 78); --sheet: oklch(97% 0.02 82); --ink: oklch(18% 0.035 82); --ink-2: oklch(36% 0.045 80); --rule: oklch(76% 0.05 77);
+  --amber: oklch(68% 0.145 74); --amber-fill: oklch(74% 0.155 78); --amber-ink: oklch(46% 0.12 62); --on-amber: oklch(18% 0.035 82);
+  --sun: oklch(64% 0.19 43); --sun-deep: oklch(52% 0.17 38); --gold-bright: oklch(80% 0.16 82);
+  --term: oklch(17% 0.035 185); --term-2: oklch(21% 0.04 178); --term-fg: oklch(94% 0.02 82); --term-dim: oklch(72% 0.03 90); --term-rule: oklch(31% 0.04 180);
+  --t-static: oklch(48% 0.1 165); --t-native: oklch(50% 0.13 62); --t-react: oklch(48% 0.11 235);
+  --sy-kw: oklch(80% 0.15 80); --sy-str: oklch(80% 0.11 140); --sy-fn: oklch(82% 0.08 200); --sy-tag: oklch(74% 0.14 40); --sy-cm: oklch(62% 0.03 120);
+  --grid: oklch(94% 0.02 82 / 0.045); --glow: oklch(80% 0.16 82 / 0.28); --amber-dim: oklch(74% 0.155 78 / 0.5);
+  --gridline: oklch(20% 0.015 80 / 0.035); --halo: oklch(82% 0.11 79 / 0.55);
+  --ty-grass: oklch(52% 0.13 140); --ty-poison: oklch(48% 0.15 310); --ty-fire: oklch(56% 0.17 40); --ty-electric: oklch(84% 0.15 92); --ty-dark-fg: oklch(20% 0.03 85); --rice: oklch(97% 0.02 82);
+  --pz-sky0: oklch(96% 0.025 82); --pz-sky1: oklch(92% 0.055 80); --pz-sky2: oklch(87% 0.09 75); --pz-sky3: oklch(81% 0.12 64); --pz-sun: oklch(77% 0.16 74);
+  --pz-far: oklch(52% 0.045 175); --pz-near: oklch(29% 0.045 180); --pz-snow: oklch(96% 0.02 82); --pz-ink: oklch(17% 0.035 185); --pz-sea: oklch(22% 0.04 190);
+  --pz-static: oklch(72% 0.13 160); --pz-native: oklch(82% 0.15 80); --pz-react: oklch(74% 0.11 230);
+  --display: "Chakra Petch", "Noto Sans Thai", sans-serif;
+  --text: "Zen Old Mincho", "Noto Serif Thai", "Hiragino Mincho ProN", serif;
+  --mono: "Azeret Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* Dark is the night band widened to the whole page and softened: teal-charcoal ground, rice text at ~90%, a muted gold. */
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: oklch(20% 0.028 185); --sheet: oklch(24% 0.032 182); --ink: oklch(91% 0.02 82); --ink-2: oklch(77% 0.03 82); --rule: oklch(36% 0.032 180);
+  --amber: oklch(74% 0.12 78); --amber-fill: oklch(72% 0.12 76); --amber-ink: oklch(81% 0.11 80); --on-amber: oklch(18% 0.035 82);
+  --sun: oklch(64% 0.15 45); --sun-deep: oklch(56% 0.14 40); --gold-bright: oklch(76% 0.12 80);
+  --term: oklch(16% 0.03 185); --term-2: oklch(20.5% 0.034 180); --term-fg: oklch(90% 0.02 82); --term-dim: oklch(69% 0.03 90); --term-rule: oklch(30% 0.034 180);
+  --t-static: oklch(74% 0.09 165); --t-native: oklch(78% 0.11 78); --t-react: oklch(74% 0.08 230);
+  --sy-kw: oklch(76% 0.11 80); --sy-str: oklch(77% 0.08 140); --sy-fn: oklch(79% 0.06 200); --sy-tag: oklch(72% 0.1 40); --sy-cm: oklch(60% 0.025 120);
+  --glow: oklch(74% 0.12 78 / 0.14); --amber-dim: oklch(74% 0.12 78 / 0.35); --gridline: oklch(94% 0.02 82 / 0.03); --halo: oklch(60% 0.09 79 / 0.18); color-scheme: dark } }
+:root[data-theme="dark"] {
+  --paper: oklch(20% 0.028 185); --sheet: oklch(24% 0.032 182); --ink: oklch(91% 0.02 82); --ink-2: oklch(77% 0.03 82); --rule: oklch(36% 0.032 180);
+  --amber: oklch(74% 0.12 78); --amber-fill: oklch(72% 0.12 76); --amber-ink: oklch(81% 0.11 80); --on-amber: oklch(18% 0.035 82);
+  --sun: oklch(64% 0.15 45); --sun-deep: oklch(56% 0.14 40); --gold-bright: oklch(76% 0.12 80);
+  --term: oklch(16% 0.03 185); --term-2: oklch(20.5% 0.034 180); --term-fg: oklch(90% 0.02 82); --term-dim: oklch(69% 0.03 90); --term-rule: oklch(30% 0.034 180);
+  --t-static: oklch(74% 0.09 165); --t-native: oklch(78% 0.11 78); --t-react: oklch(74% 0.08 230);
+  --sy-kw: oklch(76% 0.11 80); --sy-str: oklch(77% 0.08 140); --sy-fn: oklch(79% 0.06 200); --sy-tag: oklch(72% 0.1 40); --sy-cm: oklch(60% 0.025 120);
+  --glow: oklch(74% 0.12 78 / 0.14); --amber-dim: oklch(74% 0.12 78 / 0.35); --gridline: oklch(94% 0.02 82 / 0.03); --halo: oklch(60% 0.09 79 / 0.18); color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--paper); color: var(--ink); font-family: var(--text); font-size: 16.5px; line-height: 1.6; margin: 0 }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.1 }
+h2 { font-stretch: 112%; font-weight: 750; font-size: clamp(1.7rem, 3.4vw, 2.3rem); letter-spacing: -.01em }
+h3 { font-weight: 650; font-size: 1.1rem; line-height: 1.3 }
+p { margin: 0 }
+a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--amber); text-decoration-thickness: 2px; text-underline-offset: 3px }
+a:hover { text-decoration-color: var(--ink) }
+code, pre, kbd { font-family: var(--mono) }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px }
+.wrap { max-width: 1160px; margin: 0 auto; padding-inline: 16px }
+.muted { color: var(--ink-2) }
+p code, li code, dd code { font-size: .88em; background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; padding: .05rem .3rem }
+
+/* mockup switcher */
+.mock-bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 30; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .45rem 16px; background: var(--sheet); border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--ink-2) }
+.mock-bar button { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--rule); border-radius: 6px; padding: .25rem .65rem; cursor: pointer }
+.mock-bar button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink) }
+.mock-bar .sp { margin-left: auto }
+
+/* header */
+.site-header { display: flex; align-items: center; gap: 1.5rem; padding-block: 1rem }
+.brand { font-family: var(--display); font-stretch: 125%; font-weight: 850; font-size: 22px; letter-spacing: -.02em; color: var(--ink); text-decoration: none; display: flex; align-items: center; gap: .6rem }
+.brand .v { font-family: var(--mono); font-stretch: 100%; font-weight: 400; font-size: 12px; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 4px; padding: 0 .4rem; letter-spacing: 0 }
+.site-header nav { margin-left: auto; display: flex; align-items: center; gap: 1.25rem; font-size: 15px }
+.site-header nav a { text-decoration: none; color: var(--ink-2) } .site-header nav a:hover { color: var(--ink) }
+.search { display: flex; align-items: center; gap: .6rem; border: 1px solid var(--rule); background: var(--sheet); border-radius: 6px; padding: .3rem .6rem; color: var(--ink-2); font-size: 14px; min-width: 11rem }
+.search kbd { margin-left: auto; font-size: 11px; border: 1px solid var(--rule); border-radius: 3px; padding: 0 .3rem }
+
+/* buttons */
+.btn { display: inline-flex; align-items: center; gap: .5rem; font-weight: 600; font-size: 15px; padding: .7rem 1.1rem; border-radius: 6px; text-decoration: none; border: 1px solid var(--ink); color: var(--ink); background: transparent }
+.btn.primary { background: var(--amber-fill); border-color: var(--amber-fill); color: var(--on-amber) }
+.btn:hover { text-decoration: none }
+.cta { display: flex; gap: .75rem; flex-wrap: wrap }
+
+/* code / terminal blocks */
+.code { background: var(--term); color: var(--term-fg); border-radius: 8px; margin: 0; overflow: hidden; font-size: 13.5px; line-height: 1.6; min-width: 0; border: 1px solid var(--term-rule) }
+.code .bar { display: flex; align-items: stretch; justify-content: space-between; background: var(--term-2); border-bottom: 1px solid var(--term-rule); font-family: var(--mono); font-size: 12px; color: var(--term-dim) }
+.code .bar .tab { padding: .4rem .9rem; background: var(--term); color: var(--term-fg); border-right: 1px solid var(--term-rule); position: relative }
+.code .bar .tab::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--amber) }
+.code .bar .cwd { padding: .4rem .9rem; color: var(--term-dim) }
+.code .bar button { font: inherit; color: var(--term-dim); background: transparent; border: 0; border-left: 1px solid var(--term-rule); padding: 0 .9rem; cursor: pointer }
+.code .bar button:hover { color: var(--term-fg) } .code .bar button.done { color: #8fd694 }
+.code pre { margin: 0; padding: .9rem 1rem; overflow-x: auto }
+.k { color: var(--sy-kw) } .s { color: var(--sy-str) } .f { color: var(--sy-fn) } .t { color: var(--sy-tag) } .c { color: var(--sy-cm) }
+.ps { color: var(--amber); user-select: none }
+.pin { display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; border-radius: 50%; background: var(--amber-fill); color: var(--on-amber); font-size: 11px; margin-left: .6rem; vertical-align: 1px; user-select: none }
+
+/* tier tags */
+.tier { display: inline-flex; align-items: center; gap: .35rem; font-family: var(--mono); font-size: 12px; color: var(--c) }
+.tier::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c) }
+.tier.static { --c: var(--t-static) } .tier.native { --c: var(--t-native) } .tier.react { --c: var(--t-react) }
+
+/* ===== hero ===== */
+.hero-top { display: grid; grid-template-columns: 1.35fr 1fr; gap: 2.5rem; align-items: end; padding-block: 3.5rem 2.5rem }
+.hero h1 { font-stretch: 125%; font-weight: 850; font-size: clamp(2.5rem, 6.2vw, 4.7rem); letter-spacing: -.035em; line-height: .98 }
+.hero .lead { font-size: 1.15rem; color: var(--ink-2); margin-bottom: 1.4rem; max-width: 30rem }
+.tmux { background: var(--term); border-block: 1px solid var(--term-rule) }
+.tmux .inner { max-width: 1160px; margin: 0 auto; padding: 16px }
+.panes { display: grid; grid-template-columns: 1.25fr 1fr; grid-template-rows: auto auto; gap: 6px; font-family: var(--mono); font-size: 13.5px; line-height: 1.65; color: var(--term-fg) }
+.pane { border: 1px solid var(--term-rule); border-radius: 4px; min-width: 0; display: flex; flex-direction: column }
+.pane.edit { grid-row: 1 / 3 }
+.pane header { display: flex; justify-content: space-between; padding: .3rem .8rem; border-bottom: 1px solid var(--term-rule); font-size: 12px; color: var(--term-dim) }
+.pane pre { margin: 0; padding: .8rem 1rem; overflow-x: auto; flex: 1 }
+.panes[data-active="0"] .p0, .panes[data-active="1"] .p1, .panes[data-active="2"] .p2 { border-color: var(--amber) }
+.panes[data-active="0"] .p0 header, .panes[data-active="1"] .p1 header, .panes[data-active="2"] .p2 header { color: var(--amber) }
+.status { display: flex; gap: 1.25rem; margin-top: 6px; background: var(--amber-fill); color: var(--on-amber); font-family: var(--mono); font-size: 12.5px; padding: .2rem .7rem; border-radius: 3px; flex-wrap: wrap }
+.status .w { opacity: .65 } .status .w.on { opacity: 1; font-weight: 700 } .status .w.on::after { content: "*" }
+.status .right { margin-left: auto }
+.type { display: inline-block; overflow: hidden; white-space: pre; vertical-align: bottom; max-width: 100% }
+.ln { display: inline-block }
+
+/* facts */
+.facts { display: grid; grid-template-columns: repeat(4, 1fr); padding-block: 2.25rem }
+.facts > div { padding: 0 1.25rem; border-left: 1px solid var(--rule); min-width: 0 } .facts > div:first-child { padding-left: 0; border-left: 0 }
+.facts b { display: block; font-family: var(--display); font-stretch: 118%; font-weight: 800; font-size: 1.9rem; letter-spacing: -.02em; line-height: 1.15 }
+.facts span { color: var(--ink-2); font-size: 14.5px }
+
+/* sections */
+.sec { padding-block: 4.5rem; border-top: 1px solid var(--rule) }
+.sec > .wrap > .head { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: end; margin-bottom: 2.25rem }
+.sec .head p { color: var(--ink-2); font-size: 1.05rem; max-width: 34rem }
+
+/* steps: numbered rail */
+.rail { list-style: none; margin: 0; padding: 0 0 0 3.25rem; position: relative; display: grid; gap: 2.5rem }
+.rail::before, .rail .rail-fill { content: ""; position: absolute; left: 1.05rem; top: .4rem; width: 2px; background: var(--rule); bottom: .4rem }
+.rail .rail-fill { background: var(--amber); bottom: auto; height: 0 }
+.rail li { display: grid; grid-template-columns: 1fr 1.4fr; gap: 2rem; position: relative; align-items: start }
+.rail li > div { min-width: 0; display: grid; gap: .5rem }
+.rail .num { position: absolute; left: -3.25rem; top: 0; width: 2.2rem; height: 2.2rem; display: grid; place-items: center; border-radius: 6px; background: var(--ink); color: var(--paper); font-family: var(--mono); font-size: 14px; z-index: 1 }
+.rail p { color: var(--ink-2) }
+
+/* tiers: tabs */
+.tabs { display: flex; gap: 0; border-bottom: 1px solid var(--rule); position: relative; overflow-x: auto }
+.tabs button { font: inherit; background: none; border: 0; color: var(--ink-2); padding: .8rem 1.25rem; cursor: pointer; display: grid; gap: .1rem; text-align: left; white-space: nowrap }
+.tabs button b { color: var(--ink); font-weight: 600; font-size: 15px }
+.tabs button span.d { font-size: 13px }
+.tabs button[aria-selected="true"] { color: var(--ink) }
+.tabs .ink { position: absolute; bottom: -1px; left: 0; height: 3px; width: 0; background: var(--amber) }
+.panel { display: grid; grid-template-columns: 1.3fr 1fr; gap: 2rem; padding-top: 2rem }
+.panel[hidden] { display: none }
+.panel > * { min-width: 0 }
+.pipe { display: flex; align-items: center; gap: .6rem; font-family: var(--mono); font-size: 13px; color: var(--ink-2); margin-bottom: 1rem; flex-wrap: wrap }
+.pipe .node { border: 1px solid var(--rule); background: var(--sheet); padding: .2rem .55rem; border-radius: 4px; color: var(--ink) }
+.pipe .node.build { background: var(--term); color: var(--term-fg); border-color: var(--term) }
+.pipe .wire { position: relative; width: 2.5rem; height: 2px; background: var(--rule) }
+.pipe .wire i { position: absolute; top: -3px; left: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); opacity: 0 }
+.ships { background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: 1.25rem 1.4rem; display: grid; gap: 1rem; align-content: start }
+.ships h3 { font-size: 1rem }
+.ships dl { margin: 0; display: grid; gap: .55rem }
+.ships .row { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px dashed var(--rule); padding-bottom: .5rem; font-size: 15px }
+.ships dt { color: var(--ink-2) } .ships dd { margin: 0; font-family: var(--mono); font-size: 14px }
+.ships dd.no { color: var(--ink-2) }
+.ships p { color: var(--ink-2); font-size: 15px }
+
+/* data / split */
+.split { display: grid; grid-template-columns: 1fr 1.25fr; gap: 3rem; align-items: start }
+.split > * { min-width: 0 }
+.split .text { display: grid; gap: 1.1rem }
+.pins { list-style: none; margin: 0; padding: 0; display: grid; gap: .8rem }
+.pins li { display: grid; grid-template-columns: 1.5rem 1fr; gap: .6rem; color: var(--ink-2) }
+.pins li .pin { margin: .15rem 0 0 }
+.pins li b { color: var(--ink); font-weight: 600 }
+.stack { display: grid; gap: .9rem }
+
+/* pairs */
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0 }
+.pair > div { min-width: 0; display: grid; gap: .9rem; align-content: start; padding-right: 2.5rem }
+.pair > div + div { padding: 0 0 0 2.5rem; border-left: 1px solid var(--rule) }
+.pair p { color: var(--ink-2) }
+
+/* packages */
+.pkgs { border-top: 1px solid var(--ink) }
+.pkg { display: grid; grid-template-columns: 15rem 1fr 18rem; gap: 1.5rem; padding-block: 1rem; border-bottom: 1px solid var(--rule); align-items: baseline }
+.pkg > * { min-width: 0 }
+.pkg code.n { font-size: 15px; color: var(--ink) }
+.pkg p { color: var(--ink-2); font-size: 15px }
+.pkg .how { font-family: var(--mono); font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere }
+
+/* not */
+.nots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.5rem }
+.nots div { display: grid; gap: .4rem } .nots p { color: var(--ink-2) }
+.nots h3::before { content: "not "; color: var(--ink-2); font-weight: 400; font-stretch: 100% }
+
+/* closing + footer */
+.closing { background: var(--term); color: var(--term-fg) }
+.closing .wrap { padding-block: 4rem; display: grid; grid-template-columns: 1.4fr 1fr; gap: 2rem; align-items: end }
+.closing h2 { font-stretch: 125%; font-weight: 850; font-size: clamp(2rem, 4.5vw, 3.2rem); letter-spacing: -.03em; color: var(--term-fg) }
+.closing .btn { border-color: var(--term-fg); color: var(--term-fg) } .closing .btn.primary { border-color: var(--amber-fill); color: var(--on-amber) }
+footer.site { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 2rem; padding-block: 2.5rem; font-size: 14px; color: var(--ink-2) }
+footer.site h4 { margin: 0 0 .5rem; color: var(--ink); font-size: 14px }
+footer.site a { display: block; text-decoration: none; color: var(--ink-2); padding: .12rem 0 } footer.site a:hover { color: var(--ink) }
+
+/* ===== docs page ===== */
+.docs { display: grid; grid-template-columns: 250px minmax(0, 1fr) 210px; gap: 3rem; max-width: 1280px; margin: 0 auto; padding-inline: 16px; border-top: 1px solid var(--rule) }
+.side { padding-block: 2rem; font-size: 14.5px; align-self: start; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 40px); max-height: calc(100vh - 40px); overflow-y: auto }
+.side h4 { margin: 1.4rem 0 .35rem; font-family: var(--display); font-stretch: 112%; font-size: 13px; font-weight: 750; color: var(--ink) } .side h4:first-child { margin-top: 0 }
+.side a { display: block; text-decoration: none; color: var(--ink-2); padding: .22rem .7rem; margin-left: -.7rem; border-radius: 4px }
+.side a:hover { color: var(--ink); background: var(--sheet) }
+.side a[aria-current="page"] { color: var(--ink); background: var(--sheet); box-shadow: inset 3px 0 0 var(--amber); font-weight: 600 }
+.doc { padding-block: 2.25rem 3.5rem; min-width: 0; display: grid; gap: 1.1rem; align-content: start }
+.crumbs { font-size: 13px; color: var(--ink-2); font-family: var(--mono) }
+.doc h1 { font-stretch: 118%; font-weight: 850; font-size: clamp(2rem, 4vw, 2.7rem); letter-spacing: -.025em }
+.doc .lead { font-size: 1.12rem; color: var(--ink-2); max-width: 62ch }
+.doc h2 { font-size: 1.45rem; font-stretch: 108%; display: flex; align-items: center; gap: .75rem; margin-top: 1.75rem; scroll-margin-top: 60px }
+.doc h2 .n { width: 2rem; height: 2rem; display: inline-grid; place-items: center; border-radius: 6px; background: var(--ink); color: var(--paper); font-family: var(--mono); font-size: 13px; font-stretch: 100%; font-weight: 400; flex: none }
+.doc p, .doc li { max-width: 68ch }
+.doc ul { margin: 0; padding-left: 1.2rem } .doc li { margin: .3rem 0 }
+.note { display: grid; grid-template-columns: auto 1fr; gap: .9rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: 8px; padding: .85rem 1rem; font-size: 15px; max-width: 68ch }
+.note .tag { font-family: var(--mono); font-size: 11px; background: var(--amber-fill); color: var(--on-amber); border-radius: 3px; padding: .05rem .4rem; height: fit-content; margin-top: .15rem }
+.foot-meta { display: flex; gap: 1.5rem; font-size: 13.5px; color: var(--ink-2); margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--rule) }
+.pager { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem }
+.pager a { display: grid; gap: .1rem; text-decoration: none; border: 1px solid var(--rule); background: var(--sheet); border-radius: 8px; padding: .8rem 1rem; color: var(--ink) }
+.pager a span { font-size: 12.5px; color: var(--ink-2) } .pager a b { font-weight: 600 } .pager a.next { text-align: right }
+.toc { padding-block: 2.25rem; font-size: 13.5px; align-self: start; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 40px); padding-left: 14px; border-left: 1px solid var(--rule) }
+.toc h4 { margin: 0 0 .5rem; font-size: 12.5px; color: var(--ink); font-family: var(--display); font-stretch: 112%; font-weight: 750 }
+.toc a { display: block; text-decoration: none; color: var(--ink-2); padding: .2rem 0 } .toc a.active { color: var(--ink); font-weight: 600 }
+.toc .ind { position: absolute; left: -1px; top: 0; width: 2px; height: 0; background: var(--amber) }
+
+/* bench: a dark panel, one big number, three cards with their real latency histograms */
+.bench3 { background: var(--term); color: var(--term-fg); padding-block: 4.5rem; text-align: center;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: 32px 32px }
+.bench3 h2 { color: var(--amber); font-stretch: 118% }
+.bench3 .setup { color: var(--term-dim); max-width: 44rem; margin: .9rem auto 0; font-size: 15.5px }
+.bench3 .setup code { background: var(--term-2); border: 1px solid var(--term-rule); color: var(--sy-str); border-radius: 4px; padding: .05rem .35rem; font-size: 13px }
+.hero-num { margin-top: 2rem; display: flex; justify-content: center; align-items: baseline; gap: .6rem; font-family: var(--display); font-stretch: 125%; font-weight: 850; letter-spacing: -.04em; line-height: 1; font-variant-numeric: tabular-nums }
+.hero-num span { font-size: clamp(3.4rem, 10vw, 6.6rem); color: var(--amber); text-shadow: 0 0 60px var(--glow) }
+.hero-num small { font-size: 1.15rem; letter-spacing: 0; color: var(--term-dim); font-weight: 500; font-stretch: 100% }
+.hero-cap { color: var(--term-dim); margin-top: .6rem } .hero-cap b { color: var(--sy-str); font-weight: 500 }
+.bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 2.75rem; text-align: left }
+.bcard { background: var(--term-2); border: 1px solid var(--term-rule); border-radius: 12px; padding: 1.4rem 1.4rem 1.1rem; min-width: 0; display: grid; align-content: start }
+.bcard.lead { border-color: var(--amber-dim); box-shadow: 0 0 0 1px var(--amber-dim), 0 0 48px -12px var(--glow) }
+.bcard header { display: flex; justify-content: space-between; align-items: center; gap: .75rem }
+.bcard h3 { color: var(--term-fg); font-size: 1.05rem }
+.bcard .pill { font-family: var(--mono); font-size: 11.5px; color: var(--term-dim); border: 1px solid var(--term-rule); border-radius: 999px; padding: .1rem .55rem; white-space: nowrap }
+.bcard.lead .pill { color: var(--amber); border-color: var(--amber-dim) }
+.bcard .path { font-family: var(--mono); font-size: 12px; color: var(--term-dim); margin-top: .2rem }
+.bcard .rps { margin-top: 1.1rem; font-family: var(--display); font-stretch: 118%; font-weight: 800; font-size: 2.3rem; letter-spacing: -.02em; line-height: 1.05; font-variant-numeric: tabular-nums; color: var(--term-fg) }
+.bcard.lead .rps { color: var(--amber) }
+.bcard .cap { font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--term-dim); margin-top: .15rem }
+.bcard dl { margin: 1.1rem 0 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem }
+.bcard dt { font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--term-dim) }
+.bcard dd { margin: 0; font-family: var(--mono); font-size: 1.05rem; color: var(--term-fg); font-variant-numeric: tabular-nums }
+.bcard dd small { font-size: 11px; color: var(--term-dim); margin-left: .15rem }
+.hg { margin-top: 1.25rem; height: 56px; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 3px; align-items: end; border-bottom: 1px solid var(--term-rule) }
+.hg i { display: block; height: var(--h); background: var(--term-dim); border-radius: 2px 2px 0 0; opacity: .75 }
+.bcard.lead .hg i { background: var(--amber); opacity: .9 }
+.hg-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--term-dim); margin-top: .35rem }
+.bench3 .bfoot code { background: var(--term-2); border: 1px solid var(--term-rule); color: var(--sy-str) }
+.bfoot { color: var(--term-dim); font-size: 13.5px; max-width: 44rem; margin: 2rem auto 0 }
+@media (max-width: 980px) { .bgrid { grid-template-columns: 1fr } }
+@media (prefers-reduced-motion: no-preference) {
+  .hg i { transform-origin: bottom; transition: transform .8s var(--ease) var(--d, 0s) }
+  .hg.armed i { transform: scaleY(0) }
+  .bcard { transition: transform .2s, border-color .2s } .bcard:hover { transform: translateY(-3px) }
+}
+
+/* tiers: code next to what it renders */
+.panel.cr { display: block; padding-top: 1.75rem } .panel.cr[hidden] { display: none }
+.cr-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 1.25rem; align-items: stretch }
+.browser { border: 1px solid var(--rule); border-radius: 8px; background: var(--sheet); display: flex; flex-direction: column; overflow: hidden; min-width: 0 }
+.browser .url { display: flex; justify-content: space-between; gap: 1rem; padding: .45rem .8rem; border-bottom: 1px solid var(--rule); font-family: var(--mono); font-size: 12px; color: var(--ink-2); background: var(--paper) }
+.browser .url .lbl { color: var(--amber-ink) }
+.vp { flex: 1; padding: 1.25rem; min-height: 15rem }
+.vp.center { display: grid; place-content: center; justify-items: center; gap: .9rem; text-align: center }
+.vp-note { font-size: 13.5px; color: var(--ink-2); max-width: 18rem }
+.shipbar { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule) }
+.shipbar > div { padding: .6rem .8rem; border-left: 1px solid var(--rule); min-width: 0 } .shipbar > div:first-child { border-left: 0 }
+.shipbar dt { font-size: 12px; color: var(--ink-2) } .shipbar dd { margin: 0; font-family: var(--mono); font-size: 12.5px } .shipbar dd.no { color: var(--ink-2) }
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem }
+.pk { border: 1px solid var(--rule); border-radius: 8px; padding: .8rem; background: var(--paper); display: grid; gap: .3rem; align-content: start; min-width: 0 }
+.pk img { width: 100%; height: auto; aspect-ratio: 1; max-width: 100%; background: var(--sheet); border-radius: 6px; padding: .35rem }
+.pk .no { font-family: var(--mono); font-size: 12px; color: var(--ink-2) }
+.pk h4 { margin: 0; font-family: var(--display); font-stretch: 110%; font-size: 1rem }
+.pk > div { display: flex; flex-wrap: wrap; gap: .3rem }
+.ty { font-family: var(--mono); font-size: 11px; padding: .05rem .5rem; border-radius: 999px; color: #fff; background: var(--ty) }
+.ty.grass { --ty: var(--ty-grass) } .ty.poison { --ty: var(--ty-poison) } .ty.fire { --ty: var(--ty-fire) } .ty.electric { --ty: var(--ty-electric); color: var(--ty-dark-fg) }
+.demo-btn { font: inherit; font-weight: 600; padding: .75rem 1.3rem; border-radius: 6px; border: 1px solid var(--ink); background: var(--paper); color: var(--ink); cursor: pointer; font-variant-numeric: tabular-nums }
+.demo-btn span { display: inline-block; min-width: 1ch }
+.demo-in { width: 100%; font: inherit; padding: .55rem .75rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink) }
+.demo-list { list-style: none; margin: .8rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .35rem .9rem; font-size: 14.5px }
+.demo-list li { display: flex; gap: .4rem; align-items: center; min-width: 0 } .demo-list img { width: 40px; height: 40px; image-rendering: pixelated; flex: none } .demo-list .no { font-family: var(--mono); font-size: 12px; color: var(--ink-2) }
+.demo-list .empty { grid-column: 1 / -1; color: var(--ink-2) }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
+@media (max-width: 980px) { .bench2, .cr-grid { grid-template-columns: 1fr } }
+@media (max-width: 560px) {
+  .cards { grid-template-columns: 1fr 1fr } .demo-list { grid-template-columns: 1fr }
+  .shipbar { grid-template-columns: 1fr } .shipbar > div { border-left: 0; border-top: 1px solid var(--rule) } .shipbar > div:first-child { border-top: 0 }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .oha.play .hb { width: calc(var(--n) * 1ch); animation: type .45s steps(var(--n)) var(--d, 0s) both }
+  .bench-tabs button { transition: border-color .15s, box-shadow .2s }
+  .demo-btn { transition: transform .1s } .demo-btn:active { transform: scale(.97) }
+  .demo-btn span.bump { animation: pop .3s var(--ease) }
+  .demo-list li { animation: rise .2s ease-out both }
+}
+
+/* native demo: a live card + the signal log beside it */
+.nvp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 13rem); gap: 1rem; align-items: stretch }
+.catch { border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); padding: .9rem; display: grid; gap: .6rem; align-content: start; min-width: 0 }
+.catch .art { background: var(--sheet); border-radius: 8px; display: grid; place-items: center; padding: .4rem }
+.catch .art img { width: 100%; max-width: 170px; height: auto; aspect-ratio: 1 }
+.cmeta { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap } .cmeta .no { font-family: var(--mono); font-size: 12px; color: var(--ink-2) }
+.cmeta h4 { margin: 0; font-family: var(--display); font-stretch: 110%; font-size: 1.05rem; margin-right: auto }
+.controls { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap }
+.sw { display: inline-flex; align-items: center; gap: .5rem; font-size: 14.5px; cursor: pointer; user-select: none }
+.sw input { position: absolute; opacity: 0; width: 1px; height: 1px }
+.sw .knob { width: 2.2rem; height: 1.25rem; border-radius: 999px; background: var(--rule); position: relative; flex: none }
+.sw .knob::after { content: ""; position: absolute; top: 2px; left: 2px; width: calc(1.25rem - 4px); height: calc(1.25rem - 4px); border-radius: 50%; background: var(--sheet); box-shadow: 0 1px 2px rgba(0,0,0,.25) }
+.sw input:checked + .knob { background: var(--amber-fill) } .sw input:checked + .knob::after { transform: translateX(.95rem) }
+.sw input:focus-visible + .knob { outline: 2px solid var(--amber); outline-offset: 2px }
+.controls .demo-btn { padding: .55rem 1rem; background: var(--amber-fill); border-color: var(--amber-fill); color: var(--on-amber) }
+.sig { background: var(--term); color: var(--term-fg); border-radius: 10px; border: 1px solid var(--term-rule); font-family: var(--mono); font-size: 12.5px; display: flex; flex-direction: column; min-width: 0; overflow: hidden }
+.sig-h { display: flex; justify-content: space-between; gap: .5rem; padding: .45rem .7rem; border-bottom: 1px solid var(--term-rule); color: var(--term-dim); font-size: 11.5px }
+.sig-h span:first-child { color: var(--amber) }
+.sig ol { list-style: none; margin: 0; padding: .5rem .7rem; display: grid; gap: .35rem; align-content: start }
+.sig li { display: flex; justify-content: space-between; gap: .5rem; white-space: nowrap }
+.sig li b { color: var(--sy-fn); font-weight: 400 } .sig li span { color: var(--term-dim) } .sig li em { font-style: normal; color: var(--sy-str) }
+.sig li.hint { color: var(--term-dim); white-space: normal }
+@media (max-width: 560px) { .nvp { grid-template-columns: 1fr } }
+@media (prefers-reduced-motion: no-preference) {
+  .sw .knob, .sw .knob::after { transition: background .2s, transform .2s cubic-bezier(.2,.7,.2,1) }
+  .catch .art img { transition: opacity .2s }
+  .catch .art img.wiggle { animation: wiggle .45s ease-in-out }
+  .sig li.new { animation: slidein .25s ease-out }
+}
+@keyframes wiggle { 0%, 100% { transform: rotate(0) } 25% { transform: rotate(-6deg) } 50% { transform: rotate(5deg) } 75% { transform: rotate(-3deg) } }
+@keyframes slidein { from { opacity: 0; transform: translateX(-6px) } }
+
+/* responsive */
+@media (max-width: 980px) {
+  .hero-top, .sec > .wrap > .head, .bench-grid, .split, .closing .wrap { grid-template-columns: 1fr }
+  .panes { grid-template-columns: 1fr } .pane.edit { grid-row: auto }
+  .facts { grid-template-columns: 1fr 1fr; gap: 1.5rem 0 } .facts > div:nth-child(3) { padding-left: 0; border-left: 0 }
+  .rail li { grid-template-columns: 1fr; gap: .9rem }
+  .panel { grid-template-columns: 1fr }
+  .pair { grid-template-columns: 1fr; gap: 2.5rem } .pair > div { padding: 0 } .pair > div + div { padding: 2.5rem 0 0; border-left: 0; border-top: 1px solid var(--rule) }
+  .pkg { grid-template-columns: 1fr; gap: .3rem }
+  .nots { grid-template-columns: 1fr; gap: 1.5rem }
+  footer.site { grid-template-columns: 1fr 1fr }
+  .docs { grid-template-columns: 1fr; gap: 0 } .side, .toc { position: static; max-height: none } .toc { display: none }
+  .side { display: flex; flex-wrap: wrap; gap: .1rem 1rem; padding-bottom: 0 } .side h4 { flex-basis: 100% }
+  .search { display: none }
+}
+@media (max-width: 560px) { .bar-row { grid-template-columns: 1fr 5.5rem } .bar-row .lab { grid-column: 1 / 3 } .bar-row .lat { grid-column: 1 / 3; margin-top: -.6rem } }
+
+/* ===== motion =====
+   One orchestrated moment: the tmux session plays the quickstart on load (~3.4 s, replayable).
+   Everything else answers the reader: the step rail fills as you scroll, bars grow and numbers count when they come into view,
+   tabs slide and send a dot down the pipe, the TOC indicator follows the section you read. */
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth }
+  .btn { transition: transform .15s, box-shadow .15s } .btn:hover { transform: translateY(-1px) } .btn.primary:hover { box-shadow: 0 8px 18px -10px var(--amber) }
+  .pager a, .side a, .toc a { transition: background .15s, color .15s, border-color .15s } .pager a:hover { border-color: var(--ink) }
+  .pane, .pane header { transition: border-color .25s, color .25s }
+  .play .type { width: calc(var(--n) * 1ch); animation: type calc(var(--n) * 22ms) steps(var(--n)) var(--d, 0s) both }
+  .play .ln { animation: rise .35s ease-out var(--d, 0s) both }
+  .play .rv { animation: rise .6s cubic-bezier(.2,.7,.2,1) var(--d, 0s) both }
+  .tabs .ink { transition: transform .4s var(--ease) }
+  .panel.enter { animation: rise .35s ease-out }
+  .pipe.go .wire i { animation: travel .6s ease-in-out var(--d, 0s) both }
+  .doc h2 .n.pop { animation: pop .55s var(--ease) }
+  .toc .ind { transition: transform .35s var(--ease) }
+  .view { animation: fade .2s ease-out }
+}
+@keyframes type { from { width: 0 } }
+@keyframes rise { from { opacity: 0; transform: translateY(6px) } }
+@keyframes fade { from { opacity: 0 } }
+@keyframes travel { 0% { left: 0; opacity: 0 } 15% { opacity: 1 } 85% { opacity: 1 } 100% { left: calc(100% - 8px); opacity: 0 } }
+@keyframes pop { from { transform: scale(.5) } }
+
+/* ===== neo-mirai skin ===== */
+body { background: radial-gradient(circle at 70% 4%, var(--halo), transparent 18rem), linear-gradient(90deg, var(--gridline) 1px, transparent 1px), linear-gradient(0deg, var(--gridline) 1px, transparent 1px), var(--paper);
+  background-size: auto, 112px 112px, 112px 112px, auto; font-family: var(--text); font-size: 17px; line-height: 1.7 }
+h1, h2, h3 { font-family: var(--display) }
+h2 { font-weight: 300; text-transform: uppercase; letter-spacing: .01em; font-size: clamp(1.9rem, 3.4vw, 3rem); line-height: 1.02; font-stretch: normal }
+h3 { font-weight: 500; font-stretch: normal }
+.hero h1 { font-weight: 300; text-transform: uppercase; font-size: clamp(3rem, 6.8vw, 5.9rem); letter-spacing: 0; line-height: .96; font-stretch: normal }
+.brand { font-family: var(--display); font-stretch: normal; font-weight: 600; text-transform: uppercase; letter-spacing: .14em; font-size: 19px }
+.brand .v { font-family: var(--mono); letter-spacing: .02em; text-transform: none }
+.facts b, .big, .rps, .hero-num, .doc h1, .closing h2, .cmeta h4, .pk h4 { font-family: var(--display); font-stretch: normal }
+.facts b { font-weight: 400; letter-spacing: .01em } .doc h1 { font-weight: 300; text-transform: uppercase; letter-spacing: 0 }
+.hero-num { font-weight: 300; letter-spacing: 0 } .bcard .rps { font-weight: 400; letter-spacing: 0 }
+.btn { border-radius: 0; font-family: var(--mono); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; min-height: 46px; padding: .7rem 1.15rem }
+.btn.primary { background: var(--amber-fill); border-color: var(--amber-fill); color: var(--on-amber) }
+.code, .browser, .bcard, .pk, .catch, .sig, .ships, .search, .pager a, .note, .tabs button, .demo-btn, .demo-in, .pane, .status, .pipe .node, .track { border-radius: 2px }
+.code .bar .tab::before { background: var(--sun) }
+.rail .num, .doc h2 .n { border-radius: 50%; background: var(--amber-fill); color: var(--on-amber) }
+.status { background: var(--amber-fill); color: var(--on-amber) }
+.tmux { background: radial-gradient(circle at 100% 0, oklch(40% 0.08 74 / .35), transparent 22rem), linear-gradient(135deg, var(--term), oklch(13% 0.035 180)) }
+.bench3 { background-color: var(--term); background-image: radial-gradient(circle at 50% 30%, var(--glow), transparent 26rem), linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: auto, 112px 112px, 112px 112px }
+.bench3 h2 { color: var(--gold-bright) } .hero-num span { color: var(--gold-bright) } .bcard.lead .rps { color: var(--gold-bright) }
+.bcard.lead { border-color: var(--amber-dim); box-shadow: none; background: oklch(24% 0.05 120 / .35) }
+.side a[aria-current="page"] { box-shadow: none; background: var(--sheet); outline: 1px solid var(--rule) }
+.toc .ind { width: 7px; height: 7px !important; border-radius: 50%; left: -4px; margin-top: .62em; background: var(--sun) }
+.note .tag, .pin { background: var(--amber-fill); color: var(--on-amber) }
+.cta .btn:not(.primary) { border-color: var(--ink) }
+
+/* hero: headline left; on the right a small WebGL orrery (gold sun, dark moon, a ring carrying the three tiers) above the two buttons */
+.hero-top { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); align-items: end }
+.hero-side { display: grid; gap: 1.4rem; justify-items: end; min-width: 0 }
+.poster { position: relative; width: min(100%, 24rem); justify-self: end }
+.orb { width: 100%; height: auto; aspect-ratio: 400 / 480; display: block; outline: 1px solid var(--rule); outline-offset: 6px }
+.build-btn { position: absolute; left: 3.2%; bottom: .9%; height: 4.6%; padding: 0 .7rem; display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--pz-sun); border-radius: 2px; background: transparent; color: var(--pz-sun); font-family: var(--mono); font-size: 10.5px; font-weight: 700; letter-spacing: .08em; cursor: pointer }
+.build-btn:hover, .build-btn:focus-visible { background: var(--pz-sun); color: var(--pz-ink) }
+.build-btn:focus-visible { outline: 2px solid var(--pz-sun); outline-offset: 2px }
+.build-btn[aria-busy="true"] { cursor: progress; opacity: .7 }
+.orb .tl { fill: var(--pz-ink); font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: .06em; opacity: 0 }
+.orb.lit .tl { opacity: 1 }
+.orb.lit .wins rect { fill: var(--pz-sun); opacity: 1 }
+.orb .sky0 { fill: var(--pz-sky0) } .orb .sky1 { fill: var(--pz-sky1) } .orb .sky2 { fill: var(--pz-sky2) } .orb .sky3 { fill: var(--pz-sky3) }
+.orb .sunf { fill: var(--pz-sun) } .orb .orbit { fill: none; stroke: var(--pz-ink); stroke-width: 1.2; stroke-dasharray: 2 7; opacity: .45 }
+.orb .far { fill: var(--pz-far) } .orb .fuji { fill: var(--pz-near) } .orb .snow { fill: var(--pz-snow) }
+.orb .towers { fill: var(--pz-ink) } .orb .wins rect { fill: var(--pz-snow); opacity: .5 }
+.orb .sea { fill: var(--pz-sea) } .orb .horizon { fill: var(--pz-sun); opacity: .7 } .orb .rb { fill: var(--pz-sun) }
+.orb .beacon.b1, .orb .tr.t1 { fill: var(--pz-static) } .orb .beacon.b2, .orb .tr.t2 { fill: var(--pz-native) } .orb .beacon.b3, .orb .tr.t3 { fill: var(--pz-react) }
+.orb .tr { opacity: .45 }
+.orb .cl.c1 { fill: var(--pz-sky2); opacity: .7 } .orb .cl.c2 { fill: var(--pz-sky1) }
+.orb .birds polyline { fill: none; stroke: var(--pz-ink); stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; opacity: .7 }
+.orb .waves { fill: var(--pz-snow); opacity: .14 }
+.orb .cap { fill: var(--pz-ink) } .orb .capt { fill: var(--pz-sun); font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em }
+.th { font-family: var(--display); font-weight: 400; font-size: 1.2rem; color: var(--ink); margin: 0 0 .9rem; line-height: 1.5 }
+
+/* closing: the orange band + a stamp seal */
+.closing { background: var(--sun); color: var(--on-amber) }
+.closing .wrap { grid-template-columns: 1.4fr auto 1fr }
+.closing h2 { color: var(--on-amber); font-weight: 300; text-transform: uppercase; letter-spacing: 0 }
+.closing .th { color: var(--on-amber); opacity: .85; margin: .6rem 0 0 }
+.closing .btn { border-color: var(--on-amber); color: var(--on-amber) } .closing .btn.primary { background: var(--on-amber); border-color: var(--on-amber); color: var(--rice) }
+.seal { width: 7.5rem; aspect-ratio: 1; border-radius: 50%; border: 2px solid var(--on-amber); display: grid; place-content: center; text-align: center; font-family: var(--mono); font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--on-amber); transform: rotate(-9deg); line-height: 1.5 }
+.seal b { font-family: var(--display); font-size: 1.4rem; letter-spacing: .1em; font-weight: 600 }
+@media (max-width: 980px) { .closing .wrap { grid-template-columns: 1fr } .seal { justify-self: start } .hero-top { grid-template-columns: 1fr } .hero-side { justify-items: start } .poster { width: min(100%, 20rem); justify-self: center } }
+@media (prefers-reduced-motion: no-preference) {
+  .play .sun { animation: sunrise 1.6s var(--ease) both }
+  .btn { transition: transform .2s var(--ease), background .2s var(--ease) }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .orb .rb { transform-box: fill-box; transform-origin: center; animation: shimmer 3.2s ease-in-out infinite alternate; animation-delay: calc(var(--i) * -0.4s) }
+  .orb .beacon { animation: beacon 3s ease-in-out infinite } .orb .b2 { animation-delay: 1s } .orb .b3 { animation-delay: 2s }
+  .orb .orbit { transform-box: fill-box; transform-origin: center; animation: turn 90s linear infinite }
+  .orb .clouds .c1 { animation: drift-x 26s ease-in-out infinite alternate } .orb .clouds .c2 { animation: drift-x 34s ease-in-out infinite alternate-reverse }
+  .orb .birds { animation: glide 12s ease-in-out infinite alternate }
+  .orb .wins rect { transition: fill .25s, opacity .25s; transition-delay: calc(var(--k) * 14ms) }
+  .orb:not(.lit) .wins rect { transition-delay: 0s }
+  .orb .tl { transition: opacity .35s var(--ease); transition-delay: calc(.35s + var(--t) * .3s) }
+  .orb:not(.lit) .tl { transition-delay: 0s }
+  .orb.flash .sunf { transform-box: fill-box; transform-origin: center; animation: pulse .9s var(--ease) }
+  .orb.flash .rb { animation: shimmer 3.2s ease-in-out infinite alternate, glint .9s var(--ease) }
+  .build-btn { transition: background .2s, color .2s }
+}
+@keyframes shimmer { to { transform: scaleX(.78) } }
+@keyframes beacon { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
+@keyframes turn { to { transform: rotate(360deg) } }
+@keyframes pulse { 40% { transform: scale(1.05) } }
+@keyframes glint { 40% { filter: brightness(1.35) } }
+@keyframes drift-x { to { transform: translateX(22px) } }
+@keyframes glide { to { transform: translate(26px, -8px) } }
+@keyframes sunrise { from { transform: translateY(2.5rem); opacity: 0 } }
+</style>
+
+<div class="mock-bar">
+  <span>Mockup</span>
+  <button type="button" id="b-landing" aria-pressed="true" onclick="show('landing')">Landing</button>
+  <button type="button" id="b-docs" aria-pressed="false" onclick="show('docs')">Docs page</button>
+  <span class="sp"></span>
+  <button type="button" id="b-replay" onclick="replayIntro()">Replay intro</button>
+  <button type="button" id="b-theme" onclick="toggleTheme()">Light / dark</button>
+</div>
+
+<!-- ================= LANDING ================= -->
+<section class="view" id="landing">
+  <div class="wrap">
+    <header class="site-header">
+      <a class="brand" href="#landing">brust <span class="v">2.0.0-alpha.3</span></a>
+      <nav aria-label="Site">
+        <span class="search">Search docs <kbd>⌘K</kbd></span>
+        <a href="#docs">Docs</a><a href="#">Cookbook</a><a href="#">GitHub</a>
+      </nav>
+    </header>
+  </div>
+
+  <section class="hero" id="hero">
+    <div class="wrap hero-top">
+      <h1 class="rv" style="--d:0s">React you write.<br>Rust that serves it.</h1>
+      <div class="hero-side">
+        <div class="poster rv" style="--d:.15s">
+        <svg class="orb" id="orb" viewBox="0 0 400 480" role="img" aria-label="A flat dusk scene: a sun setting behind mountains, three towers on the horizon" focusable="false">
+          <defs><clipPath id="poster-clip"><rect width="400" height="480" rx="2"/></clipPath></defs>
+          <g clip-path="url(#poster-clip)">
+            <rect width="400" height="300" class="sky0"/><rect y="168" width="400" height="62" class="sky1"/><rect y="230" width="400" height="40" class="sky2"/><rect y="270" width="400" height="30" class="sky3"/>
+            <g class="clouds"><rect class="cl c1" x="34" y="118" width="120" height="9" rx="4.5"/><rect class="cl c1" x="70" y="132" width="78" height="7" rx="3.5"/><rect class="cl c2" x="250" y="74" width="96" height="8" rx="4"/><rect class="cl c2" x="286" y="87" width="58" height="6" rx="3"/></g>
+            <g class="birds"><polyline points="96,156 102,160 108,156"/><polyline points="114,146 119,149 124,146"/><polyline points="128,160 132,163 136,160"/></g>
+            <circle class="orbit" cx="236" cy="236" r="122"/>
+            <circle class="sunf" cx="236" cy="236" r="92"/>
+            <polygon class="far" points="0,300 0,262 40,250 78,262 120,238 160,258 205,244 250,266 300,242 345,258 400,246 400,300"/>
+            <polygon class="fuji" points="0,300 0,282 40,262 92,206 108,201 124,206 178,262 214,300"/>
+            <polygon class="snow" points="92,206 108,201 124,206 133,215 121,221 113,213 105,224 97,213 84,215"/>
+            <g class="towers"><rect x="270" y="214" width="24" height="86"/><rect x="300" y="172" width="30" height="128"/><rect x="306" y="160" width="18" height="12"/><rect x="314" y="140" width="2" height="20"/><rect x="336" y="228" width="22" height="72"/></g>
+            <g class="wins"><rect x="273.8" y="222" width="3" height="3" style="--k:0"/><rect x="280.5" y="222" width="3" height="3" style="--k:1"/><rect x="287.2" y="222" width="3" height="3" style="--k:2"/><rect x="273.8" y="231" width="3" height="3" style="--k:3"/><rect x="280.5" y="231" width="3" height="3" style="--k:4"/><rect x="273.8" y="240" width="3" height="3" style="--k:5"/><rect x="280.5" y="240" width="3" height="3" style="--k:6"/><rect x="287.2" y="240" width="3" height="3" style="--k:7"/><rect x="273.8" y="249" width="3" height="3" style="--k:8"/><rect x="280.5" y="249" width="3" height="3" style="--k:9"/><rect x="287.2" y="249" width="3" height="3" style="--k:10"/><rect x="280.5" y="258" width="3" height="3" style="--k:11"/><rect x="287.2" y="258" width="3" height="3" style="--k:12"/><rect x="273.8" y="267" width="3" height="3" style="--k:13"/><rect x="280.5" y="267" width="3" height="3" style="--k:14"/><rect x="287.2" y="267" width="3" height="3" style="--k:15"/><rect x="273.8" y="276" width="3" height="3" style="--k:16"/><rect x="287.2" y="276" width="3" height="3" style="--k:17"/><rect x="273.8" y="285" width="3" height="3" style="--k:18"/><rect x="280.5" y="285" width="3" height="3" style="--k:19"/><rect x="287.2" y="285" width="3" height="3" style="--k:20"/><rect x="305.2" y="180" width="3" height="3" style="--k:21"/><rect x="313.5" y="180" width="3" height="3" style="--k:22"/><rect x="321.8" y="180" width="3" height="3" style="--k:23"/><rect x="305.2" y="189" width="3" height="3" style="--k:24"/><rect x="313.5" y="189" width="3" height="3" style="--k:25"/><rect x="321.8" y="189" width="3" height="3" style="--k:26"/><rect x="305.2" y="198" width="3" height="3" style="--k:27"/><rect x="321.8" y="198" width="3" height="3" style="--k:28"/><rect x="305.2" y="207" width="3" height="3" style="--k:29"/><rect x="313.5" y="207" width="3" height="3" style="--k:30"/><rect x="321.8" y="207" width="3" height="3" style="--k:31"/><rect x="305.2" y="216" width="3" height="3" style="--k:32"/><rect x="313.5" y="216" width="3" height="3" style="--k:33"/><rect x="321.8" y="216" width="3" height="3" style="--k:34"/><rect x="305.2" y="225" width="3" height="3" style="--k:35"/><rect x="313.5" y="225" width="3" height="3" style="--k:36"/><rect x="305.2" y="234" width="3" height="3" style="--k:37"/><rect x="313.5" y="234" width="3" height="3" style="--k:38"/><rect x="321.8" y="234" width="3" height="3" style="--k:39"/><rect x="305.2" y="243" width="3" height="3" style="--k:40"/><rect x="313.5" y="243" width="3" height="3" style="--k:41"/><rect x="321.8" y="243" width="3" height="3" style="--k:42"/><rect x="313.5" y="252" width="3" height="3" style="--k:43"/><rect x="321.8" y="252" width="3" height="3" style="--k:44"/><rect x="305.2" y="261" width="3" height="3" style="--k:45"/><rect x="313.5" y="261" width="3" height="3" style="--k:46"/><rect x="321.8" y="261" width="3" height="3" style="--k:47"/><rect x="305.2" y="270" width="3" height="3" style="--k:48"/><rect x="321.8" y="270" width="3" height="3" style="--k:49"/><rect x="305.2" y="279" width="3" height="3" style="--k:50"/><rect x="313.5" y="279" width="3" height="3" style="--k:51"/><rect x="321.8" y="279" width="3" height="3" style="--k:52"/><rect x="305.2" y="288" width="3" height="3" style="--k:53"/><rect x="313.5" y="288" width="3" height="3" style="--k:54"/><rect x="321.8" y="288" width="3" height="3" style="--k:55"/><rect x="341.3" y="236" width="3" height="3" style="--k:56"/><rect x="349.7" y="236" width="3" height="3" style="--k:57"/><rect x="341.3" y="245" width="3" height="3" style="--k:58"/><rect x="349.7" y="245" width="3" height="3" style="--k:59"/><rect x="341.3" y="254" width="3" height="3" style="--k:60"/><rect x="349.7" y="254" width="3" height="3" style="--k:61"/><rect x="341.3" y="263" width="3" height="3" style="--k:62"/><rect x="341.3" y="272" width="3" height="3" style="--k:63"/><rect x="349.7" y="272" width="3" height="3" style="--k:64"/><rect x="341.3" y="281" width="3" height="3" style="--k:65"/><rect x="349.7" y="281" width="3" height="3" style="--k:66"/><rect x="341.3" y="290" width="3" height="3" style="--k:67"/><rect x="349.7" y="290" width="3" height="3" style="--k:68"/></g>
+            <circle class="beacon b1" cx="282" cy="207" r="4"/><circle class="beacon b2" cx="315" cy="136" r="4"/><circle class="beacon b3" cx="347" cy="221" r="4"/>
+            <g class="tls"><text class="tl" x="264" y="210" text-anchor="end" style="--t:0">static</text><text class="tl" x="315" y="125" text-anchor="middle" style="--t:1">native</text><text class="tl" x="364" y="224" text-anchor="start" style="--t:2">react</text></g>
+            <rect y="300" width="400" height="150" class="sea"/>
+            <rect y="299.5" width="400" height="1.5" class="horizon"/>
+            <rect class="rb" x="161" y="308" width="150" height="4" style="opacity:0.95;--i:0"/><rect class="rb" x="175" y="318" width="122" height="4" style="opacity:0.85;--i:1"/><rect class="rb" x="187" y="329" width="98" height="4" style="opacity:0.75;--i:2"/><rect class="rb" x="198" y="342" width="76" height="4" style="opacity:0.6;--i:3"/><rect class="rb" x="208" y="357" width="56" height="3" style="opacity:0.5;--i:4"/><rect class="rb" x="217" y="373" width="38" height="3" style="opacity:0.38;--i:5"/><rect class="rb" x="224" y="391" width="24" height="3" style="opacity:0.28;--i:6"/><rect class="rb" x="229" y="410" width="14" height="2" style="opacity:0.2;--i:7"/>
+            <g class="waves"><rect x="24" y="322" width="40" height="1.2"/><rect x="92" y="338" width="26" height="1.2"/><rect x="330" y="330" width="34" height="1.2"/><rect x="18" y="360" width="30" height="1.2"/><rect x="360" y="352" width="22" height="1.2"/><rect x="60" y="392" width="44" height="1.2"/><rect x="300" y="386" width="36" height="1.2"/><rect x="130" y="420" width="30" height="1.2"/><rect x="250" y="432" width="40" height="1.2"/><rect x="20" y="436" width="24" height="1.2"/></g><rect class="tr t1" x="280" y="306" width="4" height="9"/><rect class="tr t1" x="280" y="319" width="4" height="7"/><rect class="tr t1" x="280" y="331" width="4" height="4"/><rect class="tr t2" x="313" y="306" width="4" height="12"/><rect class="tr t2" x="313" y="322" width="4" height="9"/><rect class="tr t2" x="313" y="336" width="4" height="6"/><rect class="tr t2" x="313" y="348" width="4" height="3"/><rect class="tr t3" x="345" y="306" width="4" height="7"/><rect class="tr t3" x="345" y="317" width="4" height="5"/><rect class="tr t3" x="345" y="327" width="4" height="3"/>
+            <rect y="450" width="400" height="30" class="cap"/>
+            <text x="384" y="469" class="capt" text-anchor="end" id="poster-status">REACT IN · HTML OUT</text>
+          </g>
+        </svg>
+        <button type="button" class="build-btn" id="build-btn" aria-describedby="build-live"><span aria-hidden="true">$</span> brust build</button>
+        <span class="sr" id="build-live" aria-live="polite"></span>
+        </div>
+        <div class="cta rv" style="--d:.3s"><a class="btn primary" href="#docs">Get started</a><a class="btn" href="#">Star on GitHub</a></div>
+      </div>
+    </div>
+    <div class="tmux" aria-label="A brust quickstart session">
+      <div class="inner">
+        <div class="panes" id="panes" data-active="0">
+          <div class="pane edit p1">
+            <header><span>routes.tsx</span><span>1:edit</span></header>
+            <pre><span class="ln" style="--d:1.35s"><span class="k">import</span> { defineRoutes } <span class="k">from</span> <span class="s">'@brust/core/routes'</span></span>
+<span class="ln" style="--d:1.45s"><span class="k">import</span> Layout <span class="k">from</span> <span class="s">'./components/Layout'</span></span>
+<span class="ln" style="--d:1.55s"><span class="k">import</span> HomePage <span class="k">from</span> <span class="s">'./pages/HomePage'</span></span>
+
+<span class="ln" style="--d:1.7s"><span class="k">export const</span> routes = <span class="f">defineRoutes</span>([</span>
+<span class="ln" style="--d:1.8s">  { Component: Layout, children: [</span>
+<span class="ln" style="--d:1.9s">    { path: <span class="s">'/'</span>, Component: HomePage },</span>
+<span class="ln" style="--d:2.0s">  ] },</span>
+<span class="ln" style="--d:2.1s">])</span></pre>
+          </div>
+          <div class="pane p0">
+            <header><span>~/</span><span>0:install</span></header>
+            <pre><span class="ps">$ </span><span class="type" style="--n:35;--d:.35s">bun create @brust/app@latest my-app</span>
+<span class="ps ln" style="--d:1.15s">$ </span><span class="ln" style="--d:1.15s">cd my-app &amp;&amp; bun install</span></pre>
+          </div>
+          <div class="pane p2">
+            <header><span>~/my-app</span><span>2:run</span></header>
+            <pre><span class="ps">$ </span><span class="type" style="--n:30;--d:2.35s">curl -i http://127.0.0.1:1337/</span>
+<span class="ln c" style="--d:3.1s">HTTP/1.1 200 OK</span>
+<span class="ln c" style="--d:3.2s">x-powered-by: brust/2.0.0-alpha.3</span>
+<span class="ln c" style="--d:3.3s">content-type: text/html; charset=utf-8</span></pre>
+          </div>
+        </div>
+        <div class="status" id="status"><span>[my-app]</span><span class="w on" data-w="0">0:install</span><span class="w" data-w="1">1:edit</span><span class="w" data-w="2">2:run</span><span class="right">brust 2.0.0-alpha.3</span></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap facts">
+    <div><b>0 KB</b><span>client JavaScript on a page that only reads data</span></div>
+    <div><b>3 tiers</b><span>static, native, island, decided per component</span></div>
+    <div><b>Rust + Bun</b><span>Rust serves, routes, caches and renders; Bun runs your loaders and actions</span></div>
+    <div><b>React 19</b><span>real React in islands, nothing forked or patched</span></div>
+  </div>
+
+  <section class="bench3" id="bench">
+    <div class="wrap">
+      <h2>Measured, not promised</h2>
+      <p class="setup">Tested with <code>oha</code>: 120 concurrent connections for 10 seconds per page, brust with 10 workers on a <code>MacBook Pro M1 Pro</code>. Three pages from the pokedex example, each on a freshly started server.</p>
+      <div class="hero-num"><span data-count="113744">113,744</span><small>req/s</small></div>
+      <p class="hero-cap">on a cached page, with every one of 2,324,676 requests answered <b>200 OK</b></p>
+      <div class="bgrid">
+        <article class="bcard lead">
+          <header><h3>Cached page</h3><span class="pill">L1 hit</span></header>
+          <p class="path">GET /types</p>
+          <div class="rps" data-count="113744">113,744</div><div class="cap">requests / second</div>
+          <dl><div><dt>p50</dt><dd><span data-count="1.0">1.0</span><small>ms</small></dd></div><div><dt>p99</dt><dd><span data-count="1.3">1.3</span><small>ms</small></dd></div><div><dt>throughput</dt><dd><span data-count="194">194</span><small>MB/s</small></dd></div></dl>
+          <div class="hg" aria-label="Latency distribution"><i style="--h:2.0%;--d:0.00s" title="1 requests up to 0.16 ms"></i><i style="--h:2.0%;--d:0.04s" title="265 requests up to 0.55 ms"></i><i style="--h:4.1%;--d:0.08s" title="44,340 requests up to 0.94 ms"></i><i style="--h:100.0%;--d:0.12s" title="1,085,892 requests up to 1.33 ms"></i><i style="--h:2.0%;--d:0.16s" title="6,740 requests up to 1.72 ms"></i><i style="--h:2.0%;--d:0.20s" title="459 requests up to 2.11 ms"></i><i style="--h:2.0%;--d:0.24s" title="44 requests up to 2.50 ms"></i><i style="--h:2.0%;--d:0.28s" title="34 requests up to 2.89 ms"></i><i style="--h:2.0%;--d:0.32s" title="75 requests up to 3.28 ms"></i><i style="--h:2.0%;--d:0.36s" title="15 requests up to 3.67 ms"></i><i style="--h:2.0%;--d:0.40s" title="1 requests up to 4.06 ms"></i></div>
+          <div class="hg-axis"><span>0.16 ms</span><span>latency</span><span>4.1 ms</span></div>
+        </article>
+        <article class="bcard">
+          <header><h3>Interactive page</h3><span class="pill">one React island</span></header>
+          <p class="path">GET /team</p>
+          <div class="rps" data-count="104889">104,889</div><div class="cap">requests / second</div>
+          <dl><div><dt>p50</dt><dd><span data-count="1.1">1.1</span><small>ms</small></dd></div><div><dt>p99</dt><dd><span data-count="2.1">2.1</span><small>ms</small></dd></div><div><dt>throughput</dt><dd><span data-count="82">82</span><small>MB/s</small></dd></div></dl>
+          <div class="hg" aria-label="Latency distribution"><i style="--h:2.0%;--d:0.00s" title="1 requests up to 0.09 ms"></i><i style="--h:100.0%;--d:0.04s" title="673,380 requests up to 1.18 ms"></i><i style="--h:54.6%;--d:0.08s" title="367,716 requests up to 2.26 ms"></i><i style="--h:2.0%;--d:0.12s" title="6,714 requests up to 3.35 ms"></i><i style="--h:2.0%;--d:0.16s" title="1,036 requests up to 4.43 ms"></i><i style="--h:2.0%;--d:0.20s" title="206 requests up to 5.51 ms"></i><i style="--h:2.0%;--d:0.24s" title="70 requests up to 6.60 ms"></i><i style="--h:2.0%;--d:0.28s" title="35 requests up to 7.68 ms"></i><i style="--h:2.0%;--d:0.32s" title="43 requests up to 8.76 ms"></i><i style="--h:2.0%;--d:0.36s" title="67 requests up to 9.85 ms"></i><i style="--h:2.0%;--d:0.40s" title="17 requests up to 10.93 ms"></i></div>
+          <div class="hg-axis"><span>0.09 ms</span><span>latency</span><span>10.9 ms</span></div>
+        </article>
+        <article class="bcard">
+          <header><h3>Dynamic page</h3><span class="pill">loader every request</span></header>
+          <p class="path">GET /dex</p>
+          <div class="rps" data-count="13759">13,759</div><div class="cap">requests / second</div>
+          <dl><div><dt>p50</dt><dd><span data-count="8.3">8.3</span><small>ms</small></dd></div><div><dt>p99</dt><dd><span data-count="20.1">20.1</span><small>ms</small></dd></div><div><dt>throughput</dt><dd><span data-count="299">299</span><small>MB/s</small></dd></div></dl>
+          <div class="hg" aria-label="Latency distribution"><i style="--h:2.0%;--d:0.00s" title="1 requests up to 0.51 ms"></i><i style="--h:73.9%;--d:0.04s" title="54,468 requests up to 7.52 ms"></i><i style="--h:100.0%;--d:0.08s" title="73,659 requests up to 14.52 ms"></i><i style="--h:11.6%;--d:0.12s" title="8,570 requests up to 21.52 ms"></i><i style="--h:2.0%;--d:0.16s" title="716 requests up to 28.52 ms"></i><i style="--h:2.0%;--d:0.20s" title="63 requests up to 35.53 ms"></i><i style="--h:2.0%;--d:0.24s" title="27 requests up to 42.53 ms"></i><i style="--h:2.0%;--d:0.28s" title="16 requests up to 49.53 ms"></i><i style="--h:2.0%;--d:0.32s" title="3 requests up to 56.53 ms"></i><i style="--h:2.0%;--d:0.36s" title="1 requests up to 63.54 ms"></i><i style="--h:2.0%;--d:0.40s" title="1 requests up to 70.54 ms"></i></div>
+          <div class="hg-axis"><span>0.51 ms</span><span>latency</span><span>70.5 ms</span></div>
+        </article>
+      </div>
+      <p class="bfoot">Bars show each page's latency distribution on a linear scale, fastest to slowest response. Measured 2026-10-11; the harness and every raw run are in the repo under <code>bench/</code>.</p>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap">
+      <div class="head"><h2>Sixty seconds to a served page</h2><p>No config to write first. The template already has a layout, a page and the scripts.</p></div>
+      <ol class="rail" id="rail">
+        <span class="rail-fill" id="rail-fill" aria-hidden="true"></span>
+        <li><span class="num">1</span><div><h3>Create</h3><p>One command scaffolds the project and installs its dependencies.</p></div>
+          <figure class="code"><div class="bar"><span class="cwd">~/</span><button type="button">Copy</button></div><pre><span class="ps">$ </span>bun create @brust/app@latest my-app
+<span class="ps">$ </span>cd my-app &amp;&amp; bun install</pre></figure></li>
+        <li><span class="num">2</span><div><h3>Write</h3><p>A page is a React component. There is nothing to import from brust.</p></div>
+          <figure class="code"><div class="bar"><span class="tab">pages/HomePage.tsx</span><button type="button">Copy</button></div><pre><span class="k">export default function</span> <span class="f">HomePage</span>() {
+  <span class="k">return</span> <span class="t">&lt;h1&gt;</span>Hello from brust<span class="t">&lt;/h1&gt;</span>
+}</pre></figure></li>
+        <li><span class="num">3</span><div><h3>Run</h3><p>Build compiles every component; start serves them from Rust.</p></div>
+          <figure class="code"><div class="bar"><span class="cwd">~/my-app</span><button type="button">Copy</button></div><pre><span class="ps">$ </span>bun run dev
+<span class="c">[brust] built dist in 17ms
+[brust] ready (10 workers) http://127.0.0.1:1337</span></pre></figure></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap">
+      <div class="head"><h2>One component model, three outputs</h2><p>You write ordinary React. The compiler reads each component, picks the cheapest output that still behaves the same, and tells you what it picked. Left is the code, right is what the browser shows.</p></div>
+      <div class="tabs" role="tablist" id="tabs">
+        <button type="button" role="tab" id="tab-static" aria-selected="true" aria-controls="p-static" data-t="static"><b><span class="tier static">static</span></b><span class="d">Reads props, renders markup</span></button>
+        <button type="button" role="tab" id="tab-native" aria-selected="false" aria-controls="p-native" data-t="native"><b><span class="tier native">native</span></b><span class="d">Local state and handlers</span></button>
+        <button type="button" role="tab" id="tab-react" aria-selected="false" aria-controls="p-react" data-t="react"><b><span class="tier react">react</span></b><span class="d">Needs the real thing</span></button>
+        <span class="ink" id="tab-ink"></span>
+      </div>
+
+      <div class="panel cr" role="tabpanel" id="p-static" aria-labelledby="tab-static">
+        <div class="pipe"><span class="node">PokemonCard.tsx</span><span class="wire"><i style="--d:0s"></i></span><span class="node build">brust build</span><span class="wire"><i style="--d:.45s"></i></span><span class="tier static">static</span></div>
+        <div class="cr-grid">
+          <figure class="code"><div class="bar"><span class="tab">components/PokemonCard.tsx</span><button type="button">Copy</button></div><pre><span class="k">export default function</span> <span class="f">PokemonCard</span>({ num, name, types }) {
+  <span class="k">return</span> (
+    <span class="t">&lt;article</span> className=<span class="s">"card"</span><span class="t">&gt;</span>
+      <span class="t">&lt;img</span> src={<span class="s">`/art/${num}.png`</span>} alt={name} <span class="t">/&gt;</span>
+      <span class="t">&lt;span</span> className=<span class="s">"num"</span><span class="t">&gt;</span>#{String(num).<span class="f">padStart</span>(3, <span class="s">'0'</span>)}<span class="t">&lt;/span&gt;</span>
+      <span class="t">&lt;h3&gt;</span>{name}<span class="t">&lt;/h3&gt;</span>
+      <span class="t">&lt;ul&gt;</span>
+        {types.<span class="f">map</span>((t) =&gt; <span class="t">&lt;li</span> key={t} className={t}<span class="t">&gt;</span>{t}<span class="t">&lt;/li&gt;</span>)}
+      <span class="t">&lt;/ul&gt;</span>
+    <span class="t">&lt;/article&gt;</span>
+  )
+}</pre></figure>
+          <div class="browser"><div class="url"><span>127.0.0.1:1337/pokedex</span><span class="lbl">Rendered</span></div>
+            <div class="vp"><div class="cards">
+              <article class="pk"><img src="img/art-1.png" alt="Bulbasaur" width="200" height="200"><span class="no">#001</span><h4>Bulbasaur</h4><div><span class="ty grass">grass</span><span class="ty poison">poison</span></div></article>
+              <article class="pk"><img src="img/art-4.png" alt="Charmander" width="200" height="200"><span class="no">#004</span><h4>Charmander</h4><div><span class="ty fire">fire</span></div></article>
+              <article class="pk"><img src="img/art-25.png" alt="Pikachu" width="200" height="200"><span class="no">#025</span><h4>Pikachu</h4><div><span class="ty electric">electric</span></div></article>
+            </div></div>
+            <dl class="shipbar"><div><dt>HTML</dt><dd>rendered on the server</dd></div><div><dt>JavaScript</dt><dd class="no">none</dd></div><div><dt>Hydration</dt><dd class="no">none</dd></div></dl>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel cr" role="tabpanel" id="p-native" aria-labelledby="tab-native" hidden>
+        <div class="pipe"><span class="node">CatchCard.tsx</span><span class="wire"><i style="--d:0s"></i></span><span class="node build">brust build</span><span class="wire"><i style="--d:.45s"></i></span><span class="tier native">native</span></div>
+        <div class="cr-grid">
+          <figure class="code"><div class="bar"><span class="tab">components/CatchCard.tsx</span><button type="button">Copy</button></div><pre><span class="k">import</span> { useState } <span class="k">from</span> <span class="s">'react'</span>
+
+<span class="k">export default function</span> <span class="f">CatchCard</span>({ num, name, art, shinyArt }) {
+  <span class="k">const</span> [caught, setCaught] = <span class="f">useState</span>(0)
+  <span class="k">const</span> [shiny, setShiny] = <span class="f">useState</span>(<span class="k">false</span>)
+  <span class="k">return</span> (
+    <span class="t">&lt;article</span> className=<span class="s">"card"</span><span class="t">&gt;</span>
+      <span class="t">&lt;img</span> src={shiny ? shinyArt : art} alt={name} <span class="t">/&gt;</span>
+      <span class="t">&lt;h3&gt;</span>#{num} {name}<span class="t">&lt;/h3&gt;</span>
+      <span class="t">&lt;label&gt;</span>
+        <span class="t">&lt;input</span> type=<span class="s">"checkbox"</span> checked={shiny}
+          onChange={() =&gt; <span class="f">setShiny</span>(!shiny)} <span class="t">/&gt;</span>
+        Shiny
+      <span class="t">&lt;/label&gt;</span>
+      <span class="t">&lt;button</span> onClick={() =&gt; <span class="f">setCaught</span>(caught + 1)}<span class="t">&gt;</span>
+        Catch · {caught}
+      <span class="t">&lt;/button&gt;</span>
+    <span class="t">&lt;/article&gt;</span>
+  )
+}</pre></figure>
+          <div class="browser"><div class="url"><span>127.0.0.1:1337/pokemon/pikachu</span><span class="lbl">Rendered · try it</span></div>
+            <div class="vp nvp">
+              <article class="catch">
+                <div class="art"><img id="cc-img" src="img/art-25.png" alt="Pikachu" width="200" height="200"></div>
+                <div class="cmeta"><span class="no">#025</span><h4>Pikachu</h4><span class="ty electric">electric</span></div>
+                <div class="controls">
+                  <label class="sw" for="cc-shiny"><input type="checkbox" id="cc-shiny"><span class="knob" aria-hidden="true"></span>Shiny</label>
+                  <button type="button" class="demo-btn" id="cc-catch">Catch · <span>0</span></button>
+                </div>
+              </article>
+              <div class="sig"><div class="sig-h"><span>Signals</span><span>no re-render</span></div><ol id="cc-log" aria-live="polite"><li class="hint">Use the switch or the button.</li></ol></div>
+            </div>
+            <dl class="shipbar"><div><dt>HTML</dt><dd>rendered on the server</dd></div><div><dt>JavaScript</dt><dd>brust runtime, about 1 KB</dd></div><div><dt>React</dt><dd class="no">not loaded</dd></div></dl>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel cr" role="tabpanel" id="p-react" aria-labelledby="tab-react" hidden>
+        <div class="pipe"><span class="node">PokemonSearch.tsx</span><span class="wire"><i style="--d:0s"></i></span><span class="node build">brust build</span><span class="wire"><i style="--d:.45s"></i></span><span class="tier react">react</span></div>
+        <div class="cr-grid">
+          <figure class="code"><div class="bar"><span class="tab">components/PokemonSearch.tsx</span><button type="button">Copy</button></div><pre><span class="k">import</span> { useState } <span class="k">from</span> <span class="s">'react'</span>
+<span class="k">import</span> { useDebouncedValue } <span class="k">from</span> <span class="s">'@mantine/hooks'</span>
+
+<span class="k">export default function</span> <span class="f">PokemonSearch</span>({ all }) {
+  <span class="k">const</span> [q, setQ] = <span class="f">useState</span>(<span class="s">''</span>)
+  <span class="k">const</span> [term] = <span class="f">useDebouncedValue</span>(q, 150)
+  <span class="k">const</span> hits = all.<span class="f">filter</span>((p) =&gt; p.name.<span class="f">includes</span>(term))
+  <span class="k">return</span> (
+    <span class="t">&lt;div&gt;</span>
+      <span class="t">&lt;input</span> value={q} onChange={(e) =&gt; <span class="f">setQ</span>(e.target.value)} <span class="t">/&gt;</span>
+      <span class="t">&lt;ul&gt;</span>{hits.<span class="f">map</span>((p) =&gt; <span class="t">&lt;li</span> key={p.id}<span class="t">&gt;&lt;img</span> src={p.sprite} alt=<span class="s">""</span> <span class="t">/&gt;</span>{p.name}<span class="t">&lt;/li&gt;</span>)}<span class="t">&lt;/ul&gt;</span>
+    <span class="t">&lt;/div&gt;</span>
+  )
+}</pre></figure>
+          <div class="browser"><div class="url"><span>127.0.0.1:1337/search</span><span class="lbl">Rendered · try it</span></div>
+            <div class="vp"><label class="sr" for="demo-q">Search Pokémon</label><input id="demo-q" class="demo-in" placeholder="Search Pokémon, e.g. char" autocomplete="off"><ul class="demo-list" id="demo-list"></ul></div>
+            <dl class="shipbar"><div><dt>HTML</dt><dd>server-rendered with React</dd></div><div><dt>JavaScript</dt><dd>one React chunk</dd></div><div><dt>Where</dt><dd>only pages that use it</dd></div></dl>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap split">
+      <div class="text">
+        <h2>Data stays next to the route</h2>
+        <p class="muted">Each route names its loader, and layouts nest through <code>Outlet</code> with their loader results merged top-down.</p>
+        <ol class="pins">
+          <li><span class="pin">1</span><span><b>Params arrive decoded</b>, including encoded slashes.</span></li>
+          <li><span class="pin">2</span><span><b>The loader runs in Bun</b> with the request in hand and returns the page's props.</span></li>
+          <li><span class="pin">3</span><span><b>Caching is one line.</b> A hit is answered by Rust and never wakes Bun.</span></li>
+          <li><span class="pin">4</span><span><b>Invalidate by tag</b> from wherever the data changed.</span></li>
+        </ol>
+      </div>
+      <div class="stack">
+        <figure class="code"><div class="bar"><span class="tab">routes.tsx</span><button type="button">Copy</button></div><pre>{
+  path: <span class="s">'/pokemon/{name}'</span>,<span class="pin">1</span>
+  Component: DetailPage,
+  loader: detailLoader,<span class="pin">2</span>
+  cache: { ttl_seconds: 60, tags: [<span class="s">'pokemon'</span>, <span class="s">'team'</span>] },<span class="pin">3</span>
+}</pre></figure>
+        <figure class="code"><div class="bar"><span class="tab">actions.ts</span><button type="button">Copy</button></div><pre><span class="k">import</span> { cache } <span class="k">from</span> <span class="s">'@brust/core'</span>
+
+<span class="c">// after the roster changes:</span>
+<span class="k">await</span> cache.<span class="f">invalidate</span>({ tags: [<span class="s">'team'</span>] })<span class="pin">4</span></pre></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap pair">
+      <div>
+        <h2>Actions, typed end to end</h2>
+        <p>One Elysia app, served by Rust under <code>/_brust/action</code>. The browser gets a client that knows every route and its types.</p>
+        <figure class="code"><div class="bar"><span class="tab">actions.ts</span><button type="button">Copy</button></div><pre><span class="k">import</span> { brust } <span class="k">from</span> <span class="s">'@brust/core/elysia'</span>
+<span class="k">import</span> { Elysia, t } <span class="k">from</span> <span class="s">'elysia'</span>
+
+<span class="k">const</span> app = <span class="k">new</span> <span class="f">Elysia</span>({ adapter: <span class="f">brust</span>() })
+  .<span class="f">get</span>(<span class="s">'/hello'</span>, { query: t.Object({ name: t.String() }) },
+    ({ query }) =&gt; ({ message: <span class="s">`Hello, ${query.name}!`</span> }))
+
+<span class="k">export default</span> app
+<span class="k">export type</span> App = <span class="k">typeof</span> app</pre></figure>
+        <figure class="code"><div class="bar"><span class="tab">in the browser</span><button type="button">Copy</button></div><pre><span class="k">const</span> api = <span class="f">client</span>&lt;App&gt;()
+<span class="k">const</span> { data } = <span class="k">await</span> api.hello.<span class="f">get</span>({ query: { name: <span class="s">'ash'</span> } })</pre></figure>
+      </div>
+      <div>
+        <h2>One store, both sides</h2>
+        <p>Define a store once. The server fills it while rendering, the browser picks it up as a snapshot, and native components and islands read the same signals.</p>
+        <figure class="code"><div class="bar"><span class="tab">stores/team.ts</span><button type="button">Copy</button></div><pre><span class="k">import</span> { defineStore, signal } <span class="k">from</span> <span class="s">'@brust/core/store'</span>
+
+<span class="k">export const</span> team = <span class="f">defineStore</span>(<span class="s">'team'</span>, () =&gt; ({
+  members: <span class="f">signal</span>([]),
+  max: <span class="f">signal</span>(6),
+}))</pre></figure>
+        <figure class="code"><div class="bar"><span class="tab">components/TeamCount.tsx</span><button type="button">Copy</button></div><pre><span class="k">export default function</span> <span class="f">TeamCount</span>() {
+  <span class="k">const</span> members = <span class="f">useStore</span>(team.members)
+  <span class="k">return</span> <span class="t">&lt;span&gt;</span>{members.length} / 6<span class="t">&lt;/span&gt;</span>
+}</pre></figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap">
+      <div class="head"><h2>Deploy where you like</h2><p>The same routes file builds for a Bun process on your own machine or for Cloudflare Workers. Nothing in the app changes.</p></div>
+      <div class="pair">
+        <div><h3>Your server</h3><p>A Rust server handles HTTP; Bun workers run loaders and actions beside it.</p>
+          <figure class="code"><div class="bar"><span class="cwd">~/my-app</span><button type="button">Copy</button></div><pre><span class="ps">$ </span>bun run build
+<span class="ps">$ </span>brust start --port 8080 --workers 4</pre></figure></div>
+        <div><h3>Cloudflare Workers</h3><p>The build emits a Worker, the static assets and a merged <code>wrangler.jsonc</code>. D1 and KV bind as usual.</p>
+          <figure class="code"><div class="bar"><span class="cwd">~/my-app</span><button type="button">Copy</button></div><pre><span class="ps">$ </span>brust build routes.tsx --target cloudflare
+<span class="ps">$ </span>wrangler deploy -c dist/cf/wrangler.jsonc</pre></figure></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap">
+      <div class="head"><h2>Packages</h2><p>Install only what the app uses. Everything publishes in lockstep at the same version.</p></div>
+      <div class="pkgs">
+        <div class="pkg"><code class="n">@brust/core</code><p>Routes, loaders, cache, actions, store, the CLI and the native server.</p><span class="how">bun add @brust/core</span></div>
+        <div class="pkg"><code class="n">@brust/create-app</code><p>The scaffolder behind <code>bun create @brust/app</code>.</p><span class="how">bun create @brust/app@latest</span></div>
+        <div class="pkg"><code class="n">@brust/core-cf</code><p>The same runtime as a Worker, used by the Cloudflare target.</p><span class="how">installed with @brust/core</span></div>
+        <div class="pkg"><code class="n">@brust/runtime-dom</code><p>The browser runtime for native components: signals and bindings.</p><span class="how">installed with @brust/core</span></div>
+        <div class="pkg"><code class="n">@brust/cache-redis</code><p>A shared cache tier on Redis or Dragonfly, with invalidation across instances.</p><span class="how">bun add @brust/cache-redis</span></div>
+        <div class="pkg"><code class="n">@brust/cache-cloudflare</code><p>The shared tier on KV, with a Durable Object for invalidation.</p><span class="how">bun add @brust/cache-cloudflare</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec">
+    <div class="wrap">
+      <div class="head"><h2>What brust is not</h2><p>Fewer surprises if you know the shape before you start.</p></div>
+      <div class="nots">
+        <div><h3>a single-page app</h3><p>Navigation is server-first. Pages render on the server; islands hydrate only where they appear.</p></div>
+        <div><h3>file-system routing</h3><p>Routes live in one explicit <code>routes.tsx</code>, so you can read the whole site in one file.</p></div>
+        <div><h3>a React replacement</h3><p>Islands run real React 19. The compiler only steps in where React would be dead weight.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="closing">
+    <div class="wrap"><div><h2>Read the quickstart, then ship something small.</h2><p class="th" lang="th">อ่าน quickstart แล้วเริ่มจากของชิ้นเล็ก ๆ</p></div>
+      <div class="seal" aria-hidden="true"><span>brust</span><b>v2</b><span>alpha 3</span></div>
+      <div class="cta"><a class="btn primary" href="#docs">Open the docs</a><a class="btn" href="#">See the pokedex example</a></div></div>
+  </section>
+
+  <div class="wrap">
+    <footer class="site">
+      <div><a class="brand" href="#landing" style="font-size:18px">brust</a><p style="margin-top:.5rem">React components compiled ahead of time, served by Rust. MIT License.</p></div>
+      <div><h4>Docs</h4><a href="#docs">Quickstart</a><a href="#">Routing</a><a href="#">Rendering tiers</a><a href="#">Cookbook</a></div>
+      <div><h4>Project</h4><a href="#">GitHub</a><a href="#">Releases</a><a href="#">Changelog</a></div>
+      <div><h4>Packages</h4><a href="#">@brust/core on npm</a><a href="#">@brust/create-app</a></div>
+    </footer>
+  </div>
+</section>
+
+<!-- ================= DOCS PAGE ================= -->
+<section class="view" id="docs" hidden>
+  <div class="wrap">
+    <header class="site-header">
+      <a class="brand" href="#landing">brust <span class="v">2.0.0-alpha.3</span></a>
+      <nav aria-label="Site">
+        <span class="search">Search docs <kbd>⌘K</kbd></span>
+        <a href="#docs">Docs</a><a href="#">Cookbook</a><a href="#">GitHub</a>
+      </nav>
+    </header>
+  </div>
+
+  <div class="docs">
+    <nav class="side" aria-label="Docs">
+      <h4>Guide</h4>
+      <a href="#">Introduction</a><a href="#">Installation</a><a href="#" aria-current="page">Quickstart</a><a href="#">Project structure</a><a href="#">Routing</a><a href="#">Loaders and params</a><a href="#">Rendering tiers</a><a href="#">Caching</a><a href="#">Actions</a><a href="#">Store</a><a href="#">Configuration</a><a href="#">CLI</a><a href="#">Deployment</a><a href="#">Migrating from 0.1.x</a>
+      <h4>Cloudflare</h4>
+      <a href="#">Workers target</a><a href="#">D1 recipe</a><a href="#">Cache on KV and DO</a>
+      <h4>Cache adapters</h4>
+      <a href="#">Overview</a><a href="#">Redis and Dragonfly</a><a href="#">Cloudflare</a><a href="#">Write your own</a>
+      <h4>Cookbook</h4>
+      <a href="#">Hello world</a><a href="#">A React island</a><a href="#">Form action</a><a href="#">Static 404 page</a><a href="#">Invalidate the cache</a>
+    </nav>
+
+    <article class="doc">
+      <div class="crumbs">Guide / Quickstart</div>
+      <h1>Quickstart</h1>
+      <p class="lead">From an empty folder to a page served by Rust. Four steps, each one a command or a file you can copy as is.</p>
+
+      <h2 id="requirements"><span class="n">1</span>Check the requirements</h2>
+      <p>Bun 1.4 or newer. The Rust server ships prebuilt for macOS and Linux, so there is no Rust toolchain to install.</p>
+      <figure class="code"><div class="bar"><span class="cwd">~/</span><button type="button">Copy</button></div><pre><span class="ps">$ </span>bun --version
+<span class="c">1.4.3</span></pre></figure>
+
+      <h2 id="create"><span class="n">2</span>Create the project</h2>
+      <p>The blank template has one layout, one page, and the scripts you will use every day.</p>
+      <figure class="code"><div class="bar"><span class="cwd">~/</span><button type="button">Copy</button></div><pre><span class="ps">$ </span>bun create @brust/app@latest my-app
+<span class="ps">$ </span>cd my-app &amp;&amp; bun install</pre></figure>
+      <div class="note"><span class="tag">Note</span><p>Keep the <code>@latest</code>. <code>bun create</code> caches the scaffolder, and a stale cache gives you an old template.</p></div>
+
+      <h2 id="write"><span class="n">3</span>Write a page</h2>
+      <p>A page is a plain React component. <code>routes.tsx</code> maps paths to components, and the layout wraps every page through <code>Outlet</code>.</p>
+      <figure class="code"><div class="bar"><span class="tab">pages/HomePage.tsx</span><button type="button">Copy</button></div><pre><span class="k">export default function</span> <span class="f">HomePage</span>() {
+  <span class="k">return</span> (
+    <span class="t">&lt;section&gt;</span>
+      <span class="t">&lt;h1&gt;</span>Hello from brust<span class="t">&lt;/h1&gt;</span>
+      <span class="t">&lt;p&gt;</span>Edit pages/HomePage.tsx and run bun run dev again.<span class="t">&lt;/p&gt;</span>
+    <span class="t">&lt;/section&gt;</span>
+  )
+}</pre></figure>
+      <figure class="code"><div class="bar"><span class="tab">routes.tsx</span><button type="button">Copy</button></div><pre><span class="k">import</span> { defineRoutes } <span class="k">from</span> <span class="s">'@brust/core/routes'</span>
+<span class="k">import</span> Layout <span class="k">from</span> <span class="s">'./components/Layout'</span>
+<span class="k">import</span> HomePage <span class="k">from</span> <span class="s">'./pages/HomePage'</span>
+
+<span class="k">export const</span> routes = <span class="f">defineRoutes</span>([
+  { Component: Layout, children: [{ path: <span class="s">'/'</span>, Component: HomePage }] },
+])</pre></figure>
+      <p>This page has no state and no handlers, so the compiler marks it <span class="tier static">static</span>: rendered once, served as HTML, no client JavaScript.</p>
+
+      <h2 id="run"><span class="n">4</span>Run it</h2>
+      <p><code>bun run dev</code> builds and starts the server. Open the address it prints.</p>
+      <figure class="code"><div class="bar"><span class="cwd">~/my-app</span><button type="button">Copy</button></div><pre><span class="ps">$ </span>bun run dev
+<span class="c">[brust] built dist in 17ms
+[brust] ready (10 workers) http://127.0.0.1:1337</span></pre></figure>
+      <figure class="code"><div class="bar"><span class="cwd">~/my-app</span><button type="button">Copy</button></div><pre><span class="ps">$ </span>curl -i http://127.0.0.1:1337/
+<span class="c">HTTP/1.1 200 OK
+x-powered-by: brust/2.0.0-alpha.3
+content-type: text/html; charset=utf-8</span></pre></figure>
+
+      <h2 id="next"><span class="n">5</span>Where to go next</h2>
+      <ul>
+        <li><a href="#">Routing</a>: nested layouts, path params, the catch-all 404.</li>
+        <li><a href="#">Loaders and params</a>: fetch data per route in Bun.</li>
+        <li><a href="#">Rendering tiers</a>: what makes a component static, native, or a React island.</li>
+      </ul>
+
+      <div class="foot-meta"><span>Edit this page on GitHub</span><span>Last updated 2026-10-12</span></div>
+      <nav class="pager" aria-label="Pages">
+        <a href="#"><span>Previous</span><b>Installation</b></a>
+        <a class="next" href="#"><span>Next</span><b>Project structure</b></a>
+      </nav>
+    </article>
+
+    <aside class="toc">
+      <span class="ind"></span>
+      <h4>On this page</h4>
+      <a class="active" href="#requirements">Check the requirements</a><a href="#create">Create the project</a><a href="#write">Write a page</a><a href="#run">Run it</a><a href="#next">Where to go next</a>
+    </aside>
+  </div>
+</section>
+
+<script>
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
+const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)]
+
+function show(id) {
+  for (const v of ['landing', 'docs']) { $('#' + v).hidden = v !== id; $('#b-' + v).setAttribute('aria-pressed', String(v === id)) }
+  window.scrollTo(0, 0)
+  if (id === 'docs') requestAnimationFrame(placeInd)
+  if (id === 'landing') requestAnimationFrame(() => { placeTabInk(); updateRail() })
+}
+function toggleTheme() {
+  const r = document.documentElement
+  const dark = r.getAttribute('data-theme') === 'dark' || (!r.getAttribute('data-theme') && matchMedia('(prefers-color-scheme: dark)').matches)
+  r.setAttribute('data-theme', dark ? 'light' : 'dark')
+}
+
+// Copy buttons
+$$('.code .bar button').forEach((b) => b.addEventListener('click', async () => {
+  const text = b.closest('.code').querySelector('pre').innerText
+  try { await navigator.clipboard.writeText(text); b.textContent = 'Copied'; b.classList.add('done') } catch { b.textContent = 'Select to copy' }
+  setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('done') }, 1400)
+}))
+
+// 1. The one orchestrated moment: the tmux session plays the quickstart.
+const timers = []
+function setPane(n) { $('#panes').dataset.active = n; $$('#status .w').forEach((w) => w.classList.toggle('on', w.dataset.w === String(n))) }
+function playIntro() {
+  timers.splice(0).forEach(clearTimeout)
+  const h = $('#hero')
+  if (reduce) { setPane(2); return }
+  h.classList.remove('play'); void h.offsetWidth; h.classList.add('play')
+  setPane(0); timers.push(setTimeout(() => setPane(1), 1300), setTimeout(() => setPane(2), 2300))
+}
+function replayIntro() { if ($('#landing').hidden) show('landing'); window.scrollTo(0, 0); playIntro() }
+playIntro()
+
+// 2. Bars grow and numbers count when they scroll into view (final values render first; only off-screen bars are armed).
+function countUp(el) {
+  const raw = el.dataset.count, end = parseFloat(raw), dec = (raw.split('.')[1] || '').length, node = el.firstChild
+  const fmt = (v) => v.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec })
+  const t0 = performance.now(), dur = 1000
+  const tick = (t) => { const p = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - p, 3); node.nodeValue = fmt(end * e); if (p < 1) requestAnimationFrame(tick) }
+  requestAnimationFrame(tick)
+}
+if (!reduce && 'IntersectionObserver' in window) {
+  $$('.fill').forEach((f) => { if (f.getBoundingClientRect().top > innerHeight) f.classList.add('armed') })
+  const seen = new IntersectionObserver((es) => es.forEach((e) => {
+    if (!e.isIntersecting) return
+    if (e.target.dataset.count) countUp(e.target); else e.target.classList.remove('armed')
+    seen.unobserve(e.target)
+  }), { threshold: 0.6 })
+  $$('[data-count], .fill').forEach((el) => seen.observe(el))
+  const pops = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('pop'); pops.unobserve(e.target) } }), { threshold: 1 })
+  $$('.doc h2 .n').forEach((el) => pops.observe(el))
+}
+
+// 3. The step rail fills as you scroll through the steps.
+function updateRail() {
+  const rail = $('#rail'), fill = $('#rail-fill')
+  if (!rail || $('#landing').hidden) return
+  const r = rail.getBoundingClientRect(), mid = innerHeight * 0.6
+  const p = Math.max(0, Math.min(1, (mid - r.top) / r.height))
+  fill.style.height = reduce ? '0' : `calc((100% - .8rem) * ${p.toFixed(3)})`
+}
+
+// 4. Tabs: the underline slides, the panel rises, a dot runs down the pipe.
+function placeTabInk() {
+  const sel = $('#tabs [aria-selected="true"]'), ink = $('#tab-ink')
+  if (!sel || !ink) return
+  ink.style.width = '100px'; ink.style.transformOrigin = '0 0'; ink.style.transform = `translateX(${sel.offsetLeft}px) scaleX(${sel.offsetWidth / 100})`
+}
+$$('#tabs [role="tab"]').forEach((t) => t.addEventListener('click', () => {
+  $$('#tabs [role="tab"]').forEach((x) => x.setAttribute('aria-selected', String(x === t)))
+  $$('.panel').forEach((p) => { p.hidden = p.id !== 'p-' + t.dataset.t })
+  const p = $('#p-' + t.dataset.t), pipe = $('.pipe', p)
+  p.classList.remove('enter'); pipe.classList.remove('go'); void p.offsetWidth; p.classList.add('enter'); pipe.classList.add('go')
+  placeTabInk()
+}))
+requestAnimationFrame(placeTabInk)
+addEventListener('resize', placeTabInk)
+
+// 5. Docs: the TOC indicator follows the section you read.
+const tocLinks = $$('.toc a'), ind = $('.toc .ind')
+function setActive(a) {
+  tocLinks.forEach((x) => x.classList.toggle('active', x === a))
+  if (ind && a) { ind.style.transform = `translateY(${a.offsetTop}px)`; ind.style.height = a.offsetHeight + 'px' }
+}
+function placeInd() { setActive($('.toc a.active') || tocLinks[0]) }
+let queued = false
+addEventListener('scroll', () => {
+  if (queued) return
+  queued = true
+  requestAnimationFrame(() => {
+    queued = false
+    updateRail()
+    if ($('#docs').hidden) return
+    let cur = tocLinks[0]
+    for (const a of tocLinks) { const h = document.getElementById(a.getAttribute('href').slice(1)); if (h && h.getBoundingClientRect().top < 160) cur = a }
+    setActive(cur)
+  })
+}, { passive: true })
+updateRail()
+if (location.hash === '#docs') show('docs')
+
+// 6. Benchmark: histograms grow when the panel comes into view (only bars that start off-screen are armed).
+if (!reduce && 'IntersectionObserver' in window) {
+  const hgs = $$('.hg'); hgs.forEach((h) => { if (h.getBoundingClientRect().top > innerHeight) h.classList.add('armed') })
+  const grow = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.remove('armed'); grow.unobserve(e.target) } }), { threshold: 0.5 })
+  hgs.forEach((h) => grow.observe(h))
+}
+
+// 7. The rendered demos are live: the native counter counts, the island searches.
+// Native demo: two signals; each change is logged, and only the bound attribute or text changes.
+const ccImg = $('#cc-img'), ccBtn = $('#cc-catch'), ccLog = $('#cc-log')
+let caught = 0
+function logSig(name, from, to) {
+  const hint = $('.hint', ccLog); if (hint) hint.remove()
+  const li = document.createElement('li'); li.className = 'new'
+  li.innerHTML = `<b>${name}</b><span>${from} → <em>${to}</em></span>`
+  ccLog.prepend(li); while (ccLog.children.length > 6) ccLog.lastElementChild.remove()
+}
+ccBtn.addEventListener('click', () => {
+  const n = $('span', ccBtn); logSig('caught', caught, caught + 1); caught++; n.textContent = String(caught)
+  n.classList.remove('bump'); ccImg.classList.remove('wiggle'); void n.offsetWidth; n.classList.add('bump'); ccImg.classList.add('wiggle')
+})
+$('#cc-shiny').addEventListener('change', (e) => {
+  const on = e.target.checked; logSig('shiny', !on, on)
+  ccImg.src = on ? 'img/art-25-shiny.png' : 'img/art-25.png'; ccImg.alt = on ? 'Shiny Pikachu' : 'Pikachu'
+})
+const DEX = [[1, 'bulbasaur'], [2, 'ivysaur'], [3, 'venusaur'], [4, 'charmander'], [5, 'charmeleon'], [6, 'charizard'], [7, 'squirtle'], [8, 'wartortle'], [9, 'blastoise'], [25, 'pikachu'], [26, 'raichu'], [39, 'jigglypuff'], [52, 'meowth'], [54, 'psyduck'], [66, 'machop'], [74, 'geodude'], [94, 'gengar'], [95, 'onix'], [133, 'eevee'], [143, 'snorlax'], [149, 'dragonite'], [150, 'mewtwo'], [151, 'mew']]
+function renderHits(term) {
+  const hits = DEX.filter(([, n]) => n.includes(term.trim().toLowerCase())).slice(0, 8)
+  $('#demo-list').innerHTML = hits.length
+    ? hits.map(([no, n]) => `<li><img src="img/s-${no}.png" alt="" width="40" height="40"><span class="no">#${String(no).padStart(3, '0')}</span>${n[0].toUpperCase() + n.slice(1)}</li>`).join('')
+    : '<li class="empty">No Pokémon match that name.</li>'
+}
+let debounce
+$('#demo-q').addEventListener('input', (e) => { clearTimeout(debounce); debounce = setTimeout(() => renderHits(e.target.value), 150) })
+renderHits('')
+
+// 9. The poster's build button: light the towers like a build, then print the CLI's line.
+const orb = $('#orb'), buildBtn = $('#build-btn'), status = $('#poster-status'), live = $('#build-live')
+let building = false
+function typeStatus(text, done) {
+  if (reduce) { status.textContent = text; done && done(); return }
+  let i = 0; status.textContent = ''
+  const tick = () => { status.textContent = text.slice(0, ++i); if (i < text.length) setTimeout(tick, 28); else done && done() }
+  tick()
+}
+buildBtn.addEventListener('click', () => {
+  if (building) return
+  building = true; buildBtn.setAttribute('aria-busy', 'true')
+  orb.classList.remove('lit', 'flash'); void orb.getBoundingClientRect()
+  status.textContent = 'BUILDING…'
+  setTimeout(() => {
+    orb.classList.add('lit', 'flash')
+    typeStatus('BUILT DIST IN 17MS · 3 TIERS', () => {
+      building = false; buildBtn.removeAttribute('aria-busy')
+      live.textContent = 'Built dist in 17 milliseconds: static, native and react.'
+    })
+  }, reduce ? 0 : 450)
+})
+</script>

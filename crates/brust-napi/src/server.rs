@@ -351,12 +351,14 @@ pub fn put_fetch_reply(slot: u32, body: Uint8Array) -> bool {
     }
 }
 
-/// Resolves once `workers` workers registered with the current server;
-/// rejects after `timeout_ms` (the caller decides the exit policy).
+/// Resolves once `workers` workers registered with the current server and the server has printed its
+/// `[brust] listening on` line (so a caller's `ready` always follows it, F128); rejects after `timeout_ms` (the caller decides the exit policy).
 #[napi]
 pub async fn until_ready(timeout_ms: u32) -> napi::Result<()> {
     let wait = async {
-        while REGISTERED.load(Ordering::SeqCst) < EXPECTED.load(Ordering::SeqCst) {
+        while REGISTERED.load(Ordering::SeqCst) < EXPECTED.load(Ordering::SeqCst)
+            || !current().map_or(true, |s| s.announced())
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     };

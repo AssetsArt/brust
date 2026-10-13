@@ -1,0 +1,192 @@
+// Rendering tiers — static, native, react: what each ships, what decides it, how to see it. The three demos below are
+// real components of this site, and their tiers are read from this build's dist/manifest.json by the loader.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import CodeBlock from '../../components/CodeBlock'
+import Note from '../../components/docs/Note'
+import CatchCard from '../../components/landing/demos/CatchCard'
+import PokemonCard from '../../components/landing/demos/PokemonCard'
+import PokemonSearch from '../../components/landing/demos/PokemonSearch'
+import { type CodeBlockData, codeBlock } from '../../lib/highlight'
+import type { TocItem } from '../../lib/nav'
+import { artworkUrl, byId, dexNo, displayName, POKEMON, shinyUrl, spriteUrl } from '../../lib/pokemon'
+
+interface Shipped {
+  tier: string
+  client: string
+}
+
+export interface RenderingTiersData {
+  toc: TocItem[]
+  blocks: Record<'warning' | 'manifest', CodeBlockData>
+  tiers: { card: Shipped; catch: Shipped; search: Shipped }
+  cards: { no: string; name: string; art: string; types: string[] }[]
+  catchMon: { no: string; name: string; type: string; art: string; shinyArt: string }
+  all: { id: number; no: string; label: string; name: string; sprite: string }[]
+}
+
+let manifest: { components: Record<string, { tier: string; client: string | null }> } | undefined
+function shipped(prefix: string): Shipped {
+  try {
+    manifest ??= JSON.parse(readFileSync(join(process.env.BRUST_DIST_DIR ?? join(process.cwd(), 'dist'), 'manifest.json'), 'utf8'))
+  } catch {
+    return { tier: 'unknown', client: 'manifest not found' }
+  }
+  const hit = Object.entries(manifest!.components).find(([id]) => id.startsWith(`${prefix}_`))
+  if (!hit) return { tier: 'unknown', client: 'not in this build' }
+  return { tier: hit[1].tier, client: hit[1].client ?? 'none' }
+}
+
+export async function renderingTiersLoader(): Promise<RenderingTiersData> {
+  const mon = (id: number) => {
+    const p = byId(id)!
+    return { no: dexNo(id), name: displayName(p.name), art: artworkUrl(id), types: p.types }
+  }
+  const pika = byId(25)!
+  return {
+    toc: [
+      { id: 'three', title: 'Three tiers' },
+      { id: 'live', title: 'The three, live' },
+      { id: 'hooks', title: 'What decides the tier' },
+      { id: 'see', title: 'See what you got' },
+    ],
+    blocks: {
+      warning: codeBlock({ lang: 'sh', cwd: '~/pokedex', code: '$ bun run build\nwarning hook-unsupported components/TeamBuilder.tsx:12:26 hook useReducer is not supported\nwarning hook-unsupported components/UnifiedIsland.tsx:11:25 hook useReducer is not supported\n[brust] built dist in 73ms' }),
+      manifest: codeBlock({ lang: 'json', file: 'dist/manifest.json', code: '"pokemonSearch_<hash>": {\n  "tier": "react",\n  "client": "client/react-pokemonSearch_<hash>-<hash>.js",\n  "jobs": [{ "kind": "ssr", … }]\n}' }),
+    },
+    tiers: { card: shipped('pokemonCard'), catch: shipped('catchCard'), search: shipped('pokemonSearch') },
+    cards: [mon(1), mon(4), mon(7)],
+    catchMon: { no: dexNo(25), name: displayName(pika.name), type: pika.types[0]!, art: artworkUrl(25), shinyArt: shinyUrl(25) },
+    all: POKEMON.map((p) => ({ id: p.id, no: dexNo(p.id), label: displayName(p.name), name: p.name, sprite: spriteUrl(p.id) })),
+  }
+}
+
+export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: RenderingTiersData) {
+  return (
+    <>
+      <h1>Rendering tiers</h1>
+      <p className="lead">The compiler reads each component and picks the cheapest output that still behaves the same. You never pick it; you can always see what it picked.</p>
+
+      <h2 id="three">Three tiers</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Tier</th>
+            <th>When</th>
+            <th>The browser gets</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <span className="tier static">static</span>
+            </td>
+            <td>No hooks, no handlers, no refs. Props in, markup out.</td>
+            <td>HTML only. No JavaScript.</td>
+          </tr>
+          <tr>
+            <td>
+              <span className="tier native">native</span>
+            </td>
+            <td>Only the supported hooks, and event handlers.</td>
+            <td>HTML, plus a small React-free chunk: signals bound to the server's markup.</td>
+          </tr>
+          <tr>
+            <td>
+              <span className="tier react">react</span>
+            </td>
+            <td>Everything else: context, <code>useReducer</code>, <code>useDeferredValue</code>, <code>Suspense</code>, a component from a package, browser globals read during render.</td>
+            <td>HTML rendered by React on the server, then a React island hydrates it.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The tier is decided per component, bottom-up. A React child inside a native parent becomes an island and the parent stays native, so one island never turns the whole page into React. A page made only of static components gets no <code>&lt;script&gt;</code> tag at all.
+      </p>
+
+      <h2 id="live">The three, live</h2>
+      <p>These are the landing page's three demo components. The tier and the shipped chunk under each one come from this build's manifest, read by the page's loader.</p>
+      <div className="browser">
+        <div className="url">
+          <span>PokemonCard</span>
+          <span className="lbl">
+            tier {tiers.card.tier} · client {tiers.card.client}
+          </span>
+        </div>
+        <div className="vp">
+          <div className="cards">
+            {cards.map((c) => (
+              <PokemonCard key={c.no} no={c.no} name={c.name} art={c.art} types={c.types} />
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="browser">
+        <div className="url">
+          <span>CatchCard</span>
+          <span className="lbl">
+            tier {tiers.catch.tier} · client {tiers.catch.client}
+          </span>
+        </div>
+        <CatchCard no={catchMon.no} name={catchMon.name} art={catchMon.art} shinyArt={catchMon.shinyArt} />
+      </div>
+      <div className="browser">
+        <div className="url">
+          <span>PokemonSearch</span>
+          <span className="lbl">
+            tier {tiers.search.tier} · client {tiers.search.client}
+          </span>
+        </div>
+        <PokemonSearch all={all} />
+      </div>
+
+      <h2 id="hooks">What decides the tier</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>You use</th>
+            <th>Tier</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Props only, or <code>useId</code></td>
+            <td>
+              <span className="tier static">static</span>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>useState</code>, <code>useMemo</code>, <code>useCallback</code>, <code>useEffect</code>, <code>useLayoutEffect</code>, <code>useRef</code>, <code>useId</code>, <code>memo()</code>, event handlers, <code>useStore</code>, and a custom hook whose body uses only these (the compiler inlines it)
+            </td>
+            <td>
+              <span className="tier native">native</span>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>useReducer</code>, <code>useContext</code>, <code>useDeferredValue</code>, <code>useTransition</code>, <code>useSyncExternalStore</code>, <code>use(promise)</code>, <code>cloneElement</code>, <code>forwardRef</code> and other HOCs, spread props, <code>lazy</code>
+            </td>
+            <td>
+              <span className="tier react">react</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        In a native component, effect dependency arrays are not needed: signals track what an effect reads. A missing dependency still prints <code>effect-deps</code> as a warning, and the tier stays native.
+      </p>
+      <Note>
+        Falling back to React is never a build failure. Some things are: passing a function prop to a React child (<code>island-prop</code>), server-only code reachable from the browser (<code>server-only-in-client</code>), and a list without keys (<code>list-key</code>).
+      </Note>
+
+      <h2 id="see">See what you got</h2>
+      <p>Every fallback is printed once per component by the build, with the rule and the line. This is the pokedex example's build:</p>
+      <CodeBlock code={blocks.warning.code} lang={blocks.warning.lang} cwd={blocks.warning.cwd} html={blocks.warning.html} />
+      <p>
+        The full answer is in <code>dist/manifest.json</code>: each component has a <code>tier</code>, the <code>client</code> chunk it ships (<code>null</code> when nothing ships) and its server <code>jobs</code>.
+      </p>
+      <CodeBlock code={blocks.manifest.code} lang={blocks.manifest.lang} file={blocks.manifest.file} html={blocks.manifest.html} />
+    </>
+  )
+}

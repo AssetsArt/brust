@@ -1,0 +1,27 @@
+{
+  "name": "@brust/docs-site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun scripts/gen-meta.ts && brust build routes.tsx && brust start",
+    "build": "bun scripts/gen-meta.ts && brust build routes.tsx",
+    "build:static": "bun scripts/gen-meta.ts && brust build routes.tsx --target static && bun scripts/pages-extras.ts",
+    "deploy": "bun run build:static && bunx wrangler pages deploy dist/static --project-name brust-dev --branch main --commit-dirty=true",
+    "start": "brust start",
+    "test": "bun test",
+    "typecheck": "bun check"
+  },
+  "dependencies": {
+    "@brust/core": "workspace:*",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "shiki": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "@types/react": "^19.2.0",
+    "playwright": "1.64.0",
+    "typescript": "^7.0.2"
+  }
+}

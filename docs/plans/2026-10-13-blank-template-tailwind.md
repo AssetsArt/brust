@@ -30,3 +30,5 @@ Branch from `docs-site` (see `2026-10-13-docs-site-sync.md`, "Rules for every do
 |---|---|---|---|---|
 | `blank-template-tailwind` | standard | implementer (Dew) | none | Part A boundary, R29.1–R29.5, CI green, F129 row |
 | `docs-project-structure` | standard | implementer (Dew) | `blank-template-tailwind` merged + lead's v2→docs-site merge | Part B; site tests green; screenshots |
+
+**Amendment 2026-10-13 (docs site merged into v2, PR #182):** Part B branches from `v2` (`conclave lane start`), not from `docs-site` (deleted); flow is lane → PR → CI (the server job runs `website` typecheck and each `website/test/*.test.ts`) → lead merges → lead redeploys with `cd website && bun run deploy`.

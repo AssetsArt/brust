@@ -1,0 +1,222 @@
+[
+  {
+    "id": "lang",
+    "steps": [
+      {
+        "command": "curl -si \"$BASE/ex/lang\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>lang render 1</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si \"$BASE/ex/lang\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>lang render 1</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'Cookie: lang=th' \"$BASE/ex/lang\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>lang render 2</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si -H 'Cookie: lang=TH' \"$BASE/ex/lang\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>lang render 2</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'Cookie: lang=en' \"$BASE/ex/lang\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>lang render 1</p>",
+        "outcome": "HIT"
+      }
+    ]
+  },
+  {
+    "id": "tenant",
+    "steps": [
+      {
+        "command": "curl -si -H 'Host: a.example.com' \"$BASE/ex/tenant\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>tenant render 1</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si -H 'Host: a.example.com' \"$BASE/ex/tenant\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>tenant render 1</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'Host: b.example.com' \"$BASE/ex/tenant\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>tenant render 2</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si -H 'Cookie: lang=EN' -H 'Host: a.example.com' \"$BASE/ex/tenant\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>tenant render 1</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'Cookie: lang=th' -H 'Host: a.example.com' \"$BASE/ex/tenant\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>tenant render 3</p>",
+        "outcome": "MISS"
+      }
+    ]
+  },
+  {
+    "id": "ab",
+    "steps": [
+      {
+        "command": "curl -si \"$BASE/ex/ab\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>ab render 1</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si -H 'Cookie: ab=b' \"$BASE/ex/ab\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>ab render 2</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si -H 'Cookie: ab=b' \"$BASE/ex/ab\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>ab render 2</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'Cookie: ab=zzz' \"$BASE/ex/ab\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>ab render 1</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'Cookie: ab=a' \"$BASE/ex/ab\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>ab render 1</p>",
+        "outcome": "HIT"
+      }
+    ]
+  },
+  {
+    "id": "plan",
+    "steps": [
+      {
+        "command": "curl -si \"$BASE/ex/plan\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>plan render 1</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si \"$BASE/ex/plan\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>plan render 1</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'Cookie: plan=pro' \"$BASE/ex/plan\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>plan render 2</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si -H 'Cookie: plan=pro' \"$BASE/ex/plan\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>plan render 2</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'Cookie: plan=enterprise' \"$BASE/ex/plan\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>plan render 1</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'Cookie: session=s1' \"$BASE/ex/plan\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: BYPASS\n<p>plan render 3</p>",
+        "outcome": "BYPASS"
+      },
+      {
+        "command": "curl -si -H 'Cookie: session=s1; plan=pro' \"$BASE/ex/plan\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: BYPASS\n<p>plan render 4</p>",
+        "outcome": "BYPASS"
+      }
+    ]
+  },
+  {
+    "id": "device",
+    "steps": [
+      {
+        "command": "curl -si \"$BASE/ex/device\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>device render 1</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si \"$BASE/ex/device\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>device render 1</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'sec-ch-ua-mobile: ?1' \"$BASE/ex/device\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>device render 2</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si -H 'sec-ch-ua-mobile: ?1' \"$BASE/ex/device\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>device render 2</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si -H 'sec-ch-ua-mobile: ?0' \"$BASE/ex/device\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>device render 1</p>",
+        "outcome": "HIT"
+      }
+    ]
+  },
+  {
+    "id": "deploy",
+    "steps": [
+      {
+        "command": "curl -si \"$BASE/ex/deploy/pikachu\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>deploy pikachu render 1</p>",
+        "outcome": "MISS"
+      },
+      {
+        "command": "curl -si \"$BASE/ex/deploy/pikachu\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: HIT\n<p>deploy pikachu render 1</p>",
+        "outcome": "HIT"
+      },
+      {
+        "command": "curl -si \"$BASE/ex/deploy/eevee\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>deploy eevee render 2</p>",
+        "outcome": "MISS"
+      }
+    ]
+  },
+  {
+    "id": "decode",
+    "steps": [
+      {
+        "command": "curl -si \"$BASE/ex/decode?mode=draft\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: BYPASS\n<p>decode render 1</p>",
+        "outcome": "BYPASS"
+      },
+      {
+        "command": "curl -si \"$BASE/ex/decode?mode=dr%61ft\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: BYPASS\n<p>decode render 2</p>",
+        "outcome": "BYPASS"
+      },
+      {
+        "command": "curl -si \"$BASE/ex/decode?mo%64e=draft\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: BYPASS\n<p>decode render 3</p>",
+        "outcome": "BYPASS"
+      },
+      {
+        "command": "curl -si \"$BASE/ex/decode?mode=live\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: MISS\n<p>decode render 4</p>",
+        "outcome": "MISS"
+      }
+    ]
+  },
+  {
+    "id": "ambiguous",
+    "steps": [
+      {
+        "command": "curl -si \"$BASE/ex/lang?a=1&a=2\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: BYPASS\n<p>lang render 3</p>",
+        "outcome": "BYPASS"
+      },
+      {
+        "command": "curl -si -H 'Cookie: lang=th; Lang=en' \"$BASE/ex/lang\" | grep -E 'x-brust-cache|render'",
+        "output": "x-brust-cache: BYPASS\n<p>lang render 4</p>",
+        "outcome": "BYPASS"
+      }
+    ]
+  }
+]
