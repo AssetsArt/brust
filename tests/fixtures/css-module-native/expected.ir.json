@@ -1,0 +1,200 @@
+{
+  "id": "input_e0292c7b",
+  "source": "tests/fixtures/css-module-native/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "on",
+      "setter": "setOn",
+      "init": {
+        "Server": {
+          "loc": 138,
+          "kind": {
+            "Lit": {
+              "Bool": false
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 231,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 237,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 237,
+                      "kind": {
+                        "Ident": {
+                          "name": "setOn",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 243,
+                        "kind": {
+                          "Unary": {
+                            "op": "Not",
+                            "value": {
+                              "loc": 244,
+                              "kind": {
+                                "Ident": {
+                                  "name": "on",
+                                  "kind": "State"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setOn",
+                "Setter"
+              ],
+              [
+                "on",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 160,
+      "tag": "button",
+      "attrs": [
+        {
+          "Static": {
+            "name": "type",
+            "value": "button"
+          }
+        },
+        {
+          "Dynamic": {
+            "name": "className",
+            "value": {
+              "Server": {
+                "loc": 193,
+                "kind": {
+                  "Cond": {
+                    "test": {
+                      "loc": 193,
+                      "kind": {
+                        "Ident": {
+                          "name": "on",
+                          "kind": "State"
+                        }
+                      }
+                    },
+                    "yes": {
+                      "loc": 198,
+                      "kind": {
+                        "Lit": {
+                          "Str": "on_fx"
+                        }
+                      }
+                    },
+                    "no": {
+                      "loc": 210,
+                      "kind": {
+                        "Lit": {
+                          "Str": "off_fx"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "Event": {
+            "event": "click",
+            "handler": "_h1"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Slot": {
+            "Server": {
+              "loc": 257,
+              "kind": {
+                "Cond": {
+                  "test": {
+                    "loc": 257,
+                    "kind": {
+                      "Ident": {
+                        "name": "on",
+                        "kind": "State"
+                      }
+                    }
+                  },
+                  "yes": {
+                    "loc": 262,
+                    "kind": {
+                      "Lit": {
+                        "Str": "on"
+                      }
+                    }
+                  },
+                  "no": {
+                    "loc": 269,
+                    "kind": {
+                      "Lit": {
+                        "Str": "off"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [
+    [
+      "./btn.module.css",
+      "default"
+    ]
+  ],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}
