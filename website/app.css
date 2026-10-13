@@ -9,6 +9,8 @@
    the same name, so utilities (bg-paper, text-ink, border-rule, ...) switch with light/dark through the variables and
    need no dark: variant. No tailwind.config: CSS-first only. */
 @import "tailwindcss";
+/* The README quotes utilities and arbitrary values as examples; scanned, each would become a real rule. */
+@source not "./README.md";
 
 @theme inline {
   --color-paper: var(--paper);
@@ -74,14 +76,17 @@
   --ease-mirai: var(--ease);
 }
 
-/* R32.4: the two breakpoints of the rules below (desktop-first: use max-narrow: / max-wide:). */
+/* R32.4: the two breakpoints (desktop-first: use max-narrow: / max-wide:). They sit half a pixel past the site's old
+   inclusive rules (max-width: 560px / 980px), so max-narrow: = 560 px and below, max-wide: = 980 px and below whichever
+   way the compiler writes max-*: the bundled 4.1 compiler's `max-width: calc(X - .001px)` (which Chromium rounds up to
+   X, so a whole-pixel X would be inclusive) and Tailwind 4.3's `width < X` (exclusive) agree on a half-pixel X. */
 @theme {
-  --breakpoint-narrow: 35rem;
-  --breakpoint-wide: 61.25rem;
+  --breakpoint-narrow: 35.03125rem; /* 560.5px */
+  --breakpoint-wide: 61.28125rem; /* 980.5px */
 }
 
 /* Motion tokens (L31 tw-landing, R32.4): `animate-mirai-<name>`, always used as `motion-safe:animate-mirai-<name>`. The prefix keeps
-   them clear of Tailwind's built-ins (animate-pulse, ...). The @keyframes they name stay unlayered at the end of this file;
+   them clear of Tailwind's built-in animations (pulse, spin, ...). The @keyframes they name stay unlayered at the end of this file;
    --d / --n / --i are set per element in the markup (style={{ '--d': '.3s' }}), so this block is `inline`: a plain @theme
    would resolve var(--n) / var(--d) at :root (animation-name `none`, every delay 0s). */
 @theme inline {
@@ -99,7 +104,7 @@
   --animate-mirai-drift-a: drift-x 26s ease-in-out infinite alternate;
   --animate-mirai-drift-b: drift-x 34s ease-in-out infinite alternate-reverse;
   --animate-mirai-glide: glide 12s ease-in-out infinite alternate;
-  --animate-mirai-pulse: pulse .9s var(--ease);
+  --animate-mirai-pulse: mirai-pulse .9s var(--ease);
 }
 
 
@@ -171,11 +176,9 @@
   button, input:where([type='button'], [type='reset'], [type='submit']), ::file-selector-button { appearance: revert }
 }
 
-/* The site's rules, unchanged, in the components layer (L31 tw-foundation): after Tailwind's base (Preflight) and before
-   its utilities, so a utility in markup overrides a rule here. Later lanes move each rule into markup and delete it. */
-@layer components {
-  /* ===== base: paper with a 112px grid and a gold halo ===== */
-  * { box-sizing: border-box }
+/* The site's base (R32.3): the paper ground and the defaults of the bare elements the pages write as prose (headings,
+   paragraphs, links, inline code), the code panes' scrollbars, smooth anchor scrolling. Utilities in markup win. */
+@layer base {
   body { margin: 0; color: var(--ink); font-family: var(--text); font-size: 17px; line-height: 1.7;
     background: radial-gradient(circle at 70% 4%, var(--halo), transparent 18rem), linear-gradient(90deg, var(--gridline) 1px, transparent 1px), linear-gradient(0deg, var(--gridline) 1px, transparent 1px), var(--paper);
     background-size: auto, 112px 112px, 112px 112px, auto }
@@ -187,148 +190,54 @@
   a:hover { text-decoration-color: var(--ink) }
   code, pre, kbd { font-family: var(--mono) }
   :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px }
-  .wrap { max-width: 1160px; margin: 0 auto; padding-inline: 16px }
-  .muted { color: var(--ink-2) }
-  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap }
   p code, li code, dd code { font-size: .88em; background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px; padding: .05rem .3rem }
   pre code { background: none; border: 0; padding: 0; font-size: inherit; border-radius: 0 }
-  .th { font-family: var(--display); font-weight: 400; font-size: 1.2rem; color: var(--ink); margin: 0 0 .9rem; line-height: 1.5 }
-
-  /* ===== header ===== */
-
-  /* ===== buttons ===== */
-  .btn { display: inline-flex; align-items: center; gap: .5rem; min-height: 46px; padding: .7rem 1.15rem; border: 1px solid var(--ink); border-radius: 0; background: transparent; color: var(--ink);
-    font-family: var(--mono); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; text-decoration: none }
-  .btn.primary { background: var(--amber-fill); border-color: var(--amber-fill); color: var(--on-amber) }
-  .btn:hover { text-decoration: none }
-  .cta { display: flex; gap: .75rem; flex-wrap: wrap }
-
-  /* ===== code / terminal blocks ===== */
-  /* Always-visible scrollbars in code (macOS overlay scrollbars hide that a long line continues). */
+  /* Always-visible scrollbars in code panes for WebKit (macOS overlay scrollbars hide that a long line continues);
+     Chromium and Firefox take CodeBlock's scrollbar-color / scrollbar-width utilities instead. */
   .code pre::-webkit-scrollbar { width: 10px; height: 10px }
   .code pre::-webkit-scrollbar-track { background: transparent }
   .code pre::-webkit-scrollbar-thumb { background: var(--term-rule); border-radius: 999px; border: 2px solid var(--term) }
   .code pre::-webkit-scrollbar-thumb:hover { background: var(--term-dim) }
   .code pre::-webkit-scrollbar-corner { background: transparent }
-  .code pre code { font: inherit }
-  .ps { color: var(--amber); user-select: none } /* the `$ ` prompt: emitted by lib/highlight.ts, not written in a component */
-  .pin { display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; border-radius: 50%; background: var(--amber-fill); color: var(--on-amber); font-size: 11px; margin-left: .6rem; vertical-align: 1px; user-select: none } /* numbered markers inside highlighted code: emitted by lib/highlight.ts */
+  @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth } }
+}
+
+/* Exceptions (R32.3): markup no component writes classes for, so a utility has nowhere to go. */
+@layer components {
+  /* Highlighted code: lib/highlight.ts emits these spans (the `$ ` prompt, numbered pins, token colours) into html strings. */
+  .ps { color: var(--amber); user-select: none }
+  .pin { display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; border-radius: 50%; background: var(--amber-fill); color: var(--on-amber); font-size: 11px; margin-left: .6rem; vertical-align: 1px; user-select: none }
   .k { color: var(--sy-kw) } .s { color: var(--sy-str) } .f { color: var(--sy-fn) } .t { color: var(--sy-tag) } .c { color: var(--sy-cm) } .n { color: var(--sy-fn) }
 
-  /* ===== tier tags ===== */
-  .tier { display: inline-flex; align-items: center; gap: .35rem; font-family: var(--mono); font-size: 12px; color: var(--c) }
-  .tier::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--c) }
-  .tier.static { --c: var(--t-static) } .tier.native { --c: var(--t-native) } .tier.react { --c: var(--t-react) }
-
-  /* tiers: tabs; the ink underline moves by transform (--ink-x, --ink-s set by the tabs component) */
-  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--rule); position: relative; overflow-x: auto }
-  .tabs button { font: inherit; background: none; border: 0; border-radius: 2px; color: var(--ink-2); padding: .8rem 1.25rem; cursor: pointer; display: grid; gap: .1rem; text-align: left; white-space: nowrap }
-  .tabs button b { color: var(--ink); font-weight: 600; font-size: 15px }
-  .tabs button span.d { font-size: 13px }
-  .tabs button[aria-selected="true"] { color: var(--ink) }
-
-  /* the browser frame the demos share (the landing now writes its own in utilities) */
-  .browser { border: 1px solid var(--rule); border-radius: 2px; background: var(--sheet); display: flex; flex-direction: column; overflow: hidden; min-width: 0 }
-  .browser .url { display: flex; justify-content: space-between; gap: 1rem; padding: .45rem .8rem; border-bottom: 1px solid var(--rule); font-family: var(--mono); font-size: 12px; color: var(--ink-2); background: var(--paper) }
-  .browser .url .lbl { color: var(--amber-ink) }
-  .vp { flex: 1; padding: 1.25rem; min-height: 15rem }
-  .vp.center { display: grid; place-content: center; justify-items: center; gap: .9rem; text-align: center }
-  .shipbar { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--rule) }
-  .shipbar > div { padding: .6rem .8rem; border-left: 1px solid var(--rule); min-width: 0 } .shipbar > div:first-child { border-left: 0 }
-  .shipbar dt { font-size: 12px; color: var(--ink-2) } .shipbar dd { margin: 0; font-family: var(--mono); font-size: 12.5px } .shipbar dd.no { color: var(--ink-2) }
-
-  /* Pokémon cards and demos */
-  .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .75rem }
-  .pk { border: 1px solid var(--rule); border-radius: 2px; padding: .8rem; background: var(--paper); display: grid; gap: .3rem; align-content: start; min-width: 0 }
-  .pk img { width: 100%; height: auto; aspect-ratio: 1; max-width: 100%; background: var(--sheet); border-radius: 6px; padding: .35rem }
-  .pk .no { font-family: var(--mono); font-size: 12px; color: var(--ink-2) }
-  .pk h4 { margin: 0; font-family: var(--display); font-size: 1rem }
-  .pk > div { display: flex; flex-wrap: wrap; gap: .3rem }
-  .ty { font-family: var(--mono); font-size: 11px; padding: .05rem .5rem; border-radius: 999px; color: #fff; background: var(--ty) }
-  .ty.grass { --ty: var(--ty-grass) } .ty.poison { --ty: var(--ty-poison) } .ty.fire { --ty: var(--ty-fire) } .ty.electric { --ty: var(--ty-electric); color: var(--ty-dark-fg) }
-  .ty.water { --ty: var(--ty-water) } .ty.normal { --ty: var(--ty-normal) } .ty.flying { --ty: var(--ty-flying) } .ty.psychic { --ty: var(--ty-psychic) }
-  .ty.ghost { --ty: var(--ty-ghost) } .ty.ice { --ty: var(--ty-ice) } .ty.dragon { --ty: var(--ty-dragon) } .ty.fairy { --ty: var(--ty-fairy) }
-  .demo-btn { font: inherit; font-weight: 600; padding: .75rem 1.3rem; border-radius: 2px; border: 1px solid var(--ink); background: var(--paper); color: var(--ink); cursor: pointer; font-variant-numeric: tabular-nums }
-  .demo-btn span { display: inline-block; min-width: 1ch }
-  .demo-in { width: 100%; font: inherit; padding: .55rem .75rem; border: 1px solid var(--rule); border-radius: 2px; background: var(--paper); color: var(--ink) }
-  .demo-list { list-style: none; margin: .8rem 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .35rem .9rem; font-size: 14.5px }
-  .demo-list li { display: flex; gap: .4rem; align-items: center; min-width: 0 } .demo-list img { width: 40px; height: 40px; image-rendering: pixelated; flex: none } .demo-list .no { font-family: var(--mono); font-size: 12px; color: var(--ink-2) }
-  .demo-list .empty { grid-column: 1 / -1; color: var(--ink-2) }
-
-  /* native demo: a live card + the signal log beside it */
-  .nvp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 13rem); gap: 1rem; align-items: stretch }
-  .catch { border: 1px solid var(--rule); border-radius: 2px; background: var(--paper); padding: .9rem; display: grid; gap: .6rem; align-content: start; min-width: 0 }
-  .controls { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap }
-  .sw { display: inline-flex; align-items: center; gap: .5rem; font-size: 14.5px; cursor: pointer; user-select: none }
-  .sw input { position: absolute; opacity: 0; width: 1px; height: 1px }
-  .sw .knob { width: 2.2rem; height: 1.25rem; border-radius: 999px; background: var(--rule); position: relative; flex: none }
-  .sw .knob::after { content: ""; position: absolute; top: 2px; left: 2px; width: calc(1.25rem - 4px); height: calc(1.25rem - 4px); border-radius: 50%; background: var(--sheet); box-shadow: 0 1px 2px rgba(0,0,0,.25) }
-  .sw input:checked + .knob { background: var(--amber-fill) } .sw input:checked + .knob::after { transform: translateX(.95rem) }
-  .sw input:focus-visible + .knob { outline: 2px solid var(--amber); outline-offset: 2px }
-  .controls .demo-btn { padding: .55rem 1rem; background: var(--amber-fill); border-color: var(--amber-fill); color: var(--on-amber) }
-
-
-  /* ===== 404 ===== */
-
-  /* ===== docs page ===== */
-  .crumbs { font-size: 13px; color: var(--ink-2); font-family: var(--mono) }
-  /* Docs body (R32.3 exception): the pages write bare h1/h2/h3/p/ul/ol/li/table/th/td/code elements (about 1,500 of
-     them, from page data and prose), so these rules style them through the `.doc` article class, which stays on
-     DocsLayout's <article> as the hook. The chrome around the body (layout, sidebar, pager, TOC, note, frames, code
-     blocks, tier tags, table frame) is utilities in markup. */
+  /* Docs body: the pages write bare h1/h2/h3/p/ul/ol/li/table/th/td/code elements (about 1,500 of them, from page data
+     and prose), so these rules style them through the `.doc` class on DocsLayout's <article>. The chrome around the
+     body (layout, sidebar, pager, TOC, notes, frames, code blocks, tier tags, table frame) is utilities in markup. */
   .doc h1 { font-family: var(--display); font-weight: 300; text-transform: uppercase; letter-spacing: 0; font-size: clamp(2rem, 4vw, 2.7rem) }
   .doc h2 { font-size: 1.45rem; display: flex; align-items: center; gap: .75rem; margin-top: 1.75rem; scroll-margin-top: 60px }
+  .doc h3 { margin-top: 1rem; scroll-margin-top: 60px }
   .doc p, .doc li { max-width: 68ch }
   .doc ul { margin: 0; padding-left: 1.2rem } .doc li { margin: .3rem 0 }
-  .doc h3 { margin-top: 1rem; scroll-margin-top: 60px }
+  .doc ol { margin: 0; padding-left: 1.4rem } .doc ol li { margin: .3rem 0 }
   .doc :not(pre) > code { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 0 .3em; font-size: .86em; overflow-wrap: anywhere }
+  /* tables shrink with the column (their code wraps); only TableWrap's scrolling frame gives them a floor */
   .doc table { border-collapse: collapse; width: 100%; font-size: 14.5px; line-height: 1.5 }
-  /* the 34rem floor only inside .table-wrap, which scrolls; a bare table must shrink with the column (its code wraps) */
   .doc th, .doc td { text-align: left; vertical-align: top; padding: .55rem .8rem; border-bottom: 1px solid var(--rule) }
   .doc th { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--ink-2); white-space: nowrap }
   .doc tr:last-child td { border-bottom: 0 }
-  .note { display: grid; grid-template-columns: auto 1fr; gap: .9rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: 2px; padding: .85rem 1rem; font-size: 15px; max-width: 68ch }
-  .note .tag { font-family: var(--mono); font-size: 11px; background: var(--amber-fill); color: var(--on-amber); border-radius: 3px; padding: .05rem .4rem; height: fit-content; margin-top: .15rem }
 
-  /* ===== responsive ===== */
-  @media (max-width: 980px) {
-  }
-  @media (max-width: 560px) {
-    .cards { grid-template-columns: 1fr 1fr } .demo-list { grid-template-columns: 1fr }
-    .shipbar { grid-template-columns: 1fr } .shipbar > div { border-left: 0; border-top: 1px solid var(--rule) } .shipbar > div:first-child { border-top: 0 }
-    .nvp { grid-template-columns: 1fr }
-  }
-
-  /* ===== motion =====
-     The landing's motion now lives in its markup (motion-safe:animate-mirai-*, see the @theme block above); what stays here
-     is the docs and demo motion. */
-  @media (prefers-reduced-motion: no-preference) {
-    html { scroll-behavior: smooth }
-    .btn { transition: transform .2s var(--ease), background .2s var(--ease), box-shadow .15s } .btn:hover { transform: translateY(-1px) } .btn.primary:hover { box-shadow: 0 8px 18px -10px var(--amber) }
-    .demo-btn { transition: transform .1s } .demo-btn:active { transform: scale(.97) }
-    .demo-btn span.bump { animation: pop .3s var(--ease) }
-    .demo-list li { animation: rise .2s ease-out both }
-    .sw .knob, .sw .knob::after { transition: background .2s, transform .2s cubic-bezier(.2,.7,.2,1) }
-  }
-  /* typing reveals by clip-path, so the line keeps its width and nothing reflows */
-
-  /* ===== guide pages (site-docs-guide): ordered lists and the live demos inside .browser frames (tables share the rules above) ===== */
-  .doc ol { margin: 0; padding-left: 1.4rem } .doc ol li { margin: .3rem 0 }
-  .doc .browser .vp { min-height: 0 }
-  .doc .browser .vp.nvp { padding: 1.25rem }
 }
 
+/* The keyframes the --animate-mirai-* tokens above name (unlayered, so every layer sees them). */
 @keyframes type { from { clip-path: inset(0 100% 0 0) } to { clip-path: inset(0 0 0 0) } }
 @keyframes rise { from { opacity: 0; transform: translateY(6px) } }
 @keyframes travel { 0% { transform: translateX(0); opacity: 0 } 15% { opacity: 1 } 85% { opacity: 1 } 100% { transform: translateX(calc(2.5rem - 8px)); opacity: 0 } }
-@keyframes pop { from { transform: scale(.5) } }
 @keyframes wiggle { 0%, 100% { transform: rotate(0) } 25% { transform: rotate(-6deg) } 50% { transform: rotate(5deg) } 75% { transform: rotate(-3deg) } }
 @keyframes slidein { from { opacity: 0; transform: translateX(-6px) } }
 @keyframes shimmer { to { transform: scaleX(.78) } }
 @keyframes beacon { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
 @keyframes turn { to { transform: rotate(360deg) } }
-@keyframes pulse { 40% { transform: scale(1.05) } }
+/* not `pulse`: Tailwind ships a pulse keyframes of its own for its built-in pulse animation and emits it after this file's rules, where it would win */
+@keyframes mirai-pulse { 40% { transform: scale(1.05) } }
 @keyframes glint { 40% { filter: brightness(1.35) } }
 @keyframes drift-x { to { transform: translateX(22px) } }
 @keyframes glide { to { transform: translate(26px, -8px) } }
-@keyframes sunrise { from { transform: translateY(2.5rem); opacity: 0 } }

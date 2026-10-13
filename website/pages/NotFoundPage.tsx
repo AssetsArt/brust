@@ -1,4 +1,6 @@
 // The site 404: a static full document outside the layout (no loader, no scripts), in the site skin.
+import Button from '../components/Button'
+
 export default function NotFoundPage() {
   return (
     <html lang="en">
@@ -17,13 +19,9 @@ export default function NotFoundPage() {
           </a>
           <h1 className="text-[clamp(2.6rem,6vw,4.5rem)] font-light uppercase leading-[.96]">Page not found</h1>
           <p className="text-ink-2">Nothing is served at this address.</p>
-          <div className="cta">
-            <a className="btn primary" href="/">
-              Back to the start
-            </a>
-            <a className="btn" href="/docs">
-              Read the docs
-            </a>
+          <div className="flex flex-wrap gap-3">
+            <Button href="/" label="Back to the start" primary />
+            <Button href="/docs" label="Read the docs" />
           </div>
         </main>
       </body>

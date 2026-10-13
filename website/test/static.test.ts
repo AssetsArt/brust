@@ -116,7 +116,7 @@ test('every built page, the 404 included, links the hashed stylesheet exactly on
   expect(readFileSync(join(out, '_headers'), 'utf8')).toMatch(/\/_brust\/client\/\*\n\s+Cache-Control: public, max-age=31536000, immutable/)
 })
 
-test('the stylesheet is Tailwind CSS v4 in one hashed file: its layers, the site rules in components, a utility the markup uses (L31 R32.7)', () => {
+test('the stylesheet is Tailwind CSS v4 in one hashed file: its layers, only the R32.3 exceptions in components, a utility the markup uses, every @keyframes used (L31 R32.7)', () => {
   const css = readdirSync(join(out, '_brust/client')).filter((f) => f.endsWith('.css'))
   expect(css).toEqual([expect.stringMatching(/^app-[0-9a-f]{10}\.css$/)])
   const text = readFileSync(join(out, '_brust/client', css[0]!), 'utf8')
@@ -134,7 +134,10 @@ test('the stylesheet is Tailwind CSS v4 in one hashed file: its layers, the site
     expect([name, bodies.length > 0]).toEqual([name, true])
     return bodies.join('\n')
   }
-  expect(layer('components')).toContain('.wrap{')
+  // components holds only the R32.3 exceptions (highlighter spans, the docs body); the shared rules the lanes migrated are gone
+  const components = layer('components')
+  for (const r of ['.ps{', '.doc h1{']) expect([r, components.includes(r)]).toEqual([r, true])
+  for (const r of ['.wrap{', '.btn{', '.cta{', '.note{', '.tabs{', '.browser{', '.vp{', '.cards{', '.demo-btn{', '.sw{']) expect([r, text.includes(r)]).toEqual([r, false])
   // Preflight is undone rule by rule in base (R32.1), after Preflight itself
   const base = layer('base')
   expect(base.lastIndexOf('h1,h2,h3,h4,h5,h6{font-size:revert;font-weight:revert}')).toBeGreaterThan(base.indexOf('h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}'))
@@ -150,6 +153,12 @@ test('the stylesheet is Tailwind CSS v4 in one hashed file: its layers, the site
   // (animation-name `none`, every delay 0s). They must stay @theme inline, i.e. never appear as a :root declaration, and the utility carries the var().
   expect(text).not.toMatch(/--animate-mirai-[\w-]+:[^;}]*var\(--(?:n|d|i)\b/)
   expect(layer('utilities')).toMatch(/animation:type calc\(var\(--n\)\*22ms\) ?steps\(var\(--n\)\) ?var\(--d,0s\) ?both/)
+  // Every @keyframes is named by some animation (a --animate-mirai-* utility or a remaining rule), and no name is defined
+  // twice (a Tailwind built-in animation brings its own @keyframes, e.g. pulse, and would silently replace the site's).
+  const frames = [...text.matchAll(/@keyframes ([\w-]+)\{/g)].map((m) => m[1]!)
+  expect(frames.length).toBe(new Set(frames).size)
+  const animations = [...text.matchAll(/animation(?:-name)?:([^;}]*)/g)].map((m) => m[1]!).join(' ')
+  for (const k of frames) expect([k, new RegExp(`(^|[\\s,])${k}\\b`).test(animations)]).toEqual([k, true])
 })
 
 test('sitemap.xml and llms.txt list every route under the production origin', () => {
