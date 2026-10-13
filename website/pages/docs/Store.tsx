@@ -8,6 +8,8 @@ import TeamPicker from '../../components/demos/TeamPicker'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { byId, displayName, spriteUrl } from '../../lib/pokemon'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface StoreData {
   toc: TocItem[]
@@ -68,7 +70,7 @@ export default function Store({ blocks, candidates }: StoreData) {
   return (
     <>
       <h1>Store</h1>
-      <p className="lead">A store is a named bag of signals that a loader, a native component and a React island all read and write. One name, one value, three surfaces.</p>
+      <Lead>A store is a named bag of signals that a loader, a native component and a React island all read and write. One name, one value, three surfaces.</Lead>
 
       <h2 id="define">Define a store</h2>
       <CodeBlock code={blocks.define.code} lang={blocks.define.lang} file={blocks.define.file} html={blocks.define.html} />
@@ -99,33 +101,18 @@ export default function Store({ blocks, candidates }: StoreData) {
       <p>
         Three components, two tiers, one store. Add a Pokémon with the native picker or remove one in the React island: the native badge follows both, with no reload. The team is the one from the <a href="/docs/actions">Actions</a> page.
       </p>
-      <div className="browser">
-        <div className="url">
-          <span>store “team”</span>
-          <span className="lbl">TeamBadge · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="store “team”" label="TeamBadge · native">
           <TeamBadge />
-        </div>
-      </div>
-      <div className="browser">
-        <div className="url">
-          <span>store “team”</span>
-          <span className="lbl">TeamIsland · react</span>
-        </div>
-        <div className="vp">
+        
+      </Frame>
+      <Frame title="store “team”" label="TeamIsland · react">
           <TeamIsland />
-        </div>
-      </div>
-      <div className="browser">
-        <div className="url">
-          <span>store “team”</span>
-          <span className="lbl">TeamPicker · native</span>
-        </div>
-        <div className="vp">
+        
+      </Frame>
+      <Frame title="store “team”" label="TeamPicker · native">
           <TeamPicker candidates={candidates} />
-        </div>
-      </div>
+        
+      </Frame>
 
       <h2 id="limits">Rules and limits</h2>
       <ul>

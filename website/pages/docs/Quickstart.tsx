@@ -9,6 +9,8 @@ import Note from '../../components/docs/Note'
 import Step from '../../components/docs/Step'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Lead from '../../components/docs/Lead'
+import Tier from '../../components/docs/Tier'
 
 // Loader data merges with the layouts' (a page's keys win), so the blocks live under `blocks`: a top-level `version`
 // or `title` would replace the header's version or the page title.
@@ -60,7 +62,7 @@ export default function Quickstart({ blocks }: QuickstartData) {
   return (
     <>
       <h1>Quickstart</h1>
-      <p className="lead">From an empty folder to a page served by Rust. Four steps, each one a command or a file you can copy as is.</p>
+      <Lead>From an empty folder to a page served by Rust. Four steps, each one a command or a file you can copy as is.</Lead>
 
       <Step n={1} id="requirements" title="Check the requirements" />
       <p>Bun 1.4 or newer. The Rust server ships prebuilt for macOS and Linux, so there is no Rust toolchain to install.</p>
@@ -80,7 +82,7 @@ export default function Quickstart({ blocks }: QuickstartData) {
       <CodeBlock code={blocks.page.code} lang={blocks.page.lang} file={blocks.page.file} html={blocks.page.html} />
       <CodeBlock code={blocks.routes.code} lang={blocks.routes.lang} file={blocks.routes.file} html={blocks.routes.html} />
       <p>
-        This page has no state and no handlers, so the compiler marks it <span className="tier static">static</span>: rendered once, served as HTML, no client JavaScript.
+        This page has no state and no handlers, so the compiler marks it <Tier t="static">static</Tier>: rendered once, served as HTML, no client JavaScript.
       </p>
 
       <Step n={4} id="run" title="Run it" />

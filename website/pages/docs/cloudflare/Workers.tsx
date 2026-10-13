@@ -6,6 +6,8 @@ import Note from '../../../components/docs/Note'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
 import ElysiaLink from '../../../components/ElysiaLink'
+import Lead from '../../../components/docs/Lead'
+import TableWrap from '../../../components/docs/TableWrap'
 
 const SRC = {
   create: {
@@ -101,9 +103,9 @@ export default function Workers({ blocks }: WorkersData) {
   return (
     <>
       <h1>Workers target</h1>
-      <p className="lead">
+      <Lead>
         brust builds the same app for Cloudflare Workers that it runs natively with <code>brust start</code>. The page renderer is the same Rust code, compiled to WebAssembly.
-      </p>
+      </Lead>
       <p>
         The only JavaScript that runs is the shim <code>worker-build</code> generates and your own compiled TypeScript: loaders, <code>jobs.js</code>, <code>actions.ts</code>, client chunks. brust adds no runtime layer of its own, and the runtime needs only Workers. It ships no Durable Object, KV namespace or D1 database.
       </p>
@@ -122,7 +124,7 @@ export default function Workers({ blocks }: WorkersData) {
       </p>
 
       <h2 id="commands">Commands</h2>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Commands">
+      <TableWrap label="Commands">
         <table>
           <thead>
             <tr>
@@ -149,7 +151,7 @@ export default function Workers({ blocks }: WorkersData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <p>
         <code>--target</code> takes <code>bun</code> (the default) or <code>cloudflare</code>. <code>brust dev</code> supports only <code>--target cloudflare</code> for now.
       </p>
@@ -162,7 +164,7 @@ export default function Workers({ blocks }: WorkersData) {
         The table is optional. Its presence is not required to use <code>--target cloudflare</code>; the defaults below apply. Unknown keys are a build error. <code>[server]</code> and <code>[workers]</code> are ignored on this target, with a warning.
       </p>
       <CodeBlock code={blocks.toml.code} lang={blocks.toml.lang} file={blocks.toml.file} html={blocks.toml.html} />
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="cloudflare keys">
+      <TableWrap label="cloudflare keys">
         <table>
           <thead>
             <tr>
@@ -233,7 +235,7 @@ export default function Workers({ blocks }: WorkersData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <p>
         <code>[actions]</code>, <code>[cors]</code> and <code>[cache]</code> are read as on native. <code>[build] server_only</code> is honoured too.
       </p>
@@ -311,7 +313,7 @@ export default function Workers({ blocks }: WorkersData) {
       </ul>
 
       <h2 id="differences">Differences from native</h2>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Native versus Workers">
+      <TableWrap label="Native versus Workers">
         <table>
           <thead>
             <tr>
@@ -395,11 +397,11 @@ export default function Workers({ blocks }: WorkersData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
 
       <h2 id="limits">Limits</h2>
       <p>Numbers below are Cloudflare&rsquo;s, read on 2026-10-12. They change; check the source before you size anything.</p>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Cloudflare limits">
+      <TableWrap label="Cloudflare limits">
         <table>
           <thead>
             <tr>
@@ -460,7 +462,7 @@ export default function Workers({ blocks }: WorkersData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <p>What this means for brust:</p>
       <ul>
         <li>
@@ -527,7 +529,7 @@ export default function Workers({ blocks }: WorkersData) {
 
       <h2 id="sources">Sources</h2>
       <p>All fetched 2026-10-12. Every figure and quotation above was re-read from these pages on that date.</p>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Sources">
+      <TableWrap label="Sources">
         <table>
           <thead>
             <tr>
@@ -574,7 +576,7 @@ export default function Workers({ blocks }: WorkersData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
     </>
   )
 }

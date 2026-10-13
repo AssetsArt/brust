@@ -10,6 +10,9 @@ import PokemonSearch from '../../components/landing/demos/PokemonSearch'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { artworkUrl, byId, dexNo, displayName, POKEMON, shinyUrl, spriteUrl } from '../../lib/pokemon'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
+import Tier from '../../components/docs/Tier'
 
 interface Shipped {
   tier: string
@@ -65,7 +68,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
   return (
     <>
       <h1>Rendering tiers</h1>
-      <p className="lead">The compiler reads each component and picks the cheapest output that still behaves the same. You never pick it; you can always see what it picked.</p>
+      <Lead>The compiler reads each component and picks the cheapest output that still behaves the same. You never pick it; you can always see what it picked.</Lead>
 
       <h2 id="three">Three tiers</h2>
       <table>
@@ -79,21 +82,21 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         <tbody>
           <tr>
             <td>
-              <span className="tier static">static</span>
+              <Tier t="static">static</Tier>
             </td>
             <td>No hooks, no handlers, no refs. Props in, markup out.</td>
             <td>HTML only. No JavaScript.</td>
           </tr>
           <tr>
             <td>
-              <span className="tier native">native</span>
+              <Tier t="native">native</Tier>
             </td>
             <td>Only the supported hooks, and event handlers.</td>
             <td>HTML, plus a small React-free chunk: signals bound to the server's markup.</td>
           </tr>
           <tr>
             <td>
-              <span className="tier react">react</span>
+              <Tier t="react">react</Tier>
             </td>
             <td>Everything else: context, <code>useReducer</code>, <code>useDeferredValue</code>, <code>Suspense</code>, a component from a package, browser globals read during render.</td>
             <td>HTML rendered by React on the server, then a React island hydrates it.</td>
@@ -106,39 +109,19 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
 
       <h2 id="live">The three, live</h2>
       <p>These are the landing page's three demo components. The tier and the shipped chunk under each one come from this build's manifest, read by the page's loader.</p>
-      <div className="browser">
-        <div className="url">
-          <span>PokemonCard</span>
-          <span className="lbl">
-            tier {tiers.card.tier} · client {tiers.card.client}
-          </span>
+      <Frame title="PokemonCard" label={`tier ${tiers.card.tier} · client ${tiers.card.client}`}>
+        <div className="grid grid-cols-3 gap-3 max-narrow:grid-cols-2">
+          {cards.map((c) => (
+            <PokemonCard key={c.no} no={c.no} name={c.name} art={c.art} types={c.types} />
+          ))}
         </div>
-        <div className="vp">
-          <div className="cards">
-            {cards.map((c) => (
-              <PokemonCard key={c.no} no={c.no} name={c.name} art={c.art} types={c.types} />
-            ))}
-          </div>
-        </div>
-      </div>
-      <div className="browser">
-        <div className="url">
-          <span>CatchCard</span>
-          <span className="lbl">
-            tier {tiers.catch.tier} · client {tiers.catch.client}
-          </span>
-        </div>
+      </Frame>
+      <Frame bare title="CatchCard" label={`tier ${tiers.catch.tier} · client ${tiers.catch.client}`}>
         <CatchCard no={catchMon.no} name={catchMon.name} art={catchMon.art} shinyArt={catchMon.shinyArt} />
-      </div>
-      <div className="browser">
-        <div className="url">
-          <span>PokemonSearch</span>
-          <span className="lbl">
-            tier {tiers.search.tier} · client {tiers.search.client}
-          </span>
-        </div>
+      </Frame>
+      <Frame bare title="PokemonSearch" label={`tier ${tiers.search.tier} · client ${tiers.search.client}`}>
         <PokemonSearch all={all} />
-      </div>
+      </Frame>
 
       <h2 id="hooks">What decides the tier</h2>
       <table>
@@ -152,7 +135,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
           <tr>
             <td>Props only, or <code>useId</code></td>
             <td>
-              <span className="tier static">static</span>
+              <Tier t="static">static</Tier>
             </td>
           </tr>
           <tr>
@@ -160,7 +143,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
               <code>useState</code>, <code>useMemo</code>, <code>useCallback</code>, <code>useEffect</code>, <code>useLayoutEffect</code>, <code>useRef</code>, <code>useId</code>, <code>memo()</code>, event handlers, <code>useStore</code>, and a custom hook whose body uses only these (the compiler inlines it)
             </td>
             <td>
-              <span className="tier native">native</span>
+              <Tier t="native">native</Tier>
             </td>
           </tr>
           <tr>
@@ -168,7 +151,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
               <code>useReducer</code>, <code>useContext</code>, <code>useDeferredValue</code>, <code>useTransition</code>, <code>useSyncExternalStore</code>, <code>use(promise)</code>, <code>cloneElement</code>, <code>forwardRef</code> and other HOCs, spread props, <code>lazy</code>
             </td>
             <td>
-              <span className="tier react">react</span>
+              <Tier t="react">react</Tier>
             </td>
           </tr>
         </tbody>

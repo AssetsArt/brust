@@ -4,6 +4,8 @@ import Note from '../../components/docs/Note'
 import RouteMatcher from '../../components/demos/RouteMatcher'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface RoutingData {
   toc: TocItem[]
@@ -77,7 +79,7 @@ export default function Routing({ blocks }: RoutingData) {
   return (
     <>
       <h1>Routing</h1>
-      <p className="lead">One file, routes.tsx, maps paths to components. Routes nest: a route with children is a layout.</p>
+      <Lead>One file, routes.tsx, maps paths to components. Routes nest: a route with children is a layout.</Lead>
 
       <h2 id="routes">Map paths to components</h2>
       <p>
@@ -89,15 +91,10 @@ export default function Routing({ blocks }: RoutingData) {
 
       <h2 id="try">Try a path</h2>
       <p>The matcher below runs the routes above in the browser: type a path and see which route answers it, with the decoded params.</p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">RouteMatcher · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="Live demo" label="RouteMatcher · native">
           <RouteMatcher initialPath="/pokemon/mr%20mime" initialPattern="/pokemon/{name}" initialParams={['name = "mr mime"']} />
-        </div>
-      </div>
+        
+      </Frame>
 
       <h2 id="params">Params and the catch-all</h2>
       <ul>

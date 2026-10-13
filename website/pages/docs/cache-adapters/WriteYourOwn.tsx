@@ -5,6 +5,7 @@ import Note from '../../../components/docs/Note'
 import Step from '../../../components/docs/Step'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
 
 const SRC = {
   adapter: {
@@ -126,9 +127,9 @@ export default function WriteYourOwn({ blocks }: WriteYourOwnData) {
   return (
     <>
       <h1>Write your own</h1>
-      <p className="lead">
+      <Lead>
         An adapter is a plain object with a <code>store</code>, a <code>broadcast</code>, or both. Import the types from <code>@brust/core/cache-adapter</code>.
-      </p>
+      </Lead>
       <p>
         That module has no <code>bun</code> import, so it bundles into a Worker. Set <code>adapter = &quot;custom&quot;</code> and <code>module = &quot;lib/cache.ts&quot;</code> in <code>[cache]</code> (see the <a href="/docs/cache-adapters/overview">overview</a>).
       </p>

@@ -5,6 +5,8 @@ import Note from '../../components/docs/Note'
 import ConfigBuilder from '../../components/demos/ConfigBuilder'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface ConfigurationData {
   toc: TocItem[]
@@ -93,7 +95,7 @@ export default function Configuration({ blocks }: ConfigurationData) {
   return (
     <>
       <h1>Configuration</h1>
-      <p className="lead">One optional file, brust.toml, next to package.json. Every key has a default; a missing file is fine, a malformed one stops the server with a message.</p>
+      <Lead>One optional file, brust.toml, next to package.json. Every key has a default; a missing file is fine, a malformed one stops the server with a message.</Lead>
 
       <h2 id="where">Where settings come from</h2>
       {/* source: packages/brust/src/config.ts:1-9 (precedence comment) and :79-87 (env ?? cli ?? toml ?? default per field); an empty env var is unset: :195; cli.ts:115-121 (`brust start` passes only --port and --workers) */}
@@ -134,15 +136,10 @@ export default function Configuration({ blocks }: ConfigurationData) {
 
       <h2 id="try">Try it</h2>
       <p>Set the pokedex server's port, worker count and actions; the file and the one-run override follow.</p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">ConfigBuilder · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="Live demo" label="ConfigBuilder · native">
           <ConfigBuilder />
-        </div>
-      </div>
+        
+      </Frame>
 
       <h2 id="size">Response size</h2>
       {/* source: packages/brust/src/worker.ts:102 (SLOT_BYTES = 256 * 1024) and packages/brust/src/run.ts:115-118 (one SharedArrayBuffer of SLOT_BYTES * renderSlots per worker) */}
