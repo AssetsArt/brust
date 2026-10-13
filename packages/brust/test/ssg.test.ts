@@ -80,9 +80,10 @@ test('R9.2: the ssg field is validated (false or { params: fn }, leaves only)', 
   expect(() => validateRoutes([{ path: '/', Component: C, ssg: false }, { path: '/p/{x}', Component: C, ssg: { params: () => [{ x: '1' }] } }])).not.toThrow()
 })
 
-test('R9.4: [actions] and a cache key that reads the request refuse the build; params() is awaited', async () => {
+test('R9.4/R12: [actions] plans like any app (a binding cache is refused) and a cache key that reads the request refuses the build; params() is awaited', async () => {
   const ls = leaves([{ path: '/', Component: C }])
-  expect(await rule(() => prepareStatic(ls, true, noReads, () => {}))).toStartWith('ssg-actions: [actions] is configured')
+  expect((await prepareStatic(ls, true, noReads, () => {})).pages.length).toBe(1)
+  expect(await rule(() => prepareStatic(ls, true, noReads, () => {}, { adapter: 'cloudflare-kv', options: {}, broadcast: undefined, broadcastOptions: undefined }))).toStartWith('ssg-actions-cache: [cache] adapter "cloudflare-kv"')
   const cached = leaves([{ path: '/', Component: C, cache: { ttl_seconds: 60, prefix: 'cookie(currency)' } }])
   const reads = (e: string) => (e === 'cookie(currency)' ? ['cookie(currency)'] : [])
   expect(await rule(() => prepareStatic(cached, false, reads, () => {}))).toStartWith('ssg-varies: route r0 (/) cache.prefix reads cookie(currency)')
