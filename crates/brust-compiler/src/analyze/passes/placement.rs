@@ -10,7 +10,7 @@
 use super::PassState;
 use super::deps::{Deps, minimal_paths};
 use super::server_expr::try_server;
-use crate::analyze::const_fold::{Folder, imported_const, map_idents};
+use crate::analyze::const_fold::{Folder, imported_const, map_idents, map_pre};
 use crate::ir::{
     Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobDecl, JobKind, Node, RawExpr, RawKind,
 };
@@ -60,6 +60,9 @@ const FUNCTION_WHYS: &[&str] = &[
     "contains-jsx",
 ];
 
+/// L20: a CSS Module import's source and class map.
+type CssImport = (String, HashMap<String, String>);
+
 struct Placer<'s> {
     st: &'s mut PassState,
     derived_raw: HashMap<String, RawExpr>,
@@ -67,6 +70,10 @@ struct Placer<'s> {
     consts: HashMap<String, RawExpr>,
     /// Relatively imported consts the template or a state initializer reads, folded (by local name).
     imported_vals: HashMap<String, RawExpr>,
+    /// L20: `*.module.css` default imports the template reads, by local name: the import source and its class map.
+    css: HashMap<String, CssImport>,
+    /// L20: classes a template names that the module does not define (build errors, deduplicated on append).
+    css_errors: std::cell::RefCell<Vec<Diagnostic>>,
     places: HashMap<String, Place>,
     visiting: Vec<String>,
     next_slot: u32,
@@ -90,6 +97,12 @@ struct Placer<'s> {
     jsx_flagged: bool,
     /// Locations of `list-shape` fallbacks: the reader already named the construct there.
     list_shape_locs: BTreeSet<u32>,
+    /// L2: module path, source text, module declarations and build-computed slot values.
+    path: String,
+    text: &'s [u8],
+    module_decls: Vec<crate::ir::ModuleDecl>,
+    slot_values: &'s std::collections::HashMap<String, serde_json::Value>,
+    opts: &'s crate::analyze::component::AnalyzeOptions,
 }
 
 pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>) {
@@ -152,11 +165,47 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
     });
     derived_raw.values().for_each(note);
     let imported_vals = imported_vals.into_inner();
+    // L20: CSS Module imports whose class map the build handed over; `styles.x` folds to the literal class.
+    let css: std::cell::RefCell<HashMap<String, CssImport>> = Default::default();
+    if !ctx.opts.css_modules.is_empty() {
+        let find = |e: &RawExpr| {
+            let _ = map_idents(e, &|id| {
+                if let RawKind::Ident {
+                    name,
+                    kind:
+                        IdentKind::Import {
+                            source,
+                            imported: imp,
+                        },
+                } = &id.kind
+                    && imp == "default"
+                    && source.ends_with(".module.css")
+                    && !shadowed(name)
+                    && let Some(key) = crate::analyze::modules::css_module_key(ctx.path, source)
+                    && let Some(map) = ctx.opts.css_modules.get(&key)
+                {
+                    css.borrow_mut()
+                        .insert(name.clone(), (source.clone(), map.clone()));
+                }
+                None
+            });
+        };
+        collect_raw(&ir.template, &mut |e| find(e));
+        ir.state.iter().for_each(|s| {
+            if let Expr::Raw(r) = &s.init {
+                find(r)
+            }
+        });
+        derived_raw.values().for_each(find);
+    }
+    let css = css.into_inner();
     let mut p = Placer {
         st,
         derived_raw,
         consts,
         imported_vals,
+        css,
+        css_errors: Default::default(),
         places: HashMap::new(),
         visiting: Vec::new(),
         next_slot: 0,
@@ -179,6 +228,11 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
             .filter(|d| d.rule == "list-shape")
             .map(|d| d.loc)
             .collect(),
+        path: ctx.path.to_string(),
+        text: ctx.text,
+        module_decls: ir.module_decls.clone(),
+        slot_values: &ctx.opts.slot_values,
+        opts: ctx.opts,
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     p.node(&mut template);
@@ -210,6 +264,16 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         }
     }
     ir.diagnostics.append(&mut p.diagnostics);
+    ir.build_eval = std::mem::take(&mut p.st.build_eval);
+    for d in p.css_errors.take() {
+        if !ir
+            .diagnostics
+            .iter()
+            .any(|x| x.rule == d.rule && x.loc == d.loc && x.message == d.message)
+        {
+            ir.diagnostics.push(d);
+        }
+    }
 
     // One precompute job over every slot.
     let mut outputs = Vec::new();
@@ -416,10 +480,55 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 
 impl Placer<'_> {
     /// `e` with the folding module consts it reads replaced by their values.
+    /// L20: `styles.x` / `styles['x']` of a CSS Module import is the literal class. An unknown class is a
+    /// build error at its source location. This is an explicit exception to R1.1b: the map is frozen.
+    fn css_member(&self, n: &RawExpr) -> Option<RawExpr> {
+        let (target, key) = match &n.kind {
+            RawKind::Member {
+                target,
+                name,
+                optional: false,
+            } => (target, name.clone()),
+            RawKind::Index { target, index } => match &index.kind {
+                RawKind::Lit(crate::ir::Literal::Str(s)) => (target, s.clone()),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let RawKind::Ident {
+            name,
+            kind: IdentKind::Import { .. },
+        } = &target.kind
+        else {
+            return None;
+        };
+        let (source, map) = self.css.get(name)?;
+        match map.get(&key) {
+            Some(class) => Some(RawExpr {
+                loc: n.loc,
+                kind: RawKind::Lit(crate::ir::Literal::Str(class.clone())),
+            }),
+            None => {
+                self.css_errors.borrow_mut().push(Diagnostic::error(
+                    "css-module-class",
+                    format!("class `{key}` is not defined in {source}"),
+                    n.loc,
+                    "add the class to the CSS Module, or fix the name",
+                ));
+                Some(n.clone())
+            }
+        }
+    }
+
     fn fold(&self, e: &RawExpr) -> RawExpr {
-        if self.consts.is_empty() && self.imported_vals.is_empty() {
+        if self.consts.is_empty() && self.imported_vals.is_empty() && self.css.is_empty() {
             return e.clone();
         }
+        let e = &if self.css.is_empty() {
+            e.clone()
+        } else {
+            map_pre(e, &|n| self.css_member(n))
+        };
         map_idents(e, &|id| match &id.kind {
             RawKind::Ident {
                 name,
@@ -485,6 +594,13 @@ impl Placer<'_> {
     }
 
     fn slot(&mut self, r: &RawExpr) -> Expr {
+        // L2: the build computed this slot once; it is a literal now (no job, no worker).
+        let key = format!("{}@{}", self.path, r.loc);
+        if let Some(v) = self.slot_values.get(&key)
+            && let Some(lit) = crate::analyze::const_fold::json_to_raw(v, r.loc)
+        {
+            return Expr::Server(crate::ir::ServerExpr(lit));
+        }
         let deps = self.st.cx.deps(r, &self.loop_scope);
         self.next_slot += 1;
         let slot = format!("_s{}", self.next_slot);
@@ -507,6 +623,15 @@ impl Placer<'_> {
                 state_dependent |= l.stateful;
             }
         }
+        self.classify_for_build(
+            r,
+            &deps,
+            &slot,
+            &key,
+            &inputs,
+            state_dependent,
+            per_item.is_some(),
+        );
         self.st.slots.insert(
             slot.clone(),
             SlotInfo {
@@ -523,6 +648,53 @@ impl Placer<'_> {
             inputs: minimal_paths(inputs),
             state_dependent,
             per_item,
+        }
+    }
+
+    /// L2: records the slot as a build-evaluation candidate, or says why a `buildTime(…)` is not one.
+    #[allow(clippy::too_many_arguments)]
+    fn classify_for_build(
+        &mut self,
+        r: &RawExpr,
+        deps: &Deps,
+        slot: &str,
+        key: &str,
+        inputs: &[String],
+        state_dependent: bool,
+        per_item: bool,
+    ) {
+        use super::build_eval::{Verdict, classify};
+        let placed = inputs.is_empty() && !state_dependent && !per_item && self.guards.is_empty();
+        let (line, col) = crate::ir::line_col(self.text, r.loc);
+        let candidate = |build_time: bool| crate::ir::BuildEvalSlot {
+            key: key.to_string(),
+            slot: slot.to_string(),
+            build_time,
+            line,
+            col,
+        };
+        let (opts, path) = (self.opts, self.path.clone());
+        match classify(r, deps, placed, &self.module_decls, &|src| {
+            super::build_eval::module_is_pure(&path, src, opts)
+        }) {
+            Verdict::Not => {}
+            Verdict::Pure => self.st.build_eval.push(candidate(false)),
+            Verdict::BuildTime => self.st.build_eval.push(candidate(true)),
+            Verdict::BuildTimeInput(what) => self.diagnostics.push(Diagnostic::warning(
+                "build-time-input",
+                format!(
+                    "buildTime(…) reads {}; it cannot run at build and stays a per-request job",
+                    what.join(", ")
+                ),
+                r.loc,
+                "read only constants inside buildTime, or compute it from props in a loader",
+            )),
+            Verdict::BuildTimeImpure(g) => self.diagnostics.push(Diagnostic::error(
+                "build-time-impure",
+                format!("buildTime(…) reads `{g}`, which differs between runs"),
+                r.loc,
+                "buildTime is evaluated once at build: remove time and randomness from the closure",
+            )),
         }
     }
 

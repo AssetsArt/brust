@@ -443,6 +443,31 @@ then only writes to the DOM when a signal changes. There is no hydration diff an
 mismatch class of bug — if the two evaluations disagree, that is a compiler bug
 caught by the golden test that renders both and compares.
 
+**Build-time evaluation (L2, gap round 2026-10-13).** A precompute slot that reads nothing
+request- or time-dependent is computed once by `brust build` instead of per request. It qualifies
+when it has no inputs, is not state-dependent, sits in no list or condition and is pure: only
+`Math` (not `random`), `JSON`, `String`, `Number`, `Array`, `Object`, `RegExp`,
+`encodeURIComponent` and `decodeURIComponent` as globals, no module `let` / `var` captures, and no
+package imports. A relatively imported helper counts only after its module is read: no package or
+`node:` import, no module `let` / `var`, no dynamic `import()`, no global outside the allowlist
+(`process`, `require`, `Date`, …), no `Math.random`, and the same for its own relative imports. The compiler lists the candidates in
+`ir.build_eval` and emits one thunk per slot (`ComponentArtifacts.eval_ts`); the build bundles them,
+runs them once in a Bun subprocess (`TZ=UTC`, 2 s per slot, JSON-only values of at most 64 KiB, and
+a runtime guard that throws on `Date.now()` / `new Date()` / `Math.random()` / `crypto` /
+`performance.now()` / `fetch`), then compiles again with the values
+(`AnalyzeOptions.slot_values`): the slot becomes a literal like any module const (L1), and a job
+left with no slots is dropped. A helper that throws, times out or returns something that is not
+JSON keeps its job and logs `warning build-eval <file>:<line>:<col> <reason>`.
+
+`buildTime(() => …)` from `@brust/core` is the explicit opt-in that lifts the limits: the closure
+may use package imports and be `async` (10 s, 256 KiB); the time/random/host rules still apply
+(`build-time-impure`). When the closure reads props, state, a store or a loop value it cannot run
+at build: it stays a per-request job and warns `build-time-input` naming the input. A throwing,
+timing-out or non-JSON closure is a build error (`build-time <file>:<line>:<col>`); a use in a
+handler, an effect or a state-dependent value is `build-time-client`. At runtime `buildTime(fn)`
+just returns `fn()`, so the job path and the baked path give the same output (the dual-run test
+builds both and compares the pages). Objects keep their key order across the recompile.
+
 **lucide-react icons (L23).** An icon imported from `lucide-react` (a named export, an alias such as
 `Edit`, or a deep `lucide-react/**/icons/<name>` default import) renders as inline SVG in static and
 native components: no React, no island, no worker. The compiler records an `IconRequest` for each

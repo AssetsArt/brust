@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 41 | 26 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
+| B Composition | 14 | 7 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 4 | 1 | 23 | 1 | 0 | 0 | 0 |
 | E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 143 | 47 | 38 | 52 | 5 | 1 | 0 | 0 |
+| **Total** | 145 | 49 | 38 | 52 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -79,6 +79,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-reactive-props | state flows into a native child as a reactive prop | native | native | 0 | ok | — | spec §7.4 reactive props (D8) |
 | b-function-prop | function prop to a native child | native | native | 0 | ok | — | spec §7.4 function prop between native components |
 | b-react-child-island | react child inside a native parent (island) | static | static | ssr | ok | — | the parent stays static; its one job is the child island SSR render |
+| b-island-in-inlined | react island inside an inlined native component (G11) | static | static | 0 | ok | — | S6 amendment L4 (F108): the island render is the inlined Tiers instance job, so the page has no job of its own |
+| b-island-in-inlined-row | react island inside an inlined per-row component | static | static | 0 | ok | — | S6 amendment L4 (F108): one island render per row of the Row instance (per-row child record) |
 | b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component |  |
 | b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
 | b-forwardref | forwardRef component | react | react | ssr | ok | fallback:default-export-shape |  |

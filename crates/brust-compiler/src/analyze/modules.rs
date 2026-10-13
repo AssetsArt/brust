@@ -196,6 +196,20 @@ pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String>
     candidates.into_iter().find(|c| opts.root.join(c).is_file())
 }
 
+/// L20: the key of the CSS module `rel` names, relative to the module at `parent`: a path relative to the
+/// root, `/`-separated, as `AnalyzeOptions::css_modules` is keyed. `None` for a package import.
+pub fn css_module_key(parent: &str, rel: &str) -> Option<String> {
+    if !(rel.starts_with("./") || rel.starts_with("../")) {
+        return None;
+    }
+    let dir = parent.rfind('/').map_or("", |i| &parent[..i]);
+    Some(normalize(&if dir.is_empty() {
+        rel.to_string()
+    } else {
+        format!("{dir}/{rel}")
+    }))
+}
+
 /// Resolves `.` and `..` segments of a `/`-separated path; an absolute path
 /// stays absolute.
 pub fn normalize(p: &str) -> String {

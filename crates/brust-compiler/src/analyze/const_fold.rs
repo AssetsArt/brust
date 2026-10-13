@@ -20,12 +20,16 @@ pub const FOLD_DEPTH: usize = 16;
 /// A folded value printing to more than this many bytes of Jinja per use stays a slot (R1.3).
 pub const FOLD_MAX_JINJA: usize = 8 * 1024;
 
-/// Rebuilds `e` with `f` applied to every identifier; `None` from `f` keeps the identifier.
-/// Functions, JSX and opaque code are left untouched.
-pub fn map_idents(e: &RawExpr, f: &dyn Fn(&RawExpr) -> Option<RawExpr>) -> RawExpr {
-    let b = |x: &RawExpr| Box::new(map_idents(x, f));
+/// Rebuilds `e` with `f` applied to every node, outermost first: `Some(x)` replaces the node (its
+/// children are not visited), `None` keeps it and visits the children. Functions, JSX and opaque
+/// code are left untouched.
+pub fn map_pre(e: &RawExpr, f: &dyn Fn(&RawExpr) -> Option<RawExpr>) -> RawExpr {
+    if let Some(r) = f(e) {
+        return r;
+    }
+    let b = |x: &RawExpr| Box::new(map_pre(x, f));
     let kind = match &e.kind {
-        RawKind::Ident { .. } => return f(e).unwrap_or_else(|| e.clone()),
+        RawKind::Ident { .. } => return e.clone(),
         RawKind::Member {
             target,
             name,
@@ -57,18 +61,18 @@ pub fn map_idents(e: &RawExpr, f: &dyn Fn(&RawExpr) -> Option<RawExpr>) -> RawEx
             head: head.clone(),
             parts: parts
                 .iter()
-                .map(|(p, t)| (map_idents(p, f), t.clone()))
+                .map(|(p, t)| (map_pre(p, f), t.clone()))
                 .collect(),
         },
         RawKind::Call { callee, args } => RawKind::Call {
             callee: b(callee),
-            args: args.iter().map(|a| map_idents(a, f)).collect(),
+            args: args.iter().map(|a| map_pre(a, f)).collect(),
         },
-        RawKind::Array(items) => RawKind::Array(items.iter().map(|i| map_idents(i, f)).collect()),
+        RawKind::Array(items) => RawKind::Array(items.iter().map(|i| map_pre(i, f)).collect()),
         RawKind::Object(props) => RawKind::Object(
             props
                 .iter()
-                .map(|(k, v)| (k.clone(), map_idents(v, f)))
+                .map(|(k, v)| (k.clone(), map_pre(v, f)))
                 .collect(),
         ),
         RawKind::Lit(_) | RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
@@ -76,6 +80,18 @@ pub fn map_idents(e: &RawExpr, f: &dyn Fn(&RawExpr) -> Option<RawExpr>) -> RawEx
         }
     };
     RawExpr { loc: e.loc, kind }
+}
+
+/// Rebuilds `e` with `f` applied to every identifier; `None` from `f` keeps the identifier.
+/// Functions, JSX and opaque code are left untouched.
+pub fn map_idents(e: &RawExpr, f: &dyn Fn(&RawExpr) -> Option<RawExpr>) -> RawExpr {
+    map_pre(e, &|n| {
+        if matches!(n.kind, RawKind::Ident { .. }) {
+            Some(f(n).unwrap_or_else(|| n.clone()))
+        } else {
+            None
+        }
+    })
 }
 
 /// A value that cannot be an array or an object, so folding it freezes nothing mutable.
@@ -314,4 +330,40 @@ fn exported_const_name(ast: &js_ast::Ast<'_>, export: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// A JSON value as a literal expression (a build-computed slot, L2); `None` for a shape the
+/// literal cannot hold.
+pub fn json_to_raw(v: &serde_json::Value, loc: u32) -> Option<RawExpr> {
+    use crate::ir::Literal;
+    use serde_json::Value;
+    let kind = match v {
+        Value::Null => RawKind::Lit(Literal::Null),
+        Value::Bool(b) => RawKind::Lit(Literal::Bool(*b)),
+        Value::Number(n) => RawKind::Lit(Literal::Num(n.as_f64()?)),
+        Value::String(s) => RawKind::Lit(Literal::Str(s.clone())),
+        Value::Array(items) => RawKind::Array(
+            items
+                .iter()
+                .map(|i| json_to_raw(i, loc))
+                .collect::<Option<_>>()?,
+        ),
+        // The build encodes every object as `{"$": [[key, value], …]}` so key order survives
+        // `serde_json` (no `preserve_order`): a plain object is not a valid value here.
+        Value::Object(o) => {
+            let pairs = o.get("$")?.as_array()?;
+            RawKind::Object(
+                pairs
+                    .iter()
+                    .map(|p| {
+                        let [k, v] = p.as_array()?.as_slice() else {
+                            return None;
+                        };
+                        Some((k.as_str()?.to_string(), json_to_raw(v, loc)?))
+                    })
+                    .collect::<Option<_>>()?,
+            )
+        }
+    };
+    Some(RawExpr { loc, kind })
 }

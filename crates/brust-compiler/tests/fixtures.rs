@@ -11,6 +11,7 @@
 //!
 //! `ir` is the full analysis (M1b-2 passes included); child components
 //! resolve from the repo root, so `parent-counter/Counter.tsx` is compiled too.
+mod lower_common;
 use brust_compiler::analyze::component::{AnalyzeOptions, analyze_file};
 use brust_compiler::analyze::hir::analyze_hir;
 use brust_compiler::ir::render_diagnostics;
@@ -110,6 +111,7 @@ fn golden_ir_and_diag() {
             let file = display_path(&case);
             let opts = AnalyzeOptions {
                 root: fixtures_dir().join("../.."),
+                css_modules: lower_common::css_modules(&case),
                 ..Default::default()
             };
             match analyze_file(&file, &opts) {
@@ -147,6 +149,7 @@ fn golden_lowered() {
             let file = display_path(&case);
             let opts = AnalyzeOptions {
                 root: fixtures_dir().join("../.."),
+                css_modules: lower_common::css_modules(&case),
                 ..Default::default()
             };
             let Ok(tree) = compile_tree(&file, None, &opts, DEFAULT_RUNTIME_IMPORT) else {

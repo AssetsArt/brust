@@ -1,5 +1,6 @@
 /// <reference path="./css-modules.d.ts" />
 // `@brust/core`: the app-facing API.
+export { buildTime } from './build-time'
 export { cache } from './cache'
 export { type BrustConfig, BrustConfigError, loadConfig } from './config'
 export { type RunOptions, run } from './run'

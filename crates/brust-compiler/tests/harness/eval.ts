@@ -11,8 +11,17 @@
 // with what the server painted. Hidden templates are skipped.
 import { readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { plugin } from 'bun'
 import { captured } from './rt.ts'
 import { signal } from '../../../../packages/runtime-dom/src/index.ts'
+
+// L20: a `*.module.css` import is the class map the compiler folded from (dual_eval.rs writes it as JSON).
+plugin({
+  name: 'css-module-map',
+  setup(b) {
+    b.onLoad({ filter: /\.module\.css$/ }, async (a) => ({ exports: { default: JSON.parse(await Bun.file(a.path).text()) }, loader: 'object' }))
+  },
+})
 
 const repo = resolve(import.meta.dir, '../../../..')
 const { Window } = await import(Bun.resolveSync('happy-dom', join(repo, 'packages/runtime-dom')))

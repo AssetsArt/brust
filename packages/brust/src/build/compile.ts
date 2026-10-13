@@ -2,7 +2,8 @@
 // `compileTree` (analysis + lowering of its whole tree). `Err` = build error; fallback and
 // warning diagnostics are logged; `outlet-outside-layout` is raised here (contract 5).
 // A component several trees reach keeps one compile, chosen by role, not by route order (F75).
-import { relative } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { relative, sep } from 'node:path'
 import { type CompiledComponent, type CompiledTree, compileTree } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
@@ -42,6 +43,8 @@ export interface Compiled {
   ir: ComponentIR
   jinja: string
   serverTs?: string
+  /** Build-time evaluation module (L2): one thunk per `ir.build_eval` slot. */
+  evalTs?: string
   clientJs?: string
   /** The compiler's diagnostics for this component (`dev.json`, L14). */
   diagnostics?: { class: string; rule: string; message: string; line: number; col: number; remediation: string }[]
@@ -93,14 +96,21 @@ export function compileApp(opts: {
   componentIssue?: Map<Function, string>
   runtimeImport: string
   serverOnly: string[]
+  /** L20: every CSS Module's class map by absolute source path; `styles.x` folds to the literal class. */
+  cssMaps?: Map<string, Record<string, string>>
   log: (s: string) => void
   /** SVG markup the build rendered for lucide icon requests (L23), by `ir.icon_requests[].key`. */
   iconSvgs?: Record<string, { svg: string; base: string }>
   /** The compile after icons were rendered (even if none could be): icons still components are judged as islands. */
   iconsFinal?: boolean
+  /** Values the build computed for `ir.build_eval` slots, by key (L2): the slots become literals. */
+  slotValues?: Record<string, unknown>
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
   const iconSvgsJson = opts.iconsFinal ? JSON.stringify({ final: true, svgs: opts.iconSvgs ?? {} }) : undefined
+  const slotValuesJson = opts.slotValues && Object.keys(opts.slotValues).length > 0 ? JSON.stringify(opts.slotValues) : undefined
+  // The Rust side keys each map by its path relative to the app root (`/`-separated), like an import resolves.
+  const cssModules = Object.fromEntries([...(opts.cssMaps ?? [])].map(([abs, map]) => [relative(realpathSync(appRoot), abs).split(sep).join('/'), map]))
   const seen = new Map<string, Seen>()
   const rootIdOfFile = new Map<string, string>()
   const routeComponent = new Map<string, string>()
@@ -118,7 +128,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, iconSvgsJson)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).
@@ -150,6 +160,7 @@ export function compileApp(opts: {
       ir,
       jinja: c.jinja,
       serverTs: c.serverTs,
+      evalTs: c.evalTs,
       clientJs: c.clientJs,
       diagnostics: c.diagnostics.map((d) => ({ class: d.class, rule: d.rule, message: d.message, line: d.line, col: d.col, remediation: d.remediation })),
     })

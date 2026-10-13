@@ -813,7 +813,7 @@ The human asked on 2026-10-13: "lucide มัน support native ไหม". Toda
   - Render once with sentinel values, then lower the sentinels to the template expression: `{{ … | e }}` for static, an `x-bind` for native.
   - This applies to string and number attributes only (`size` → `width`/`height`, `color` → `stroke`, `strokeWidth`, `className`).
   - Anything else falls back to L22's island, with diagnostic `icon-dynamic-prop` naming the prop.
-  - A whole dynamic icon choice (`const I = cond ? Plus : Minus`) becomes a native `x-if` over the two inlined SVGs. A dynamic icon from a map or variable → island.
+  - A whole dynamic icon choice (`const I = cond ? Plus : Minus`) becomes a native `x-if` over the two inlined SVGs. A dynamic icon from a map or variable → island. *Amended 2026-10-13 (ruling on Mellow's F2, lane lucide-native): the `x-if` form is deferred to ledger row F126; in this round the whole-icon choice falls back to the L22 island (correct under R0.1).*
 - **Where it works:** static, native and react (inside an island it is just React).
 - **Version:** whatever `lucide-react` the app installs. No pinned copy in brust.
 

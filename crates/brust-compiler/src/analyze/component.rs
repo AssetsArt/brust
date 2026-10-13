@@ -106,6 +106,12 @@ pub struct AnalyzeOptions {
     /// The last compile (icons were rendered): a lucide icon that is still a component is judged
     /// as an island, so a prop it cannot hydrate from is an error again (L23).
     pub icons_final: bool,
+    /// Values the build computed for precompute slots, by `BuildEvalSlot.key` (L2): the slot is
+    /// replaced by the literal, so its job (and the worker) is not needed for it.
+    pub slot_values: std::collections::HashMap<String, serde_json::Value>,
+    /// L20: the class map of every `*.module.css` file, keyed by its path relative to `root` (`/`-separated).
+    /// `styles.x` from such an import folds to the literal class; empty = nothing folds.
+    pub css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
 }
 
 /// Parses `source` as the module at `path` and runs the full analysis,

@@ -83,6 +83,15 @@
       "per_item": null
     }
   ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-const-mutated-container/input.tsx@135",
+      "slot": "_s1",
+      "build_time": false,
+      "line": 8,
+      "col": 8
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],

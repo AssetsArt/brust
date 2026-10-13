@@ -3,6 +3,7 @@
 //! captures → tier (`cache()` is read with the component, in `component.rs`). Pure functions of the IR, except `stores`, which
 //! reads store modules, and `children`, which compiles child modules, both through the
 //! [`crate::analyze::modules`] cache.
+pub mod build_eval;
 pub mod captures;
 pub mod children;
 pub mod deps;
@@ -37,6 +38,8 @@ pub struct PassState {
     pub jsx_code: Vec<(u32, &'static str)>,
     /// Every client read, with its raw expression where it has one (`captures` leaves the final list here).
     pub all_uses: Vec<ClientUse>,
+    /// Slots the build may evaluate once (L2), filled by placement.
+    pub build_eval: Vec<crate::ir::BuildEvalSlot>,
 }
 
 /// Something the client chunk runs, with what it reads.

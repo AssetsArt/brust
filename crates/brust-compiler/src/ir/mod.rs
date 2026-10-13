@@ -210,6 +210,9 @@ pub struct ComponentIR {
     /// lucide icons the build should render to inline SVG (L23); empty when none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub icon_requests: Vec<IconRequest>,
+    /// Slots the build may evaluate once (L2); empty when none qualifies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build_eval: Vec<BuildEvalSlot>,
     pub child_links: Vec<ChildLink>,
     /// Inlined child instances with a precompute job or `useId` values (S6 `children[].instances`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -298,6 +301,7 @@ impl ComponentIR {
             uses_outlet: false,
             jobs: vec![],
             icon_requests: vec![],
+            build_eval: vec![],
             child_links: vec![],
             instances: vec![],
             client_props: vec![],
@@ -320,4 +324,20 @@ impl Default for ComponentIR {
     fn default() -> Self {
         Self::new(String::new(), String::new())
     }
+}
+
+/// A job the server runs per inlined instance of its component: a precompute job, or the ssr
+/// render of a React island the component holds (L4; a client-only island has no render).
+pub fn feeds_instances(j: &JobDecl) -> bool {
+    matches!(
+        j.kind,
+        JobKind::Precompute | JobKind::Ssr { client_only: false }
+    )
+}
+
+/// A native/static component whose inlined instances the server must feed: a job of its own
+/// (`feeds_instances`) or `useId` values. A React component renders as its own island instead.
+pub fn is_fed(ir: &ComponentIR) -> bool {
+    !matches!(ir.tier, Tier::React { .. })
+        && (ir.use_id_slots > 0 || ir.jobs.iter().any(feeds_instances))
 }

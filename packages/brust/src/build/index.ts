@@ -12,6 +12,7 @@ import { type BrowserCtx, setDevBuild, buildActions, buildCacheAdapter, buildCli
 import { runActionsOnly } from './actions-only'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import { renderIcons } from './build-icons'
+import { evaluateBuildSlots } from './build-eval'
 import { type Compiled, compileApp } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
@@ -241,16 +242,21 @@ async function buildInto(
     componentIssue: o.componentIssue,
     runtimeImport: `/_brust/${runtime}`,
     serverOnly: o.serverOnly,
+    cssMaps: css.maps,
   }
   const firstLog: string[] = []
   let { compiled, routeComponent } = compileApp({ ...compileOpts, log: (l) => firstLog.push(l) })
-  // L23: lucide icons the compiler could inline are rendered here (react-dom/server) and the app is
-  // compiled again with their SVG (an icon with no markup stays the L22 island). The first compile's
-  // warnings describe icons that are inline now, so only the last compile's are shown.
+  // L23: lucide icons the compiler could inline are rendered here (react-dom/server); L2: slots that read
+  // nothing request- or time-dependent are computed once, here. The app is compiled again with both (an icon with
+  // no markup stays the L22 island; a slot with a value is a literal: no job, no worker). The first compile's
+  // warnings describe icons that are inline now, so when icons were rendered only the last compile's are shown.
   const hasIcons = [...compiled.values()].some((c) => (c.ir.icon_requests ?? []).length > 0)
-  if (hasIcons) {
-    const iconSvgs = await renderIcons(compiled, appRoot, o.log)
-    ;({ compiled, routeComponent } = compileApp({ ...compileOpts, iconSvgs, iconsFinal: true, log: o.log }))
+  const iconSvgs = hasIcons ? await renderIcons(compiled, appRoot, o.log) : undefined
+  const slotValues = await evaluateBuildSlots(out, compiled, ctx.sourceOf, appRoot, o.log)
+  const hasSlots = Object.keys(slotValues).length > 0
+  if (hasIcons || hasSlots) {
+    if (!hasIcons) firstLog.forEach((l) => o.log(l))
+    ;({ compiled, routeComponent } = compileApp({ ...compileOpts, iconSvgs, iconsFinal: hasIcons, slotValues, log: hasIcons ? o.log : () => {} }))
   } else firstLog.forEach((l) => o.log(l))
 
   mkdirSync(join(out, 'jinja'), { recursive: true })

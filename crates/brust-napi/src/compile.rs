@@ -23,6 +23,8 @@ pub struct CompiledComponent {
     pub ir: String,
     pub jinja: String,
     pub server_ts: Option<String>,
+    /// Build-time evaluation module (L2): one thunk per `ir.build_eval` slot.
+    pub eval_ts: Option<String>,
     pub client_js: Option<String>,
     pub diagnostics: Vec<NapiDiagnostic>,
 }
@@ -50,6 +52,8 @@ pub(crate) fn compile_tree_impl(
     root: &str,
     runtime_import: &str,
     server_only: Vec<String>,
+    slot_values: Option<String>,
+    css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     icon_svgs: Option<String>,
 ) -> CompiledTree {
     // `{ "final": bool, "svgs": { "<key>": "<svg markup>" } }`: lucide icons the build rendered (L23).
@@ -69,9 +73,15 @@ pub(crate) fn compile_tree_impl(
             )
         })
         .unwrap_or_default();
+    // `{ "<key>": <json> }`, the values the build computed for precompute slots (L2).
+    let slot_values: std::collections::HashMap<String, serde_json::Value> = slot_values
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     let opts = AnalyzeOptions {
         server_only,
         root: std::path::PathBuf::from(root),
+        slot_values,
+        css_modules,
         icon_svgs,
         icons_final,
     };
@@ -92,6 +102,7 @@ pub(crate) fn compile_tree_impl(
                         ir: serde_json::to_string(&*l.ir).expect("ComponentIR serialises"),
                         jinja: l.artifacts.jinja.clone(),
                         server_ts: l.artifacts.server_ts.clone(),
+                        eval_ts: l.artifacts.eval_ts.clone(),
                         client_js: l.artifacts.client_js.clone(),
                         diagnostics: l
                             .ir
@@ -107,17 +118,30 @@ pub(crate) fn compile_tree_impl(
     })
 }
 
-/// Compiles `path` (relative to `root`) and every child it reaches through lowering.
+/// Compiles `path` (relative to `root`) and every child it reaches through lowering. `css_modules` (L20): the class
+/// map of each `*.module.css`, keyed by its path relative to `root`; `styles.x` folds to the literal class.
 #[napi]
 pub fn compile_tree(
     path: String,
     root: String,
     runtime_import: String,
     server_only: Vec<String>,
+    slot_values: Option<String>,
+    css_modules: Option<
+        std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    >,
     icon_svgs: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
-    compile_tree_impl(&path, &root, &runtime_import, server_only, icon_svgs)
+    compile_tree_impl(
+        &path,
+        &root,
+        &runtime_import,
+        server_only,
+        slot_values,
+        css_modules.unwrap_or_default(),
+        icon_svgs,
+    )
 }
 
 #[cfg(test)]
@@ -130,6 +154,8 @@ mod tests {
             root,
             "brust/runtime-dom",
             vec![],
+            None,
+            Default::default(),
             None,
         );
         assert!(t.error.is_none(), "{:?}", t.error);
@@ -148,6 +174,8 @@ mod tests {
             root,
             "brust/runtime-dom",
             vec![],
+            None,
+            Default::default(),
             None,
         );
         assert_eq!(t.error.as_ref().map(|d| d.class.as_str()), Some("error"));

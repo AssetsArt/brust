@@ -146,3 +146,51 @@ fn a_react_fallback_parent_drops_child_instances_and_links() {
     assert!(ir.instances.is_empty(), "{:?}", ir.instances);
     assert!(ir.child_links.is_empty(), "{:?}", ir.child_links);
 }
+
+/// L4 (F108): a wrapper holding an island is a fed instance; its island's server render reads the
+/// wrapper's props, so a state-fed (linked) wrapper falls back to React like a precompute (F96).
+#[test]
+fn a_wrapper_island_is_fed_and_a_linked_one_falls_back() {
+    let wrapper = "import Search from './Search'\nexport default function Child({ code }: any) { return <div><Search label={code} /></div> }";
+    let dir = std::env::temp_dir().join(format!("brust-lpp-island-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("Search.tsx"),
+        "import { useReducer } from 'react'\nexport default function Search({ label }: any) { const [n, bump] = useReducer((x: number) => x + 1, 0); return <button onClick={() => bump()}>{label}{n}</button> }",
+    )
+    .unwrap();
+    let analyze_in = |src: &str| {
+        std::fs::write(dir.join("Child.tsx"), wrapper).unwrap();
+        let path = dir.join("T.tsx").to_string_lossy().into_owned();
+        let src = src.to_string();
+        run_on_compiler_thread(move || {
+            analyze_source(
+                &path,
+                src.into_bytes(),
+                &AnalyzeOptions {
+                    root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        })
+    };
+    let ir = analyze_in(
+        "import Child from './Child'\nexport default function T({ src }: any) { return <Child code={src} /> }",
+    );
+    assert!(!matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert_eq!(ir.instances.len(), 1, "{:?}", ir.instances);
+    assert_eq!(ir.instances[0].props["code"], Some("src".to_string()));
+    let ir = analyze_in(
+        "import { useState } from 'react'\nimport Child from './Child'\nexport default function T() { const [n, setN] = useState('a'); return <div onClick={() => setN(n + 'a')}><Child code={n} /></div> }",
+    );
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert!(
+        ir.diagnostics
+            .iter()
+            .any(|d| d.rule == "linked-prop-precompute"),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(ir.instances.is_empty(), "{:?}", ir.instances);
+}

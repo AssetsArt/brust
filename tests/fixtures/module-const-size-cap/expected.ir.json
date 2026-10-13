@@ -101,6 +101,15 @@
       "per_item": null
     }
   ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-const-size-cap/input.tsx@13777",
+      "slot": "_s1",
+      "build_time": false,
+      "line": 167,
+      "col": 8
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
