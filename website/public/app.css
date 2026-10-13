@@ -141,11 +141,28 @@ pre code { background: none; border: 0; padding: 0; font-size: inherit; border-r
 .type { display: inline-block; overflow: hidden; white-space: pre; vertical-align: bottom; max-width: 100% }
 .ln { display: inline-block }
 
-/* facts row */
-.facts { display: grid; grid-template-columns: repeat(4, 1fr); padding-block: 2.25rem }
-.facts > div { padding: 0 1.25rem; border-left: 1px solid var(--rule); min-width: 0 } .facts > div:first-child { padding-left: 0; border-left: 0 }
-.facts b { display: block; font-family: var(--display); font-weight: 400; font-size: 1.9rem; letter-spacing: .01em; line-height: 1.15 }
-.facts span { color: var(--ink-2); font-size: 14.5px }
+/* request path (landing): five stops on one line; a cache hit dims the stops it skips */
+.reqbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1.5rem; margin-bottom: 2rem }
+.reqbar > code { font-size: 15px; background: none; border: 0; padding: 0; color: var(--ink) }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 999px; padding: 3px; background: var(--sheet) }
+.seg button { font: inherit; font-size: 14px; border: 0; border-radius: 999px; padding: .35rem .95rem; background: none; color: var(--ink-2); cursor: pointer; transition: background .25s var(--ease), color .25s var(--ease) }
+.seg button[aria-pressed="true"] { background: var(--amber-fill); color: var(--on-amber) }
+.seg button:focus-visible { outline: 2px solid var(--amber-ink); outline-offset: 2px }
+.reqpath { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1.5rem; position: relative }
+.reqpath::before { content: ""; position: absolute; left: 0; right: 0; top: .75rem; height: 2px; background: var(--amber) }
+.reqpath li { position: relative; display: grid; gap: .45rem; align-content: start; min-width: 0; transition: opacity .35s var(--ease) }
+.reqpath h3 { font-size: 1.1rem; font-weight: 600; line-height: 1.3 }
+.reqpath p { margin: 0; color: var(--ink-2); font-size: 15px; line-height: 1.6 }
+.reqpath code { white-space: nowrap }
+.reqpath .who { justify-self: start; position: relative; z-index: 1; font-size: 12.5px; font-weight: 700; line-height: 1; padding: .4rem .7rem; border-radius: 999px; border: 2px solid var(--amber); background: var(--sheet); color: var(--ink) }
+.reqpath .who.rust { background: var(--amber-fill); border-color: var(--amber-fill); color: var(--on-amber) }
+.reqpath .who.browser { border-color: var(--ink-2) }
+.reqpath .on-hit, .reqpath.hit .on-miss { display: none }
+.reqpath.hit .on-hit { display: inline }
+.reqpath.hit p.on-hit { display: block }
+.reqpath.hit li.skip { opacity: .32 }
+.reqpath.hit li.skip h3 { text-decoration: line-through; text-decoration-thickness: 1px }
+@media (prefers-reduced-motion: reduce) { .reqpath li, .seg button { transition: none } }
 
 /* ===== sections ===== */
 .sec { padding-block: 4.5rem; border-top: 1px solid var(--rule) }
@@ -354,7 +371,7 @@ footer.site p { margin-top: .5rem }
   .hero-top, .sec > .wrap > .head, .split, .cr-grid, .bgrid { grid-template-columns: 1fr }
   .hero-side { justify-items: start } .poster { width: min(100%, 20rem); justify-self: center }
   .panes { grid-template-columns: 1fr } .pane.edit { grid-row: auto }
-  .facts { grid-template-columns: 1fr 1fr; gap: 1.5rem 0 } .facts > div:nth-child(3) { padding-left: 0; border-left: 0 }
+  .reqpath { grid-template-columns: 1fr; gap: 1.25rem; padding-left: 1.25rem } .reqpath::before { left: 0; right: auto; top: .3rem; bottom: .3rem; width: 2px; height: auto }
   .rail li { grid-template-columns: 1fr; gap: .9rem }
   .panel { grid-template-columns: 1fr }
   .pair { grid-template-columns: 1fr; gap: 2.5rem } .pair > div { padding: 0 } .pair > div + div { padding: 2.5rem 0 0; border-left: 0; border-top: 1px solid var(--rule) }

@@ -9,7 +9,7 @@ import { type LandingCode, landingCode } from '../components/landing/snippets'
 import DataSection from '../components/landing/DataSection'
 import { type CardData, type CatchData, demoData, type SearchItem } from '../components/landing/demoData'
 import Deploy from '../components/landing/Deploy'
-import Facts from '../components/landing/Facts'
+import RequestPath from '../components/landing/RequestPath'
 import Hero from '../components/landing/Hero'
 import Nots from '../components/landing/Nots'
 import Packages from '../components/landing/Packages'
@@ -59,7 +59,7 @@ export default function HomePage(d: HomeData) {
   return (
     <div className="landing">
       <Hero version={d.version} />
-      <Facts />
+      <RequestPath />
       <Benchmark bench={d.bench} />
       <Steps create={d.code.create} write={d.code.write} run={d.code.run} />
       {/* The tiers section is written out here, not as a component: the React island (PokemonSearch, an ssr job) must sit in the page's own template. */}
