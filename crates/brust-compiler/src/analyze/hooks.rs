@@ -1,17 +1,19 @@
 //! Hook calls and the component body (spec §4.3). Reads the component's
 //! top-level statements in order; anything React-only is recorded as a
 //! `Fallback` diagnostic (the tier itself is decided in M1b-2).
-use crate::analyze::expr::{Reader, Walk, loc_of};
-use crate::analyze::names::NameTable;
+use crate::analyze::component::AnalyzeOptions;
+use crate::analyze::expr::{Js, Reader, Walk, loc_of, print_js_with};
+use crate::analyze::names::{Alias, Aliases, NameTable};
 use crate::ir::{
-    DerivedDecl, Diagnostic, EffectDecl, Expr, HandlerDecl, Literal, PropDecl, RawExpr, RawKind,
-    RefDecl, StateDecl, StoreUse,
+    ArrowBody, DerivedDecl, DiagClass, Diagnostic, EffectDecl, Expr, HandlerDecl, IdentKind,
+    Literal, PropDecl, RawExpr, RawKind, RefDecl, StateDecl, StoreUse, line_col,
 };
+use crate::parse::Parsed;
 use bun_ast as js_ast;
 use js_ast::b::B;
 use js_ast::expr::Data as E;
 use js_ast::stmt::Data as S;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Default)]
 pub struct BodyDecls {
@@ -32,6 +34,40 @@ pub struct BodyDecls {
     pub react_reason: Option<String>,
     /// Hook calls already classified as top-level statements, by address.
     classified_hooks: HashSet<usize>,
+    /// Custom hooks being inlined (G3).
+    inline: Inline,
+}
+
+/// The module a body is read in (G3): custom hooks resolve and inline through it.
+#[derive(Clone, Copy)]
+pub struct Module<'m, 'x> {
+    pub parsed: &'m Parsed,
+    pub ast: &'m js_ast::Ast<'x>,
+    /// `None` when there is no project root: imported hooks are not read.
+    pub opts: Option<&'m AnalyzeOptions>,
+    /// Not the component's own module: its bindings cannot be reached from the component.
+    pub foreign: bool,
+}
+
+/// How deep custom hooks may call custom hooks.
+const MAX_HOOK_DEPTH: usize = 8;
+
+/// State of custom-hook inlining across one component read (G3).
+#[derive(Debug, Default)]
+struct Inline {
+    /// (module path, hook) of each hook being inlined, outermost first.
+    stack: Vec<(String, String)>,
+    /// Call sites inlined so far per hook: the `n` of `<local>_<hook><n>` (R5.1).
+    counters: HashMap<String, usize>,
+    /// Names a generated local may not take: every symbol of every module read, and the
+    /// names already generated.
+    taken: HashSet<String>,
+    /// What the component itself declares: a hook's free names must not be among them, or
+    /// the inlined code would read the component's binding instead.
+    root_declared: HashSet<String>,
+    /// Every name the component's module declares (imports included): a global a foreign
+    /// hook reads must not be among them, or the inlined code would read that binding.
+    root_module: HashSet<String>,
 }
 
 impl BodyDecls {
@@ -329,15 +365,49 @@ fn undefined_at(loc: u32) -> RawExpr {
 }
 
 /// Reads the component body. `mark_state_bindings` must have run on `r.names`.
-pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>) -> BodyDecls {
+pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, m: Module<'_, '_>) -> BodyDecls {
     let mut out = BodyDecls::default();
+    out.inline.taken.extend(r.names.spellings());
+    let mut w = Walk::default();
+    for arg in func.args.slice() {
+        w.declare_binding(&arg.binding);
+    }
+    w.stmts(func.body.stmts.slice());
+    out.inline.root_declared = w.declared.iter().map(|d| r.names.name(*d)).collect();
+    if !m.foreign {
+        out.inline.root_module = r.names.declared_spellings().collect();
+    }
     read_props(func, r, &mut out);
-    let mut returned = false;
-    for stmt in func.body.stmts.slice() {
+    let returned = read_stmts(func.body.stmts.slice(), r, &mut out, m);
+    out.return_expr = returned.flatten().map(Expr::Raw);
+    nested_hooks(func, r.names, &mut out);
+    if out.return_expr.is_none() && out.react_reason.is_none() {
+        out.fallback(
+            "body-shape",
+            "component has no top-level return".into(),
+            0,
+            "return one JSX tree",
+        );
+    }
+    out.handlers.append(&mut r.pending_handlers);
+    out.diagnostics.append(&mut r.diagnostics);
+    out
+}
+
+/// Reads the statements of a component or custom-hook body in order. `Some(value)` when a
+/// top-level `return` was reached (`value` is `None` for a bare `return`).
+fn read_stmts(
+    stmts: &[js_ast::Stmt],
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+) -> Option<Option<RawExpr>> {
+    let mut returned = None;
+    for (i, stmt) in stmts.iter().enumerate() {
         let loc = stmt.loc.start.max(0) as u32;
         // After the return only hoisted function declarations still mean
         // something; anything else is dead code we will not reason about.
-        if returned
+        if returned.is_some()
             && !matches!(
                 &stmt.data,
                 S::SFunction(_)
@@ -367,10 +437,10 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>) -> BodyDecls {
                     continue;
                 }
                 for decl in local.decls.iter() {
-                    read_decl(r, &mut out, decl, loc);
+                    read_decl(r, out, m, decl, loc, &stmts[..i]);
                 }
             }
-            S::SExpr(x) => read_expr_stmt(r, &mut out, &x.value),
+            S::SExpr(x) => read_expr_stmt(r, out, m, &x.value),
             S::SFunction(f) => {
                 let name = f
                     .func
@@ -385,8 +455,7 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>) -> BodyDecls {
                 });
             }
             S::SReturn(ret) => {
-                out.return_expr = ret.value.map(|v| Expr::Raw(r.expr(&v)));
-                returned = true;
+                returned = Some(ret.value.map(|v| r.expr(&v)));
             }
             S::SIf(_)
             | S::SFor(_)
@@ -416,18 +485,7 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>) -> BodyDecls {
             ),
         }
     }
-    nested_hooks(func, r.names, &mut out);
-    if out.return_expr.is_none() && out.react_reason.is_none() {
-        out.fallback(
-            "body-shape",
-            "component has no top-level return".into(),
-            0,
-            "return one JSX tree",
-        );
-    }
-    out.handlers.append(&mut r.pending_handlers);
-    out.diagnostics.append(&mut r.diagnostics);
-    out
+    returned
 }
 
 /// Hook calls anywhere but as a classified top-level statement: inside an
@@ -460,7 +518,14 @@ fn nested_hooks(func: &js_ast::G::Fn, names: &NameTable<'_>, out: &mut BodyDecls
     }
 }
 
-fn read_decl(r: &mut Reader<'_, '_>, out: &mut BodyDecls, decl: &js_ast::G::Decl, loc: u32) {
+fn read_decl(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+    decl: &js_ast::G::Decl,
+    loc: u32,
+    prior: &[js_ast::Stmt],
+) {
     let Some(value) = &decl.value else {
         out.fallback(
             "body-shape",
@@ -480,6 +545,18 @@ fn read_decl(r: &mut Reader<'_, '_>, out: &mut BodyDecls, decl: &js_ast::G::Decl
         let args: Vec<js_ast::Expr> = call.args.to_vec();
         if is_use_store(&call.target, r.names) {
             return read_use_store(r, out, decl, &args, vloc);
+        }
+        if !from_react {
+            let site = Site {
+                hook: &hook,
+                call,
+                binding: Some(&decl.binding),
+                vloc,
+                prior,
+            };
+            if inline_hook(r, out, m, &site) {
+                return;
+            }
         }
         match (from_react, hook.as_str()) {
             (true, "useState") => {
@@ -693,11 +770,30 @@ fn expr_body(a: &js_ast::E::Arrow) -> Option<js_ast::Expr> {
     }
 }
 
-fn read_expr_stmt(r: &mut Reader<'_, '_>, out: &mut BodyDecls, value: &js_ast::Expr) {
+fn read_expr_stmt(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+    value: &js_ast::Expr,
+) {
     let vloc = loc_of(value);
     let hook = hook_call(value, r.names);
     if let Some((_, call, _)) = &hook {
         out.classified_hooks.insert(call_addr(call));
+    }
+    if let Some((name, call, false)) = &hook
+        && !is_use_store(&call.target, r.names)
+    {
+        let site = Site {
+            hook: name,
+            call,
+            binding: None,
+            vloc,
+            prior: &[],
+        };
+        if inline_hook(r, out, m, &site) {
+            return;
+        }
     }
     match hook {
         Some((hook, call, true)) if hook == "useEffect" || hook == "useLayoutEffect" => {
@@ -740,4 +836,720 @@ fn read_expr_stmt(r: &mut Reader<'_, '_>, out: &mut BodyDecls, value: &js_ast::E
             "move side effects into useEffect",
         ),
     }
+}
+
+/// One custom-hook call site (G3).
+struct Site<'s> {
+    /// The name the hook is called by.
+    hook: &'s str,
+    call: &'s js_ast::E::Call,
+    /// `None` for a call as a statement.
+    binding: Option<&'s js_ast::Binding>,
+    vloc: u32,
+    /// The caller's statements before this one.
+    prior: &'s [js_ast::Stmt],
+}
+
+const HOOK_REMEDY: &str = "keep custom hooks to const declarations, React hooks brust supports and one final return, or move this component to React";
+
+/// Inlines the custom hook `site` calls (G3, plan L5) and binds its result. `false` when
+/// the callee is not a function this crate can read (the caller reports
+/// `hook-unsupported`); otherwise the hook is inlined or a fallback names why not.
+fn inline_hook(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+    site: &Site<'_>,
+) -> bool {
+    let target = match &site.call.target.data {
+        E::EIdentifier(id) => id.ref_,
+        E::EImportIdentifier(id) => id.ref_,
+        _ => return false,
+    };
+    let Some((source, imported)) = r
+        .names
+        .import_of(target)
+        .map(|(s, i)| (s.to_string(), i.to_string()))
+    else {
+        let Some(func) = local_fn(m.ast, r.names, target) else {
+            return false;
+        };
+        read_hook(r, out, m, func, site);
+        return true;
+    };
+    let Some(opts) = m.opts else {
+        return false;
+    };
+    if imported == "*" {
+        return false;
+    }
+    let Some(path) = crate::analyze::modules::resolve(&m.parsed.path(), &source, opts) else {
+        return false;
+    };
+    let hook = site.hook;
+    let bytes = match std::fs::read(opts.root.join(&path)) {
+        Ok(b) => b,
+        Err(e) => {
+            out.fallback(
+                "hook-unsupported",
+                format!("custom hook {hook}: cannot read {path}: {e}"),
+                site.vloc,
+                HOOK_REMEDY,
+            );
+            return true;
+        }
+    };
+    let parsed = match crate::parse::parse_tsx(&path, bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            out.fallback(
+                "hook-unsupported",
+                format!("custom hook {hook}: cannot parse {path}: {}", e.message),
+                site.vloc,
+                HOOK_REMEDY,
+            );
+            return true;
+        }
+    };
+    parsed.with_ast(|ast| {
+        let hm = Module {
+            parsed: &parsed,
+            ast,
+            opts: m.opts,
+            foreign: true,
+        };
+        match exported_fn(ast, &imported) {
+            Some(func) => read_hook(r, out, hm, func, site),
+            None => out.fallback(
+                "hook-unsupported",
+                format!("custom hook {hook}: {path} exports no function declaration `{imported}`"),
+                site.vloc,
+                HOOK_REMEDY,
+            ),
+        }
+    });
+    true
+}
+
+/// The module-level `function` declaring `target`.
+fn local_fn<'x>(
+    ast: &'x js_ast::Ast<'_>,
+    names: &NameTable<'_>,
+    target: js_ast::Ref,
+) -> Option<&'x js_ast::G::Fn> {
+    ast.parts.iter().find_map(|part| {
+        part.stmts.slice().iter().find_map(|s| match &s.data {
+            S::SFunction(f)
+                if f.func
+                    .name
+                    .as_ref()
+                    .is_some_and(|n| names.same(n.ref_, target)) =>
+            {
+                Some(&f.func)
+            }
+            _ => None,
+        })
+    })
+}
+
+/// The function declaration a module exports as `export`: `export function`, `export default
+/// function`, or a local function named in an `export { … }` clause.
+fn exported_fn<'x>(ast: &'x js_ast::Ast<'_>, export: &str) -> Option<&'x js_ast::G::Fn> {
+    let names = NameTable::for_hook(ast);
+    let mut local = None;
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            match &stmt.data {
+                S::SFunction(f)
+                    if f.func.flags.contains(js_ast::flags::Function::IsExport)
+                        && f.func
+                            .name
+                            .as_ref()
+                            .is_some_and(|n| names.name(n.ref_) == export) =>
+                {
+                    return Some(&f.func);
+                }
+                S::SExportDefault(ed) if export == "default" => {
+                    if let js_ast::StmtOrExpr::Stmt(inner) = &ed.value
+                        && let S::SFunction(f) = &inner.data
+                    {
+                        return Some(&f.func);
+                    }
+                    return None;
+                }
+                S::SExportClause(c) => {
+                    for item in c.items.slice() {
+                        if item.alias.slice() == export.as_bytes() {
+                            local = Some(item.name.ref_);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    local_fn(ast, &names, local?)
+}
+
+/// `local` made a name the compiler may emit (R5.1): no leading `_` (reserved for the
+/// compiler's own names), no `$` (invalid in Jinja).
+fn clean_name(local: &str) -> String {
+    let s = local.replace('$', "_");
+    let s = s.trim_start_matches('_');
+    if s.is_empty() { "v".into() } else { s.into() }
+}
+
+/// Reads the body of the custom hook `func` (declared in `hm`) into `out` at `site`.
+fn read_hook(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    hm: Module<'_, '_>,
+    func: &js_ast::G::Fn,
+    site: &Site<'_>,
+) {
+    let imported = hm.foreign;
+    let (hook, vloc) = (site.hook, site.vloc);
+    let path = hm.parsed.path();
+    let fail = |out: &mut BodyDecls, rule: &str, why: String| {
+        out.fallback(rule, why, vloc, HOOK_REMEDY);
+    };
+    let mut hnames = NameTable::for_hook(hm.ast);
+    let fn_name = func
+        .name
+        .as_ref()
+        .map(|n| hnames.name(n.ref_))
+        .unwrap_or_else(|| hook.to_string());
+    let key = (path.clone(), fn_name);
+    if out.inline.stack.contains(&key) {
+        let chain: Vec<&str> = out.inline.stack.iter().map(|(_, h)| h.as_str()).collect();
+        return fail(
+            out,
+            "hook-recursive",
+            format!(
+                "custom hook {hook} calls itself (through {} → {hook})",
+                chain.join(" → ")
+            ),
+        );
+    }
+    if out.inline.stack.len() >= MAX_HOOK_DEPTH {
+        return fail(
+            out,
+            "hook-recursive",
+            format!("custom hook {hook} nests custom hooks more than {MAX_HOOK_DEPTH} deep"),
+        );
+    }
+    use js_ast::flags::Function as F;
+    if func.flags.contains(F::IsAsync) || func.flags.contains(F::IsGenerator) {
+        return fail(
+            out,
+            "hook-shape",
+            format!("custom hook {hook} is async or a generator"),
+        );
+    }
+    let mut params = Vec::new();
+    for arg in func.args.slice() {
+        match arg.binding.data {
+            B::BIdentifier(id) if arg.default.is_none() && !func.flags.contains(F::HasRestArg) => {
+                params.push(id.r#ref)
+            }
+            _ => {
+                return fail(
+                    out,
+                    "hook-shape",
+                    format!("custom hook {hook} has a default, rest or destructured parameter"),
+                );
+            }
+        }
+    }
+    if site.call.args.len() > params.len() {
+        return fail(
+            out,
+            "hook-shape",
+            format!("custom hook {hook} is called with more arguments than it declares"),
+        );
+    }
+    if site
+        .call
+        .args
+        .iter()
+        .any(|a| matches!(a.data, E::ESpread(_)))
+    {
+        return fail(
+            out,
+            "hook-shape",
+            format!("custom hook {hook} is called with a spread argument"),
+        );
+    }
+    mark_state_bindings(func, &mut hnames);
+
+    let mut w = Walk::default();
+    for arg in func.args.slice() {
+        w.declare_binding(&arg.binding);
+    }
+    w.stmts(func.body.stmts.slice());
+    if w.calls
+        .iter()
+        .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element))
+    {
+        return fail(
+            out,
+            "hook-shape",
+            format!("custom hook {hook} builds JSX; a hook that renders is a component"),
+        );
+    }
+    if w.dynamic_import.is_some() {
+        return fail(
+            out,
+            "hook-shape",
+            format!("custom hook {hook} uses a dynamic import()"),
+        );
+    }
+    if let Some(p) = w
+        .assigned
+        .iter()
+        .find(|a| params.iter().any(|p| hnames.same(*p, **a)))
+    {
+        return fail(
+            out,
+            "hook-shape",
+            format!(
+                "custom hook {hook} assigns its parameter `{}`",
+                hnames.name(*p)
+            ),
+        );
+    }
+    if imported
+        && w.calls
+            .iter()
+            .any(|c| matches!(&c.data, E::ECall(call) if is_use_store(&call.target, &hnames)))
+    {
+        return fail(
+            out,
+            "hook-shape",
+            format!(
+                "custom hook {hook} from {path} uses useStore; only a hook declared beside the component may"
+            ),
+        );
+    }
+    // Callees of hook calls never reach the output: inlined, read as React hooks, or a fallback.
+    let mut callees: Vec<js_ast::Ref> = Vec::new();
+    for c in &w.calls {
+        let E::ECall(call) = &c.data else { continue };
+        if hook_target(&call.target, &hnames).is_none() {
+            continue;
+        }
+        match &call.target.data {
+            E::EIdentifier(id) => callees.push(id.ref_),
+            E::EImportIdentifier(id) => callees.push(id.ref_),
+            E::EDot(d) => match &d.target.data {
+                E::EIdentifier(id) => callees.push(id.ref_),
+                E::EImportIdentifier(id) => callees.push(id.ref_),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    for u in &w.used {
+        if hnames.is_jsx_runtime(*u)
+            || w.declared.iter().any(|d| hnames.same(*d, *u))
+            || callees.iter().any(|c| hnames.same(*c, *u))
+        {
+            continue;
+        }
+        let (_, kind) = hnames.kind_of(*u);
+        let spelled = hnames.name(*u);
+        if spelled == "arguments" {
+            return fail(
+                out,
+                "hook-shape",
+                format!("custom hook {hook} reads `arguments`"),
+            );
+        }
+        if imported && !matches!(kind, IdentKind::Global) {
+            return fail(
+                out,
+                "hook-shape",
+                format!(
+                    "custom hook {hook} reads `{spelled}` from {path}; an imported hook may use only React hooks and globals"
+                ),
+            );
+        }
+        if imported && out.inline.root_module.contains(&spelled) {
+            return fail(
+                out,
+                "hook-shape",
+                format!(
+                    "custom hook {hook} reads the global `{spelled}`, which the component's module declares"
+                ),
+            );
+        }
+        if out.inline.root_declared.contains(&spelled) {
+            return fail(
+                out,
+                "hook-shape",
+                format!("custom hook {hook} reads `{spelled}`, which the component also declares"),
+            );
+        }
+    }
+
+    // R5.1: every symbol the hook declares is renamed `<local>_<hook><n>`.
+    if imported {
+        out.inline.taken.extend(hnames.spellings());
+    }
+    let mut locals: Vec<(js_ast::Ref, String)> = Vec::new();
+    for d in &w.declared {
+        if !locals.iter().any(|(l, _)| hnames.same(*l, *d)) {
+            locals.push((*d, hnames.name(*d)));
+        }
+    }
+    let suffix = clean_name(hook);
+    let mut n = out.inline.counters.get(hook).copied().unwrap_or(0) + 1;
+    let generated: HashMap<String, String> = loop {
+        let mut g = HashMap::new();
+        for (_, l) in &locals {
+            g.entry(l.clone())
+                .or_insert_with(|| format!("{}_{suffix}{n}", clean_name(l)));
+        }
+        if g.values().any(|x| out.inline.taken.contains(x)) {
+            n += 1;
+            continue;
+        }
+        break g;
+    };
+    if generated.values().collect::<HashSet<_>>().len() != generated.len() {
+        return fail(
+            out,
+            "hook-shape",
+            format!("custom hook {hook} declares names that differ only in `_` or `$`"),
+        );
+    }
+    out.inline.counters.insert(hook.to_string(), n);
+    out.inline.taken.extend(generated.values().cloned());
+    let gen_of = |names: &NameTable<'_>, r: js_ast::Ref| generated[&names.name(r)].clone();
+
+    // Arguments: an identifier is the caller's binding; anything else is computed once at
+    // the call site, under the parameter's generated name.
+    let mut param_aliases = Vec::new();
+    for (i, p) in params.iter().enumerate() {
+        let alias = match site.call.args.get(i).map(|a| (a, &a.data)) {
+            Some((_, E::EIdentifier(js_ast::E::Identifier { ref_, .. })))
+            | Some((_, E::EImportIdentifier(js_ast::E::ImportIdentifier { ref_, .. }))) => Alias {
+                print: r.names.name(*ref_),
+                kind: Some(r.names.kind_of(*ref_)),
+            },
+            arg => {
+                let name = gen_of(&hnames, *p);
+                let expr = match arg {
+                    Some((a, _)) => r.expr(a),
+                    None => undefined_at(vloc),
+                };
+                out.derived.push(DerivedDecl {
+                    name: name.clone(),
+                    expr: Expr::Raw(expr),
+                });
+                Alias {
+                    print: name,
+                    kind: None,
+                }
+            }
+        };
+        param_aliases.push((*p, alias));
+    }
+    for (l, _) in &locals {
+        if !params.iter().any(|p| hnames.same(*p, *l)) {
+            let print = gen_of(&hnames, *l);
+            hnames.set_alias(*l, Alias { print, kind: None });
+        }
+    }
+    for (p, a) in param_aliases {
+        hnames.set_alias(p, a);
+    }
+
+    let start = Marks::of(out);
+    let reason_before = out.react_reason.clone();
+    let saved = std::mem::take(&mut out.classified_hooks);
+    out.inline.stack.push(key);
+    let returned = {
+        let print = |js: Js<'_>, a: &Aliases| print_js_with(hm.parsed, hm.ast, a, js);
+        let mut hr = Reader::new(&mut hnames, &print);
+        let returned = read_stmts(func.body.stmts.slice(), &mut hr, out, hm);
+        nested_hooks(func, hr.names, out);
+        out.diagnostics.append(&mut hr.diagnostics);
+        if !hr.pending_handlers.is_empty() {
+            fail(
+                out,
+                "hook-shape",
+                format!("custom hook {hook} declares an inline handler"),
+            );
+        }
+        returned
+    };
+    out.inline.stack.pop();
+    out.classified_hooks = saved;
+
+    // What went wrong inside is reported at the call site, naming the hook (R0.2).
+    let text = hm.parsed.text();
+    for d in &mut out.diagnostics[start.diagnostics..] {
+        let (line, _) = line_col(text, d.loc);
+        d.message = format!("{} (in custom hook {hook}, {path}:{line})", d.message);
+        d.loc = vloc;
+    }
+    if reason_before.is_none()
+        && let Some(reason) = out.react_reason.clone()
+    {
+        out.react_reason = out.diagnostics[start.diagnostics..]
+            .iter()
+            .find(|d| d.message.starts_with(&reason))
+            .map(|d| d.message.clone())
+            .or(Some(reason));
+    }
+    let mut returned = returned.flatten();
+    if imported {
+        start.relocate(out, vloc);
+        if let Some(e) = &mut returned {
+            relocate(e, vloc);
+        }
+    }
+    if out.diagnostics[start.diagnostics..]
+        .iter()
+        .any(|d| d.class == DiagClass::Fallback)
+    {
+        return;
+    }
+    bind_result(r, out, site, returned);
+}
+
+/// Lengths of `out`'s lists before a hook is read, so what it added can be found.
+struct Marks {
+    diagnostics: usize,
+    state: usize,
+    derived: usize,
+    effects: usize,
+    handlers: usize,
+    refs: usize,
+}
+
+impl Marks {
+    fn of(out: &BodyDecls) -> Self {
+        Marks {
+            diagnostics: out.diagnostics.len(),
+            state: out.state.len(),
+            derived: out.derived.len(),
+            effects: out.effects.len(),
+            handlers: out.handlers.len(),
+            refs: out.refs.len(),
+        }
+    }
+
+    /// Points everything read since at `loc`: locations in another file mean nothing here.
+    fn relocate(&self, out: &mut BodyDecls, loc: u32) {
+        let raw = |e: &mut Expr| {
+            if let Expr::Raw(r) = e {
+                relocate(r, loc)
+            }
+        };
+        out.state[self.state..]
+            .iter_mut()
+            .for_each(|s| raw(&mut s.init));
+        out.derived[self.derived..]
+            .iter_mut()
+            .for_each(|d| raw(&mut d.expr));
+        out.refs[self.refs..]
+            .iter_mut()
+            .for_each(|d| raw(&mut d.init));
+        out.handlers[self.handlers..]
+            .iter_mut()
+            .for_each(|h| relocate(&mut h.body, loc));
+        for e in &mut out.effects[self.effects..] {
+            relocate(&mut e.body, loc);
+            e.deps.iter_mut().flatten().for_each(|d| relocate(d, loc));
+        }
+    }
+}
+
+fn relocate(e: &mut RawExpr, loc: u32) {
+    e.loc = loc;
+    match &mut e.kind {
+        RawKind::Lit(_) | RawKind::Ident { .. } | RawKind::Opaque { .. } | RawKind::Jsx(_) => {}
+        RawKind::Member { target, .. } => relocate(target, loc),
+        RawKind::Index { target, index } => {
+            relocate(target, loc);
+            relocate(index, loc);
+        }
+        RawKind::Call { callee, args } => {
+            relocate(callee, loc);
+            args.iter_mut().for_each(|a| relocate(a, loc));
+        }
+        RawKind::Binary { left, right, .. } => {
+            relocate(left, loc);
+            relocate(right, loc);
+        }
+        RawKind::Unary { value, .. } => relocate(value, loc),
+        RawKind::Cond { test, yes, no } => {
+            relocate(test, loc);
+            relocate(yes, loc);
+            relocate(no, loc);
+        }
+        RawKind::Template { parts, .. } => parts.iter_mut().for_each(|(p, _)| relocate(p, loc)),
+        RawKind::Array(items) => items.iter_mut().for_each(|i| relocate(i, loc)),
+        RawKind::Object(props) => props.iter_mut().for_each(|(_, v)| relocate(v, loc)),
+        RawKind::Arrow { body, .. } => {
+            if let ArrowBody::Expr(b) = body {
+                relocate(b, loc)
+            }
+        }
+    }
+}
+
+/// A value whose computation can be dropped: no call, nothing opaque.
+fn inert(e: &RawExpr) -> bool {
+    match &e.kind {
+        RawKind::Lit(_) | RawKind::Ident { .. } | RawKind::Arrow { .. } => true,
+        RawKind::Member { target, .. } => inert(target),
+        RawKind::Array(items) => items.iter().all(inert),
+        RawKind::Object(props) => props.iter().all(|(_, v)| inert(v)),
+        _ => false,
+    }
+}
+
+/// Binds the hook's returned value to the call site's pattern.
+fn bind_result(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    site: &Site<'_>,
+    returned: Option<RawExpr>,
+) {
+    let (hook, vloc) = (site.hook, site.vloc);
+    let shape = |out: &mut BodyDecls, why: String| {
+        out.fallback(
+            "hook-return-shape",
+            why,
+            vloc,
+            "return one value, or an array or object literal the call site destructures",
+        )
+    };
+    let Some(binding) = site.binding else {
+        if returned.as_ref().is_some_and(|v| !inert(v)) {
+            shape(
+                out,
+                format!("custom hook {hook} computes a value the call site discards"),
+            );
+        }
+        return;
+    };
+    let value = returned.unwrap_or_else(|| undefined_at(vloc));
+    match binding.data {
+        B::BIdentifier(id) => bind_one(r, out, site, id.r#ref, value),
+        B::BMissing(_) => {}
+        B::BArray(arr) => {
+            let RawKind::Array(items) = value.kind else {
+                return shape(
+                    out,
+                    format!(
+                        "custom hook {hook} is destructured as an array but does not return an array literal"
+                    ),
+                );
+            };
+            if arr.has_spread {
+                return shape(
+                    out,
+                    format!("custom hook {hook}: ...rest in the array pattern"),
+                );
+            }
+            let mut binds = Vec::new();
+            for (i, item) in arr.items().iter().enumerate() {
+                match item.binding.data {
+                    B::BMissing(_) => {}
+                    B::BIdentifier(id) if item.default_value.is_none() => {
+                        let Some(v) = items.get(i) else {
+                            return shape(
+                                out,
+                                format!(
+                                    "custom hook {hook} returns fewer items than the pattern binds"
+                                ),
+                            );
+                        };
+                        binds.push((id.r#ref, v.clone()));
+                    }
+                    _ => {
+                        return shape(
+                            out,
+                            format!(
+                                "custom hook {hook}: a default or nested pattern in the array pattern"
+                            ),
+                        );
+                    }
+                }
+            }
+            for (b, v) in binds {
+                bind_one(r, out, site, b, v);
+            }
+        }
+        B::BObject(obj) => {
+            let RawKind::Object(props) = value.kind else {
+                return shape(
+                    out,
+                    format!(
+                        "custom hook {hook} is destructured as an object but does not return an object literal"
+                    ),
+                );
+            };
+            let mut binds = Vec::new();
+            for p in obj.properties() {
+                let plain = !p.flags.contains(js_ast::flags::Property::IsSpread)
+                    && !p.flags.contains(js_ast::flags::Property::IsComputed)
+                    && p.default_value.is_none();
+                let (true, E::EString(key), B::BIdentifier(id)) =
+                    (plain, &p.key.data, p.value.data)
+                else {
+                    return shape(
+                        out,
+                        format!(
+                            "custom hook {hook}: a default, computed key, ...rest or nested pattern in the object pattern"
+                        ),
+                    );
+                };
+                let key = crate::analyze::expr::estring(key);
+                let Some((_, v)) = props.iter().rev().find(|(k, _)| *k == key) else {
+                    return shape(out, format!("custom hook {hook} returns no `{key}`"));
+                };
+                binds.push((id.r#ref, v.clone()));
+            }
+            for (b, v) in binds {
+                bind_one(r, out, site, b, v);
+            }
+        }
+    }
+}
+
+/// `binding` is the returned `value`: an identifier the hook returns is the same binding
+/// (it keeps its kind: state, setter, store); anything else is derived.
+fn bind_one(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    site: &Site<'_>,
+    binding: js_ast::Ref,
+    value: RawExpr,
+) {
+    if let RawKind::Ident { name, kind } = &value.kind
+        && !matches!(kind, IdentKind::Prop)
+    {
+        // A closure declared earlier read the caller's binding under its own name.
+        let mut w = Walk::default();
+        w.stmts(site.prior);
+        if !w.used.iter().any(|u| r.names.same(*u, binding)) {
+            r.names.set_alias(
+                binding,
+                Alias {
+                    print: name.clone(),
+                    kind: Some((name.clone(), kind.clone())),
+                },
+            );
+            return;
+        }
+    }
+    out.derived.push(DerivedDecl {
+        name: r.names.name(binding),
+        expr: Expr::Raw(value),
+    });
 }

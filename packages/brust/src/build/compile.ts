@@ -78,6 +78,8 @@ export function compileApp(opts: {
   appRoot: string
   leaves: FlatRoute[]
   componentFile: Map<Function, string>
+  /** Why a Component the scan saw has no file (named export only, outside the root); optional. */
+  componentIssue?: Map<Function, string>
   runtimeImport: string
   serverOnly: string[]
   log: (s: string) => void
@@ -95,7 +97,7 @@ export function compileApp(opts: {
     if (!file)
       throw new BuildError(
         'component-source',
-        `${route.Component!.name || '(anonymous)'} is not a default import of a .tsx file (route ${routeId})`,
+        `${opts.componentIssue?.get(route.Component!) ?? `${route.Component!.name || '(anonymous)'} is not the default export of a .tsx file in the import graph`} (route ${routeId})`,
       )
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
