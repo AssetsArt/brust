@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun scripts/gen-meta.ts && brust build routes.tsx && brust start",
     "build": "bun scripts/gen-meta.ts && brust build routes.tsx",
-    "build:static": "bun scripts/gen-meta.ts && brust build routes.tsx --target static",
+    "build:static": "bun scripts/gen-meta.ts && brust build routes.tsx --target static && bun scripts/pages-extras.ts",
     "deploy": "bun run build:static && bunx wrangler pages deploy dist/static --project-name brust-dev --branch main --commit-dirty=true",
     "start": "brust start",
     "test": "bun test",
