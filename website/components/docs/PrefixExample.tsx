@@ -14,7 +14,7 @@ export interface ExampleData {
 
 export default function PrefixExample({ ex }: { ex: ExampleData }) {
   return (
-    <div className="prefix-example">
+    <div className="prefix-example" style={{ minWidth: 0 }}>
       <h3>
         {ex.n}. {ex.title}
       </h3>

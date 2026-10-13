@@ -188,6 +188,7 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
       </p>
 
       <h3 id="grammar">The expressions</h3>
+      <div className="table-wrap" tabIndex={0} role="region" aria-label="Cache key expressions">
       <table>
         <thead>
           <tr>
@@ -309,6 +310,7 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
           </tr>
         </tbody>
       </table>
+      </div>
       <p>
         For <code>bypass</code> the rule is the other way round: a non-empty result means skip the cache for that request. A wrong expression is a build error that names the problem.
       </p>
