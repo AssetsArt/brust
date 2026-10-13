@@ -1182,10 +1182,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                     && j.outputs.contains(&out)
                     && j.per_item.is_some()
             });
-            if self.inline.is_some() || (per_item && self.frames.len() > 1) {
+            if per_item && (self.inline.is_some() || self.frames.len() > 1) {
                 // S6 hands the server one array per ssr job, indexed by ONE list of the route
-                // component; deeper loops need a 2-D slot, and inside an inlined child the slot counters
-                // restart, so its react children would collide (same reason as fed grandchildren).
+                // component; deeper loops, or a row of an inlined child (whose output already sits
+                // in the instance's slot dict), need a 2-D slot.
                 self.diagnostics.push(Diagnostic::error(
                     "nested-instance",
                     format!(
@@ -1202,11 +1202,17 @@ impl<'a, 'c> Printer<'a, 'c> {
             } else {
                 ""
             };
+            // Inside an inlined child the render is that instance's job output (L4): it sits in
+            // the instance's slot dict like a precompute value.
+            let html = match self.inline {
+                Some(_) => self.slot_ref(&out, false),
+                None => format!("{out}{idx}"),
+            };
             let dict = self.props_dict(props, sprops);
             self.out.push_str(&crate::lower::island_host(
                 &id,
                 &dict,
-                &format!("{{{{ {out}{idx} | safe }}}}"),
+                &format!("{{{{ {html} | safe }}}}"),
             ));
             return;
         }
@@ -1553,14 +1559,7 @@ impl Expr {
     }
 }
 
-/// A component whose instances the server must feed (a precompute job or `useId` values).
-fn is_fed(ir: &ComponentIR) -> bool {
-    ir.use_id_slots > 0
-        || ir
-            .jobs
-            .iter()
-            .any(|j| matches!(j.kind, JobKind::Precompute))
-}
+use crate::ir::is_fed;
 
 /// Whether `f` holds for `n` or any node below it.
 fn contains_node(n: &Node, f: &dyn Fn(&Node) -> bool) -> bool {

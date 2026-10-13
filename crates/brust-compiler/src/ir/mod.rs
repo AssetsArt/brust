@@ -317,3 +317,19 @@ impl Default for ComponentIR {
         Self::new(String::new(), String::new())
     }
 }
+
+/// A job the server runs per inlined instance of its component: a precompute job, or the ssr
+/// render of a React island the component holds (L4; a client-only island has no render).
+pub fn feeds_instances(j: &JobDecl) -> bool {
+    matches!(
+        j.kind,
+        JobKind::Precompute | JobKind::Ssr { client_only: false }
+    )
+}
+
+/// A native/static component whose inlined instances the server must feed: a job of its own
+/// (`feeds_instances`) or `useId` values. A React component renders as its own island instead.
+pub fn is_fed(ir: &ComponentIR) -> bool {
+    !matches!(ir.tier, Tier::React { .. })
+        && (ir.use_id_slots > 0 || ir.jobs.iter().any(feeds_instances))
+}
