@@ -53,7 +53,10 @@ pub(crate) fn compile_tree_impl(
     icon_svgs: Option<String>,
 ) -> CompiledTree {
     // `{ "final": bool, "svgs": { "<key>": "<svg markup>" } }`: lucide icons the build rendered (L23).
-    let (icon_svgs, icons_final) = icon_svgs
+    let (icon_svgs, icons_final): (
+        std::collections::HashMap<String, brust_compiler::analyze::component::IconMarkup>,
+        bool,
+    ) = icon_svgs
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .map(|v| {
             let svgs = v

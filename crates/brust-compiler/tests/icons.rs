@@ -1,10 +1,10 @@
 //! L23: lucide icons rendered at build time and inlined as SVG.
-use brust_compiler::analyze::component::{AnalyzeOptions, analyze_source};
+use brust_compiler::analyze::component::{AnalyzeOptions, IconMarkup, analyze_source};
 use brust_compiler::ir::*;
 use brust_compiler::parse::run_on_compiler_thread;
 use std::collections::HashMap;
 
-fn analyze(src: &str, svgs: HashMap<String, String>, fin: bool) -> ComponentIR {
+fn analyze(src: &str, svgs: HashMap<String, IconMarkup>, fin: bool) -> ComponentIR {
     let s = src.to_string();
     run_on_compiler_thread(move || {
         analyze_source(
@@ -21,6 +21,14 @@ fn analyze(src: &str, svgs: HashMap<String, String>, fin: bool) -> ComponentIR {
 }
 
 const HEART: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"__BRUST_ICON_size__\" height=\"__BRUST_ICON_size__\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" class=\"lucide lucide-heart __BRUST_ICON_className__\" aria-hidden=\"true\"><path d=\"M2 9&amp;5\"></path></svg>";
+
+/// The markup with sentinels and the one React renders for `undefined` props.
+fn markup() -> IconMarkup {
+    IconMarkup {
+        svg: HEART.to_string(),
+        base: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" class=\"lucide lucide-heart\" aria-hidden=\"true\"><path d=\"M2 9&amp;5\"></path></svg>".to_string(),
+    }
+}
 
 fn elements(n: &Node, out: &mut Vec<(String, Vec<Attr>)>) {
     match n {
@@ -71,7 +79,7 @@ fn a_rendered_icon_becomes_elements_with_dynamic_attributes() {
         .key
         .clone();
     let mut svgs = HashMap::new();
-    svgs.insert(key, HEART.to_string());
+    svgs.insert(key, markup());
     let ir = analyze(src, svgs, true);
     assert!(ir.icon_requests.is_empty());
     assert!(ir.jobs.is_empty() && !ir.needs_worker, "{:?}", ir.jobs);
@@ -111,8 +119,22 @@ fn a_rendered_icon_becomes_elements_with_dynamic_attributes() {
         } if name == "className" => Some(r),
         _ => None,
     });
+    // an absent className renders React's default string, a present one the template
+    let RawKind::Cond { yes, no, .. } = &class.unwrap().kind else {
+        panic!("className is a conditional: {class:?}")
+    };
+    assert!(matches!(&yes.kind, RawKind::Template { head, .. } if head == "lucide lucide-heart "));
+    assert!(matches!(&no.kind, RawKind::Lit(Literal::Str(s)) if s == "lucide lucide-heart"));
+    // width / height / stroke fall back to React's defaults: `prop ?? "24"`
+    let width = svg.1.iter().find_map(|a| match a {
+        Attr::Dynamic {
+            name,
+            value: Expr::Raw(r) | Expr::Server(ServerExpr(r)),
+        } if name == "width" => Some(r),
+        _ => None,
+    });
     assert!(
-        matches!(&class.unwrap().kind, RawKind::Template { head, .. } if head == "lucide lucide-heart ")
+        matches!(&width.unwrap().kind, RawKind::Binary { op: BinOp::Nullish, right, .. } if matches!(&right.kind, RawKind::Lit(Literal::Str(s)) if s == "24"))
     );
 }
 
@@ -144,7 +166,7 @@ fn a_literal_provider_is_applied_and_a_dynamic_one_is_not() {
     assert_eq!(r.provider.get("color"), Some(&serde_json::json!("green")));
     // with markup for the icon, the provider disappears from the template
     let mut svgs = HashMap::new();
-    svgs.insert(r.key.clone(), HEART.to_string());
+    svgs.insert(r.key.clone(), markup());
     let done = analyze(
         "import { Heart, LucideProvider } from 'lucide-react'\nexport default function C() { return <LucideProvider size={32} color=\"green\"><Heart /></LucideProvider> }",
         svgs,

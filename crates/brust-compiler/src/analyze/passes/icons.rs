@@ -13,7 +13,7 @@ use crate::analyze::const_fold::{Folder, map_idents};
 use crate::ir::{
     Attr, ComponentIR, Diagnostic, Expr, IconRequest, IdentKind, Node, RawExpr, RawKind,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Props whose value may be a template expression (rendered to one attribute each).
 const DYNAMIC_PROPS: &[&str] = &["size", "color", "strokeWidth", "className"];
@@ -30,7 +30,7 @@ pub fn is_lucide(source: &str) -> bool {
 struct Cx<'a> {
     path: &'a str,
     text: &'a [u8],
-    svgs: &'a std::collections::HashMap<String, String>,
+    svgs: &'a std::collections::HashMap<String, crate::analyze::component::IconMarkup>,
     consts: std::collections::HashMap<String, RawExpr>,
     requests: Vec<IconRequest>,
     diagnostics: Vec<Diagnostic>,
@@ -195,8 +195,8 @@ fn icon(n: &mut Node, cx: &mut Cx<'_>) {
         provider.extend(p.clone());
     }
     let key = format!("{}@{loc}", cx.path);
-    if let Some(svg) = cx.svgs.get(&key)
-        && let Some(el) = parse_svg(svg, loc, props, &dynamic)
+    if let Some(m) = cx.svgs.get(&key)
+        && let Some(el) = parse_svg(&m.svg, &m.base, loc, props, &dynamic)
     {
         *n = el;
         return;
@@ -262,9 +262,30 @@ struct Tok<'a> {
     i: usize,
 }
 
-fn parse_svg(svg: &str, loc: u32, props: &[(String, Expr)], dynamic: &[String]) -> Option<Node> {
+fn parse_svg(
+    svg: &str,
+    base: &str,
+    loc: u32,
+    props: &[(String, Expr)],
+    dynamic: &[String],
+) -> Option<Node> {
+    // What React renders when the dynamic props are absent (`undefined`): each dynamic attribute
+    // falls back to this, exactly like `size ?? contextSize`.
+    let defaults: HashMap<String, String> = {
+        let mut t = Tok { s: base, i: 0 };
+        match element(&mut t, loc, props, &[], &HashMap::new())? {
+            Node::Element { attrs, .. } => attrs
+                .into_iter()
+                .filter_map(|a| match a {
+                    Attr::Static { name, value } => Some((name, value)),
+                    _ => None,
+                })
+                .collect(),
+            _ => return None,
+        }
+    };
     let mut t = Tok { s: svg, i: 0 };
-    let node = element(&mut t, loc, props, dynamic)?;
+    let node = element(&mut t, loc, props, dynamic, &defaults)?;
     (t.s[t.i..].trim().is_empty()).then_some(node)
 }
 
@@ -273,6 +294,7 @@ fn element(
     loc: u32,
     props: &[(String, Expr)],
     dynamic: &[String],
+    defaults: &HashMap<String, String>,
 ) -> Option<Node> {
     let s = t.s.as_bytes();
     if s.get(t.i) != Some(&b'<') {
@@ -331,7 +353,7 @@ fn element(
         } else {
             String::new()
         };
-        attrs.push(attr(&name, &value, props, dynamic)?);
+        attrs.push(attr(&name, &value, props, dynamic, defaults)?);
     }
     let mut children = Vec::new();
     loop {
@@ -344,7 +366,7 @@ fn element(
             return Some(make(tag, attrs, children, loc));
         }
         if t.s.as_bytes().get(t.i) == Some(&b'<') {
-            children.push(element(t, loc, props, dynamic)?);
+            children.push(element(t, loc, props, dynamic, defaults)?);
         } else {
             let end = t.s[t.i..].find('<')? + t.i;
             let text = decode(&t.s[t.i..end]);
@@ -376,7 +398,16 @@ fn prop_expr(name: &str, props: &[(String, Expr)]) -> Option<RawExpr> {
 }
 
 /// One attribute of the rendered markup: static, or dynamic where the value carries a sentinel.
-fn attr(name: &str, value: &str, props: &[(String, Expr)], dynamic: &[String]) -> Option<Attr> {
+/// React treats an `undefined` (or `null`) size / color / strokeWidth as absent and renders the
+/// default (or the provider's value), so the dynamic value is `prop ?? <default>` and a
+/// `className` template is only used when the prop is truthy.
+fn attr(
+    name: &str,
+    value: &str,
+    props: &[(String, Expr)],
+    dynamic: &[String],
+    defaults: &HashMap<String, String>,
+) -> Option<Attr> {
     let Some((head, parts, tail)) = split_sentinels(value, dynamic) else {
         return Some(Attr::Static {
             name: name.to_string(),
@@ -384,32 +415,63 @@ fn attr(name: &str, value: &str, props: &[(String, Expr)], dynamic: &[String]) -
         });
     };
     let html = if name == "class" { "className" } else { name };
+    let default = defaults.get(name).map(|d| RawExpr {
+        loc: 0,
+        kind: RawKind::Lit(crate::ir::Literal::Str(d.clone())),
+    });
     if head.is_empty() && parts.len() == 1 && tail.is_empty() {
         let e = prop_expr(&parts[0].1, props)?;
+        let value = match default {
+            Some(d) => RawExpr {
+                loc: e.loc,
+                kind: RawKind::Binary {
+                    op: crate::ir::BinOp::Nullish,
+                    left: Box::new(e),
+                    right: Box::new(d),
+                },
+            },
+            None => e,
+        };
         return Some(Attr::Dynamic {
             name: html.to_string(),
-            value: Expr::Raw(e),
+            value: Expr::Raw(value),
         });
     }
     // `"lucide lucide-heart " + className`: a template over the props.
     let mut tparts = Vec::new();
+    let mut tests = Vec::new();
     for (i, (_, prop)) in parts.iter().enumerate() {
         let after = if i + 1 < parts.len() {
             parts[i].0.clone()
         } else {
             tail.clone()
         };
-        tparts.push((prop_expr(prop, props)?, after));
+        let e = prop_expr(prop, props)?;
+        tests.push(e.clone());
+        tparts.push((e, after));
     }
     let loc = tparts.first().map(|p| p.0.loc).unwrap_or(0);
+    let template = RawExpr {
+        loc,
+        kind: RawKind::Template {
+            head,
+            parts: tparts,
+        },
+    };
+    // Absent props render the default string; present ones the template.
+    let value = match (default, tests.into_iter().next()) {
+        (Some(d), Some(test)) => RawExpr {
+            loc,
+            kind: RawKind::Cond {
+                test: Box::new(test),
+                yes: Box::new(template),
+                no: Box::new(d),
+            },
+        },
+        _ => template,
+    };
     Some(Attr::Dynamic {
         name: html.to_string(),
-        value: Expr::Raw(RawExpr {
-            loc,
-            kind: RawKind::Template {
-                head,
-                parts: tparts,
-            },
-        }),
+        value: Expr::Raw(value),
     })
 }

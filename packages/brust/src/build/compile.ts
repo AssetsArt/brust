@@ -95,7 +95,7 @@ export function compileApp(opts: {
   serverOnly: string[]
   log: (s: string) => void
   /** SVG markup the build rendered for lucide icon requests (L23), by `ir.icon_requests[].key`. */
-  iconSvgs?: Record<string, string>
+  iconSvgs?: Record<string, { svg: string; base: string }>
   /** The compile after icons were rendered (even if none could be): icons still components are judged as islands. */
   iconsFinal?: boolean
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {

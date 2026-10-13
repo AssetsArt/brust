@@ -56,6 +56,23 @@ test('a native lucide icon follows state: size and color update, no island, no c
   await page.close()
 }, 60_000)
 
+test('an undefined state size renders the default and follows the state', async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/native-undefined`, { waitUntil: 'load' })
+  const svg = page.locator('svg.lucide-heart')
+  expect(await svg.getAttribute('width')).toBe('24')   // React's default, not a missing attribute
+  await page.waitForTimeout(300)
+  await page.locator('#set').click()
+  await page.waitForFunction(() => document.querySelector('svg.lucide-heart')?.getAttribute('width') === '8')
+  await page.locator('#unset').click()
+  await page.waitForFunction(() => document.querySelector('svg.lucide-heart')?.getAttribute('width') === '24')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
 test('static page icons are SVG elements with no script for them', async () => {
   const page = await browser.newPage()
   await page.goto(`${base}/`, { waitUntil: 'load' })

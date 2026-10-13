@@ -66,6 +66,16 @@ test('a non-constant size / color / strokeWidth / className is lowered to attrib
   expect(page).toContain(react(createElement(Heart, { size: 40, color: 'teal', strokeWidth: 1, className: 'ico teal' })))
 })
 
+test('an undefined size / color / strokeWidth / className renders React\'s defaults, the provider\'s values included', async () => {
+  const page = await html('/undefined')
+  expect(page).toContain(react(createElement(Heart, {})))   // width 24, stroke currentColor, stroke-width 2, class "lucide lucide-heart"
+  expect(page).toContain(react(createElement(LucideProvider, { size: 32, color: 'green', strokeWidth: 3, children: createElement(Heart, {}) })))
+  // and with values present the same route renders them
+  const defined = await html('/defined')
+  expect(defined).toContain(react(createElement(Heart, { size: 12, color: 'navy', strokeWidth: 1, className: 'k1' })))
+  expect(defined).toContain(react(createElement(LucideProvider, { size: 32, color: 'green', strokeWidth: 3, children: createElement(Heart, { size: 12, color: 'navy', strokeWidth: 1 }) })))
+})
+
 test('a literal LucideProvider is applied at build; no island, no worker', async () => {
   const c = comp('provider_')
   expect(c.needs_worker).toBe(false)
