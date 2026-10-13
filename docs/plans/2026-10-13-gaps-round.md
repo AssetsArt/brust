@@ -24,6 +24,20 @@ Every finding below was reproduced on 2026-10-13 by research agents against v2 @
 - **R0.2 Real diagnostics.** Every new or changed diagnostic carries a real source location. Locations like `:0:0` are a bug; fix them wherever a lane touches the code.
 - **R0.3 Rebuild the addon before testing.** Any compiler change needs `packages/brust` `bun run build:debug` first. A stale addon makes tests lie.
 - **R0.4 Battery and coverage stay in sync.** `scripts/battery/rows.ts` and `docs/react-coverage.md` change in the same lane as any tier change.
+- **R0.6 Ledger numbers (ruled, so lanes don't collide).** Each lane writes only its own row:
+
+  | Row | Lane | Row | Lane | Row | Lane |
+  |---|---|---|---|---|---|
+  | F99 | gap-route-graph | F105 | gap-child-literals | F111 | dev-server |
+  | F100 | gap-custom-hooks | F106 | gap-transparent-root | F112 | dev-trace |
+  | F101 | runtime-response-size | F107 | gap-ssg | F113 | devtools-ui |
+  | F102 | gap-store-ssr-snapshot | F108 | gap-island-in-inlined | F114 | actions-standalone |
+  | F103 | gap-const-fold | F109 | gap-build-eval | | |
+  | F104 | gap-map-cond | F110 | gap-ssg-actions | F115 | react-coverage-api |
+  | F116 | css-pipeline | F117 | css-module-fold | F118 | tailwind |
+  | F119 | external-island | F120 | lucide-native | | |
+
+  When two lanes add rows, the second one to merge resolves the textual conflict by keeping both rows.
 - **R0.5 Each lane updates its own docs.** Update `docs/*.md` where the behaviour is documented, and add a `docs/plans/m1a-followups.md` row (F99+) marked DONE with the PR number.
   The docs site (`website/`) is updated afterwards on the docs-site branch by the lead. Lanes do not touch `website/` except where a lane below says so.
 
@@ -64,6 +78,29 @@ Each gap shows the same cause:
 
 Otherwise it stays a job, which is today's behaviour. Primitives always fold.
 Why: folding freezes the initial value. A long-lived worker today shows mutations, and we will not silently change that.
+
+**R1.1a (lead ruling 2026-10-13, after Mellow's review of `gap-const-fold`, round 1).**
+
+The mutation check is an **allowlist** of read-only uses, not a denylist. It applies to the name and to every alias of it. Allowed uses:
+- member or index read;
+- the target of the template-subset methods that do not mutate (`map`, `filter`, `find`, `some`, `every`, `includes`, `indexOf`, `join`, `slice`, `concat`, `at`, `length`), provided their callbacks write nothing reachable from their parameters;
+- the argument of `Object.keys`, `Object.entries` or `Object.values`;
+- spread into a new literal;
+- a `useState` argument;
+- a JSX or template read.
+
+Every other use counts as a mutation, so the const stays a job. That includes:
+- the source of a `for-of` or `for-in`;
+- an element of another literal;
+- the right-hand side of an assignment;
+- a return value;
+- any other call or method target.
+
+Fixtures `module-const-mutated-*` cover for-of, `forEach` and a literal container. All three must stay jobs.
+
+**R1.1b (lead ruling, Mellow N1).** An **imported** const folds only if its value is a primitive: a string, number, boolean or null, or a template literal or operator expression whose result is one of those.
+
+Imported arrays and objects stay jobs. Another importer could mutate them, and a whole-graph scan (including dynamic imports) is not worth it this round. Record a graph scan as a possible follow-up in the ledger row. Consts defined in the same module still follow R1.1a.
 
 **R1.2 NaN and Infinity.** Folding renders `NaN`/`Infinity` the way React does (the text `NaN`). Today's job path turns them into `null` through JSON, which is the bug, not the contract. Pin this with a dual-eval test.
 
@@ -200,7 +237,10 @@ Clear both in `react_jobs`. Regression fixture: a page with state passes `code={
 **R6.1 Keys (ruled).**
 - The same key in both arms → that key.
 - Different keys → `Cond(test, kA, kB)`.
-- A keyed arm next to a null arm → that arm's key (a duplicate-key warning from `runtime-dom/directives/for.ts:47` is acceptable).
+- A keyed arm next to a null arm → **guarded**: `Cond(test, kA, undefined)`.
+  - This is the lead amendment of 2026-10-13, after Mellow's review of `gap-map-cond` round 1, F1. An unguarded `it.link.id` throws for a row whose `link` is null, and the whole list dies.
+  - `runtime-dom/directives/for.ts` treats an `undefined` key as a positional empty row, key `__nil_<i>`, **with no duplicate-key warning**. This matches React, where a `null` element carries no key.
+  - Browser case: a list mixing null-link and linked rows renders, reorders, and toggles a row's link on and off.
 - A JSX arm without a key → the existing `list-key` error at that arm.
 
 **Shapes still refused** (block body, pattern/default parameter, `?.map`, non-array `Array.from`): fallback `list-shape` with the reason, e.g. "`.map` callback has a block body; return one JSX expression". Placement then skips `jsx-expression` at that location. `outlet-in-react` names the island's reason and location.
@@ -584,13 +624,226 @@ The site's production domain is **https://brust.dev** (human, 2026-10-13). With 
 
 Each pass gets screenshots in light, dark and at 400px, plus the website tests. It is a direct commit on docs-site (no PR), as before.
 
+### L18 `react-coverage-api`: coverage per react.dev reference entry (v2: battery + generated data). Wave 1, size M
+
+The human asked for this on 2026-10-13: "ทำ react coverage page ใน docs site … ว่า coverage Hooks ไหน components บ้างตอนนี้", with https://react.dev/reference/react as the reference. The battery (`scripts/battery/rows.ts`, 82 rows, `docs/react-coverage.md`) is organised by authoring pattern, not by React API, and many APIs have no row.
+
+**R18.1 The source list is react.dev (ruled).**
+- **Fetch it, don't type it:** enumerate every entry of the React reference at https://react.dev/reference/react, fetched when the lane runs. Record the fetch date in the file.
+- **What to cover:**
+  - Hooks, Components and APIs from the `react` reference.
+  - The `react-dom` hooks (`useFormStatus`), the components that matter for brust (`<form>`, `<input>`, `<select>`, `<textarea>`, `<title>`, `<meta>`, `<link>`, `<style>`, `<script>`), and the APIs that matter for brust (`createPortal`, `flushSync`, resource hints).
+  - Server-only entries (`'use server'`, `'use client'`, Server Components) as their own group, with brust's answer: no directives, `'use client'` is ignored with a warning.
+  - Legacy APIs are out of scope.
+- **Commit the list:** save it as `scripts/battery/react-api.ts`: name, group, react.dev URL.
+
+**R18.2 Every entry gets at least one battery row (ruled).**
+- **Linking:** rows gain `api?: string[]` linking them to entries.
+- **Missing rows:** add one for each entry that has none, with the expected tier from the design spec where the spec says, otherwise the honest expectation and a `knownGap` note.
+- **Several shapes:** an entry with several meaningful shapes gets several rows, e.g. `use(promise)` vs `use(context)`, `useEffect` with and without cleanup.
+- **No claim without a row:** a test fails if any react-api entry has no row, and no claim is made without one.
+
+**R18.3 Generated output.**
+- **`docs/react-coverage.json` (new):** per entry, its status, the rows, the tiers observed, the diagnostics and a one-line note.
+- **Status values (ruled):**
+  - `native` (compiles to the native tier, no React shipped);
+  - `static`;
+  - `island` (works, rendered as a React island);
+  - `partial` (some shapes native/static, others island; the note says which);
+  - `unsupported` (build error / compile error);
+  - `n/a` (no meaning in brust, e.g. `'use server'`).
+- **Markdown:** `docs/react-coverage.md` gets a "By React API" section from the same data.
+- **Regenerated by `bun run battery` and checked in CI like today**, so every gap lane that changes a tier updates the coverage automatically (R0.4).
+
+**R18.4 Conflicts.** L5 and L6 also add battery rows. The second lane to merge rebases. Rows keep stable ids.
+
+**Website page** (lead or a docs-site lane, after L18 merges; part of L17):
+- **`/docs/react-coverage`:** a new page in the Guide nav. Its loader reads `docs/react-coverage.json` from the repo at build time. Nothing is copied by hand.
+- **Layout:** grouped like react.dev (Hooks, Components, APIs, react-dom, Server), with a status badge per entry using the tier colours, the shapes and notes, and a link to the react.dev page.
+- **Filters and summary:** filter by status (an interactive native component), plus the summary counts.
+- **Stays current:** every later lane that changes coverage changes this page through the regenerated JSON.
+
+### L19 `css-pipeline`: global CSS and CSS Modules, built, minified and injected. Wave 2, size M–L
+
+The human asked for this on 2026-10-13: "built-in plugin support tailwindcss v4, support scope css และ global css, auto inject เข้าไปใน tag <head> … ไม่เกี่ยวกับอันที่ user ใส่เอง, ตอน build ทำ .min."
+
+**Current state** (probed on 2026-10-13 against v2 with Bun 1.4.3):
+- `import './x.css'` is silently dropped: the compiler records only imports that bind names (`analyze/names.rs:34-62`).
+- `styles.card` from a `.module.css` becomes a precompute job on a static page.
+- In a native or island client build, a CSS module fails with `unexpected output …css` (`bundle.ts:187`).
+- The only CSS path today is a hand-written `<link>` to `public/`, copied unhashed (`build/index.ts:204-205`).
+- What already works:
+  - the server serves `/_brust/client/*.css` as `text/css` (`static_rules.rs:55,106,140`), immutable when hashed (`pipeline.rs:167`);
+  - CF copies `client/*.css` (`cf-assets.ts:25`);
+  - Bun's CSS bundler minifies, inlines `@import`, supports nesting and `composes:`, and does CSS Modules.
+
+**R19.1 Global CSS (ruled).**
+- **Which CSS a route gets:** every `.css` import (side-effect import, including package CSS) reachable from the route's chain files. Reachability is a BFS with `Bun.Transpiler.scanImports`, like L7's walk, so a layout import is site-wide and a page import is per-page.
+- **Order:**
+  1. chain order (root layout → nested layouts → page);
+  2. then depth-first import order;
+  3. the first occurrence wins.
+- **Config entry:** `[css] global = ["styles/global.css"]` in `brust.toml` for apps without a layout. It comes first in the order.
+
+**R19.2 Output (ruled).**
+- One minified, content-hashed file per source CSS file, at `dist/client/<stem>-<hex10>.css`. A file shared by routes is one URL, so nothing is duplicated.
+- Production builds always minify; dev (L13) does not.
+- **Name (ruled, explained to the human):** no `.min.` infix. The hash is the cache contract: `is_hashed` reads the stem, so `.min` would cost immutable caching. Minification is always on.
+- **`url()` handling:**
+  - absolute `/public/*` and `/_brust/*` stay external;
+  - relative font and image `url()`s are emitted as hashed assets under `client/`, and `safe_rel`/`clientOk` serve them (fold in the research's C5).
+
+**R19.3 Injection (ruled).**
+- **What:** the manifest gets `RouteRecord.css: Vec<String>` (default `[]`, `manifest.rs:24`). `inject_document_assets_into` (`render.rs:327-395`, called from `pipeline.rs:750`) inserts `<link rel="stylesheet" href="/_brust/client/…" data-brust-css>` for each entry.
+- **Where:** **right after the opening `<head>` tag**, after `<meta charset>` if that comes first. Match `<head>` or `<head ` exactly, never `<header>`. With no `<head>`, the links are prepended to the document.
+- **Never gated** by the all-static early return (`:367`).
+- **User tags are untouched and come later**, so the user's own CSS wins in the cascade. That is the separation the human asked for.
+- **Other targets:** SSG (L9) and CF reuse this through the real server and `layoutAssets`.
+
+**R19.4 CSS Modules = scoped CSS (ruled; Vue/Svelte data-attribute scoping rejected).**
+- **Why:** class names are plain strings, so the same mechanism works in static, native and react islands, and in SSR plus hydration.
+- **One brust Bun plugin** in **every** JS build (browser chunks, `jobs.js`, actions, the CF worker at `cloudflare.ts:264`):
+  - `.module.css` → `export default Object.freeze({…map})`;
+  - plain `.css` → an empty module.
+  - No JS build ever emits CSS, so the `:187` error goes away, and server and client read the same map.
+- **The map:** built from one in-process Bun.build of all `*.module.css` files. A build check asserts that every hashed name exists in the emitted CSS.
+- **Class names are Bun's.** They can depend on the working directory, which is harmless because one map is used per build. Switching to `lightningcss` patterns is deferred.
+- **Types:** an ambient `declare module '*.module.css'` ships with `@brust/core`.
+- **Without L20:** `styles.x` in a template is still a precompute job, so it works but costs a worker job.
+
+**Tests:**
+- Build fixtures for every probed case above.
+- Two routes sharing a module produce one file.
+- Layout/page/nested order.
+- `url()` fonts.
+- Rust injection with `<header>`, with no head, and with an all-static chain.
+- Chromium `getComputedStyle` for global, module, a hydrated island and a `client_only` island, with no hydration warnings.
+- CF and SSG layouts include the CSS.
+
+### L20 `css-module-fold`: `styles.x` folds to a literal class at compile time. Wave 3 (after L1 and L19), size S–M
+
+- **Fold:** `styles.x` or `styles['x']` from a `*.module.css` import becomes a string literal, so static and native templates stay static with no job.
+- **Map source:** the map from L19 is a new `compileTree` argument.
+- **Unknown class:** a build error with its source location.
+- **Exception:** this is an explicit exception to R1.1b (frozen CSS-module maps fold even though they are imported objects).
+- **Tests:** static and native fixtures have `needs_worker:false`; an unknown class gives an error; dual-eval.
+
+### L21 `tailwind`: built-in Tailwind CSS v4. Wave 3 (after L19), size M
+
+**R21.1 (ruled) Option A.** Use the official `bun-plugin-tailwind` (v0.1.x, zero dependencies, ships oxide), with `tailwindcss@4` as **user** dev dependencies. brust passes the plugin to the CSS Bun.build with `root: appRoot`, so content detection scans the app.
+
+The research verified this on 2026-10-13: `@import "tailwindcss"`, `@theme` and `@apply` compiled, and `.tsx` classes were scanned (`hover:underline`, `md:grid`), minified, in 57 ms.
+
+**Loading and errors:**
+- Tailwind is loaded only when some CSS file contains `@import "tailwindcss"`, `@apply`, `@reference`, `@theme` or `@plugin`.
+- If the packages are missing, the build fails with `tailwind-missing`, giving the exact `bun add -d` command.
+- A warning is emitted when more than one CSS file has `@import "tailwindcss"` (the whole of Tailwind would be duplicated).
+
+**R21.2 Users write `@reference`.** A `.module.css` that uses `@apply` needs `@reference "./app.css"`, which is standard v4. brust does not inject it; the docs show it.
+
+**Cascade (document it).** Tailwind v4 utilities live in `@layer`, so unlayered module CSS beats utilities whatever the file order.
+
+**create-app.** A `--tailwind` template option: `app.css` with `@import "tailwindcss"`, imported by the layout, plus the pinned dev dependencies.
+
+**Dev (L13).** A CSS-only edit rebuilds the CSS and swaps the `data-brust-css` links with no reload. Class maps depend on the path, not the content, so they are stable. A `.tsx` edit rebuilds and reloads, and Tailwind rescans. Whichever of L13 and L19/L21 lands second wires the swap.
+
+**Tests:**
+- A fixture with Tailwind pinned as a dev dependency.
+- Missing packages give the error.
+- Chromium computed style of a utility class.
+- A dev CSS edit is swapped without reload.
+
+## After the round: publish, then shadcn/ui (human, 2026-10-13)
+
+The human: "หลังจากทำทั้งหมด public version ให้ แล้ว มาทำให้ brust ใช้ https://ui.shadcn.com/docs ได้ง่ายๆแบบ framework อื่นๆ แล้วมาเก็บ coverage shadcn Components ให้หมด".
+
+**P1. Publish.**
+- **When:** after every lane L1–L23 has merged with CI green and the docs site is synced (L17).
+- **What:** the lead publishes the next prerelease, **2.0.0-alpha.4**. This is the human's explicit go for this publish.
+- **How:**
+  - follow the release flow (`/release` skill and memory notes): `bun scripts/release-bump.ts` covers every version reference, including `bun.lock`;
+  - run CI on v2 and check the run's conclusion, not just the exit code;
+  - run the published-tarball install test.
+- **Not included:** deploying the docs site (brust.dev). That still waits for the human's word.
+
+**P2. shadcn/ui support** (a new plan written after P1; research first). The goal is that `npx shadcn@latest init` and `add <component>` work in a brust app the way they do in the frameworks shadcn documents. That needs:
+- `components.json` and the `@/` path aliases;
+- Tailwind v4 (L21) and the `cn` util;
+- a `create-app --shadcn` template;
+- docs.
+
+**Behaviour.** Radix-based interactive components run as React islands. Purely presentational ones (Card, Badge, …) should compile to static or native where possible.
+
+**P3. shadcn coverage.** Track every component in the shadcn registry, fetched from the registry rather than typed by hand, the same way L18 tracks React:
+- each component gets a build-and-render row;
+- the status is static, native, island, partial or unsupported, with notes;
+- the output is `docs/shadcn-coverage.json`;
+- it becomes a page on the docs site.
+
+### L22 `external-island`: a component from a package must render as a React island, as the warning promises. Wave 1 (bug), size S–M
+
+**Bug, found by the lead on 2026-10-13** with `lucide-react@0.468.0` in a scratch app against v2. `<Heart size={16}/>` in a static component, or `<Plus/>` in a native one:
+- prints `warning external-component … <Heart> comes from the package lucide-react; it renders as a React island`;
+- then **fails the build** with `error ssr-target staticIcon_… job j0: output _ssr_Heart names no compiled react component`.
+- Inside an inlined child it fails earlier, with `nested-instance`.
+
+So no package component works in static or native parents. That also blocks shadcn/ui (P2).
+
+**Fix.** The ssr target of an external component is the package export itself:
+- the island registry and bundling resolve `{package, export}` instead of a compiled component id;
+- SSR renders it in the worker;
+- the client bundles the export as an island entry;
+- literal props ship as island props (the existing literals path).
+
+Keep `nested-instance` only where L4 cannot handle it yet.
+
+**Tests:** a scratch-package fixture (a tiny local package under the test fixtures, no network): a static parent and a native parent each use it; build OK, SSR markup present, hydrated in Chromium.
+
+### L23 `lucide-native`: lucide-react icons compile to inline SVG (static/native), no React. Wave 2 (after L1), size M
+
+The human asked on 2026-10-13: "lucide มัน support native ไหม". Today the answer is no; the build fails (L22). 0.1.x turned lucide icons in native routes into static SVG, including aliases (`git show main:` history of `followLucideAlias`); v2 lost that.
+
+**R23.1 (ruled).**
+- **Which imports:** a named import of an icon from `lucide-react` (or its `/icons/<name>` deep import, and aliases such as `Edit` → `SquarePen`, resolved through the package's own exports).
+- **How the SVG is produced:** the icon component is rendered **at build time** with `react-dom/server` `renderToStaticMarkup`, in the build process, for the literal props at that call site. The SVG markup is inlined into the template. No React, no island, no JS.
+  - The icon modules are `createLucideIcon(name, iconNode)`. Rendering keeps it exact for every lucide version and option: `size`, `color`, `strokeWidth`, `absoluteStrokeWidth`, `className`, `aria-*`, any SVG attribute.
+- **Props that are not compile-time constants** (props, state, loop item):
+  - Render once with sentinel values, then lower the sentinels to the template expression: `{{ … | e }}` for static, an `x-bind` for native.
+  - This applies to string and number attributes only (`size` → `width`/`height`, `color` → `stroke`, `strokeWidth`, `className`).
+  - Anything else falls back to L22's island, with diagnostic `icon-dynamic-prop` naming the prop.
+  - A whole dynamic icon choice (`const I = cond ? Plus : Minus`) becomes a native `x-if` over the two inlined SVGs. A dynamic icon from a map or variable → island.
+- **Where it works:** static, native and react (inside an island it is just React).
+- **Version:** whatever `lucide-react` the app installs. No pinned copy in brust.
+
+**R23.2 Target lucide-react 1.x (lead re-test, 2026-10-13).** The human pointed out that the latest release is 1.55.0. The lead re-ran the scratch probe on `lucide-react@1.55.0` and got the same L22 failure (`ssr-target … _ssr_Heart`). Version 1.x differs from 0.4xx in three ways:
+- **`__iconData`:** icon modules expose `{name, size, node}` (`dist/esm/icons/heart.mjs`).
+- **New prop:** there is a `nonScalingStroke` prop.
+- **`LucideProvider`:** a context (`dist/esm/context.mjs`) supplies default `size`, `color`, `strokeWidth`, `absoluteStrokeWidth`, `nonScalingStroke` and `className` to the icons beneath it.
+
+**How each is handled:**
+- **Render, don't rebuild.** The build-time render of R23.1 stays the mechanism, so output always matches the installed version. `__iconData` may be used only for detection, never to hand-build the SVG.
+- **A provider whose props are all literal** is applied at build: the icon is rendered inside a `LucideProvider` with those values.
+- **A provider with dynamic props** makes the icons under it fall back to L22's island, with diagnostic `icon-provider-dynamic`.
+- **Test version:** tests pin `lucide-react@1.55.0` as a dev dependency of the test package. A 0.4xx compatibility check is optional, not required.
+
+**Tests:**
+- static and native fixtures have `needs_worker:false`, no `client` chunk for a pure icon page, and the SVG equals React's output byte for byte;
+- dynamic `size` and `color` from state update in the browser;
+- a literal `LucideProvider` is applied, and a dynamic one falls back;
+- `nonScalingStroke`;
+- an alias import;
+- a fallback diagnostic.
+- Battery rows plus a lucide entry on the coverage pages (L18/P3).
+
+**Docs-site follow-up (lead):** the site can use lucide icons and drop hand-written SVGs.
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
 |---|---|---|
-| 1 | L1, L5, L6, L7, L10, L11 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
-| 2 | L3 (after L1), L8, L9, L13 | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
-| 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14), L16 (after L9; L12 and L16 both touch the CF build: second rebases) | |
+| 1 | L1, L5, L6, L7, L10, L11, L18, L22 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
+| 2 | L3 (after L1), L8, L9, L13, L19, L23 (after L1; uses L22's fallback) | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
+| 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14), L16 (after L9; L12 and L16 both touch the CF build: second rebases), L20 (after L1 + L19), L21 (after L19) | |
 
 Each lane is one PR to v2 and goes through the usual flow: READY → REVIEW-PASS → GATES-OK (full CI mirror: `cargo fmt --check`, clippy `-D warnings`, cargo test, `bun run ci`, bun tests, browser tests) → MERGE-READY. The lead merges after CI is green.
 

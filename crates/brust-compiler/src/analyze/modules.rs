@@ -1,7 +1,7 @@
 //! Multi-module analysis: resolve a child component's import, compile it once
 //! per run, and break import cycles (plan Task 5, Review Focus 4).
 use crate::analyze::component::{
-    AnalyzeOptions, analyze_component, analyze_named_component, finish_diagnostics,
+    AnalyzeOptions, analyze_component_in, analyze_named_component_in, finish_diagnostics,
 };
 use crate::analyze::passes::{PassCtx, run_passes};
 use crate::ir::{ComponentIR, Diagnostic};
@@ -143,17 +143,19 @@ fn compile_uncached(
         )
     })?;
     let mut ir = match export {
-        Export::Default => analyze_component(&parsed)?,
-        Export::Named(name) => analyze_named_component(&parsed, name).ok_or_else(|| {
-            Diagnostic::fallback(
-                "export-shape",
-                format!("{path} has no function declaration `{name}`"),
-                0,
-                "export the component as `export function Name(props) { … }`",
-            )
-        })?,
+        Export::Default => analyze_component_in(&parsed, Some(opts))?,
+        Export::Named(name) => {
+            analyze_named_component_in(&parsed, name, Some(opts)).ok_or_else(|| {
+                Diagnostic::fallback(
+                    "export-shape",
+                    format!("{path} has no function declaration `{name}`"),
+                    0,
+                    "export the component as `export function Name(props) { … }`",
+                )
+            })?
+        }
     };
-    let local = |name: &str| analyze_named_component(&parsed, name);
+    let local = |name: &str| analyze_named_component_in(&parsed, name, Some(opts));
     let ctx = PassCtx {
         text: parsed.text(),
         opts,
