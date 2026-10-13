@@ -31,7 +31,7 @@ export interface RunManifest {
 }
 
 /** Pure: the napi `StartOptions`. No actions/cors/cache → exactly the pre-actions keys. */
-export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, version: string): StartOptions {
+export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, version: string, devToken?: string): StartOptions {
   return {
     host: cfg.host,
     port: cfg.port,
@@ -43,6 +43,7 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     generator: `brust/${version}`,
     ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}) } } : {}),
     ...(cfg.cors ? { cors: cfg.cors } : {}),
+    ...(devToken ? { devToken } : {}),
     ...(m.cache ? { l2: { adapter: m.cache.adapter, getTimeoutMs: m.cache.getTimeoutMs, maxBodyBytes: m.cache.maxBodyBytes, namespace: m.cache.namespace, buildId: m.cache.buildId } } : {}),
   }
 }
@@ -78,7 +79,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
 
   const version: string = (await Bun.file(join(import.meta.dir, '../package.json')).json()).version
   try {
-    startServer(startOptions(cfg, distDir, m, version))
+    startServer(startOptions(cfg, distDir, m, version, process.env.BRUST_DEV_TOKEN || undefined))
   } catch (e) {
     fail((e as Error).message)
   }

@@ -177,6 +177,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             actions: cfg.actions,
             https: cfg.tls.is_some(),
             l2: cfg.l2,
+            dev_token: cfg.dev_token,
         },
     )?;
     let state = Arc::new(Server {

@@ -165,16 +165,24 @@ fn function_declarations_and_plain_props() {
 }
 
 #[test]
-fn fragment_root_is_wrapped_and_diagnostics_have_positions() {
+fn fragment_root_is_a_synthetic_wrapper_and_diagnostics_have_positions() {
     let ir = ir(
         "export default function R({ items }: any) {\n  return <>\n    <ul>{items.map((i: any) => <li>{i}</li>)}</ul>\n  </>\n}",
     );
-    let Node::Element { tag, host, .. } = &ir.template else {
+    let Node::Element {
+        tag,
+        host,
+        synthetic,
+        ..
+    } = &ir.template
+    else {
         panic!()
     };
     assert_eq!(tag, "brust-host");
     assert!(host);
-    assert!(ir.diagnostics.iter().any(|d| d.rule == "fragment-root"));
+    // The wrapper is flagged; lowering decides (static: dropped, interactive: kept + warned).
+    assert!(synthetic);
+    assert!(ir.diagnostics.iter().all(|d| d.rule != "fragment-root"));
     let key = ir
         .diagnostics
         .iter()

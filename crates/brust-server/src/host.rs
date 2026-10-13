@@ -123,7 +123,10 @@ impl Host for NativeHost {
         let mut pairs: Vec<(Cow<str>, Cow<str>)> = call
             .headers
             .iter()
-            .filter(|(n, _)| !is_framing_header(n.as_str()))
+            .filter(|(n, _)| {
+                !is_framing_header(n.as_str())
+                    && n.as_str() != brust_core::trace::REQUEST_TOKEN_HEADER
+            })
             .map(|(n, v)| {
                 (
                     Cow::Borrowed(n.as_str()),
