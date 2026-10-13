@@ -6,6 +6,8 @@ import Note from '../../components/docs/Note'
 import DevLoopDemo from '../../components/demos/DevLoopDemo'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface DevModeData {
   toc: TocItem[]
@@ -101,10 +103,10 @@ export default function DevMode({ blocks }: DevModeData) {
   return (
     <section style={{ display: 'contents' }}>
       <h1>Dev mode</h1>
-      <p className="lead">
+      <Lead>
         <code>brust dev</code> rebuilds when you save, swaps the new build in without dropping the old one, and shows build errors above the last good page. A browser overlay explains what each page was made of. None of it exists under{' '}
         <code>brust start</code>.
-      </p>
+      </Lead>
 
       <h2 id="run">Run it</h2>
       <CodeBlock code={blocks.run.code} lang={blocks.run.lang} cwd={blocks.run.cwd} html={blocks.run.html} />
@@ -160,15 +162,10 @@ export default function DevMode({ blocks }: DevModeData) {
 
       <h2 id="try">Try it</h2>
       <p>The same loop with the lines it prints. Nothing is built here: each button applies the rules above to the numbers on the left.</p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">DevLoopDemo · native</span>
-        </div>
-        <div className="vp nvp">
+      <Frame title="Live demo" label="DevLoopDemo · native" nvp>
           <DevLoopDemo />
-        </div>
-      </div>
+        
+      </Frame>
 
       <h2 id="reloads">What reloads and what does not</h2>
       {/* source: packages/brust/src/dev/client.ts:1-11 (the messages the page client handles: hello, reload, error, css, css-swap) and :64-78 (handle) */}

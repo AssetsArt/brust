@@ -16,14 +16,14 @@ export default function ClassFold({ initialExpr, initialOut, initialStatus }: { 
   const [out, setOut] = useState(initialOut)
   const [status, setStatus] = useState(initialStatus)
   return (
-    <div className="matcher">
-      <label className="sr" htmlFor="cf-expr">
+    <div className="matcher grid min-w-0 gap-3">
+      <label className="sr-only" htmlFor="cf-expr">
         Expression in the template
       </label>
       <input
         ref={root}
         id="cf-expr"
-        className="demo-in"
+        className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-family:inherit] [font-size:inherit] [font-weight:inherit] [line-height:inherit]"
         value={expr}
         spellCheck={false}
         autoComplete="off"
@@ -49,14 +49,14 @@ export default function ClassFold({ initialExpr, initialOut, initialStatus }: { 
           }
         }}
       />
-      <dl className="shipbar">
-        <div>
-          <dt>Compiled</dt>
-          <dd data-testid="fold-out">{out}</dd>
+      <dl className="m-0 grid grid-cols-3 border border-rule max-narrow:grid-cols-1">
+        <div className="min-w-0 border-l border-rule px-[.8rem] py-[.6rem] first:border-l-0 max-narrow:border-t max-narrow:border-l-0 max-narrow:first:border-t-0">
+          <dt className="text-[12px] text-ink-2">Compiled</dt>
+          <dd className="m-0 font-mono text-[12.5px]" data-testid="fold-out">{out}</dd>
         </div>
-        <div>
-          <dt>Result</dt>
-          <dd data-testid="fold-status">{status}</dd>
+        <div className="min-w-0 border-l border-rule px-[.8rem] py-[.6rem] first:border-l-0 max-narrow:border-t max-narrow:border-l-0 max-narrow:first:border-t-0">
+          <dt className="text-[12px] text-ink-2">Result</dt>
+          <dd className="m-0 font-mono text-[12.5px]" data-testid="fold-status">{status}</dd>
         </div>
       </dl>
     </div>

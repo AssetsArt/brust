@@ -37,12 +37,12 @@ export default function CacheKeyPlayground({ presets }: { presets: Preset[] }) {
   const [f, dispatch] = useReducer(reduce, presets, initial)
   const r = evaluatePlayground(f)
   return (
-    <div className="builder keypg">
-      <div className="fields">
-        <label>
+    <div className="grid min-w-0 gap-3">
+      <div className="grid grid-cols-[minmax(0,1fr)] items-end gap-x-4 gap-y-3">
+        <label className="grid min-w-0 gap-[.3rem] font-mono text-[12px] text-ink-2">
           Example
           <select
-            className="demo-in"
+            className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-weight:inherit] [line-height:inherit] font-mono text-[13.5px]"
             onChange={(e) => {
               const p = presets.find((x) => x.id === e.target.value)
               if (p) dispatch({ preset: p })
@@ -56,41 +56,41 @@ export default function CacheKeyPlayground({ presets }: { presets: Preset[] }) {
           </select>
         </label>
       </div>
-      <label>
+      <label className="grid min-w-0 gap-[.3rem] font-mono text-[12px] text-ink-2">
         prefix
-        <input className="demo-in" value={f.prefix} onChange={(e) => dispatch({ set: 'prefix', value: e.target.value })} spellCheck={false} />
+        <input className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-weight:inherit] [line-height:inherit] font-mono text-[13.5px]" value={f.prefix} onChange={(e) => dispatch({ set: 'prefix', value: e.target.value })} spellCheck={false} />
       </label>
-      <label>
+      <label className="grid min-w-0 gap-[.3rem] font-mono text-[12px] text-ink-2">
         bypass (an expression, or true)
-        <input className="demo-in" value={f.bypass} onChange={(e) => dispatch({ set: 'bypass', value: e.target.value })} spellCheck={false} />
+        <input className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-weight:inherit] [line-height:inherit] font-mono text-[13.5px]" value={f.bypass} onChange={(e) => dispatch({ set: 'bypass', value: e.target.value })} spellCheck={false} />
       </label>
-      <div className="fields">
-        <label>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(8rem,1fr))] items-end gap-x-4 gap-y-3">
+        <label className="grid min-w-0 gap-[.3rem] font-mono text-[12px] text-ink-2">
           Path and query
-          <input className="demo-in" value={f.url} onChange={(e) => dispatch({ set: 'url', value: e.target.value })} spellCheck={false} />
+          <input className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-weight:inherit] [line-height:inherit] font-mono text-[13.5px]" value={f.url} onChange={(e) => dispatch({ set: 'url', value: e.target.value })} spellCheck={false} />
         </label>
-        <label>
+        <label className="grid min-w-0 gap-[.3rem] font-mono text-[12px] text-ink-2">
           Host
-          <input className="demo-in" value={f.host} onChange={(e) => dispatch({ set: 'host', value: e.target.value })} spellCheck={false} />
+          <input className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-weight:inherit] [line-height:inherit] font-mono text-[13.5px]" value={f.host} onChange={(e) => dispatch({ set: 'host', value: e.target.value })} spellCheck={false} />
         </label>
-        <label>
+        <label className="grid min-w-0 gap-[.3rem] font-mono text-[12px] text-ink-2">
           Cookies (a=1; b=2)
-          <input className="demo-in" value={f.cookies} onChange={(e) => dispatch({ set: 'cookies', value: e.target.value })} spellCheck={false} />
+          <input className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-weight:inherit] [line-height:inherit] font-mono text-[13.5px]" value={f.cookies} onChange={(e) => dispatch({ set: 'cookies', value: e.target.value })} spellCheck={false} />
         </label>
-        <label>
+        <label className="grid min-w-0 gap-[.3rem] font-mono text-[12px] text-ink-2">
           Route params (name=pikachu)
-          <input className="demo-in" value={f.params} onChange={(e) => dispatch({ set: 'params', value: e.target.value })} spellCheck={false} />
+          <input className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-weight:inherit] [line-height:inherit] font-mono text-[13.5px]" value={f.params} onChange={(e) => dispatch({ set: 'params', value: e.target.value })} spellCheck={false} />
         </label>
       </div>
-      <label>
+      <label className="grid min-w-0 gap-[.3rem] font-mono text-[12px] text-ink-2">
         Headers (one name: value per line)
-        <textarea className="demo-in" rows={2} value={f.headers} onChange={(e) => dispatch({ set: 'headers', value: e.target.value })} spellCheck={false} />
+        <textarea className="resize-y w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-weight:inherit] [line-height:inherit] font-mono text-[13.5px]" rows={2} value={f.headers} onChange={(e) => dispatch({ set: 'headers', value: e.target.value })} spellCheck={false} />
       </label>
-      <label>
+      <label className="grid min-w-0 gap-[.3rem] font-mono text-[12px] text-ink-2">
         Process env when the server started (NAME=value per line)
-        <textarea className="demo-in" rows={1} value={f.env} onChange={(e) => dispatch({ set: 'env', value: e.target.value })} spellCheck={false} />
+        <textarea className="resize-y w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-weight:inherit] [line-height:inherit] font-mono text-[13.5px]" rows={1} value={f.env} onChange={(e) => dispatch({ set: 'env', value: e.target.value })} spellCheck={false} />
       </label>
-      <pre className="cmd" aria-live="polite">
+      <pre className="cmd m-0 mt-3 overflow-x-auto rounded-xs border border-term-rule bg-term px-4 py-[.8rem] text-[13px] leading-[1.6] text-term-fg" aria-live="polite">
         <code>
           {r.ok === false
             ? `parse error: ${r.error}`

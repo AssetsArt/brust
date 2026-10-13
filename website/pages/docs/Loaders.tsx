@@ -6,6 +6,7 @@ import LoaderDemo from '../../components/demos/LoaderDemo'
 import { type Lookup, lookup } from '../../components/demos/loader-lookup'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Lead from '../../components/docs/Lead'
 
 export interface LoadersData {
   toc: TocItem[]
@@ -86,7 +87,7 @@ export default function Loaders({ blocks, demo }: LoadersData) {
   return (
     <>
       <h1>Loaders and params</h1>
-      <p className="lead">A loader is an async function on a route. It runs in a Bun worker for each request, and what it returns becomes the props of the route's components.</p>
+      <Lead>A loader is an async function on a route. It runs in a Bun worker for each request, and what it returns becomes the props of the route's components.</Lead>
 
       <h2 id="write">Write a loader</h2>
       <CodeBlock code={blocks.loader.code} lang={blocks.loader.lang} file={blocks.loader.file} html={blocks.loader.html} />

@@ -6,6 +6,9 @@ import Note from '../../components/docs/Note'
 import IconAttrs from '../../components/demos/IconAttrs'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
+import TableWrap from '../../components/docs/TableWrap'
 
 export interface PackagesData {
   toc: TocItem[]
@@ -92,7 +95,7 @@ export default function IconsAndPackages({ blocks }: PackagesData) {
   return (
     <section style={{ display: 'contents' }}>
       <h1>Icons and packages</h1>
-      <p className="lead">A component from a package works in any page. An icon from lucide-react does better than that: the build turns it into inline SVG, so the page ships no React for it.</p>
+      <Lead>A component from a package works in any page. An icon from lucide-react does better than that: the build turns it into inline SVG, so the page ships no React for it.</Lead>
 
       <h2 id="package">A component from a package</h2>
       {/* source: crates/brust-compiler/src/analyze/passes/children.rs:249 (the external-component fallback names the package and says "it renders as a React island") */}
@@ -153,15 +156,10 @@ export default function IconsAndPackages({ blocks }: PackagesData) {
 
       <h3 id="try">Try it</h3>
       <p>The demo is plain JSX with the same rule: pick &ldquo;undefined&rdquo; and the attribute falls back to the default.</p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">IconAttrs · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="Live demo" label="IconAttrs · native">
           <IconAttrs />
-        </div>
-      </div>
+        
+      </Frame>
 
       <h2 id="provider">LucideProvider</h2>
       {/* source: lane/lucide-native @1071c202 icons.rs:106-146 (a provider whose props are all constants is applied at build and removed when every icon under it was rendered; a dynamic prop: icon-provider-dynamic and the icons stay islands) and build-icons.ts:49-54 (the icon is rendered inside the provider with those values); packages/brust/test/lucide-native.test.ts "a literal LucideProvider is applied at build" */}
@@ -172,7 +170,7 @@ export default function IconsAndPackages({ blocks }: PackagesData) {
       <h2 id="fallbacks">When an icon stays an island</h2>
       {/* source: lane/lucide-native @1071c202 icons.rs:127-135 (icon-provider-dynamic), :181-190 (icon-dynamic-prop), build-icons.ts:64-66 (icon-render: the icon could not be rendered); the whole-icon choice is deferred, ledger row F126 (docs/plans/m1a-followups.md) */}
       <CodeBlock code={blocks.fallbackWarn.code} lang={blocks.fallbackWarn.lang} cwd={blocks.fallbackWarn.cwd} html={blocks.fallbackWarn.html} />
-      <div className="table-wrap">
+      <TableWrap>
         <table>
           <thead>
             <tr>
@@ -213,7 +211,7 @@ export default function IconsAndPackages({ blocks }: PackagesData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
 
       <h2 id="versions">Versions</h2>
       {/* source: lane/lucide-native @1071c202 packages/brust/package.json (lucide-react 1.55.0 is the version the tests pin); docs/plans/2026-10-13-gaps-round.md §L23 R23.1 (whatever lucide-react the app installs, no copy in brust) */}

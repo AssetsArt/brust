@@ -3,6 +3,8 @@ import CodeBlock from '../../../components/CodeBlock'
 import Note from '../../../components/docs/Note'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
+import TableWrap from '../../../components/docs/TableWrap'
 
 const SRC = {
   install: { lang: 'sh', cwd: '~/my-app', code: '$ bun add @brust/cache-redis' },
@@ -43,9 +45,9 @@ export default function Redis({ blocks }: RedisData) {
   return (
     <>
       <h1>Redis and Dragonfly</h1>
-      <p className="lead">
+      <Lead>
         One package serves both servers: <code>adapter = &quot;redis&quot;</code> or <code>adapter = &quot;dragonfly&quot;</code>. Native only; push broadcast over pub/sub.
-      </p>
+      </Lead>
 
       <h2 id="setup">Setup</h2>
       <CodeBlock code={blocks.install.code} lang={blocks.install.lang} cwd={blocks.install.cwd} html={blocks.install.html} />
@@ -65,7 +67,7 @@ export default function Redis({ blocks }: RedisData) {
       <p>
         These go under <code>[cache.redis]</code>. An unknown key stops the start with <code>cache-redis: unknown option &quot;&lt;key&gt;&quot;</code>.
       </p>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Redis options">
+      <TableWrap label="Redis options">
         <table>
           <thead>
             <tr>
@@ -151,13 +153,13 @@ export default function Redis({ blocks }: RedisData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
 
       <h2 id="keys">What it keeps in the server</h2>
       <p>
         Every key of a namespace carries the hash tag <code>{'{brust:<namespace>}'}</code>, so the scripts also work on Redis Cluster (all keys in one slot).
       </p>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Redis keys">
+      <TableWrap label="Redis keys">
         <table>
           <thead>
             <tr>
@@ -206,7 +208,7 @@ export default function Redis({ blocks }: RedisData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <p>Only page keys are scoped by build id. The index sets, markers, counter and channel are shared by all builds, so a rolling deploy keeps invalidating across old and new instances.</p>
 
       <h2 id="guard">Guard and invalidation</h2>

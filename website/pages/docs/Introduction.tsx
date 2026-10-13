@@ -4,6 +4,9 @@ import CatchCard from '../../components/landing/demos/CatchCard'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { artworkUrl, byId, dexNo, displayName, shinyUrl } from '../../lib/pokemon'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
+import Tier from '../../components/docs/Tier'
 
 export interface IntroductionData {
   toc: TocItem[]
@@ -47,9 +50,9 @@ export default function Introduction({ blocks, demo }: IntroductionData) {
   return (
     <>
       <h1>Introduction</h1>
-      <p className="lead">
+      <Lead>
         Write React. Get a native page: HTML rendered by Rust from a compiled template, interactivity as a small React-free chunk, React only where the compiler proves it is needed.
-      </p>
+      </Lead>
 
       <h2 id="what">What brust is</h2>
       <p>
@@ -71,15 +74,11 @@ export default function Introduction({ blocks, demo }: IntroductionData) {
 
       <h2 id="tiers">One component, three outputs</h2>
       <p>
-        The compiler gives each component one of three tiers. <span className="tier static">static</span> components read props and render markup: nothing ships to the browser. <span className="tier native">native</span> components use local state, effects and handlers: they ship a small React-free chunk. <span className="tier react">react</span> components need the real thing and become React islands. The card below is a native component on this page; its source is next to it.
+        The compiler gives each component one of three tiers. <Tier t="static">static</Tier> components read props and render markup: nothing ships to the browser. <Tier t="native">native</Tier> components use local state, effects and handlers: they ship a small React-free chunk. <Tier t="react">react</Tier> components need the real thing and become React islands. The card below is a native component on this page; its source is next to it.
       </p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">CatchCard · native</span>
-        </div>
+      <Frame bare title="Live demo" label="CatchCard · native">
         <CatchCard no={demo.no} name={demo.name} art={demo.art} shinyArt={demo.shinyArt} />
-      </div>
+      </Frame>
       <CodeBlock code={blocks.card.code} lang={blocks.card.lang} file={blocks.card.file} html={blocks.card.html} />
       <p>
         The live card is the landing page's CatchCard (it also logs each signal write). <code>useState</code>, a controlled checkbox and a click handler are all native-tier features, so this card ships no React. The <a href="/docs/rendering-tiers">Rendering tiers</a> page lists what lands where.

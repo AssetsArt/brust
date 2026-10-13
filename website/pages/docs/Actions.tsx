@@ -12,6 +12,8 @@ import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { byId, displayName, spriteUrl } from '../../lib/pokemon'
 import ElysiaLink from '../../components/ElysiaLink'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface ActionsData {
   toc: TocItem[]
@@ -120,7 +122,7 @@ export default function Actions({ blocks, candidates }: ActionsData) {
   return (
     <>
       <h1>Actions</h1>
-      <p className="lead">Actions are the server endpoints your pages call. In brust they are one <ElysiaLink label="Elysia 2" /> app, served behind the Rust server: no second port, no second router.</p>
+      <Lead>Actions are the server endpoints your pages call. In brust they are one <ElysiaLink label="Elysia 2" /> app, served behind the Rust server: no second port, no second router.</Lead>
 
       <Step n={1} id="install" title="Turn actions on" />
       <p>Install the two pinned packages and add an <code>[actions]</code> table to <code>brust.toml</code>. Without the table, actions are off even if <code>actions.ts</code> exists.</p>
@@ -149,15 +151,10 @@ export default function Actions({ blocks, candidates }: ActionsData) {
       <p>
         On this site the demo runs in your browser; with <code>[actions]</code> on a brust server the same buttons call <code>POST /_brust/action/team</code>. The rules are the app's above: at most 6, a Pokémon already in the team is not added twice, and the seventh gets the <code>TeamFull</code> 409. The team is kept in your browser's storage and goes into the <code>team</code> store that the buttons read. The <a href="/docs/store">Store</a> page shows the same team.
       </p>
-      <div className="browser">
-        <div className="url">
-          <span>runs in your browser</span>
-          <span className="lbl">TeamPicker · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="runs in your browser" label="TeamPicker · native">
           <TeamPicker candidates={candidates} />
-        </div>
-      </div>
+        
+      </Frame>
 
       <Step n={5} id="errors" title="Errors and limits" />
       <CodeBlock code={blocks.errors.code} lang={blocks.errors.lang} file={blocks.errors.file} html={blocks.errors.html} />
@@ -242,15 +239,10 @@ export default function Actions({ blocks, candidates }: ActionsData) {
       <p>
         Three things decide whether a cross-origin call works: the actions server's <code>[cors]</code>, its cross-site guard, and the browser's rule for credentials. Change the settings below to see each step.
       </p>
-      <div className="browser">
-        <div className="url">
-          <span>runs in your browser, sends nothing</span>
-          <span className="lbl">CrossOriginCheck · react</span>
-        </div>
-        <div className="vp">
+      <Frame title="runs in your browser, sends nothing" label="CrossOriginCheck · react">
           <CrossOriginCheck />
-        </div>
-      </div>
+        
+      </Frame>
       <ul>
         {/* source: docs/actions.md §8 (Eden's GET carries content-type: application/json, so a cross-origin GET is preflighted) and crates/brust-core/src/pipeline.rs:84-94 (Rust answers an allowed origin's preflight with a 204) */}
         <li>

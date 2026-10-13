@@ -5,6 +5,8 @@ import ClassFold from '../../components/demos/ClassFold'
 import Note from '../../components/docs/Note'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface CssData {
   toc: TocItem[]
@@ -109,7 +111,7 @@ export default function Css({ blocks }: CssData) {
   return (
     <section style={{ display: 'contents' }}>
       <h1>CSS</h1>
-      <p className="lead">You import stylesheets; brust bundles and minifies them, names them by content, and links each page's stylesheets in its head. You never write those link tags.</p>
+      <Lead>You import stylesheets; brust bundles and minifies them, names them by content, and links each page's stylesheets in its head. You never write those link tags.</Lead>
 
       <h2 id="global">Global stylesheets</h2>
       {/* source: docs/css.md:1-3 (what the build does) and :18-21 (the two sources of a route's stylesheets); packages/brust/src/build/css.ts:78-88 (routeCssSources: globals first, then each chain file's CSS) */}
@@ -200,15 +202,10 @@ export default function Css({ blocks }: CssData) {
 
       <h3 id="try">Try it</h3>
       <p>Type an expression a template could use with the module above. The demo answers the way the build does.</p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">ClassFold · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="Live demo" label="ClassFold · native">
           <ClassFold initialExpr="styles.card" initialOut='class="card_nBzD1A"' initialStatus="folds: a literal in the template, no job" />
-        </div>
-      </div>
+        
+      </Frame>
 
       <h2 id="tailwind">Tailwind CSS v4</h2>
       {/* source: docs/css.md:74 (Tailwind is built in through bun-plugin-tailwind; install tailwindcss 4 and the plugin as your app's own dev dependencies); packages/create-app/src/tailwind.ts:7 and :9 (L28, PR #180: the blank template ships both, pinned; --tailwind does nothing) */}

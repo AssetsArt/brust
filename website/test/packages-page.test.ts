@@ -52,7 +52,7 @@ test('the demo (Chromium): undefined falls back to the default, a value is appli
   const svg = page.getByTestId('icon-stage').locator('svg')
   await attrs.scrollIntoViewIfNeeded()
   expect(await attrs.innerText()).toContain('width="16"')
-  const selects = page.locator('select.demo-in')
+  const selects = page.locator('.builder select')
   await selects.nth(0).selectOption('')
   expect(await until(() => attrs.innerText(), (t) => t.includes('width="24"'))).toContain('width="24" height="24" stroke="currentColor" stroke-width="2"')
   expect(await svg.getAttribute('width')).toBe('24')

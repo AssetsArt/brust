@@ -5,6 +5,8 @@ import Note from '../../../components/docs/Note'
 import Step from '../../../components/docs/Step'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
+import Tier from '../../../components/docs/Tier'
 
 const SRC = {
   page: {
@@ -64,11 +66,11 @@ export default function Static404({ blocks }: Static404Data) {
   return (
     <>
       <h1>Static 404 page</h1>
-      <p className="lead">Any path no route matches answers 404 with a page of your own, rendered once and served as HTML.</p>
+      <Lead>Any path no route matches answers 404 with a page of your own, rendered once and served as HTML.</Lead>
 
       <Step n={1} id="page" title="Write the page" />
       <p>
-        The page is a full document, <code>html</code> to <code>body</code>, because it sits outside the layout. With no state, handlers or loader it is <span className="tier static">static</span>.
+        The page is a full document, <code>html</code> to <code>body</code>, because it sits outside the layout. With no state, handlers or loader it is <Tier t="static">static</Tier>.
       </p>
       <CodeBlock code={blocks.page.code} lang={blocks.page.lang} file={blocks.page.file} html={blocks.page.html} />
 

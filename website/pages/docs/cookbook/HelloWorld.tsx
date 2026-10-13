@@ -5,6 +5,8 @@ import Note from '../../../components/docs/Note'
 import Step from '../../../components/docs/Step'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
+import Tier from '../../../components/docs/Tier'
 
 const SRC = {
   page: {
@@ -97,10 +99,10 @@ export default function HelloWorld({ blocks }: HelloWorldData) {
   return (
     <>
       <h1>Hello world</h1>
-      <p className="lead">The smallest app: one page, one route. Then a route with a path param and a loader.</p>
+      <Lead>The smallest app: one page, one route. Then a route with a path param and a loader.</Lead>
 
       <Step n={1} id="page" title="Write a page" />
-      <p>A page is a plain React component. This one has no state and no handlers, so the compiler marks it <span className="tier static">static</span>: rendered once, served as HTML.</p>
+      <p>A page is a plain React component. This one has no state and no handlers, so the compiler marks it <Tier t="static">static</Tier>: rendered once, served as HTML.</p>
       <CodeBlock code={blocks.page.code} lang={blocks.page.lang} file={blocks.page.file} html={blocks.page.html} />
       <CodeBlock code={blocks.routes.code} lang={blocks.routes.lang} file={blocks.routes.file} html={blocks.routes.html} />
 

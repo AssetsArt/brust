@@ -6,6 +6,8 @@ import Step from '../../../components/docs/Step'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
 import ElysiaLink from '../../../components/ElysiaLink'
+import Lead from '../../../components/docs/Lead'
+import Tier from '../../../components/docs/Tier'
 
 const SRC = {
   install: {
@@ -101,9 +103,9 @@ export default function FormAction({ blocks }: FormActionData) {
   return (
     <>
       <h1>Form action</h1>
-      <p className="lead">
+      <Lead>
         A form that adds a Pokémon to a team of up to six. The server side is one <ElysiaLink label="Elysia 2" /> app behind the Rust server; the form is a native component.
-      </p>
+      </Lead>
 
       <Step n={1} id="setup" title="Turn actions on" />
       <p>Actions are opt-in. Install the two pinned packages and add an <code>[actions]</code> table; every key in it is optional.</p>
@@ -118,7 +120,7 @@ export default function FormAction({ blocks }: FormActionData) {
 
       <Step n={3} id="form" title="Call it from a form" />
       <p>
-        <code>client&lt;App&gt;()</code> is Eden Treaty wired to the actions mount. The <code>import type</code> is erased, so the browser bundle carries no Elysia. This form has state and handlers but nothing the native tier cannot express, so it compiles to a <span className="tier native">native</span> component.
+        <code>client&lt;App&gt;()</code> is Eden Treaty wired to the actions mount. The <code>import type</code> is erased, so the browser bundle carries no Elysia. This form has state and handlers but nothing the native tier cannot express, so it compiles to a <Tier t="native">native</Tier> component.
       </p>
       <CodeBlock code={blocks.api.code} lang={blocks.api.lang} file={blocks.api.file} html={blocks.api.html} />
       <CodeBlock code={blocks.form.code} lang={blocks.form.lang} file={blocks.form.file} html={blocks.form.html} />

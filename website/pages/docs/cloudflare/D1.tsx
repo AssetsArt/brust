@@ -4,6 +4,7 @@ import Note from '../../../components/docs/Note'
 import Step from '../../../components/docs/Step'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
 
 const SRC = {
   migration: {
@@ -70,9 +71,9 @@ export default function D1({ blocks }: D1Data) {
   return (
     <>
       <h1>D1 recipe</h1>
-      <p className="lead">
+      <Lead>
         The pokedex example&rsquo;s team roster: native uses <code>bun:sqlite</code>, Workers use D1. Both sit behind one async <code>TeamDb</code> interface.
-      </p>
+      </Lead>
 
       <Step n={1} id="migration" title="Migration" />
       <CodeBlock code={blocks.migration.code} lang={blocks.migration.lang} file={blocks.migration.file} html={blocks.migration.html} />
