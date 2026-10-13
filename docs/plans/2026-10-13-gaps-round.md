@@ -24,6 +24,18 @@ Every finding below was reproduced on 2026-10-13 by research agents against v2 @
 - **R0.2 Real diagnostics.** Every new or changed diagnostic carries a real source location. Locations like `:0:0` are a bug; fix them wherever a lane touches the code.
 - **R0.3 Rebuild the addon before testing.** Any compiler change needs `packages/brust` `bun run build:debug` first. A stale addon makes tests lie.
 - **R0.4 Battery and coverage stay in sync.** `scripts/battery/rows.ts` and `docs/react-coverage.md` change in the same lane as any tier change.
+- **R0.6 Ledger numbers (ruled, so lanes don't collide).** Each lane writes only its own row:
+
+  | Row | Lane | Row | Lane | Row | Lane |
+  |---|---|---|---|---|---|
+  | F99 | gap-route-graph | F105 | gap-child-literals | F111 | dev-server |
+  | F100 | gap-custom-hooks | F106 | gap-transparent-root | F112 | dev-trace |
+  | F101 | runtime-response-size | F107 | gap-ssg | F113 | devtools-ui |
+  | F102 | gap-store-ssr-snapshot | F108 | gap-island-in-inlined | F114 | actions-standalone |
+  | F103 | gap-const-fold | F109 | gap-build-eval | | |
+  | F104 | gap-map-cond | F110 | gap-ssg-actions | | |
+
+  When two lanes add rows, the second one to merge resolves the textual conflict by keeping both rows.
 - **R0.5 Each lane updates its own docs.** Update `docs/*.md` where the behaviour is documented, and add a `docs/plans/m1a-followups.md` row (F99+) marked DONE with the PR number.
   The docs site (`website/`) is updated afterwards on the docs-site branch by the lead. Lanes do not touch `website/` except where a lane below says so.
 
@@ -64,6 +76,29 @@ Each gap shows the same cause:
 
 Otherwise it stays a job, which is today's behaviour. Primitives always fold.
 Why: folding freezes the initial value. A long-lived worker today shows mutations, and we will not silently change that.
+
+**R1.1a (lead ruling 2026-10-13, after Mellow's review of `gap-const-fold`, round 1).**
+
+The mutation check is an **allowlist** of read-only uses, not a denylist. It applies to the name and to every alias of it. Allowed uses:
+- member or index read;
+- the target of the template-subset methods that do not mutate (`map`, `filter`, `find`, `some`, `every`, `includes`, `indexOf`, `join`, `slice`, `concat`, `at`, `length`), provided their callbacks write nothing reachable from their parameters;
+- the argument of `Object.keys`, `Object.entries` or `Object.values`;
+- spread into a new literal;
+- a `useState` argument;
+- a JSX or template read.
+
+Every other use counts as a mutation, so the const stays a job. That includes:
+- the source of a `for-of` or `for-in`;
+- an element of another literal;
+- the right-hand side of an assignment;
+- a return value;
+- any other call or method target.
+
+Fixtures `module-const-mutated-*` cover for-of, `forEach` and a literal container. All three must stay jobs.
+
+**R1.1b (lead ruling, Mellow N1).** An **imported** const folds only if its value is a primitive: a string, number, boolean or null, or a template literal or operator expression whose result is one of those.
+
+Imported arrays and objects stay jobs. Another importer could mutate them, and a whole-graph scan (including dynamic imports) is not worth it this round. Record a graph scan as a possible follow-up in the ledger row. Consts defined in the same module still follow R1.1a.
 
 **R1.2 NaN and Infinity.** Folding renders `NaN`/`Infinity` the way React does (the text `NaN`). Today's job path turns them into `null` through JSON, which is the bug, not the contract. Pin this with a dual-eval test.
 
