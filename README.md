@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@brust/core"><img src="https://img.shields.io/npm/v/@brust/core/alpha?label=%40brust%2Fcore&color=f2a516" alt="npm"></a>
   <a href="https://github.com/AssetsArt/brust/actions/workflows/ci.yml"><img src="https://github.com/AssetsArt/brust/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/license-MIT-062323" alt="MIT">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-062323" alt="MIT"></a>
 </p>
 
 <p align="center">
@@ -47,4 +47,4 @@ cd packages/brust && bun run build:debug && bun test
 
 Design notes live in [`docs/design/`](docs/design/), work plans in [`docs/plans/`](docs/plans/). The 0.1.x line (`brustjs` on npm) is kept on the [`v01x`](https://github.com/AssetsArt/brust/tree/v01x) branch.
 
-MIT
+[MIT](LICENSE) © Assets Art
