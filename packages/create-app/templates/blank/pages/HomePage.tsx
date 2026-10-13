@@ -19,7 +19,7 @@ export default function HomePage() {
       </section>
       <nav className="links" aria-label="Learn more">
         <a href="https://brust.dev">Docs</a>
-        <a href="https://brust.dev/docs/routes">Routes</a>
+        <a href="https://brust.dev/docs/routing">Routes</a>
         <a href="https://brust.dev/docs/actions">Actions</a>
       </nav>
     </>
