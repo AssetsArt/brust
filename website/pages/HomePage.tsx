@@ -11,6 +11,9 @@ import { type CardData, type CatchData, demoData, type SearchItem } from '../com
 import Deploy from '../components/landing/Deploy'
 import RequestPath from '../components/landing/RequestPath'
 import Hero from '../components/landing/Hero'
+import SecHead from '../components/landing/SecHead'
+import ShipBar from '../components/landing/ShipBar'
+import UrlBar from '../components/landing/UrlBar'
 import Nots from '../components/landing/Nots'
 import Packages from '../components/landing/Packages'
 import Steps from '../components/landing/Steps'
@@ -57,48 +60,29 @@ export async function homeLoader(): Promise<HomeData> {
 
 export default function HomePage(d: HomeData) {
   return (
-    <div className="landing">
+    <div>
       <Hero version={d.version} />
       <RequestPath />
       <Benchmark bench={d.bench} />
       <Steps create={d.code.create} write={d.code.write} run={d.code.run} />
       {/* The tiers section is written out here, not as a component: the React island (PokemonSearch, an ssr job) must sit in the page's own template. */}
-      <section className="sec">
-        <div className="wrap">
-          <div className="head">
-            <h2>One component model, three outputs</h2>
-            <p>
-              You write ordinary React. The compiler reads each component, picks the cheapest output that still behaves the same, and tells you what it picked. Left is the code, right is what the browser
-              shows.
-            </p>
-          </div>
+      <section className="border-t border-rule py-18">
+        <div className="mx-auto max-w-[1160px] px-4">
+          <SecHead
+            title="One component model, three outputs"
+            lede="You write ordinary React. The compiler reads each component, picks the cheapest output that still behaves the same, and tells you what it picked. Left is the code, right is what the browser shows."
+          />
           <TierTabs />
           <StaticPanel code={d.code.staticDemo} a={d.a} b={d.b} c={d.c} />
           <NativePanel code={d.code.nativeDemo} card={d.catchData} />
-          <div className="panel cr" role="tabpanel" id="p-react" aria-labelledby="tab-react" hidden>
+          <div className="pt-7 [&.enter]:motion-safe:animate-mirai-enter" role="tabpanel" id="p-react" aria-labelledby="tab-react" hidden>
             <Pipe file="PokemonSearch.tsx" tier="react" />
-            <div className="cr-grid">
+            <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] items-stretch gap-5 max-wide:grid-cols-1 [&_pre]:max-h-[30rem] [&_pre]:overflow-auto">
               <CodeBlock code={d.code.reactDemo.code} lang={d.code.reactDemo.lang} file={d.code.reactDemo.file} cwd={d.code.reactDemo.cwd} html={d.code.reactDemo.html} />
-              <div className="browser">
-                <div className="url">
-                  <span>127.0.0.1:1337/search</span>
-                  <span className="lbl">Rendered · try it</span>
-                </div>
+              <div className="flex min-w-0 flex-col overflow-hidden rounded-xs border border-rule bg-sheet">
+                <UrlBar url="127.0.0.1:1337/search" label="Rendered · try it" />
                 <PokemonSearch all={d.all} />
-                <dl className="shipbar">
-                  <div>
-                    <dt>HTML</dt>
-                    <dd>server-rendered with React</dd>
-                  </div>
-                  <div>
-                    <dt>JavaScript</dt>
-                    <dd>one React chunk</dd>
-                  </div>
-                  <div>
-                    <dt>Where</dt>
-                    <dd>only pages that use it</dd>
-                  </div>
-                </dl>
+                <ShipBar a={{ k: 'HTML', v: 'server-rendered with React' }} b={{ k: 'JavaScript', v: 'one React chunk' }} c={{ k: 'Where', v: 'only pages that use it' }} />
               </div>
             </div>
           </div>

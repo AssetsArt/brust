@@ -15,5 +15,5 @@ export default function RailFill() {
     addEventListener('scroll', update, { passive: true })
     return () => removeEventListener('scroll', update)
   }, [])
-  return <span className="rail-fill" aria-hidden="true" />
+  return <span className="absolute top-[.4rem] bottom-[.4rem] left-[1.05rem] w-[2px] origin-top bg-amber [transform:scaleY(var(--rail,0))] motion-safe:[transition:transform_.1s_linear]" aria-hidden="true" />
 }

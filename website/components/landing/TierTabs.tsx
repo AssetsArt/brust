@@ -7,7 +7,7 @@ function choose(name: string) {
     if (panel) panel.hidden = t !== name
   }
   const panel = document.getElementById('p-' + name)
-  const pipe = panel ? panel.querySelector('.pipe') : null
+  const pipe = panel ? panel.querySelector('[data-pipe]') : null
   if (panel && pipe) {
     panel.classList.remove('enter')
     pipe.classList.remove('go')
@@ -39,10 +39,11 @@ export default function TierTabs() {
     return () => removeEventListener('resize', onResize)
   }, [])
   return (
-    <div className="tabs" role="tablist" id="tabs">
+    <div className="relative flex gap-0 overflow-x-auto border-b border-rule" role="tablist" id="tabs">
       <button
         type="button"
         role="tab"
+        className="grid cursor-pointer gap-[.1rem] rounded-xs border-0 bg-transparent px-5 py-[.8rem] text-left whitespace-nowrap text-ink-2 [font:inherit] aria-selected:text-ink"
         id="tab-static"
         aria-selected={sel === 'static'}
         aria-controls="p-static"
@@ -51,14 +52,15 @@ export default function TierTabs() {
           choose('static')
         }}
       >
-        <b>
-          <span className="tier static">static</span>
+        <b className="text-[15px] font-semibold text-ink">
+          <span className="inline-flex items-center gap-[.35rem] font-mono text-[12px] before:size-2 before:rounded-xs before:content-[''] text-t-static before:bg-t-static">static</span>
         </b>
-        <span className="d">Reads props, renders markup</span>
+        <span className="text-[13px]">Reads props, renders markup</span>
       </button>
       <button
         type="button"
         role="tab"
+        className="grid cursor-pointer gap-[.1rem] rounded-xs border-0 bg-transparent px-5 py-[.8rem] text-left whitespace-nowrap text-ink-2 [font:inherit] aria-selected:text-ink"
         id="tab-native"
         aria-selected={sel === 'native'}
         aria-controls="p-native"
@@ -67,14 +69,15 @@ export default function TierTabs() {
           choose('native')
         }}
       >
-        <b>
-          <span className="tier native">native</span>
+        <b className="text-[15px] font-semibold text-ink">
+          <span className="inline-flex items-center gap-[.35rem] font-mono text-[12px] before:size-2 before:rounded-xs before:content-[''] text-t-native before:bg-t-native">native</span>
         </b>
-        <span className="d">Local state and handlers</span>
+        <span className="text-[13px]">Local state and handlers</span>
       </button>
       <button
         type="button"
         role="tab"
+        className="grid cursor-pointer gap-[.1rem] rounded-xs border-0 bg-transparent px-5 py-[.8rem] text-left whitespace-nowrap text-ink-2 [font:inherit] aria-selected:text-ink"
         id="tab-react"
         aria-selected={sel === 'react'}
         aria-controls="p-react"
@@ -83,12 +86,12 @@ export default function TierTabs() {
           choose('react')
         }}
       >
-        <b>
-          <span className="tier react">react</span>
+        <b className="text-[15px] font-semibold text-ink">
+          <span className="inline-flex items-center gap-[.35rem] font-mono text-[12px] before:size-2 before:rounded-xs before:content-[''] text-t-react before:bg-t-react">react</span>
         </b>
-        <span className="d">Needs the real thing</span>
+        <span className="text-[13px]">Needs the real thing</span>
       </button>
-      <span className="ink" id="tab-ink" />
+      <span className="absolute -bottom-px left-0 h-[3px] w-[100px] origin-[0_0] bg-amber [transform:translateX(var(--ink-x,0))_scaleX(var(--ink-s,0))] motion-safe:[transition:transform_.4s_var(--ease)]" id="tab-ink" />
     </div>
   )
 }

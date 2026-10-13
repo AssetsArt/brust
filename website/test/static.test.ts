@@ -266,18 +266,18 @@ test('landing tier demos work from the static files: native catch card, react se
       (v) => v === 'true',
     )
   expect(await tab('native')).toBe('true')
-  const card = page.locator('.catch')
+  const card = page.locator('#p-native article')
   const count = await until(
     async () => {
-      await card.locator('.demo-btn').click()
-      return Number((await card.locator('.demo-btn span').textContent()) ?? '0')
+      await card.getByRole('button', { name: /Catch/ }).click()
+      return Number((await card.getByRole('button', { name: /Catch/ }).locator('span').textContent()) ?? '0')
     },
     (n) => n > 0,
   )
   expect(count).toBeGreaterThan(0)
   expect(await tab('react')).toBe('true')
   await page.locator('brust-island[data-hydrated] #demo-q').fill('char')
-  await page.locator('.demo-list li', { hasText: 'Charmander' }).first().waitFor()
+  await page.locator('#p-react li', { hasText: 'Charmander' }).first().waitFor()
   expect(w).toEqual({ errors: [], failed: [], nonFile: [] })
   await ctx.close()
 }, TEST_MS)
