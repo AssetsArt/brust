@@ -1,0 +1,101 @@
+{
+  "id": "input_6432853b",
+  "source": "tests/fixtures/module-const-template-literal/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 147,
+      "tag": "p",
+      "attrs": [
+        {
+          "Dynamic": {
+            "name": "title",
+            "value": {
+              "Server": {
+                "loc": 38,
+                "kind": {
+                  "Template": {
+                    "head": "hello ",
+                    "parts": [
+                      [
+                        {
+                          "loc": 13,
+                          "kind": {
+                            "Lit": {
+                              "Str": "brust"
+                            }
+                          }
+                        },
+                        ""
+                      ]
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "children": [
+        {
+          "Slot": {
+            "Server": {
+              "loc": 38,
+              "kind": {
+                "Template": {
+                  "head": "hello ",
+                  "parts": [
+                    [
+                      {
+                        "loc": 13,
+                        "kind": {
+                          "Lit": {
+                            "Str": "brust"
+                          }
+                        }
+                      },
+                      ""
+                    ]
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "Text": " "
+        },
+        {
+          "Slot": {
+            "Server": {
+              "loc": 70,
+              "kind": {
+                "Lit": {
+                  "Str": "</script><!-- x -->\nline"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

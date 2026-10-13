@@ -1459,11 +1459,11 @@ fn store_render_checks_walk_function_values() {
 }
 
 /// The job-import backstop (review F1 (b)): render reads only `a`, but the job prints the whole
-/// statement `const a = 1, b = cart.count()` and imports the handle with it.
+/// statement `const a = Number('1'), b = cart.count()` and imports the handle with it.
 #[test]
 fn store_handle_in_job_imports() {
     refused_lowered(
-        "const a = 1, b = cart.count()",
+        "const a = Number('1'), b = cart.count()",
         "return <p>{a}</p>",
         "store-handle-in-render",
     );
@@ -1473,7 +1473,7 @@ fn store_handle_in_job_imports() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("cart.ts"), CART).unwrap();
     std::fs::write(root.join("stores.ts"), "export * from './cart'\n").unwrap();
-    let src = "import * as st from './stores'\nconst a = 1, b = st.cart.count()\nexport default function C() { return <p>{a}</p> }\n";
+    let src = "import * as st from './stores'\nconst a = Number('1'), b = st.cart.count()\nexport default function C() { return <p>{a}</p> }\n";
     let (ir, a) = lower_artifacts(root.clone(), "C.tsx".into(), src.into());
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(

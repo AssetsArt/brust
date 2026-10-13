@@ -4,6 +4,7 @@ import { readdir, rm } from 'node:fs/promises'
 import { copyTemplate } from './copy.ts'
 import { parseArgs, USAGE } from './args.ts'
 import { applyOverrides, monorepoRoot, resolveBrustDep } from './dep.ts'
+import { applyTailwind } from './tailwind.ts'
 import { selectTemplate } from './templates.ts'
 
 const fail = (msg: string): never => {
@@ -26,6 +27,7 @@ export async function main(argv: string[]): Promise<void> {
 
   let tmpl: ReturnType<typeof selectTemplate>
   try { tmpl = selectTemplate({ explicit: parsed.template, yes: parsed.yes, isTTY: Boolean(process.stdin.isTTY) }) } catch (e) { return fail(msg(e)) }
+  if (parsed.tailwind && tmpl.name !== 'blank') return fail(`create-app: --tailwind applies to the blank template (got ${tmpl.name})`)
   const dep = resolveBrustDep({ explicit: parsed.brustDep, targetDir })
 
   try {
@@ -40,11 +42,12 @@ export async function main(argv: string[]): Promise<void> {
       substitutions: { __PROJECT_NAME__: projectName, __BRUST_DEP__: JSON.stringify(dep.spec) },
     })
     if (dep.overrides) applyOverrides(targetDir, dep.overrides)
+    if (parsed.tailwind) applyTailwind(targetDir)
   } catch (e) {
     if (!targetExisted) await rm(targetDir, { recursive: true, force: true }).catch(() => {})
     return fail(`create-app: failed to scaffold (${msg(e)})`)
   }
-  printNextSteps(projectName, targetDir, tmpl.name, dep.kind === 'workspace')
+  printNextSteps(projectName, targetDir, parsed.tailwind ? `${tmpl.name} + tailwind` : tmpl.name, dep.kind === 'workspace')
 }
 
 function printNextSteps(name: string, targetDir: string, template: string, workspace: boolean): void {

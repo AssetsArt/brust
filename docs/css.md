@@ -68,3 +68,41 @@ For now, `styles.card` in a static or native template is computed by a precomput
 
 - A `<link>` you write to a file in `public/` is untouched. It is served as before, without a content hash.
 - No JS bundle contains CSS. A `.css` import in JavaScript is an empty module, and a `.module.css` import is its class map.
+
+## 6. Tailwind CSS v4
+
+Tailwind is built in through the official `bun-plugin-tailwind`. Install it and Tailwind as your app's own dev dependencies (`bun create @brust/app my-app --tailwind` does this):
+
+```sh
+bun add -d tailwindcss@4 bun-plugin-tailwind
+```
+
+```css
+/* app.css, imported by the root layout */
+@import "tailwindcss";
+
+@theme {
+  --color-brand: oklch(0.55 0.2 260);
+}
+```
+
+```tsx
+// Layout.tsx
+import './app.css'
+// …
+<h1 className="text-brand font-bold md:text-4xl">…</h1>
+```
+
+- **When it loads.** brust loads Tailwind only when a stylesheet, or a file it `@import`s, contains `@import "tailwindcss"`, `@apply`, `@reference`, `@theme` or `@plugin`. If the packages are missing, the build fails with `tailwind-missing` and prints the `bun add -d` command above.
+- **What it scans.** Tailwind scans the app root for class names. Utilities you use in `.tsx` files end up in the stylesheet, minified like every other.
+- **One import.** Import `tailwindcss` once, in the stylesheet your root layout imports. The build warns if more than one file has `@import "tailwindcss"`, because each one ships the whole of Tailwind.
+- **`@apply` in a CSS Module.** The module must reference your Tailwind entry itself. This is standard in v4, and brust does not add it for you:
+
+  ```css
+  /* Card.module.css */
+  @reference "../app.css";
+  .card { @apply p-4 text-brand; }
+  ```
+
+- **Cascade.** Tailwind v4 puts its utilities in `@layer`. Unlayered CSS, such as your CSS Modules and plain stylesheets, beats a utility whatever the file order. To let a utility override a module class, put that module rule in a layer too: `@layer components { … }`.
+- **`brust dev`.** Editing a stylesheet rebuilds the CSS, and the page swaps its `data-brust-css` links without reloading. Editing a `.tsx` file rebuilds and reloads the page, and Tailwind rescans for classes.

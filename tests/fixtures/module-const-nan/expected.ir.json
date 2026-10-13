@@ -1,0 +1,195 @@
+{
+  "id": "input_6ccbd0c8",
+  "source": "tests/fixtures/module-const-nan/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "n",
+      "setter": "setN",
+      "init": {
+        "Server": {
+          "loc": 55,
+          "kind": {
+            "Binary": {
+              "op": "Div",
+              "left": {
+                "loc": 55,
+                "kind": {
+                  "Lit": {
+                    "Num": 0.0
+                  }
+                }
+              },
+              "right": {
+                "loc": 59,
+                "kind": {
+                  "Lit": {
+                    "Num": 0.0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "h",
+      "setter": null,
+      "init": {
+        "Server": {
+          "loc": 74,
+          "kind": {
+            "Binary": {
+              "op": "Div",
+              "left": {
+                "loc": 74,
+                "kind": {
+                  "Lit": {
+                    "Num": 1.0
+                  }
+                }
+              },
+              "right": {
+                "loc": 78,
+                "kind": {
+                  "Lit": {
+                    "Num": 0.0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 230,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 236,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 236,
+                      "kind": {
+                        "Ident": {
+                          "name": "setN",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 241,
+                        "kind": {
+                          "Lit": {
+                            "Num": 1.0
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setN",
+                "Setter"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 201,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 213,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 246,
+                    "kind": {
+                      "Ident": {
+                        "name": "n",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 264,
+            "tag": "span",
+            "attrs": [],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 271,
+                    "kind": {
+                      "Ident": {
+                        "name": "h",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

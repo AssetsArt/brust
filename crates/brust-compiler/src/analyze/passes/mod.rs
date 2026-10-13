@@ -94,7 +94,7 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
         refs: ir.refs.clone(),
     }));
     let mut st = PassState::new(ir);
-    placement::place(ir, &mut st);
+    placement::place(ir, &mut st, ctx);
     // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);
     captures::captures(ir, &mut st, ctx);

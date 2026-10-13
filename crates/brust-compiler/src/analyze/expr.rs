@@ -340,7 +340,7 @@ impl<'r, 'a> Reader<'r, 'a> {
     /// identifier-bound `const`/`let`/`var` (exported or not).
     #[allow(clippy::type_complexity)]
     pub fn module_scope(
-        &self,
+        &mut self,
         ast: &js_ast::Ast<'_>,
     ) -> (
         Vec<(String, Vec<(String, IdentKind)>)>,
@@ -348,14 +348,13 @@ impl<'r, 'a> Reader<'r, 'a> {
     ) {
         let mut out = Vec::new();
         let mut decls = Vec::new();
-        let source = |stmt: &js_ast::Stmt| {
-            let s = self.print_stmt(stmt);
-            s.strip_prefix("export ").map(str::to_string).unwrap_or(s)
-        };
+        let mutated = crate::analyze::use_scan::unsafe_to_fold(ast, &*self.names);
+        let strip = |s: String| s.strip_prefix("export ").map(str::to_string).unwrap_or(s);
         for part in ast.parts.iter() {
             for stmt in part.stmts.slice() {
                 match &stmt.data {
                     S::SFunction(f) => {
+                        let stmt_source = strip(self.print_stmt(stmt));
                         if let Some(n) = &f.func.name {
                             let (captures, _) =
                                 self.captures_of(f.func.args.slice(), f.func.body.stmts.slice());
@@ -363,12 +362,15 @@ impl<'r, 'a> Reader<'r, 'a> {
                             out.push((name.clone(), captures));
                             decls.push(crate::ir::ModuleDecl {
                                 names: vec![name],
-                                source: source(stmt),
+                                source: stmt_source,
+                                consts: vec![],
                             });
                         }
                     }
                     S::SLocal(l) => {
+                        let stmt_source = strip(self.print_stmt(stmt));
                         let mut names = Vec::new();
+                        let mut consts = Vec::new();
                         for d in l.decls.iter() {
                             if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) {
                                 let mut w = Walk::default();
@@ -376,13 +378,28 @@ impl<'r, 'a> Reader<'r, 'a> {
                                 let (captures, _) = self.captured(w);
                                 let name = self.names.name(id.r#ref);
                                 names.push(name.clone());
+                                if matches!(l.kind, js_ast::S::Kind::KConst) {
+                                    // Reading the initializer must leave no diagnostic or
+                                    // handler behind: it is only a candidate for folding.
+                                    let (nd, nh) =
+                                        (self.diagnostics.len(), self.pending_handlers.len());
+                                    let value = self.expr(v);
+                                    self.diagnostics.truncate(nd);
+                                    self.pending_handlers.truncate(nh);
+                                    consts.push(crate::ir::ConstVal {
+                                        name: name.clone(),
+                                        value,
+                                        mutated: mutated.contains(&id.r#ref.inner_index()),
+                                    });
+                                }
                                 out.push((name, captures));
                             }
                         }
                         if !names.is_empty() {
                             decls.push(crate::ir::ModuleDecl {
                                 names,
-                                source: source(stmt),
+                                source: stmt_source,
+                                consts,
                             });
                         }
                     }
@@ -658,6 +675,10 @@ impl Walk {
                     }
                 }
             }
+            S::SExportDefault(ed) => match &ed.value {
+                js_ast::StmtOrExpr::Expr(e) => self.expr(e),
+                js_ast::StmtOrExpr::Stmt(s) => self.stmt(s),
+            },
             S::SReturn(r) => {
                 if let Some(v) = &r.value {
                     self.expr(v);

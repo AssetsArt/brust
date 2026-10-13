@@ -1,0 +1,6 @@
+/* R21.2: a module that uses @apply references the app's Tailwind entry itself. */
+@reference "./app.css";
+
+.card {
+  @apply p-4 text-brand;
+}

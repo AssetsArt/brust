@@ -1,4 +1,5 @@
 pub mod component;
+pub mod const_fold;
 pub mod expr;
 pub mod hir;
 pub mod hooks;
@@ -7,3 +8,4 @@ pub mod modules;
 pub mod names;
 pub mod passes;
 pub mod stores;
+pub mod use_scan;

@@ -1,0 +1,14 @@
+{
+  "function": "Page",
+  "params": 0,
+  "scopes": [
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t0"
+      ]
+    }
+  ]
+}
