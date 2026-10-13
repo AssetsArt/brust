@@ -1,0 +1,178 @@
+{
+  "id": "input_4b23bc30",
+  "source": "tests/fixtures/module-const-imported/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 113,
+      "tag": "section",
+      "attrs": [
+        {
+          "Dynamic": {
+            "name": "title",
+            "value": {
+              "Server": {
+                "loc": 43,
+                "kind": {
+                  "Template": {
+                    "head": "",
+                    "parts": [
+                      [
+                        {
+                          "loc": 15,
+                          "kind": {
+                            "Lit": {
+                              "Str": "row"
+                            }
+                          }
+                        },
+                        " list"
+                      ]
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "children": [
+        {
+          "Element": {
+            "loc": 143,
+            "tag": "ul",
+            "attrs": [],
+            "children": [
+              {
+                "For": {
+                  "source": {
+                    "Precomputed": {
+                      "slot": "_s1",
+                      "js": "ROWS",
+                      "client_js": null,
+                      "inputs": [],
+                      "state_dependent": false,
+                      "per_item": null
+                    }
+                  },
+                  "item": "r",
+                  "index": null,
+                  "key": {
+                    "Server": {
+                      "loc": 194,
+                      "kind": {
+                        "Member": {
+                          "target": {
+                            "loc": 194,
+                            "kind": {
+                              "Ident": {
+                                "name": "r",
+                                "kind": "LoopBinding"
+                              }
+                            }
+                          },
+                          "name": "id",
+                          "optional": false
+                        }
+                      }
+                    }
+                  },
+                  "body": [
+                    {
+                      "Element": {
+                        "loc": 185,
+                        "tag": "li",
+                        "attrs": [],
+                        "children": [
+                          {
+                            "Slot": {
+                              "Server": {
+                                "loc": 201,
+                                "kind": {
+                                  "Member": {
+                                    "target": {
+                                      "loc": 201,
+                                      "kind": {
+                                        "Ident": {
+                                          "name": "r",
+                                          "kind": "LoopBinding"
+                                        }
+                                      }
+                                    },
+                                    "name": "name",
+                                    "optional": false
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ],
+                        "host": false,
+                        "ref_name": null
+                      }
+                    }
+                  ]
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 244,
+            "tag": "p",
+            "attrs": [],
+            "children": [
+              {
+                "Text": "limit "
+              },
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 170,
+                    "kind": {
+                      "Lit": {
+                        "Num": 3.0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [],
+      "outputs": [
+        "_s1"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

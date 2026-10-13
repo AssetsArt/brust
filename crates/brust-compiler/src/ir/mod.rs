@@ -186,6 +186,10 @@ fn is_zero(n: &usize) -> bool {
 pub struct ComponentIR {
     pub id: String,
     pub source: String,
+    /// Set on the synthetic React-tier component of a package export (`source` is then
+    /// `package_<specifier>_<export>` made filename-safe, not a file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalRef>,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     pub state: Vec<StateDecl>,
@@ -249,6 +253,18 @@ pub struct ModuleDecl {
     pub names: Vec<String>,
     /// The printed statement without a leading `export`.
     pub source: String,
+    /// The `const name = value` bindings it declares, read as expressions (G5/G9/G10):
+    /// the placer folds a value it can prove constant into the template.
+    pub consts: Vec<ConstVal>,
+}
+
+/// A module-level `const` with its initializer read as an expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstVal {
+    pub name: String,
+    pub value: RawExpr,
+    /// The binding has a use that is not a proven read (R1.1a): an array or object must not fold.
+    pub mutated: bool,
 }
 
 /// The structural parts of a `ComponentIR` before placement.
@@ -265,6 +281,7 @@ impl ComponentIR {
         Self {
             id,
             source,
+            external: None,
             tier: Tier::Pending,
             props: vec![],
             state: vec![],

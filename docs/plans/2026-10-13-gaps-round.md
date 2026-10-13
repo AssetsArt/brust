@@ -35,7 +35,8 @@ Every finding below was reproduced on 2026-10-13 by research agents against v2 @
   | F103 | gap-const-fold | F109 | gap-build-eval | | |
   | F104 | gap-map-cond | F110 | gap-ssg-actions | F115 | react-coverage-api |
   | F116 | css-pipeline | F117 | css-module-fold | F118 | tailwind |
-  | F119 | external-island | F120 | lucide-native | | |
+  | F119 | external-island | F120 | lucide-native | F121 | route-nonascii |
+  | F122 | hydrate-flake (L26, plan `2026-10-13-hydrate-flake.md`) | F123 | blank-template (L25) | F124 | ci-speed (L27, plan `2026-10-13-ci-speed.md`) |
 
   When two lanes add rows, the second one to merge resolves the textual conflict by keeping both rows.
 - **R0.5 Each lane updates its own docs.** Update `docs/*.md` where the behaviour is documented, and add a `docs/plans/m1a-followups.md` row (F99+) marked DONE with the PR number.
@@ -758,7 +759,7 @@ The research verified this on 2026-10-13: `@import "tailwindcss"`, `@theme` and 
 The human: "หลังจากทำทั้งหมด public version ให้ แล้ว มาทำให้ brust ใช้ https://ui.shadcn.com/docs ได้ง่ายๆแบบ framework อื่นๆ แล้วมาเก็บ coverage shadcn Components ให้หมด".
 
 **P1. Publish.**
-- **When:** after every lane L1–L23 has merged with CI green and the docs site is synced (L17).
+- **When:** after every lane L1–L24 has merged with CI green and the docs site is synced (L17).
 - **What:** the lead publishes the next prerelease, **2.0.0-alpha.4**. This is the human's explicit go for this publish.
 - **How:**
   - follow the release flow (`/release` skill and memory notes): `bun scripts/release-bump.ts` covers every version reference, including `bun.lock`;
@@ -837,11 +838,61 @@ The human asked on 2026-10-13: "lucide มัน support native ไหม". Toda
 
 **Docs-site follow-up (lead):** the site can use lucide icons and drop hand-written SVGs.
 
+### L24 `route-nonascii`: a static route with non-ASCII literals 404s (bug). Wave 1, size S
+
+**Found by Dew in `gap-ssg` (2026-10-13).** A route whose pattern has a non-ASCII literal segment, e.g. `/ข่าว` or `/docs/ภาษาไทย`, answers 404 on `brust start`. Browsers send the path percent-encoded (`/%E0%B8%82…`).
+
+**Suspected cause.** The router matches the raw (encoded) path against the unencoded pattern. Params are already decoded **after** `router.at` (0.1.48 rule, memory "decode params shipped"); the literal part of the path never is.
+
+**R24.1 (ruled).**
+- **Routes:** patterns are normalised once at install. Each literal segment is stored percent-encoded the way browsers encode it (UTF-8, uppercase hex), so matching the raw request path works with no per-request decode. Never decode the path before matching: `%2F` must keep meaning a literal slash inside a param.
+- **Requests:**
+  - A request that spells a literal with different hex case (`%e0` vs `%E0`) is matched case-insensitively for the hex digits only.
+  - An unencoded non-ASCII request path (curl allows it) still matches.
+- **Every surface uses the same normalisation:**
+  - L1 cache keys;
+  - `cache.invalidate({ path })`;
+  - the action prefix check;
+  - SSG output file names: these come out decoded, through L9's path mapping.
+
+**Tests:**
+- Rust router unit tests: Thai literal; mixed literal + param; hex case; raw UTF-8.
+- e2e: `curl` both forms → 200; Chromium navigates to a Thai URL → 200.
+- An invalidation by a Thai path.
+
+### L25 `blank-template`: the `bun create @brust/app` starter looks like a framework starter and carries the brust mark. Wave 3 (human request, 2026-10-13), size S
+
+**Human request (2026-10-13):** "แก้ blank template ให้สวยๆ แบบ Framework อื่นๆ และใช้ favicon.svg เดียวกันกับ docs ด้วย" — make the blank template look as good as other frameworks' starters, and use the same `favicon.svg` as the docs site.
+
+**Today.** `packages/create-app/templates/blank/` is a bare page: `pages/HomePage.tsx` renders "Hello from brust", one sentence and `<Counter />`; `public/app.css` is 14 lines; `public/favicon.svg` is a red circle left over from the pokedex era. `components/Layout.tsx` is the document root (`<html>` with `<Outlet />`, links `/public/favicon.svg` and `/public/app.css`).
+
+**What to build.** One page that a newcomer recognises as a framework starter (compare the Vite and Next.js welcome pages for *scope*, not for look): the brust mark, the app name, one sentence that says what this page is, the working counter, and three links. No new dependencies, no web font, no build-time plugin: the template must scaffold and run offline exactly as it does now.
+
+- **Favicon.** Replace `public/favicon.svg` with the docs site's file, byte for byte. Source: branch `docs-site`, `website/public/favicon.svg` (a rounded dark square `#062323` with an amber sun over two bars, `#f2a516`). Get it with `git show docs-site:website/public/favicon.svg > packages/create-app/templates/blank/public/favicon.svg`.
+- **Mark on the page.** Inline the same SVG once in `HomePage.tsx` (as JSX, 40–48 px) next to the app name, so the page and the tab icon match. Do not load it as an `<img>` from `/public` — the page should render the mark even before static files are served.
+- **Palette and type.** Reuse the docs site's palette so the starter and the docs read as one product. Tokens in `public/app.css`, light first, dark under `@media (prefers-color-scheme: dark)`, `color-scheme: light dark` kept:
+  - light: `--paper: oklch(94% 0.035 78)`, `--sheet: oklch(97% 0.02 82)`, `--ink: oklch(18% 0.035 82)`, `--ink-2: oklch(36% 0.045 80)`, `--rule: oklch(76% 0.05 77)`, `--amber: oklch(68% 0.145 74)`, `--amber-ink: oklch(46% 0.12 62)`;
+  - dark: `--paper: oklch(20% 0.028 185)`, `--sheet: oklch(24% 0.032 182)`, `--ink: oklch(91% 0.02 82)`, `--ink-2: oklch(77% 0.03 82)`, `--rule: oklch(36% 0.032 180)`, `--amber: oklch(74% 0.12 78)`, `--amber-ink: oklch(81% 0.11 80)`.
+  - type: `ui-rounded, "SF Pro Rounded", system-ui, sans-serif` (the docs site's stack minus Nunito, which the template must not fetch). Body text at least 4.5:1 on `--paper` in both themes (`--ink` and `--ink-2` above satisfy it).
+- **Layout.** Centered column, `max-width: 42rem`, 16 px side gutter at phone width, no horizontal scroll at 400 px. Top: mark + "brust app" (the `<title>` stays `brust app`) + one sentence: "Edit pages/HomePage.tsx and save. The page reloads." Middle: the counter inside a panel on `--sheet` with a one-line caption that states the fact the counter demonstrates: "useState only, so this button is native: a signal in the browser, no React shipped." Bottom: three links as a single row that wraps: Docs → `https://brust.dev`, Routes → `https://brust.dev/docs/routes`, Actions → `https://brust.dev/docs/actions`. Links are plain anchors with the amber accent, not cards with icons. One focus ring style (`:focus-visible`) for the button and the links.
+- **Counter.** Keep `components/Counter.tsx` as is (useState only, native tier); only its label may change. The scaffold test asserts the rendered HTML contains `count is` (`packages/create-app/test/scaffold.test.ts:70`): keep that text, or update the assertion in the same commit.
+- **Nothing else moves.** `routes.tsx`, `actions.ts`, `brust.toml`, `wrangler.jsonc.tmpl`, `package.json.tmpl`, `README.md.tmpl`, `tsconfig.json` are untouched except where a file list in `packages/create-app/test/templates.test.ts` must name a new file (there is none: no new files are added).
+
+**Rulings.**
+- **R25.1 No dependency, no network.** The template adds no npm dependency, no `<link>` to a font or CDN, no Tailwind. (`create-app --tailwind` from L21 is a separate flag and separate template concern; this lane does not touch it.)
+- **R25.2 Same favicon, by file identity.** `packages/create-app/templates/blank/public/favicon.svg` must be byte-identical to `website/public/favicon.svg` on `docs-site`; a test in `packages/create-app/test/templates.test.ts` pins its content hash (compute it once and assert; the docs-site branch is not available in CI).
+- **R25.3 Both themes, by hand.** Check light and dark in a real browser at desktop and 400 px width before READY; attach the four screenshots to the task as a note (paths under the scratchpad are fine; do not commit screenshots).
+- **R25.4 Tier stays native.** `brust build` of the scaffolded app must still report `HomePage` as static and `Counter` as native with no react chunk. `scaffold.test.ts` already builds the app; extend its assertion to the manifest tiers.
+
+**Tests.** `cd packages/create-app && bun run typecheck && bun test` (`templates.test.ts` for the favicon hash and file list, `scaffold.test.ts` for `count is` and the tiers). CI runs both (`ci.yml` server job).
+
+**Docs.** `docs/getting-started.md` (or wherever `bun create @brust/app` is described) gets one sentence on what the starter page shows. Ledger row F123.
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
 |---|---|---|
-| 1 | L1, L5, L6, L7, L10, L11, L18, L22 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
+| 1 | L1, L5, L6, L7, L10, L11, L18, L22, L24 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
 | 2 | L3 (after L1), L8, L9, L13, L19, L23 (after L1; uses L22's fallback) | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
 | 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14), L16 (after L9; L12 and L16 both touch the CF build: second rebases), L20 (after L1 + L19), L21 (after L19) | |
 
@@ -854,3 +905,5 @@ All three were taken into this round by the human on 2026-10-13 ("เพิ่�
 - **H1** is the `buildTime()` opt-in, in L2.
 - **H2** approves the SSG names (`--target static`, the `ssg` field) as ruled.
 - **H3** is the hybrid static + actions output, as L12.
+- **H4** (2026-10-13, later): the blank template redesign with the docs favicon, as L25.
+- **H5** (2026-10-13, later): CI wall-clock and runner minutes, as L27 (`docs/plans/2026-10-13-ci-speed.md`).

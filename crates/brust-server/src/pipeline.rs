@@ -35,6 +35,36 @@ pub const PLAN_DECLINED: &str = "!";
 /// worker's JS thread, synchronously inside its call for `slot`. Never panics out, never errs:
 /// every failure is [`PLAN_DECLINED`] and leaves no plan behind.
 pub fn plan_in_call(s: &Server, worker: u32, slot: u32, len: u32) -> String {
+    plan_claimed(s, worker, slot, |entry| {
+        let (ptr, cap) = entry.dispatch.buf_slot(slot);
+        if len == 0 || len as usize > cap {
+            return None;
+        }
+        // SAFETY: we run on the worker's JS thread, synchronously inside its call for `slot` (the
+        // slot is claimed: `plan_claimed` found it): the worker wrote these `len` bytes on this
+        // thread just before calling `planJobs`, and nothing else writes a claimed slot. `len` is
+        // bounds-checked against the slot's capacity above.
+        Some(unsafe { std::slice::from_raw_parts(ptr, len as usize) })
+    })
+}
+
+/// L10: [`plan_in_call`] for a loader response too large for the slot (napi `planJobsBuf(slot,
+/// buf)`): the worker hands the bytes over directly. Declines (like any failure) when `buf` is
+/// empty or over `max_loader_response_bytes`.
+pub fn plan_in_call_buf(s: &Server, worker: u32, slot: u32, buf: &[u8]) -> String {
+    if buf.is_empty() || buf.len() > s.core.host.max_loader_response_bytes {
+        return PLAN_DECLINED.to_string();
+    }
+    plan_claimed(s, worker, slot, |_| Some(buf))
+}
+
+/// The shared body of the two planning entry points: `bytes` yields the loader response.
+fn plan_claimed<'a>(
+    s: &Server,
+    worker: u32,
+    slot: u32,
+    bytes: impl FnOnce(&crate::pool::WorkerEntry) -> Option<&'a [u8]>,
+) -> String {
     let declined = || PLAN_DECLINED.to_string();
     let s = &s.core;
     let Some(entry) = s.host.pool.entry(worker) else {
@@ -52,15 +82,9 @@ pub fn plan_in_call(s: &Server, worker: u32, slot: u32, len: u32) -> String {
         },
         _ => return declined(),
     };
-    let (ptr, cap) = entry.dispatch.buf_slot(slot);
-    if len == 0 || len as usize > cap {
+    let Some(bytes) = bytes(&entry) else {
         return declined();
-    }
-    // SAFETY: we run on the worker's JS thread, synchronously inside its call for `slot` (the
-    // slot is claimed: `claimed_plan_cell` returned it): the worker wrote these `len` bytes on
-    // this thread just before calling `planJobs`, and nothing else writes a claimed slot. `len`
-    // is bounds-checked against the slot's capacity above.
-    let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+    };
     let Some(route) = s.manifest.routes.get(seed.route) else {
         return declined();
     };

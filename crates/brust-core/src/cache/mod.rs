@@ -98,7 +98,8 @@ pub fn build_cache_key(method: &str, full_path: &str, prefix: String) -> CacheKe
     CacheKey {
         prefix,
         method: method.to_string(),
-        path: path_only.to_string(),
+        // L24: one entry per page however the URL is spelled (raw UTF-8, `%e0` vs `%E0`); never decoded.
+        path: crate::routing::routes::normalize_request_path(path_only).into_owned(),
         sorted_query: sort_query(query),
     }
 }

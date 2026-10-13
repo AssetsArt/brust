@@ -6,12 +6,16 @@
 /// Borrowed request data the evaluator reads. Slices, not maps — the caller
 /// already holds these as small vecs at the cache-decision site.
 ///
-/// NOTE: header/cookie/query values are passed through verbatim — NOT
-/// percent-decoded. An `eq(cookie(x), "/")` will not match a `%2F`-encoded
-/// value. The L1 sorted_query path is likewise undecoded, so key-building stays
-/// internally consistent. PATH PARAMS are the exception: param() values arrive
-/// percent-DECODED (decoded once at envelope production in
-/// routing/routes.rs::decode_path_param — same values the loaders see).
+/// NOTE on encoding (credit: knock2):
+/// - headers and cookies are passed through verbatim, NOT percent-decoded: an
+///   `eq(cookie(x), "/")` will not match a `%2F`-encoded value;
+/// - query names and values ARE decoded (`routing/routes.rs::decode_search`, `+`
+///   becomes a space): the same pairs as the loader's `req.search`, so
+///   `?pre%76iew=1` is `preview`;
+/// - the L1 key keeps the raw sorted query: distinct raw spellings split entries,
+///   they never merge;
+/// - params are decoded (once, at envelope production in
+///   routing/routes.rs::decode_path_param: the values the loaders see).
 pub struct EvalCtx<'a> {
     pub headers: &'a [(&'a str, &'a str)],
     pub cookies: &'a [(&'a str, &'a str)],
@@ -56,6 +60,45 @@ impl Expr {
             return Err(format!("cache expression: trailing input at byte {}", p.i));
         }
         Ok(e)
+    }
+
+    /// What a request can change in this expression's value (static output, gaps round R9.4):
+    /// every `header(n)`, `cookie(n)`, `query(n)` and `request(host)`, as written, first-seen
+    /// order, no repeats. `param`, `env`, literals and the other `request()` fields are fixed per path.
+    pub fn request_reads(&self) -> Vec<String> {
+        fn walk(e: &Expr, out: &mut Vec<String>) {
+            let read = match e {
+                Expr::Header(n) => Some(format!("header({n})")),
+                Expr::Cookie(n) => Some(format!("cookie({n})")),
+                Expr::Query(n) => Some(format!("query({n})")),
+                Expr::Request(f) if f == "host" => Some("request(host)".to_string()),
+                Expr::Request(_) | Expr::Param(_) | Expr::Env(_) | Expr::Lit(_) => None,
+                Expr::Or(args) | Expr::And(args) | Expr::Concat(args) => {
+                    args.iter().for_each(|a| walk(a, out));
+                    None
+                }
+                Expr::Eq(a, b, v) => {
+                    walk(a, out);
+                    walk(b, out);
+                    if let Some(v) = v {
+                        walk(v, out);
+                    }
+                    None
+                }
+                Expr::Lower(a) | Expr::Upper(a) => {
+                    walk(a, out);
+                    None
+                }
+            };
+            if let Some(r) = read
+                && !out.contains(&r)
+            {
+                out.push(r);
+            }
+        }
+        let mut out = Vec::new();
+        walk(self, &mut out);
+        out
     }
 
     pub fn eval(&self, ctx: &EvalCtx) -> String {
@@ -296,6 +339,24 @@ fn env_unavailable(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_reads_name_what_a_request_can_change() {
+        let r = |s: &str| Expr::parse(s).unwrap().request_reads();
+        assert!(r("param(id)").is_empty());
+        assert!(r("concat(request(path), '-', request(scheme), request(method))").is_empty());
+        assert_eq!(
+            r(
+                "or(header(x-tenant), lower(cookie(currency)), eq(query(v), '1', request(host)), header(x-tenant))"
+            ),
+            [
+                "header(x-tenant)",
+                "cookie(currency)",
+                "query(v)",
+                "request(host)"
+            ]
+        );
+    }
 
     fn ctx<'a>() -> EvalCtx<'a> {
         EvalCtx {

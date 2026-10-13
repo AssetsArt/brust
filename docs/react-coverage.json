@@ -536,8 +536,7 @@
       ],
       "diagnostics": [
         "fallback:external-component",
-        "fallback:island-children",
-        "warning:fragment-root"
+        "fallback:island-children"
       ],
       "shapes": [
         {
@@ -547,8 +546,7 @@
           "observed": "react",
           "diagnostics": [
             "fallback:external-component",
-            "fallback:island-children",
-            "warning:fragment-root"
+            "fallback:island-children"
           ]
         }
       ],
@@ -566,18 +564,14 @@
       "tiers": [
         "static"
       ],
-      "diagnostics": [
-        "warning:fragment-root"
-      ],
+      "diagnostics": [],
       "shapes": [
         {
           "row": "a-fragment",
           "authoring": "fragment root",
           "expected": "static",
           "observed": "static",
-          "diagnostics": [
-            "warning:fragment-root"
-          ]
+          "diagnostics": []
         },
         {
           "row": "d-fragment-keyed",
@@ -587,7 +581,7 @@
           "diagnostics": []
         }
       ],
-      "note": "warning fragment-root: wrapped in <brust-host>"
+      "note": "static fragment root: no <brust-host>, no warning (gaps L8)"
     },
     {
       "name": "<Profiler>",
@@ -605,8 +599,7 @@
       "diagnostics": [
         "error:island-prop",
         "fallback:external-component",
-        "fallback:island-children",
-        "warning:fragment-root"
+        "fallback:island-children"
       ],
       "shapes": [
         {
@@ -617,8 +610,7 @@
           "diagnostics": [
             "error:island-prop",
             "fallback:external-component",
-            "fallback:island-children",
-            "warning:fragment-root"
+            "fallback:island-children"
           ]
         },
         {
@@ -628,8 +620,7 @@
           "observed": "react",
           "diagnostics": [
             "fallback:external-component",
-            "fallback:island-children",
-            "warning:fragment-root"
+            "fallback:island-children"
           ]
         }
       ],
@@ -648,8 +639,7 @@
       ],
       "diagnostics": [
         "fallback:external-component",
-        "fallback:island-children",
-        "warning:fragment-root"
+        "fallback:island-children"
       ],
       "shapes": [
         {
@@ -659,8 +649,7 @@
           "observed": "react",
           "diagnostics": [
             "fallback:external-component",
-            "fallback:island-children",
-            "warning:fragment-root"
+            "fallback:island-children"
           ]
         }
       ],
@@ -683,8 +672,7 @@
         "fallback:external-component",
         "fallback:island-children",
         "fallback:jsx-expression",
-        "fallback:local-component",
-        "warning:fragment-root"
+        "fallback:local-component"
       ],
       "shapes": [
         {
@@ -697,8 +685,7 @@
             "fallback:external-component",
             "fallback:island-children",
             "fallback:jsx-expression",
-            "fallback:local-component",
-            "warning:fragment-root"
+            "fallback:local-component"
           ]
         },
         {
@@ -709,8 +696,7 @@
           "diagnostics": [
             "fallback:external-component",
             "fallback:island-children",
-            "fallback:jsx-expression",
-            "warning:fragment-root"
+            "fallback:jsx-expression"
           ]
         }
       ],
@@ -729,8 +715,7 @@
       ],
       "diagnostics": [
         "fallback:external-component",
-        "fallback:island-children",
-        "warning:fragment-root"
+        "fallback:island-children"
       ],
       "shapes": [
         {
@@ -740,8 +725,7 @@
           "observed": "react",
           "diagnostics": [
             "fallback:external-component",
-            "fallback:island-children",
-            "warning:fragment-root"
+            "fallback:island-children"
           ]
         }
       ],
@@ -884,7 +868,6 @@
       ],
       "diagnostics": [
         "fallback:member-tag",
-        "warning:fragment-root",
         "fallback:jsx-expression"
       ],
       "shapes": [
@@ -894,8 +877,7 @@
           "expected": "react",
           "observed": "react",
           "diagnostics": [
-            "fallback:member-tag",
-            "warning:fragment-root"
+            "fallback:member-tag"
           ]
         },
         {
@@ -905,8 +887,7 @@
           "observed": "react",
           "diagnostics": [
             "fallback:member-tag",
-            "fallback:jsx-expression",
-            "warning:fragment-root"
+            "fallback:jsx-expression"
           ]
         }
       ],
@@ -983,8 +964,7 @@
         "fallback:external-component",
         "fallback:island-children",
         "fallback:jsx-expression",
-        "fallback:local-component",
-        "warning:fragment-root"
+        "fallback:local-component"
       ],
       "shapes": [
         {
@@ -997,8 +977,7 @@
             "fallback:external-component",
             "fallback:island-children",
             "fallback:jsx-expression",
-            "fallback:local-component",
-            "warning:fragment-root"
+            "fallback:local-component"
           ]
         },
         {
@@ -1008,8 +987,7 @@
           "observed": "react",
           "diagnostics": [
             "fallback:dynamic-import",
-            "fallback:local-component",
-            "warning:fragment-root"
+            "fallback:local-component"
           ]
         }
       ],
@@ -1388,8 +1366,7 @@
         "react"
       ],
       "diagnostics": [
-        "fallback:browser-global",
-        "warning:fragment-root"
+        "fallback:browser-global"
       ],
       "shapes": [
         {
@@ -1398,8 +1375,7 @@
           "expected": "react",
           "observed": "react",
           "diagnostics": [
-            "fallback:browser-global",
-            "warning:fragment-root"
+            "fallback:browser-global"
           ]
         }
       ],
@@ -1674,18 +1650,14 @@
       "tiers": [
         "static"
       ],
-      "diagnostics": [
-        "warning:fragment-root"
-      ],
+      "diagnostics": [],
       "shapes": [
         {
           "row": "e-server-function-prop",
           "authoring": "server function passed to a client component",
           "expected": "react",
           "observed": "static",
-          "diagnostics": [
-            "warning:fragment-root"
-          ]
+          "diagnostics": []
         }
       ],
       "note": "No Server Functions: call an `[actions]` route (`@brust/core/actions`) instead."

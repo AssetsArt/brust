@@ -18,6 +18,10 @@ pub enum Node {
         /// The single element that carries `x-data` (the mount host).
         host: bool,
         ref_name: Option<String>,
+        /// A wrapper the compiler added around a root that is not one element (`host_root`). A static
+        /// component prints only its children; an interactive one keeps the `<brust-host>` element.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        synthetic: bool,
     },
     Text(String),
     Slot(Expr),

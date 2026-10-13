@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 37 | 23 | 11 | 3 | 0 | 0 | 0 | 0 |
+| A JSX basics | 41 | 26 | 12 | 3 | 0 | 0 | 0 | 0 |
 | B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 4 | 1 | 23 | 1 | 0 | 0 | 0 |
-| E v2 specifics | 27 | 7 | 10 | 5 | 4 | 1 | 0 | 0 |
-| **Total** | 135 | 41 | 37 | 51 | 5 | 1 | 0 | 0 |
+| E v2 specifics | 29 | 8 | 10 | 6 | 4 | 1 | 0 | 0 |
+| **Total** | 141 | 45 | 38 | 52 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -31,9 +31,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-attributes | static and dynamic attributes | static | static | 0 | ok | — | spec §3.1 static tier; §6.2 attributes |
 | a-classname-template | className template literal | static | static | 0 | ok | — | spec §6.2 template literal |
 | a-style-object | style object from props | static | static | 0 | ok | — | spec §6.2 style object |
+| a-module-const | module const (literal, array) in render | static | static | 0 | ok | — | spec §6.2 literals/arrays; module consts fold at compile time (L1) |
+| a-module-const-mutated | module const array mutated in its module | static | static | precompute | ok | — | R1.1: a mutated array never folds; it stays a precompute slot |
+| a-list-cond-element | .map returning a ternary between two elements | static | static | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms desugar to For + If |
+| a-list-cond-state | .map returning a conditional element over state | native | native | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms |
 | a-and-guard | && guard on a prop | static | static | 0 | ok | — | spec §6.2 && guard |
 | a-ternary | ternary on a prop | static | static | 0 | ok | — | spec §6.2 ternary |
-| a-fragment | fragment root | static | static | 0 | ok | warning:fragment-root | warning fragment-root: wrapped in <brust-host> |
+| a-fragment | fragment root | static | static | 0 | ok | — | static fragment root: no <brust-host>, no warning (gaps L8) |
 | a-list-keys | keyed list from a prop | static | static | 0 | ok | — | spec §6.2 keyed list |
 | a-nested-list | nested keyed lists | static | static | 0 | ok | — | table rows |
 | a-cond-attribute | conditional attribute via ternary | static | static | 0 | ok | — | spec §6.2 conditional attribute |
@@ -71,15 +75,15 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-child-static | static child component | static | static | 0 | ok | — | spec §3.1 inlined child |
 | b-child-props | child with props | static | static | 0 | ok | — | spec §3.1 inlined child with props |
 | b-child-dir-index | child imported from a directory (./widgets → widgets/index.ts) | static | static | 0 | ok | — | spec §3.1 inlined child; Bun resolves <dir>/index.ts; compiler matches (M3-F store lane) |
-| b-children-slot | children passed through a slot | static | static | 0 | ok | warning:fragment-root | spec §3.1 children slot |
+| b-children-slot | children passed through a slot | static | static | 0 | ok | — | spec §3.1 children slot |
 | b-reactive-props | state flows into a native child as a reactive prop | native | native | 0 | ok | — | spec §7.4 reactive props (D8) |
 | b-function-prop | function prop to a native child | native | native | 0 | ok | — | spec §7.4 function prop between native components |
 | b-react-child-island | react child inside a native parent (island) | static | static | ssr | ok | — | the parent stays static; its one job is the child island SSR render |
-| b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component, warning:fragment-root |  |
+| b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component |  |
 | b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
 | b-forwardref | forwardRef component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
-| b-spread-child | spread props onto a component (F31) | react | react | ssr | ok | fallback:spread-props, warning:fragment-root |  |
+| b-spread-child | spread props onto a component (F31) | react | react | ssr | ok | fallback:spread-props |  |
 
 ## C. Hooks
 
@@ -121,27 +125,27 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
 | d-cache | cache() around a server helper | static | static | precompute | ok | — | spec §3.4 cache() |
-| d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:jsx-expression, fallback:local-component, warning:fragment-root | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
-| d-createcontext | createContext provider | react | react | ssr | ok | fallback:member-tag, warning:fragment-root |  |
+| d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:jsx-expression, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
+| d-createcontext | createContext provider | react | react | ssr | ok | fallback:member-tag |  |
 | d-clone-element | cloneElement | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-expression |  |
-| d-suspense-static | <Suspense> around static content | react | react | ssr | ok | fallback:external-component, fallback:island-children, fallback:jsx-expression, warning:fragment-root | spec §3 react tier: Suspense |
+| d-suspense-static | <Suspense> around static content | react | react | ssr | ok | fallback:external-component, fallback:island-children, fallback:jsx-expression | spec §3 react tier: Suspense |
 | d-fragment-keyed | <Fragment key> inside a list | static | static | 0 | ok | — |  |
-| d-activity | <Activity mode> | react | react | ssr | ok | fallback:external-component, fallback:island-children, warning:fragment-root |  |
-| d-profiler | <Profiler onRender> | error | error | ssr | refused | error:island-prop, fallback:external-component, fallback:island-children, warning:fragment-root | a function prop to an external component is refused (island-prop) |
-| d-profiler-bare | <Profiler> without onRender | react | react | ssr | ok | fallback:external-component, fallback:island-children, warning:fragment-root |  |
-| d-strictmode | <StrictMode> | react | react | ssr | ok | fallback:external-component, fallback:island-children, warning:fragment-root |  |
-| d-viewtransition | <ViewTransition> | react | react | ssr | ok | fallback:external-component, fallback:island-children, warning:fragment-root |  |
+| d-activity | <Activity mode> | react | react | ssr | ok | fallback:external-component, fallback:island-children |  |
+| d-profiler | <Profiler onRender> | error | error | ssr | refused | error:island-prop, fallback:external-component, fallback:island-children | a function prop to an external component is refused (island-prop) |
+| d-profiler-bare | <Profiler> without onRender | react | react | ssr | ok | fallback:external-component, fallback:island-children |  |
+| d-strictmode | <StrictMode> | react | react | ssr | ok | fallback:external-component, fallback:island-children |  |
+| d-viewtransition | <ViewTransition> | react | react | ssr | ok | fallback:external-component, fallback:island-children |  |
 | d-act | act() in a component module | static | static | 0 | ok | — | a test helper: importing it changes nothing about the component |
 | d-addtransitiontype | addTransitionType inside startTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-cachesignal | cacheSignal() in a cached function | static | static | precompute | ok | — | spec §3.4 cache(): the call is a precompute job on the server |
 | d-captureownerstack | captureOwnerStack in a handler | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-taint-object | experimental_taintObjectReference | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-taint-unique | experimental_taintUniqueValue | react | react | ssr | ok | fallback:hook-unsupported |  |
-| d-lazy-component | lazy component without Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:local-component, warning:fragment-root |  |
+| d-lazy-component | lazy component without Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:local-component |  |
 | d-memo-state | default export memo(function …) with state | react | react | ssr | ok | fallback:default-export-shape | fail-closed: an inline function inside the default export is the default-export-shape fallback (memo(Named) is b-memo) |
-| d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | fallback:member-tag, fallback:jsx-expression, warning:fragment-root |  |
-| d-createportal | createPortal | react | react | ssr | ok | fallback:browser-global, warning:fragment-root |  |
+| d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | fallback:member-tag, fallback:jsx-expression |  |
+| d-createportal | createPortal | react | react | ssr | ok | fallback:browser-global |  |
 | d-flushsync | flushSync in a handler | react | native | 0 | ok | — | known gap: F115: compiles native but the client chunk imports react-dom (a native chunk must contain no react import); it should fall back to react |
 | d-preconnect | preconnect in render | react | react | ssr | ok | fallback:body-shape |  |
 | d-prefetchdns | prefetchDNS in render | react | react | ssr | ok | fallback:body-shape |  |
@@ -154,6 +158,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
+| e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
+| e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-precompute-props | props-only value outside the template subset | static | static | precompute | ok | — | spec §6.4 precompute |
 | e-precompute-state | state-dependent value from a module helper | native | native | precompute | ok | — | spec §6.4 precompute |
 | e-precompute-per-item | per-item precompute in a list | static | static | precompute | ok | — | spec §6.4 precompute |
@@ -164,7 +170,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-request-prop | request state read in render | error | error | precompute | refused | error:request-state-in-render |  |
 | e-missing-key | list without key | error | error | 0 | refused | error:list-key |  |
 | e-use-client | 'use client' leftover | static | static | 0 | ok | warning:use-client-leftover | spec §8.1 use-client-leftover (F41) |
-| e-fragment-root | fragment root with state | native | native | 0 | ok | warning:fragment-root | warning fragment-root |
+| e-fragment-root | fragment root with state | native | native | 0 | ok | — | keeps <brust-host>; the fragment-root warning comes from lowering (not in ir.diagnostics) |
 | e-if-in-table | state-driven row inside a table | native | native | 0 | ok | — | spec §7.1 x-if |
 | e-raw-text-child | dynamic child of <script> | react | react | ssr | ok | fallback:raw-text-child | raw-text-child: the template would HTML-escape a dynamic value inside raw text (F35) |
 | e-static-list-child | static child with row-only props in a prop list (F70) | static | static | 0 | ok | — | ledger F70: no link, no chunk, no x-* — the row cannot change on the client |
@@ -180,7 +186,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |
 | e-use-server | 'use server' function | react | static | precompute | ok | — | known gap: F115: the directive is ignored and the function becomes a precompute value the url_ok guard drops (a form with no action); actions are an Elysia app under [actions] |
 | e-server-component-async | async Server Component | react | static | precompute | ok | — | known gap: F115: an async component becomes a precompute job whose function is not async (`await` in a sync function: a broken job); it should fall back to react or refuse. Loaders and jobs are the server half |
-| e-server-function-prop | server function passed to a client component | react | static | precompute | ok | warning:fragment-root | known gap: F115: the function crosses as a precompute value into x-props (json null), so the child calls undefined at click time; it should refuse like e-function-prop-react-child. Use [actions] |
+| e-server-function-prop | server function passed to a client component | react | static | precompute | ok | — | known gap: F115: the function crosses as a precompute value into x-props (json null), so the child calls undefined at click time; it should refuse like e-function-prop-react-child. Use [actions] |
 
 ## By React API
 
@@ -225,7 +231,7 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 | Entry | Status | Rows | Note |
 |---|---|---|---|
 | [`<Activity>`](https://react.dev/reference/react/Activity) | island | d-activity | <Activity mode> |
-| [`<Fragment>`](https://react.dev/reference/react/Fragment) | static | a-fragment, d-fragment-keyed | warning fragment-root: wrapped in <brust-host> |
+| [`<Fragment>`](https://react.dev/reference/react/Fragment) | static | a-fragment, d-fragment-keyed | static fragment root: no <brust-host>, no warning (gaps L8) |
 | [`<Profiler>`](https://react.dev/reference/react/Profiler) | partial | d-profiler, d-profiler-bare | island: d-profiler-bare; refused: d-profiler |
 | [`<StrictMode>`](https://react.dev/reference/react/StrictMode) | island | d-strictmode | <StrictMode> |
 | [`<Suspense>`](https://react.dev/reference/react/Suspense) | island | d-lazy-suspense, d-suspense-static | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |

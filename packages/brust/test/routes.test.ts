@@ -7,8 +7,10 @@ const L = () => null,
   N = () => null
 
 test('defineRoutes rejects every non-M2 field with the M3 message', () => {
-  for (const field of ['native', 'errorBoundary', 'ssg', 'middleware', 'sse', 'websocket', 'index'])
+  for (const field of ['native', 'errorBoundary', 'middleware', 'sse', 'websocket', 'index'])
     expect(() => defineRoutes([{ path: '/', Component: H, [field]: 1 } as any])).toThrow(`${field} is not supported in M2 (M3)`)
+  // `ssg` is a v2 field again (gaps round R9.2), validated by shape: test/ssg.test.ts
+  expect(() => defineRoutes([{ path: '/', Component: H, ssg: 1 } as any])).toThrow('route /: ssg must be false or { params }')
   expect(() => defineRoutes([{ path: '/', Component: H, cache: { ttl_seconds: 1, key: () => 'k' } } as any])).toThrow('cache.key is not supported in M2 (M3)')
   expect(() => defineRoutes([{ path: '/x', children: [{ Component: H }] }])).toThrow(/leaf .* needs a path/)
   expect(() => defineRoutes([{ path: '*', Component: N, children: [{ path: '/a', Component: H }] }])).toThrow(/'\*' must be a leaf/)

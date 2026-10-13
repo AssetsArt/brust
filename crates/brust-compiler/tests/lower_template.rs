@@ -626,3 +626,14 @@ fn literal_style_object_lowers_to_css_decls() {
         "{html}"
     );
 }
+
+#[test]
+fn a_folded_module_const_is_escaped_like_any_literal() {
+    let (jinja, _) = lower(
+        "const HOSTILE = 'a\"b </script><!-- \\n x'\nexport default function T() { return <p title={HOSTILE}>{HOSTILE}</p> }",
+    );
+    let html = render(&jinja, serde_json::json!({}));
+    assert!(!html.contains("</script"), "{html}");
+    assert!(html.contains("a&quot;b"), "{html}");
+    assert!(html.contains("&lt;/script&gt;"), "{html}");
+}

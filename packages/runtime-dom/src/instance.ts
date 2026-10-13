@@ -1,6 +1,16 @@
 import { effect as coreEffect, signal, type Dispose, type Signal } from './signal'
 import type { BehaviorCtx, BehaviorFactory, BehaviorInstance } from './registry'
 
+/** Defined by `brust build --dev` (true) and every other build (false): the dev code below is removed from production bundles. */
+declare const __BRUST_DEV__: boolean | undefined
+/** Dev only (L14): the live instances, for the devtools (`globalThis.__brustDev.instances`). */
+function devTrack(i: Instance, on: boolean): void {
+  const g = globalThis as { __brustDev?: { instances: Set<Instance> } }
+  const dev = (g.__brustDev ??= { instances: new Set<Instance>() })
+  if (on) dev.instances.add(i)
+  else dev.instances.delete(i)
+}
+
 export class Instance {
   members: BehaviorInstance = {}
   props: Signal<Record<string, unknown>>
@@ -17,6 +27,7 @@ export class Instance {
   constructor(public host: HTMLElement, public name: string, public parent: Instance | null, initialProps: Record<string, unknown>) {
     this.props = signal(initialProps)
     parent?.children.add(this)
+    if (typeof __BRUST_DEV__ !== 'undefined' && __BRUST_DEV__) devTrack(this, true)
   }
 
   effect(fn: () => void | (() => void)): Dispose {
@@ -63,6 +74,7 @@ export class Instance {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    if (typeof __BRUST_DEV__ !== 'undefined' && __BRUST_DEV__) devTrack(this, false)
     this.pending = null   // effects not yet started never run
     for (const c of Array.from(this.children)) c.dispose()
     this.parent?.children.delete(this)

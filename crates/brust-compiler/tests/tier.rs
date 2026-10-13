@@ -114,7 +114,7 @@ fn foreign_ref_falls_back() {
 #[test]
 fn diagnostics_sort_by_severity_then_position() {
     let ir = analyze(
-        "export default function D({ xs, a }: any) {\n  return <>{a ?? <i/>}{xs.map((x: any) => <li>{x}</li>)}</>\n}",
+        "export default function D({ xs, a }: any) {\n  return <div key=\"k\">{a ?? <i/>}{xs.map((x: any) => <li>{x}</li>)}</div>\n}",
     );
     let order: Vec<_> = ir
         .diagnostics

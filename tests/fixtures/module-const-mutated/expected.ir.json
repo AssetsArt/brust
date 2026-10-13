@@ -1,0 +1,94 @@
+{
+  "id": "input_f70bbfa0",
+  "source": "tests/fixtures/module-const-mutated/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 90,
+      "tag": "ul",
+      "attrs": [],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Precomputed": {
+                "slot": "_s1",
+                "js": "ITEMS",
+                "client_js": null,
+                "inputs": [],
+                "state_dependent": false,
+                "per_item": null
+              }
+            },
+            "item": "it",
+            "index": null,
+            "key": {
+              "Server": {
+                "loc": 139,
+                "kind": {
+                  "Ident": {
+                    "name": "it",
+                    "kind": "LoopBinding"
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Element": {
+                  "loc": 130,
+                  "tag": "li",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Server": {
+                          "loc": 144,
+                          "kind": {
+                            "Ident": {
+                              "name": "it",
+                              "kind": "LoopBinding"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [],
+      "outputs": [
+        "_s1"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

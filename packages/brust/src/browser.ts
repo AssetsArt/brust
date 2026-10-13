@@ -1,3 +1,4 @@
+/// <reference path="./css-modules.d.ts" />
 // `@brust/core` under the `browser` export condition (and what every browser bundle of
 // `brust build` resolves the package root to): only the side-effect-free pieces. No `run`, no
 // config, no napi addon — a react island may import `cache` from the package root.
@@ -26,4 +27,4 @@ export {
   Outlet,
   redirect,
 } from './routes'
-export type { ComponentType, FlatRoute, HttpErrorOpts, HttpErrorTrigger, LoaderCtx, LoaderReq, Route, RouteCacheConfig, Verdict } from './routes'
+export type { ComponentType, FlatRoute, HttpErrorOpts, HttpErrorTrigger, LoaderCtx, LoaderReq, Route, RouteCacheConfig, RouteSsgConfig, Verdict } from './routes'
