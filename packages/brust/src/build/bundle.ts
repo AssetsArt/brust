@@ -14,6 +14,7 @@ import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
 import { BuildError } from './errors'
+import { RUNTIME_FEATURES } from './features'
 
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
 /** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). `brust dev` builds set
@@ -208,52 +209,86 @@ async function browserBuild(
   return entries
 }
 
-/** D3/C6: one runtime instance per page. Island and native client builds resolve the reactive core and
- * the store API to the runtime bundle URL (external), exactly as the compiler's `runtimeImport`. The
- * React bridge (`useStore`) is bundled (it holds no module state), but ITS imports of the core are the
- * runtime too. Registered after `serverOnlyPlugin`, before `sourceDirPlugin` (which would resolve the
+/** The client runtime's URLs (L33): the core every page loads, the `store` module (`defineStore` + the reactive
+ * primitives a store's code imports), and the feature modules. Core and features are single shared ESM files, so a
+ * page has one signal graph and one binder registry however many features it loads. */
+export interface RuntimeUrls {
+  core: string
+  store: string
+}
+
+/** D3/C6: one runtime instance per page. Island and native client builds resolve the reactive core to the core URL
+ * and the store API to the store module's URL (external), exactly as the compiler's `runtimeImport` (the core). The
+ * React bridge (`useStore`) is bundled (it holds no module state), but ITS imports of the core are the store
+ * module too. Registered after `serverOnlyPlugin`, before `sourceDirPlugin` (which would resolve the
  * bare specifiers to files). */
-export function runtimeAliasPlugin(runtimeUrl: string): BunPlugin {
+export function runtimeAliasPlugin(urls: RuntimeUrls): BunPlugin {
   return {
     name: 'brust-runtime-alias',
     setup(b) {
-      b.onResolve({ filter: /^@brust\/(runtime-dom(\/store)?|core\/store)$/ }, () => ({ path: runtimeUrl, external: true }))
+      b.onResolve({ filter: /^@brust\/runtime-dom(\/core)?$/ }, () => ({ path: urls.core, external: true }))
+      b.onResolve({ filter: /^@brust\/(runtime-dom|core)\/store$/ }, () => ({ path: urls.store, external: true }))
       let bridge: string | undefined
       b.onResolve({ filter: /^@brust\/(runtime-dom|core)\/store\/react$/ }, () => {
         bridge ??= Bun.resolveSync('@brust/runtime-dom/store/react', import.meta.dir) // core lane file; resolved lazily
         return { path: bridge }
       })
-      b.onResolve({ filter: /^\.\.?\// }, (a) => (bridge !== undefined && a.importer === bridge ? { path: runtimeUrl, external: true } : undefined))
+      b.onResolve({ filter: /^\.\.?\// }, (a) => (bridge !== undefined && a.importer === bridge ? { path: urls.store, external: true } : undefined))
     },
   }
 }
 
-/** `dist/client/runtime-<hex>.js`: runtime-dom, re-exported (client chunks import `signal`,
- * `defineBehavior`, … from this URL) and mounted on `document.documentElement` (contract 6). */
-export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<string> {
-  const entry = join(dist, '.stage', 'runtime.ts')
-  write(entry, "export * from '@brust/runtime-dom'\nimport { mount } from '@brust/runtime-dom'\nmount(document.documentElement)\n")
+/** What `buildRuntime` wrote: `client/<file>` paths (relative to dist). */
+export interface RuntimeAssets {
+  /** The core: `export *` of the runtime core + `mount(document.documentElement)` (contract 6). */
+  core: string
+  store: string
+  /** Feature module name → file; every module is built, a route links the ones its components need. */
+  features: Record<string, string>
+}
+
+/** `dist/client/runtime-<hex>.js` (the core; client chunks import `signal`, `defineBehavior`, … from this URL), then
+ * one `rt-<feature>-<hex>.js` per feature module and `rt-store-<hex>.js`, each importing the core by that URL. */
+export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<RuntimeAssets> {
   // Resolved from this package (its dependency), not from wherever `dist/` sits.
-  const runtimeDom = Bun.resolveSync('@brust/runtime-dom', import.meta.dir)
-  const res = await browserBuild(dist, 'runtime', ctx, {
-    entrypoints: [entry],
+  const dir = dirname(Bun.resolveSync('@brust/runtime-dom', import.meta.dir))
+  const coreEntry = join(dist, '.stage', 'runtime.ts')
+  write(coreEntry, "export * from '@brust/runtime-dom/core'\nimport { mount } from '@brust/runtime-dom/core'\nmount(document.documentElement)\n")
+  const core = (
+    await browserBuild(dist, 'runtime', ctx, {
+      entrypoints: [coreEntry],
+      plugins: [{ name: 'brust-runtime-dom', setup: (b) => void b.onResolve({ filter: /^@brust\/runtime-dom\/core$/ }, () => ({ path: join(dir, 'core.ts') })) }],
+    })
+  ).get('runtime')!
+  // Features import the core's API (`core-api`, and `core` for the store's re-exports) from the core file by URL.
+  const coreUrl = `/_brust/${core}`
+  const coreFiles = new Set(['core-api', 'core'].map((f) => join(dir, f)))
+  const names = [...RUNTIME_FEATURES, 'store'] as const
+  const entries = names.map((n) => {
+    const file = join(dist, '.stage', `rt-${n}.ts`)
+    write(file, `import ${JSON.stringify(join(dir, 'features', n))}\nexport * from ${JSON.stringify(join(dir, 'features', n))}\n`)
+    return file
+  })
+  const built = await browserBuild(dist, 'runtime features', ctx, {
+    entrypoints: entries,
     plugins: [
       {
-        name: 'brust-runtime-dom',
-        setup(b) {
-          b.onResolve({ filter: /^@brust\/runtime-dom$/ }, () => ({ path: runtimeDom }))
-        },
+        name: 'brust-runtime-core-external',
+        setup: (b) =>
+          void b.onResolve({ filter: /^\.\.?\/(core-api|core)$/ }, (a) => (coreFiles.has(resolve(dirname(a.importer), a.path)) ? { path: coreUrl, external: true } : undefined)),
       },
     ],
   })
-  return res.get('runtime')!
+  const features: Record<string, string> = {}
+  for (const n of RUNTIME_FEATURES) features[n] = built.get(`rt-${n}`)!
+  return { core, store: built.get('rt-store')!, features }
 }
 
 /** One entry chunk per component with client JS (`<id>-<hex>.js`), split: a module two chunks
  * import (a store) lands once in a shared `chunk-<hex>.js`, so one page has one instance of it.
  * The runtime import stays the absolute `/_brust/client/runtime-<hex>.js` URL the compiler
  * printed (external: one runtime for every chunk). */
-export async function buildClientChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: string): Promise<Map<string, string>> {
+export async function buildClientChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   for (const c of compiled.values()) {
     if (c.clientJs === undefined) continue
@@ -331,7 +366,7 @@ export function islandShim(c: Compiled): string {
 
 /** One island chunk per react-tier component (`react-<id>-<hex>.js`, contract 3), React split
  * into a shared chunk the island chunks import relatively. */
-export async function buildReactChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: string): Promise<Map<string, string>> {
+export async function buildReactChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   for (const c of compiled.values()) {
     if (!isReact(c)) continue

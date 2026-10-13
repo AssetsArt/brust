@@ -1,6 +1,4 @@
-import { BINDERS, bindElement, walkChildren } from './index'
-import { parsed, read } from './common'
-import { hooks } from '../instance'
+import { BINDERS, bindElement, walkChildren, parsed, read, hooks } from '../core-api'
 BINDERS.push({
   match: (a) => a === 'x-if',
   bind: ({ inst, el, attr, raw, scope }) => {

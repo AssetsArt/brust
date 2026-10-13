@@ -1,5 +1,4 @@
-import { BINDERS } from './index'
-import { parsed, read, mismatch } from './common'
+import { BINDERS, parsed, read, mismatch } from '../core-api'
 /** Both sides through the HTML parser (inert `<template>`), so `<br/>` vs `<br>` or entity spelling is not a mismatch. */
 function sameMarkup(el: Element, next: string): boolean {
   const t = document.createElement('template'); t.innerHTML = next

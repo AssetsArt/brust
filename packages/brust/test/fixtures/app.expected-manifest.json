@@ -42,7 +42,10 @@
       "client": "client/appLayout_d491b982-<hash>.js",
       "needs_worker": false,
       "use_id_slots": 0,
-      "stores": []
+      "stores": [],
+      "features": [
+        "basics"
+      ]
     },
     "homePage_010405bc": {
       "tier": "static",
@@ -52,7 +55,8 @@
       "client": null,
       "needs_worker": false,
       "use_id_slots": 0,
-      "stores": []
+      "stores": [],
+      "features": []
     },
     "itemPage_b7278c7c": {
       "tier": "static",
@@ -114,7 +118,8 @@
       "client": null,
       "needs_worker": true,
       "use_id_slots": 1,
-      "stores": []
+      "stores": [],
+      "features": []
     },
     "priceRow_042dcbca": {
       "tier": "static",
@@ -142,7 +147,8 @@
       "client": null,
       "needs_worker": true,
       "use_id_slots": 0,
-      "stores": []
+      "stores": [],
+      "features": []
     },
     "team_db295766": {
       "tier": "react",
@@ -171,11 +177,23 @@
       "client": "client/react-team_db295766-<hash>.js",
       "needs_worker": true,
       "use_id_slots": 0,
-      "stores": []
+      "stores": [],
+      "features": [
+        "island"
+      ]
     }
   },
   "assets": {
-    "runtime": "client/runtime-<hash>.js"
+    "runtime": "client/runtime-<hash>.js",
+    "features": {
+      "basics": "client/rt-basics-<hash>.js",
+      "if": "client/rt-if-<hash>.js",
+      "for": "client/rt-for-<hash>.js",
+      "model": "client/rt-model-<hash>.js",
+      "html": "client/rt-html-<hash>.js",
+      "island": "client/rt-island-<hash>.js",
+      "store": "client/rt-store-<hash>.js"
+    }
   },
   "jobs_module": "jobs.js",
   "actions": null

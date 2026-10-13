@@ -1,9 +1,8 @@
-export { signal, computed, effect, batch, untracked, isSignal, isComputed } from './signal'
-export type { Signal, Computed, Dispose } from './signal'
+// The full runtime: the core plus every feature. Tests and non-split consumers import this; the browser build
+// loads `./core` and only the `./features/*` a route needs.
+export * from './core'
 export { defineStore } from './store/define-store'
 export type { StoreHandle, Snapshot } from './store/define-store'
-export { defineBehavior, setChunkLoader } from './registry'
-export type { BehaviorCtx, BehaviorFactory, BehaviorInstance } from './registry'
-export { mount, unmount } from './mount'
 export { defineIsland } from './island'
 export type { IslandHydrate } from './island'
+import './features/index'

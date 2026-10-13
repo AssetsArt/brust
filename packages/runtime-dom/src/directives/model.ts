@@ -1,7 +1,4 @@
-import { BINDERS } from './index'
-import { parsed, member } from './common'
-import { isSignal, type Signal } from '../signal'
-import { warnOnce } from '../warn'
+import { BINDERS, parsed, member, isSignal, warnOnce, type Signal } from '../core-api'
 BINDERS.push({
   match: (a) => a === 'x-model',
   bind: ({ inst, el, attr, raw }) => {

@@ -63,11 +63,13 @@ test('static route: 200, layout composed, zero Bun calls, only the layout runtim
   expect(r.status).toBe(200)
   expect(html).toMatch(/<main>\s*<section><h1>Home<\/h1><\/section><\/main>/)
   // HomePage is static: no chunk, no island. The only scripts are the native layout's (useState):
-  // the runtime and the layout chunk (contract 6) — they load in the browser, not in Bun.
+  // the runtime core, the one feature module the layout binds (L33: `basics`) and the layout chunk (contract 6) —
+  // they load in the browser, not in Bun.
   const scripts = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1])
-  expect(scripts).toHaveLength(2)
+  expect(scripts).toHaveLength(3)
   expect(scripts[0]).toMatch(/^\/_brust\/client\/runtime-[0-9a-f]{10}\.js$/)
-  expect(scripts[1]).toMatch(/^\/_brust\/client\/appLayout_[0-9a-f]{8}-[0-9a-f]{10}\.js$/)
+  expect(scripts[1]).toMatch(/^\/_brust\/client\/rt-basics-[0-9a-f]{10}\.js$/)
+  expect(scripts[2]).toMatch(/^\/_brust\/client\/appLayout_[0-9a-f]{8}-[0-9a-f]{10}\.js$/)
   expect(html).not.toContain('<script>')
   expect(html).not.toContain('brust-island')
   expect(await stats()).toMatchObject({ loader_calls: 0, job_calls: 0 })

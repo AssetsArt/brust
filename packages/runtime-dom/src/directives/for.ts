@@ -1,8 +1,4 @@
-import { BINDERS, bindElement, walkChildren } from './index'
-import { parsed, read, member } from './common'
-import { warnOnce } from '../warn'
-import { computed, signal, type Signal } from '../signal'
-import { hooks } from '../instance'
+import { BINDERS, bindElement, walkChildren, parsed, read, member, warnOnce, computed, signal, hooks, type Signal } from '../core-api'
 
 type RowScope = Record<string, unknown> & { __own: Signal<number> }
 

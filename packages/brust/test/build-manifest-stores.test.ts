@@ -59,7 +59,7 @@ test('storesOf: cycles terminate', () => {
 })
 
 test('writeManifest puts `stores` on every component record', () => {
-  const m = writeManifest({ leaves: [], routeComponent: new Map(), compiled: app(), runtime: 'client/runtime.js', chunks: new Map() })
+  const m = writeManifest({ leaves: [], routeComponent: new Map(), compiled: app(), runtime: { core: 'client/runtime.js', features: { island: 'client/rt-island.js' } }, chunks: new Map() })
   expect(Object.fromEntries(Object.entries(m.components).map(([id, c]) => [id, c.stores]))).toEqual({
     I: ['stores/team.ts'],
     N: ['stores/cart.ts', 'stores/ui.ts'],
@@ -69,4 +69,9 @@ test('writeManifest puts `stores` on every component record', () => {
   // After `use_id_slots` in the record (key order is the JSON order).
   const keys = Object.keys(m.components.P!)
   expect(keys.indexOf('stores')).toBe(keys.indexOf('use_id_slots') + 1)
+})
+
+test('writeManifest refuses a component whose runtime feature the build did not ship', () => {
+  const opts = { leaves: [], routeComponent: new Map(), compiled: app(), chunks: new Map() }
+  expect(() => writeManifest({ ...opts, runtime: { core: 'client/runtime.js', features: {} } })).toThrow(expect.objectContaining({ rule: 'runtime-feature-missing', message: expect.stringContaining('I: needs the client runtime feature island') }))
 })

@@ -1,5 +1,4 @@
-import { BINDERS } from './index'
-import { parsed, read } from './common'
+import { BINDERS, parsed, read } from '../core-api'
 BINDERS.push({
   match: (a) => a === 'x-show',
   bind: ({ inst, el, attr, raw, scope }) => {

@@ -93,3 +93,6 @@ export function nearestInstance(el: Element): Instance | null {
 
 /** Late-bound by mount.ts so binders (x-if, x-for) can mount nested hosts synchronously without an import cycle. */
 export const hooks: { mountTree: (root: ParentNode) => void } = { mountTree: () => {} }
+
+/** Late-bound by the `island` feature (features/island.ts) so a page without React islands never loads the hydration glue. */
+export const islandHooks: { schedule: (root: ParentNode) => void; cancel: (root: Node) => void } = { schedule: () => {}, cancel: () => {} }

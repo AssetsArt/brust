@@ -130,6 +130,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: cd packages/runtime-dom && bun run typecheck
       - run: cd packages/runtime-dom && bun test
+      # L33 R35.5: the core and every feature module stay within docs/runtime-budget.json (gzip); raise it in the PR that grows the runtime, with a reason.
+      - run: cd packages/runtime-dom && bun scripts/size.ts --check
       - run: cd packages/runtime-dom && bun scripts/build.ts
   # The battery and the browser harness drive the real `brustc` (built in the job).
   battery:

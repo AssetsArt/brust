@@ -1,5 +1,4 @@
-import { BINDERS } from './index'
-import { parsed, member } from './common'
+import { BINDERS, parsed, member } from '../core-api'
 BINDERS.push({
   match: (a) => a.startsWith('x-on-'),
   bind: ({ inst, el, attr, raw, scope }) => {

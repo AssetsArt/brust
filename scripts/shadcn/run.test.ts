@@ -60,6 +60,16 @@ test('measured and analysis-only rows add up, and the doc rounds client JS to KB
   for (const r of refused) expect(r.build.ok ? null : r.build.refusal?.rule).toBe('island-prop')
 })
 
+test('a page that ships an island counts the runtime core and the rt-* modules it preloads (L33)', () => {
+  const island = rows.find((r) => r.build.ok && r.build.measured.islands > 0)
+  expect(island).toBeDefined()
+  const names = (island!.build.ok ? island!.build.measured.files : []).map((f) => f.name)
+  expect(names).toContain('runtime.js')
+  expect(names).toContain('rt-island.js')
+  // a feature the page's components do not use is not counted
+  expect(names.filter((n) => /^rt-(for|if|model|html)\.js$/.test(n)).length).toBeLessThan(4)
+})
+
 test('the exact sizes go to the git-ignored JSON, not the doc', () => {
   const j = JSON.parse(readFileSync(SIZES, 'utf8')) as { pages: { id: string; built: boolean; raw?: number; gzip?: number }[] }
   expect(j.pages.length).toBe(rows.length)
