@@ -22,11 +22,12 @@ export interface QuickstartData {
 const TEMPLATE = join(import.meta.dir, '../../../packages/create-app/templates/blank')
 const templateFile = (rel: string): string => readFileSync(join(TEMPLATE, rel), 'utf8').trimEnd()
 
-// Real output of `bun run dev` (runs `brust dev routes.tsx`) on a 10-core machine, server log lines trimmed.
-const DEV_OUTPUT = `$ bun run dev
-[brust] built dist in 176ms
-[brust] listening on 127.0.0.1:1337 (io: hyper(tokio))
-[brust] ready (10 workers)`
+// Real output of `bun run dev` (`brust dev routes.tsx`) in a freshly scaffolded blank app, as captured; the build time is machine-dependent.
+const DEV_OUTPUT = `$ brust dev routes.tsx
+[brust] dev server on http://127.0.0.1:1337 — [r]eload  [o]pen  [w]arnings  [c]lear  [q]uit
+[brust] building http://127.0.0.1:1337 gen 0
+[brust] change detected: .
+[brust] ready http://127.0.0.1:1337 gen 1 (656ms)`
 
 // Real response headers, the body cut.
 const CURL_OUTPUT = `$ curl -i http://127.0.0.1:1337/
@@ -84,7 +85,7 @@ export default function Quickstart({ blocks }: QuickstartData) {
 
       <Step n={4} id="run" title="Run it" />
       <p>
-        <code>bun run dev</code> builds and starts the server. Open the address it prints.
+        <code>bun run dev</code> starts the dev server, which builds the app and rebuilds it when a file changes. Open the address it prints.
       </p>
       <CodeBlock code={blocks.dev.code} lang={blocks.dev.lang} cwd={blocks.dev.cwd} html={blocks.dev.html} />
       <CodeBlock code={blocks.curl.code} lang={blocks.curl.lang} cwd={blocks.curl.cwd} html={blocks.curl.html} />
