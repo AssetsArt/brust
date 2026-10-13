@@ -7,8 +7,7 @@ export default function NotFoundPage() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Not found · brust</title>
         <link rel="icon" href="/public/favicon.svg" />
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&display=swap" />
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@400;500;600;700&display=swap" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@300..900&display=swap" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600;700&display=swap" />
         <link rel="stylesheet" href="/public/app.css" />
       </head>

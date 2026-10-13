@@ -20,8 +20,8 @@
   --pz-sky0: oklch(96% 0.025 82); --pz-sky1: oklch(92% 0.055 80); --pz-sky2: oklch(87% 0.09 75); --pz-sky3: oklch(81% 0.12 64); --pz-sun: oklch(77% 0.16 74);
   --pz-far: oklch(52% 0.045 175); --pz-near: oklch(29% 0.045 180); --pz-snow: oklch(96% 0.02 82); --pz-ink: oklch(17% 0.035 185); --pz-sea: oklch(22% 0.04 190);
   --pz-static: oklch(72% 0.13 160); --pz-native: oklch(82% 0.15 80); --pz-react: oklch(74% 0.11 230);
-  --display: "Chakra Petch", sans-serif;
-  --text: "Zen Old Mincho", "Hiragino Mincho ProN", serif;
+  --display: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  --text: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
   --mono: "Azeret Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   color-scheme: light;
