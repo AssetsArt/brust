@@ -7,6 +7,8 @@ import Note from '../../../components/docs/Note'
 import Step from '../../../components/docs/Step'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
+import Tier from '../../../components/docs/Tier'
 
 const SRC = {
   component: {
@@ -84,9 +86,9 @@ export default function ReactIsland({ blocks }: ReactIslandData) {
   return (
     <>
       <h1>A React island</h1>
-      <p className="lead">
+      <Lead>
         When a component needs something the native tier cannot express, such as <code>useDeferredValue</code>, <code>useReducer</code> or a component from a package, brust keeps it as real React: rendered on the server, then hydrated in the browser.
-      </p>
+      </Lead>
 
       <Step n={1} id="component" title="Use a React-only hook" />
       <p>
@@ -97,7 +99,7 @@ export default function ReactIsland({ blocks }: ReactIslandData) {
 
       <Step n={2} id="build" title="Build and read the tier" />
       <p>
-        The native tier has no <code>useDeferredValue</code>, so the compiler falls back to <span className="tier react">react</span> and says why. The manifest records one <code>ssr</code> job (the server render) and a client chunk (the island).
+        The native tier has no <code>useDeferredValue</code>, so the compiler falls back to <Tier t="react">react</Tier> and says why. The manifest records one <code>ssr</code> job (the server render) and a client chunk (the island).
       </p>
       <CodeBlock code={blocks.build.code} lang={blocks.build.lang} cwd={blocks.build.cwd} html={blocks.build.html} />
       <CodeBlock code={blocks.manifest.code} lang={blocks.manifest.lang} file={blocks.manifest.file} html={blocks.manifest.html} />
@@ -110,7 +112,7 @@ export default function ReactIsland({ blocks }: ReactIslandData) {
 
       <Step n={3} id="custom" title="Custom hooks stay native" />
       <p>
-        A hook you write yourself is not a reason for an island. If its body uses only hooks the native tier supports, the compiler inlines it into the component, which stays <span className="tier native">native</span> and ships no React. This debounce hook is one:
+        A hook you write yourself is not a reason for an island. If its body uses only hooks the native tier supports, the compiler inlines it into the component, which stays <Tier t="native">native</Tier> and ships no React. This debounce hook is one:
       </p>
       <CodeBlock code={blocks.hook.code} lang={blocks.hook.lang} file={blocks.hook.file} html={blocks.hook.html} />
       <p>

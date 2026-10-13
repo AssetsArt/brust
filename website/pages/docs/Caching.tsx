@@ -10,6 +10,9 @@ import { cacheSource, EXAMPLES, type Example, PROBES } from '../../lib/cache-exa
 import transcripts from '../../lib/cache-transcripts.json'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
+import TableWrap from '../../components/docs/TableWrap'
 
 export interface CachingData {
   toc: TocItem[]
@@ -131,7 +134,7 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
   return (
     <>
       <h1>Caching</h1>
-      <p className="lead">A route with a cache field is stored in the Rust server's memory after its first render. A hit is answered without calling Bun.</p>
+      <Lead>A route with a cache field is stored in the Rust server's memory after its first render. A hit is answered without calling Bun.</Lead>
 
       <h2 id="route">Cache a route</h2>
       <CodeBlock code={blocks.route.code} lang={blocks.route.lang} file={blocks.route.file} html={blocks.route.html} />
@@ -145,15 +148,10 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
       <p>
         The button requests <code>/demo/pokemon/{'{name}'}</code> three times with a fresh query string: the same URL twice, then with <code>?nocache=1</code>. This site is built to ship as static files, so the requests go to a simulation of the route's rules in your browser, and each row shows the <code>x-brust-cache</code> header a brust server sends for it.
       </p>
-      <div className="browser">
-        <div className="url">
-          <span>Simulated demo</span>
-          <span className="lbl">CacheProbe · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="Simulated demo" label="CacheProbe · native">
           <CacheProbe names={names} />
-        </div>
-      </div>
+        
+      </Frame>
       <p>The same three requests against this site on <code>brust start</code>, recorded:</p>
       <CodeBlock code={blocks.recorded.code} lang={blocks.recorded.lang} cwd={blocks.recorded.cwd} html={blocks.recorded.html} />
       <table>
@@ -216,7 +214,7 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
       </p>
 
       <h3 id="grammar">The expressions</h3>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Cache key expressions">
+      <TableWrap label="Cache key expressions">
       <table>
         <thead>
           <tr>
@@ -338,7 +336,7 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
           </tr>
         </tbody>
       </table>
-      </div>
+      </TableWrap>
       <p>
         For <code>bypass</code> the rule is the other way round: a non-empty result means skip the cache for that request. A wrong expression is a build error that names the problem.
       </p>
@@ -383,15 +381,10 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
 
       <h3 id="playground">Try the expressions</h3>
       <p>Pick an example or type your own, describe a request, and read off the prefix and the key parts. It is the same rules as the server, evaluated in your browser.</p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">CacheKeyPlayground · react</span>
-        </div>
-        <div className="vp">
+      <Frame title="Live demo" label="CacheKeyPlayground · react">
           <CacheKeyPlayground presets={presets} />
-        </div>
-      </div>
+        
+      </Frame>
 
       <h2 id="invalidate">Invalidate</h2>
       <p>Call it from server code (a loader or an action) after the data changed:</p>

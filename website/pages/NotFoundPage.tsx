@@ -11,12 +11,12 @@ export default function NotFoundPage() {
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600;700&display=swap" />
       </head>
       <body>
-        <main className="wrap not-found">
-          <a className="brand" href="/">
+        <main className="mx-auto grid min-h-screen max-w-[1160px] content-center gap-5 px-4 py-16">
+          <a className="flex items-center gap-[.6rem] font-display text-[19px] font-semibold uppercase tracking-[.14em] text-ink no-underline" href="/">
             brust
           </a>
-          <h1>Page not found</h1>
-          <p className="muted">Nothing is served at this address.</p>
+          <h1 className="text-[clamp(2.6rem,6vw,4.5rem)] font-light uppercase leading-[.96]">Page not found</h1>
+          <p className="text-ink-2">Nothing is served at this address.</p>
           <div className="cta">
             <a className="btn primary" href="/">
               Back to the start

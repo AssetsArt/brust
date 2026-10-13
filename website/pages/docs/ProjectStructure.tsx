@@ -5,6 +5,8 @@ import CodeBlock from '../../components/CodeBlock'
 import FileTree from '../../components/demos/FileTree'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface ProjectStructureData {
   toc: TocItem[]
@@ -88,20 +90,15 @@ export default function ProjectStructure({ blocks, files }: ProjectStructureData
   return (
     <>
       <h1>Project structure</h1>
-      <p className="lead">A brust app is a routes file, components, an optional actions app, and a brust.toml. This is the blank template.</p>
+      <Lead>A brust app is a routes file, components, an optional actions app, and a brust.toml. This is the blank template.</Lead>
 
       <h2 id="files">The files</h2>
       <CodeBlock code={blocks.tree.code} lang={blocks.tree.lang} cwd={blocks.tree.cwd} html={blocks.tree.html} />
       <p>Pick a file to see what it does.</p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">FileTree · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="Live demo" label="FileTree · native">
           <FileTree files={files} />
-        </div>
-      </div>
+        
+      </Frame>
       <p>
         Only <code>routes.tsx</code> is required by name, and you can pass another entry to <code>brust build</code>. The <code>components/</code> and <code>pages/</code> split is a convention: the compiler follows imports, not folders.
       </p>

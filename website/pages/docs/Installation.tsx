@@ -7,6 +7,8 @@ import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { spriteUrl } from '../../lib/pokemon'
 import ElysiaLink from '../../components/ElysiaLink'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface InstallationData {
   toc: TocItem[]
@@ -41,7 +43,7 @@ export default function Installation({ blocks, starters }: InstallationData) {
   return (
     <>
       <h1>Installation</h1>
-      <p className="lead">brust needs Bun and nothing else: the Rust server ships prebuilt inside the npm package for your platform.</p>
+      <Lead>brust needs Bun and nothing else: the Rust server ships prebuilt inside the npm package for your platform.</Lead>
 
       <Step n={1} id="requirements" title="Check the requirements" />
       <p>Bun 1.4 or newer, on macOS (arm64 or x64) or Linux (arm64 or x64, glibc or musl). There is no Windows build.</p>
@@ -60,15 +62,10 @@ export default function Installation({ blocks, starters }: InstallationData) {
       <p>
         The <code>blank</code> starter is styled with Tailwind CSS v4: an <code>app.css</code> at the root, with <code>tailwindcss</code> and <code>bun-plugin-tailwind</code> as dev dependencies.
       </p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">StarterPicker · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="Live demo" label="StarterPicker · native">
           <StarterPicker starters={starters} />
-        </div>
-      </div>
+        
+      </Frame>
       <Note>
         Keep the <code>@latest</code>. <code>bun create</code> caches the generator, and a stale cache gives you an old template.
       </Note>

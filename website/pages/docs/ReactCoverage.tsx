@@ -3,6 +3,8 @@
 // holds no number of its own. source: docs/react-coverage.json (summary, groups, entries), docs/react-coverage.md.
 import coverage from '../../../docs/react-coverage.json'
 import type { TocItem } from '../../lib/nav'
+import Lead from '../../components/docs/Lead'
+import TableWrap from '../../components/docs/TableWrap'
 
 type Status = 'native' | 'static' | 'island' | 'partial' | 'n/a'
 
@@ -64,9 +66,9 @@ export default function ReactCoverage({ reference, summary, groups }: ReactCover
   return (
     <section style={{ display: 'contents' }}>
       <h1>React coverage</h1>
-      <p className="lead">
+      <Lead>
         Each React API, and what brust does with it: lowered to native code, rendered once as static markup, or left to React as an island. Every row is a case the test battery builds and checks.
-      </p>
+      </Lead>
 
       <h2 id="summary">Summary</h2>
       <p>
@@ -95,7 +97,7 @@ export default function ReactCoverage({ reference, summary, groups }: ReactCover
       {groups.map((g) => (
         <section style={{ display: 'contents' }} key={g.id}>
           <h2 id={g.id}>{g.title}</h2>
-          <div className="table-wrap">
+          <TableWrap>
             <table data-testid={`table-${g.id}`}>
               <thead>
                 <tr>
@@ -128,7 +130,7 @@ export default function ReactCoverage({ reference, summary, groups }: ReactCover
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableWrap>
         </section>
       ))}
     </section>

@@ -4,6 +4,8 @@ import CodeBlock from '../../../components/CodeBlock'
 import Note from '../../../components/docs/Note'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
+import TableWrap from '../../../components/docs/TableWrap'
 
 const SRC = {
   install: { lang: 'sh', cwd: '~/my-app', code: '$ bun add @brust/cache-cloudflare' },
@@ -53,16 +55,16 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
   return (
     <>
       <h1>Cloudflare KV and Durable Objects</h1>
-      <p className="lead">
+      <Lead>
         Workers only. KV holds the page bodies; a Durable Object tells every isolate what was invalidated.
-      </p>
+      </Lead>
       <CodeBlock code={blocks.install.code} lang={blocks.install.lang} cwd={blocks.install.cwd} html={blocks.install.html} />
       <p>
         Package <code>@brust/cache-cloudflare</code>. It imports nothing from Bun.
       </p>
 
       <h2 id="configs">Three configurations</h2>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Configurations">
+      <TableWrap label="Configurations">
         <table>
           <thead>
             <tr>
@@ -97,7 +99,7 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <CodeBlock code={blocks.toml.code} lang={blocks.toml.lang} file={blocks.toml.file} html={blocks.toml.html} />
 
       <h2 id="bindings">Bindings you declare</h2>
@@ -116,7 +118,7 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
       <p>
         These go under <code>[cache.cloudflare]</code>. An unknown key in this table is an error that names it. <code>env:</code> values are not allowed on this target.
       </p>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Cloudflare adapter options">
+      <TableWrap label="Cloudflare adapter options">
         <table>
           <thead>
             <tr>
@@ -177,7 +179,7 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <Note tag="Caveat">
         <code>[cache.cloudflare]</code> is ignored for <code>adapter = &quot;custom&quot;</code>. The build reads <code>[cache.redis]</code> and <code>[cache.cloudflare]</code> only for built-in adapters, and without a warning. A custom adapter that calls <code>kvAdapter(&#123; binding, min_ttl_s &#125;)</code>, <code>doAdapter(&#123; binding, store &#125;)</code> or <code>combine(kv, do)</code> itself (all exported by <code>@brust/cache-cloudflare</code>) must pass its options through <code>[cache.options]</code> or in code, using the programmatic option names: <code>binding</code>, <code>min_ttl_s</code>, <code>store</code>.
       </Note>
@@ -186,7 +188,7 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
       </Note>
 
       <h2 id="guarantees">What each configuration guarantees</h2>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Guarantees">
+      <TableWrap label="Guarantees">
         <table>
           <thead>
             <tr>
@@ -246,7 +248,7 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <p>
         <b>KV alone never invalidates.</b> Tier-2 keys hash the route prefix, method, path and query, so KV cannot list the pages under a tag or a path without extra index writes. Use the pair unless a stale page for up to its TTL is acceptable.
       </p>
@@ -278,7 +280,7 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
       <p>
         <b>Durable Object requests.</b> The pull broadcast makes one DO request per poll, and only an isolate that is serving requests polls (idle isolates cost nothing). A continuously busy isolate polls <code>86,400,000 / epoch_interval_ms</code> times a day. Cloudflare&rsquo;s Free plan includes 100,000 DO requests per day and 13,000 GB-s per day, and past a Free limit &ldquo;further operations of that type will fail with an error&rdquo;. Paid includes 1 million requests per month, then $0.15 per million (source C7).
       </p>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Polling cost">
+      <TableWrap label="Polling cost">
         <table>
           <thead>
             <tr>
@@ -324,7 +326,7 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <p>
         The Paid column is overage only: <code>(requests - 1 million) x $0.15 per million</code>; it excludes the plan&rsquo;s minimum charge and other usage. A DO kept active by polls uses about 11,000 GB-s a day at 128 MB, inside the Free 13,000.
       </p>
@@ -337,7 +339,7 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
 
       <h2 id="sources">Sources</h2>
       <p>All fetched 2026-10-12.</p>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Sources">
+      <TableWrap label="Sources">
         <table>
           <thead>
             <tr>
@@ -372,7 +374,7 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
     </>
   )
 }

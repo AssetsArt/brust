@@ -48,7 +48,7 @@ test('every Guide page is 200 with its title, a live demo frame and no compiler 
     const html = await r.text()
     expect(html).toContain(`<title>${p.title} · brust docs</title>`)
     // the coverage page is a reference table generated from docs/react-coverage.json: it has no demo frame
-    expect([p.slug, p.slug === 'react-coverage' || html.includes('class="browser"')]).toEqual([p.slug, true])
+    expect([p.slug, p.slug === 'react-coverage' || /class="browser[ "]/.test(html)]).toEqual([p.slug, true])
   }
 }, TEST_MS)
 
