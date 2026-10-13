@@ -6,6 +6,7 @@ import StarterPicker from '../../components/demos/StarterPicker'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { spriteUrl } from '../../lib/pokemon'
+import ElysiaLink from '../../components/ElysiaLink'
 
 export interface InstallationData {
   toc: TocItem[]
@@ -53,7 +54,7 @@ export default function Installation({ blocks, starters }: InstallationData) {
       <p>The generator copies a template into a new folder. It has no dependencies of its own, so running it downloads nothing else.</p>
       <CodeBlock code={blocks.create.code} lang={blocks.create.lang} cwd={blocks.create.cwd} html={blocks.create.html} />
       <p>
-        In a terminal it asks for one thing, the template: <code>blank</code> (a starter page with the brust mark, a native counter and links to these docs, plus an Elysia hello action) or <code>pokedex</code>. An empty answer picks <code>blank</code>. Pick a starter below to see the commands for your own project.
+        In a terminal it asks for one thing, the template: <code>blank</code> (a starter page with the brust mark, a native counter and links to these docs, plus an <ElysiaLink /> hello action) or <code>pokedex</code>. An empty answer picks <code>blank</code>. Pick a starter below to see the commands for your own project.
       </p>
       {/* source: packages/create-app/templates/blank/app.css:1 and package.json.tmpl:21 (L28, PR #180) */}
       <p>

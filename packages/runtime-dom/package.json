@@ -49,5 +49,14 @@
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "homepage": "https://brust.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AssetsArt/brust.git",
+    "directory": "packages/runtime-dom"
+  },
+  "bugs": {
+    "url": "https://github.com/AssetsArt/brust/issues"
   }
 }

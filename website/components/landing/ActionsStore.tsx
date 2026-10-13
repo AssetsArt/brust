@@ -1,6 +1,7 @@
 // "Actions, typed end to end" and "One store, both sides": two columns of code.
 import type { CodeBlockData } from '../../lib/highlight'
 import CodeBlock from '../CodeBlock'
+import ElysiaLink from '../ElysiaLink'
 
 export default function ActionsStore({ actions, client, store, teamCount }: { actions: CodeBlockData; client: CodeBlockData; store: CodeBlockData; teamCount: CodeBlockData }) {
   return (
@@ -9,7 +10,7 @@ export default function ActionsStore({ actions, client, store, teamCount }: { ac
         <div>
           <h2>Actions, typed end to end</h2>
           <p>
-            One Elysia app, served by Rust under <code>/_brust/action</code>. The browser gets a client that knows every route and its types.
+            One <ElysiaLink /> app, served by Rust under <code>/_brust/action</code>. The browser gets a client that knows every route and its types.
           </p>
           <CodeBlock code={actions.code} lang={actions.lang} file={actions.file} cwd={actions.cwd} html={actions.html} />
           <CodeBlock code={client.code} lang={client.lang} file={client.file} cwd={client.cwd} html={client.html} />
