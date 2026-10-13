@@ -11,6 +11,7 @@ import TeamPicker from '../../components/demos/TeamPicker'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { byId, displayName, spriteUrl } from '../../lib/pokemon'
+import ElysiaLink from '../../components/ElysiaLink'
 
 export interface ActionsData {
   toc: TocItem[]
@@ -119,7 +120,7 @@ export default function Actions({ blocks, candidates }: ActionsData) {
   return (
     <>
       <h1>Actions</h1>
-      <p className="lead">Actions are the server endpoints your pages call. In brust they are one Elysia 2 app, served behind the Rust server: no second port, no second router.</p>
+      <p className="lead">Actions are the server endpoints your pages call. In brust they are one <ElysiaLink label="Elysia 2" /> app, served behind the Rust server: no second port, no second router.</p>
 
       <Step n={1} id="install" title="Turn actions on" />
       <p>Install the two pinned packages and add an <code>[actions]</code> table to <code>brust.toml</code>. Without the table, actions are off even if <code>actions.ts</code> exists.</p>

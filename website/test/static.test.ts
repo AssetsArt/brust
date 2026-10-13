@@ -92,6 +92,12 @@ test('served like Pages: every route 200 with its canonical and og:url, an unkno
   }
 })
 
+test('the first mention of Elysia on a page links to elysiajs.com in a new tab', () => {
+  const link = '<a href="https://elysiajs.com/" target="_blank" rel="noopener noreferrer">'
+  for (const f of ['index.html', 'docs/actions.html', 'docs/installation.html', 'docs/cloudflare/workers.html', 'docs/cookbook/form-action.html'])
+    expect([f, readFileSync(join(out, f), 'utf8').includes(link)]).toEqual([f, true])
+})
+
 test('sitemap.xml and llms.txt list every route under the production origin', () => {
   const sitemap = readFileSync(join(out, 'public/sitemap.xml'), 'utf8')
   const llms = readFileSync(join(out, 'public/llms.txt'), 'utf8')
