@@ -11,6 +11,7 @@ import {
   makeDispatch,
   makeHandlers,
   PLAN_DECLINED,
+  type HeapReply,
   SLOT_BYTES,
   startWorker,
   writeSlot,
@@ -390,4 +391,132 @@ test('worker.ts loads with elysia not installed: an app without [actions] needs 
   } finally {
     rmSync(d, { recursive: true, force: true })
   }
+})
+
+// ---- L10: heap replies for loader / jobs / planned calls ----
+
+/** A fake `HeapIo` + `planJobsBuf`: records what crossed. */
+function fakeHeap(over: { cap?: number; accept?: boolean; planBuf?: (slot: number, buf: Uint8Array) => string } = {}) {
+  const put: { slot: number; bytes: Uint8Array }[] = []
+  const heap: HeapReply = {
+    io: {
+      takeBody: () => null,
+      putReply: (slot, bytes) => {
+        if (over.accept === false) return false
+        put.push({ slot, bytes })
+        return true
+      },
+    },
+    planBuf: over.planBuf ?? (() => PLAN_DECLINED),
+    cap: over.cap ?? 8_388_608,
+  }
+  return { heap, put }
+}
+const marker = (v: Uint8Array, n: number) => (n === 5 && v[0] === 0 ? new DataView(v.buffer, v.byteOffset + 1, 4).getUint32(0, true) : null)
+const big = (bytes: number) => ({ blob: 'x'.repeat(bytes) })
+const SLOT = 256 * 1024
+const bigLoader = (bytes: number) => makeHandlers({ leaves: leaves({ child: async () => big(bytes) }), jobs: {} })
+
+test('writeSlot: a reply that does not fit goes by heap when io+cap are given: marker [0x00][u32 LE n]', () => {
+  const view = new Uint8Array(new SharedArrayBuffer(4096))
+  const { heap, put } = fakeHeap()
+  const json = JSON.stringify(big(10_000))
+  const n = writeSlot(view, 0, 1, json, heap.io, heap.cap)
+  expect(n).toBe(5)
+  expect(marker(view, n)).toBe(Buffer.byteLength(json))
+  expect(put.length).toBe(1)
+  expect(new TextDecoder().decode(put[0]?.bytes)).toBe(json)
+})
+
+test('writeSlot: over the cap, or declined by Rust → {error} naming the cap; no io → today\'s slot error', () => {
+  const view = new Uint8Array(new SharedArrayBuffer(4096))
+  const json = JSON.stringify(big(10_000))
+  const over = fakeHeap({ cap: 5000 })
+  const a = writeSlot(view, 0, 1, json, over.heap.io, over.heap.cap)
+  expect(dec(view, a)).toEqual({ error: `response too large: ${Buffer.byteLength(json)} > 5000 (maxLoaderResponseBytes)` })
+  expect(over.put.length).toBe(0)
+  const no = fakeHeap({ accept: false })
+  const b = writeSlot(view, 0, 1, json, no.heap.io, no.heap.cap)
+  // under the cap but declined by Rust: the message names the real reason, not the cap
+  expect(dec(view, b).error).toBe(`heap reply declined: ${Buffer.byteLength(json)} bytes did not fit the 4096-byte slot and Rust refused the handover`)
+  const c = writeSlot(view, 0, 1, json)
+  expect(dec(view, c)).toEqual({ error: `response too large: ${Buffer.byteLength(json)} > 4096` })
+})
+
+test('writeSlot: a reply that fits never touches the heap', () => {
+  const view = new Uint8Array(new SharedArrayBuffer(4096))
+  const { heap, put } = fakeHeap()
+  const n = writeSlot(view, 0, 1, '{"a":1}', heap.io, heap.cap)
+  expect(dec(view, n)).toEqual({ a: 1 })
+  expect(put.length).toBe(0)
+})
+
+test('dispatch: a 300 KB loader reply crosses by heap (marker in the slot)', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(SLOT))
+  const { heap, put } = fakeHeap()
+  const d = makeDispatch(bigLoader(300_000), view, 1, undefined, heap)
+  const n = await d('loader', JSON.stringify(ctx('r1')), 0)
+  expect(marker(view, n)).toBe(put[0]?.bytes.length ?? -1)
+  expect(JSON.parse(new TextDecoder().decode(put[0]?.bytes))).toEqual({ ok: true, data: big(300_000) })
+})
+
+test('dispatch: a 300 KB jobs reply crosses by heap', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(SLOT))
+  const { heap, put } = fakeHeap()
+  const h = makeHandlers({ leaves: leaves({}), jobs: { c: { precompute: () => big(300_000) } } })
+  const d = makeDispatch(h, view, 1, undefined, heap)
+  const n = await d('jobs', JSON.stringify({ jobs: [{ id: 'c/j0', componentId: 'c', kind: 'precompute', inputs: {} }] }), 0)
+  expect(marker(view, n)).toBe(put[0]?.bytes.length ?? -1)
+  expect(JSON.parse(new TextDecoder().decode(put[0]?.bytes)).results[0].value).toEqual(big(300_000))
+})
+
+test('dispatch: a planned loader call with a 300 KB ctx plans from the bytes (planJobsBuf), not the slot', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(SLOT))
+  const seen: number[] = []
+  const { heap, put } = fakeHeap({
+    planBuf: (_slot, buf) => {
+      seen.push(buf.length)
+      return ''
+    },
+  })
+  const noSlotPlan = (): string => {
+    throw new Error('planJobs (slot) must not be called for an oversized ctx')
+  }
+  const d = makeDispatch(bigLoader(300_000), view, 1, noSlotPlan, heap)
+  const n = await d('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
+  expect(seen.length).toBe(1)
+  expect(seen[0]).toBeGreaterThan(300_000)
+  expect(dec(view, n)).toEqual({ planned: true })
+  expect(put.length).toBe(0)
+})
+
+test('dispatch: planning declined for a 300 KB ctx hands the loader reply over by heap', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(SLOT))
+  const { heap, put } = fakeHeap() // planBuf → PLAN_DECLINED
+  const d = makeDispatch(bigLoader(300_000), view, 1, undefined, heap)
+  const n = await d('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
+  expect(marker(view, n)).toBe(put[0]?.bytes.length ?? -1)
+  expect(JSON.parse(new TextDecoder().decode(put[0]?.bytes))).toEqual({ ok: true, data: big(300_000) })
+})
+
+test('dispatch: the final {planned, results} reply uses the heap fallback too', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(SLOT))
+  const { heap, put } = fakeHeap()
+  const plan = () => JSON.stringify({ jobs: [{ id: 'c/j0', componentId: 'c', kind: 'precompute', inputs: {} }] })
+  const h = makeHandlers({ leaves: leaves({ child: async () => ({ team: ['a'] }) }), jobs: { c: { precompute: () => big(300_000) } } })
+  const d = makeDispatch(h, view, 1, plan, heap)
+  const n = await d('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
+  expect(marker(view, n)).toBe(put[0]?.bytes.length ?? -1)
+  expect(JSON.parse(new TextDecoder().decode(put[0]?.bytes)).planned).toBe(true)
+})
+
+test('dispatch: over the cap → {error} naming the cap (loader, planned ctx)', async () => {
+  const view = new Uint8Array(new SharedArrayBuffer(SLOT))
+  const { heap, put } = fakeHeap({ cap: 262_144 })
+  const d = makeDispatch(bigLoader(300_000), view, 1, undefined, heap)
+  const a = await d('loader', JSON.stringify(ctx('r1')), 0)
+  expect(dec(view, a).error).toMatch(/^response too large: \d+ > 262144 \(maxLoaderResponseBytes\)$/)
+  const b = await d('loader', JSON.stringify({ ...ctx('r1'), plan: true }), 0)
+  expect(dec(view, b).error).toMatch(/> 262144 \(maxLoaderResponseBytes\)/)
+  expect(put.length).toBe(0)
 })

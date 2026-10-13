@@ -88,6 +88,8 @@ struct Placer<'s> {
     loop_scope: Vec<String>,
     diagnostics: Vec<Diagnostic>,
     jsx_flagged: bool,
+    /// Locations of `list-shape` fallbacks: the reader already named the construct there.
+    list_shape_locs: BTreeSet<u32>,
 }
 
 pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>) {
@@ -171,6 +173,12 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         loop_scope: Vec::new(),
         diagnostics: Vec::new(),
         jsx_flagged: false,
+        list_shape_locs: ir
+            .diagnostics
+            .iter()
+            .filter(|d| d.rule == "list-shape")
+            .map(|d| d.loc)
+            .collect(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     p.node(&mut template);
@@ -563,6 +571,9 @@ impl Placer<'_> {
             return Expr::Raw(r.clone());
         }
         if contains_jsx(r) {
+            if self.list_shape_locs.contains(&r.loc) {
+                return Expr::Raw(r.clone());
+            }
             if !self.jsx_flagged {
                 self.jsx_flagged = true;
                 self.diagnostics.push(Diagnostic::fallback(

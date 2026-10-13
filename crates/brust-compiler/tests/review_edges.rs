@@ -651,8 +651,10 @@ fn array_from_over_an_iterable_or_a_shadowed_array_is_not_a_list() {
         "export default function L(props: any) { const Array = { from: (a: any, f: any) => [f(a[0], 0)] }; return <ul>{Array.from(props.xs, (x: any) => <li key={x}>{x}</li>)}</ul> }",
     ] {
         let ir = analyze(src);
+        // L6: a real `Array.from` over a non-array source now names itself (`list-shape`).
         assert!(
-            rules(&ir).contains(&(DiagClass::Fallback, "jsx-expression".into())),
+            rules(&ir).contains(&(DiagClass::Fallback, "jsx-expression".into()))
+                || rules(&ir).contains(&(DiagClass::Fallback, "list-shape".into())),
             "{src}: {:?}",
             rules(&ir)
         );
@@ -734,4 +736,18 @@ fn react_grandchild_under_an_inlined_row_is_a_nested_instance_error() {
         .err()
     });
     assert_eq!(err.expect("lowering must fail").rule, "nested-instance");
+}
+
+#[test]
+fn outlet_in_react_names_the_construct_that_made_the_layout_react() {
+    let ir = analyze(
+        "import { Outlet } from '@brust/core/routes'\nexport default function L({ xs }: any) { return <div>{xs.map((x: any) => { const t = x; return <i key={t}>{t}</i> })}<Outlet/></div> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "outlet-in-react")
+        .unwrap_or_else(|| panic!("{:?}", ir.diagnostics));
+    assert!(d.message.contains("list-shape"), "{}", d.message);
+    assert!(d.loc > 0, "a real location, not 0");
 }

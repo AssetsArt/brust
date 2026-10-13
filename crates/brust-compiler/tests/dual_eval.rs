@@ -68,6 +68,8 @@ const NO_DIRECTIVES: &[&str] = &[
     "module-const-nested-g10",
     "module-const-shadowed",
     "module-const-template-literal",
+    // L6: a static list with conditional element arms has no directives.
+    "list-cond-element",
 ];
 
 fn fixture_dirs() -> Vec<PathBuf> {

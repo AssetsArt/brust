@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 brust-compiler = { path = "../brust-compiler", features = ["real-mimalloc"] }
+brust-core.workspace = true
 brust-server = { path = "../brust-server" }
 # M3-P P0: the addon's #[global_allocator]. Default features = mimalloc v3.
 mimalloc = "0.1"

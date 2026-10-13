@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 28 | 18 | 7 | 3 | 0 | 0 | 0 | 0 |
+| A JSX basics | 30 | 19 | 8 | 3 | 0 | 0 | 0 | 0 |
 | B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
-| C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
+| C Hooks | 17 | 1 | 10 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 24 | 4 | 10 | 5 | 4 | 1 | 0 | 0 |
-| **Total** | 84 | 29 | 28 | 22 | 4 | 1 | 0 | 0 |
+| E v2 specifics | 25 | 4 | 10 | 6 | 4 | 1 | 0 | 0 |
+| **Total** | 89 | 30 | 31 | 23 | 4 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -33,6 +33,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-style-object | style object from props | static | static | 0 | ok | — | spec §6.2 style object |
 | a-module-const | module const (literal, array) in render | static | static | 0 | ok | — | spec §6.2 literals/arrays; module consts fold at compile time (L1) |
 | a-module-const-mutated | module const array mutated in its module | static | static | precompute | ok | — | R1.1: a mutated array never folds; it stays a precompute slot |
+| a-list-cond-element | .map returning a ternary between two elements | static | static | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms desugar to For + If |
+| a-list-cond-state | .map returning a conditional element over state | native | native | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms |
 | a-and-guard | && guard on a prop | static | static | 0 | ok | — | spec §6.2 && guard |
 | a-ternary | ternary on a prop | static | static | 0 | ok | — | spec §6.2 ternary |
 | a-fragment | fragment root | static | static | 0 | ok | warning:fragment-root | warning fragment-root: wrapped in <brust-host> |
@@ -86,7 +88,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | — | spec §4.3 useLayoutEffect |
 | c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usecontext | useContext | react | react | ssr | ok | fallback:hook-unsupported |  |
-| c-custom-hook | custom hook | react | react | ssr | ok | fallback:hook-unsupported |  |
+| c-custom-hook | custom hook | native | native | 0 | ok | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
+| c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
+| c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
 | c-usetransition | useTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usesyncexternalstore | useSyncExternalStore | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-use-hook | use(promise) | react | react | ssr | ok | fallback:hook-unsupported |  |
@@ -106,6 +110,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
+| e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-precompute-props | props-only value outside the template subset | static | static | precompute | ok | — | spec §6.4 precompute |
 | e-precompute-state | state-dependent value from a module helper | native | native | precompute | ok | — | spec §6.4 precompute |
 | e-precompute-per-item | per-item precompute in a list | static | static | precompute | ok | — | spec §6.4 precompute |

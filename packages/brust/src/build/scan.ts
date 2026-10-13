@@ -1,13 +1,15 @@
-// Route scan (plan T5): import the route entry, then map every route Component to the `.tsx`
-// file it is the default export of. The compiler only ever sees files, never functions.
-import { readFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+// Route scan (plan T5, gaps L7): import the route entry, then walk its static import graph (inside the app root,
+// outside node_modules) and map every Component to the `.tsx` file it is the default export of. The compiler only ever sees files, never functions.
+import { readFileSync, realpathSync } from 'node:fs'
+import { dirname, resolve, sep } from 'node:path'
 import { BrustRouteError, type Route } from '../routes'
 import { BuildError } from './errors'
 
-const DEFAULT_IMPORT = /^\s*import\s+([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^}]*\})?\s+from\s+['"]([^'"]+)['"]/gm
-
-export async function scanRoutes(entryFile: string): Promise<{ routes: Route[]; componentFile: Map<Function, string> }> {
+/** `componentIssue` explains a Component the walk saw but could not map (named-only, outside the root, in node_modules). */
+export async function scanRoutes(
+  entryFile: string,
+  appRoot?: string,
+): Promise<{ routes: Route[]; componentFile: Map<Function, string>; componentIssue: Map<Function, string> }> {
   // biome-ignore lint/suspicious/noExplicitAny: an arbitrary user module
   let mod: any
   try {
@@ -21,22 +23,59 @@ export async function scanRoutes(entryFile: string): Promise<{ routes: Route[]; 
   if (!Array.isArray(routes))
     throw new BuildError('route-entry', `${entryFile} exports neither \`routes\` nor a default route array`)
 
-  const src = readFileSync(entryFile, 'utf8')
-  const real = new Set(new Bun.Transpiler({ loader: 'tsx' }).scanImports(src).map((i) => i.path))
   const componentFile = new Map<Function, string>()
-  for (const m of src.matchAll(DEFAULT_IMPORT)) {
-    const spec = m[2]!
-    if (!real.has(spec)) continue // inside a comment or string: not an import
-    let file: string
+  const componentIssue = new Map<Function, string>()
+  const root = realpathSync(resolve(appRoot ?? dirname(entryFile)))
+  const transpiler = new Bun.Transpiler({ loader: 'tsx' })
+  const inRoot = (f: string) => f.startsWith(root + sep) && !f.split(sep).includes('node_modules')
+  const visited = new Set<string>()
+  // Post-order: a file's imports are mapped before the file itself, and the first file to claim a function
+  // keeps it, so the module that defines a Component beats a barrel that re-exports it.
+  const visit = async (file: string): Promise<void> => {
+    if (visited.has(file)) return
+    visited.add(file)
+    let src: string
     try {
-      file = Bun.resolveSync(spec, dirname(entryFile))
+      src = readFileSync(file, 'utf8')
     } catch {
-      continue // a bare specifier the route file never uses as a Component; checked below
+      return
     }
-    if (!file.endsWith('.tsx')) continue // not a component source; a route using it fails in compileApp
-    const def = (await import(file)).default
-    // Bun's module cache: the same function object the routes tree holds.
-    if (typeof def === 'function') componentFile.set(def, file)
+    const loader = file.endsWith('.tsx') ? transpiler : file.endsWith('.ts') ? new Bun.Transpiler({ loader: 'ts' }) : null
+    if (!loader) return
+    const deps: string[] = []
+    // Only static imports are followed: a dynamic import() is not part of the route table's static graph.
+    for (const imp of loader.scanImports(src)) {
+      if (imp.kind !== 'import-statement') continue
+      let dep: string
+      try {
+        dep = Bun.resolveSync(imp.path, dirname(file))
+      } catch {
+        continue // a bare specifier that does not resolve; a route using it fails in compileApp
+      }
+      if (!dep.endsWith('.tsx') && !dep.endsWith('.ts')) continue
+      if (inRoot(dep)) deps.push(dep)
+      else if (dep.endsWith('.tsx')) await note(dep, dep.split(sep).includes('node_modules') ? 'in node_modules' : `outside the app root ${root}`)
+    }
+    for (const dep of deps) await visit(dep)
+    if (!file.endsWith('.tsx')) return
+    const m = await import(file)
+    for (const [name, v] of Object.entries(m)) {
+      if (typeof v !== 'function') continue
+      if (name === 'default') {
+        if (!componentFile.has(v)) componentFile.set(v, file)
+      } else if (!componentIssue.has(v)) {
+        componentIssue.set(v, `${v.name || name} is only a named export of ${file} (export ${name}): export it as default`)
+      }
+    }
   }
-  return { routes, componentFile }
+  const note = async (file: string, why: string) => {
+    try {
+      const def = (await import(file)).default
+      if (typeof def === 'function' && !componentIssue.has(def)) componentIssue.set(def, `${def.name || '(anonymous)'} lives in ${file}, which is ${why}`)
+    } catch {}
+  }
+  await visit(entryFile)
+  // A function reachable as a default somewhere is fine; only an unmapped one keeps its explanation.
+  for (const f of componentFile.keys()) componentIssue.delete(f)
+  return { routes, componentFile, componentIssue }
 }

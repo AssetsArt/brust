@@ -15,6 +15,7 @@ import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from 
 import { BuildError } from './errors'
 import { type CacheRecord, type ManifestJson, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
+import { type ExprReads, prepareStatic, writeStatic } from './static'
 
 export { BuildError } from './errors'
 
@@ -80,8 +81,13 @@ export async function runBuild(opts: {
   outDir: string
   /** Replace a non-empty out dir even without a previous build's marker. */
   force?: boolean
-  /** `cloudflare` also writes `<out>/cf/` (M4-CF); default `bun` = the unchanged build. */
-  target?: 'bun' | 'cloudflare'
+  /** `cloudflare` also writes `<out>/cf/` (M4-CF); `static` also writes `<out>/static/` (gaps round
+   * L9); default `bun` = the unchanged build. */
+  target?: 'bun' | 'cloudflare' | 'static'
+  /** `--strict` (static): a loader that reads the request fails the build. */
+  strict?: boolean
+  /** The cache key grammar's read-set (static; tests swap it). Default: the addon. */
+  exprReads?: ExprReads
   /** `--wasm-from-source` (cloudflare only). */
   wasmFromSource?: boolean
   log: (s: string) => void
@@ -94,7 +100,7 @@ export async function runBuild(opts: {
   const { serverOnly, actions, cloudflare, cache } = await loadBuildConfig(appRoot)
 
   // Everything that can fail on the app's own input runs before a byte is written.
-  const { routes, componentFile } = await scanRoutes(entry)
+  const { routes, componentFile, componentIssue } = await scanRoutes(entry, appRoot)
   let leaves: ReturnType<typeof validateRoutes>
   try {
     leaves = validateRoutes(routes)
@@ -129,6 +135,12 @@ export async function runBuild(opts: {
   }
   assertSafeOutDir(dist, appRoot, [...componentFile.values(), ...(actionsEntry ? [actionsEntry] : []), ...(cacheModule ? [cacheModule] : [])])
 
+  // R9.3/R9.4: every reason to refuse a static build, before any write.
+  const ssgPlan =
+    opts.target === 'static'
+      ? await prepareStatic(leaves, actions !== null, opts.exprReads ?? (await import('../native')).cacheExprReads, opts.log)
+      : null
+
   // Config, @brust/core-cf resolution and the user's wrangler file fail here, before any write.
   const cf = opts.target === 'cloudflare' ? await prepareCloudflare(appRoot, cloudflare, { fromSource: opts.wasmFromSource === true, env: process.env }) : null
 
@@ -138,7 +150,12 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, serverOnly, actions, actionsEntry, cache, cacheModule, cf, log: opts.log })
+    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, log: opts.log })
+    if (ssgPlan) {
+      // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
+      const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
+      await writeStatic(tmp, { entry, appRoot, plan: ssgPlan, version, strict: opts.strict === true, log: opts.log, shownDir: join(dist, 'static') })
+    }
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
     if (existsSync(dist)) {
       const old = join(dirname(dist), `.${basename(dist)}.brust-old`)
@@ -162,6 +179,7 @@ async function buildInto(
     dist: string
     leaves: ReturnType<typeof validateRoutes>
     componentFile: Map<Function, string>
+    componentIssue: Map<Function, string>
     serverOnly: string[]
     actions: ActionsBuildConfig | null
     /** Absolute path of the actions entry (null when `[actions]` is off). */
@@ -181,6 +199,7 @@ async function buildInto(
     appRoot,
     leaves,
     componentFile: o.componentFile,
+    componentIssue: o.componentIssue,
     runtimeImport: `/_brust/${runtime}`,
     serverOnly: o.serverOnly,
     log: o.log,

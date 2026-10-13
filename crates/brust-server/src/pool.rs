@@ -71,6 +71,11 @@ pub struct Slot {
     /// The waker of the call waiting on that deadline. Per slot and uncontended: only the claim
     /// holder and the sweeper touch it.
     deadline_waker: parking_lot::Mutex<Option<Waker>>,
+    /// L10: a loader/jobs/planned reply too large for the SAB slot, put by the worker
+    /// (`put_fetch_reply`) before it writes the 5-byte heap marker `[0x00][u32 LE n]` into the slot;
+    /// taken by [`RenderClaim::take_heap_reply`] inside the claim. ALWAYS cleared by
+    /// `RenderClaim::drop`: no reply outlives its claim.
+    pub(crate) heap_reply: parking_lot::Mutex<Option<bytes::Bytes>>,
 }
 
 /// The origin of [`Slot`] deadlines (process-wide, so a slot needs no pool back-reference).
@@ -178,6 +183,11 @@ impl WorkerEntry {
         }
     }
 
+    /// `slot` while it is claimed; `None` when out of range or idle.
+    pub(crate) fn claimed_slot(&self, slot: u32) -> Option<&Slot> {
+        self.slots.get(slot as usize).filter(|s| !s.is_idle())
+    }
+
     pub fn claimed_plan_cell(&self, slot: u32) -> Option<&parking_lot::Mutex<Option<PlanBox>>> {
         self.slots
             .get(slot as usize)
@@ -233,6 +243,14 @@ impl RenderClaim {
         drop(old);
     }
 
+    /// Take the heap reply the worker put for this claim's call (L10), once.
+    pub fn take_heap_reply(&self) -> Option<bytes::Bytes> {
+        self.entry.slots[self.slot as usize]
+            .heap_reply
+            .lock()
+            .take()
+    }
+
     /// Take whatever this claim's slot cell holds (M3-P P6). Called after the
     /// worker's Promise resolved, before the claim is dropped.
     pub fn take_plan(&self) -> Option<PlanBox> {
@@ -266,6 +284,8 @@ impl Drop for RenderClaim {
         let stale = slot.plan.lock().take();
         drop(stale);
         slot.jobs_since.lock().take();
+        let stale = slot.heap_reply.lock().take();
+        drop(stale);
         // M3-P P7: disarm the call deadline before the slot can be claimed again.
         slot.deadline_ms.store(0, Ordering::Relaxed);
         let parked = slot.deadline_waker.lock().take();
@@ -326,6 +346,7 @@ impl WorkerPool {
                 jobs_since: parking_lot::Mutex::new(None),
                 deadline_ms: AtomicU64::new(0),
                 deadline_waker: parking_lot::Mutex::new(None),
+                heap_reply: parking_lot::Mutex::new(None),
             })
             .collect();
         let entry = Arc::new(WorkerEntry {

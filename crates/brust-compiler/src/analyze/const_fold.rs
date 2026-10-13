@@ -4,8 +4,9 @@
 //! (R0.1): calls, globals, functions, JSX, `new`, regex, `let`/`var`, destructured consts and
 //! package imports.
 use crate::analyze::component::AnalyzeOptions;
-use crate::analyze::expr::{Js, Reader, print_js};
+use crate::analyze::expr::{Js, Reader, print_js_with};
 use crate::analyze::modules::resolve;
+use crate::analyze::names::Aliases;
 use crate::analyze::names::NameTable;
 use crate::ir::{BinOp, ConstVal, IdentKind, ModuleDecl, RawExpr, RawKind, ServerExpr, UnOp};
 use bun_ast as js_ast;
@@ -261,7 +262,7 @@ pub fn imported_const(
     parsed.with_ast(|ast| {
         let dummy = js_ast::G::Fn::default();
         let mut names = NameTable::new(ast, &dummy);
-        let print = |js: Js<'_>| print_js(&parsed, ast, js);
+        let print = |js: Js<'_>, a: &Aliases| print_js_with(&parsed, ast, a, js);
         let mut reader = Reader::new(&mut names, &print);
         let (_, decls) = reader.module_scope(ast);
         let local = exported_const_name(ast, imported)?;
