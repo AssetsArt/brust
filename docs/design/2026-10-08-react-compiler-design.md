@@ -253,8 +253,8 @@ not supported (in custom hook useCart, hooks/useCart.ts:4)`) when the hook: call
 does not support; builds JSX or returns early; has a default, rest or destructured parameter
 or assigns one (`hook-shape`); is destructured against a return that is not a literal of that
 shape (`hook-return-shape`); is imported and reads its own module's bindings or imports
-(other than React hooks), or uses `useStore` (import paths are not rebased); or reads a
-module name the component shadows.
+(other than React hooks), reads a global the component's module also declares, or uses
+`useStore` (import paths are not rebased); or reads a module name the component shadows.
 
 ### 4.4 Lower
 

@@ -65,6 +65,9 @@ struct Inline {
     /// What the component itself declares: a hook's free names must not be among them, or
     /// the inlined code would read the component's binding instead.
     root_declared: HashSet<String>,
+    /// Every name the component's module declares (imports included): a global a foreign
+    /// hook reads must not be among them, or the inlined code would read that binding.
+    root_module: HashSet<String>,
 }
 
 impl BodyDecls {
@@ -371,6 +374,9 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, m: Module<'_, '_>
     }
     w.stmts(func.body.stmts.slice());
     out.inline.root_declared = w.declared.iter().map(|d| r.names.name(*d)).collect();
+    if !m.foreign {
+        out.inline.root_module = r.names.declared_spellings().collect();
+    }
     read_props(func, r, &mut out);
     let returned = read_stmts(func.body.stmts.slice(), r, &mut out, m);
     out.return_expr = returned.flatten().map(Expr::Raw);
@@ -1165,6 +1171,15 @@ fn read_hook(
                 "hook-shape",
                 format!(
                     "custom hook {hook} reads `{spelled}` from {path}; an imported hook may use only React hooks and globals"
+                ),
+            );
+        }
+        if imported && out.inline.root_module.contains(&spelled) {
+            return fail(
+                out,
+                "hook-shape",
+                format!(
+                    "custom hook {hook} reads the global `{spelled}`, which the component's module declares"
                 ),
             );
         }

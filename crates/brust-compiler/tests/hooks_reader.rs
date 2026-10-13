@@ -561,3 +561,45 @@ fn a_hook_inside_an_imported_module_keeps_that_modules_rules() {
     );
     assert!(f.iter().all(|d| d.line == 2), "{f:?}");
 }
+
+/// Review F1 (Mellow, round 1): a global a foreign hook reads must not bind to the component
+/// module's own import or const of that name once inlined.
+#[test]
+fn a_foreign_hooks_global_does_not_bind_to_the_component_modules_names() {
+    let hook = "import { useState } from 'react'\nexport function useBack(label) { const [n, setN] = useState(0); const go = () => { history.back(); setN(n + 1) }; return [label + n, go] as const }\n";
+    for component in [
+        "import { useEffect } from 'react'\nimport { history } from './myhistory'\nimport { useBack } from './useNav'\nexport default function C({ title }: any) { const [text, back] = useBack(title); useEffect(() => { history.push('/x') }, []); return <button onClick={back}>{text}</button> }",
+        "import { useBack } from './useNav'\nconst history = { back() {} }\nexport default function C({ title }: any) { const [text, back] = useBack(title); return <button onClick={back}>{text}</button> }",
+    ] {
+        let ir = project(
+            &[
+                ("useNav.ts", hook),
+                (
+                    "myhistory.ts",
+                    "export const history = { back() {}, push(_p: string) {} }\n",
+                ),
+                ("C.tsx", component),
+            ],
+            "C.tsx",
+        );
+        let f = fallbacks(&ir);
+        assert!(
+            f.iter().any(|d| d.rule == "hook-shape" && d.message.contains("reads the global `history`")),
+            "{component}: {f:?}"
+        );
+        assert_ne!(ir.tier, Tier::Native);
+    }
+    // The same hook in a module that declares no `history` still inlines.
+    let ok = project(
+        &[
+            ("useNav.ts", hook),
+            (
+                "C.tsx",
+                "import { useBack } from './useNav'\nexport default function C({ title }: any) { const [text, back] = useBack(title); return <button onClick={back}>{text}</button> }",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(fallbacks(&ok).is_empty(), "{:?}", ok.diagnostics);
+    assert_eq!(ok.tier, Tier::Native);
+}

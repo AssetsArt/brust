@@ -332,6 +332,15 @@ impl<'a> NameTable<'a> {
             .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())
     }
 
+    /// Every name the module itself declares (imports, module and nested bindings), as spelled:
+    /// the module's symbols except the unbound ones (globals).
+    pub fn declared_spellings(&self) -> impl Iterator<Item = String> + '_ {
+        self.symbols
+            .iter()
+            .filter(|s| s.kind != js_ast::symbol::Kind::Unbound)
+            .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())
+    }
+
     /// Same symbol, links followed.
     pub fn same(&self, a: js_ast::Ref, b: js_ast::Ref) -> bool {
         a.source_index() == b.source_index() && self.key(a) == self.key(b)
