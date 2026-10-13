@@ -79,6 +79,10 @@ pub struct ComponentRecord {
     /// The server only asks whether a route's chain has any (the worker touches them).
     #[serde(default)]
     pub stores: Vec<String>,
+    /// L33 (R35.2): the client runtime feature modules this component's output needs (keys of
+    /// `assets.features`, in load order). A page links the core plus the union over its components.
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -201,9 +205,13 @@ impl<'de> Deserialize<'de> for Instances {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Assets {
+    /// The client runtime core (`client/runtime-<hex>.js`).
     pub runtime: String,
     #[serde(default)]
     pub react: Option<String>,
+    /// L33: feature module name → `client/<file>`. Absent in an older manifest (no component lists a feature).
+    #[serde(default)]
+    pub features: BTreeMap<String, String>,
 }
 
 /// A validated manifest plus every component's template source, read once.
@@ -252,6 +260,8 @@ pub enum ManifestError {
         job: String,
         reason: String,
     },
+    #[error("component {component}: needs runtime feature {feature}, which assets.features does not list")]
+    MissingFeature { component: String, feature: String },
     #[error("component {component}: bad path {path:?} in {field}: {reason}")]
     BadPath {
         component: String,
@@ -476,6 +486,23 @@ fn walk(
     if let Some(r) = &manifest.assets.react {
         file("assets", r, FileUse::Asset)?;
     }
+    for f in manifest.assets.features.values() {
+        file("assets", f, FileUse::Asset)?;
+    }
+    // L33: a component whose output needs a runtime feature the build did not ship is a boot error, never a
+    // directive that silently does nothing in the browser.
+    for (id, c) in &manifest.components {
+        if let Some(f) = c
+            .features
+            .iter()
+            .find(|f| !manifest.assets.features.contains_key(f.as_str()))
+        {
+            return Err(ManifestError::MissingFeature {
+                component: id.clone(),
+                feature: f.clone(),
+            });
+        }
+    }
     Ok((manifest, templates))
 }
 
@@ -629,6 +656,20 @@ mod tests {
         for c in m["components"].as_object_mut().unwrap().values_mut() {
             c["client"] = "client/nope-island.js".into();
         }
+        assert!(Manifest::from_parts(&m.to_string(), &files).is_ok());
+    }
+
+    #[test]
+    fn a_component_feature_the_build_did_not_ship_is_refused() {
+        let (mut m, files) = parts();
+        let id = m["components"].as_object().unwrap().keys().next().unwrap().clone();
+        m["components"][&id]["features"] = serde_json::json!(["basics"]);
+        let e = Manifest::from_parts(&m.to_string(), &files).unwrap_err();
+        let ManifestError::MissingFeature { component, feature } = e else {
+            panic!("want MissingFeature, got {e:?}");
+        };
+        assert_eq!((component, feature.as_str()), (id.clone(), "basics"));
+        m["assets"]["features"] = serde_json::json!({ "basics": "client/rt-basics-0123456789.js" });
         assert!(Manifest::from_parts(&m.to_string(), &files).is_ok());
     }
 

@@ -43,7 +43,7 @@ export async function runActionsOnly(o: {
       version: MANIFEST_VERSION,
       routes: [],
       components: {},
-      assets: { runtime: '' },
+      assets: { runtime: '', features: {} },
       jobs_module: 'jobs.js',
       actions: { entry: await buildActions(tmp, entry), prefix: actions.prefix, maxBodyBytes: actions.maxBodyBytes, maxResponseBytes: actions.maxResponseBytes, crossSite: actions.crossSite },
       actions_only: true,

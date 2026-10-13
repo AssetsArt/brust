@@ -1,20 +1,10 @@
 // Core + feature modules (L33, R35.1): the core knows no directive by name, each feature is its own file that
 // imports the core's API from one shared core module, and a feature never drags core code into itself.
 import { expect, test } from 'bun:test'
-import { resolve } from 'node:path'
-import { gzipSync } from 'node:zlib'
+import { readFileSync } from 'node:fs'
+import { BUDGET_FILE, bundle, measure } from '../scripts/size'
 
-const src = resolve(import.meta.dir, '../src')
 const FEATURES = ['basics', 'if', 'for', 'model', 'html', 'island'] as const
-
-async function bundle(entry: string, coreExternal: boolean): Promise<string> {
-  const r = await Bun.build({
-    entrypoints: [resolve(src, entry)], minify: true, format: 'esm', target: 'browser', define: { __BRUST_DEV__: 'false' },
-    plugins: coreExternal ? [{ name: 'core-external', setup: (b) => { b.onResolve({ filter: /core-api$/ }, () => ({ path: './core.js', external: true })) } }] : [],
-  })
-  expect(r.success).toBe(true)
-  return await r.outputs[0]!.text()
-}
 
 test('the core binds no directive by name and carries no island or store glue', async () => {
   const core = await bundle('core.ts', false)
@@ -43,10 +33,10 @@ test('basics carries text/show/bind/on/ref; if, for, model, html each carry only
   }
 })
 
-test('size budget: core plus basics stays well under the monolith (gzip, per file)', async () => {
-  const gz = async (e: string, ext: boolean) => gzipSync(await bundle(e, ext), { level: 9 }).length
-  const core = await gz('core.ts', false), basics = await gz('features/basics.ts', true)
-  console.log(`[runtime-split] core ${core} B gz, basics ${basics} B gz`)
-  expect(core).toBeLessThan(4200)
-  expect(basics).toBeLessThan(1500)
+test('size budget: core and every feature stay within docs/runtime-budget.json (gzip)', async () => {
+  const s = await measure()
+  const b = JSON.parse(readFileSync(BUDGET_FILE, 'utf8')) as { core: number; features: Record<string, number> }
+  console.log(`[runtime-split] core ${s.core} B gz, ${Object.entries(s.features).map(([f, n]) => `${f} ${n}`).join(', ')}`)
+  expect(s.core, 'core grew: raise docs/runtime-budget.json with a reason').toBeLessThanOrEqual(b.core)
+  for (const [f, n] of Object.entries(s.features)) expect(n, `${f} grew: raise docs/runtime-budget.json with a reason`).toBeLessThanOrEqual(b.features[f]!)
 })

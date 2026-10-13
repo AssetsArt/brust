@@ -95,6 +95,9 @@ test('the generated dist passes Manifest::load and renders through the real hand
   expect(home.status).toBe(200)
   const homeHtml = await home.text()
   expect(homeHtml).toContain('<section><h1>Home</h1></section>')
+  // L33: the page links the core, then exactly the feature modules its components need (the layout binds basics only).
+  expect(homeHtml).toMatch(/runtime-[0-9a-f]{10}\.js"><\/script><script type="module" src="\/_brust\/client\/rt-basics-[0-9a-f]{10}\.js"/)
+  expect(homeHtml).not.toMatch(/rt-(for|if|model|html|island)-/)
   expect(JSON.parse(cacheStats()).loader_calls).toBe(0)
 
   const res = await fetch(`${base}/items/x`)
@@ -110,6 +113,7 @@ test('the generated dist passes Manifest::load and renders through the real hand
   // m2a3 literals: the constant prop reaches the child's ssr through the manifest + worker merge.
   expect(html).toContain('<h3>crew</h3>')
   expect(html).toContain('/_brust/client/runtime-')
+  expect(html).toMatch(/client\/rt-island-[0-9a-f]{10}\.js/) // an island page links the hydration glue
   expect(html).toContain('/_brust/client/react-team_db295766-')
   const chunk = /\/_brust\/(client\/react-team_[^"]+\.js)/.exec(html)![1]! // ItemPage is static (F70): the island's chunk is the page's one client file
   const js = await fetch(`${base}/_brust/${chunk}`)

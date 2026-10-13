@@ -1,0 +1,13 @@
+{
+  "reason": "L33 first budget (2026-10-14): measured gzip size of each module + 10%. Raise a number only in the PR that grows that module, and say why in this line.",
+  "core": 3432,
+  "features": {
+    "basics": 1022,
+    "if": 403,
+    "for": 1159,
+    "model": 648,
+    "html": 339,
+    "island": 843,
+    "store": 1262
+  }
+}

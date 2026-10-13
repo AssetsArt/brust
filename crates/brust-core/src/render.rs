@@ -5,7 +5,7 @@
 //! process-global `RwLock`, no dynamic tier, no hot reload). Every environment
 //! goes through [`brust_jinja::register`] — autoescape None, the template writes
 //! `| e` itself; no second escaper is ever added here.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use minijinja::Environment;
@@ -441,12 +441,14 @@ pub fn inject_document_assets_into(
 ) {
     let mut chunks: Vec<&str> = Vec::new();
     let mut react: Vec<&str> = Vec::new();
+    let mut features: BTreeSet<&str> = BTreeSet::new();
     let mut any_dynamic = false;
     let mut visit = |id: &str| {
         if let Some(c) = m.components.get(id) {
             if c.tier != Tier::Static {
                 any_dynamic = true;
             }
+            features.extend(c.features.iter().map(String::as_str));
             if let Some(cl) = &c.client {
                 let bucket = if c.tier == Tier::React {
                     &mut react
@@ -490,6 +492,13 @@ pub fn inject_document_assets_into(
         store_scripts_into(&mut tags, st);
     }
     tags.push_str(&tag(&m.assets.runtime));
+    // L33: the runtime features this page's components need, sorted by name (the core first, then
+    // features, then the chunks that define behaviors: module scripts run in document order).
+    for (name, file) in &m.assets.features {
+        if features.contains(name.as_str()) {
+            tags.push_str(&tag(file));
+        }
+    }
     for c in &chunks {
         tags.push_str(&tag(c));
     }
@@ -878,6 +887,37 @@ mod tests {
             "",
             "routes[1] must exercise the tag path"
         );
+    }
+
+    #[test]
+    fn inject_links_core_then_exactly_the_features_the_chain_needs() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../brust-server/tests/fixtures/dist");
+        let mut m = crate::manifest::Manifest::load(&dir).unwrap().manifest;
+        for f in ["basics", "for", "island"] {
+            m.assets
+                .features
+                .insert(f.into(), format!("client/rt-{f}-0123456789.js"));
+        }
+        let chain = m.routes[1].chain.clone();
+        // No component asks for a feature: the core and the chunks only.
+        let bare = inject_assets(String::new(), &chain, &m);
+        assert!(!bare.contains("rt-"), "{bare}");
+        // One component asks for basics: its module is linked once, after the core and before the chunks.
+        let id = chain
+            .iter()
+            .find(|c| m.components[c.as_str()].tier != Tier::Static)
+            .unwrap()
+            .clone();
+        m.components.get_mut(&id).unwrap().features = vec!["basics".into()];
+        let out = inject_assets(String::new(), &chain, &m);
+        assert_eq!(out.matches("rt-basics-0123456789.js").count(), 1, "{out}");
+        assert!(!out.contains("rt-for-") && !out.contains("rt-island-"), "{out}");
+        let at = |needle: &str| out.find(needle).unwrap();
+        assert!(at(&m.assets.runtime) < at("rt-basics-"), "{out}");
+        if let Some(chunk) = &m.components[&id].client {
+            assert!(at("rt-basics-") < at(chunk.as_str()), "{out}");
+        }
     }
 
     // ---- L14: dev markers and the doctype ----

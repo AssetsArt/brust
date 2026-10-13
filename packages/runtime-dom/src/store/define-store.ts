@@ -1,6 +1,6 @@
 // defineStore (M3-F D1): the 0.1.x `brustjs/store` handle on the shared reactive core and the
 // globalThis registry. Resolution (browser registry / server resolver) lives in ./registry.
-import { type Computed, type Signal, isSignal } from '../signal'
+import { type Computed, type Signal, isSignal } from '../core-api'
 import { type StoreInstanceRecord, computeSnapshot, resolveRecord } from './registry'
 
 // Unwrap a Signal/Computed to its value type; `never` if it is neither. Uses `infer` (not

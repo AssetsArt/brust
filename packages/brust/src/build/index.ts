@@ -235,12 +235,13 @@ async function buildInto(
   const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps }
   // The runtime first: its hashed URL is the `runtimeImport` every client chunk is compiled with.
   const runtime = await buildRuntime(out, ctx)
+  const runtimeUrls = { core: `/_brust/${runtime.core}`, store: `/_brust/${runtime.store}` }
   const compileOpts = {
     appRoot,
     leaves,
     componentFile: o.componentFile,
     componentIssue: o.componentIssue,
-    runtimeImport: `/_brust/${runtime}`,
+    runtimeImport: runtimeUrls.core,
     serverOnly: o.serverOnly,
     cssMaps: css.maps,
   }
@@ -262,8 +263,7 @@ async function buildInto(
   mkdirSync(join(out, 'jinja'), { recursive: true })
   for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
 
-  const runtimeUrl = `/_brust/${runtime}`
-  const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrl)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrl))])
+  const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrls)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrls))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime, chunks })
   for (const r of manifest.routes) {
     const files = [...new Set((routeCss.get(r.id) ?? []).flatMap((s) => (css.file.has(s) ? [css.file.get(s)!] : [])))]

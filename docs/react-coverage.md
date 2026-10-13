@@ -24,178 +24,178 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 
 ## A. JSX basics
 
-| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
-|---|---|---|---|---|---|---|---|
-| a-static-text | static text | static | static | 0 | ok | — | spec §3.1 static tier |
-| a-interpolation | prop interpolation | static | static | 0 | ok | — | spec §3.1 static tier; §6.2 prop read |
-| a-attributes | static and dynamic attributes | static | static | 0 | ok | — | spec §3.1 static tier; §6.2 attributes |
-| a-classname-template | className template literal | static | static | 0 | ok | — | spec §6.2 template literal |
-| a-style-object | style object from props | static | static | 0 | ok | — | spec §6.2 style object |
-| a-module-const | module const (literal, array) in render | static | static | 0 | ok | — | spec §6.2 literals/arrays; module consts fold at compile time (L1) |
-| a-module-const-mutated | module const array mutated in its module | static | static | precompute | ok | — | R1.1: a mutated array never folds; it stays a precompute slot |
-| a-list-cond-element | .map returning a ternary between two elements | static | static | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms desugar to For + If |
-| a-list-cond-state | .map returning a conditional element over state | native | native | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms |
-| a-and-guard | && guard on a prop | static | static | 0 | ok | — | spec §6.2 && guard |
-| a-ternary | ternary on a prop | static | static | 0 | ok | — | spec §6.2 ternary |
-| a-fragment | fragment root | static | static | 0 | ok | — | static fragment root: no <brust-host>, no warning (gaps L8) |
-| a-list-keys | keyed list from a prop | static | static | 0 | ok | — | spec §6.2 keyed list |
-| a-nested-list | nested keyed lists | static | static | 0 | ok | — | table rows |
-| a-cond-attribute | conditional attribute via ternary | static | static | 0 | ok | — | spec §6.2 conditional attribute |
-| a-array-from | Array.from range list | static | static | precompute | ok | — | spec §6.2: the Array.from(xs, fn) callback form is a keyed list like .map (F40) |
-| a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | ok | — | spec §6.2: N literal ≤ 1024 |
-| a-state-text | state text with a click handler | native | native | 0 | ok | — | spec §4.3 useState |
-| a-state-cond | state-driven conditional | native | native | 0 | ok | — | spec §4.3 useState; §7.1 x-if |
-| a-state-list | state list with append | native | native | 0 | ok | — | spec §4.3 useState; §7.1 x-for |
-| a-style-undefined | style={c ? {…} : undefined} (F36) | static | static | 0 | ok | — | the attribute is omitted when undefined, as React does |
-| a-inner-html | dangerouslySetInnerHTML on a host element | static | static | 0 | ok | — | raw HTML sink (html_raw), React contract: the author sanitises |
-| a-inner-html-state | dangerouslySetInnerHTML driven by state | native | native | 0 | ok | — | spec §4.3 useState; x-html directive repaints innerHTML |
-| a-inner-html-react | dangerouslySetInnerHTML in a component that is React for another reason | react | react | ssr | ok | fallback:browser-global | browser-global forces the React tier; the markup is no longer a build error |
-| a-reserved-x-attr | x-* attribute written in JSX (F94) | static | static | 0 | ok | warning:reserved-attr | warning reserved-attr: runtime directives come only from compiler output; the attributes are dropped |
-| a-svg-class-state | state-driven class on an SVG element (F96a) | native | native | 0 | ok | — | F96a: x-bind-class uses setAttribute (SVG className is a getter-only SVGAnimatedString) |
-| a-state-spread-handler | spread of a state array in a handler and a helper (F96b) | native | native | precompute | ok | — | F96b: a verbatim body nested in a structured expression gets its captures bound (xs → xs()) |
-| a-state-list-static-child | static child listing a state-fed prop (F96d) | native | native | 0 | ok | — | F96d: the linked child repaints its own list (x-for over props()) |
-| a-linked-child-prop-precompute | state-fed prop derived with a callback in a linked child (F96d) | react | react | ssr | ok | fallback:linked-prop-precompute | F96d fail-closed: a server-computed value over a prop the parent changes would freeze; fallback linked-prop-precompute |
-| a-spread-host | spread props on a host element (F31) | react | react | ssr | ok | fallback:spread-props | fallback spread-props until the template backend can expand a known-shape spread |
-| a-form-onsubmit | <form onSubmit> | native | native | 0 | ok | — |  |
-| a-form-action | <form action={fn}> | react | static | precompute | ok | — | known gap: F115: a function action becomes a precompute value that the url_ok guard drops, so the form renders without an action and submits nowhere; it should fall back to react |
-| a-input-controlled | controlled <input> | native | native | 0 | ok | — |  |
-| a-input-static | <input> with a default value | static | static | 0 | ok | — |  |
-| a-select-controlled | controlled <select> | native | native | 0 | ok | — |  |
-| a-textarea-controlled | controlled <textarea> | native | native | 0 | ok | — |  |
-| a-title | <title> in a component body | static | static | 0 | ok | — |  |
-| a-meta | <meta> in a component body | static | static | 0 | ok | — |  |
-| a-link | <link rel=stylesheet> in a component body | static | static | 0 | ok | — |  |
-| a-style | <style> element | static | static | 0 | ok | — |  |
-| a-script-async | <script async src> | static | static | 0 | ok | — |  |
+| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Runtime (core + modules · gzip B, budget bound) | Diagnostics | Note |
+|---|---|---|---|---|---|---|---|---|
+| a-static-text | static text | static | static | 0 | ok | — | — | spec §3.1 static tier |
+| a-interpolation | prop interpolation | static | static | 0 | ok | — | — | spec §3.1 static tier; §6.2 prop read |
+| a-attributes | static and dynamic attributes | static | static | 0 | ok | — | — | spec §3.1 static tier; §6.2 attributes |
+| a-classname-template | className template literal | static | static | 0 | ok | — | — | spec §6.2 template literal |
+| a-style-object | style object from props | static | static | 0 | ok | — | — | spec §6.2 style object |
+| a-module-const | module const (literal, array) in render | static | static | 0 | ok | — | — | spec §6.2 literals/arrays; module consts fold at compile time (L1) |
+| a-module-const-mutated | module const array mutated in its module | static | static | precompute | ok | — | — | R1.1: a mutated array never folds; it stays a precompute slot |
+| a-list-cond-element | .map returning a ternary between two elements | static | static | 0 | ok | — | — | spec §6.2 map-as-For; L6 conditional element arms desugar to For + If |
+| a-list-cond-state | .map returning a conditional element over state | native | native | 0 | ok | core+basics+if+for · 6016 | — | spec §6.2 map-as-For; L6 conditional element arms |
+| a-and-guard | && guard on a prop | static | static | 0 | ok | — | — | spec §6.2 && guard |
+| a-ternary | ternary on a prop | static | static | 0 | ok | — | — | spec §6.2 ternary |
+| a-fragment | fragment root | static | static | 0 | ok | — | — | static fragment root: no <brust-host>, no warning (gaps L8) |
+| a-list-keys | keyed list from a prop | static | static | 0 | ok | — | — | spec §6.2 keyed list |
+| a-nested-list | nested keyed lists | static | static | 0 | ok | — | — | table rows |
+| a-cond-attribute | conditional attribute via ternary | static | static | 0 | ok | — | — | spec §6.2 conditional attribute |
+| a-array-from | Array.from range list | static | static | precompute | ok | — | — | spec §6.2: the Array.from(xs, fn) callback form is a keyed list like .map (F40) |
+| a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | ok | — | — | spec §6.2: N literal ≤ 1024 |
+| a-state-text | state text with a click handler | native | native | 0 | ok | core+basics · 4454 | — | spec §4.3 useState |
+| a-state-cond | state-driven conditional | native | native | 0 | ok | core+basics+if · 4857 | — | spec §4.3 useState; §7.1 x-if |
+| a-state-list | state list with append | native | native | 0 | ok | core+basics+for · 5613 | — | spec §4.3 useState; §7.1 x-for |
+| a-style-undefined | style={c ? {…} : undefined} (F36) | static | static | 0 | ok | — | — | the attribute is omitted when undefined, as React does |
+| a-inner-html | dangerouslySetInnerHTML on a host element | static | static | 0 | ok | — | — | raw HTML sink (html_raw), React contract: the author sanitises |
+| a-inner-html-state | dangerouslySetInnerHTML driven by state | native | native | 0 | ok | core+basics+html · 4793 | — | spec §4.3 useState; x-html directive repaints innerHTML |
+| a-inner-html-react | dangerouslySetInnerHTML in a component that is React for another reason | react | react | ssr | ok | core+island · 4275 | fallback:browser-global | browser-global forces the React tier; the markup is no longer a build error |
+| a-reserved-x-attr | x-* attribute written in JSX (F94) | static | static | 0 | ok | — | warning:reserved-attr | warning reserved-attr: runtime directives come only from compiler output; the attributes are dropped |
+| a-svg-class-state | state-driven class on an SVG element (F96a) | native | native | 0 | ok | core+basics · 4454 | — | F96a: x-bind-class uses setAttribute (SVG className is a getter-only SVGAnimatedString) |
+| a-state-spread-handler | spread of a state array in a handler and a helper (F96b) | native | native | precompute | ok | core+basics · 4454 | — | F96b: a verbatim body nested in a structured expression gets its captures bound (xs → xs()) |
+| a-state-list-static-child | static child listing a state-fed prop (F96d) | native | native | 0 | ok | core+basics+for · 5613 | — | F96d: the linked child repaints its own list (x-for over props()) |
+| a-linked-child-prop-precompute | state-fed prop derived with a callback in a linked child (F96d) | react | react | ssr | ok | core+island · 4275 | fallback:linked-prop-precompute | F96d fail-closed: a server-computed value over a prop the parent changes would freeze; fallback linked-prop-precompute |
+| a-spread-host | spread props on a host element (F31) | react | react | ssr | ok | core+island · 4275 | fallback:spread-props | fallback spread-props until the template backend can expand a known-shape spread |
+| a-form-onsubmit | <form onSubmit> | native | native | 0 | ok | core+basics · 4454 | — |  |
+| a-form-action | <form action={fn}> | react | static | precompute | ok | — | — | known gap: F115: a function action becomes a precompute value that the url_ok guard drops, so the form renders without an action and submits nowhere; it should fall back to react |
+| a-input-controlled | controlled <input> | native | native | 0 | ok | core+basics+model · 5102 | — |  |
+| a-input-static | <input> with a default value | static | static | 0 | ok | — | — |  |
+| a-select-controlled | controlled <select> | native | native | 0 | ok | core+model · 4080 | — |  |
+| a-textarea-controlled | controlled <textarea> | native | native | 0 | ok | core+model · 4080 | — |  |
+| a-title | <title> in a component body | static | static | 0 | ok | — | — |  |
+| a-meta | <meta> in a component body | static | static | 0 | ok | — | — |  |
+| a-link | <link rel=stylesheet> in a component body | static | static | 0 | ok | — | — |  |
+| a-style | <style> element | static | static | 0 | ok | — | — |  |
+| a-script-async | <script async src> | static | static | 0 | ok | — | — |  |
 
 ## B. Composition
 
-| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
-|---|---|---|---|---|---|---|---|
-| b-child-static | static child component | static | static | 0 | ok | — | spec §3.1 inlined child |
-| b-child-props | child with props | static | static | 0 | ok | — | spec §3.1 inlined child with props |
-| b-child-dir-index | child imported from a directory (./widgets → widgets/index.ts) | static | static | 0 | ok | — | spec §3.1 inlined child; Bun resolves <dir>/index.ts; compiler matches (M3-F store lane) |
-| b-children-slot | children passed through a slot | static | static | 0 | ok | — | spec §3.1 children slot |
-| b-reactive-props | state flows into a native child as a reactive prop | native | native | 0 | ok | — | spec §7.4 reactive props (D8) |
-| b-function-prop | function prop to a native child | native | native | 0 | ok | — | spec §7.4 function prop between native components |
-| b-react-child-island | react child inside a native parent (island) | static | static | ssr | ok | — | the parent stays static; its one job is the child island SSR render |
-| b-named-export-island | react island imported by name (export function) | static | static | ssr | ok | — | R34.11 (F138b): the island entry imports `{ Panel }`, not the default export; hydrates in tests/server/named-export-islands.chromium.test.ts |
-| b-two-islands-one-file | two react islands from one file on one page | static | static | ssr, ssr | ok | — | R34.11: each export is its own island id; one module instance of the file per chunk set (browser test: shared module state) |
-| b-island-via-index | react island re-exported through an index (export { X } from) | static | static | ssr | ok | — | R34.11: the barrel is followed to the declaring module; the island has the same id however it is imported |
-| b-export-alias-island | react island exported under another name (export { X as Y }) | static | static | ssr | ok | — | R34.11: imported as `Panel`, declared as `Inner` |
-| b-export-const-island | react island declared as export const (arrow function) | static | static | ssr | ok | fallback:child-component | R34.11/R34.10: a binding the compiler does not read stays an island (fail closed); the build imports `{ Panel }` |
-| b-island-in-inlined | react island inside an inlined native component (G11) | static | static | 0 | ok | — | S6 amendment L4 (F108): the island render is the inlined Tiers instance job, so the page has no job of its own |
-| b-island-in-inlined-row | react island inside an inlined per-row component | static | static | 0 | ok | — | S6 amendment L4 (F108): one island render per row of the Row instance (per-row child record) |
-| b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component |  |
-| b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
-| b-forwardref | forwardRef component | react | react | ssr | ok | fallback:default-export-shape |  |
-| b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
-| b-spread-child | spread props onto a component (F31) | react | react | ssr | ok | fallback:spread-props |  |
+| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Runtime (core + modules · gzip B, budget bound) | Diagnostics | Note |
+|---|---|---|---|---|---|---|---|---|
+| b-child-static | static child component | static | static | 0 | ok | — | — | spec §3.1 inlined child |
+| b-child-props | child with props | static | static | 0 | ok | — | — | spec §3.1 inlined child with props |
+| b-child-dir-index | child imported from a directory (./widgets → widgets/index.ts) | static | static | 0 | ok | — | — | spec §3.1 inlined child; Bun resolves <dir>/index.ts; compiler matches (M3-F store lane) |
+| b-children-slot | children passed through a slot | static | static | 0 | ok | — | — | spec §3.1 children slot |
+| b-reactive-props | state flows into a native child as a reactive prop | native | native | 0 | ok | core+basics · 4454 | — | spec §7.4 reactive props (D8) |
+| b-function-prop | function prop to a native child | native | native | 0 | ok | core+basics · 4454 | — | spec §7.4 function prop between native components |
+| b-react-child-island | react child inside a native parent (island) | static | static | ssr | ok | — | — | the parent stays static; its one job is the child island SSR render |
+| b-named-export-island | react island imported by name (export function) | static | static | ssr | ok | — | — | R34.11 (F138b): the island entry imports `{ Panel }`, not the default export; hydrates in tests/server/named-export-islands.chromium.test.ts |
+| b-two-islands-one-file | two react islands from one file on one page | static | static | ssr, ssr | ok | — | — | R34.11: each export is its own island id; one module instance of the file per chunk set (browser test: shared module state) |
+| b-island-via-index | react island re-exported through an index (export { X } from) | static | static | ssr | ok | — | — | R34.11: the barrel is followed to the declaring module; the island has the same id however it is imported |
+| b-export-alias-island | react island exported under another name (export { X as Y }) | static | static | ssr | ok | — | — | R34.11: imported as `Panel`, declared as `Inner` |
+| b-export-const-island | react island declared as export const (arrow function) | static | static | ssr | ok | — | fallback:child-component | R34.11/R34.10: a binding the compiler does not read stays an island (fail closed); the build imports `{ Panel }` |
+| b-island-in-inlined | react island inside an inlined native component (G11) | static | static | 0 | ok | — | — | S6 amendment L4 (F108): the island render is the inlined Tiers instance job, so the page has no job of its own |
+| b-island-in-inlined-row | react island inside an inlined per-row component | static | static | 0 | ok | — | — | S6 amendment L4 (F108): one island render per row of the Row instance (per-row child record) |
+| b-component-map | component map dispatch | react | react | ssr | ok | core+island · 4275 | fallback:local-component |  |
+| b-memo | memo() wrapper around a plain component | native | native | 0 | ok | core+basics · 4454 | — | spec §3 memo() |
+| b-forwardref | forwardRef component | react | react | ssr | ok | core+island · 4275 | fallback:default-export-shape |  |
+| b-hoc | higher-order component | react | react | ssr | ok | core+island · 4275 | fallback:default-export-shape |  |
+| b-spread-child | spread props onto a component (F31) | react | react | ssr | ok | core+island · 4275 | fallback:spread-props |  |
 
 ## C. Hooks
 
-| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
-|---|---|---|---|---|---|---|---|
-| c-usestate | useState | native | native | 0 | ok | — | spec §4.3 useState |
-| c-useeffect-cleanup | useEffect with cleanup | native | native | 0 | ok | — | spec §8.1 effect-deps: the deps array is complete, so no warning (F41) |
-| c-useeffect-missing-dep | useEffect missing a dependency | native | native | 0 | ok | warning:effect-deps | spec §8.1 effect-deps: warns, never changes the tier (F41) |
-| c-usememo | useMemo derived from state | native | native | 0 | ok | — | spec §4.3 useMemo |
-| c-usecallback | useCallback handler | native | native | 0 | ok | — | spec §4.3 useCallback |
-| c-useref | useRef bound with ref= | native | native | 0 | ok | — | spec §4.3 useRef |
-| c-useid | useId read in render | static | static | 0 | ok | — | spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static |
-| c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | — | spec §4.3 useLayoutEffect |
-| c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |
-| c-usecontext | useContext | react | react | ssr | ok | fallback:hook-unsupported |  |
-| c-custom-hook | custom hook | native | native | 0 | ok | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
-| c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
-| c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
-| c-usetransition | useTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
-| c-usesyncexternalstore | useSyncExternalStore | react | react | ssr | ok | fallback:hook-unsupported |  |
-| c-use-hook | use(promise) | react | react | ssr | ok | fallback:hook-unsupported |  |
-| c-usestate-load | useState(load) with a module function (F26) | native | native | precompute | ok | — | seeds the call, not the function |
-| c-useeffect-nocleanup | useEffect without cleanup | native | native | 0 | ok | — | spec §4.3 useEffect |
-| c-usestate-functional | useState with a functional update | native | native | 0 | ok | — | spec §4.3 useState (functional updates supported) |
-| c-useactionstate | useActionState | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
-| c-usedebugvalue | useDebugValue in a hook-using component | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
-| c-usedeferredvalue | useDeferredValue | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
-| c-useeffectevent | useEffectEvent | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
-| c-useimperativehandle | useImperativeHandle | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
-| c-useinsertioneffect | useInsertionEffect | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
-| c-useoptimistic | useOptimistic | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
-| c-usetransition-start | startTransition from the useTransition pair | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: startTransition is outside the supported set |
-| c-use-context | use(context) | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: use |
-| c-useformstatus | useFormStatus read in the component | react | react | ssr | ok | fallback:hook-unsupported | react-dom hook, outside the supported set |
-| c-useformstatus-child | useFormStatus in a child inside a static <form> | react | static | ssr | ok | — | known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react |
+| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Runtime (core + modules · gzip B, budget bound) | Diagnostics | Note |
+|---|---|---|---|---|---|---|---|---|
+| c-usestate | useState | native | native | 0 | ok | core+basics · 4454 | — | spec §4.3 useState |
+| c-useeffect-cleanup | useEffect with cleanup | native | native | 0 | ok | core+basics · 4454 | — | spec §8.1 effect-deps: the deps array is complete, so no warning (F41) |
+| c-useeffect-missing-dep | useEffect missing a dependency | native | native | 0 | ok | core+basics · 4454 | warning:effect-deps | spec §8.1 effect-deps: warns, never changes the tier (F41) |
+| c-usememo | useMemo derived from state | native | native | 0 | ok | core+basics · 4454 | — | spec §4.3 useMemo |
+| c-usecallback | useCallback handler | native | native | 0 | ok | core+basics · 4454 | — | spec §4.3 useCallback |
+| c-useref | useRef bound with ref= | native | native | 0 | ok | core+basics · 4454 | — | spec §4.3 useRef |
+| c-useid | useId read in render | static | static | 0 | ok | — | — | spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static |
+| c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | core+basics · 4454 | — | spec §4.3 useLayoutEffect |
+| c-usereducer | useReducer | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| c-usecontext | useContext | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| c-custom-hook | custom hook | native | native | 0 | ok | core+basics · 4454 | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
+| c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | core+basics · 4454 | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
+| c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
+| c-usetransition | useTransition | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| c-usesyncexternalstore | useSyncExternalStore | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| c-use-hook | use(promise) | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| c-usestate-load | useState(load) with a module function (F26) | native | native | precompute | ok | core+basics · 4454 | — | seeds the call, not the function |
+| c-useeffect-nocleanup | useEffect without cleanup | native | native | 0 | ok | core+basics · 4454 | — | spec §4.3 useEffect |
+| c-usestate-functional | useState with a functional update | native | native | 0 | ok | core+basics · 4454 | — | spec §4.3 useState (functional updates supported) |
+| c-useactionstate | useActionState | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-usedebugvalue | useDebugValue in a hook-using component | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-usedeferredvalue | useDeferredValue | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-useeffectevent | useEffectEvent | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-useimperativehandle | useImperativeHandle | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-useinsertioneffect | useInsertionEffect | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-useoptimistic | useOptimistic | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-usetransition-start | startTransition from the useTransition pair | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | spec §3 react tier: startTransition is outside the supported set |
+| c-use-context | use(context) | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | spec §3 react tier: use |
+| c-useformstatus | useFormStatus read in the component | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported | react-dom hook, outside the supported set |
+| c-useformstatus-child | useFormStatus in a child inside a static <form> | react | static | ssr | ok | — | — | known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react |
 
 ## D. API surface
 
-| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
-|---|---|---|---|---|---|---|---|
-| d-cache | cache() around a server helper | static | static | precompute | ok | — | spec §3.4 cache() |
-| d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:jsx-expression, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
-| d-createcontext | createContext provider | react | react | ssr | ok | fallback:member-tag |  |
-| d-clone-element | cloneElement | react | react | ssr | ok | fallback:hook-unsupported |  |
-| d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-expression |  |
-| d-suspense-static | <Suspense> around static content | react | react | ssr | ok | fallback:external-component, fallback:island-children, fallback:jsx-expression | spec §3 react tier: Suspense |
-| d-fragment-keyed | <Fragment key> inside a list | static | static | 0 | ok | — |  |
-| d-activity | <Activity mode> | react | react | ssr | ok | fallback:external-component, fallback:island-children |  |
-| d-profiler | <Profiler onRender> | error | error | ssr | refused | error:island-prop, fallback:external-component, fallback:island-children | a function prop to an external component is refused (island-prop) |
-| d-profiler-bare | <Profiler> without onRender | react | react | ssr | ok | fallback:external-component, fallback:island-children |  |
-| d-strictmode | <StrictMode> | react | react | ssr | ok | fallback:external-component, fallback:island-children |  |
-| d-viewtransition | <ViewTransition> | react | react | ssr | ok | fallback:external-component, fallback:island-children |  |
-| d-act | act() in a component module | static | static | 0 | ok | — | a test helper: importing it changes nothing about the component |
-| d-addtransitiontype | addTransitionType inside startTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
-| d-cachesignal | cacheSignal() in a cached function | static | static | precompute | ok | — | spec §3.4 cache(): the call is a precompute job on the server |
-| d-captureownerstack | captureOwnerStack in a handler | react | react | ssr | ok | fallback:hook-unsupported |  |
-| d-taint-object | experimental_taintObjectReference | react | react | ssr | ok | fallback:hook-unsupported |  |
-| d-taint-unique | experimental_taintUniqueValue | react | react | ssr | ok | fallback:hook-unsupported |  |
-| d-lazy-component | lazy component without Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:local-component |  |
-| d-memo-state | default export memo(function …) with state | react | react | ssr | ok | fallback:default-export-shape | fail-closed: an inline function inside the default export is the default-export-shape fallback (memo(Named) is b-memo) |
-| d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | fallback:member-tag, fallback:jsx-expression |  |
-| d-createportal | createPortal | react | react | ssr | ok | fallback:browser-global |  |
-| d-flushsync | flushSync in a handler | react | native | 0 | ok | — | known gap: F115: compiles native but the client chunk imports react-dom (a native chunk must contain no react import); it should fall back to react |
-| d-preconnect | preconnect in render | react | react | ssr | ok | fallback:body-shape |  |
-| d-prefetchdns | prefetchDNS in render | react | react | ssr | ok | fallback:body-shape |  |
-| d-preinit | preinit in render | react | react | ssr | ok | fallback:body-shape |  |
-| d-preinitmodule | preinitModule in render | react | react | ssr | ok | fallback:body-shape |  |
-| d-preload | preload in render | react | react | ssr | ok | fallback:body-shape |  |
-| d-preloadmodule | preloadModule in render | react | react | ssr | ok | fallback:body-shape |  |
+| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Runtime (core + modules · gzip B, budget bound) | Diagnostics | Note |
+|---|---|---|---|---|---|---|---|---|
+| d-cache | cache() around a server helper | static | static | precompute | ok | — | — | spec §3.4 cache() |
+| d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | core+island · 4275 | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:jsx-expression, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
+| d-createcontext | createContext provider | react | react | ssr | ok | core+island · 4275 | fallback:member-tag |  |
+| d-clone-element | cloneElement | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| d-children-map | Children.map | react | react | ssr | ok | core+island · 4275 | fallback:jsx-expression |  |
+| d-suspense-static | <Suspense> around static content | react | react | ssr | ok | core+island · 4275 | fallback:external-component, fallback:island-children, fallback:jsx-expression | spec §3 react tier: Suspense |
+| d-fragment-keyed | <Fragment key> inside a list | static | static | 0 | ok | — | — |  |
+| d-activity | <Activity mode> | react | react | ssr | ok | core+island · 4275 | fallback:external-component, fallback:island-children |  |
+| d-profiler | <Profiler onRender> | error | error | ssr | refused | core+island · 4275 | error:island-prop, fallback:external-component, fallback:island-children | a function prop to an external component is refused (island-prop) |
+| d-profiler-bare | <Profiler> without onRender | react | react | ssr | ok | core+island · 4275 | fallback:external-component, fallback:island-children |  |
+| d-strictmode | <StrictMode> | react | react | ssr | ok | core+island · 4275 | fallback:external-component, fallback:island-children |  |
+| d-viewtransition | <ViewTransition> | react | react | ssr | ok | core+island · 4275 | fallback:external-component, fallback:island-children |  |
+| d-act | act() in a component module | static | static | 0 | ok | — | — | a test helper: importing it changes nothing about the component |
+| d-addtransitiontype | addTransitionType inside startTransition | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| d-cachesignal | cacheSignal() in a cached function | static | static | precompute | ok | — | — | spec §3.4 cache(): the call is a precompute job on the server |
+| d-captureownerstack | captureOwnerStack in a handler | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| d-taint-object | experimental_taintObjectReference | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| d-taint-unique | experimental_taintUniqueValue | react | react | ssr | ok | core+island · 4275 | fallback:hook-unsupported |  |
+| d-lazy-component | lazy component without Suspense | react | react | ssr | ok | core+island · 4275 | fallback:dynamic-import, fallback:local-component |  |
+| d-memo-state | default export memo(function …) with state | react | react | ssr | ok | core+island · 4275 | fallback:default-export-shape | fail-closed: an inline function inside the default export is the default-export-shape fallback (memo(Named) is b-memo) |
+| d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | core+island · 4275 | fallback:member-tag, fallback:jsx-expression |  |
+| d-createportal | createPortal | react | react | ssr | ok | core+island · 4275 | fallback:browser-global |  |
+| d-flushsync | flushSync in a handler | react | native | 0 | ok | core+basics · 4454 | — | known gap: F115: compiles native but the client chunk imports react-dom (a native chunk must contain no react import); it should fall back to react |
+| d-preconnect | preconnect in render | react | react | ssr | ok | core+island · 4275 | fallback:body-shape |  |
+| d-prefetchdns | prefetchDNS in render | react | react | ssr | ok | core+island · 4275 | fallback:body-shape |  |
+| d-preinit | preinit in render | react | react | ssr | ok | core+island · 4275 | fallback:body-shape |  |
+| d-preinitmodule | preinitModule in render | react | react | ssr | ok | core+island · 4275 | fallback:body-shape |  |
+| d-preload | preload in render | react | react | ssr | ok | core+island · 4275 | fallback:body-shape |  |
+| d-preloadmodule | preloadModule in render | react | react | ssr | ok | core+island · 4275 | fallback:body-shape |  |
 
 ## E. v2 specifics
 
-| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
-|---|---|---|---|---|---|---|---|
-| e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
-| e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
-| e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
-| e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |
-| e-precompute-props | props-only value outside the template subset | static | static | precompute | ok | — | spec §6.4 precompute |
-| e-precompute-state | state-dependent value from a module helper | native | native | precompute | ok | — | spec §6.4 precompute |
-| e-precompute-per-item | per-item precompute in a list | static | static | precompute | ok | — | spec §6.4 precompute |
-| e-reactive-props-child | derived reactive value passed to a child | native | native | 0 | ok | — | spec §7.4 reactive props (D8) |
-| e-function-prop-react-child | function prop to a react child | error | error | 0 | refused | error:island-prop |  |
-| e-server-only-handler | server-only import reached from a handler | error | error | 0 | refused | error:server-only-in-client |  |
-| e-browser-global | browser global read during render | react | react | ssr | ok | fallback:browser-global | client-only React island |
-| e-request-prop | request state read in render | error | error | precompute | refused | error:request-state-in-render |  |
-| e-missing-key | list without key | error | error | 0 | refused | error:list-key |  |
-| e-use-client | 'use client' leftover | static | static | 0 | ok | warning:use-client-leftover | spec §8.1 use-client-leftover (F41) |
-| e-fragment-root | fragment root with state | native | native | 0 | ok | — | keeps <brust-host>; the fragment-root warning comes from lowering (not in ir.diagnostics) |
-| e-if-in-table | state-driven row inside a table | native | native | 0 | ok | — | spec §7.1 x-if |
-| e-raw-text-child | dynamic child of <script> | react | react | ssr | ok | fallback:raw-text-child | raw-text-child: the template would HTML-escape a dynamic value inside raw text (F35) |
-| e-static-list-child | static child with row-only props in a prop list (F70) | static | static | 0 | ok | — | ledger F70: no link, no chunk, no x-* — the row cannot change on the client |
-| e-reactive-list-child | static child in a state-dependent list keeps its link (F70) | native | native | precompute | ok | — | ledger F70/F71: the client re-creates the rows; the helper reads rows whole, so x-props keeps the full list |
-| e-store-read | store field read through useStore | native | native | 0 | ok | — | M3-F D7: store-view root → __store.cart.count |
-| e-store-destructure | destructured useStore fields | native | native | 0 | ok | — | M3-F D7 |
-| e-store-derived | helper over a store read | native | native | precompute | ok | — | M3-F D7: precompute slot keyed by __store.cart.count |
-| e-store-handler-write | store write in an event handler | native | native | 0 | ok | — | M3-F D7: writes in handlers are plain calls |
-| e-store-reexport | store handle through a re-export | native | native | 0 | ok | — | M3-F D7: re-exports followed |
-| e-store-unresolved | store handle from a package | react | react | ssr | ok | fallback:store-name-unresolved | M3-F D7: fallback store-name-unresolved |
-| e-store-write-in-render | store write during render | react | react | ssr | ok | fallback:store-write-in-render | M3-F D7: fallback store-write-in-render |
-| e-store-computed-key | store computed key read | react | react | ssr | ok | fallback:store-key-unsupported | M3-F R1: fallback store-key-unsupported |
-| e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |
-| e-use-server | 'use server' function | react | static | precompute | ok | — | known gap: F115: the directive is ignored and the function becomes a precompute value the url_ok guard drops (a form with no action); actions are an Elysia app under [actions] |
-| e-server-component-async | async Server Component | react | static | precompute | ok | — | known gap: F115: an async component becomes a precompute job whose function is not async (`await` in a sync function: a broken job); it should fall back to react or refuse. Loaders and jobs are the server half |
-| e-server-function-prop | server function passed to a client component | react | static | precompute | ok | — | known gap: F115: the function crosses as a precompute value into x-props (json null), so the child calls undefined at click time; it should refuse like e-function-prop-react-child. Use [actions] |
+| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Runtime (core + modules · gzip B, budget bound) | Diagnostics | Note |
+|---|---|---|---|---|---|---|---|---|
+| e-package-component | component from a package in a static parent | static | static | ssr | ok | — | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
+| e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | core+island · 4275 | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
+| e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | — | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
+| e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | — | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |
+| e-precompute-props | props-only value outside the template subset | static | static | precompute | ok | — | — | spec §6.4 precompute |
+| e-precompute-state | state-dependent value from a module helper | native | native | precompute | ok | core+basics · 4454 | — | spec §6.4 precompute |
+| e-precompute-per-item | per-item precompute in a list | static | static | precompute | ok | — | — | spec §6.4 precompute |
+| e-reactive-props-child | derived reactive value passed to a child | native | native | 0 | ok | core+basics · 4454 | — | spec §7.4 reactive props (D8) |
+| e-function-prop-react-child | function prop to a react child | error | error | 0 | refused | core · 3432 | error:island-prop |  |
+| e-server-only-handler | server-only import reached from a handler | error | error | 0 | refused | core · 3432 | error:server-only-in-client |  |
+| e-browser-global | browser global read during render | react | react | ssr | ok | core+island · 4275 | fallback:browser-global | client-only React island |
+| e-request-prop | request state read in render | error | error | precompute | refused | — | error:request-state-in-render |  |
+| e-missing-key | list without key | error | error | 0 | refused | — | error:list-key |  |
+| e-use-client | 'use client' leftover | static | static | 0 | ok | — | warning:use-client-leftover | spec §8.1 use-client-leftover (F41) |
+| e-fragment-root | fragment root with state | native | native | 0 | ok | core+basics · 4454 | — | keeps <brust-host>; the fragment-root warning comes from lowering (not in ir.diagnostics) |
+| e-if-in-table | state-driven row inside a table | native | native | 0 | ok | core+basics+if · 4857 | — | spec §7.1 x-if |
+| e-raw-text-child | dynamic child of <script> | react | react | ssr | ok | core+island · 4275 | fallback:raw-text-child | raw-text-child: the template would HTML-escape a dynamic value inside raw text (F35) |
+| e-static-list-child | static child with row-only props in a prop list (F70) | static | static | 0 | ok | — | — | ledger F70: no link, no chunk, no x-* — the row cannot change on the client |
+| e-reactive-list-child | static child in a state-dependent list keeps its link (F70) | native | native | precompute | ok | core+basics+for · 5613 | — | ledger F70/F71: the client re-creates the rows; the helper reads rows whole, so x-props keeps the full list |
+| e-store-read | store field read through useStore | native | native | 0 | ok | core+basics · 4454 | — | M3-F D7: store-view root → __store.cart.count |
+| e-store-destructure | destructured useStore fields | native | native | 0 | ok | core+basics · 4454 | — | M3-F D7 |
+| e-store-derived | helper over a store read | native | native | precompute | ok | core+basics · 4454 | — | M3-F D7: precompute slot keyed by __store.cart.count |
+| e-store-handler-write | store write in an event handler | native | native | 0 | ok | core+basics · 4454 | — | M3-F D7: writes in handlers are plain calls |
+| e-store-reexport | store handle through a re-export | native | native | 0 | ok | core+basics · 4454 | — | M3-F D7: re-exports followed |
+| e-store-unresolved | store handle from a package | react | react | ssr | ok | core+island · 4275 | fallback:store-name-unresolved | M3-F D7: fallback store-name-unresolved |
+| e-store-write-in-render | store write during render | react | react | ssr | ok | core+island · 4275 | fallback:store-write-in-render | M3-F D7: fallback store-write-in-render |
+| e-store-computed-key | store computed key read | react | react | ssr | ok | core+island · 4275 | fallback:store-key-unsupported | M3-F R1: fallback store-key-unsupported |
+| e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | — | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |
+| e-use-server | 'use server' function | react | static | precompute | ok | — | — | known gap: F115: the directive is ignored and the function becomes a precompute value the url_ok guard drops (a form with no action); actions are an Elysia app under [actions] |
+| e-server-component-async | async Server Component | react | static | precompute | ok | — | — | known gap: F115: an async component becomes a precompute job whose function is not async (`await` in a sync function: a broken job); it should fall back to react or refuse. Loaders and jobs are the server half |
+| e-server-function-prop | server function passed to a client component | react | static | precompute | ok | — | — | known gap: F115: the function crosses as a precompute value into x-props (json null), so the child calls undefined at click time; it should refuse like e-function-prop-react-child. Use [actions] |
 
 ## By React API
 
