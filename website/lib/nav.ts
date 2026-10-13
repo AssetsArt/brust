@@ -9,6 +9,7 @@ import Cli, { cliLoader } from '../pages/docs/Cli'
 import Configuration, { configurationLoader } from '../pages/docs/Configuration'
 import Css, { cssLoader } from '../pages/docs/Css'
 import Deployment, { deploymentLoader } from '../pages/docs/Deployment'
+import DevMode, { devModeLoader } from '../pages/docs/DevMode'
 import Installation, { installationLoader } from '../pages/docs/Installation'
 import Introduction, { introductionLoader } from '../pages/docs/Introduction'
 import Loaders, { loadersLoader } from '../pages/docs/Loaders'
@@ -63,6 +64,7 @@ export const NAV: NavGroup[] = [
       { slug: 'css', title: 'CSS', file: 'pages/docs/Css.tsx', Component: Css, loader: cssLoader },
       { slug: 'configuration', title: 'Configuration', file: 'pages/docs/Configuration.tsx', Component: Configuration, loader: configurationLoader },
       { slug: 'cli', title: 'CLI', file: 'pages/docs/Cli.tsx', Component: Cli, loader: cliLoader },
+      { slug: 'dev-mode', title: 'Dev mode', file: 'pages/docs/DevMode.tsx', Component: DevMode, loader: devModeLoader },
       { slug: 'deployment', title: 'Deployment', file: 'pages/docs/Deployment.tsx', Component: Deployment, loader: deploymentLoader },
       { slug: 'migrating', title: 'Migrating from 0.1.x', file: 'pages/docs/Migrating.tsx', Component: Migrating, loader: migratingLoader },
     ],
