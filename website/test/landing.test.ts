@@ -65,7 +65,7 @@ test('the three demos compile to the tier the page claims: PokemonCard static, C
 })
 
 test('the interactive landing pieces are native; the composition is static', () => {
-  for (const name of ['Poster', 'TmuxSession', 'CountUp', 'Histogram', 'TierTabs', 'RailFill', 'CopyButton']) expect([name, component(name).tier]).toEqual([name, 'native'])
+  for (const name of ['Poster', 'TmuxSession', 'CountUp', 'Histogram', 'TierTabs', 'RailFill', 'CopyButton', 'RequestPath']) expect([name, component(name).tier]).toEqual([name, 'native'])
   for (const name of ['HomePage', 'Hero', 'Benchmark', 'BenchCardView', 'PosterScene', 'StaticPanel', 'NativePanel', 'Steps', 'DataSection', 'ActionsStore', 'Deploy', 'Packages', 'Nots', 'Closing'])
     expect([name, component(name).tier]).toEqual([name, 'static'])
 })

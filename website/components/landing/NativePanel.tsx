@@ -24,7 +24,8 @@ export default function NativePanel({ code, card }: { code: CodeBlockData; card:
             </div>
             <div>
               <dt>JavaScript</dt>
-              <dd>brust runtime, about 1 KB</dd>
+              {/* Measured 2026-10-13 (gzip -9): runtime-dom 5.9 KB, the CatchCard chunk 0.6 KB. */}
+              <dd>brust runtime 6 KB + this card under 1 KB, gzipped</dd>
             </div>
             <div>
               <dt>React</dt>
