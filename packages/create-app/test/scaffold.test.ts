@@ -77,7 +77,7 @@ test('blank: install → build → typecheck → start; / is the native counter;
   expect(html).not.toContain('/public/app.css')
   expect(html).toContain('class="bg-paper font-sans text-ink')
   const css = await (await fetch(new URL(links[0]!, app.base))).text()
-  expect(css).toStartWith('@layer theme,base,components,utilities;')
+  expect(css).toContain('@layer theme,base,components,utilities;') // after '@layer properties;' when a utility needs @property
   for (const u of ['.bg-paper{', '.text-ink{', '.max-w-2xl{', '.rounded-2xl{', '.bg-amber{', '--color-amber-ink:']) expect([u, css.includes(u)]).toEqual([u, true])
   expect(css).toContain('prefers-color-scheme:dark')
   // R25.4: HomePage static, Counter native, no react chunk.
@@ -116,7 +116,7 @@ test('blank --tailwind (L21, a no-op since L28 R29.1): accepted, says so, and bu
   const css = await (await fetch(new URL(links[0]!, app.base))).text()
   // only the utilities the app uses (Tailwind v4 also drops theme tokens nothing reads)
   for (const u of ['.mx-auto{', '.max-w-2xl{', '.font-sans{', '.bg-sheet{']) expect([u, css.includes(u)]).toEqual([u, true])
-  expect(css).toStartWith('@layer theme,base,components,utilities;')
+  expect(css).toContain('@layer theme,base,components,utilities;') // after '@layer properties;' when a utility needs @property
   await stopOne(app)
 }, T)
 
