@@ -12,6 +12,8 @@ pub const REQUEST_TOKEN_HEADER: &str = "x-brust-dev-token";
 pub const RESPONSE_HEADER: &str = "x-brust-dev";
 /// A header must stay small: at most this many jobs are listed, the rest only counted.
 const MAX_JOBS: usize = 40;
+/// The whole header value (base64) stays under this; a bigger trace is cut down and flagged `truncated`.
+pub const MAX_HEADER_BYTES: usize = 32 * 1024;
 
 #[derive(Debug, Default, Serialize)]
 pub struct Trace {
@@ -23,6 +25,8 @@ pub struct Trace {
     pub jobs: Vec<TraceJob>,
     /// Jobs beyond [`MAX_JOBS`] (counted, not listed).
     pub jobs_more: usize,
+    /// Cut down to fit [`MAX_HEADER_BYTES`] (jobs, components or params were dropped).
+    pub truncated: bool,
     pub render_ms: Option<f64>,
     pub render_error: Option<String>,
     pub bun_calls: u8,
@@ -57,9 +61,31 @@ impl Trace {
         self.jobs = jobs;
     }
 
-    /// The `x-brust-dev` value: base64 of the JSON (ASCII-safe, whatever the params hold).
-    pub fn header_value(&self) -> Option<http::HeaderValue> {
-        let json = serde_json::to_vec(self).ok()?;
+    /// The `x-brust-dev` value: base64 of the JSON (ASCII-safe, whatever the params hold), at most
+    /// [`MAX_HEADER_BYTES`]: if the trace is bigger, jobs, then the component list, then the params, then the render
+    /// error are dropped (in that order) until it fits, and `truncated` is set.
+    pub fn header_value(&mut self) -> Option<http::HeaderValue> {
+        let mut json = serde_json::to_vec(self).ok()?;
+        let mut step = 0;
+        while json.len().div_ceil(3) * 4 > MAX_HEADER_BYTES && step < 4 {
+            self.truncated = true;
+            match step {
+                0 => self.jobs.clear(),
+                1 => self.rendered.clear(),
+                2 => {
+                    if let Some(r) = &mut self.route {
+                        r.params.clear();
+                        r.chain.truncate(8);
+                    }
+                }
+                _ => self.render_error = None,
+            }
+            step += 1;
+            json = serde_json::to_vec(self).ok()?;
+        }
+        if json.len().div_ceil(3) * 4 > MAX_HEADER_BYTES {
+            return None; // a pattern or error that long is not worth a header: no trace at all
+        }
         http::HeaderValue::from_str(&base64(&json)).ok()
     }
 }
@@ -118,6 +144,32 @@ mod tests {
         });
         let v = t.header_value().unwrap();
         assert!(v.to_str().unwrap().is_ascii());
+        assert!(!t.truncated);
+    }
+
+    #[test]
+    fn an_oversized_trace_is_cut_to_fit_and_flagged() {
+        let mut t = Trace::default();
+        t.route = Some(TraceRoute {
+            id: "r1".into(),
+            pattern: "/p/{id}".into(),
+            chain: vec!["a".into()],
+            params: BTreeMap::from([("id".into(), "x".repeat(40_000))]),
+        });
+        t.rendered = vec!["c".into()];
+        let v = t.header_value().expect("fits once the params are dropped");
+        assert!(v.len() <= MAX_HEADER_BYTES, "{}", v.len());
+        assert!(t.truncated);
+        assert!(t.route.as_ref().unwrap().params.is_empty());
+        // one that cannot fit at all has no header rather than a broken one
+        let mut huge = Trace::default();
+        huge.route = Some(TraceRoute {
+            id: "r".into(),
+            pattern: "p".repeat(40_000),
+            chain: vec![],
+            params: BTreeMap::new(),
+        });
+        assert!(huge.header_value().is_none());
     }
 
     #[test]

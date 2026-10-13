@@ -338,7 +338,8 @@ pub fn build_request_envelope<'a>(
     let mut cookies = Vec::new();
     for (name, value) in request_headers.iter() {
         let name_str = name.as_str();
-        if name_str.is_empty() {
+        // The dev token (`x-brust-dev-token`, L14) is for the core only: loaders never see it.
+        if name_str.is_empty() || name_str == crate::trace::REQUEST_TOKEN_HEADER {
             continue;
         }
         // HeaderValue may carry non-UTF-8 bytes; match the old

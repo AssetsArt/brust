@@ -177,7 +177,8 @@ impl Renderer {
             if pos == 0 {
                 render_into(&tmpl, scope, out).map_err(|e| render_err(id, &e))?;
                 if mark {
-                    out.insert_str(0, &format!("<!--brust:{id}-->"));
+                    // After the doctype, never before it: a node ahead of `<!doctype>` puts the page in quirks mode.
+                    out.insert_str(doctype_end(out), &format!("<!--brust:{id}-->"));
                     out.push_str("<!--/brust-->");
                 }
             } else {
@@ -342,6 +343,18 @@ pub fn inject_page_assets_into(
     store: Option<&Node>,
 ) {
     inject_document_assets_into(html, chain, m, store, None);
+}
+
+/// Byte offset just past a leading `<!doctype …>` (case-insensitive, after optional whitespace); 0 when the document has none.
+fn doctype_end(html: &str) -> usize {
+    let lead = html.len() - html.trim_start().len();
+    let rest = &html[lead..];
+    if rest.len() >= 9 && rest.as_bytes()[..9].eq_ignore_ascii_case(b"<!doctype") {
+        if let Some(i) = rest.find('>') {
+            return lead + i + 1;
+        }
+    }
+    0
 }
 
 /// The components a page is made of, in the order the asset injection walks them: each chain level, the react
@@ -762,5 +775,53 @@ mod tests {
             "",
             "routes[1] must exercise the tag path"
         );
+    }
+
+    // ---- L14: dev markers and the doctype ----
+
+    #[test]
+    fn doctype_end_finds_a_leading_doctype_only() {
+        assert_eq!(doctype_end("<!doctype html><html>"), 15);
+        assert_eq!(doctype_end("  <!DOCTYPE html>\n<html>"), 17);
+        assert_eq!(doctype_end("<html><!doctype html>"), 0);
+        assert_eq!(doctype_end("<!-- c --><!doctype html>"), 0);
+        assert_eq!(doctype_end("<!doctype html"), 0);
+        assert_eq!(doctype_end(""), 0);
+    }
+
+    #[test]
+    fn dev_markers_wrap_each_level_and_sit_after_the_doctype() {
+        let mut r = Renderer::from_templates(&templates(&[
+            (
+                "root",
+                "<!doctype html><html><body>{{ __outlet | safe }}</body></html>",
+            ),
+            ("leaf", "<p>x</p>"),
+            ("isl", "<brust-island>i</brust-island>"),
+        ]))
+        .unwrap();
+        let chain: Vec<String> = vec!["root".into(), "leaf".into()];
+        let plain = r
+            .render_chain(&chain, &serde_json::json!({}), &|_| vec![])
+            .unwrap();
+        assert!(!plain.contains("<!--brust"));
+        r.set_dev_markers(["isl".to_string()].into());
+        let dev = r
+            .render_chain(&chain, &serde_json::json!({}), &|_| vec![])
+            .unwrap();
+        assert!(
+            dev.starts_with("<!doctype html><!--brust:root--><html>"),
+            "{dev}"
+        );
+        assert!(
+            dev.contains("<body><!--brust:leaf--><p>x</p><!--/brust--></body>"),
+            "{dev}"
+        );
+        assert!(dev.ends_with("</html><!--/brust-->"), "{dev}");
+        // a react level (in the skip set) is never wrapped
+        let isl = r
+            .render_chain(&["isl".to_string()], &serde_json::json!({}), &|_| vec![])
+            .unwrap();
+        assert_eq!(isl, "<brust-island>i</brust-island>");
     }
 }

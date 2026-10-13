@@ -172,3 +172,58 @@ fn dev_markers_wrap_each_chain_level_and_are_absent_in_production_and_in_islands
     let (_, _, pbody) = get(&prod, "/pokemon/pikachu", &[]);
     assert!(!pbody.contains("<!--brust"), "{pbody}");
 }
+
+#[test]
+fn the_dev_token_never_reaches_a_loader_or_an_action() {
+    // loader: the request envelope the worker receives carries no x-brust-dev-token
+    let (s, f) = boot_dev(Some(TOKEN));
+    let (_, h, _) = get(
+        &s,
+        "/pokemon/pikachu",
+        &[("x-brust-dev-token", TOKEN), ("x-other", "kept")],
+    );
+    assert!(trace(&h).is_some());
+    let req = f.last_loader().expect("a loader call");
+    let headers = req["req"]["headers"].to_string();
+    assert!(
+        !headers.contains("x-brust-dev-token") && !headers.contains(TOKEN),
+        "{headers}"
+    );
+    assert!(
+        headers.contains("x-other"),
+        "other headers still pass: {headers}"
+    );
+
+    // action: the A1 request forwarded to the worker carries none either
+    let fake = fake().with_fetch(|req| {
+        frame(
+            200,
+            &[("content-type", "application/json")],
+            &serde_json::to_vec(&req).unwrap(),
+        )
+    });
+    let mut cfg = config(&fx());
+    cfg.dev_token = Some(TOKEN.into());
+    cfg.actions = Some(brust_server::ActionsConfig::default());
+    let s = start(cfg).expect("start");
+    let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&fake))));
+    fake.bind(&s, id);
+    let (st, _, body) = request_body(
+        &s,
+        "POST",
+        "/_brust/action/team",
+        &[
+            ("x-brust-dev-token", TOKEN),
+            ("x-other", "kept"),
+            ("content-type", "application/json"),
+        ],
+        b"{}".to_vec(),
+    );
+    assert_eq!(st, 200);
+    let sent = String::from_utf8(body).unwrap();
+    assert!(
+        !sent.contains("x-brust-dev-token") && !sent.contains(TOKEN),
+        "{sent}"
+    );
+    assert!(sent.contains("x-other"), "{sent}");
+}

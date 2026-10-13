@@ -228,3 +228,60 @@ test('dev.json: component -> file, tier, react reason, diagnostics; its tiers eq
   rmSync(dev, { recursive: true, force: true })
   rmSync(prod, { recursive: true, force: true })
 }, 120_000)
+
+test('a document with a doctype stays in standards mode with the dev markers (compatMode CSS1Compat); the control without one is BackCompat', async () => {
+  const out = join(app, '.doctype-out')
+  const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out, '--dev'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  expect(b.exitCode, b.stderr.toString()).toBe(0)
+  const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')) as { routes: { pattern: string; chain: string[] }[]; components: Record<string, { template: string }> }
+  const rootId = manifest.routes.find((r) => r.pattern === '/counter')?.chain[0] as string
+  const tpl = join(out, manifest.components[rootId]?.template as string)
+  const original = readFileSync(tpl, 'utf8')
+  async function serve(html: string) {
+    writeFileSync(tpl, html)
+    const p = Bun.spawn([bin, 'start', '--dist-dir', out, '--entry', join(app, 'routes.tsx'), '--port', '0', '--workers', '1'], {
+      cwd: app,
+      env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', BRUST_DIST_DIR: '', BRUST_APP_ENTRY: '', NODE_ENV: 'development', BRUST_DEV_TOKEN: 'doctype-test-token' },
+      stdout: 'pipe',
+      stderr: 'inherit',
+    })
+    const reader = (p.stdout as ReadableStream<Uint8Array>).getReader()
+    const dec = new TextDecoder()
+    let o = ''
+    while (!/\[brust\] ready/.test(o)) {
+      const { done, value } = await reader.read()
+      if (done) throw new Error(`brust start exited before ready:\n${o}`)
+      o += dec.decode(value, { stream: true })
+    }
+    void (async () => {
+      for (;;) if ((await reader.read()).done) return
+    })()
+    return { url: `http://${/listening on (\S+)/.exec(o)?.[1]}`, stop: async () => { p.kill('SIGINT'); await Promise.race([p.exited, sleep(5000)]); p.kill('SIGKILL') } }
+  }
+  const mode = async (html: string) => {
+    const s = await serve(html)
+    try {
+      const page = await browser.newPage()
+      await page.goto(`${s.url}/counter`, { waitUntil: 'domcontentloaded' })
+      const r = await page.evaluate(() => {
+        const w = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT)
+        let markers = 0
+        for (let n = w.nextNode(); n; n = w.nextNode()) if ((n.nodeValue ?? '').startsWith('brust:')) markers++
+        return { compat: document.compatMode, markers, doctype: document.doctype?.name ?? null, firstNode: document.childNodes[0]?.nodeType ?? 0 }
+      })
+      await page.close()
+      return r
+    } finally {
+      await s.stop()
+    }
+  }
+  try {
+    const withDoctype = await mode(`<!doctype html>${original}`)
+    expect(withDoctype).toEqual({ compat: 'CSS1Compat', markers: withDoctype.markers, doctype: 'html', firstNode: 10 }) // the doctype is the document's FIRST node (10), no marker before it
+    expect(withDoctype.markers).toBeGreaterThan(0) // the markers are there, after the doctype
+    const without = await mode(original)
+    expect(without.compat).toBe('BackCompat') // the control: a doctype-less page is quirks, so the assertion above is not vacuous
+  } finally {
+    rmSync(out, { recursive: true, force: true })
+  }
+}, 120_000)
