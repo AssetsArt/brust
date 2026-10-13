@@ -4,7 +4,7 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { assertNoCacheBindings, pagesConfig, routesJson, workerSource } from '../src/build/static-worker'
+import { ASSETS_IGNORE, HIDDEN, assertNoCacheBindings, pagesConfig, routesJson, workerSource } from '../src/build/static-worker'
 import { resolveCoreCf } from '../src/build/cf-core'
 
 const fixture = join(import.meta.dir, 'fixtures/static-actions')
@@ -53,13 +53,18 @@ test('R12: the cf/ tree is not left in the dist; the project file sits next to s
 })
 
 test('R12.1: _routes.json includes only the prefix; the worker falls through to ASSETS', () => {
-  expect(JSON.parse(readFileSync(join(dist, 'static/_routes.json'), 'utf8'))).toEqual({ version: 1, include: ['/api', '/api/*'], exclude: [] })
+  expect(JSON.parse(readFileSync(join(dist, 'static/_routes.json'), 'utf8'))).toEqual({ version: 1, include: ['/api', '/api/*', ...HIDDEN], exclude: [] })
   const w = readFileSync(join(dist, 'static/_worker.js/index.js'), 'utf8')
   expect(w).toBe(workerSource('index.js', '/api'))
   expect(w).toContain('env.ASSETS.fetch(request)')
   const report = JSON.parse(readFileSync(join(dist, 'static/ssg.json'), 'utf8')) as { actions: unknown; pages: { path: string }[] }
   expect(report.actions).toEqual({ prefix: '/api', worker: '_worker.js' })
   expect(report.pages.map((p) => p.path).sort()).toEqual(['/', '/about'])
+})
+
+test('N1: .assetsignore keeps the Worker source and _routes.json out of public assets', () => {
+  expect(readFileSync(join(dist, 'static/.assetsignore'), 'utf8')).toBe(ASSETS_IGNORE)
+  expect(ASSETS_IGNORE.split('\n')).toEqual(expect.arrayContaining(['_worker.js', '_routes.json']))
 })
 
 test('R12: a core-cf fixture without a worker is cf-wasm, and the previous dist survives', () => {
@@ -82,7 +87,7 @@ test('R12: an [actions] app without a static plan problem still refuses a KV/DO 
 })
 
 test('pure helpers: routesJson, pagesConfig dates, assertNoCacheBindings', () => {
-  expect(JSON.parse(routesJson('/_brust/action'))).toEqual({ version: 1, include: ['/_brust/action', '/_brust/action/*'], exclude: [] })
+  expect(JSON.parse(routesJson('/_brust/action'))).toEqual({ version: 1, include: ['/_brust/action', '/_brust/action/*', ...HIDDEN], exclude: [] })
   expect(() => assertNoCacheBindings(undefined)).not.toThrow()
   expect(() => assertNoCacheBindings({ adapter: 'redis', options: {}, broadcast: undefined, broadcastOptions: undefined })).not.toThrow()
   expect(() => assertNoCacheBindings({ adapter: 'cloudflare-do', options: {}, broadcast: undefined, broadcastOptions: undefined })).toThrow(/Durable Object BRUST_CACHE_DO/)

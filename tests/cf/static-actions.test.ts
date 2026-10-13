@@ -105,7 +105,7 @@ describe.skipIf(!ENABLED)('static pages + actions on wrangler pages dev', () => 
 
   test('1 pages are static files: _routes.json keeps them off the Worker (invocation counter)', async () => {
     const routes = JSON.parse(readFileSync(join(DIST, 'static/_routes.json'), 'utf8')) as { include: string[] }
-    expect(routes.include).toEqual(['/api', '/api/*'])
+    expect(routes.include.slice(0, 2)).toEqual(['/api', '/api/*'])
     for (const [path, text] of [
       ['/', 'static actions home'],
       ['/about', 'static actions home'],
@@ -118,6 +118,16 @@ describe.skipIf(!ENABLED)('static pages + actions on wrangler pages dev', () => 
     expect(await calls()).toBe(0)
   })
 
+  test('N1 /_worker.js and /_routes.json are never served', async () => {
+    for (const path of ['/_worker.js', '/_worker.js/index.js', '/_worker.js/core/brust-app.js', '/_routes.json']) {
+      const r = await get(path)
+      const body = await r.text()
+      expect([path, r.status]).toEqual([path, 404])
+      expect(body).not.toContain('Core.prototype')
+      expect(body).not.toContain('"include"')
+    }
+  })
+
   test('2 an unknown path is the 404 page with status 404', async () => {
     const r = await get('/nope')
     expect(r.status).toBe(404)
@@ -125,11 +135,12 @@ describe.skipIf(!ENABLED)('static pages + actions on wrangler pages dev', () => 
   })
 
   test('3 GET an action is answered by the Worker', async () => {
+    const before = await calls()
     const r = await get('/api/hello')
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({ hello: 'pages' })
     expect(r.headers.get('x-powered-by')).toStartWith('brust/')
-    expect(await calls()).toBe(1)
+    expect(await calls()).toBe(before + 1)
   })
 
   test('4 POST an action with a same-site origin echoes; a cross-site origin is 403', async () => {

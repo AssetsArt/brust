@@ -12,15 +12,24 @@ import { BuildError } from './errors'
 import { CF_MIN_COMPAT_DATE } from './config'
 import type { CacheRecord } from './manifest'
 
-/** `_routes.json` (R12.1): the prefix itself and everything under it; nothing else reaches the Worker. */
+/** `.assetsignore`: the Worker source and the routes file are deploy inputs, never public assets. */
+export const ASSETS_IGNORE = '_worker.js\n_routes.json\n.assetsignore\n'
+
+/** The deploy inputs the Worker answers with a 404 (N1). */
+export const HIDDEN = ['/_worker.js', '/_worker.js/*', '/_routes.json', '/.assetsignore']
+
+/** `_routes.json` (R12.1): the prefix itself and everything under it reach the Worker, and so do the
+ * deploy inputs (N1): a static host that would otherwise serve `_worker.js/*` as files (the local
+ * `wrangler pages dev` does) is answered by the Worker's 404 instead. Pages and assets never do. */
 export function routesJson(prefix: string): string {
-  return `${JSON.stringify({ version: 1, include: [prefix, `${prefix}/*`], exclude: [] }, null, 2)}\n`
+  return `${JSON.stringify({ version: 1, include: [prefix, `${prefix}/*`, ...HIDDEN], exclude: [] }, null, 2)}\n`
 }
 
 /** `_worker.js/index.js`. Pages' pipeline wants a module object with `fetch`, not the class the core
  * exports (a WorkerEntrypoint whose `fetch` reads `this.env` and `this.ctx`), so the core's method is
  * called with exactly those two. A request that reaches the Worker and is not an action (a path
- * `_routes.json` keeps away, or a probe) falls through to the static files. */
+ * `_routes.json` keeps away, or a probe) falls through to the static files, except the deploy inputs
+ * themselves (`_worker.js/*`, `_routes.json`, `.assetsignore`), which are a 404 whatever serves the assets (N1). */
 export function workerSource(main: string, prefix: string): string {
   const q = JSON.stringify
   return `${[
@@ -31,6 +40,9 @@ export function workerSource(main: string, prefix: string): string {
     '  fetch(request, env, ctx) {',
     '    const path = new URL(request.url).pathname',
     '    if (path === PREFIX || path.startsWith(`${PREFIX}/`)) return Core.prototype.fetch.call({ env, ctx }, request)',
+    '    let plain = path',
+    '    try { plain = decodeURIComponent(path) } catch {}',
+    '    if (/^\\/(_worker\\.js(\\/|$)|_routes\\.json$|\\.assetsignore$)/i.test(plain)) return new Response("Not Found", { status: 404 })',
     '    return env.ASSETS.fetch(request)',
     '  },',
     '}',
@@ -68,6 +80,8 @@ export function writeStaticWorker(dist: string, actions: { prefix: string }, p: 
   cpSync(worker, join(out, 'core'), { recursive: true })
   writeFileSync(join(out, 'index.js'), workerSource(p.core.meta.main, actions.prefix))
   writeFileSync(join(staticDir, '_routes.json'), routesJson(actions.prefix))
+  // Workers Static Assets uploads the whole directory as public files unless told otherwise; Pages never serves these two.
+  writeFileSync(join(staticDir, '.assetsignore'), ASSETS_IGNORE)
   writeFileSync(join(dist, 'wrangler.jsonc'), pagesConfig(p))
   const report = join(staticDir, 'ssg.json')
   const json = JSON.parse(readFileSync(report, 'utf8')) as Record<string, unknown>

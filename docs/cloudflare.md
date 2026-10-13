@@ -277,7 +277,8 @@ The output in `dist/static/`:
 |---|---|
 | `_worker.js/index.js` | The Worker. A request whose path is the action prefix or under it runs the Cloudflare core (section 6). Any other request that reaches it is answered with `env.ASSETS.fetch(request)`. |
 | `_worker.js/core/` | The same worker tree `--target cloudflare` writes: the wasm host plus your bundled actions app. |
-| `_routes.json` | `{ "version": 1, "include": ["<prefix>", "<prefix>/*"], "exclude": [] }`. Only the action prefix invokes the Worker. Pages and assets are static files and are never routed to it. |
+| `.assetsignore` | Lists `_worker.js` and `_routes.json`, so a deploy that treats the directory as public assets (Workers Static Assets) still never serves the Worker source. The hybrid output is **Pages only**. |
+| `_routes.json` | `{ "version": 1, "include": ["<prefix>", "<prefix>/*", "/_worker.js", "/_worker.js/*", "/_routes.json", "/.assetsignore"], "exclude": [] }`. The action prefix invokes the Worker, and so do the deploy inputs, which the Worker answers with a 404 so they are never served as files. Pages and assets are static files and are never routed to the Worker. |
 
 `dist/wrangler.jsonc` sits next to `static/` and holds the project `name` (`[cloudflare] name`, else the package name) and the `compatibility_date`. It carries no bindings and no secrets.
 

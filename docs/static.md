@@ -99,6 +99,8 @@ Workers Static Assets also reads `_headers` and `_redirects`.
 
 ## 8. Static pages with actions
 
+**Cloudflare Pages only.** This output is for `wrangler pages deploy`. Do not point Workers Static Assets at `dist/static` for it. The build writes a `.assetsignore` (`_worker.js`, `_routes.json`) so those files are never uploaded as public assets, but Pages is the supported target.
+
 When `[actions]` is configured, `--target static` writes the same static pages and also a Cloudflare Pages advanced-mode Worker that serves **only** the action prefix:
 
 ```
