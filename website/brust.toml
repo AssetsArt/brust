@@ -1,0 +1,4 @@
+# The brust documentation site (website/). Pages are TSX, served by the workspace @brust/core — always the latest brust.
+[server]
+address = "127.0.0.1"
+port = 1340
