@@ -427,7 +427,8 @@ fn list_arm_key(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Option<RawExpr> {
             let yes = list_arm_key(r, &i.yes);
             let no = list_arm_key(r, &i.no);
             match (yes, no) {
-                (Some(a), Some(b)) if a == b => Some(a),
+                // Compared by the code they print: the two arms sit at different locations.
+                (Some(a), Some(b)) if a.to_js() == b.to_js() => Some(a),
                 (Some(a), Some(b)) => Some(RawExpr {
                     loc: loc_of(&i.test),
                     kind: RawKind::Cond {

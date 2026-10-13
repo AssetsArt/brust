@@ -6,7 +6,7 @@ export default defineBehavior("input_9eb001a4", ({ el: __el, props, effect: __ef
   const linked = signal(true)
   const _h1 = (...a) => (() => linked.set(!linked()))(...a)
   const _l1 = computed(() => props().items)
-  const _k1 = (it) => linked() && it.href ? it.id : it.id
+  const _k1 = (it) => it.id
   const _c1 = (it) => linked() && it.href
   const _c1_not = (it) => !(linked() && it.href)
   const _c2 = (it) => __attr(it.href)

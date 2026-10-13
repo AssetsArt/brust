@@ -424,3 +424,89 @@ fn array_from_without_key_is_the_list_key_error() {
         "{d:?}"
     );
 }
+
+// L6 (G6): a `.map` body that is a conditional element.
+
+fn list_of(n: &Node) -> (&Expr, &Vec<Node>) {
+    fn find(n: &Node) -> Option<(&Expr, &Vec<Node>)> {
+        match n {
+            Node::For { key, body, .. } => Some((key, body)),
+            Node::Element { children, .. } | Node::Fragment(children) => {
+                children.iter().find_map(find)
+            }
+            _ => None,
+        }
+    }
+    find(n).unwrap_or_else(|| panic!("no list in {n:?}"))
+}
+
+fn key_text(e: &Expr) -> String {
+    format!("{e:?}")
+}
+
+#[test]
+fn a_ternary_body_is_a_for_with_an_if_and_no_stray_diagnostics() {
+    let (n, d) = tpl(
+        "export default function T({ xs }: any) { return <ul>{xs.map((x: any) => x.href ? <a key={x.id} href={x.href}>l</a> : <h4 key={x.id}>h</h4>)}</ul> }",
+    );
+    assert!(d.is_empty(), "{d:?}");
+    let (key, body) = list_of(&n);
+    assert!(matches!(body.as_slice(), [Node::If { then, else_, .. }] if then.len() == 1 && else_.len() == 1));
+    // The same key in both arms is that key (R6.1), not a conditional.
+    assert!(!key_text(key).contains("Cond"), "{key:?}");
+}
+
+#[test]
+fn different_arm_keys_become_a_conditional_key() {
+    let (n, d) = tpl(
+        "export default function T({ xs }: any) { return <ul>{xs.map((x: any) => x.href ? <a key={x.id}>l</a> : <h4 key={'h' + x.id}>h</h4>)}</ul> }",
+    );
+    assert!(d.is_empty(), "{d:?}");
+    assert!(key_text(list_of(&n).0).contains("Cond"));
+}
+
+#[test]
+fn and_with_a_null_arm_uses_the_keyed_arm() {
+    for body in ["x.ok && <i key={x.id}>y</i>", "x.ok ? <i key={x.id}>y</i> : null"] {
+        let (n, d) = tpl(&format!(
+            "export default function T({{ xs }}: any) {{ return <ul>{{xs.map((x: any) => {body})}}</ul> }}"
+        ));
+        assert!(d.is_empty(), "{body}: {d:?}");
+        let (key, b) = list_of(&n);
+        assert!(!key_text(key).contains("Cond") && !key_text(key).contains("Undefined"), "{key:?}");
+        assert!(matches!(b.as_slice(), [Node::If { .. }]));
+    }
+}
+
+#[test]
+fn an_element_arm_without_a_key_is_a_list_key_error_at_that_arm() {
+    let (_, d) = tpl(
+        "export default function T({ xs }: any) { return <ul>{xs.map((x: any) => x.href ? <a key={x.id}>l</a> : <h4>h</h4>)}</ul> }",
+    );
+    let errs: Vec<_> = d.iter().filter(|d| d.rule == "list-key").collect();
+    assert_eq!(errs.len(), 1, "{d:?}");
+    assert!(d.iter().all(|d| d.rule != "key-outside-list"), "{d:?}");
+}
+
+#[test]
+fn unsupported_list_shapes_say_why() {
+    for (src, why) in [
+        ("xs.map((x: any) => { const y = x.id; return <i key={y}>y</i> })", "block body"),
+        ("xs.map(({ id }: any) => <i key={id}>y</i>)", "pattern"),
+        ("xs?.map((x: any) => <i key={x.id}>y</i>)", "?.map"),
+        ("Array.from(new Set(xs), (x: any) => <i key={x}>y</i>)", "Array.from"),
+    ] {
+        let (_, d) = tpl(&format!(
+            "export default function T({{ xs }}: any) {{ return <ul>{{{src}}}</ul> }}"
+        ));
+        let hit: Vec<_> = d.iter().filter(|d| d.rule == "list-shape").collect();
+        assert_eq!(hit.len(), 1, "{src}: {d:?}");
+        assert_eq!(hit[0].class, DiagClass::Fallback);
+        assert!(hit[0].message.contains(why), "{src}: {}", hit[0].message);
+    }
+    // A `.map` over data (no JSX) is an ordinary expression.
+    let (_, d) = tpl(
+        "export default function T({ xs }: any) { return <p>{xs.map((x: any) => { const y = x * 2; return y }).join(',')}</p> }",
+    );
+    assert!(d.iter().all(|d| d.rule != "list-shape"), "{d:?}");
+}

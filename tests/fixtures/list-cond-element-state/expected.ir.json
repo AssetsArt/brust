@@ -141,80 +141,20 @@
                   "index": null,
                   "key": {
                     "Server": {
-                      "loc": 332,
+                      "loc": 375,
                       "kind": {
-                        "Cond": {
-                          "test": {
-                            "loc": 332,
-                            "kind": {
-                              "Binary": {
-                                "op": "And",
-                                "left": {
-                                  "loc": 332,
-                                  "kind": {
-                                    "Ident": {
-                                      "name": "linked",
-                                      "kind": "State"
-                                    }
-                                  }
-                                },
-                                "right": {
-                                  "loc": 342,
-                                  "kind": {
-                                    "Member": {
-                                      "target": {
-                                        "loc": 342,
-                                        "kind": {
-                                          "Ident": {
-                                            "name": "it",
-                                            "kind": "LoopBinding"
-                                          }
-                                        }
-                                      },
-                                      "name": "href",
-                                      "optional": false
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          },
-                          "yes": {
+                        "Member": {
+                          "target": {
                             "loc": 375,
                             "kind": {
-                              "Member": {
-                                "target": {
-                                  "loc": 375,
-                                  "kind": {
-                                    "Ident": {
-                                      "name": "it",
-                                      "kind": "LoopBinding"
-                                    }
-                                  }
-                                },
-                                "name": "id",
-                                "optional": false
+                              "Ident": {
+                                "name": "it",
+                                "kind": "LoopBinding"
                               }
                             }
                           },
-                          "no": {
-                            "loc": 485,
-                            "kind": {
-                              "Member": {
-                                "target": {
-                                  "loc": 485,
-                                  "kind": {
-                                    "Ident": {
-                                      "name": "it",
-                                      "kind": "LoopBinding"
-                                    }
-                                  }
-                                },
-                                "name": "id",
-                                "optional": false
-                              }
-                            }
-                          }
+                          "name": "id",
+                          "optional": false
                         }
                       }
                     }
