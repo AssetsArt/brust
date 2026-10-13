@@ -1,0 +1,7 @@
+{
+  "cli": "shadcn@4.21.4",
+  "registry": "https://ui.shadcn.com/r/styles/new-york-v4",
+  "style": "new-york (the CLI resolves it to new-york-v4)",
+  "baseColor": "neutral",
+  "items": "accordion alert alert-dialog aspect-ratio avatar badge breadcrumb button button-group calendar card carousel chart checkbox collapsible combobox command context-menu dialog drawer dropdown-menu empty field form hover-card input input-group input-otp item label menubar navigation-menu pagination popover progress radio-group resizable scroll-area select separator sheet sidebar skeleton slider sonner spinner switch table tabs textarea toggle toggle-group tooltip kbd native-select direction attachment bubble marker message message-scroller"
+}
