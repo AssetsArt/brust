@@ -1116,6 +1116,10 @@ impl<'a, 'c> Printer<'a, 'c> {
     /// The binding of a handler the parent hoisted (shadcn S1.3): `x-on-<event>` naming the parent's
     /// member, exactly what the hand-written attribute prints in the parent.
     fn handler_attr(&mut self, k: &str, d: &str, tag: &str, attrs: &[Attr], open: &mut String) {
+        // The analysis hoists valid names only; never print anything else into the tag.
+        if !crate::analyze::passes::children::handler_key_ok(k) {
+            return;
+        }
         let Some(event) = crate::analyze::jsx::event_name(k) else {
             return;
         };

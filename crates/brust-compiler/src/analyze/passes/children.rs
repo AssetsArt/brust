@@ -989,8 +989,9 @@ impl Walker<'_, '_> {
     /// the spread of a static child, which spreads it onto elements only and reads it nowhere else,
     /// becomes a handler of the parent (`_hN`, [`crate::ir::Forwarded`]); the inline print binds it
     /// on the child's element, as if written there. The child stays static and unlinked.
-    /// Returns the hoisted keys, and the handler keys that land in the spread but cannot be bound,
-    /// with why (R34.19: `check_spread` refuses them).
+    /// Returns the hoisted keys (plus the dropped invalid names: neither are props of the instance),
+    /// and the handler keys that land in the spread but cannot be bound, with why (R34.19:
+    /// `check_spread` refuses them).
     fn forward_handlers(
         &mut self,
         name: &str,
@@ -1001,8 +1002,24 @@ impl Walker<'_, '_> {
         let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
         let mut want: Vec<String> = Vec::new();
         let mut unbound: Vec<(String, String)> = Vec::new();
+        // Keys that are not attribute names (a quoted key of a literal spread, which Bun inlines
+        // into the props): never an `x-on-*` attribute. Dropped with a warning, as React drops an
+        // invalid attribute name and as the reader drops a hand-written one (review F1, R34.17).
+        let mut dropped: Vec<String> = Vec::new();
         for (k, v) in props {
             if !is_handler_prop(k, v) || !child.spread.lands(k) {
+                continue;
+            }
+            if !handler_key_ok(k) {
+                if !dropped.contains(k) {
+                    self.diagnostics.push(Diagnostic::warning(
+                        "unsafe-attr",
+                        format!("`{k}` reaches an element through the spread of <{name}> but is not a valid event attribute name; it is not bound"),
+                        loc,
+                        "pass attribute names only",
+                    ));
+                    dropped.push(k.clone());
+                }
                 continue;
             }
             let why = if k.ends_with("Capture") {
@@ -1037,14 +1054,14 @@ impl Walker<'_, '_> {
             }
         }
         if want.is_empty() {
-            return (want, unbound);
+            return (dropped, unbound);
         }
         // Bound on the child's element, so the instance must paint once: no link for the rest.
         let need = instance_needs_link(
             &child.tier,
             props
                 .iter()
-                .filter(|(k, _)| !want.contains(k))
+                .filter(|(k, _)| !want.contains(k) && !dropped.contains(k))
                 .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
         );
         if need != LinkNeed::None {
@@ -1055,7 +1072,7 @@ impl Walker<'_, '_> {
                 _ => format!("<{name}> is linked (another prop of it changes on the client)"),
             };
             unbound.extend(want.drain(..).map(|k| (k, why.clone())));
-            return (want, unbound);
+            return (dropped, unbound);
         }
         for k in &want {
             let body = self.st.prop_raws[&(loc, k.clone())].clone();
@@ -1075,6 +1092,7 @@ impl Walker<'_, '_> {
                 }),
             });
         }
+        want.extend(dropped);
         (want, unbound)
     }
 
@@ -1242,6 +1260,17 @@ impl Walker<'_, '_> {
             },
         }
     }
+}
+
+/// A forwarded handler's key prints as `x-on-<event>`: it must be an attribute name whose event is
+/// plain `[a-z0-9]+` (no quote, space, `=` or `>` can reach the tag).
+pub(crate) fn handler_key_ok(k: &str) -> bool {
+    brust_jinja::spread::attr_name_ok(k)
+        && crate::analyze::jsx::event_name(k).is_some_and(|e| {
+            !e.is_empty()
+                && e.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
 }
 
 /// An `on*` prop whose value can be a function (anything but a literal): bound as an event

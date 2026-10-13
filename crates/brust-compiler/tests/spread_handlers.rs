@@ -263,3 +263,39 @@ fn an_omitted_prop_of_a_fed_child_is_bound_as_undefined() {
     assert_eq!(rec[0].literals["text"], serde_json::json!("x"));
     assert_eq!(rec[0].exprs["tone"], "__undefined");
 }
+
+#[test]
+fn a_forwarded_key_that_is_not_an_attribute_name_is_never_printed() {
+    // Review F1 (R34.17 for handlers): Bun inlines a literal spread into the props, so a quoted key
+    // reaches the call site as a prop name. It must not print as `x-on-<key>`: dropped with a
+    // warning, as React and the reader drop an invalid attribute name; a valid key still binds.
+    for key in [
+        "onX\\\" onmouseover=\\\"alert(1)",
+        "onClick x",
+        "onClick>",
+        "onCl\u{ed}ck",
+        "onClick=1",
+    ] {
+        let o = page(
+            "import Btn from './Btn'",
+            &format!(
+                "const [n, setN] = useState(0); return <div><p>{{n}}</p><Btn {{...{{ \"{key}\": () => setN(1) }}}} onClick={{() => setN(n + 1)}} /></div>"
+            ),
+        );
+        assert_eq!(o.tier, Tier::Native, "{key}: {:?}", o.diags);
+        assert!(
+            has(&o, DiagClass::Warning, "unsafe-attr"),
+            "{key}: {:?}",
+            o.diags
+        );
+        let html = render(&o.jinja, serde_json::json!({}));
+        assert!(
+            !html.contains("onmouseover") && !html.contains("alert"),
+            "{key}: {html}"
+        );
+        assert_eq!(html.matches(" x-on-").count(), 1, "{key}: {html}");
+        assert!(html.contains(" x-on-click=\"_h1\""), "{key}: {html}");
+        // Only the valid handler became a member.
+        assert!(!o.chunk.contains("_h2"), "{key}: {}", o.chunk);
+    }
+}
