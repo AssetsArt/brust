@@ -3,11 +3,13 @@
 // Exit codes: 0 ok, 1 build/boot error (`error <rule> <message>` / `[brust] …`), 2 usage.
 import { parseArgs } from 'node:util'
 import { BuildError, runBuild } from './build'
+import { runBunDev } from './dev/bun'
 import { runDev } from './dev'
 import { run } from './run'
 
 const USAGE = `usage:
   brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare|static] [--strict] [--wasm-from-source]
+  brust dev [entry=routes.tsx] [--port N] [--workers N]    (Bun target: proxy + hot reload + inline TUI)
   brust dev [entry=routes.tsx] --target cloudflare [--out-dir dist] [--port N] [--wasm-from-source] [-- <wrangler args>]
   brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
 
@@ -96,8 +98,12 @@ export async function main(argv: string[]): Promise<void> {
   }
   if (cmd === 'dev') {
     if (positionals.length > 1) usage(`dev takes one entry (got ${positionals.join(' ')})`)
-    if (target !== 'cloudflare') usage('brust dev: only --target cloudflare in this release')
     const port = intFlag('port', str('port'), 0)
+    if (target !== 'cloudflare') {
+      const workers = intFlag('workers', str('workers'), 1)
+      if (passthrough.length > 0) usage('brust dev: arguments after -- are for --target cloudflare (wrangler)')
+      process.exit(await runBunDev({ appRoot: process.cwd(), entry: positionals[0] ?? 'routes.tsx', ...(port !== undefined && { port }), ...(workers !== undefined && { workers }) }))
+    }
     try {
       process.exit(
         await runDev({

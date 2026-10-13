@@ -66,6 +66,27 @@ generated files resolve against the component's source dir, bare imports against
 `--out-dir` may point anywhere; at run time `dist/` must still resolve `react` and `@brust/core`
 (keep it inside the app, or next to a `node_modules` that has them).
 
+## `brust dev [entry=routes.tsx] [--port N] [--workers N]`
+
+The Bun-target dev server. A long-lived parent owns your port and proxies to the newest build; every
+successful build is booted as a new child (`brust start` on a loopback port, `--workers 1` unless you pass
+`--workers`), the proxy switches over, browsers are told to `reload`, and the old child is stopped. A failed
+build **or a failed boot** keeps the old child serving and shows the error as an overlay above the stale page
+(a page opened while builds fail shows it too); the next good build clears it and reloads.
+
+- Source changes do a full reload (debounced ~150 ms; an edit made during a rebuild is not dropped).
+- A change to `public/*.css` skips the build: the file is copied into the running dist and the `<link>` is
+  swapped (`?v=`), the page keeps its state. Other `public/` files reload.
+- Every `text/html` response, including error pages, gets `/_brust/dev/client.js` (a WebSocket at
+  `/_brust/dev/ws`); responses are `cache-control: no-store`. `Host` and `Origin` reach the child unchanged,
+  so the actions cross-site guard behaves as in production.
+- Dev builds use React in development mode (`NODE_ENV=development`); `brust build` / `brust start` are unchanged.
+- The terminal shows request lines (`method path status ms cache`) and a status block of at most 6 lines at the
+  bottom (state, URL, generation, build time, last request, warnings, hotkeys `r` reload, `o` open, `w` warnings,
+  `c` clear, `q` quit). It never uses the alternate screen. Not a TTY, `CI` or `NO_COLOR`: plain lines only.
+- Not hot module replacement: component state does not survive an edit. `brust dev --target cloudflare` keeps
+  its wrangler loop (now on the same watch loop).
+
 ## `brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]`
 
 Prints `[brust] listening on <addr>` then `[brust] ready (N workers)`. `--port 0` picks a free port.
