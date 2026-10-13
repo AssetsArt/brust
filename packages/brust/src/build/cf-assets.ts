@@ -21,8 +21,10 @@ export function isHashed(file: string): boolean {
 
 const segOk = (s: string) => s !== '' && !s.startsWith('.') && SEG.test(s)
 
-/** `client/<file>.js|.css`: `is_safe_island_filename` / `is_safe_css_filename`. */
-const clientOk = (f: string) => segOk(f) && !f.includes('..') && (f.endsWith('.js') || f.endsWith('.css'))
+/** `client/<file>.js|.css`: `is_safe_island_filename` / `is_safe_css_filename`, plus the fonts and images a
+ * stylesheet references (`is_safe_client_asset_filename`, L19). */
+const CLIENT_EXT = /\.(js|css|woff2|woff|ttf|otf|eot|png|jpg|jpeg|gif|webp|avif|svg|ico)$/
+const clientOk = (f: string) => segOk(f) && !f.includes('..') && CLIENT_EXT.test(f)
 
 function walk(dir: string, rel = ''): string[] {
   const out: string[] = []

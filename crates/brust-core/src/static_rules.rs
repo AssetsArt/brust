@@ -117,9 +117,27 @@ pub(crate) fn is_safe_css_filename(name: &str) -> bool {
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
 }
 
+/// L19 (R19.2, research C5): a font or image a stylesheet references by a relative `url()`, emitted
+/// next to it as `client/<name>-<hash>.<ext>`. Same name rule as the chunks; only these extensions.
+pub(crate) fn is_safe_client_asset_filename(name: &str) -> bool {
+    const EXT: &[&str] = &[
+        ".woff2", ".woff", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+        ".avif", ".svg", ".ico",
+    ];
+    if !EXT.iter().any(|e| name.ends_with(e)) {
+        return false;
+    }
+    if name.starts_with('.') || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return false;
+    }
+    name.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
 /// Validate a static `rel` path (already percent-decoded). Every segment is
 /// non-empty, does not start with `.` (so no `.`/`..`/dotfiles) and holds only
-/// `[A-Za-z0-9_.-]`. Under `/_brust/` only `client/<file>.js|.css` is served:
+/// `[A-Za-z0-9_.-]`. Under `/_brust/` only `client/<file>.js|.css` (and the fonts and images a
+/// stylesheet references, L19) is served:
 /// the dist root also holds `manifest.json`, `jobs.js` (server-side) and
 /// `jinja/`, none of which may leave the server.
 pub(crate) fn safe_rel(rel: &str, root: StaticRoot) -> Option<&str> {
@@ -137,7 +155,11 @@ pub(crate) fn safe_rel(rel: &str, root: StaticRoot) -> Option<&str> {
         let [dir, file] = segs.as_slice() else {
             return None;
         };
-        if *dir != "client" || !(is_safe_island_filename(file) || is_safe_css_filename(file)) {
+        if *dir != "client"
+            || !(is_safe_island_filename(file)
+                || is_safe_css_filename(file)
+                || is_safe_client_asset_filename(file))
+        {
             return None;
         }
     }
@@ -193,6 +215,22 @@ mod tests {
             "client//x.js",
             "client/sub/x.js",
             "",
+        ] {
+            assert_eq!(safe_rel(bad, b), None, "{bad}");
+        }
+        // L19: the fonts and images a stylesheet references, only by extension.
+        for ok in [
+            "client/inter-1a2b3c4d5e.woff2",
+            "client/bg-0a1b2c3d4e.png",
+            "client/i.svg",
+        ] {
+            assert_eq!(safe_rel(ok, b), Some(ok), "{ok}");
+        }
+        for bad in [
+            "client/x.html",
+            "client/x.wasm",
+            "client/.x.woff2",
+            "client/a..b.png",
         ] {
             assert_eq!(safe_rel(bad, b), None, "{bad}");
         }

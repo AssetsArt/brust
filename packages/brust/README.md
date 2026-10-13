@@ -35,6 +35,7 @@ Compiles every route component through lowering, then writes (always from scratc
 dist/manifest.json        the only build → server contract (spec S6)
 dist/jinja/<id>.jinja     templates          dist/jobs.js + jobs/*.server.ts   worker jobs
 dist/client/*-<hex>.js    runtime, native chunks, react-<id> island chunks (served immutable)
+dist/client/*-<hex>.css   one minified stylesheet per imported .css / .module.css (see docs/css.md)
 dist/public/              copied from ./public          dist/index.js   `bun dist/index.js` = start
 ```
 

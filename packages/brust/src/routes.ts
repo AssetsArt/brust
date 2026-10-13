@@ -1,3 +1,4 @@
+/// <reference path="./css-modules.d.ts" />
 // Route tree, ids and loader verdicts (spec S4, S7 step 4). M2 routes carry ONLY
 // `path/Component/loader/cache/children`; every other 0.1.x field fails loudly (M3).
 

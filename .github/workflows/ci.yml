@@ -204,6 +204,8 @@ jobs:
       - run: cd packages/brust && bun test test/handlers.test.ts test/fetch-in-scope.test.ts
       # gaps round L9: brust build --target static, end to end on test/fixtures/static-app.
       - run: cd packages/brust && bun test --timeout 300000 test/static.test.ts
+      # gaps round L19: CSS (global, modules, injection) end to end on test/fixtures/css-app.
+      - run: cd packages/brust && bun test --timeout 300000 test/css.test.ts
       # m2e: the pokedex dogfood (spec §10). Each server-starting file runs alone.
       - run: cd examples/pokedex && bun test
       - run: cd examples/pokedex && bun run typecheck
@@ -222,6 +224,7 @@ jobs:
       - run: bun test --timeout 180000 tests/server/cache-redis.test.ts
       - run: bun test --timeout 120000 tests/server/hydrate.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/css.chromium.test.ts
       # m3b: the bench suite's cheap gates (spec §1.6). The bench itself is manual and load-guarded — never here.
       - run: bun check -p bench
       - run: bun check -p bench/apps/next
