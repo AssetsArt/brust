@@ -363,13 +363,143 @@ The human added this on 2026-10-13. `--target static` with `[actions]` configure
   - CF test deploys only under the standing rule: named `brust-test-<slug>-<sha>`, deleted every time, and only if the lane needs a real deploy. Prefer local.
 - **Docs:** extend `docs/cloudflare.md` with a "Static pages + actions on Pages" section.
 
+### L13 `dev-server`: `brust dev` for the Bun target with hot reload and an inline TUI. Wave 2, size M
+
+The human asked for this on 2026-10-13: "เพิ่ม host reload ตอน dev", plus "ใช้ TUI แบบไม่ full screen". On the TUI, the human chose an inline terminal TUI **plus** a browser overlay (L15).
+
+Today `cli.ts:99-100` accepts `brust dev` only with `--target cloudflare`. `dev.ts:35-84` already builds in a child process, keeps the old process on failure, and reruns through an `again` flag. Factor that into a shared watch/build loop.
+
+**Prior art (0.1.x, `main`).** Dev reload broke in three ways that a curl soak never caught (post-mortem `a2bf5e9`):
+- native pages got no client script;
+- the reload frame was lost on a socket owned by a terminated worker;
+- a use-after-free in the dead worker's close handler.
+
+Two later crashes came from swapping workers in-process (`983fb16`, and `docs/superpowers/reports/2026-07-19-hot-reload-syntax-crash-diagnosis.md`). An edit during a rebuild was dropped (`8f29c26`). Error pages lost the client script, and a reconnect had no catch-up. The rulings below avoid each of these by construction.
+
+**R13.1 Architecture (ruled).**
+- A long-lived **Bun parent** owns the user's port with `Bun.serve` and acts as a proxy.
+- Each successful build is booted as a **new child**: `brust start --dist-dir .brust/dev/g<N> --workers 1` on a free loopback port, with `BRUST_PORT` in its env because env beats flags (`cli.ts:13-15`).
+- Swap is blue/green: wait for `[brust] ready`, switch the proxy, send `reload`, stop the old child (`run.ts:106-112`), and delete its directory.
+- A failed build **or a failed boot** (template error, worker import or syntax error, timeout) keeps the old child serving.
+- Never reload in-process. Reasons:
+  - one `SERVER` per process (`brust-napi/src/server.rs:27`);
+  - workers never restart (`run.ts:114-135`);
+  - SABs are never freed (`run.ts:46-47`).
+
+**R13.2 Browser channel (ruled).**
+- WebSocket served by the parent at `/_brust/dev/ws`, with the client at `/_brust/dev/client.js`. WS, not SSE: SSE holds one of six per-host connections, so six or more tabs would stall.
+- The proxy injects `<script type=module src=/_brust/dev/client.js?g=N>` into **every** `text/html` response, so native, react and error pages all get it. A plain-text 5xx on a document request is wrapped as HTML so it gets the script too.
+- On connect the server sends `{gen, state, diag}`. A client whose page generation is older reloads; this is the catch-up. Reconnect uses backoff.
+- Upstream requests keep `Host`. Drop `accept-encoding` upstream so injection works. The proxy must preserve `Host` and `Origin` for the actions cross-site guard; test it.
+- Dev responses are sent with `cache-control: no-store`.
+
+**R13.3 How hot (ruled).**
+- v1 is a full reload for source changes, debounced about 150 ms, single-flight with a rerun flag so no edit is dropped.
+- A change to `public/*.css` skips the build: copy it into the active dist (`build/index.ts:204-205`) and swap the `<link>` with `?v=`, no reload.
+- Other `public/` files trigger a reload.
+- HMR that preserves native component state is **deferred** (size L; state lives in factory closures, `runtime-dom/src/registry.ts`).
+
+**Build-error overlay.**
+- The parent parses `error <rule> <file:line:col> <msg>` (`cli.ts:85-88`) and sends `error`.
+- The overlay sits in a shadow root above the stale page. A page loaded while builds are failing shows the overlay too.
+- The next successful build sends `reload`.
+
+**R13.4 Defaults (ruled).**
+- One worker; `--workers N` overrides.
+- The cold job cache after each swap is accepted (about 5 s on the docs-site home); persisting it is deferred.
+- Dev builds run React in development mode: `NODE_ENV=development` for the worker **and** the client bundles (`run.ts:84`, `bundle.ts:19` `PRODUCTION`), for readable errors and hydration diffs.
+- `brust start` and production builds are unchanged.
+
+**R13.5 Inline TUI (ruled; human: not full screen).**
+- Never the alternate screen. Request log lines scroll normally above: method, path, status, ms, `x-brust-cache`.
+- A redrawn status block of at most 6 lines sits at the bottom:
+  - state (building, ready, error), URL, generation and build ms;
+  - the last page's tier counts (from L14's trace once it lands; before that, route + status);
+  - the warnings count with the first warning (from L14's `dev.json`);
+  - hotkeys: `r` reload browsers, `o` open, `w` list warnings, `c` clear, `q` quit.
+- Redraw by cursor-up + clear, aware of width and resize (wrapped lines counted).
+- Not a TTY, `CI`, or `NO_COLOR` → plain line logs with no redraw. Ctrl+C always quits cleanly and stops the children (own PIDs only).
+- No TUI dependency unless it is tiny and pinned; prefer ~200 lines of local code.
+
+**Other.**
+- The `create-app` templates' `dev` script becomes `brust dev`.
+- `brust dev --target cloudflare` keeps working through the same loop (wrangler behind the proxy is deferred).
+
+**Tests.** Real Chromium, extending the `tests/server/hydrate.chromium.test.ts` `__noReload` pattern. Never a curl soak.
+- A TSX edit reloads and shows the **new text**.
+- A CSS edit keeps the page (the marker survives) and applies the new style.
+- A syntax error shows the overlay, and fixing it recovers.
+- A boot error keeps the old child serving.
+- A page loaded during the error state shows the overlay.
+- Two edits during one build both land.
+- Native, react and 500 pages all carry the script.
+- Six or more tabs still load.
+- An action POST through the proxy passes the cross-site guard.
+- TUI: a pty test of the non-TTY plain mode, plus a snapshot of the status block render function.
+
+### L14 `dev-trace`: per-request trace and build metadata for dev tools. Wave 3 (after L13 and L10), size M
+
+**R14.1 Trace transport (ruled).**
+- `dev_token: Option<String>` in `CoreConfig` (`core.rs:28-40`), passed as napi `StartOptions.devToken`, set only by `brust dev`.
+- `PageMeta` (`pipeline.rs:63-68`) gets an optional trace.
+- `handle()` (`pipeline.rs:128-146`) adds `x-brust-dev: base64(json)` **only** when the request carries the matching token header, which only the dev proxy sends.
+- The header is added after L1 storage, so it is never cached. In production the cost is a single `Option` check.
+- The proxy strips the header, adds `<script type=application/json id=__brust_trace>` to the page, and keeps the last 50 traces, actions included.
+
+**Trace contents:**
+- route id, pattern and chain (`pipeline.rs:191-197`, `manifest.rs:24-31`), params (`:226-231`);
+- cache outcome (`meta.cache`, `:206,220,230`);
+- loader ms (wrap `s.host.loader`, `:264`, using `now_ns` as at `:129`);
+- jobs: planned path `:338-354`; tokio path `:356-414`, with `JobPlan` call_id, kind, component_id, user_key and tags `:1199-1251`, plus hit or miss;
+- render ms and render error (`:433`, `:708`);
+- `bun_calls`;
+- the components actually rendered, as `render.rs:345-363` walks them.
+
+**R14.2 Build metadata (ruled).**
+- `brust build --dev` (used by `brust dev`) writes `dev.json`: component id → source file, tier, **react reason**, and diagnostics (`rule`, `line`, `col`, `remediation`).
+- Today `tierOf` drops the reason (`build/manifest.ts:93-99`) and diagnostics are only logged (`compile.ts:121-123`).
+- Production builds never write it.
+
+**R14.3 DOM mapping (ruled).**
+- In dev only, Rust wraps each chain level in `<!--brust:<id>-->…<!--/brust-->` (`render.rs:142-170`). Never inside `<brust-island>`.
+- Native components already carry `[x-data=<id>]`; islands carry `brust-island`.
+- Markers for inlined child instances need compiler work and are **deferred**.
+- A dev client build sets `__BRUST_DEV__=true` next to `PRODUCTION` (`bundle.ts:19`) and exposes the live instances (`instance.ts:74`) on a dev global. Production builds set it to false, so the minifier removes it.
+
+**Tests:**
+- No `x-brust-dev` header without the token, and none in a production build.
+- A HIT response carries no stale trace.
+- `dev.json` reasons match the manifest tiers.
+- Markers are absent in production and absent inside islands.
+- Hydration still passes in dev, measured in Chromium.
+
+### L15 `devtools-ui`: the browser overlay. Wave 3 (after L14), size M
+
+- **Element.** `<brust-devtools>`, only ever injected by the dev proxy, inside a shadow root (no style leaks either way). A production build contains none of it.
+- **Corner indicator.** Build state plus tier counts for the page. `Alt+Shift+B` toggles the panel.
+- **Panels.** Every panel shows only data from the trace, `dev.json`, the DOM or the dev global; nothing is invented.
+  - **Page:** route, params, cache outcome, timings.
+  - **Components:** a tree with tier badges. A react component shows its reason and the diagnostic location. Hovering highlights it on the page: chain markers via `Range.getBoundingClientRect`, native via `[x-data]`, islands via `brust-island`.
+  - **Jobs:** kind, hit or miss, key.
+  - **Store:** from `data-brust-store` and, when native, the live values.
+  - **Islands:** hydrated or not.
+  - **Build:** warnings and errors, each with `file:line`.
+  - **Requests:** the last 50.
+- **Accessibility.** Real buttons and tabs with roles, `Esc` closes, focus is restored, it works with the keyboard alone, and contrast is ≥ 4.5:1 in light and dark.
+- **TUI.** The L13 TUI status block shows the tier counts from the same trace once this lane lands.
+- **Tests.** Chromium:
+  - the indicator appears in dev and never under `brust start`;
+  - the Components panel lists the tiers the manifest says for the website's pages;
+  - hover highlights a static chain level;
+  - the keyboard flow works.
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
 |---|---|---|
 | 1 | L1, L5, L6, L7, L10, L11 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
-| 2 | L3 (after L1), L8, L9 | L3 and L8 both touch `lower/template.rs`: second rebases. |
-| 3 | L4 (after L3), L2 (after L1), L12 (after L9) | |
+| 2 | L3 (after L1), L8, L9, L13 | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
+| 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14) | |
 
 Each lane is one PR to v2 and goes through the usual flow: READY → REVIEW-PASS → GATES-OK (full CI mirror: `cargo fmt --check`, clippy `-D warnings`, cargo test, `bun run ci`, bun tests, browser tests) → MERGE-READY. The lead merges after CI is green.
 
