@@ -1,10 +1,10 @@
-import { useState } from 'react'
-import { useDebounced } from './useDebounced'
+import { useDeferredValue, useState } from 'react'
 
 export default function PokemonSearch({ all }: { all: { id: number; no: string; label: string; name: string; sprite: string }[] }) {
   const [q, setQ] = useState('')
-  const debounced = useDebounced(q, 150)
-  const term = debounced.trim().toLowerCase()
+  // useDeferredValue keeps the input responsive while the list filters: React only (an island)
+  const deferred = useDeferredValue(q)
+  const term = deferred.trim().toLowerCase()
   const hits = all.filter((p) => p.name.includes(term)).slice(0, 8)
   return (
     <div className="vp">

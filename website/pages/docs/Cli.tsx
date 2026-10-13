@@ -61,7 +61,7 @@ export async function cliLoader(): Promise<CliData> {
 
 export default function Cli({ blocks, panels }: CliData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>CLI</h1>
       <p className="lead">Three commands: build compiles the app into dist/, start serves it, dev rebuilds and reloads while you edit.</p>
 
@@ -227,6 +227,6 @@ export default function Cli({ blocks, panels }: CliData) {
       <Note>
         A <em>page-only</em> build (pages that call actions on another origin) has no flag. It is what <code>brust build</code> does when <code>brust.toml</code> sets <code>[actions] base_url</code> and the project has no actions file.
       </Note>
-    </section>
+    </>
   )
 }

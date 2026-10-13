@@ -62,7 +62,7 @@ export async function static404Loader(): Promise<Static404Data> {
 
 export default function Static404({ blocks }: Static404Data) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Static 404 page</h1>
       <p className="lead">Any path no route matches answers 404 with a page of your own, rendered once and served as HTML.</p>
 
@@ -83,6 +83,6 @@ export default function Static404({ blocks }: Static404Data) {
       <Note>
         Paths under the actions prefix are answered by the actions app, not by this page: an unknown action path is a problem+json 404. A loader can also send a 404 for a route that did match, with <code>notFound(...)</code> (see <a href="/docs/cookbook/hello-world">Hello world</a>).
       </Note>
-    </section>
+    </>
   )
 }

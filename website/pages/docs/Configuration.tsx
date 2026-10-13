@@ -14,12 +14,15 @@ export interface ConfigurationData {
 const SERVER = `[server]
 address = "127.0.0.1"   # default localhost
 port = 1337             # 1..65535, default 1337
+max_loader_response_bytes = 8388608   # 256 KiB..64 MiB, default 8 MiB (env BRUST_MAX_LOADER_RESPONSE_BYTES)
 
 [workers]
-count = 4               # 1..1024, default one per CPU core`
+count = 4               # 1..1024, default one per CPU core
+slot_bytes = 262144     # 64 KiB..16 MiB, default 256 KiB (env BRUST_SLOT_BYTES)`
 
 // source: packages/brust/src/run.ts:15-21 (RunOptions: distDir, entry, config), :56 and :65 (defaults 'dist', 'routes.tsx'), config.ts:23-37 (the config fields),
-// config.ts:49 (host/port/timeout defaults), :81-83 (workers, renderSlots defaults), :109-121 (ranges for values passed from code).
+// config.ts:49 (host/port/timeout defaults), :81-83 (workers, renderSlots defaults), :109-121 (ranges for values passed from code);
+// slotBytes and maxLoaderResponseBytes: config.ts:39-43 (fields, env names), :65 (defaults), :77 and :80 (ranges), :179 and :195 (the toml keys).
 const CODE = `// server.ts: run it with 'bun server.ts' after 'brust build'
 import { run } from '@brust/core'
 
@@ -35,6 +38,8 @@ await run({
     callTimeoutMs: 30_000,  // a call still running after this answers 504
     drainTimeoutMs: 10_000, // how long a graceful shutdown waits
     bootTimeoutMs: 30_000,  // start waits this long for every worker
+    slotBytes: 262_144,     // one render slot's shared buffer; 64 KiB..16 MiB, default 256 KiB
+    maxLoaderResponseBytes: 8_388_608, // a bigger loader reply crosses by heap up to this; 256 KiB..64 MiB, default 8 MiB
   },
 })`
 
@@ -86,7 +91,7 @@ export async function configurationLoader(): Promise<ConfigurationData> {
 
 export default function Configuration({ blocks }: ConfigurationData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Configuration</h1>
       <p className="lead">One optional file, brust.toml, next to package.json. Every key has a default; a missing file is fine, a malformed one stops the server with a message.</p>
 
@@ -259,6 +264,6 @@ export default function Configuration({ blocks }: ConfigurationData) {
       <Note>
         <code>brust start</code> has no TLS option. Put a proxy or a load balancer in front of it for HTTPS.
       </Note>
-    </section>
+    </>
   )
 }

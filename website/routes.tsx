@@ -1,39 +1,13 @@
 // website/routes.tsx — the brust docs site. Every page is TSX; no markdown pipeline (decision 2026-10-12).
-import { defineRoutes } from '@brust/core/routes'
+import { defineRoutes, redirect } from '@brust/core/routes'
 import DocsLayout, { docsLayoutLoader } from './components/docs/DocsLayout'
 import Layout, { layoutLoader } from './components/Layout'
 import { DOCS_HOME, PAGES } from './lib/nav'
 import HomePage, { homeLoader } from './pages/HomePage'
 import NotFoundPage from './pages/NotFoundPage'
 import DemoPokemonPage, { demoPokemonLoader } from './components/demos/DemoPokemonPage'
-// brust build maps each route Component to its file through the DEFAULT imports of this file, so every docs page
-// is imported here even though the routes come from lib/nav.ts (a page missing here fails with component-source).
-import Actions from './pages/docs/Actions'
-import Caching from './pages/docs/Caching'
-import Cli from './pages/docs/Cli'
-import Configuration from './pages/docs/Configuration'
-import Deployment from './pages/docs/Deployment'
-import Installation from './pages/docs/Installation'
-import Introduction from './pages/docs/Introduction'
-import Loaders from './pages/docs/Loaders'
-import Migrating from './pages/docs/Migrating'
-import ProjectStructure from './pages/docs/ProjectStructure'
-import Quickstart from './pages/docs/Quickstart'
-import RenderingTiers from './pages/docs/RenderingTiers'
-import Routing from './pages/docs/Routing'
-import Store from './pages/docs/Store'
-import CloudflareAdapter from './pages/docs/cache-adapters/Cloudflare'
-import CacheAdaptersOverview from './pages/docs/cache-adapters/Overview'
-import RedisAdapter from './pages/docs/cache-adapters/Redis'
-import WriteYourOwn from './pages/docs/cache-adapters/WriteYourOwn'
-import CloudflareCache from './pages/docs/cloudflare/Cache'
-import D1 from './pages/docs/cloudflare/D1'
-import Workers from './pages/docs/cloudflare/Workers'
-import FormAction from './pages/docs/cookbook/FormAction'
-import HelloWorld from './pages/docs/cookbook/HelloWorld'
-import InvalidateCache from './pages/docs/cookbook/InvalidateCache'
-import ReactIsland from './pages/docs/cookbook/ReactIsland'
-import Static404 from './pages/docs/cookbook/Static404'
+// Every docs page is imported by lib/nav.ts; brust build follows the import graph from this file (F99), so no
+// page needs a default import here any more.
 
 const home = PAGES.find((p) => p.slug === DOCS_HOME)!
 
@@ -49,6 +23,8 @@ export const routes = defineRoutes([
         Component: DemoPokemonPage,
         loader: demoPokemonLoader,
         cache: { ttl_seconds: 60, tags: ['pokemon'], bypass: 'query(nocache)' },
+        // The page varies per request (the bypass reads the query), so the static build skips it (ssg-varies): it exists on a local run only.
+        ssg: false,
       },
       // Docs: /docs is the docs home; every nav entry is /docs/{slug} (lib/nav.ts) inside the docs shell.
       {
@@ -62,5 +38,8 @@ export const routes = defineRoutes([
     ],
   },
   // Outside the layout: a static full document, no scripts.
+  // The blank template's starter page links /docs/routes; the page is /docs/routing. Outside the docs shell (its layout
+  // loader answers notFound for a path that is not a nav entry): a permanent redirect, one _redirects line in the static build.
+  { path: '/docs/routes', Component: NotFoundPage, loader: async () => redirect('/docs/routing', 301) },
   { path: '*', Component: NotFoundPage },
 ])

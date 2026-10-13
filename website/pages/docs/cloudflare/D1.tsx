@@ -68,7 +68,7 @@ export async function d1Loader(): Promise<D1Data> {
 
 export default function D1({ blocks }: D1Data) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>D1 recipe</h1>
       <p className="lead">
         The pokedex example&rsquo;s team roster: native uses <code>bun:sqlite</code>, Workers use D1. Both sit behind one async <code>TeamDb</code> interface.
@@ -103,6 +103,6 @@ export default function D1({ blocks }: D1Data) {
       <Note>
         A D1 query counts as a subrequest, and the Free plan allows 50 queries per invocation (source C6 on <a href="/docs/cloudflare/workers">Workers target</a>, read 2026-10-12).
       </Note>
-    </section>
+    </>
   )
 }

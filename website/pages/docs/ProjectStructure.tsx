@@ -74,7 +74,7 @@ export async function projectStructureLoader(): Promise<ProjectStructureData> {
 
 export default function ProjectStructure({ blocks, files }: ProjectStructureData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Project structure</h1>
       <p className="lead">A brust app is a routes file, components, an optional actions app, and a brust.toml. This is the blank template.</p>
 
@@ -105,6 +105,6 @@ export default function ProjectStructure({ blocks, files }: ProjectStructureData
       <p>
         The build writes to a temporary folder next to <code>dist/</code> and swaps it in only when it succeeds, so a failed build leaves the last good one in place. <code>dist/</code> imports <code>react</code> and <code>@brust/core</code> at runtime: keep it inside the app, next to its <code>node_modules</code>.
       </p>
-    </section>
+    </>
   )
 }
