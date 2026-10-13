@@ -72,7 +72,7 @@ export async function invalidateCacheLoader(): Promise<InvalidateCacheData> {
 
 export default function InvalidateCache({ blocks }: InvalidateCacheData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Invalidate the cache</h1>
       <p className="lead">Cache a Pokémon page for a minute, then drop it the moment the team changes.</p>
 
@@ -101,6 +101,6 @@ export default function InvalidateCache({ blocks }: InvalidateCacheData) {
       <Note>
         See <a href="/docs/cache-adapters/overview">Cache adapters</a> for the shared tier, and <a href="/docs/cloudflare/cache">Cache on KV and DO</a> for why Workers need it.
       </Note>
-    </section>
+    </>
   )
 }

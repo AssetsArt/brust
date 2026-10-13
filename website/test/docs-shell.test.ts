@@ -32,7 +32,8 @@ afterAll(async () => {
 test('routes: /docs plus one /docs/{slug} per nav entry, in nav order; the canon slugs are present', () => {
   // the /demo/... routes belong to the Guide demos (guide.test.ts), not to the docs shell
   const patterns = manifest.routes.map((r) => r.pattern).filter((p) => !p.startsWith('/demo/'))
-  expect(patterns).toEqual(['/', '/docs', ...PAGES.map((p) => `/docs/${p.slug}`), '*'])
+  // /docs/routes is a permanent redirect to /docs/routing (the blank template's starter links it), not a nav entry
+  expect(patterns).toEqual(['/', '/docs', ...PAGES.map((p) => `/docs/${p.slug}`), '/docs/routes', '*'])
   expect(NAV.map((g) => [g.group, g.items.length])).toEqual([
     ['Guide', 16],
     ['Cloudflare', 3],

@@ -51,7 +51,7 @@ export async function cloudflareAdapterLoader(): Promise<CloudflareAdapterData> 
 
 export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Cloudflare KV and Durable Objects</h1>
       <p className="lead">
         Workers only. KV holds the page bodies; a Durable Object tells every isolate what was invalidated.
@@ -373,6 +373,6 @@ export default function CloudflareAdapter({ blocks }: CloudflareAdapterData) {
           </tbody>
         </table>
       </div>
-    </section>
+    </>
   )
 }

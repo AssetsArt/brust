@@ -69,7 +69,7 @@ export async function migratingLoader(): Promise<MigratingData> {
 
 export default function Migrating({ blocks, panels }: MigratingData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Migrating from 0.1.x</h1>
       <p className="lead">brust 2 is a rewrite. 0.1.x lives on the main branch as brustjs; 2.x is @brust/core. Most app code moves over with renamed imports and fewer route fields.</p>
 
@@ -183,6 +183,6 @@ export default function Migrating({ blocks, panels }: MigratingData) {
       <Note>
         Cross-site action requests are rejected by default in 2.x (<code>cross_site = "reject"</code>). Set it to <code>"allow"</code> only if another site must call your actions.
       </Note>
-    </section>
+    </>
   )
 }

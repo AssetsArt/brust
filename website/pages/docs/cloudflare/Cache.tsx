@@ -44,7 +44,7 @@ export async function cloudflareCacheLoader(): Promise<CloudflareCacheData> {
 
 export default function CloudflareCache({ blocks }: CloudflareCacheData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Cache on KV and DO</h1>
       <p className="lead">
         On Workers every isolate has its own page cache. This page explains what that means for <code>cache.invalidate</code> and when to add a shared tier.
@@ -92,6 +92,6 @@ export default function CloudflareCache({ blocks }: CloudflareCacheData) {
           A page with <code>Set-Cookie</code> is not cached, as on native.
         </li>
       </ul>
-    </section>
+    </>
   )
 }

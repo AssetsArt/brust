@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "brust build routes.tsx && brust start",
-    "build": "brust build routes.tsx",
+    "dev": "bun scripts/gen-meta.ts && brust build routes.tsx && brust start",
+    "build": "bun scripts/gen-meta.ts && brust build routes.tsx",
+    "build:static": "bun scripts/gen-meta.ts && brust build routes.tsx --target static",
     "start": "brust start",
     "test": "bun test",
     "typecheck": "bun check"

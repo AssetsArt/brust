@@ -84,7 +84,7 @@ export async function loadersLoader(): Promise<LoadersData> {
 
 export default function Loaders({ blocks, demo }: LoadersData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Loaders and params</h1>
       <p className="lead">A loader is an async function on a route. It runs in a Bun worker for each request, and what it returns becomes the props of the route's components.</p>
 
@@ -111,7 +111,7 @@ export default function Loaders({ blocks, demo }: LoadersData) {
       <LoaderDemo initial={demo.initial} names={demo.names} />
       <CodeBlock code={blocks.mine.code} lang={blocks.mine.lang} file={blocks.mine.file} html={blocks.mine.html} />
       <p>
-        For a route param, open <a href="/demo/pokemon/eevee">/demo/pokemon/eevee</a>: its loader reads <code>params.name</code>, and on a brust server an unknown name such as <a href="/demo/pokemon/agumon">/demo/pokemon/agumon</a> returns <code>notFound()</code>. This site exported one page per known Pokémon, so an unknown name is its 404 page.
+        For a route param, open <code>/demo/pokemon/eevee</code>: its loader reads <code>params.name</code>, and on a brust server an unknown name such as <code>/demo/pokemon/agumon</code> returns <code>notFound()</code>. This site ships as static files and the route's cache rule reads the query string, so the static build leaves it out (<code>ssg: false</code>); run the docs locally with <code>bun run dev</code> to open it.
       </p>
 
       <h2 id="verdicts">Not found, redirect, errors</h2>
@@ -128,6 +128,6 @@ export default function Loaders({ blocks, demo }: LoadersData) {
           A response that carries <code>Set-Cookie</code> is never stored in the page cache.
         </li>
       </ul>
-    </section>
+    </>
   )
 }
