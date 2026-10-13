@@ -100,6 +100,104 @@ struct Child {
     /// The compiled child has a precompute job (or an island's ssr render, L4) over its props: the
     /// server computes it once, so a link that changes those props later would leave it stale (F96d).
     prop_precompute: bool,
+    /// Where the child spreads its props (shadcn S1.2): the call-site keys that land in a spread.
+    spread: SpreadSink,
+}
+
+/// Which props of a call site a child spreads onto an element or another component.
+#[derive(Clone, Debug, Default)]
+enum SpreadSink {
+    #[default]
+    None,
+    /// Every key except these (`{...props}` / `{...rest}`; several spreads union).
+    AllBut(Vec<String>),
+    /// Exactly these keys (`{...props.attrs}` spreads the call site's `attrs`).
+    Only(Vec<String>),
+}
+
+impl SpreadSink {
+    fn lands(&self, key: &str) -> bool {
+        match self {
+            SpreadSink::None => false,
+            SpreadSink::AllBut(omit) => !omit.iter().any(|k| k == key),
+            SpreadSink::Only(keys) => keys.iter().any(|k| k == key),
+        }
+    }
+
+    /// The child's props spreads, read from its template (React tier: none, it renders itself).
+    fn of(ir: &ComponentIR) -> SpreadSink {
+        let named: Vec<String> = ir.props.iter().map(|p| p.name.clone()).collect();
+        let mut sink = SpreadSink::None;
+        let mut add = |v: &Expr| {
+            let raw = match v {
+                Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r,
+                _ => return,
+            };
+            let next = match &raw.kind {
+                RawKind::Ident {
+                    name,
+                    kind: IdentKind::Prop,
+                } if name == "*" => SpreadSink::AllBut(Vec::new()),
+                RawKind::Ident {
+                    name,
+                    kind: IdentKind::Prop,
+                } if name == crate::ir::REST_PROPS => SpreadSink::AllBut(named.clone()),
+                _ => match crate::analyze::passes::deps::prop_path(raw) {
+                    Some(p) => {
+                        SpreadSink::Only(vec![p.split('.').next().unwrap_or(&p).to_string()])
+                    }
+                    None => return,
+                },
+            };
+            sink = match (std::mem::take(&mut sink), next) {
+                (SpreadSink::None, n) => n,
+                (SpreadSink::AllBut(a), SpreadSink::AllBut(b)) => {
+                    SpreadSink::AllBut(a.into_iter().filter(|k| b.contains(k)).collect())
+                }
+                (SpreadSink::AllBut(a), SpreadSink::Only(b))
+                | (SpreadSink::Only(b), SpreadSink::AllBut(a)) => {
+                    SpreadSink::AllBut(a.into_iter().filter(|k| !b.contains(k)).collect())
+                }
+                (SpreadSink::Only(mut a), SpreadSink::Only(b)) => {
+                    a.extend(b);
+                    SpreadSink::Only(a)
+                }
+                (s, SpreadSink::None) => s,
+            };
+        };
+        fn walk(n: &Node, add: &mut dyn FnMut(&Expr)) {
+            match n {
+                Node::Element {
+                    attrs, children, ..
+                } => {
+                    for a in attrs {
+                        if let Attr::Spread(v) = a {
+                            add(v);
+                        }
+                    }
+                    children.iter().for_each(|c| walk(c, add));
+                }
+                Node::Component {
+                    props, children, ..
+                } => {
+                    for (k, v) in props {
+                        if k == crate::ir::SPREAD_KEY {
+                            add(v);
+                        }
+                    }
+                    children.iter().for_each(|c| walk(c, add));
+                }
+                Node::Fragment(cs) => cs.iter().for_each(|c| walk(c, add)),
+                Node::If { then, else_, .. } => then.iter().chain(else_).for_each(|c| walk(c, add)),
+                Node::For { body, .. } => body.iter().for_each(|c| walk(c, add)),
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            }
+        }
+        if !matches!(ir.tier, Tier::React { .. }) {
+            walk(&ir.template, &mut add);
+        }
+        sink
+    }
 }
 
 /// Client reads a `RowOnly` link implies, and the child's (name, loc) when it precomputes over props.
@@ -244,6 +342,7 @@ impl Walker<'_, '_> {
                     fed: false,
                     stores: false,
                     prop_precompute: false,
+                    spread: SpreadSink::None,
                 };
             }
             self.diagnostics.push(Diagnostic::fallback(
@@ -281,6 +380,7 @@ impl Walker<'_, '_> {
                 fed: false,
                 stores: false,
                 prop_precompute: false,
+                spread: SpreadSink::None,
             };
         };
         let export = match imported {
@@ -322,6 +422,7 @@ impl Walker<'_, '_> {
                         fed: false,
                         stores: false,
                         prop_precompute: false,
+                        spread: SpreadSink::None,
                     };
                 };
                 ctx.modules
@@ -358,8 +459,10 @@ impl Walker<'_, '_> {
         let mut fed = false;
         let mut stores = false;
         let mut prop_precompute = false;
+        let mut spread = SpreadSink::None;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
+                spread = SpreadSink::of(&ir);
                 if matches!(&ir.tier, Tier::React { reason, .. } if reason == crate::analyze::modules::OPAQUE_EXPORT)
                 {
                     self.diagnostics.push(Diagnostic::fallback(
@@ -420,6 +523,7 @@ impl Walker<'_, '_> {
             fed,
             stores,
             prop_precompute,
+            spread,
         }
     }
 
@@ -553,6 +657,7 @@ impl Walker<'_, '_> {
             }
         };
         *tier = child.tier.clone();
+        self.check_spread(name, props, &child, *loc);
         if !self.refs.iter().any(|r| r.name == *name) {
             self.refs.push(ChildRef {
                 name: name.clone(),
@@ -654,6 +759,20 @@ impl Walker<'_, '_> {
                 let k = self.instance_counts.entry(child_id.clone()).or_insert(0);
                 *k += 1;
                 let k = *k;
+                if child.fed && self.loop_sources.iter().any(Option::is_none) {
+                    // Fail closed softly (ruling on challenge 4dc45c45, F142): the server feeds a
+                    // per-instance job by indexing the list's props path; over a local or store list
+                    // there is none, and the build would refuse the page (`manifest.ts`
+                    // instance-list-path). Valid React never becomes a build error: an island instead.
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "instance-list-path",
+                        format!(
+                            "<{name}> has a job of its own and sits in a list that is not a props path, so the server cannot feed it per row"
+                        ),
+                        *loc,
+                        "map over a list that comes from props (a loader), or keep the page a React island",
+                    ));
+                }
                 if child.fed {
                     let mut record = InstanceRecord {
                         child_id: child_id.clone(),
@@ -750,6 +869,53 @@ impl Walker<'_, '_> {
         }
         // After this node's own link id: `_pN` follow document order.
         children.iter_mut().for_each(|c| self.node(c));
+    }
+
+    /// Fail closed (shadcn S1.2, R34.15): a spread is expanded into HTML only. A function or a
+    /// value that changes on the client reaching an element through the child's spread would
+    /// need a binding the child's chunk does not have, so the parent renders with React instead;
+    /// likewise a spread passed to a React island or to a child the server feeds per instance.
+    fn check_spread(&mut self, name: &str, props: &[(String, Expr)], child: &Child, loc: u32) {
+        let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
+        let refuse = |why: String| {
+            Diagnostic::fallback(
+                "spread-props",
+                why,
+                loc,
+                "pass these props explicitly, or keep the component that receives them interactive with React",
+            )
+        };
+        if spreads_in && matches!(child.tier, Tier::React { .. }) {
+            self.diagnostics.push(refuse(format!(
+                "props are spread into the React island <{name}>"
+            )));
+            return;
+        }
+        if spreads_in && child.fed {
+            self.diagnostics.push(refuse(format!(
+                "props are spread into <{name}>, which the server feeds per instance (a job or useId)"
+            )));
+            return;
+        }
+        for (k, v) in props {
+            let live = matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v);
+            if !live {
+                continue;
+            }
+            // Props spread in carry keys known only at render: a linked instance next to them could
+            // repaint an attribute the spread set.
+            if k == crate::ir::SPREAD_KEY || spreads_in || child.spread.lands(k) {
+                let what = if matches!(v, Expr::ClientOnly { .. }) {
+                    "a function"
+                } else {
+                    "a value that changes on the client"
+                };
+                self.diagnostics.push(refuse(format!(
+                    "prop `{k}` of <{name}> is {what} and reaches an element through a spread, which brust expands into HTML only"
+                )));
+                return;
+            }
+        }
     }
 
     /// A plain props path of `e` (`item.price`), `[idx]` standing for the current row of

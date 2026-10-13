@@ -35,9 +35,19 @@ pub enum PropBinding {
     Markup(String),
 }
 
+/// One piece of a call site's props, in source order (shadcn S1.2): a named prop, or a spread
+/// object whose keys are known only at render (a jinja expression of a map).
+#[derive(Clone, Debug)]
+pub enum Seg {
+    Named(String, PropBinding),
+    Spread(String),
+}
+
 /// How an instance is embedded: `None` for the component itself.
 pub struct Inline {
-    pub props: HashMap<String, PropBinding>,
+    /// The call site's props in source order; JSX children last (React sets them after every
+    /// attribute, so they win over a `children` in a spread). A later segment wins.
+    pub segs: Vec<Seg>,
     /// `x-props-bind` value when the parent links this instance.
     pub bind: Option<String>,
     /// Template variable of this instance's job output (`__<id>_<k>[…]`).
@@ -46,6 +56,78 @@ pub struct Inline {
     pub slot_loops: Vec<Rc<Cell<bool>>>,
     /// Suffix for this instance's seed and derived variables.
     pub suffix: String,
+}
+
+impl Inline {
+    /// What prop `name` reads: the last named binding, or a spread after it that may carry the
+    /// key (`spread_get(d, "name", earlier)`).
+    pub fn get(&self, name: &str) -> Option<PropBinding> {
+        let mut cur: Option<PropBinding> = None;
+        for s in &self.segs {
+            match s {
+                Seg::Named(k, b) if k == name => cur = Some(b.clone()),
+                Seg::Named(..) => {}
+                Seg::Spread(d) => {
+                    let earlier = match &cur {
+                        Some(PropBinding::Expr(e)) => e.clone(),
+                        _ => UNDEFINED.into(),
+                    };
+                    cur = Some(PropBinding::Expr(format!(
+                        "spread_get({d}, {}, {earlier})",
+                        jinja_string(name)
+                    )));
+                }
+            }
+        }
+        cur
+    }
+
+    /// No spread of unknown keys: every key the call site passes is listed.
+    pub fn known(&self) -> bool {
+        self.segs.iter().all(|s| matches!(s, Seg::Named(..)))
+    }
+
+    /// The listed props minus `omit`, merged as a JS object (a later key keeps the first key's
+    /// position). Only meaningful when [`Self::known`].
+    pub fn entries(&self, omit: &[String]) -> Vec<(String, PropBinding)> {
+        let mut out: Vec<(String, PropBinding)> = Vec::new();
+        for s in &self.segs {
+            if let Seg::Named(k, b) = s
+                && !omit.contains(k)
+            {
+                match out.iter_mut().find(|(n, _)| n == k) {
+                    Some(slot) => slot.1 = b.clone(),
+                    None => out.push((k.clone(), b.clone())),
+                }
+            }
+        }
+        out
+    }
+
+    /// The whole props object minus `omit` as one jinja map (markup children are not data).
+    pub fn object(&self, omit: &[String]) -> String {
+        let segs: Vec<String> = self
+            .segs
+            .iter()
+            .filter_map(|s| match s {
+                Seg::Named(k, PropBinding::Expr(e)) if !omit.contains(k) => {
+                    Some(format!("[{}, {e}]", jinja_string(k)))
+                }
+                Seg::Named(..) => None,
+                Seg::Spread(d) => Some(omit_jinja(d, omit)),
+            })
+            .collect();
+        format!("spread_merge({})", segs.join(", "))
+    }
+}
+
+/// `d` without the keys in `omit` (a rest object), as jinja.
+fn omit_jinja(d: &str, omit: &[String]) -> String {
+    if omit.is_empty() {
+        return d.to_string();
+    }
+    let keys: Vec<String> = omit.iter().map(|k| jinja_string(k)).collect();
+    format!("(({d}) | omit([{}]))", keys.join(", "))
 }
 
 pub struct TemplateOut {
@@ -213,7 +295,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                 let base = match &self.inline {
                     None if name == "*" => "_props".into(),
                     None => name.to_string(),
-                    Some(i) => match i.props.get(name) {
+                    Some(i) if name == "*" => format!("({})", i.object(&[])),
+                    Some(i) => match i.get(name) {
                         Some(PropBinding::Expr(e)) => format!("({e})"),
                         _ => UNDEFINED.into(),
                     },
@@ -475,9 +558,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                 ..
             }),
         ) = (&self.inline, raw)
-            && let Some(PropBinding::Markup(m)) = i.props.get(name)
+            && let Some(PropBinding::Markup(m)) = i.get(name)
         {
-            self.out.push_str(m);
+            self.out.push_str(&m);
             return None;
         }
         let paint = format!("{{{{ {} | e }}}}", self.value(e));
@@ -541,8 +624,13 @@ impl<'a, 'c> Printer<'a, 'c> {
             open.push_str(x);
         }
         let model = model_pair(attrs, &self.f);
-        for (a, sa) in attrs.iter().zip(sattrs) {
-            self.attr(a, sa, tag, attrs, model.as_deref(), &mut open);
+        let mut spread_body = None;
+        if attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
+            spread_body = self.spread_open(tag, attrs, sattrs, model.as_deref(), &mut open);
+        } else {
+            for (a, sa) in attrs.iter().zip(sattrs) {
+                self.attr(a, sa, tag, attrs, model.as_deref(), &mut open);
+            }
         }
         if let Some(m) = &model {
             open.push_str(&format!(" x-model=\"{m}\""));
@@ -566,6 +654,11 @@ impl<'a, 'c> Printer<'a, 'c> {
         std::mem::swap(&mut body, &mut self.out);
         if let Some(h) = inner_html {
             body = h;
+        } else if children.is_empty()
+            && let Some(b) = spread_body
+        {
+            // R34.15: `children` in a spread is the element's children when JSX gives none.
+            body = b;
         }
         if let Some(d) = text_directive {
             open.push_str(&format!(" x-text=\"{d}\""));
@@ -599,7 +692,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             match &self.inline {
                 None if p == "*" => "_props".into(),
                 None => p.clone(),
-                Some(i) => match i.props.get(p) {
+                Some(i) => match i.get(p) {
                     Some(PropBinding::Expr(e)) => e.clone(),
                     _ => "none".into(),
                 },
@@ -650,17 +743,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         if seed.contains("*") {
             let all = match &self.inline {
                 None => "_props".to_string(),
-                Some(i) => format!(
-                    "{{{}}}",
-                    i.props
-                        .iter()
-                        .filter_map(|(k, v)| match v {
-                            PropBinding::Expr(e) => Some(format!("{}: {e}", jinja_string(k))),
-                            PropBinding::Markup(_) => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
+                Some(i) => i.object(&[]),
             };
             s.push_str(&format!(" x-props='{{{{ {all} | json_attr }}}}'"));
         } else if !dict.is_empty() {
@@ -815,6 +898,239 @@ impl<'a, 'c> Printer<'a, 'c> {
                     open.push_str(" x-raw");
                 }
             }
+        }
+    }
+
+    /// The opening tag's attributes of an element that carries a spread (shadcn S1.2, R34.15),
+    /// with React's semantics: a later key wins (keeping the first key's position, as a JS object
+    /// literal does), `key`/`ref` are not attributes, and `children` in a spread is returned as the
+    /// element body (used when JSX gives none). Keys known at compile time print exactly as
+    /// hand-written attributes; keys known only at render go through `spread_attrs` (brust-jinja,
+    /// the same rules). An own attribute replaced by a later key is still printed into a scratch
+    /// buffer, so the members it records keep their numbers in every instance.
+    fn spread_open(
+        &mut self,
+        tag: &str,
+        attrs: &[Attr],
+        sattrs: &[Attr],
+        model: Option<&str>,
+        open: &mut String,
+    ) -> Option<String> {
+        enum It {
+            Own(usize),
+            Bound(String, PropBinding),
+            Runtime(String),
+        }
+        // Attributes merge on the HTML attribute they print as (review F1): `className` and
+        // `class`, `htmlFor` and `for`, `tabIndex` and `tabindex` are one key, so a later alias wins.
+        let name_of = |it: &It| -> Option<String> {
+            match it {
+                It::Own(i) => match &attrs[*i] {
+                    Attr::Static { name, .. } | Attr::Dynamic { name, .. } => Some(name.clone()),
+                    _ => None,
+                },
+                It::Bound(k, _) => Some(k.clone()),
+                It::Runtime(_) => None,
+            }
+        };
+        let key_of = |it: &It| name_of(it).map(|n| brust_jinja::spread::attr_key(&n));
+        let mut items: Vec<It> = Vec::new();
+        let mut children: Vec<Seg> = Vec::new();
+        for (i, a) in attrs.iter().enumerate() {
+            let Attr::Spread(v) = a else {
+                items.push(It::Own(i));
+                continue;
+            };
+            for s in self.spread_segs(v) {
+                match s {
+                    Seg::Spread(d) => {
+                        children.push(Seg::Spread(d.clone()));
+                        items.push(It::Runtime(d));
+                    }
+                    Seg::Named(k, b) => {
+                        if k == "children" {
+                            children.push(Seg::Named(k, b));
+                        } else if k == "key"
+                            || k == "ref"
+                            || (k.starts_with("on")
+                                && k[2..].starts_with(|c: char| c.is_ascii_uppercase()))
+                        {
+                            // Not attributes (a function value never reaches here: the parent
+                            // refuses a function into a spread, `passes/children.rs`).
+                        } else if k.to_ascii_lowercase().starts_with("x-") {
+                            self.diagnostics.push(Diagnostic::warning(
+                                "reserved-attr",
+                                format!("`{k}` reaches <{tag}> through a spread: `x-` attributes are reserved for brust's runtime and are not rendered"),
+                                0,
+                                "rename it (`data-x-…`) or move this component to React",
+                            ));
+                        } else if k == "dangerouslySetInnerHTML" {
+                            self.diagnostics.push(Diagnostic::error(
+                                "spread-innerhtml",
+                                format!("dangerouslySetInnerHTML reaches <{tag}> through a spread"),
+                                0,
+                                "set dangerouslySetInnerHTML on the element itself",
+                            ));
+                        } else {
+                            items.push(It::Bound(k, b));
+                        }
+                    }
+                }
+            }
+        }
+        let children_body = {
+            let probe = Inline {
+                segs: children,
+                bind: None,
+                slots: String::new(),
+                slot_loops: Vec::new(),
+                suffix: String::new(),
+            };
+            match probe.get("children") {
+                Some(PropBinding::Markup(m)) => Some(m),
+                Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
+                None => None,
+            }
+        };
+        let last_runtime = items.iter().rposition(|it| matches!(it, It::Runtime(_)));
+        let (head, tail) = match last_runtime {
+            Some(p) => items.split_at(p + 1),
+            None => items.split_at(0),
+        };
+        // Keys the tail sets: they win over everything before.
+        let mut tail_keys: Vec<String> = tail.iter().filter_map(key_of).collect();
+        tail_keys.dedup();
+        let tail_names: Vec<String> = tail.iter().filter_map(name_of).collect();
+        let overridden = |name: &str| tail_keys.contains(&brust_jinja::spread::attr_key(name));
+        if last_runtime.is_some() {
+            let mut segs: Vec<String> = Vec::new();
+            for it in head {
+                match it {
+                    It::Own(i) => match (&attrs[*i], &sattrs[*i]) {
+                        (Attr::Static { name, value }, _) => {
+                            if overridden(name) {
+                                continue;
+                            }
+                            let v = if value.is_empty() {
+                                "true".to_string()
+                            } else {
+                                jinja_string(value)
+                            };
+                            segs.push(format!("[{}, {v}]", jinja_string(name)));
+                        }
+                        (Attr::Dynamic { name, value }, Attr::Dynamic { value: sv, .. }) => {
+                            let raw = raw_of(value, Some(sv));
+                            if self.reactive(raw, value).is_some() {
+                                // Its member is recorded either way (numbering, see above).
+                                let mut scratch = String::new();
+                                self.attr(&attrs[*i], &sattrs[*i], tag, attrs, model, &mut scratch);
+                                // Reactive only through props: with keys known only at render the
+                                // props are the route's (fixed), or the parent refuses a live prop
+                                // next to the spread (`passes/children.rs`), so the merged server
+                                // value is final and needs no binding.
+                                let live =
+                                    raw.is_some_and(|r| self.f.deps(r, &self.scope()).reactive());
+                                if overridden(name) || !live {
+                                    if !overridden(name) {
+                                        let v = self.value(value);
+                                        segs.push(format!("[{}, {v}]", jinja_string(name)));
+                                    }
+                                    continue;
+                                }
+                                self.diagnostics.push(Diagnostic::error(
+                                    "spread-shape",
+                                    format!("`{name}` on <{tag}> changes on the client, but a later spread of keys known only at render may replace it"),
+                                    0,
+                                    "write the attribute after the spread",
+                                ));
+                                continue;
+                            }
+                            if overridden(name) {
+                                continue;
+                            }
+                            let v = self.value(value);
+                            segs.push(format!("[{}, {v}]", jinja_string(name)));
+                        }
+                        // Events, refs and inner HTML are not keys of the merge.
+                        (a, sa) => self.attr(a, sa, tag, attrs, model, open),
+                    },
+                    It::Bound(k, PropBinding::Expr(e)) if !overridden(k) => {
+                        segs.push(format!("[{}, {e}]", jinja_string(k)));
+                    }
+                    It::Bound(..) => {}
+                    It::Runtime(d) => segs.push(if tail_names.is_empty() {
+                        d.clone()
+                    } else {
+                        let names: Vec<String> =
+                            tail_names.iter().map(|n| jinja_string(n)).collect();
+                        format!("(({d}) | omit_attrs([{}]))", names.join(", "))
+                    }),
+                }
+            }
+            open.push_str(&format!("{{{{ spread_attrs({}) }}}}", segs.join(", ")));
+        }
+        // Compile-time part: JS object semantics over the tail (the whole list when every key is known).
+        let mut order: Vec<(Option<String>, usize)> = Vec::new();
+        for (n, it) in tail.iter().enumerate() {
+            match key_of(it) {
+                Some(k) => match order
+                    .iter_mut()
+                    .find(|(o, _)| o.as_deref() == Some(k.as_str()))
+                {
+                    Some(slot) => {
+                        // Replaced: still printed (into scratch) so its members keep their numbers.
+                        let old = std::mem::replace(&mut slot.1, n);
+                        if let It::Own(i) = &tail[old] {
+                            let mut scratch = String::new();
+                            self.attr(&attrs[*i], &sattrs[*i], tag, attrs, model, &mut scratch);
+                        }
+                    }
+                    None => order.push((Some(k), n)),
+                },
+                None => order.push((None, n)),
+            }
+        }
+        for (_, n) in order {
+            match &tail[n] {
+                It::Own(i) => self.attr(&attrs[*i], &sattrs[*i], tag, attrs, model, open),
+                It::Bound(k, PropBinding::Expr(e)) => self.bound_attr(k, e, tag, open),
+                It::Bound(..) | It::Runtime(_) => {}
+            }
+        }
+        children_body
+    }
+
+    /// One attribute a known-shape spread brings (`k` a React name, `v` a jinja expression of the
+    /// call site): the rules of a hand-written `Attr::Dynamic` without a compile-time value.
+    fn bound_attr(&mut self, k: &str, v: &str, tag: &str, open: &mut String) {
+        let html = attr_name(k);
+        if !brust_jinja::spread::attr_name_ok(k) || !brust_jinja::spread::attr_name_ok(&html) {
+            self.diagnostics.push(Diagnostic::warning(
+                "unsafe-attr",
+                format!("`{k}` reaches <{tag}> through a spread but is not a valid attribute name; it is not rendered"),
+                0,
+                "pass attribute names only",
+            ));
+            return;
+        }
+        if is_refused_attr(&html) {
+            self.refuse(&html, tag);
+            return;
+        }
+        if html == "style" {
+            open.push_str(&format!(
+                "{{% if ({v}) | present %}} style=\"{{{{ ({v}) | style_css | e }}}}\"{{% endif %}}"
+            ));
+        } else if is_boolean_attr(&html) {
+            open.push_str(&format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"));
+        } else if is_url_attr(&html) {
+            open.push_str(&format!(
+                "{{% if ({v} | present) and ({v} | url_ok) %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
+            ));
+        } else {
+            open.push_str(&format!(
+                "{{% if {v} | present %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
+            ));
         }
     }
 
@@ -1265,20 +1581,23 @@ impl<'a, 'c> Printer<'a, 'c> {
             *k += 1;
             *k
         };
-        let mut bindings = HashMap::new();
-        for ((pname, v), (_, sv)) in props.iter().zip(sprops) {
+        let mut segs = Vec::new();
+        for (pname, v) in props.iter() {
+            if pname == crate::ir::SPREAD_KEY {
+                segs.extend(self.spread_segs(v));
+                continue;
+            }
             if matches!(v, Expr::ClientOnly { .. }) {
                 continue;
             }
-            let _ = sv;
-            bindings.insert(pname.clone(), PropBinding::Expr(self.value(v)));
+            segs.push(Seg::Named(pname.clone(), PropBinding::Expr(self.value(v))));
         }
         if !children.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
             self.nodes(children, schildren);
             std::mem::swap(&mut saved, &mut self.out);
-            bindings.insert("children".into(), PropBinding::Markup(saved));
+            segs.push(Seg::Named("children".into(), PropBinding::Markup(saved)));
         }
         let bind = link
             .and_then(|l| ir.child_links.iter().find(|c| c.id == l))
@@ -1302,7 +1621,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 d
             });
         let inline = Inline {
-            props: bindings,
+            segs,
             bind: bind.clone(),
             slots: format!("__{id}_{k}{loops}"),
             slot_loops,
@@ -1322,6 +1641,45 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.out.push_str(&p.out);
         self.diagnostics.append(&mut p.diagnostics);
+    }
+
+    /// The props a spread `{...v}` passes (R34.15): this component's own props object (or its
+    /// `...rest`) is its call site's segments when it is inlined, the render's `_props` at the
+    /// root; a props path is one object of unknown keys.
+    fn spread_segs(&self, v: &Expr) -> Vec<Seg> {
+        let raw = match v {
+            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => Some(r),
+            _ => None,
+        };
+        let omit = match raw.map(|r| &r.kind) {
+            Some(RawKind::Ident {
+                name,
+                kind: IdentKind::Prop,
+            }) if name == "*" => Some(Vec::new()),
+            Some(RawKind::Ident {
+                name,
+                kind: IdentKind::Prop,
+            }) if name == crate::ir::REST_PROPS => Some(self.rest_omits()),
+            _ => None,
+        };
+        match (omit, &self.inline) {
+            (Some(omit), Some(i)) => i
+                .segs
+                .iter()
+                .filter_map(|s| match s {
+                    Seg::Named(k, _) if omit.contains(k) => None,
+                    Seg::Named(..) => Some(s.clone()),
+                    Seg::Spread(d) => Some(Seg::Spread(omit_jinja(d, &omit))),
+                })
+                .collect(),
+            (Some(omit), None) => vec![Seg::Spread(omit_jinja("_props", &omit))],
+            (None, _) => vec![Seg::Spread(format!("({})", self.value(v)))],
+        }
+    }
+
+    /// The keys this component's props pattern names: what its `...rest` leaves out.
+    fn rest_omits(&self) -> Vec<String> {
+        self.f.ir.props.iter().map(|p| p.name.clone()).collect()
     }
 
     fn props_dict(&self, props: &[(String, Expr)], _s: &[(String, Expr)]) -> String {

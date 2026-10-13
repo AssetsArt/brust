@@ -15,6 +15,8 @@ pub mod ctx;
 
 #[path = "filters/project.rs"]
 mod project;
+#[path = "filters/spread.rs"]
+pub mod spread;
 
 /// Registers every brust filter on `env` (and the builtins they build on).
 /// The one way brust converts serde data into a template value (minijinja 3:
@@ -65,6 +67,13 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("keys", keys);
     env.add_filter("entries", entries);
     env.add_filter("project", project::project); // F71, filters/project.rs
+    // shadcn S1.2 (R34.15 b): props spread onto an element, keys unknown at compile time.
+    env.add_function("spread_attrs", spread::spread_attrs);
+    env.add_function("spread_children", spread::spread_children);
+    env.add_function("spread_get", spread::spread_get);
+    env.add_function("spread_merge", spread::spread_merge);
+    env.add_filter("omit", spread::omit);
+    env.add_filter("omit_attrs", spread::omit_attrs);
     env.add_filter("css_val", |v: Value, prop: String| css_value(&prop, &v));
     // M3-P P7: a literal style object lowered at compile time. Arguments are
     // `key, value` pairs, already in the order minijinja's dict literal would

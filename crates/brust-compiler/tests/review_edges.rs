@@ -364,12 +364,39 @@ fn use_state_with_a_module_function_seeds_its_call() {
     );
 }
 
-/// F31: a spread of props cannot be expanded by the template backend.
+/// F31, superseded by shadcn S1.2: a spread of the props object expands (no fallback); a spread
+/// of anything else (a local object, a call) still makes the component React.
 #[test]
 fn spread_props_make_the_component_react() {
+    let dir = root(
+        "spread",
+        &[(
+            "Child.tsx",
+            "export default function Child(p: any) { return <b>{p.a}</b> }",
+        )],
+    );
     for src in [
         "export default function R(props) { return <div {...props}>x</div> }",
         "import Child from './Child'\nexport default function R(props) { return <Child {...props} /> }",
+    ] {
+        let ir = analyze_opts(
+            "T.tsx",
+            src,
+            AnalyzeOptions {
+                root: dir.clone(),
+                ..Default::default()
+            },
+        );
+        assert!(
+            !rules(&ir).contains(&(DiagClass::Fallback, "spread-props".into())),
+            "{:?}",
+            ir.diagnostics
+        );
+        assert!(!matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    }
+    for src in [
+        "export default function R(props) { const o = { a: props.a }; return <div {...o}>x</div> }",
+        "import Child from './Child'\nexport default function R(props) { return <Child {...make(props)} /> }\nfunction make(p) { return p }",
     ] {
         let ir = analyze(src);
         assert!(

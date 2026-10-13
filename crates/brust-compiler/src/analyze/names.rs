@@ -28,6 +28,14 @@ pub struct NameTable<'a> {
     props: HashMap<u32, String>,
     /// The component's parameter when it is not destructured (`props`).
     props_ident: Option<u32>,
+    /// `...rest` of a destructured props pattern (shadcn S1.2, R34.14): `rest.k` reads prop `k`
+    /// (`undefined` for a named key), `{...rest}` spreads the props minus the named keys.
+    rest: Option<u32>,
+    /// The keys the props pattern names (what `rest` leaves out).
+    named_props: Vec<String>,
+    /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
+    /// the bare object as a value, or inside code printed as written (R34.14: fail closed).
+    pub rest_escape: std::cell::Cell<Option<u32>>,
     state: HashSet<u32>,
     setters: HashSet<u32>,
     loop_bindings: HashSet<u32>,
@@ -83,11 +91,17 @@ impl<'a> NameTable<'a> {
         if let Some(arg) = component.args.slice().first() {
             match arg.binding.data {
                 B::BIdentifier(id) => table.props_ident = Some(table.key(id.r#ref)),
-                // Only plain `key` / `key: local` / `key = default` bind a prop;
-                // nested patterns and `...rest` are a `prop-pattern` fallback
-                // (read_props) and their bindings stay Local.
+                // Only plain `key` / `key: local` / `key = default` bind a prop, and a
+                // trailing `...rest` (R34.14); nested patterns are a `prop-pattern`
+                // fallback (read_props) and their bindings stay Local.
                 B::BObject(obj) => {
                     for p in obj.properties() {
+                        if p.flags.contains(js_ast::flags::Property::IsSpread) {
+                            if let B::BIdentifier(id) = p.value.data {
+                                table.rest = Some(table.key(id.r#ref));
+                            }
+                            continue;
+                        }
                         let (B::BIdentifier(id), js_ast::expr::Data::EString(key)) =
                             (p.value.data, &p.key.data)
                         else {
@@ -97,7 +111,9 @@ impl<'a> NameTable<'a> {
                             continue;
                         }
                         let k = table.key(id.r#ref);
-                        table.props.insert(k, crate::analyze::expr::estring(key));
+                        let name = crate::analyze::expr::estring(key);
+                        table.named_props.push(name.clone());
+                        table.props.insert(k, name);
                     }
                 }
                 B::BArray(_) | B::BMissing(_) => {}
@@ -115,6 +131,9 @@ impl<'a> NameTable<'a> {
             imports,
             props: HashMap::new(),
             props_ident: None,
+            rest: None,
+            named_props: Vec::new(),
+            rest_escape: std::cell::Cell::new(None),
             state: HashSet::new(),
             setters: HashSet::new(),
             loop_bindings: HashSet::new(),
@@ -208,8 +227,10 @@ impl<'a> NameTable<'a> {
         if let Some(prop) = self.props.get(&k) {
             return (prop.clone(), IdentKind::Prop);
         }
-        // The whole (non-destructured) props object: the root `*` (F20).
-        if self.props_ident == Some(k) {
+        // The whole (non-destructured) props object: the root `*` (F20). A capture of the rest
+        // object reads it too (a superset: the deps cover every prop); code that is printed as
+        // written never sees it (the reader falls back first, `Reader::rest_escapes`).
+        if self.props_ident == Some(k) || self.rest == Some(k) {
             return ("*".into(), IdentKind::Prop);
         }
         let name = self.name(r);
@@ -242,6 +263,16 @@ impl<'a> NameTable<'a> {
     /// `r` is the non-destructured props parameter, so `r.x` reads prop `x`.
     pub fn is_props_ident(&self, r: js_ast::Ref) -> bool {
         self.props_ident == Some(self.key(r))
+    }
+
+    /// `r` is the `...rest` binding of the props pattern.
+    pub fn is_rest(&self, r: js_ast::Ref) -> bool {
+        self.rest.is_some() && self.rest == Some(self.key(r))
+    }
+
+    /// The keys the props pattern names (what `...rest` leaves out).
+    pub fn named_props(&self) -> &[String] {
+        &self.named_props
     }
 
     /// Import binding of `r`, if any: (module path, imported name).

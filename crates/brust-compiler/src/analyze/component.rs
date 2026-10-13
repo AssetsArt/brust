@@ -406,6 +406,17 @@ fn read_function(
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
     check_printer_panic(ir);
     ir.props = body.props;
+    ir.props_rest = body.props_rest;
+    if let Some(loc) = reader.names.rest_escape.get() {
+        // R34.14 fail closed: brust reads `rest.k` and spreads `{...rest}`; any other read of the
+        // rest object (a value, or code printed as written) would see the named keys too.
+        ir.diagnostics.push(Diagnostic::fallback(
+            "prop-pattern",
+            "the props `...rest` object is read as a value; brust reads `rest.key` and `{...rest}` in JSX",
+            loc,
+            "read rest.key, or spread {...rest} onto an element",
+        ));
+    }
     ir.state = body.state;
     ir.derived = body.derived;
     ir.effects = body.effects;

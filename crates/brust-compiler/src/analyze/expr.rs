@@ -52,6 +52,7 @@ impl<'r, 'a> Reader<'r, 'a> {
     pub fn opaque(&self, e: &js_ast::Expr, why: &str) -> RawExpr {
         let mut w = Walk::default();
         w.expr(e);
+        self.rest_in_verbatim(&w, loc_of(e));
         let (captures, jsx) = self.captured(w);
         RawExpr {
             loc: loc_of(e),
@@ -71,8 +72,21 @@ impl<'r, 'a> Reader<'r, 'a> {
             E::EBoolean(b) | E::EBranchBoolean(b) => RawKind::Lit(Literal::Bool(b.value)),
             E::ENull(_) => RawKind::Lit(Literal::Null),
             E::EUndefined(_) => RawKind::Lit(Literal::Undefined),
+            // The bare rest object is only a spread source (`jsx.rs`); as a value it is not read.
+            E::EIdentifier(id) if self.names.is_rest(id.ref_) => {
+                if self.names.rest_escape.get().is_none() {
+                    self.names.rest_escape.set(Some(loc));
+                }
+                return self.opaque(e, "props rest object");
+            }
             E::EIdentifier(id) => self.ident(id.ref_),
             E::EImportIdentifier(id) => self.ident(id.ref_),
+            E::EDot(d)
+                if let Some(kind) =
+                    self.rest_member(&d.target, &String::from_utf8_lossy(d.name.slice())) =>
+            {
+                kind
+            }
             E::EDot(d) => {
                 let name = String::from_utf8_lossy(d.name.slice()).into_owned();
                 // `props.x` on a non-destructured props parameter reads prop `x`.
@@ -99,6 +113,13 @@ impl<'r, 'a> Reader<'r, 'a> {
             }
             E::EIndex(ix) if matches!(ix.optional_chain, Some(js_ast::OptionalChain::Start)) => {
                 return self.opaque(e, "optional index");
+            }
+            // `rest["data-x"]` reads prop `data-x` (R34.14).
+            E::EIndex(ix)
+                if let E::EString(key) = &ix.index.data
+                    && let Some(kind) = self.rest_member(&ix.target, &estring(key)) =>
+            {
+                kind
             }
             // `s["count"]` on a `useStore` view reads key `count`.
             E::EIndex(ix)
@@ -227,6 +248,32 @@ impl<'r, 'a> Reader<'r, 'a> {
         RawKind::Ident { name, kind }
     }
 
+    /// Code printed as written that reads the props `...rest` object would see the whole props
+    /// (named keys included): recorded so the component falls back (R34.14).
+    fn rest_in_verbatim(&self, w: &Walk, loc: u32) {
+        if self.names.rest_escape.get().is_none() && w.used.iter().any(|r| self.names.is_rest(*r)) {
+            self.names.rest_escape.set(Some(loc));
+        }
+    }
+
+    /// `rest.k`: prop `k`, or `undefined` when the pattern names `k` (it is not in the rest).
+    fn rest_member(&self, target: &js_ast::Expr, key: &str) -> Option<RawKind> {
+        let E::EIdentifier(id) = &target.data else {
+            return None;
+        };
+        if !self.names.is_rest(id.ref_) {
+            return None;
+        }
+        Some(if self.names.named_props().iter().any(|n| n == key) {
+            RawKind::Lit(Literal::Undefined)
+        } else {
+            RawKind::Ident {
+                name: key.to_string(),
+                kind: IdentKind::Prop,
+            }
+        })
+    }
+
     fn arrow(&mut self, e: &js_ast::Expr, a: &js_ast::E::Arrow) -> RawExpr {
         let list_body = std::mem::take(&mut self.map_callback);
         let mut params = Vec::new();
@@ -268,6 +315,14 @@ impl<'r, 'a> Reader<'r, 'a> {
                 captures_only: false,
             },
         };
+        if matches!(body, ArrowBody::Block { .. }) {
+            let mut w = Walk::default();
+            for arg in a.args.slice() {
+                w.declare_binding(&arg.binding);
+            }
+            w.stmts(stmts);
+            self.rest_in_verbatim(&w, loc_of(e));
+        }
         let (captures, jsx) = self.captures(a);
         if jsx && matches!(body, ArrowBody::Block { .. }) {
             // Ruling 1 (M1b-2 plan): JSX built in a block body is marked on an Opaque.
