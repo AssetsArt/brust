@@ -448,7 +448,9 @@ request- or time-dependent is computed once by `brust build` instead of per requ
 when it has no inputs, is not state-dependent, sits in no list or condition and is pure: only
 `Math` (not `random`), `JSON`, `String`, `Number`, `Array`, `Object`, `RegExp`,
 `encodeURIComponent` and `decodeURIComponent` as globals, no module `let` / `var` captures, and no
-package imports (relative imports are fine). The compiler lists the candidates in
+package imports. A relatively imported helper counts only after its module is read: no package or
+`node:` import, no module `let` / `var`, no dynamic `import()`, no global outside the allowlist
+(`process`, `require`, `Date`, …), no `Math.random`, and the same for its own relative imports. The compiler lists the candidates in
 `ir.build_eval` and emits one thunk per slot (`ComponentArtifacts.eval_ts`); the build bundles them,
 runs them once in a Bun subprocess (`TZ=UTC`, 2 s per slot, JSON-only values of at most 64 KiB, and
 a runtime guard that throws on `Date.now()` / `new Date()` / `Math.random()` / `crypto` /

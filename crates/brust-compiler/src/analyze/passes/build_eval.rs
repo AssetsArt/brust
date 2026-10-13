@@ -5,7 +5,13 @@
 //! imports. `buildTime(() => …)` imported from `@brust/core` is the explicit opt-in that lifts the
 //! package-import and `async` limits; the global denylist and the time/random rules still apply.
 use super::deps::Deps;
+use crate::analyze::component::AnalyzeOptions;
+use crate::analyze::expr::Walk;
+use crate::analyze::modules::resolve;
 use crate::ir::{IdentKind, ModuleDecl, RawExpr, RawKind};
+use bun_ast as js_ast;
+use js_ast::stmt::Data as S;
+use std::collections::HashSet;
 
 /// Globals a v1 slot may read.
 const ALLOWED_GLOBALS: &[&str] = &[
@@ -88,7 +94,13 @@ fn reads_random(r: &RawExpr) -> bool {
 
 /// What the build may do with the slot `r` (`deps` are its transitive dependencies). `placed`: the
 /// slot sits in no list or condition and does not change with state.
-pub fn classify(r: &RawExpr, deps: &Deps, placed: bool, module_decls: &[ModuleDecl]) -> Verdict {
+pub fn classify(
+    r: &RawExpr,
+    deps: &Deps,
+    placed: bool,
+    module_decls: &[ModuleDecl],
+    imports_pure: &dyn Fn(&str) -> bool,
+) -> Verdict {
     let closure = build_time_call(r);
     let mut inputs: Vec<String> = Vec::new();
     inputs.extend(deps.props.iter().cloned());
@@ -142,11 +154,96 @@ pub fn classify(r: &RawExpr, deps: &Deps, placed: bool, module_decls: &[ModuleDe
                 .globals
                 .iter()
                 .all(|g| ALLOWED_GLOBALS.contains(&g.as_str()));
-            if known && !deps.opaque && deps.imports.iter().all(|(src, _)| relative(src)) {
+            if known
+                && !deps.opaque
+                && deps
+                    .imports
+                    .iter()
+                    .all(|(src, _)| relative(src) && imports_pure(src))
+            {
                 Verdict::Pure
             } else {
                 Verdict::Not
             }
         }
     }
+}
+
+/// Globals an imported module may read besides the allowlist (values, not capabilities).
+const VALUE_GLOBALS: &[&str] = &["NaN", "Infinity"];
+
+/// A relatively imported module a pure slot may call into (R0.1: fail closed). Its body is read,
+/// not assumed: no package or `node:` imports, no module `let` / `var`, no dynamic `import()`, no
+/// global outside the allowlist (`process`, `require`, `Date`, …) and no `Math.random`; its own
+/// relative imports must pass too (depth <= 8).
+pub fn module_is_pure(from: &str, source: &str, opts: &AnalyzeOptions) -> bool {
+    fn go(
+        from: &str,
+        source: &str,
+        opts: &AnalyzeOptions,
+        depth: usize,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(path) = resolve(from, source, opts) else {
+            return false;
+        };
+        if !seen.insert(path.clone()) {
+            return true;
+        }
+        let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
+            return false;
+        };
+        if String::from_utf8_lossy(&bytes).contains("Math.random") {
+            return false;
+        }
+        let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+            return false;
+        };
+        let rels: Option<Vec<String>> = parsed.with_ast(|ast| {
+            let mut rels = Vec::new();
+            for rec in ast.import_records.as_slice() {
+                let spec = String::from_utf8_lossy(rec.path.text).into_owned();
+                if !(spec.starts_with("./") || spec.starts_with("../")) {
+                    return None;
+                }
+                rels.push(spec);
+            }
+            let mut w = Walk::default();
+            for part in ast.parts.iter() {
+                for stmt in part.stmts.slice() {
+                    if let S::SLocal(l) = &stmt.data
+                        && !matches!(l.kind, js_ast::S::Kind::KConst)
+                    {
+                        return None;
+                    }
+                    w.stmt(stmt);
+                }
+            }
+            if w.dynamic_import.is_some() {
+                return None;
+            }
+            for r in &w.used {
+                let Some(sym) = ast.symbols.as_slice().get(r.inner_index() as usize) else {
+                    continue;
+                };
+                if matches!(sym.kind, js_ast::symbol::Kind::Unbound) {
+                    let name = String::from_utf8_lossy(sym.original_name.slice()).into_owned();
+                    if !ALLOWED_GLOBALS.contains(&name.as_str())
+                        && !VALUE_GLOBALS.contains(&name.as_str())
+                    {
+                        return None;
+                    }
+                }
+            }
+            Some(rels)
+        });
+        match rels {
+            Some(rels) => rels.iter().all(|r| go(&path, r, opts, depth + 1, seen)),
+            None => false,
+        }
+    }
+    go(from, source, opts, 0, &mut HashSet::new())
 }

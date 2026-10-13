@@ -36,6 +36,9 @@ Math.random = deny('Math.random()')
 if (globalThis.performance) globalThis.performance.now = deny('performance.now()')
 if (globalThis.crypto) { for (const k of ['randomUUID', 'getRandomValues']) { try { globalThis.crypto[k] = deny('crypto.' + k + '()') } catch {} } }
 globalThis.fetch = deny('fetch()')
+const out = (l) => process.stdout.write(l + '\\n')
+const env = process.env
+try { Object.defineProperty(process, 'env', { configurable: true, get: deny('process.env') }) } catch {}
 const enc = (v, path) => {
   if (v === null || typeof v === 'boolean' || typeof v === 'string') return v
   if (typeof v === 'number') { if (!Number.isFinite(v)) throw new Error('not JSON: ' + path + ' is ' + v); return v }
@@ -46,12 +49,12 @@ const enc = (v, path) => {
   throw new Error('not JSON: ' + path + ' is ' + (v === undefined ? 'undefined' : typeof v === 'object' ? (v.constructor && v.constructor.name) : typeof v))
 }
 for (let i = start; i < slots.length; i++) {
-  console.log('S ' + i)
+  out('S ' + i)
   try {
     const v = await slots[i].fn()
-    console.log('R ' + i + ' ' + JSON.stringify(enc(v, 'value')))
+    out('R ' + i + ' ' + JSON.stringify(enc(v, 'value')))
   } catch (e) {
-    console.log('E ' + i + ' ' + String(e && e.message ? e.message : e).split('\\n')[0])
+    out('E ' + i + ' ' + String(e && e.message ? e.message : e).split('\\n')[0])
   }
 }
 `

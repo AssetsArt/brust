@@ -25,7 +25,7 @@ beforeAll(() => {
   okBuild = build(ok)
 }, 120_000)
 afterAll(() => {
-  for (const app of ['ok', 'throws', 'client']) rmSync(join(root, app, 'dist'), { recursive: true, force: true })
+  for (const app of ['ok', 'throws', 'client', 'envbt']) rmSync(join(root, app, 'dist'), { recursive: true, force: true })
   rmSync(join(ok, 'dist-ref'), { recursive: true, force: true })
   uninstall?.()
 })
@@ -51,6 +51,14 @@ test('an impure helper keeps its job; the runtime guard names why (warning build
   expect(err).toMatch(/warning build-eval Impure\.tsx:\d+:\d+ .*Math\.random\(\) is not allowed/)
 })
 
+test('relatively imported helpers are read, not assumed: process.env, module state and node:fs stay jobs', () => {
+  const c = comp(manifest(ok), 'impureImports_')
+  expect(c.jobs.map((j) => j.kind)).toEqual(['precompute'])
+  const html = jinja(ok, 'impureImports_')
+  for (const s of ['_s1', '_s2', '_s3']) expect(html).toContain(s)   // none was baked
+  expect(html).not.toContain(process.env.HOME ?? '\u0000')
+})
+
 test('buildTime bakes a package call, async included, into the template (no job, no worker)', () => {
   const bt = comp(manifest(ok), 'buildTime_')
   expect(bt.jobs).toEqual([])
@@ -70,6 +78,12 @@ test('a throwing buildTime is a build error naming the call site', () => {
   const b = build(join(root, 'throws'))
   expect(b.exitCode).not.toBe(0)
   expect(b.stderr.toString()).toMatch(/error build-time Throws\.tsx:4:\d+ buildTime\(…\) failed at build: boom at build/)
+})
+
+test('buildTime that reaches process.env through an import is a build error, never a baked host value', () => {
+  const b = build(join(root, 'envbt'))
+  expect(b.exitCode).not.toBe(0)
+  expect(b.stderr.toString()).toMatch(/error build-time EnvBt\.tsx:\d+:\d+ buildTime\(…\) failed at build: build-eval: process\.env is not allowed/)
 })
 
 test('buildTime in a handler is the error build-time-client', () => {

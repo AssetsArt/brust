@@ -95,6 +95,7 @@ struct Placer<'s> {
     text: &'s [u8],
     module_decls: Vec<crate::ir::ModuleDecl>,
     slot_values: &'s std::collections::HashMap<String, serde_json::Value>,
+    opts: &'s crate::analyze::component::AnalyzeOptions,
 }
 
 pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>) {
@@ -188,6 +189,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         text: ctx.text,
         module_decls: ir.module_decls.clone(),
         slot_values: &ctx.opts.slot_values,
+        opts: ctx.opts,
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     p.node(&mut template);
@@ -574,7 +576,10 @@ impl Placer<'_> {
             line,
             col,
         };
-        match classify(r, deps, placed, &self.module_decls) {
+        let (opts, path) = (self.opts, self.path.clone());
+        match classify(r, deps, placed, &self.module_decls, &|src| {
+            super::build_eval::module_is_pure(&path, src, opts)
+        }) {
             Verdict::Not => {}
             Verdict::Pure => self.st.build_eval.push(candidate(false)),
             Verdict::BuildTime => self.st.build_eval.push(candidate(true)),

@@ -481,3 +481,84 @@ fn a_slot_value_from_the_build_replaces_the_slot_with_a_literal_and_drops_the_jo
         "{s:?}"
     );
 }
+
+#[test]
+fn a_relatively_imported_helper_is_read_before_it_counts_as_pure() {
+    use brust_compiler::analyze::component::{AnalyzeOptions, analyze_source};
+    use brust_compiler::parse::run_on_compiler_thread;
+    let dir = std::env::temp_dir().join(format!("brustc-be-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = [
+        ("pure.ts", "export const twice = (n: number) => n * 2"),
+        (
+            "deep.ts",
+            "import { twice } from './pure'\nexport const four = () => twice(2)",
+        ),
+        (
+            "env.ts",
+            "export const home = () => String(process.env.HOME)",
+        ),
+        ("state.ts", "let n = 0\nexport const next = () => ++n"),
+        (
+            "fs.ts",
+            "import { readFileSync } from 'node:fs'\nexport const size = () => readFileSync('x').length",
+        ),
+        (
+            "pkg.ts",
+            "import { g } from 'pkg'\nexport const h = () => g()",
+        ),
+        ("req.ts", "export const r = () => require('fs')"),
+        ("rand.ts", "export const r = () => Math.random()"),
+        ("dyn.ts", "export const r = () => import('./pure')"),
+        (
+            "badchain.ts",
+            "import { home } from './env'\nexport const x = () => home()",
+        ),
+    ];
+    for (f, src) in files {
+        std::fs::write(dir.join(f), src).unwrap();
+    }
+    let check = |file: &str, import: &str, call: &str| -> usize {
+        let root = dir.clone();
+        let src = format!(
+            "import {{ {import} }} from './{file}'\nexport default function C() {{ return <p>{{{call}}}</p> }}"
+        );
+        run_on_compiler_thread(move || {
+            analyze_source(
+                "C.tsx",
+                src.into_bytes(),
+                &AnalyzeOptions {
+                    root,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .build_eval
+            .len()
+        })
+    };
+    assert_eq!(
+        check("pure", "twice", "twice(3)"),
+        1,
+        "a pure relative helper is a candidate"
+    );
+    assert_eq!(
+        check("deep", "four", "four()"),
+        1,
+        "its own pure relative imports are read too"
+    );
+    for (file, import, call) in [
+        ("env", "home", "home()"),
+        ("state", "next", "next()"),
+        ("fs", "size", "size()"),
+        ("pkg", "h", "h()"),
+        ("req", "r", "r()"),
+        ("rand", "r", "r()"),
+        ("dyn", "r", "r()"),
+        ("badchain", "x", "x()"),
+    ] {
+        assert_eq!(check(file, import, call), 0, "{file}: must stay a job");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
