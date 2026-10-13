@@ -1,9 +1,9 @@
 // `brust dev [entry] --target cloudflare [-- <wrangler args>]` (M4-CF R10): build, run `wrangler dev` on the
 // generated project, rebuild + restart wrangler on a source change. No HMR. Each build runs in a child
 // process: a failed build keeps the old wrangler, and module caches never leak between builds.
-import { type FSWatcher, watch } from 'node:fs'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { BuildError } from './build/errors'
+import { defaultIgnored, type WatchLoop, watchLoop } from './dev/watch'
 
 export interface DevOptions {
   appRoot: string
@@ -15,7 +15,6 @@ export interface DevOptions {
   log: (s: string) => void
 }
 
-const IGNORED = new Set(['node_modules', '.wrangler', '.git'])
 const DEBOUNCE_MS = 300
 
 function wranglerBin(appRoot: string): string {
@@ -54,7 +53,7 @@ export async function runDev(o: DevOptions): Promise<number> {
     child = c
     c.exited.then((code) => {
       if (child !== c || stopping || restarting) return
-      watcher?.close()
+      loop.close()
       exitCode(code)
     })
   }
@@ -65,17 +64,12 @@ export async function runDev(o: DevOptions): Promise<number> {
     await c.exited
   }
 
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let building = false
-  let again = false
-  const rebuild = async () => {
-    if (building) {
-      again = true
-      return
-    }
-    building = true
-    do {
-      again = false
+  // The shared watch/build loop (dev/watch.ts): one rebuild at a time, edits during a rebuild are kept for the next.
+  const loop: WatchLoop = watchLoop({
+    root: appRoot,
+    ignored: (rel) => defaultIgnored(rel, relative(appRoot, dist)),
+    debounceMs: DEBOUNCE_MS,
+    async run() {
       o.log('[brust] change detected; rebuilding')
       if ((await build()) === 0) {
         restarting = true
@@ -83,25 +77,14 @@ export async function runDev(o: DevOptions): Promise<number> {
         restarting = false
         if (!stopping) spawn()
       } else o.log('[brust] rebuild failed; keeping the running wrangler')
-    } while (again && !stopping)
-    building = false
-  }
-  const ignored = (rel: string) => {
-    const abs = resolve(appRoot, rel)
-    return rel.split(sep).some((s) => IGNORED.has(s)) || abs === dist || abs.startsWith(dist + sep) || abs.startsWith(`${dist}.`) || abs.startsWith(join(dirname(dist), `.${basename(dist)}.brust-`)) || relative(dist, abs) === ''
-  }
-  let watcher: FSWatcher | null = watch(appRoot, { recursive: true }, (_ev, name) => {
-    if (!name || ignored(String(name))) return
-    clearTimeout(timer)
-    timer = setTimeout(() => void rebuild(), DEBOUNCE_MS)
+    },
   })
 
   spawn()
   const stop = () => {
     if (stopping) return
     stopping = true
-    clearTimeout(timer)
-    watcher?.close()
+    loop.close()
     void stopChild().then(() => exitCode(0))
   }
   process.on('SIGINT', stop)

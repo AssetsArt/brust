@@ -63,7 +63,7 @@ export function syncTemplate(opts: SyncOpts = {}): { files: number } {
     throw new Error(`sync-template: examples/pokedex must depend on @brust/core workspace:* (got ${src.dependencies?.['@brust/core']})`)
   }
   const { test: _test, ...scripts } = src.scripts ?? {}
-  const pkg = { ...src, name: '__PROJECT_NAME__', version: '0.0.1', private: true, scripts: { dev: 'brust build routes.tsx && brust start', ...scripts }, dependencies: { ...src.dependencies, '@brust/core': '__BRUST_DEP__' }, devDependencies: { ...src.devDependencies, wrangler: blankWrangler() } }
+  const pkg = { ...src, name: '__PROJECT_NAME__', version: '0.0.1', private: true, scripts: { dev: 'brust dev routes.tsx', ...scripts }, dependencies: { ...src.dependencies, '@brust/core': '__BRUST_DEP__' }, devDependencies: { ...src.devDependencies, wrangler: blankWrangler() } }
   writeFileSync(join(to, 'package.json.tmpl'), `${JSON.stringify(pkg, null, 2).replace('"__BRUST_DEP__"', '__BRUST_DEP__')}\n`)
   files++
 
