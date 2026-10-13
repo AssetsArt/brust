@@ -32,7 +32,7 @@ You need Bun and `wrangler`. You do not need a Rust toolchain: the app-independe
 | `brust build [entry] --target cloudflare [--out-dir dist] [--wasm-from-source]` | The normal build into `dist/`, then the Workers project in `dist/cf/`. |
 | `brust dev [entry] --target cloudflare [--out-dir dist] [--port N] [--wasm-from-source] [-- <wrangler args>]` | Builds, runs `wrangler dev` on `dist/cf/wrangler.jsonc`, and rebuilds and restarts it when a source file changes. There is no hot module replacement. Arguments after `--` go to wrangler. |
 
-`--target` takes `bun` (the default) or `cloudflare`. `brust dev` supports only `--target cloudflare` for now.
+`--target` takes `bun` (the default), `cloudflare` or `static`. `--target static` writes plain files for Cloudflare Pages or Workers Static Assets, with no Worker: see [Static output](./static.md). `brust dev` supports only `--target cloudflare` for now.
 
 `--wasm-from-source` builds the wasm from a brust checkout instead of using `@brust/core-cf`. It needs the checkout's pinned nightly Rust, the `wasm32-unknown-unknown` target and `worker-build`. App authors never need it.
 

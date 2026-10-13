@@ -1,13 +1,14 @@
 // The Bun side of contract 7 (`crates/brust-server/src/protocol.rs`): requests arrive as inline
 // JSON, responses go into this worker's SharedArrayBuffer slot (SAB rule, `dispatch.rs`). A
 // handler NEVER rejects across the tsfn: every failure becomes `{error}` / `{id, error}`.
+import { appendFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { workerData } from 'node:worker_threads'
 import { type HeapIo, runFetch, setActionsApp, setActionsLimits } from './actions-bridge'
 import { DEFAULT_MAX_RESPONSE_BYTES } from './actions/prefix'
 import { type CacheBridgeDeps, runCache } from './cache-adapter/bridge'
 import type { CacheManifest } from './cache-adapter/load'
-import { type Handlers, type JobsModule, type ManifestLike, makeHandlers, toJson } from './handlers'
+import { type Handlers, type JobsModule, type ManifestLike, makeHandlers, type SsgRecord, toJson } from './handlers'
 import { cacheClear, cacheL2Count, cacheReplay, planJobs, putFetchReply, registerWorker, takeFetchBody } from './native'
 import { flattenRoutes, type Route } from './routes'
 
@@ -97,6 +98,13 @@ async function startCacheAdapter(m: CacheManifest, dist: string, appDir: string,
   return { adapter, origin }
 }
 
+// ---- static output (gaps round R9.5) ----
+
+/** Appends each record as one JSON line to `file` (every worker of the render appends to it). */
+function ssgLog(file: string): (r: SsgRecord) => void {
+  return (r) => appendFileSync(file, `${JSON.stringify(r)}\n`)
+}
+
 // ---- worker entry ----
 
 export const SLOT_BYTES = 256 * 1024
@@ -144,6 +152,7 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
     jobs,
     manifest,
     stores: (jobsMod.stores ?? {}) as Record<string, object>,
+    ...(env.BRUST_SSG === '1' && env.BRUST_SSG_LOG ? { ssg: ssgLog(env.BRUST_SSG_LOG) } : {}),
   })
   const id = registerWorker(view, slots, makeDispatch(handlers, view, slots))
   if (l2 && env.BRUST_WORKER_ID === '0') {
