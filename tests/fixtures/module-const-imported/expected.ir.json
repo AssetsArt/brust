@@ -167,6 +167,15 @@
       "per_item": null
     }
   ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-const-imported/input.tsx@157",
+      "slot": "_s1",
+      "build_time": false,
+      "line": 8,
+      "col": 10
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],

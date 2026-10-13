@@ -91,6 +91,9 @@ pub struct AnalyzeOptions {
     pub server_only: Vec<String>,
     /// Directory module paths are relative to.
     pub root: std::path::PathBuf,
+    /// Values the build computed for precompute slots, by `BuildEvalSlot.key` (L2): the slot is
+    /// replaced by the literal, so its job (and the worker) is not needed for it.
+    pub slot_values: std::collections::HashMap<String, serde_json::Value>,
 }
 
 /// Parses `source` as the module at `path` and runs the full analysis,

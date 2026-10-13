@@ -42,6 +42,15 @@
       "per_item": null
     }
   ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-const-cycle/input.tsx@79",
+      "slot": "_s1",
+      "build_time": false,
+      "line": 5,
+      "col": 14
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],

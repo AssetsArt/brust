@@ -23,6 +23,8 @@ pub struct CompiledComponent {
     pub ir: String,
     pub jinja: String,
     pub server_ts: Option<String>,
+    /// Build-time evaluation module (L2): one thunk per `ir.build_eval` slot.
+    pub eval_ts: Option<String>,
     pub client_js: Option<String>,
     pub diagnostics: Vec<NapiDiagnostic>,
 }
@@ -50,10 +52,16 @@ pub(crate) fn compile_tree_impl(
     root: &str,
     runtime_import: &str,
     server_only: Vec<String>,
+    slot_values: Option<String>,
 ) -> CompiledTree {
+    // `{ "<key>": <json> }`, the values the build computed for precompute slots (L2).
+    let slot_values: std::collections::HashMap<String, serde_json::Value> = slot_values
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     let opts = AnalyzeOptions {
         server_only,
         root: std::path::PathBuf::from(root),
+        slot_values,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -72,6 +80,7 @@ pub(crate) fn compile_tree_impl(
                         ir: serde_json::to_string(&*l.ir).expect("ComponentIR serialises"),
                         jinja: l.artifacts.jinja.clone(),
                         server_ts: l.artifacts.server_ts.clone(),
+                        eval_ts: l.artifacts.eval_ts.clone(),
                         client_js: l.artifacts.client_js.clone(),
                         diagnostics: l
                             .ir
@@ -94,9 +103,10 @@ pub fn compile_tree(
     root: String,
     runtime_import: String,
     server_only: Vec<String>,
+    slot_values: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
-    compile_tree_impl(&path, &root, &runtime_import, server_only)
+    compile_tree_impl(&path, &root, &runtime_import, server_only, slot_values)
 }
 
 #[cfg(test)]
@@ -109,6 +119,7 @@ mod tests {
             root,
             "brust/runtime-dom",
             vec![],
+            None,
         );
         assert!(t.error.is_none(), "{:?}", t.error);
         let c = &t.components[0];
@@ -126,6 +137,7 @@ mod tests {
             root,
             "brust/runtime-dom",
             vec![],
+            None,
         );
         assert_eq!(t.error.as_ref().map(|d| d.class.as_str()), Some("error"));
     }

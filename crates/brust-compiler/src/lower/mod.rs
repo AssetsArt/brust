@@ -29,6 +29,8 @@ pub const DEFAULT_RUNTIME_IMPORT: &str = "brust/runtime-dom";
 pub struct Artifacts {
     pub jinja: String,
     pub server_ts: Option<String>,
+    /// Build-time evaluation module for `ir.build_eval` slots (L2).
+    pub eval_ts: Option<String>,
     pub client_js: Option<String>,
     /// Every member the chunk exports, in order.
     pub members: Vec<String>,
@@ -131,6 +133,7 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
         return Err(d.clone());
     }
     let server_ts = server::job(ir);
+    let eval_ts = server::eval_module(ir);
     let (client_js, members) = if matches!(ir.tier, Tier::Static) && !(ctx.linked)(&ir.id) {
         (None, Vec::new())
     } else {
@@ -140,6 +143,7 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
     Ok(Artifacts {
         jinja: out.jinja,
         server_ts,
+        eval_ts,
         client_js,
         members,
         diagnostics: out.diagnostics,

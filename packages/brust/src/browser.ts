@@ -3,6 +3,7 @@
 // `brust build` resolves the package root to): only the side-effect-free pieces. No `run`, no
 // config, no napi addon — a react island may import `cache` from the package root.
 import { cacheComponent } from './cache-core'
+export { buildTime } from './build-time'
 import type { InvalidateArgs, InvalidateResult } from './native'
 
 function invalidate(_args: InvalidateArgs): InvalidateResult {
