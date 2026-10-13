@@ -53,8 +53,8 @@ const MOD_SRC = `/* Card.module.css */
 // observed: the css-module-fold fixture built on 2.0.0-alpha.3 + L20 (packages/brust/test/fixtures/css-fold): the template of a static page, class names are the bundler's.
 const COMPILED = `<p{% if "card_nBzD1A" | present %} class="{{ "card_nBzD1A" | attr_str | e }}"{% endif %}>hello</p>`
 
-const INSTALL = `bun add -d tailwindcss@4 bun-plugin-tailwind
-# the blank starter already has both:
+const INSTALL = `bun add -d --exact tailwindcss@4.3.3 @tailwindcss/node@4.3.3 @tailwindcss/oxide@4.3.3
+# the blank starter already has all three:
 bun create @brust/app my-app`
 
 const ENTRY = `/* app.css, imported by the root layout */
@@ -208,15 +208,16 @@ export default function Css({ blocks }: CssData) {
       </Frame>
 
       <h2 id="tailwind">Tailwind CSS v4</h2>
-      {/* source: docs/css.md:74 (Tailwind is built in through bun-plugin-tailwind; install tailwindcss 4 and the plugin as your app's own dev dependencies); packages/create-app/src/tailwind.ts:7 and :9 (L28, PR #180: the blank template ships both, pinned; --tailwind does nothing) */}
+      {/* source: docs/css.md:74 (L32: brust compiles with @tailwindcss/node and scans with @tailwindcss/oxide, from the app; install the three at one version); packages/create-app/src/tailwind.ts:8 (the blank template ships the three, pinned; --tailwind does nothing) */}
       <p>
-        Tailwind is built in through the official <code>bun-plugin-tailwind</code>. Install it and Tailwind as your app's own dev dependencies. The blank starter already ships both and an <code>app.css</code> to start from, see{' '}
+        Tailwind is built in: brust compiles with the Tailwind packages installed in your app, so the build uses exactly the <code>tailwindcss</code> version you pinned. Install <code>tailwindcss</code>, <code>@tailwindcss/node</code> and{' '}
+        <code>@tailwindcss/oxide</code> as your app's own dev dependencies, at one version. The blank starter already ships all three and an <code>app.css</code> to start from, see{' '}
         <a href="/docs/project-structure">Project structure</a>.
       </p>
       <CodeBlock code={blocks.install.code} lang={blocks.install.lang} file={blocks.install.file} html={blocks.install.html} />
       <CodeBlock code={blocks.entry.code} lang={blocks.entry.lang} file={blocks.entry.file} html={blocks.entry.html} />
       <CodeBlock code={blocks.layout.code} lang={blocks.layout.lang} file={blocks.layout.file} html={blocks.layout.html} />
-      {/* source: docs/css.md:96 (brust loads Tailwind only when a stylesheet, or a file it @imports, contains @import "tailwindcss", @apply, @reference, @theme or @plugin; packages missing: tailwind-missing with the bun add -d command); css.ts:216 (TAILWIND_USE) and :244-258 (loadTailwind: tailwind-missing) */}
+      {/* source: docs/css.md:96 (brust loads Tailwind only when a stylesheet, or a file it @imports, contains @import "tailwindcss", @apply, @reference, @theme or @plugin; packages missing: tailwind-missing with the bun add -d command); css.ts:224 (TAILWIND_USE) and build/tailwind.ts loadTailwind (tailwind-missing) */}
       <h3>When it loads</h3>
       <p>
         brust loads Tailwind only when a stylesheet, or a file it imports, contains <code>@import "tailwindcss"</code>, <code>@apply</code>, <code>@reference</code>, <code>@theme</code> or <code>@plugin</code>. If the packages are missing, the build fails with{' '}

@@ -1,4 +1,4 @@
-// L21 fixture: Tailwind CSS v4 through bun-plugin-tailwind (the repo's pinned dev dependencies).
+// L21 fixture: Tailwind CSS v4 through brust's Tailwind plugin over the repo's pinned tailwindcss, @tailwindcss/node and @tailwindcss/oxide (L32).
 import { defineRoutes } from '@brust/core/routes'
 import Home from './Home'
 import Layout from './Layout'

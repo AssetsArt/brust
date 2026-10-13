@@ -71,7 +71,9 @@ test("the scripts block is the template's scripts and devDependencies, Tailwind 
   const pkg = JSON.parse(readFileSync(join(TEMPLATE, 'package.json.tmpl'), 'utf8').replace('__BRUST_DEP__', '""'))
   expect(JSON.parse(blocks.scripts.code)).toEqual({ scripts: pkg.scripts, devDependencies: pkg.devDependencies })
   expect(pkg.devDependencies.tailwindcss).toMatch(/^4\./)
-  expect(pkg.devDependencies['bun-plugin-tailwind']).toBeString()
+  // L32: the compiler, its Node API and the scanner at one exact version; the old plugin is gone
+  expect([pkg.devDependencies['@tailwindcss/node'], pkg.devDependencies['@tailwindcss/oxide']]).toEqual([pkg.devDependencies.tailwindcss, pkg.devDependencies.tailwindcss])
+  expect(pkg.devDependencies['bun-plugin-tailwind']).toBeUndefined()
 })
 
 test('the dist block names the built CSS under client/', async () => {
@@ -84,12 +86,13 @@ test('the built pages: Project structure shows app.css and the dev deps; Install
   // the docs site's own layout links /public/app.css, so look at the tree block only
   expect(ps).toContain('├── app.css\n')
   expect(ps).toContain('├── public/\n│   └── favicon.svg\n')
-  expect(ps).toContain('bun-plugin-tailwind')
+  expect(ps).toContain('@tailwindcss/oxide')
+  expect(ps).not.toContain('bun-plugin-tailwind')
   expect(ps).toContain('.brust/dev')
   const inst = await (await fetch(`${base}/docs/installation`)).text()
   expect(inst).toContain('styled with Tailwind CSS v4')
   const css = await (await fetch(`${base}/docs/css`)).text()
-  expect(css).toContain('The blank starter already ships both')
+  expect(css).toContain('The blank starter already ships all three')
   expect(css).toContain('href="/docs/project-structure"')
   expect(css).not.toContain('scaffold with')
 })

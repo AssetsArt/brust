@@ -1,12 +1,14 @@
-// L21 tailwind (R21.1-R21.2): Tailwind CSS v4 through the app's own `bun-plugin-tailwind`, on
-// test/fixtures/tw-app with the real CLI (the repo pins tailwindcss + bun-plugin-tailwind as dev dependencies).
+// L21 tailwind (R21.1-R21.2) + L32 (R33.2-R33.6): Tailwind CSS v4 through brust's own plugin over the app's
+// tailwindcss / @tailwindcss/node / @tailwindcss/oxide, on test/fixtures/tw-app with the real CLI (the repo pins the
+// three as dev dependencies).
 // The Chromium half (computed styles, the dev CSS swap) is tests/server/tailwind.chromium.test.ts.
 // Run alone: `bun test --timeout 300000 test/tailwind.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { buildCss, loadTailwind, tailwindUse } from '../src/build/css'
+import { dirname, join } from 'node:path'
+import { buildCss, tailwindUse } from '../src/build/css'
+import { loadTailwind, tailwindVersions, versionBelow } from '../src/build/tailwind'
 
 const fixture = join(import.meta.dir, 'fixtures/tw-app')
 const bin = join(import.meta.dir, '../bin/brust')
@@ -82,8 +84,13 @@ test('detection: @import "tailwindcss", @apply, @reference, @theme, @plugin, als
 
 test('missing packages: tailwind-missing with the exact bun add -d command; plain CSS never needs them', async () => {
   const d = tmp({ 'app.css': '@import "tailwindcss";', 'plain.css': 'body{margin:0}' })
-  const err = await loadTailwind(d, join(d, 'app.css')).then(() => '', (e) => `${(e as { rule?: string }).rule}: ${(e as Error).message}`)
-  expect(err).toBe('tailwind-missing: app.css uses Tailwind CSS, but tailwindcss and bun-plugin-tailwind are not installed in the app: run `bun add -d tailwindcss@4 bun-plugin-tailwind`')
+  const err = await loadTailwind(d, join(d, 'app.css'), () => true).then(
+    () => '',
+    (e: unknown) => `${(e as { rule?: string }).rule}: ${(e as Error).message}`,
+  )
+  expect(err).toBe(
+    'tailwind-missing: app.css uses Tailwind CSS, but tailwindcss, @tailwindcss/node, @tailwindcss/oxide are not installed in the app: run `bun add -d tailwindcss@4 @tailwindcss/node@4 @tailwindcss/oxide@4`',
+  )
   const dist = tmp({ 'client/.keep': '' })
   const viaBuild = await buildCss(dist, [join(d, 'app.css')], true, { appRoot: d }).then(() => '', (e) => (e as { rule?: string }).rule)
   expect(viaBuild).toBe('tailwind-missing')
@@ -100,3 +107,60 @@ test('a second @import "tailwindcss" warns (the whole of Tailwind would ship twi
   expect(b.code).toBe(0)
   expect(b.stdout).toContain('[brust] warning tailwind @import "tailwindcss" is in 2 files (app.css, extra.css)')
 }, 120_000)
+
+test('R33.6(a): the CSS banner is the tailwindcss the app installed, and one version runs the whole build', () => {
+  const installed = (JSON.parse(readFileSync(Bun.resolveSync('tailwindcss/package.json', fixture), 'utf8')) as { version: string }).version
+  expect(css[0]!).toContain(`tailwindcss v${installed} `)
+  const v = tailwindVersions(fixture)
+  expect([v.app, v.compiler, v.node, v.oxide]).toEqual([installed, installed, installed, installed])
+  expect(stdout).not.toContain('tailwind-version')
+})
+
+test('R33.6(b): a utility added after 4.1 (pbs-*, Tailwind 4.2.0 changelog "Added", #19601) is compiled', () => {
+  expect(css[0]!).toMatch(/\.pbs-4\{padding-block-start:calc\(var\(--spacing\)\*4\)\}/)
+})
+
+test('R33.3: a compiler that is not the app tailwindcss is a loud warning with the command that aligns them', async () => {
+  const pkg = (name: string, version: string) => JSON.stringify({ name, version, main: 'index.js' })
+  const d = tmp({
+    'app.css': '@import "tailwindcss";',
+    'node_modules/tailwindcss/package.json': pkg('tailwindcss', '4.3.2'),
+    'node_modules/@tailwindcss/node/package.json': pkg('@tailwindcss/node', '4.3.3'),
+    'node_modules/@tailwindcss/node/node_modules/tailwindcss/package.json': pkg('tailwindcss', '4.3.3'),
+    'node_modules/@tailwindcss/oxide/package.json': pkg('@tailwindcss/oxide', '4.3.3'),
+  })
+  expect(tailwindVersions(d)).toEqual({ app: '4.3.2', compiler: '4.3.3', node: '4.3.3', oxide: '4.3.3' })
+  const logs: string[] = []
+  // the stand-in packages have no code, so loading them fails after the version check has spoken
+  await loadTailwind(d, join(d, 'app.css'), () => true, (s) => logs.push(s)).catch(() => {})
+  expect(logs).toEqual([
+    '[brust] warning tailwind-version the app has tailwindcss 4.3.2, but the compiler is tailwindcss 4.3.3 (@tailwindcss/node 4.3.3, @tailwindcss/oxide 4.3.3): install one version of all three: bun add -d --exact tailwindcss@4.3.2 @tailwindcss/node@4.3.2 @tailwindcss/oxide@4.3.2',
+  ])
+  expect(dirname(Bun.resolveSync('tailwindcss/package.json', d))).toBe(join(d, 'node_modules/tailwindcss'))
+})
+
+test('review F1: Tailwind older than 4.1.0 fails the build with tailwind-version and the command to the tested set, before anything is built', async () => {
+  const pkg = (name: string, version: string) => JSON.stringify({ name, version, main: 'index.js' })
+  const d = tmp({
+    'app.css': '@import "tailwindcss";',
+    'node_modules/tailwindcss/package.json': pkg('tailwindcss', '4.0.17'),
+    'node_modules/@tailwindcss/node/package.json': pkg('@tailwindcss/node', '4.0.17'),
+    'node_modules/@tailwindcss/oxide/package.json': pkg('@tailwindcss/oxide', '4.0.17'),
+  })
+  const err = await loadTailwind(d, join(d, 'app.css'), () => true).then(
+    () => '',
+    (e: unknown) => `${(e as { rule?: string }).rule}: ${(e as Error).message}`,
+  )
+  expect(err).toBe(
+    'tailwind-version: app.css uses Tailwind CSS, but tailwindcss 4.0.17, the compiler tailwindcss 4.0.17, @tailwindcss/node 4.0.17, @tailwindcss/oxide 4.0.17 are older than 4.1.0, the oldest brust builds with: run `bun add -d --exact tailwindcss@4.3.3 @tailwindcss/node@4.3.3 @tailwindcss/oxide@4.3.3`',
+  )
+  // through the CSS build: the same rule, and no stylesheet is written
+  const dist = tmp({ 'client/.keep': '' })
+  const viaBuild = await buildCss(dist, [join(d, 'app.css')], true, { appRoot: d }).then(
+    () => '',
+    (e: unknown) => (e as { rule?: string }).rule,
+  )
+  expect(viaBuild).toBe('tailwind-version')
+  expect(readdirSync(join(dist, 'client'))).toEqual(['.keep'])
+  expect([versionBelow('4.0.17', '4.1.0'), versionBelow('4.1.0', '4.1.0'), versionBelow('4.3.3', '4.1.0'), versionBelow('4.1.0-beta.1', '4.1.0')]).toEqual([true, false, false, false])
+})
