@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|
-| 62 | 25 | 0 | 37 | 48 | 17 | 0 / 87 / 324 KB |
+| 62 | 25 | 1 | 36 | 48 | 17 | 0 / 87 / 324 KB |
 
 ### Analysis-only (2 of 64 pages refused)
 
@@ -41,20 +41,20 @@ One line per thing that keeps a row or a library component off the static/native
 | 1 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 37 | 0 | 132 | 1 | `member-tag` diagnostic (docs/react-coverage.md) |
 | 2 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 35 | 0 | 42 | 7 | `island-children` diagnostic (docs/react-coverage.md) |
 | 3 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 18 | 0 | 27 | 0 | `external-component` diagnostic (docs/react-coverage.md) |
-| 4 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 11 | 0 | 13 | 10 | `spread-props` diagnostic (docs/react-coverage.md) |
+| 4 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 10 | 0 | 12 | 10 | `spread-props` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 10 | 22 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 6 | 2 | `jsx-expression` diagnostic (docs/react-coverage.md) |
 | 7 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 2 | `child-component` diagnostic (docs/react-coverage.md) |
 | 8 | fallback:instance-list-path | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 0 | `instance-list-path` diagnostic (docs/react-coverage.md) |
 | 9 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 4 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
 | 10 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 7 | 24 | `control-flow` diagnostic (docs/react-coverage.md) |
-| 11 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
-| 12 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 13 | `body-shape` diagnostic (docs/react-coverage.md) |
-| 13 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `hook-shape` diagnostic (docs/react-coverage.md) |
-| 14 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `local-component` diagnostic (docs/react-coverage.md) |
-| 15 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `ref-shape` diagnostic (docs/react-coverage.md) |
-| 16 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `browser-global` diagnostic (docs/react-coverage.md) |
-| 17 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
+| 11 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 13 | `body-shape` diagnostic (docs/react-coverage.md) |
+| 12 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `hook-shape` diagnostic (docs/react-coverage.md) |
+| 13 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `local-component` diagnostic (docs/react-coverage.md) |
+| 14 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `ref-shape` diagnostic (docs/react-coverage.md) |
+| 15 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `browser-global` diagnostic (docs/react-coverage.md) |
+| 16 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
+| 17 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
 | 18 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
 | 19 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
 | 20 | error:island-prop | compile error | survey truth (compiler refusal) | 0 | 2 | 0 | 9 | `error:island-prop` diagnostic (docs/react-coverage.md) |
@@ -152,7 +152,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | sidebar | measured | react | 1 | 13 (6) | 116 | browser-global, control-flow, external-component, hook-shape, hook-unsupported, instance-list-path, island-children, linked-prop-precompute, member-tag, slot-dynamic, spread-props | built |
 | skeleton | measured | static | 0 | 2 (0) | 0 | — | built |
 | slider | measured | static | 1 | 2 (1) | 93 | member-tag | built |
-| sonner | measured | react | 1 | 3 (2) | 97 | child-component, linked-prop-precompute, spread-props | built |
+| sonner | measured | native | 1 | 3 (1) | 87 | child-component | built |
 | spinner | measured | static | 1 | 3 (2) | 231 | external-component, spread-props | built |
 | switch | measured | react | 1 | 3 (3) | 89 | island-children, member-tag | built |
 | table | measured | react | 1 | 8 (1) | 81 | instance-list-path | built |
@@ -351,7 +351,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | pages/select.tsx#select | island-children | 1 |
 | pages/sheet.tsx#sheet | island-children | 1 |
 | pages/sidebar.tsx#sidebar | instance-list-path, island-children | 1 |
-| pages/sonner.tsx#sonner | child-component, linked-prop-precompute, spread-props | 1 |
+| pages/sonner.tsx#sonner | child-component | 1 |
 | pages/switch.tsx#switch | island-children | 1 |
 | pages/table.tsx#table | instance-list-path | 1 |
 | pages/tabs.tsx#tabs | island-children | 1 |

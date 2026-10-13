@@ -643,6 +643,7 @@ fn read_decl(
                     name,
                     body,
                     item_scoped: Vec::new(),
+                    forwarded: None,
                 });
             }
             (true, "useRef") => {

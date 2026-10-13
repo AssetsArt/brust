@@ -12,7 +12,7 @@ use crate::ir::{
     InstanceRecord, JobDecl, JobKind, JsCtx, Node, PolyTag, RawExpr, RawKind, ServerExpr, Tier,
     UnOp, component_id, named_component_id,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
@@ -41,6 +41,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             || !ir.effects.is_empty()
             || !ir.handlers.is_empty()
             || !ir.refs.is_empty(),
+        handlers: Vec::new(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
@@ -55,6 +56,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.children.extend(w.refs);
     ir.jobs.extend(w.jobs);
     ir.diagnostics.extend(w.diagnostics);
+    ir.handlers.extend(w.handlers);
 }
 
 struct Walker<'s, 'c> {
@@ -84,6 +86,8 @@ struct Walker<'s, 'c> {
     row_only: HashMap<u32, RowOnlyLink>,
     /// Whether this component's own props can change after first paint (see `children`).
     props_reactive: bool,
+    /// Handlers hoisted from props a static child spreads onto an element (shadcn S1.3).
+    handlers: Vec<crate::ir::HandlerDecl>,
 }
 
 /// A resolved child.
@@ -104,9 +108,62 @@ struct Child {
     spread: SpreadSink,
     /// The child's polymorphic tag (`asChild`, R34.28): the call site must resolve it.
     poly: Option<PolyTag>,
-    /// Roots of the props the child's per-instance jobs read (`props.className` → `className`): a
-    /// call site that omits one passes JS `undefined` for it.
-    job_roots: Vec<String>,
+    /// What else the child does with those keys, for a handler the parent may bind (shadcn S1.3).
+    onward: HandlerSink,
+    /// The props roots the compiled child's jobs read (the server feeds each instance these).
+    job_roots: BTreeSet<String>,
+}
+
+/// Facts that decide whether a handler landing in a static child's spread can be bound by the
+/// parent on the child's element (shadcn S1.3, R34.18). The default refuses every key.
+#[derive(Clone, Debug, Default)]
+struct HandlerSink {
+    /// The keys the child spreads into another component (a binding would be needed there).
+    components: SpreadSink,
+    /// Prop roots the child reads by name outside its spreads; `None` = the whole props object.
+    reads: Option<BTreeSet<String>>,
+}
+
+impl HandlerSink {
+    fn of(ir: &ComponentIR) -> HandlerSink {
+        let mut t = ir.template.clone();
+        strip_spreads(&mut t);
+        let cx = super::deps::DepsCx::new(ir);
+        let mut d = cx.deps_node(&t, &[]);
+        for h in &ir.handlers {
+            d.union(&cx.deps(&h.body, &h.item_scoped));
+        }
+        for e in &ir.effects {
+            d.union(&cx.deps(&e.body, &[]));
+        }
+        let roots = d.prop_roots();
+        HandlerSink {
+            components: SpreadSink::of_where(ir, false),
+            reads: (!roots.contains("*")).then_some(roots),
+        }
+    }
+}
+
+/// `n` without its spreads (attribute and component), for what a child reads by name.
+fn strip_spreads(n: &mut Node) {
+    match n {
+        Node::Element {
+            attrs, children, ..
+        } => {
+            attrs.retain(|a| !matches!(a, Attr::Spread(_)));
+            children.iter_mut().for_each(strip_spreads);
+        }
+        Node::Component {
+            props, children, ..
+        } => {
+            props.retain(|(k, _)| k != crate::ir::SPREAD_KEY);
+            children.iter_mut().for_each(strip_spreads);
+        }
+        Node::Fragment(cs) => cs.iter_mut().for_each(strip_spreads),
+        Node::If { then, else_, .. } => then.iter_mut().chain(else_).for_each(strip_spreads),
+        Node::For { body, .. } => body.iter_mut().for_each(strip_spreads),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+    }
 }
 
 /// Which props of a call site a child spreads onto an element or another component.
@@ -131,6 +188,12 @@ impl SpreadSink {
 
     /// The child's props spreads, read from its template (React tier: none, it renders itself).
     fn of(ir: &ComponentIR) -> SpreadSink {
+        Self::of_where(ir, true)
+    }
+
+    /// [`Self::of`], counting spreads onto elements only when `elements` (always those into
+    /// components).
+    fn of_where(ir: &ComponentIR, elements: bool) -> SpreadSink {
         let named: Vec<String> = ir.props.iter().map(|p| p.name.clone()).collect();
         let mut sink = SpreadSink::None;
         let mut add = |v: &Expr| {
@@ -170,17 +233,19 @@ impl SpreadSink {
                 (s, SpreadSink::None) => s,
             };
         };
-        fn walk(n: &Node, add: &mut dyn FnMut(&Expr)) {
+        fn walk(n: &Node, elements: bool, add: &mut dyn FnMut(&Expr)) {
             match n {
                 Node::Element {
                     attrs, children, ..
                 } => {
                     for a in attrs {
-                        if let Attr::Spread(v) = a {
+                        if let Attr::Spread(v) = a
+                            && elements
+                        {
                             add(v);
                         }
                     }
-                    children.iter().for_each(|c| walk(c, add));
+                    children.iter().for_each(|c| walk(c, elements, add));
                 }
                 Node::Component {
                     props, children, ..
@@ -190,26 +255,22 @@ impl SpreadSink {
                             add(v);
                         }
                     }
-                    children.iter().for_each(|c| walk(c, add));
+                    children.iter().for_each(|c| walk(c, elements, add));
                 }
-                Node::Fragment(cs) => cs.iter().for_each(|c| walk(c, add)),
-                Node::If { then, else_, .. } => then.iter().chain(else_).for_each(|c| walk(c, add)),
-                Node::For { body, .. } => body.iter().for_each(|c| walk(c, add)),
+                Node::Fragment(cs) => cs.iter().for_each(|c| walk(c, elements, add)),
+                Node::If { then, else_, .. } => then
+                    .iter()
+                    .chain(else_)
+                    .for_each(|c| walk(c, elements, add)),
+                Node::For { body, .. } => body.iter().for_each(|c| walk(c, elements, add)),
                 Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
             }
         }
         if !matches!(ir.tier, Tier::React { .. }) {
-            walk(&ir.template, &mut add);
+            walk(&ir.template, elements, &mut add);
         }
         sink
     }
-}
-
-/// Root segment of a job input path: text before the first `.` or `[`, with a leading `props.`
-/// stripped (the same rule as `brust-core`'s manifest check).
-fn input_root(input: &str) -> &str {
-    let s = input.strip_prefix("props.").unwrap_or(input);
-    s.split(['.', '[']).next().unwrap_or(s)
 }
 
 /// Client reads a `RowOnly` link implies, and the child's (name, loc) when it precomputes over props.
@@ -356,7 +417,8 @@ impl Walker<'_, '_> {
                     prop_precompute: false,
                     spread: SpreadSink::None,
                     poly: None,
-                    job_roots: Vec::new(),
+                    onward: HandlerSink::default(),
+                    job_roots: BTreeSet::new(),
                 };
             }
             self.diagnostics.push(Diagnostic::fallback(
@@ -396,7 +458,8 @@ impl Walker<'_, '_> {
                 prop_precompute: false,
                 spread: SpreadSink::None,
                 poly: None,
-                job_roots: Vec::new(),
+                onward: HandlerSink::default(),
+                job_roots: BTreeSet::new(),
             };
         };
         let export = match imported {
@@ -440,7 +503,8 @@ impl Walker<'_, '_> {
                         prop_precompute: false,
                         spread: SpreadSink::None,
                         poly: None,
-                        job_roots: Vec::new(),
+                        onward: HandlerSink::default(),
+                        job_roots: BTreeSet::new(),
                     };
                 };
                 ctx.modules
@@ -479,20 +543,25 @@ impl Walker<'_, '_> {
         let mut prop_precompute = false;
         let mut spread = SpreadSink::None;
         let mut poly = None;
-        let mut job_roots = Vec::new();
+        let mut onward = HandlerSink::default();
+        let mut job_roots = BTreeSet::new();
         let tier = match lookup {
             Lookup::Compiled(ir) => {
-                spread = SpreadSink::of(&ir);
-                poly = ir.poly.clone();
                 job_roots = ir
                     .jobs
                     .iter()
-                    .filter(|j| crate::ir::feeds_instances(j))
-                    .flat_map(|j| j.inputs.iter())
+                    .flat_map(|j| &j.inputs)
                     .filter(|i| i.as_str() != "*")
-                    .map(|i| input_root(i).to_string())
-                    .filter(|r| r != "__store") // bound separately, from the chain context (C5)
+                    .map(|i| {
+                        let i = i.strip_prefix("props.").unwrap_or(i);
+                        i.split(['.', '[']).next().unwrap_or(i).to_string()
+                    })
                     .collect();
+                spread = SpreadSink::of(&ir);
+                poly = ir.poly.clone();
+                if matches!(ir.tier, Tier::Static) {
+                    onward = HandlerSink::of(&ir);
+                }
                 if matches!(&ir.tier, Tier::React { reason, .. } if reason == crate::analyze::modules::OPAQUE_EXPORT)
                 {
                     self.diagnostics.push(Diagnostic::fallback(
@@ -555,6 +624,7 @@ impl Walker<'_, '_> {
             prop_precompute,
             spread,
             poly,
+            onward,
             job_roots,
         }
     }
@@ -689,7 +759,14 @@ impl Walker<'_, '_> {
             }
         };
         *tier = child.tier.clone();
-        self.check_spread(name, props, &child, *loc);
+        let (hoisted, unbound) = self.forward_handlers(name, *loc, props, &child);
+        self.check_spread(name, props, &child, *loc, &hoisted, &unbound);
+        // A hoisted handler is the parent's own member: not a prop of the instance.
+        let kept: Vec<(String, Expr)> = props
+            .iter()
+            .filter(|(k, _)| !hoisted.contains(k))
+            .cloned()
+            .collect();
         self.check_poly(name, props, children, &child, *loc);
         if !self.refs.iter().any(|r| r.name == *name) {
             self.refs.push(ChildRef {
@@ -815,7 +892,7 @@ impl Walker<'_, '_> {
                         literals: Default::default(),
                         exprs: Default::default(),
                     };
-                    for (name, v) in props.iter() {
+                    for (name, v) in kept.iter() {
                         if matches!(v, Expr::ClientOnly { .. }) {
                             continue;
                         }
@@ -833,18 +910,6 @@ impl Walker<'_, '_> {
                             record.props.insert(name.clone(), None);
                         }
                     }
-                    // A prop the call site leaves out is `undefined` for the child's jobs (its default
-                    // applies): the manifest binds every job input root, so bind it to nothing.
-                    for root in &child.job_roots {
-                        if !record.props.contains_key(root)
-                            && !record.literals.contains_key(root)
-                            && !record.exprs.contains_key(root)
-                        {
-                            record
-                                .exprs
-                                .insert(root.clone(), crate::lower::server_expr::UNDEFINED.into());
-                        }
-                    }
                     // C5: the child's jobs read `__store`; a fed child sits under a chain component
                     // whose props are the ctx, so the path is `__store` itself (else the manifest
                     // refuses the child job's input root as uncovered).
@@ -853,13 +918,26 @@ impl Walker<'_, '_> {
                             .props
                             .insert("__store".into(), Some("__store".into()));
                     }
+                    // A prop the call site does not pass is `undefined` for the child's job, as in
+                    // React (a destructuring default applies): an expression the server evaluates to
+                    // undefined drops the key. The manifest requires every input root bound.
+                    for root in &child.job_roots {
+                        if !record.props.contains_key(root)
+                            && !record.literals.contains_key(root)
+                            && !record.exprs.contains_key(root)
+                        {
+                            record.exprs.insert(
+                                root.clone(),
+                                crate::lower::server_expr::UNDEFINED.to_string(),
+                            );
+                        }
+                    }
                     self.instances.push(record);
                 }
                 // Native / static child (§7.4, F70): see `instance_needs_link`.
                 let need = instance_needs_link(
                     &child.tier,
-                    props
-                        .iter()
+                    kept.iter()
                         .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
                 );
                 if need == LinkNeed::Always && child.prop_precompute {
@@ -1039,11 +1117,132 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// Event handlers the parent binds itself (shadcn S1.3, R34.18): an `on*` prop that lands in
+    /// the spread of a static child, which spreads it onto elements only and reads it nowhere else,
+    /// becomes a handler of the parent (`_hN`, [`crate::ir::Forwarded`]); the inline print binds it
+    /// on the child's element, as if written there. The child stays static and unlinked.
+    /// Returns the hoisted keys (plus the dropped invalid names: neither are props of the instance),
+    /// and the handler keys that land in the spread but cannot be bound, with why (R34.19:
+    /// `check_spread` refuses them).
+    fn forward_handlers(
+        &mut self,
+        name: &str,
+        loc: u32,
+        props: &[(String, Expr)],
+        child: &Child,
+    ) -> (Vec<String>, Vec<(String, String)>) {
+        let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
+        let mut want: Vec<String> = Vec::new();
+        let mut unbound: Vec<(String, String)> = Vec::new();
+        // Keys that are not attribute names (a quoted key of a literal spread, which Bun inlines
+        // into the props): never an `x-on-*` attribute. Dropped with a warning, as React drops an
+        // invalid attribute name and as the reader drops a hand-written one (review F1, R34.17).
+        let mut dropped: Vec<String> = Vec::new();
+        for (k, v) in props {
+            if !is_handler_prop(k, v) || !child.spread.lands(k) {
+                continue;
+            }
+            if !handler_key_ok(k) {
+                if !dropped.contains(k) {
+                    self.diagnostics.push(Diagnostic::warning(
+                        "unsafe-attr",
+                        format!("`{k}` reaches an element through the spread of <{name}> but is not a valid event attribute name; it is not bound"),
+                        loc,
+                        "pass attribute names only",
+                    ));
+                    dropped.push(k.clone());
+                }
+                continue;
+            }
+            let why = if k.ends_with("Capture") {
+                Some("listens in the capture phase, which directives do not support".to_string())
+            } else if !matches!(child.tier, Tier::Static) {
+                Some(format!(
+                    "<{name}> is not static (a handler can be bound only on a static child's element)"
+                ))
+            } else if spreads_in {
+                Some(format!(
+                    "props of unknown keys are also spread into <{name}> here, and may replace it"
+                ))
+            } else if child.onward.components.lands(k) {
+                Some(format!("<{name}> passes it on to another component"))
+            } else if child
+                .onward
+                .reads
+                .as_ref()
+                .is_none_or(|r| r.contains(k.as_str()))
+            {
+                Some(format!("<{name}> also reads it by name"))
+            } else if !self.st.prop_raws.contains_key(&(loc, k.clone())) {
+                Some("its value was not read".to_string())
+            } else {
+                None
+            };
+            match why {
+                Some(w) => unbound.push((k.clone(), w)),
+                // A key given twice is one handler: the last value (`prop_raws` keeps it).
+                None if !want.contains(k) => want.push(k.clone()),
+                None => {}
+            }
+        }
+        if want.is_empty() {
+            return (dropped, unbound);
+        }
+        // Bound on the child's element, so the instance must paint once: no link for the rest.
+        let need = instance_needs_link(
+            &child.tier,
+            props
+                .iter()
+                .filter(|(k, _)| !want.contains(k) && !dropped.contains(k))
+                .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
+        );
+        if need != LinkNeed::None {
+            let why = match need {
+                LinkNeed::RowOnly => format!(
+                    "another prop of <{name}> reads the row, and the handler makes the client render the row"
+                ),
+                _ => format!("<{name}> is linked (another prop of it changes on the client)"),
+            };
+            unbound.extend(want.drain(..).map(|k| (k, why.clone())));
+            return (dropped, unbound);
+        }
+        for k in &want {
+            let body = self.st.prop_raws[&(loc, k.clone())].clone();
+            let mut n = self.st.handler_names.len() + 1;
+            while self.st.handler_names.contains(&format!("_h{n}")) {
+                n += 1;
+            }
+            let hname = format!("_h{n}");
+            self.st.handler_names.insert(hname.clone());
+            self.handlers.push(crate::ir::HandlerDecl {
+                name: hname,
+                body,
+                item_scoped: self.loop_scope.clone(),
+                forwarded: Some(crate::ir::Forwarded {
+                    loc,
+                    key: k.clone(),
+                }),
+            });
+        }
+        want.extend(dropped);
+        (want, unbound)
+    }
+
     /// Fail closed (shadcn S1.2, R34.15): a spread is expanded into HTML only. A function or a
     /// value that changes on the client reaching an element through the child's spread would
     /// need a binding the child's chunk does not have, so the parent renders with React instead;
     /// likewise a spread passed to a React island or to a child the server feeds per instance.
-    fn check_spread(&mut self, name: &str, props: &[(String, Expr)], child: &Child, loc: u32) {
+    /// An event handler the parent binds itself (`hoisted`) is not refused; one that lands in the
+    /// spread but cannot be bound (`unbound`, R34.19) is, with its own code.
+    fn check_spread(
+        &mut self,
+        name: &str,
+        props: &[(String, Expr)],
+        child: &Child,
+        loc: u32,
+        hoisted: &[String],
+        unbound: &[(String, String)],
+    ) {
         let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
         let refuse = |why: String| {
             Diagnostic::fallback(
@@ -1065,7 +1264,24 @@ impl Walker<'_, '_> {
             )));
             return;
         }
+        if let Some((k, why)) = unbound.first() {
+            let rule = if k.ends_with("Capture") {
+                "event-capture"
+            } else {
+                "spread-handler"
+            };
+            self.diagnostics.push(Diagnostic::fallback(
+                rule,
+                format!("the handler `{k}` reaches an element through the spread of <{name}>, but {why}"),
+                loc,
+                "pass the handler to an element the parent writes, or keep the component interactive with React",
+            ));
+            return;
+        }
         for (k, v) in props {
+            if hoisted.contains(k) {
+                continue;
+            }
             let live = matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v);
             if !live {
                 continue;
@@ -1073,7 +1289,18 @@ impl Walker<'_, '_> {
             // Props spread in carry keys known only at render: a linked instance next to them could
             // repaint an attribute the spread set.
             if k == crate::ir::SPREAD_KEY || spreads_in || child.spread.lands(k) {
-                let what = if matches!(v, Expr::ClientOnly { .. }) {
+                let function = matches!(v, Expr::ClientOnly { .. });
+                if function && crate::analyze::jsx::event_name(k).is_none() {
+                    // R34.19: not an event, so no element binding can stand for it (a render prop).
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "spread-function",
+                        format!("prop `{k}` of <{name}> is a function that is not an event handler, and props reach <{name}> through a spread"),
+                        loc,
+                        "pass it as a named prop the child reads, or keep the component interactive with React",
+                    ));
+                    return;
+                }
+                let what = if function {
                     "a function"
                 } else {
                     "a value that changes on the client"
@@ -1164,6 +1391,29 @@ impl Walker<'_, '_> {
                 js: r.to_js_in(JsCtx::Client),
             },
         }
+    }
+}
+
+/// A forwarded handler's key prints as `x-on-<event>`: it must be an attribute name whose event is
+/// plain `[a-z0-9]+` (no quote, space, `=` or `>` can reach the tag).
+pub(crate) fn handler_key_ok(k: &str) -> bool {
+    brust_jinja::spread::attr_name_ok(k)
+        && crate::analyze::jsx::event_name(k).is_some_and(|e| {
+            !e.is_empty()
+                && e.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
+}
+
+/// An `on*` prop whose value can be a function (anything but a literal): bound as an event
+/// handler where it lands on an element. A literal is dropped from the HTML, as React does.
+fn is_handler_prop(k: &str, v: &Expr) -> bool {
+    if crate::analyze::jsx::event_name(k).is_none() {
+        return false;
+    }
+    match v {
+        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal().is_none(),
+        Expr::Precomputed { .. } | Expr::ClientOnly { .. } => true,
     }
 }
 
