@@ -387,6 +387,7 @@ fn make(tag: String, attrs: Vec<Attr>, children: Vec<Node>, loc: u32) -> Node {
         host: false,
         ref_name: None,
         synthetic: false,
+        poly: false,
     }
 }
 

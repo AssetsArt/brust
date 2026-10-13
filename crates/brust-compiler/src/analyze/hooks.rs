@@ -6,7 +6,7 @@ use crate::analyze::expr::{Js, Reader, Walk, loc_of, print_js_with};
 use crate::analyze::names::{Alias, Aliases, NameTable};
 use crate::ir::{
     ArrowBody, DerivedDecl, DiagClass, Diagnostic, EffectDecl, Expr, HandlerDecl, IdentKind,
-    Literal, PropDecl, RawExpr, RawKind, RefDecl, StateDecl, StoreUse, line_col,
+    Literal, PolyTag, PropDecl, RawExpr, RawKind, RefDecl, StateDecl, StoreUse, line_col,
 };
 use crate::parse::Parsed;
 use bun_ast as js_ast;
@@ -20,6 +20,8 @@ pub struct BodyDecls {
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (R34.14).
     pub props_rest: Option<String>,
+    /// The polymorphic tag `const Comp = asChild ? Slot.Root : "host"` (R34.28).
+    pub poly: Option<PolyTag>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -681,11 +683,81 @@ fn read_decl(
         );
         return;
     };
+    // R34.28: `const Comp = asChild ? Slot.Root : "button"` is not a value: it is the tag of `<Comp>`,
+    // which a call site resolves. A second one in the same component stays a plain const (its tag
+    // then falls back as `local-component`).
+    if out.poly.is_none()
+        && let B::BIdentifier(id) = decl.binding.data
+        && let Some(tag) = poly_tag(r.names, value, &out.props)
+    {
+        r.names.set_poly(id.r#ref, tag.clone());
+        out.poly = Some(tag);
+        return;
+    }
     let expr = r.expr(value);
     out.derived.push(DerivedDecl {
         name,
         expr: Expr::Raw(expr),
     });
+}
+
+/// `value` is `flag ? Slot : "host"` (or `flag ? "host" : Slot`): `flag` a prop that defaults to
+/// absent or `false`, `Slot` Radix's (`Slot.Root` / `Slot.Slot` of `radix-ui`, or `Root` / `Slot` /
+/// `import * as Slot` of `@radix-ui/react-slot`, resolved through the import, never by spelling),
+/// `host` a string literal that is an HTML tag name.
+fn poly_tag(names: &NameTable<'_>, value: &js_ast::Expr, props: &[PropDecl]) -> Option<PolyTag> {
+    let E::EIf(i) = &value.data else { return None };
+    let flag_ref = match &i.test.data {
+        E::EIdentifier(id) => id.ref_,
+        E::EImportIdentifier(id) => id.ref_,
+        _ => return None,
+    };
+    let (flag, kind) = names.kind_of(flag_ref);
+    if !matches!(kind, IdentKind::Prop) || flag == "*" {
+        return None;
+    }
+    // A default other than `false` would make an absent flag mean something the call site cannot see.
+    let decl = props.iter().find(|p| p.name == flag)?;
+    if let Some(d) = &decl.default
+        && d.json_literal() != Some(serde_json::Value::Bool(false))
+    {
+        return None;
+    }
+    let host_of = |e: &js_ast::Expr| match &e.data {
+        E::EString(s) => {
+            let h = crate::analyze::expr::estring(s);
+            let ok = h.starts_with(|c: char| c.is_ascii_lowercase())
+                && h.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+            ok.then_some(h)
+        }
+        _ => None,
+    };
+    let (negate, host) = if is_radix_slot(names, &i.yes) {
+        (false, host_of(&i.no)?)
+    } else if is_radix_slot(names, &i.no) {
+        (true, host_of(&i.yes)?)
+    } else {
+        return None;
+    };
+    Some(PolyTag { flag, negate, host })
+}
+
+/// Radix's `Slot` (R34.28, plan Q5): only `radix-ui` and `@radix-ui/react-slot`.
+fn is_radix_slot(names: &NameTable<'_>, e: &js_ast::Expr) -> bool {
+    let ident = |e: &js_ast::Expr| match &e.data {
+        E::EIdentifier(id) => Some(id.ref_),
+        E::EImportIdentifier(id) => Some(id.ref_),
+        _ => None,
+    };
+    match &e.data {
+        E::EDot(d) if matches!(d.name.slice(), b"Root" | b"Slot") => ident(&d.target)
+            .and_then(|r| names.import_of(r))
+            .is_some_and(|i| matches!(i, ("radix-ui", "Slot") | ("@radix-ui/react-slot", "*"))),
+        _ => ident(e)
+            .and_then(|r| names.import_of(r))
+            .is_some_and(|i| matches!(i, ("@radix-ui/react-slot", "Root" | "Slot"))),
+    }
 }
 
 /// `const s = useStore(h)` / `const { k } = useStore(h)` (M3-F D7). The bindings were

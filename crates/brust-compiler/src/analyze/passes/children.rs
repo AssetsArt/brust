@@ -9,8 +9,8 @@ use crate::analyze::exports::declared_in;
 use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
 use crate::ir::{
     Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind,
-    InstanceRecord, JobDecl, JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier, UnOp,
-    component_id, named_component_id,
+    InstanceRecord, JobDecl, JobKind, JsCtx, Node, PolyTag, RawExpr, RawKind, ServerExpr, Tier,
+    UnOp, component_id, named_component_id,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -102,6 +102,8 @@ struct Child {
     prop_precompute: bool,
     /// Where the child spreads its props (shadcn S1.2): the call-site keys that land in a spread.
     spread: SpreadSink,
+    /// The child's polymorphic tag (`asChild`, R34.28): the call site must resolve it.
+    poly: Option<PolyTag>,
 }
 
 /// Which props of a call site a child spreads onto an element or another component.
@@ -343,6 +345,7 @@ impl Walker<'_, '_> {
                     stores: false,
                     prop_precompute: false,
                     spread: SpreadSink::None,
+                    poly: None,
                 };
             }
             self.diagnostics.push(Diagnostic::fallback(
@@ -381,6 +384,7 @@ impl Walker<'_, '_> {
                 stores: false,
                 prop_precompute: false,
                 spread: SpreadSink::None,
+                poly: None,
             };
         };
         let export = match imported {
@@ -423,6 +427,7 @@ impl Walker<'_, '_> {
                         stores: false,
                         prop_precompute: false,
                         spread: SpreadSink::None,
+                        poly: None,
                     };
                 };
                 ctx.modules
@@ -460,9 +465,11 @@ impl Walker<'_, '_> {
         let mut stores = false;
         let mut prop_precompute = false;
         let mut spread = SpreadSink::None;
+        let mut poly = None;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
                 spread = SpreadSink::of(&ir);
+                poly = ir.poly.clone();
                 if matches!(&ir.tier, Tier::React { reason, .. } if reason == crate::analyze::modules::OPAQUE_EXPORT)
                 {
                     self.diagnostics.push(Diagnostic::fallback(
@@ -524,6 +531,7 @@ impl Walker<'_, '_> {
             stores,
             prop_precompute,
             spread,
+            poly,
         }
     }
 
@@ -658,6 +666,7 @@ impl Walker<'_, '_> {
         };
         *tier = child.tier.clone();
         self.check_spread(name, props, &child, *loc);
+        self.check_poly(name, props, children, &child, *loc);
         if !self.refs.iter().any(|r| r.name == *name) {
             self.refs.push(ChildRef {
                 name: name.clone(),
@@ -869,6 +878,129 @@ impl Walker<'_, '_> {
         }
         // After this node's own link id: `_pN` follow document order.
         children.iter_mut().for_each(|c| self.node(c));
+    }
+
+    /// Fail closed (shadcn S1.4, R34.29/R34.31): a child with a polymorphic tag (`asChild`) is
+    /// resolved here, at its call site. No `asChild`, or a literal `false`, prints the host
+    /// element. A literal `asChild` with exactly one host-element child whose attributes are
+    /// plain values prints that child with the component's attributes merged in. Anything else
+    /// (a value the call site cannot see, a component or text child, a handler, a ref, a
+    /// stateful component) keeps the caller on React.
+    fn check_poly(
+        &mut self,
+        name: &str,
+        props: &[(String, Expr)],
+        children: &[Node],
+        child: &Child,
+        loc: u32,
+    ) {
+        let Some(poly) = &child.poly else { return };
+        if matches!(child.tier, Tier::React { .. }) {
+            return;
+        }
+        let refuse = |rule: &str, why: String, fix: &str| Diagnostic::fallback(rule, why, loc, fix);
+        let flag = props
+            .iter()
+            .rev()
+            .find(|(k, _)| k == &poly.flag)
+            .map(|(_, v)| v);
+        let value = match flag {
+            None => Some(false),
+            Some(Expr::Raw(r)) | Some(Expr::Server(ServerExpr(r))) => match r.json_literal() {
+                Some(serde_json::Value::Bool(b)) => Some(b),
+                _ => None,
+            },
+            Some(_) => None,
+        };
+        let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
+        let Some(value) = value.filter(|_| !spreads_in) else {
+            self.diagnostics.push(refuse(
+                "slot-dynamic",
+                format!(
+                    "`{}` of <{name}> is not a literal (or props are spread in), so brust cannot tell which element it renders",
+                    poly.flag
+                ),
+                "write the prop as a literal (`asChild` or `asChild={false}`), or keep the page on React",
+            ));
+            return;
+        };
+        if value == poly.negate {
+            return; // the host element
+        }
+        if !matches!(child.tier, Tier::Static) {
+            self.diagnostics.push(refuse(
+                "slot-native",
+                format!(
+                    "<{name}> has state of its own and is rendered with `{}`",
+                    poly.flag
+                ),
+                "use `asChild` on a component without state, or keep the page on React",
+            ));
+            return;
+        }
+        if props
+            .iter()
+            .any(|(_, v)| matches!(v, Expr::ClientOnly { .. }))
+        {
+            self.diagnostics.push(refuse(
+                "slot-handler",
+                format!("a function is passed to <{name}> with `{}`", poly.flag),
+                "put the handler on the child element after the component is static, or keep the page on React",
+            ));
+            return;
+        }
+        let [only] = children else {
+            self.diagnostics.push(refuse(
+                "slot-child-shape",
+                format!(
+                    "`{}` on <{name}> needs exactly one element between the tags, found {}",
+                    poly.flag,
+                    children.len()
+                ),
+                "wrap the content in one element such as <a>",
+            ));
+            return;
+        };
+        let Node::Element {
+            attrs,
+            poly: nested,
+            ..
+        } = only
+        else {
+            let (rule, what) = match only {
+                Node::Component { .. } => ("slot-child-component", "a component"),
+                _ => ("slot-child-shape", "text or an expression"),
+            };
+            self.diagnostics.push(refuse(
+                rule,
+                format!(
+                    "`{}` on <{name}> has {what} as its child; only one host element is supported",
+                    poly.flag
+                ),
+                "pass a host element such as <a href=\"…\">",
+            ));
+            return;
+        };
+        let bad = attrs.iter().find_map(|a| match a {
+            Attr::Static { .. } => None,
+            Attr::Dynamic { value, .. } => self
+                .reads_state(value)
+                .then_some(("slot-child-attr", "an attribute that changes on the client")),
+            Attr::Event { .. } => Some(("slot-handler", "an event handler")),
+            Attr::Ref { .. } => Some(("slot-ref", "a ref")),
+            Attr::Spread(_) | Attr::InnerHtml { .. } => {
+                Some(("slot-child-shape", "a spread or dangerouslySetInnerHTML"))
+            }
+        });
+        if let Some((rule, what)) =
+            bad.or((*nested).then_some(("slot-child-shape", "a polymorphic element")))
+        {
+            self.diagnostics.push(refuse(
+                rule,
+                format!("the child of <{name}> with `{}` has {what}", poly.flag),
+                "give the child plain attributes, or keep the page on React",
+            ));
+        }
     }
 
     /// Fail closed (shadcn S1.2, R34.15): a spread is expanded into HTML only. A function or a
