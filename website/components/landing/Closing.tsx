@@ -15,7 +15,7 @@ export default function Closing({ major, label }: { major: string; label: string
         </div>
         <div className="cta">
           <Button href="/docs/quickstart" label="Open the docs" primary />
-          <Button href="https://github.com/AssetsArt/brust/tree/v2/examples/pokedex" label="See the pokedex example" />
+          <Button href="https://github.com/AssetsArt/brust/tree/main/examples/pokedex" label="See the pokedex example" />
         </div>
       </div>
     </section>

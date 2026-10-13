@@ -4,7 +4,7 @@
 // not a file, no page error, light and dark at 400px with no sideways scroll, the canonical/og:url tags, sitemap.xml
 // and llms.txt from lib/site.ts, and the four browser-only demos (team, cache probe, loader lookup, landing tiers).
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
 import { absolute, SITE_URL, siteRoutes } from '../lib/site'
@@ -73,7 +73,12 @@ test('the static build writes every nav route, skips the per-request demo route,
   expect(ssg.warnings).toEqual([])
   expect(ssg.notFound.file).toBe('404.html')
   for (const p of ssg.pages) expect([p.path, existsSync(join(out, p.file))]).toEqual([p.path, true])
-  for (const f of ['404.html', '_headers', 'public/app.css', 'public/sitemap.xml', 'public/llms.txt']) expect([f, existsSync(join(out, f))]).toEqual([f, true])
+  for (const f of ['404.html', '_headers', 'public/favicon.svg', 'public/sitemap.xml', 'public/llms.txt']) expect([f, existsSync(join(out, f))]).toEqual([f, true])
+  // F130: the stylesheet is brust's own output (global CSS: one minified, hashed file), not a file served from public/
+  expect(existsSync(join(out, 'public/app.css'))).toBe(false)
+  const css = readdirSync(join(out, '_brust/client')).filter((f) => /^app-[0-9a-f]{10}\.css$/.test(f))
+  expect(css.length).toBe(1)
+  expect(readFileSync(join(out, '_brust/client', css[0]!), 'utf8').split('\n').length).toBeLessThanOrEqual(2)
   for (const f of ['manifest.json', 'index.js', 'jobs.js', 'actions.js', 'jinja', '_worker.js', '_routes.json']) expect([f, existsSync(join(out, f))]).toEqual([f, false])
 })
 
@@ -96,6 +101,19 @@ test('the first mention of Elysia on a page links to elysiajs.com in a new tab',
   const link = '<a href="https://elysiajs.com/" target="_blank" rel="noopener noreferrer">'
   for (const f of ['index.html', 'docs/actions.html', 'docs/installation.html', 'docs/cloudflare/workers.html', 'docs/cookbook/form-action.html'])
     expect([f, readFileSync(join(out, f), 'utf8').includes(link)]).toEqual([f, true])
+})
+
+test('every built page, the 404 included, links the hashed stylesheet exactly once and never /public/app.css (F130)', () => {
+  const pages = [...ssg.pages.map((p) => p.file), ssg.notFound.file]
+  const hashed = readdirSync(join(out, '_brust/client')).find((f) => /^app-[0-9a-f]{10}\.css$/.test(f))!
+  for (const f of pages) {
+    const html = readFileSync(join(out, f), 'utf8')
+    const links = [...html.matchAll(/<link [^>]*rel="stylesheet"[^>]*href="(\/_brust\/client\/[^"]+\.css)"/g)].map((m) => m[1])
+    expect([f, links]).toEqual([f, [`/_brust/client/${hashed}`]])
+    expect([f, /href="\/public\/app\.css"/.test(html)]).toEqual([f, false])
+  }
+  // the existing /_brust/client/* rule makes it immutable
+  expect(readFileSync(join(out, '_headers'), 'utf8')).toMatch(/\/_brust\/client\/\*\n\s+Cache-Control: public, max-age=31536000, immutable/)
 })
 
 test('sitemap.xml and llms.txt list every route under the production origin', () => {

@@ -54,7 +54,6 @@ export default function Layout({ title, version, url }: LayoutData) {
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@300..900&display=swap" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600;700&display=swap" />
-        <link rel="stylesheet" href="/public/app.css" />
       </head>
       <body>
         <SiteHeader version={version} />

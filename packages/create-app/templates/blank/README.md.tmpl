@@ -9,7 +9,7 @@ bun install
 bun run dev        # brust dev routes.tsx (hot reload)  ->  http://127.0.0.1:1337
 ```
 
-Scripts: `dev` (build then start), `build`, `start`, `typecheck`, `dev:cf` (build for Cloudflare Workers and run `wrangler dev`), `deploy:cf` (build and `wrangler deploy`).
+Scripts: `dev` (`brust dev`, with hot reload), `build`, `start`, `typecheck`, `dev:cf` (build for Cloudflare Workers and run `wrangler dev`), `deploy:cf` (build and `wrangler deploy`).
 
 ## Layout
 
@@ -39,5 +39,5 @@ const { data } = await api.hello.get({ query: { name: 'ash' } })
 
 ## Docs
 
-- Actions: https://github.com/AssetsArt/brust/blob/v2/docs/actions.md
-- The unified store: https://github.com/AssetsArt/brust/blob/v2/docs/store.md
+- Actions: https://github.com/AssetsArt/brust/blob/main/docs/actions.md
+- The unified store: https://github.com/AssetsArt/brust/blob/main/docs/store.md

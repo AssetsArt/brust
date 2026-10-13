@@ -2,3 +2,8 @@
 [server]
 address = "127.0.0.1"
 port = 1340
+
+# The stylesheet goes through the brust CSS pipeline (bundled, minified, content-hashed, immutable). Global, not a layout import:
+# the 404 page renders outside the layout and needs the same file.
+[css]
+global = ["app.css"]
