@@ -90,7 +90,22 @@ Why: folding freezes the initial value. A long-lived worker today shows mutation
 - **Build:** `buildJobs` (`packages/brust/src/build/bundle.ts:355`) evaluates the qualifying slots once in a Bun subprocess with `TZ=UTC`, a 2 s timeout per slot, JSON-only values and a 64 KiB cap. It then recompiles through napi with slot → literal overrides, reusing L1's path from a literal to a server value. A job left with no outputs is dropped.
 - **On throw, timeout or a non-JSON value:** keep the job and emit warning `build-eval` with the reason and location.
 
-**Deferred (human decision).** Package imports such as shiki `highlight`, and async helpers, need an explicit opt-in API (e.g. `buildTime(() => …)` or a config allowlist). Not in this round. The docs site keeps highlighting in loaders.
+**H1 in scope (human 2026-10-13, "เพิ่มทั้ง 3 ข้อ").** Package imports and async helpers are evaluated at build only through an explicit marker.
+
+- **API.** `import { buildTime } from '@brust/core'`, used as `const html = buildTime(() => highlight(code, 'ts'))`. It may be `async`.
+- **Compiler.** It recognises the call only when `buildTime` is imported from `@brust/core`; there is no name-based guessing.
+- **Purity.** Inside the closure, package imports are allowed: the opt-in is the user's statement that the call is pure. The global denylist still applies, and so do the time/random rules.
+- **When the closure reads only compile-time constants (after L1):** it is evaluated once at build in the same Bun subprocess as the v1 path (awaited, 10 s timeout, JSON-only, 256 KiB cap). The result is baked into the template.
+- **When the closure reads props or state:** it cannot be evaluated at build. It stays a precompute job, i.e. today's per-request path. With L3, a literal prop keys the job, so it is effectively computed once per distinct literal. Warn with `build-time-input`, naming the input.
+- **At runtime** (the server's job, or the client chunk if it ever runs in the browser), `buildTime(fn)` just returns `fn()`, so behaviour is identical. Never ship the closure to the client: a `buildTime` call in a native or react client path is an error `build-time-client`.
+- **On throw, timeout or a non-JSON value:** a build **error** naming the call site. The user asked for build time explicitly, so failing open would hide the problem.
+- **Tests:**
+  - shiki highlight baked into a static template (no job, no worker);
+  - an async closure;
+  - a props-reading closure stays a job and warns;
+  - a throwing closure is a build error;
+  - a client-path use is an error.
+- **Docs-site follow-up (lead):** `CodeBlock` may then highlight its literal code itself.
 
 **Tests:** baked pure helper; impure helper keeps its job; throwing helper warns; output identical to the job path (dual run).
 
@@ -232,7 +247,7 @@ Clear both in `react_jobs`. Regression fixture: a page with state passes `code={
 
 ### L9 `gap-ssg`: static output (G12). Wave 2 (after L7 preferred), size L
 
-**R9.1 CLI (ruled).** `brust build routes.tsx --target static` builds the normal dist, then writes `<out>/static/`. `brust start` keeps working on the same dist.
+**R9.1 CLI (ruled; names approved by the human 2026-10-13).** `brust build routes.tsx --target static` builds the normal dist, then writes `<out>/static/`. `brust start` keeps working on the same dist.
 
 **R9.2 Route field (ruled).** `ssg?: { params?: () => Rec[] | Promise<Rec[]> } | false`, added to `ALLOWED_ROUTE_FIELDS` (`routes.ts:40`) with validation. The server and Cloudflare targets ignore it.
 
@@ -249,7 +264,7 @@ Clear both in `react_jobs`. Regression fixture: a page with state passes `code={
 - The top-level `*` route renders at a sentinel path, expects status 404, and is written to `404.html`.
 
 **R9.4 Refused before rendering (ruled):**
-- `[actions]` configured → error `ssg-actions`. No hybrid with Pages Functions this round.
+- `[actions]` configured → error `ssg-actions` naming L12's hybrid output. This error is replaced by the hybrid output when L12 lands.
 - A cache `prefix`/`bypass` that reads `header`/`cookie`/`query`/`request(host)` → error `ssg-varies`. Expose the grammar's read-set through a small napi helper; never re-implement it.
 - `ttl` and `[cache]` are ignored (info).
 
@@ -336,18 +351,32 @@ Credit: knock2.
 - runtime-dom: the `hydrateRoot` repro (no recoverable errors, final DOM equals the live value), a computed key, identity.
 - chromium (`tests/server/hydrate.chromium.test.ts`): a native mount effect writes the store before an island hydrates; assert no #418.
 
+### L12 `gap-ssg-actions`: static pages + actions on Cloudflare Pages (H3). Wave 3 (after L9), size M
+
+The human added this on 2026-10-13. `--target static` with `[actions]` configured writes the static pages exactly as L9 does, plus a Pages advanced-mode `_worker.js` that serves **only** the action prefix.
+
+- **Worker.** The Cloudflare target build (`docs/cloudflare.md` §6: actions already run on Workers, with admission in Rust) is bundled into `_worker.js`.
+- **R12.1 Routing (ruled).** A `_routes.json` lists only `"<prefix>/*"` in `include`, so pages and assets are served free as static files and never invoke the Worker. Any request that reaches the worker but is not an action falls through to `env.ASSETS.fetch(request)`.
+- **Secrets and bindings** are documented for Pages (`wrangler pages` env), not baked. The build refuses `[cache]` adapters that need bindings in this mode with a clear error; ttl/L1 still do not apply to static pages.
+- **Tests:**
+  - an e2e on a fixture with an action, run under `wrangler pages dev` if it is available in CI, else miniflare: page served static (no worker invocation, asserted via `_routes.json` + a counter), action POST answered by the worker, cross-site guard still 403.
+  - CF test deploys only under the standing rule: named `brust-test-<slug>-<sha>`, deleted every time, and only if the lane needs a real deploy. Prefer local.
+- **Docs:** extend `docs/cloudflare.md` with a "Static pages + actions on Pages" section.
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
 |---|---|---|
 | 1 | L1, L5, L6, L7, L10, L11 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
 | 2 | L3 (after L1), L8, L9 | L3 and L8 both touch `lower/template.rs`: second rebases. |
-| 3 | L4 (after L3), L2 (after L1) | |
+| 3 | L4 (after L3), L2 (after L1), L12 (after L9) | |
 
 Each lane is one PR to v2 and goes through the usual flow: READY → REVIEW-PASS → GATES-OK (full CI mirror: `cargo fmt --check`, clippy `-D warnings`, cargo test, `bun run ci`, bun tests, browser tests) → MERGE-READY. The lead merges after CI is green.
 
-## Human decisions (not blocking this round)
+## Human decisions
 
-- **H1, G4 package opt-in.** An API to evaluate a package import at build time, e.g. shiki: `buildTime(() => …)` vs a config allowlist.
-- **H2, SSG names.** R9.1 (`--target static`) and R9.2 (`ssg` field) are lead rulings and can be renamed before the next publish.
-- **H3, actions with static output.** Hybrid output (Pages Functions) is not in this round.
+All three were taken into this round by the human on 2026-10-13 ("เพิ่มทั้ง 3 ข้อเข้าไปทำได้เลย"):
+
+- **H1** is the `buildTime()` opt-in, in L2.
+- **H2** approves the SSG names (`--target static`, the `ssg` field) as ruled.
+- **H3** is the hybrid static + actions output, as L12.
