@@ -55,6 +55,10 @@ export default function Installation({ blocks, starters }: InstallationData) {
       <p>
         In a terminal it asks for one thing, the template: <code>blank</code> (a starter page with the brust mark, a native counter and links to these docs, plus an Elysia hello action) or <code>pokedex</code>. An empty answer picks <code>blank</code>. Pick a starter below to see the commands for your own project.
       </p>
+      {/* source: packages/create-app/templates/blank/app.css:1 and package.json.tmpl:21 (L28, PR #180) */}
+      <p>
+        The <code>blank</code> starter is styled with Tailwind CSS v4: an <code>app.css</code> at the root, with <code>tailwindcss</code> and <code>bun-plugin-tailwind</code> as dev dependencies.
+      </p>
       <div className="browser">
         <div className="url">
           <span>Live demo</span>
