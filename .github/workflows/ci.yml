@@ -18,7 +18,7 @@ env:
 jobs:
   rust:
     runs-on: ubuntu-latest
-    env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache, SCCACHE_LOG: debug, SCCACHE_ERROR_LOG: "/tmp/sccache-debug.log" }
+    env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -56,10 +56,6 @@ jobs:
       - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
       - run: sccache --show-stats
         if: always()
-      # DIAGNOSTIC (L27b R27b.1): the per-compile keys and hit/miss reasons of this job; removed again by the fix commit.
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with: { name: sccache-debug-rust, path: /tmp/sccache-debug.log, retention-days: 2, if-no-files-found: warn }
   # M4-CF: ONE blocking job for every Cloudflare test. Order: the release-shape wasm first (a release-leg break shows on every PR),
   # then workerd e2e (cf-min + pokedex on D1, tests/cf), the build-target unit tests, and the scaffold --target cloudflare case.
   # No Cloudflare credentials: `deploy --dry-run` only; the real-edge proof is local-only.
@@ -183,7 +179,7 @@ jobs:
   # All jobs run on ubuntu-latest, so the .node is portable between them.
   addon:
     runs-on: ubuntu-latest
-    env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache, SCCACHE_LOG: debug, SCCACHE_ERROR_LOG: "/tmp/sccache-debug.log" }
+    env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -204,10 +200,6 @@ jobs:
         with: { name: addon-linux-x64, path: packages/brust/native, retention-days: 1, if-no-files-found: error }
       - run: sccache --show-stats
         if: always()
-      # DIAGNOSTIC (L27b R27b.1): the per-compile keys and hit/miss reasons of this job; removed again by the fix commit.
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with: { name: sccache-debug-addon, path: /tmp/sccache-debug.log, retention-days: 2, if-no-files-found: warn }
   # @brust/core: the napi addon (built with `napi build` on this runner), the package's unit
   # tests and the end-to-end run of the real CLI (build the fixture app, start it, assert from the
   # outside). The addon itself comes from the `addon` job (artifact); this job compiles no Rust.
