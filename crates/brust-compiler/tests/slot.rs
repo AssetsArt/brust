@@ -198,3 +198,48 @@ fn a_stateful_component_with_as_child_stays_on_react() {
     );
     assert!(react_with(&o, "slot-native"), "{:?}", o.diags);
 }
+
+#[test]
+fn a_prop_the_call_site_omits_is_undefined_for_the_childs_job() {
+    // Cn has a per-instance job over `className` and `size`; the call passes neither. The manifest
+    // binds every job input root, so each is bound to `undefined` (the child's default applies).
+    let src = "import Cn from './Cn'\nexport default function P() { return <main><Cn id=\"a\" /></main> }";
+    let s = src.to_string();
+    let path = "crates/brust-compiler/tests/fixtures/slot/P.tsx".to_string();
+    let (instances, child_job) = run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            &path,
+            Some(s.into_bytes()),
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap();
+        let child = tree
+            .iter()
+            .find(|c| c.ir.id.starts_with("cn"))
+            .expect("Cn compiled");
+        (
+            tree[0].ir.instances.clone(),
+            child.artifacts.server_ts.clone().unwrap_or_default(),
+        )
+    });
+    let exprs = &instances[0].exprs;
+    assert_eq!(
+        exprs.get("className").map(String::as_str),
+        Some("__undefined"),
+        "{instances:?}"
+    );
+    assert_eq!(
+        exprs.get("size").map(String::as_str),
+        Some("__undefined"),
+        "{instances:?}"
+    );
+    // The server hands an omitted prop as null, so the default applies to null as well.
+    assert!(
+        child_job.contains("const size = props.size ?? (\"m\")"),
+        "{child_job}"
+    );
+}

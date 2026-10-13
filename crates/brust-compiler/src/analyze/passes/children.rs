@@ -104,6 +104,9 @@ struct Child {
     spread: SpreadSink,
     /// The child's polymorphic tag (`asChild`, R34.28): the call site must resolve it.
     poly: Option<PolyTag>,
+    /// Roots of the props the child's per-instance jobs read (`props.className` → `className`): a
+    /// call site that omits one passes JS `undefined` for it.
+    job_roots: Vec<String>,
 }
 
 /// Which props of a call site a child spreads onto an element or another component.
@@ -200,6 +203,13 @@ impl SpreadSink {
         }
         sink
     }
+}
+
+/// Root segment of a job input path: text before the first `.` or `[`, with a leading `props.`
+/// stripped (the same rule as `brust-core`'s manifest check).
+fn input_root(input: &str) -> &str {
+    let s = input.strip_prefix("props.").unwrap_or(input);
+    s.split(['.', '[']).next().unwrap_or(s)
 }
 
 /// Client reads a `RowOnly` link implies, and the child's (name, loc) when it precomputes over props.
@@ -346,6 +356,7 @@ impl Walker<'_, '_> {
                     prop_precompute: false,
                     spread: SpreadSink::None,
                     poly: None,
+                    job_roots: Vec::new(),
                 };
             }
             self.diagnostics.push(Diagnostic::fallback(
@@ -385,6 +396,7 @@ impl Walker<'_, '_> {
                 prop_precompute: false,
                 spread: SpreadSink::None,
                 poly: None,
+                job_roots: Vec::new(),
             };
         };
         let export = match imported {
@@ -428,6 +440,7 @@ impl Walker<'_, '_> {
                         prop_precompute: false,
                         spread: SpreadSink::None,
                         poly: None,
+                        job_roots: Vec::new(),
                     };
                 };
                 ctx.modules
@@ -466,10 +479,20 @@ impl Walker<'_, '_> {
         let mut prop_precompute = false;
         let mut spread = SpreadSink::None;
         let mut poly = None;
+        let mut job_roots = Vec::new();
         let tier = match lookup {
             Lookup::Compiled(ir) => {
                 spread = SpreadSink::of(&ir);
                 poly = ir.poly.clone();
+                job_roots = ir
+                    .jobs
+                    .iter()
+                    .filter(|j| crate::ir::feeds_instances(j))
+                    .flat_map(|j| j.inputs.iter())
+                    .filter(|i| i.as_str() != "*")
+                    .map(|i| input_root(i).to_string())
+                    .filter(|r| r != "__store") // bound separately, from the chain context (C5)
+                    .collect();
                 if matches!(&ir.tier, Tier::React { reason, .. } if reason == crate::analyze::modules::OPAQUE_EXPORT)
                 {
                     self.diagnostics.push(Diagnostic::fallback(
@@ -532,6 +555,7 @@ impl Walker<'_, '_> {
             prop_precompute,
             spread,
             poly,
+            job_roots,
         }
     }
 
@@ -807,6 +831,18 @@ impl Walker<'_, '_> {
                             record.exprs.insert(name.clone(), e);
                         } else {
                             record.props.insert(name.clone(), None);
+                        }
+                    }
+                    // A prop the call site leaves out is `undefined` for the child's jobs (its default
+                    // applies): the manifest binds every job input root, so bind it to nothing.
+                    for root in &child.job_roots {
+                        if !record.props.contains_key(root)
+                            && !record.literals.contains_key(root)
+                            && !record.exprs.contains_key(root)
+                        {
+                            record
+                                .exprs
+                                .insert(root.clone(), crate::lower::server_expr::UNDEFINED.into());
                         }
                     }
                     // C5: the child's jobs read `__store`; a fed child sits under a chain component
