@@ -36,7 +36,7 @@ Every finding below was reproduced on 2026-10-13 by research agents against v2 @
   | F104 | gap-map-cond | F110 | gap-ssg-actions | F115 | react-coverage-api |
   | F116 | css-pipeline | F117 | css-module-fold | F118 | tailwind |
   | F119 | external-island | F120 | lucide-native | F121 | route-nonascii |
-  | F122 | hydrate-flake (L26, plan `2026-10-13-hydrate-flake.md`) | F123 | blank-template (L25) | | |
+  | F122 | hydrate-flake (L26, plan `2026-10-13-hydrate-flake.md`) | F123 | blank-template (L25) | F124 | ci-speed (L27, plan `2026-10-13-ci-speed.md`) |
 
   When two lanes add rows, the second one to merge resolves the textual conflict by keeping both rows.
 - **R0.5 Each lane updates its own docs.** Update `docs/*.md` where the behaviour is documented, and add a `docs/plans/m1a-followups.md` row (F99+) marked DONE with the PR number.
@@ -906,3 +906,4 @@ All three were taken into this round by the human on 2026-10-13 ("เพิ่�
 - **H2** approves the SSG names (`--target static`, the `ssg` field) as ruled.
 - **H3** is the hybrid static + actions output, as L12.
 - **H4** (2026-10-13, later): the blank template redesign with the docs favicon, as L25.
+- **H5** (2026-10-13, later): CI wall-clock and runner minutes, as L27 (`docs/plans/2026-10-13-ci-speed.md`).
