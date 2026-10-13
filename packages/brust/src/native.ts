@@ -85,6 +85,8 @@ export interface NativeBinding {
   cacheL2Count(name: string): boolean
   /** cache adapter R10 — drop both tier-1 caches (a broadcast gap); the L1 entries removed. */
   cacheClear(): number
+  /** Static output (gaps round R9.4): the request reads of a cache key expression; throws when it does not parse. */
+  cacheExprReads(src: string): string[]
 }
 
 let binding: NativeBinding | null = null
@@ -117,3 +119,4 @@ export const putFetchReply = (slot: number, body: Uint8Array): boolean => native
 export const cacheReplay = (args: InvalidateArgs, seq: number | null): InvalidateResult => native().cacheReplay(args, seq)
 export const cacheL2Count = (name: string): boolean => native().cacheL2Count(name)
 export const cacheClear = (): number => native().cacheClear()
+export const cacheExprReads = (src: string): string[] => native().cacheExprReads(src)
