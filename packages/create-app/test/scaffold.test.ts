@@ -69,6 +69,14 @@ test('blank: install → build → typecheck → start; / is the native counter;
   const html = await page.text()
   expect(html).toContain('count is')
   expect(html).toContain('x-data="counter_')
+  expect(html).toContain('<svg class="mark"') // R25: the brust mark is inline, not an <img>
+  expect(html).toContain('/public/favicon.svg')
+  // R25.4: HomePage static, Counter native, no react chunk.
+  const manifest = JSON.parse(readFileSync(join(dir, 'dist/manifest.json'), 'utf8')) as { components: Record<string, { tier?: string }> }
+  const tiers = Object.values(manifest.components).map((c) => c.tier)
+  expect(tiers).toContain('static')
+  expect(tiers).toContain('native')
+  expect(tiers).not.toContain('react')
   const srcs = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]!)
   expect(srcs.length).toBeGreaterThan(0)
   for (const s of srcs) expect((await fetch(new URL(s, app.base))).status, s).toBe(200)
