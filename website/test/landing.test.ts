@@ -76,7 +76,7 @@ test('the code shown beside each demo is the demo’s real source file', () => {
   for (const [file, line] of [
     ['PokemonCard', '{types.map((t) => ('],
     ['CatchCard', 'const [caught, setCaught] = useState(0)'],
-    ['PokemonSearch', 'const debounced = useDebounced(q, 150)'],
+    ['PokemonSearch', 'const deferred = useDeferredValue(q)'],
   ] as const) {
     expect(readFileSync(join(app, 'components/landing/demos', `${file}.tsx`), 'utf8')).toContain(line)
     expect(html).toContain(esc(line))

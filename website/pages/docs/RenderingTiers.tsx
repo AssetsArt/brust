@@ -63,7 +63,7 @@ export async function renderingTiersLoader(): Promise<RenderingTiersData> {
 
 export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: RenderingTiersData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Rendering tiers</h1>
       <p className="lead">The compiler reads each component and picks the cheapest output that still behaves the same. You never pick it; you can always see what it picked.</p>
 
@@ -95,7 +95,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
             <td>
               <span className="tier react">react</span>
             </td>
-            <td>Everything else: context, custom hooks, <code>useReducer</code>, <code>Suspense</code>, browser globals read during render.</td>
+            <td>Everything else: context, <code>useReducer</code>, <code>useDeferredValue</code>, <code>Suspense</code>, a component from a package, browser globals read during render.</td>
             <td>HTML rendered by React on the server, then a React island hydrates it.</td>
           </tr>
         </tbody>
@@ -157,7 +157,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
           </tr>
           <tr>
             <td>
-              <code>useState</code>, <code>useMemo</code>, <code>useCallback</code>, <code>useEffect</code>, <code>useLayoutEffect</code>, <code>useRef</code>, <code>memo()</code>, event handlers, <code>useStore</code>
+              <code>useState</code>, <code>useMemo</code>, <code>useCallback</code>, <code>useEffect</code>, <code>useLayoutEffect</code>, <code>useRef</code>, <code>useId</code>, <code>memo()</code>, event handlers, <code>useStore</code>, and a custom hook whose body uses only these (the compiler inlines it)
             </td>
             <td>
               <span className="tier native">native</span>
@@ -165,7 +165,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
           </tr>
           <tr>
             <td>
-              <code>useReducer</code>, <code>useContext</code>, a custom hook, <code>useTransition</code>, <code>useSyncExternalStore</code>, <code>use(promise)</code>, <code>cloneElement</code>, <code>forwardRef</code> and other HOCs, spread props, <code>lazy</code>
+              <code>useReducer</code>, <code>useContext</code>, <code>useDeferredValue</code>, <code>useTransition</code>, <code>useSyncExternalStore</code>, <code>use(promise)</code>, <code>cloneElement</code>, <code>forwardRef</code> and other HOCs, spread props, <code>lazy</code>
             </td>
             <td>
               <span className="tier react">react</span>
@@ -187,6 +187,6 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         The full answer is in <code>dist/manifest.json</code>: each component has a <code>tier</code>, the <code>client</code> chunk it ships (<code>null</code> when nothing ships) and its server <code>jobs</code>.
       </p>
       <CodeBlock code={blocks.manifest.code} lang={blocks.manifest.lang} file={blocks.manifest.file} html={blocks.manifest.html} />
-    </section>
+    </>
   )
 }

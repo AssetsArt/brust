@@ -1,7 +1,9 @@
 // Quickstart — the reference docs page (canon port): four steps from an empty folder to a page served by Rust.
 // Every code block is built in the loader (lib/highlight.ts); the CLI output is copied from a real run.
-// The root is one element (a fragment root gets wrapped in <brust-host>); display: contents keeps every block a grid
-// item of the docs article, so the article's rhythm applies.
+// The root is a fragment: a static component's fragment root emits no wrapper (F106), so every block is a grid item
+// of the docs article and the article's rhythm applies.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import CodeBlock from '../../components/CodeBlock'
 import Note from '../../components/docs/Note'
 import Step from '../../components/docs/Step'
@@ -15,22 +17,10 @@ export interface QuickstartData {
   blocks: Record<'version' | 'create' | 'page' | 'routes' | 'dev' | 'curl', CodeBlockData>
 }
 
-const HOME_PAGE = `export default function HomePage() {
-  return (
-    <section>
-      <h1>Hello from brust</h1>
-      <p>Edit pages/HomePage.tsx and run bun run dev again.</p>
-    </section>
-  )
-}`
-
-const ROUTES = `import { defineRoutes } from '@brust/core/routes'
-import Layout from './components/Layout'
-import HomePage from './pages/HomePage'
-
-export const routes = defineRoutes([
-  { Component: Layout, children: [{ path: '/', Component: HomePage }] },
-])`
+// The template files are read at build time from packages/create-app/templates/blank (gaps round L25): the page shows
+// exactly what `bun create @brust/app` writes.
+const TEMPLATE = join(import.meta.dir, '../../../packages/create-app/templates/blank')
+const templateFile = (rel: string): string => readFileSync(join(TEMPLATE, rel), 'utf8').trimEnd()
 
 // Real output of `bun run dev` (= brust build && brust start) on a 10-core machine, server log lines trimmed.
 const DEV_OUTPUT = `$ bun run dev
@@ -57,8 +47,8 @@ export async function quickstartLoader(): Promise<QuickstartData> {
     blocks: {
       version: codeBlock({ lang: 'sh', cwd: '~/', code: '$ bun --version\n1.4.3' }),
       create: codeBlock({ lang: 'sh', cwd: '~/', code: '$ bun create @brust/app@latest my-app\n$ cd my-app && bun install' }),
-      page: codeBlock({ lang: 'tsx', file: 'pages/HomePage.tsx', code: HOME_PAGE }),
-      routes: codeBlock({ lang: 'ts', file: 'routes.tsx', code: ROUTES }),
+      page: codeBlock({ lang: 'tsx', file: 'pages/HomePage.tsx', code: templateFile('pages/HomePage.tsx') }),
+      routes: codeBlock({ lang: 'ts', file: 'routes.tsx', code: templateFile('routes.tsx') }),
       dev: codeBlock({ lang: 'sh', cwd: '~/my-app', code: DEV_OUTPUT }),
       curl: codeBlock({ lang: 'sh', cwd: '~/my-app', code: CURL_OUTPUT }),
     },
@@ -67,7 +57,7 @@ export async function quickstartLoader(): Promise<QuickstartData> {
 
 export default function Quickstart({ blocks }: QuickstartData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Quickstart</h1>
       <p className="lead">From an empty folder to a page served by Rust. Four steps, each one a command or a file you can copy as is.</p>
 
@@ -76,7 +66,7 @@ export default function Quickstart({ blocks }: QuickstartData) {
       <CodeBlock code={blocks.version.code} lang={blocks.version.lang} cwd={blocks.version.cwd} html={blocks.version.html} />
 
       <Step n={2} id="create" title="Create the project" />
-      <p>The blank template has one layout, one page, and the scripts you will use every day.</p>
+      <p>The blank template has one layout, one page (the brust mark, a native counter and three links to these docs), the site favicon, and the scripts you will use every day.</p>
       <CodeBlock code={blocks.create.code} lang={blocks.create.lang} cwd={blocks.create.cwd} html={blocks.create.html} />
       <Note>
         Keep the <code>@latest</code>. <code>bun create</code> caches the scaffolder, and a stale cache gives you an old template.
@@ -111,6 +101,6 @@ export default function Quickstart({ blocks }: QuickstartData) {
           <a href="/docs/rendering-tiers">Rendering tiers</a>: what makes a component static, native, or a React island.
         </li>
       </ul>
-    </section>
+    </>
   )
 }

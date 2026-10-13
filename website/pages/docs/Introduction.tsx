@@ -45,7 +45,7 @@ export async function introductionLoader(): Promise<IntroductionData> {
 
 export default function Introduction({ blocks, demo }: IntroductionData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Introduction</h1>
       <p className="lead">
         Write React. Get a native page: HTML rendered by Rust from a compiled template, interactivity as a small React-free chunk, React only where the compiler proves it is needed.
@@ -97,6 +97,6 @@ export default function Introduction({ blocks, demo }: IntroductionData) {
           <a href="/docs/rendering-tiers">Rendering tiers</a>: static, native and react, and how to see which one you got.
         </li>
       </ul>
-    </section>
+    </>
   )
 }

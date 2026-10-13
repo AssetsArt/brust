@@ -124,7 +124,7 @@ export async function writeYourOwnLoader(): Promise<WriteYourOwnData> {
 
 export default function WriteYourOwn({ blocks }: WriteYourOwnData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Write your own</h1>
       <p className="lead">
         An adapter is a plain object with a <code>store</code>, a <code>broadcast</code>, or both. Import the types from <code>@brust/core/cache-adapter</code>.
@@ -186,6 +186,6 @@ export default function WriteYourOwn({ blocks }: WriteYourOwnData) {
       <p>
         <code>@brust/core/cache-adapter</code> also exports <code>memoryAdapter</code>, the reference implementation. It shares nothing across processes, so it is for tests, not production.
       </p>
-    </section>
+    </>
   )
 }
