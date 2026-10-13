@@ -1,0 +1,186 @@
+{
+  "id": "input_2bfb2bae",
+  "source": "tests/fixtures/fragment-root-counter/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "n",
+      "setter": "setN",
+      "init": {
+        "Server": {
+          "loc": 195,
+          "kind": {
+            "Lit": {
+              "Num": 0.0
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 287,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 293,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 293,
+                      "kind": {
+                        "Ident": {
+                          "name": "setN",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 298,
+                        "kind": {
+                          "Binary": {
+                            "op": "Add",
+                            "left": {
+                              "loc": 298,
+                              "kind": {
+                                "Ident": {
+                                  "name": "n",
+                                  "kind": "State"
+                                }
+                              }
+                            },
+                            "right": {
+                              "loc": 302,
+                              "kind": {
+                                "Lit": {
+                                  "Num": 1.0
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setN",
+                "Setter"
+              ],
+              [
+                "n",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 213,
+      "tag": "brust-host",
+      "attrs": [
+        {
+          "Static": {
+            "name": "style",
+            "value": "display:contents"
+          }
+        }
+      ],
+      "children": [
+        {
+          "Element": {
+            "loc": 222,
+            "tag": "dt",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "data-testid",
+                  "value": "n"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 243,
+                    "kind": {
+                      "Ident": {
+                        "name": "n",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 257,
+            "tag": "dd",
+            "attrs": [],
+            "children": [
+              {
+                "Element": {
+                  "loc": 270,
+                  "tag": "button",
+                  "attrs": [
+                    {
+                      "Event": {
+                        "event": "click",
+                        "handler": "_h1"
+                      }
+                    }
+                  ],
+                  "children": [
+                    {
+                      "Text": "+"
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null,
+      "synthetic": true
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

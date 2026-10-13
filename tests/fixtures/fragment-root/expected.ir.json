@@ -85,7 +85,8 @@
         }
       ],
       "host": true,
-      "ref_name": null
+      "ref_name": null,
+      "synthetic": true
     }
   },
   "jobs": [],
@@ -96,15 +97,5 @@
   "needs_worker": false,
   "cache": null,
   "children": [],
-  "diagnostics": [
-    {
-      "class": "Warning",
-      "rule": "fragment-root",
-      "message": "the component does not return a single element; it is wrapped in <brust-host>",
-      "loc": 82,
-      "line": 3,
-      "col": 5,
-      "remediation": "return one element"
-    }
-  ]
+  "diagnostics": []
 }

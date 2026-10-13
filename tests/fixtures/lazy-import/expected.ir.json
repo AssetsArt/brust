@@ -114,7 +114,8 @@
         }
       ],
       "host": true,
-      "ref_name": null
+      "ref_name": null,
+      "synthetic": true
     }
   },
   "jobs": [
@@ -209,15 +210,6 @@
       "line": 4,
       "col": 51,
       "remediation": "declare it as `function Name(props) { … }`"
-    },
-    {
-      "class": "Warning",
-      "rule": "fragment-root",
-      "message": "the component does not return a single element; it is wrapped in <brust-host>",
-      "loc": 151,
-      "line": 4,
-      "col": 10,
-      "remediation": "return one element"
     }
   ]
 }
