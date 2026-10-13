@@ -10,9 +10,14 @@
   ],
   "description": "brust v2 — React components compiled to Rust-rendered templates",
   "license": "MIT",
+  "homepage": "https://brust.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AssetsArt/brust.git"
+    "url": "git+https://github.com/AssetsArt/brust.git",
+    "directory": "npm/darwin-x64"
+  },
+  "bugs": {
+    "url": "https://github.com/AssetsArt/brust/issues"
   },
   "publishConfig": {
     "access": "public"

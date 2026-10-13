@@ -3,9 +3,14 @@
   "version": "2.0.0-alpha.4",
   "description": "brust v2 \u2014 React components compiled to Rust-rendered templates",
   "license": "MIT",
+  "homepage": "https://brust.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AssetsArt/brust.git"
+    "url": "git+https://github.com/AssetsArt/brust.git",
+    "directory": "packages/brust"
+  },
+  "bugs": {
+    "url": "https://github.com/AssetsArt/brust/issues"
   },
   "type": "module",
   "bin": {
