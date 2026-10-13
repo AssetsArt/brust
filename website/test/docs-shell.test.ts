@@ -34,7 +34,7 @@ test('routes: /docs plus one /docs/{slug} per nav entry, in nav order; the canon
   const patterns = manifest.routes.map((r) => r.pattern).filter((p) => !p.startsWith('/demo/'))
   expect(patterns).toEqual(['/', '/docs', ...PAGES.map((p) => `/docs/${p.slug}`), '*'])
   expect(NAV.map((g) => [g.group, g.items.length])).toEqual([
-    ['Guide', 14],
+    ['Guide', 15],
     ['Cloudflare', 3],
     ['Cache adapters', 4],
     ['Cookbook', 5],
