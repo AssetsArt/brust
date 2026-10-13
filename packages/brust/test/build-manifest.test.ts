@@ -26,6 +26,9 @@ afterAll(() => {
 const clone = <T>(v: T): T => structuredClone(v)
 const unhash = (m: unknown) => JSON.parse(JSON.stringify(m).replace(/-[0-9a-f]{10}\.js/g, '-<hash>.js'))
 
+/** The `modulepreload` hrefs of a page, as `client/<file>`, in order. */
+const preloads = (html: string) => [...html.matchAll(/<link rel="modulepreload" href="\/_brust\/([^"]+)">/g)].map((m) => m[1]!)
+
 /** Boots `distDir` through the real server (`Manifest::load`) with one in-process worker running
  * the real handlers over the built `jobs.js`, the app's routes and the manifest. */
 async function serve(appDir: string) {
@@ -98,6 +101,9 @@ test('the generated dist passes Manifest::load and renders through the real hand
   // L33: the page links the core, then exactly the feature modules its components need (the layout binds basics only).
   expect(homeHtml).toMatch(/runtime-[0-9a-f]{10}\.js"><\/script><script type="module" src="\/_brust\/client\/rt-basics-[0-9a-f]{10}\.js"/)
   expect(homeHtml).not.toMatch(/rt-(for|if|model|html|island)-/)
+  // ... and preloads exactly those (core + basics), in the head, before the first module script.
+  expect(preloads(homeHtml)).toEqual([expect.stringMatching(/^client\/runtime-[0-9a-f]{10}\.js$/), expect.stringMatching(/^client\/rt-basics-[0-9a-f]{10}\.js$/)])
+  expect(homeHtml.indexOf('rel="modulepreload"')).toBeLessThan(homeHtml.indexOf('<script type="module"'))
   expect(JSON.parse(cacheStats()).loader_calls).toBe(0)
 
   const res = await fetch(`${base}/items/x`)
@@ -114,6 +120,7 @@ test('the generated dist passes Manifest::load and renders through the real hand
   expect(html).toContain('<h3>crew</h3>')
   expect(html).toContain('/_brust/client/runtime-')
   expect(html).toMatch(/client\/rt-island-[0-9a-f]{10}\.js/) // an island page links the hydration glue
+  expect(preloads(html).map((f) => f.replace(/-[0-9a-f]{10}\.js$/, ''))).toEqual(['client/runtime', 'client/rt-basics', 'client/rt-island']) // exactly what it uses
   expect(html).toContain('/_brust/client/react-team_db295766-')
   const chunk = /\/_brust\/(client\/react-team_[^"]+\.js)/.exec(html)![1]! // ItemPage is static (F70): the island's chunk is the page's one client file
   const js = await fetch(`${base}/_brust/${chunk}`)

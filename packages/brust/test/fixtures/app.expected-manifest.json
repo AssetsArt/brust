@@ -191,7 +191,8 @@
       "for": "client/rt-for-<hash>.js",
       "model": "client/rt-model-<hash>.js",
       "html": "client/rt-html-<hash>.js",
-      "island": "client/rt-island-<hash>.js"
+      "island": "client/rt-island-<hash>.js",
+      "store": "client/rt-store-<hash>.js"
     }
   },
   "jobs_module": "jobs.js",

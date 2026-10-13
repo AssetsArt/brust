@@ -334,7 +334,8 @@ pub fn inject_assets_into(html: &mut String, chain: &[String], m: &Manifest) {
 /// `react` + each react chunk, preceded by one `data-brust-store` tag per store in `store`
 /// (the ctx `__store` map, sorted by name: `MapInner` is a BTreeMap), immediately before the
 /// runtime tag, so the snapshot is in the DOM before `mount()` and before any island hydrates.
-/// No tags at all when every component in the chain (and its children) is `static` (R4).
+/// L33: a `modulepreload` link per runtime file the page uses goes into the head (see below). No tags at all when every
+/// component in the chain (and its children) is `static` (R4).
 /// Inserted before the last `</body>`, else appended — in place.
 pub fn inject_page_assets_into(
     html: &mut String,
@@ -926,33 +927,75 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../brust-server/tests/fixtures/dist");
         let mut m = crate::manifest::Manifest::load(&dir).unwrap().manifest;
-        for f in ["basics", "for", "island"] {
+        for f in ["basics", "for", "island", "store"] {
             m.assets
                 .features
                 .insert(f.into(), format!("client/rt-{f}-0123456789.js"));
         }
         let chain = m.routes[1].chain.clone();
-        // No component asks for a feature: the core and the chunks only.
+        let preloads = |out: &str| out.matches("rel=\"modulepreload\"").count();
+        // No component asks for a feature: the core is preloaded and linked, nothing else of the rt-* family.
         let bare = inject_assets(String::new(), &chain, &m);
         assert!(!bare.contains("rt-"), "{bare}");
-        // One component asks for basics: its module is linked once, after the core and before the chunks.
+        assert_eq!(preloads(&bare), 1, "{bare}");
+        // One component asks for basics and the store: basics is preloaded and linked once (after the core,
+        // before the chunks); the store module is preloaded only (the chunks that use it import it).
         let id = chain
             .iter()
             .find(|c| m.components[c.as_str()].tier != Tier::Static)
             .unwrap()
             .clone();
-        m.components.get_mut(&id).unwrap().features = vec!["basics".into()];
-        let out = inject_assets(String::new(), &chain, &m);
-        assert_eq!(out.matches("rt-basics-0123456789.js").count(), 1, "{out}");
+        m.components.get_mut(&id).unwrap().features = vec!["basics".into(), "store".into()];
+        let out = inject_assets("<html><head></head><body></body></html>".into(), &chain, &m);
+        assert_eq!(out.matches("rt-basics-0123456789.js").count(), 2, "{out}"); // preload + script
+        assert_eq!(out.matches("rt-store-0123456789.js").count(), 1, "{out}"); // preload only
         assert!(
             !out.contains("rt-for-") && !out.contains("rt-island-"),
             "{out}"
         );
+        assert_eq!(preloads(&out), 3, "{out}"); // core, basics, store
+        assert!(
+            out.contains(&format!(
+                "<link rel=\"modulepreload\" href=\"/_brust/{}\">",
+                m.assets.runtime
+            )),
+            "{out}"
+        );
+        // The links sit in the head, before the first module script.
         let at = |needle: &str| out.find(needle).unwrap();
-        assert!(at(&m.assets.runtime) < at("rt-basics-"), "{out}");
+        assert!(
+            at("modulepreload") > at("<head>") && at("modulepreload") < at("</head>"),
+            "{out}"
+        );
+        assert!(
+            at("rel=\"modulepreload\"") < at("<script type=\"module\""),
+            "{out}"
+        );
+        let script = |f: &str| format!("<script type=\"module\" src=\"/_brust/{f}\">");
+        assert!(
+            at(&script(&m.assets.runtime)) < at(&script("client/rt-basics-0123456789.js")),
+            "{out}"
+        );
         if let Some(chunk) = &m.components[&id].client {
-            assert!(at("rt-basics-") < at(chunk.as_str()), "{out}");
+            assert!(
+                at(&script("client/rt-basics-0123456789.js")) < at(&script(chunk)),
+                "{out}"
+            );
         }
+    }
+
+    #[test]
+    fn preload_links_follow_the_route_stylesheets_in_the_head() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../brust-server/tests/fixtures/dist");
+        let m = crate::manifest::Manifest::load(&dir).unwrap().manifest;
+        let chain = m.routes[1].chain.clone();
+        let mut html = "<html><head><title>t</title></head><body></body></html>".to_string();
+        inject_css_into(&mut html, &["client/a-0123456789.css".to_string()]);
+        inject_assets_into(&mut html, &chain, &m);
+        let css = html.find("data-brust-css").unwrap();
+        let pre = html.find("modulepreload").unwrap();
+        assert!(css < pre && pre < html.find("<title>").unwrap(), "{html}");
     }
 
     // ---- L14: dev markers and the doctype ----
