@@ -49,6 +49,8 @@ export interface RouteRecord {
   loaders: string[]
   cache: { ttl_seconds: number; prefix: string | null; bypass: true | string | null; tags: string[] } | null
   catch_all: boolean
+  /** L19 (R19.3): `client/<file>.css` in cascade order; absent when the route has none. */
+  css?: string[]
 }
 
 /** `manifest.actions` (A3): `entry` is relative to dist; `maxBodyBytes`/`maxResponseBytes` are camelCase by contract. */

@@ -14,6 +14,7 @@ import { type CacheNeed, mergeWrangler, readUserWrangler, renderWrangler, type U
 import { type CloudflareBuildConfig, CF_MIN_COMPAT_DATE } from './config'
 import { PRODUCTION, type SourceOf, sourceDirPlugin } from './bundle'
 import type { Compiled } from './compile'
+import { cssPlugin } from './css'
 import { BuildError } from './errors'
 import type { CacheRecord } from './manifest'
 import { BUILTINS as CACHE_BUILTINS } from '../cache-adapter/load'
@@ -80,6 +81,8 @@ export interface CfBuildCtx {
   cacheModule?: string | null
   /** `[cache] get_timeout_ms` as written (absent → the Workers default, 100). */
   cacheGetTimeoutMs?: number
+  /** L19: CSS Module class maps (the worker reads the same map as the browser). */
+  cssMaps?: Map<string, Record<string, string>>
   log: (s: string) => void
 }
 
@@ -269,7 +272,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     define: PRODUCTION,
     minify: false,
     external: ['node:*', 'cloudflare:*', glueSpec],
-    plugins: [cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'])],
+    plugins: [cssPlugin(ctx.cssMaps ?? new Map()), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'])],
   })
   if (violations.length > 0) throw new BuildError('cf-unsupported', `${[...new Set(violations)].join('\n')}\nthese modules do not exist on Cloudflare Workers; swap them with [cloudflare] alias`)
   if (!res.success) throw new BuildError('bundle', `cloudflare: ${res.logs.map(String).join('\n')}`)

@@ -31,7 +31,9 @@ use crate::manifest::{
 };
 use crate::plan::{Lookup, PlanRow, PlanSeed, PlanSrc, PlannedCall};
 use crate::protocol::{JobCall, JobResult, JobsRequest, LoaderRequest, LoaderResponse, Verdict};
-use crate::render::{Overlay, RenderError, Renderer, inject_document_assets_into, use_ids};
+use crate::render::{
+    Overlay, RenderError, Renderer, inject_css_into, inject_document_assets_into, use_ids,
+};
 use crate::routing::routes::{Search, decode_search};
 use crate::static_rules::{IMMUTABLE, asset_lookup_key, is_hashed, safe_rel};
 
@@ -814,6 +816,7 @@ fn render_document<H: Host>(
         ctx,
         &mut out,
     )?;
+    inject_css_into(&mut out, &route.css);
     inject_document_assets_into(
         &mut out,
         &route.chain,
