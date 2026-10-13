@@ -1,6 +1,6 @@
 # cache-redis-followups: PUBLISH inside the invalidation script (Mellow N1) + orphaned-page retry (N2)
 
-**RULED by lead Detoro 2026-10-12 (plan written by the lead from Mellow's REVIEW-PASS note dd437cba on `cache-redis`). Planned, NOT dispatched: runs after the m4cf → v2 PR merges. Tier: standard. Implementer TBD (Tiësto has the context). Reviewer Mellow.**
+**RULED by lead Detoro 2026-10-12 (plan written by the lead from Mellow's REVIEW-PASS note dd437cba on `cache-redis`). DISPATCHED 2026-10-13 (its gate, the m4cf → v2 merge, passed with alpha.3; it was left planned by oversight). Base: v2 at dispatch; `packages/cache-redis/src/adapter.ts:80-82` still PUBLISHes after the script and nothing counts orphans, so both findings stand. Tier: standard. Implementer TBD (Tiësto has the context). Reviewer Mellow.**
 
 owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: v2 (after the m4cf PR) · lane: cache-redis-followups · tier: standard · review: complex
 
