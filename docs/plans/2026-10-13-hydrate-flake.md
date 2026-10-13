@@ -1,4 +1,4 @@
-# hydrate-flake: `brust-island[data-hydrated="1"]` never appears on CI (F122)
+# L26 hydrate-flake: `brust-island[data-hydrated="1"]` never appears on CI (F122)
 
 owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · base: v2 @282335a · flow: lane → PR → CI → lead merges · ledger row: F122 (`docs/plans/m1a-followups.md`) · blackboard: `flakes:v2` entry #3
 
@@ -18,10 +18,10 @@ The test records console errors and page errors into `errors` but only asserts t
 
 ## Rulings
 
-- **R25.1 No blind timeout bump.** Raising the 15 s wait without a named cause is rejected at review. A longer wait is acceptable only as a consequence of a found cause (for example, a documented runner-load number), stated in the ledger row.
-- **R25.2 The next failure must explain itself.** Whatever the root cause turns out to be, the test's wait is wrapped so a timeout reports: the console errors and warnings collected so far, every `requestfailed` and every non-2xx response under `/_brust/`, the `data-hydrated` state and `data-id` of every `brust-island` on the page, and whether the react runtime chunk loaded. This stays in the test after the fix.
-- **R25.3 Fix at the source.** If the cause is in `packages/runtime-dom/src/island.ts` (scheduling via `whenIsland` / `idle` / `pending`), the server, or the build output, fix it there with a unit or integration test that reproduces the race deterministically. If the cause is the test harness (shared `browser` default context across tests, server reuse, the `raw.githubusercontent.com` route, leftover state from a previous page), fix the harness. A test-only fix must say in the ledger row why the runtime is not at fault.
-- **R25.4 Evidence of green.** The PR's CI must be green on two separate runs of `ci.yml` on the final head (dispatch the second with `gh workflow run ci.yml --ref <branch>`); cite both run ids in the ledger row. If local reproduction succeeds under load, say how (command and what load).
+- **R26.1 No blind timeout bump.** Raising the 15 s wait without a named cause is rejected at review. A longer wait is acceptable only as a consequence of a found cause (for example, a documented runner-load number), stated in the ledger row.
+- **R26.2 The next failure must explain itself.** Whatever the root cause turns out to be, the test's wait is wrapped so a timeout reports: the console errors and warnings collected so far, every `requestfailed` and every non-2xx response under `/_brust/`, the `data-hydrated` state and `data-id` of every `brust-island` on the page, and whether the react runtime chunk loaded. This stays in the test after the fix.
+- **R26.3 Fix at the source.** If the cause is in `packages/runtime-dom/src/island.ts` (scheduling via `whenIsland` / `idle` / `pending`), the server, or the build output, fix it there with a unit or integration test that reproduces the race deterministically. If the cause is the test harness (shared `browser` default context across tests, server reuse, the `raw.githubusercontent.com` route, leftover state from a previous page), fix the harness. A test-only fix must say in the ledger row why the runtime is not at fault.
+- **R26.4 Evidence of green.** The PR's CI must be green on two separate runs of `ci.yml` on the final head (dispatch the second with `gh workflow run ci.yml --ref <branch>`); cite both run ids in the ledger row. If local reproduction succeeds under load, say how (command and what load).
 
 ## Where to look first (leads, not conclusions)
 
@@ -33,7 +33,7 @@ The test records console errors and page errors into `errors` but only asserts t
 ## Acceptance
 
 - Root cause named in one sentence in the F122 ledger row, with the file and line.
-- The failing scenario is impossible after the fix, demonstrated by a test that failed before the fix (deterministic reproduction) or, if the race cannot be forced, by the diagnostic wrapper from R25.2 plus the two green runs from R25.4.
+- The failing scenario is impossible after the fix, demonstrated by a test that failed before the fix (deterministic reproduction) or, if the race cannot be forced, by the diagnostic wrapper from R26.2 plus the two green runs from R26.4.
 - `bun test --timeout 120000 tests/server/hydrate.chromium.test.ts` green locally after `cd packages/brust && bun run build:debug`.
 - Ledger row F122 filled (Where / Finding / fix / state `DONE <date> — plan hydrate-flake (lane …)`, PR number). The lane touches no other ledger row.
 - Blackboard `flakes:v2` entry #3 updated to point at the PR (the coordinator owns the key; post the PR number as a task note and it updates the entry).
