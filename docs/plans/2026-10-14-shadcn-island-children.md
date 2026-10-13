@@ -1,6 +1,8 @@
 # shadcn S1 — lane `island-children` (draft for the lead's ruling)
 
-Author: Guetta. Status: **DRAFT, no code, no lane until ruled.** Base: origin/main 824ce423. Numbers are from `docs/shadcn-coverage.md` at that commit (45 measured rows carry `fallback:island-children`, ranked #1). R-numbers continue after R34.20 (S1.3).
+owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Guetta · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F138e
+
+Author: Guetta. Status: **RULED 2026-10-14 (see §9); lane may start.** Base: origin/main 824ce423. Numbers are from `docs/shadcn-coverage.md` at that commit (45 measured rows carry `fallback:island-children`, ranked #1). R-numbers continue after R34.20 (S1.3).
 
 ## 1. What the diagnostic is today
 
@@ -80,3 +82,18 @@ Gates (targeted, as S1.1): cargo for the compiler crate; `packages/brust` typech
 - **Q2 Prop-path children in v1?** `{props.title}` / `{item.name}` inside the children. Recommended: no (v1 constant only), as a named follow-up.
 - **Q3 Size cap** 64 KB per instance, OK?
 - **Q4 Native parent with state.** Children are constant, so a native parent may keep state; children never read it (otherwise fail closed). Confirm this is wanted rather than refusing in native parents.
+
+## 9. Lead ruling (2026-10-14)
+
+The design in §3 is accepted as written (JSON element tree in `literals["children"]`, one shared revive, registry through the S1.1 binding rule; the HTML-slot alternative stays rejected on R34.3). Rulings on §8:
+
+- **Q1 Order: island-children first.** The Radix compounds (~30 of the 45 rows) need children inside the React tree whatever the leaf lanes do, so this lane is required, not optional. The next lane is **local-component / `asChild` (Slot)**, not member-tag: it makes the real shadcn `Button`/`Badge` static, which is also what the S1.3 R34.20 proof is waiting on. member-tag follows.
+- **Q2 Prop-path children: out of v1.** Constant trees only; the follow-up is an F-row (R34.27).
+- **Q3 Size cap: 64 KB of JSON per island instance**, fixed (no option). The PR reports the largest measured tree per row so the cap can be revisited with data; the F-row carries that.
+- **Q4 Native parent with state: allowed.** The children never read the parent's state; any read, handler or store access inside the children fails closed per R34.23.
+
+Additional rulings:
+
+- **R34.26(c) tightened:** `dangerouslySetInnerHTML` inside lowered children **fails closed** in v1 (`island-children`, own message and battery row), instead of a second copy of the `html_raw` rule. Fewer raw sinks.
+- **Hydration roots:** the 1 → N roots change (button page 1 → 9) is accepted for this lane; the PR reports main-thread time before/after on two rows (button, dialog) from the existing Chromium harness. It is not a gate.
+- **Scoreboard honesty (R34.27):** the PR names flipped rows and the rows that do not flip, and states plainly that client JS is flat in this lane.
