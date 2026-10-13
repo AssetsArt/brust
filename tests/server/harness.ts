@@ -20,9 +20,11 @@ export async function startPokedex(opts: { build?: boolean; db?: string } = {}) 
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
   let out = ''
-  while (!/\[brust\] ready/.test(out)) {
+  // `[brust] listening on` (Rust) and `[brust] ready` (JS) are printed by two threads that both wake on the workers'
+  // registration: either can come first (F128), so wait for both. A boot that dies reports everything it printed.
+  while (!/\[brust\] ready/.test(out) || !/listening on (\S+)/.test(out)) {
     const { done, value } = await reader.read()
-    if (done) throw new Error(`brust start exited before ready:\n${out}`)
+    if (done) throw new Error(`brust start exited before 'listening on' and 'ready' (pid ${proc.pid}); output so far:\n${out}`)
     out += dec.decode(value, { stream: true })
   }
   const base = `http://${/listening on (\S+)/.exec(out)![1]}`

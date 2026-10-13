@@ -8,7 +8,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use tokio::sync::Notify;
@@ -83,6 +83,8 @@ pub struct Server {
     pub(crate) drain_done: Arc<Notify>,
     pub(crate) drain_timeout_ms: AtomicU64,
     pub(crate) local_addr: OnceLock<SocketAddr>,
+    /// Set once the `[brust] listening on` line is printed and flushed (the accept loop starts right after).
+    pub(crate) announced: AtomicBool,
     pub(crate) tls: Option<TlsConfig>,
 }
 
@@ -96,6 +98,12 @@ impl Server {
             self.ready.notify_one();
         }
         id
+    }
+
+    /// True once the `[brust] listening on` line is out. The server thread prints it after the workers registered, so a caller
+    /// that wakes on the same registrations (`untilReady`) must wait for this before printing its own `ready` (F128).
+    pub fn announced(&self) -> bool {
+        self.announced.load(Ordering::SeqCst)
     }
 
     /// The bound address (port 0 resolves here).
