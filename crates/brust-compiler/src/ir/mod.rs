@@ -234,9 +234,6 @@ pub struct ComponentIR {
     /// chunk and the job re-emit the ones they reach); not serialized.
     #[serde(skip)]
     pub module_decls: Vec<ModuleDecl>,
-    /// Import bindings the module assigns to, mutates or hands to a call (R1.1); not serialized.
-    #[serde(skip)]
-    pub mutated_imports: std::collections::BTreeSet<String>,
     /// The structural IR (every value still `Raw`) as the passes received it.
     /// Placement only rewrites expressions, so lowering walks this in lockstep
     /// with the placed template to print client code from the original
@@ -262,8 +259,7 @@ pub struct ModuleDecl {
 pub struct ConstVal {
     pub name: String,
     pub value: RawExpr,
-    /// The binding (or an alias of it) is assigned to, mutated through a method,
-    /// or handed to a call: an array or object must not fold (R1.1).
+    /// The binding has a use that is not a proven read (R1.1a): an array or object must not fold.
     pub mutated: bool,
 }
 
@@ -305,7 +301,6 @@ impl ComponentIR {
             stores: vec![],
             diagnostics: vec![],
             module_scope: vec![],
-            mutated_imports: Default::default(),
             module_decls: vec![],
             structural: None,
         }

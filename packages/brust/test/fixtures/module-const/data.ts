@@ -1,5 +1,3 @@
 export const TITLE = 'Folded rows'
-export const ROWS = [
-  { id: 1, name: 'one' },
-  { id: 2, name: 'two' },
-]
+// An imported array never folds (R1.1b): another importer could mutate it.
+export const ROWS = [{ id: 9, name: 'nine' }]

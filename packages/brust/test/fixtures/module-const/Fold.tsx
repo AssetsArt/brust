@@ -1,5 +1,10 @@
 // L1 G10: Page → Panel → List, rows from a module const (and a relatively imported one).
-import { ROWS, TITLE } from './data'
+import { TITLE } from './data'
+
+const ROWS = [
+  { id: 1, name: 'one' },
+  { id: 2, name: 'two' },
+]
 
 function List({ rows }: { rows: { id: number; name: string }[] }) {
   return (

@@ -8,3 +8,4 @@ pub mod modules;
 pub mod names;
 pub mod passes;
 pub mod stores;
+pub mod use_scan;

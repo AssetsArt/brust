@@ -10,7 +10,7 @@
 use super::PassState;
 use super::deps::{Deps, minimal_paths};
 use super::server_expr::try_server;
-use crate::analyze::const_fold::{Folder, imported_const, map_idents, primitive};
+use crate::analyze::const_fold::{Folder, imported_const, map_idents};
 use crate::ir::{
     Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobDecl, JobKind, Node, RawExpr, RawKind,
 };
@@ -115,7 +115,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
             || ir.refs.iter().any(|r| r.name == n)
             || handler_names.contains(n)
     };
-    let consts = Folder::new(&ir.module_decls, &shadowed, &imported, &ir.mutated_imports).all();
+    let consts = Folder::new(&ir.module_decls, &shadowed, &imported).all();
     // Import bindings read straight from the template or a state initializer fold too.
     let imported_vals: std::cell::RefCell<HashMap<String, RawExpr>> = Default::default();
     let note = |e: &RawExpr| {
@@ -130,7 +130,6 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
             } = &id.kind
                 && !shadowed(name)
                 && let Some(v) = imported(source, imp)
-                && (!ir.mutated_imports.contains(name) || primitive(&v))
                 && crate::analyze::const_fold::FOLD_MAX_JINJA
                     >= crate::lower::server_expr::to_jinja(
                         &crate::ir::ServerExpr(v.clone()),

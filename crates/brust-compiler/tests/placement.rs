@@ -222,15 +222,31 @@ fn mutated_array_const_stays_a_slot_but_a_primitive_folds() {
         "const A = [1]\nA[0] = 9",
         "const A = [1]\nconst B = A\nB.sort()",
         "const A = [1]\nfunction touch(x: number[]) { x.length = 0 }\ntouch(A)",
+        // R1.1a: element aliases and literal containers
+        "const A = [{ v: 1 }]\nfor (const x of A) x.v = 2",
+        "const A = [{ v: 1 }]\nA.forEach((x) => { x.v = 2 })",
+        "const A = [{ v: 1 }]\nconst BOX = { items: A }\nBOX.items.push({ v: 2 })",
+        "const A = [{ v: 1 }]\nconst B = [A]\nB[0].push({ v: 2 })",
+        "const A = [{ v: 1 }]\nA.map((x) => { x.v = 2; return x })",
+        "const A = [{ v: 1 }]\nA.find((x) => x.v === 1)!.v = 3",
+        "const A = [{ v: 1 }]\nconst first = A[0]\nfirst.v = 4",
+        "const A = [{ v: 1 }]\nObject.values(A)[0].v = 5",
+        "const A = [{ v: 1 }]\nfunction f() { return A }\nf().push({ v: 2 })",
     ] {
         let ir = module_const(head, "return <p>{A.length}</p>");
         assert!(ir.needs_worker, "{head}: must stay a job");
     }
-    let ir = module_const(
-        "const A = [1]\nconsole.log(A.length)",
-        "return <p>{A.length}</p>",
-    );
+    let ir = module_const("const A = [1]\nconsole.log(A)", "return <p>{A.length}</p>");
     assert!(ir.needs_worker, "an array handed to a call stays a job");
+    // Proven read-only uses keep the fold.
+    for head in [
+        "const A = [{ v: 1 }]\nconst n = A.filter((x) => x.v > 0).length",
+        "const A = [{ v: 1 }]\nconst s = [...A]\nconst k = Object.keys(A)",
+        "const A = [{ v: 1 }]\nA.some((x) => x.v === 1)",
+    ] {
+        let ir = module_const(head, "return <p>{A.length}</p>");
+        assert!(!ir.needs_worker, "{head}: read-only uses still fold");
+    }
     let ir = module_const("const N = 4\nconsole.log(N)", "return <p>{N}</p>");
     assert!(
         !ir.needs_worker,

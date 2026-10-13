@@ -53,96 +53,13 @@
               {
                 "For": {
                   "source": {
-                    "Server": {
-                      "loc": 80,
-                      "kind": {
-                        "Array": [
-                          {
-                            "loc": 84,
-                            "kind": {
-                              "Object": [
-                                [
-                                  "id",
-                                  {
-                                    "loc": 90,
-                                    "kind": {
-                                      "Lit": {
-                                        "Str": "a"
-                                      }
-                                    }
-                                  }
-                                ],
-                                [
-                                  "name",
-                                  {
-                                    "loc": 101,
-                                    "kind": {
-                                      "Template": {
-                                        "head": "",
-                                        "parts": [
-                                          [
-                                            {
-                                              "loc": 15,
-                                              "kind": {
-                                                "Lit": {
-                                                  "Str": "row"
-                                                }
-                                              }
-                                            },
-                                            "-a"
-                                          ]
-                                        ]
-                                      }
-                                    }
-                                  }
-                                ]
-                              ]
-                            }
-                          },
-                          {
-                            "loc": 120,
-                            "kind": {
-                              "Object": [
-                                [
-                                  "id",
-                                  {
-                                    "loc": 126,
-                                    "kind": {
-                                      "Lit": {
-                                        "Str": "b"
-                                      }
-                                    }
-                                  }
-                                ],
-                                [
-                                  "name",
-                                  {
-                                    "loc": 137,
-                                    "kind": {
-                                      "Template": {
-                                        "head": "",
-                                        "parts": [
-                                          [
-                                            {
-                                              "loc": 15,
-                                              "kind": {
-                                                "Lit": {
-                                                  "Str": "row"
-                                                }
-                                              }
-                                            },
-                                            "-b"
-                                          ]
-                                        ]
-                                      }
-                                    }
-                                  }
-                                ]
-                              ]
-                            }
-                          }
-                        ]
-                      }
+                    "Precomputed": {
+                      "slot": "_s1",
+                      "js": "ROWS",
+                      "client_js": null,
+                      "inputs": [],
+                      "state_dependent": false,
+                      "per_item": null
                     }
                   },
                   "item": "r",
@@ -240,12 +157,21 @@
       "ref_name": null
     }
   },
-  "jobs": [],
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [],
+      "outputs": [
+        "_s1"
+      ],
+      "per_item": null
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
   "client_module_locals": [],
-  "needs_worker": false,
+  "needs_worker": true,
   "cache": null,
   "children": [],
   "diagnostics": []

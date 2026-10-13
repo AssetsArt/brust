@@ -1,0 +1,103 @@
+{
+  "id": "input_db0f5c57",
+  "source": "tests/fixtures/module-const-mutated-forof/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 129,
+      "tag": "ul",
+      "attrs": [],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Precomputed": {
+                "slot": "_s1",
+                "js": "ITEMS",
+                "client_js": null,
+                "inputs": [],
+                "state_dependent": false,
+                "per_item": null
+              }
+            },
+            "item": "it",
+            "index": null,
+            "key": {
+              "Server": {
+                "loc": 178,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 178,
+                      "kind": {
+                        "Ident": {
+                          "name": "it",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "id",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Element": {
+                  "loc": 169,
+                  "tag": "li",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Precomputed": {
+                          "slot": "_s2",
+                          "js": "String(it.done)",
+                          "client_js": null,
+                          "inputs": [],
+                          "state_dependent": false,
+                          "per_item": "it"
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": "Precompute",
+      "inputs": [],
+      "outputs": [
+        "_s1",
+        "_s2"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

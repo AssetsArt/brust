@@ -12,7 +12,7 @@ use bun_ast as js_ast;
 use js_ast::b::B;
 use js_ast::expr::Data as E;
 use js_ast::stmt::Data as S;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 /// Deepest chain of module consts one fold follows.
 pub const FOLD_DEPTH: usize = 16;
@@ -103,8 +103,6 @@ pub struct Folder<'a> {
     /// Names shadowed by something in a component body.
     excluded: &'a dyn Fn(&str) -> bool,
     imported: ImportedConst<'a>,
-    /// Import bindings the module assigns to or mutates (R1.1).
-    mutated_imports: &'a BTreeSet<String>,
     /// Folded value and the length of the const chain behind it.
     done: HashMap<String, Option<(RawExpr, usize)>>,
     path: Vec<String>,
@@ -117,7 +115,6 @@ impl<'a> Folder<'a> {
         decls: &'a [ModuleDecl],
         excluded: &'a dyn Fn(&str) -> bool,
         imported: ImportedConst<'a>,
-        mutated_imports: &'a BTreeSet<String>,
     ) -> Self {
         Folder {
             all: decls
@@ -127,7 +124,6 @@ impl<'a> Folder<'a> {
                 .collect(),
             excluded,
             imported,
-            mutated_imports,
             done: HashMap::new(),
             path: Vec::new(),
             chain: 0,
@@ -187,8 +183,8 @@ impl<'a> Folder<'a> {
                 name,
                 kind: IdentKind::Import { source, imported },
             } => {
-                let v = (self.imported)(source, imported)?;
-                return (!self.mutated_imports.contains(name) || primitive(&v)).then_some(v);
+                let _ = name;
+                return (self.imported)(source, imported);
             }
             RawKind::Member {
                 target,
@@ -267,12 +263,13 @@ pub fn imported_const(
         let mut names = NameTable::new(ast, &dummy);
         let print = |js: Js<'_>| print_js(&parsed, ast, js);
         let mut reader = Reader::new(&mut names, &print);
-        let (_, decls, mutated_imports) = reader.module_scope(ast);
+        let (_, decls) = reader.module_scope(ast);
         let local = exported_const_name(ast, imported)?;
         let nested = |src: &str, imp: &str| imported_const(&path, src, imp, opts, depth + 1);
         let none = |_: &str| false;
-        let mut folder = Folder::new(&decls, &none, &nested, &mutated_imports);
-        folder.resolve(&local)
+        let mut folder = Folder::new(&decls, &none, &nested);
+        // R1.1b: another importer could mutate an array or object, so only primitives cross.
+        folder.resolve(&local).filter(primitive)
     })
 }
 

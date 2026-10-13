@@ -409,11 +409,15 @@ golden test; never by special-casing a backend.
 built only from literals, template literals, `!`/`-`, binary operators, ternaries, arrays,
 objects, member / literal-index reads and other folding consts (chain depth ≤ 16, cycle-safe)
 is substituted into the template, so `{LABEL}`, `{ITEMS.map(…)}` and `useState(START)` need no
-precompute job. Consts imported by a relative path (named or default) fold the same way; calls,
+precompute job. Consts imported by a relative path (named or default) fold only when primitive (another importer could mutate an array or object); calls,
 globals (`Date`, `process.env`), `new`, regex, functions, JSX, `let`/`var`, destructured consts and
 package imports do not (the value stays a precompute slot, as before). An array or object const
-folds only if it is never assigned to, mutated through a method (`push`, `sort`, `set`, …) or
-handed to a call anywhere in its module; a primitive always folds. A folded value that prints to
+folds only if every use in its module is a proven read: member / index reads, non-mutating array
+methods (`map`, `filter`, `find`, `some`, `every`, `includes`, `indexOf`, `join`, `slice`, `concat`, `at`)
+with callbacks that write nothing reachable from their parameters, `Object.keys` / `entries` / `values`,
+spread into a new literal, a `useState` argument, JSX or template reads. Any other use (a `for-of`
+source, a declaration or assignment, a return, an element of another literal, any other call) keeps it a
+job; a primitive always folds. A folded value that prints to
 more than 8 KiB of Jinja per use stays a slot. `NaN` / `Infinity` print as React prints them.
 The client chunk is unchanged: it still reads the const.
 
