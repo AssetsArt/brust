@@ -12,13 +12,18 @@ on:
 concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
+# sccache cannot cache incremental builds (workspace and path crates would always miss), so incremental is off for every job.
+env:
+  CARGO_INCREMENTAL: "0"
 jobs:
   rust:
     runs-on: ubuntu-latest
+    env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: nightly-2026-09-15, components: "rust-src, rustfmt, clippy" }
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "canary" }
       - uses: actions/cache@v4
@@ -26,11 +31,9 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: cargo-${{ runner.os }}-
+          key: cargo-reg-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-reg-${{ runner.os }}-
       - run: cargo fmt --all -- --check
-      - run: cargo build --workspace
       # Invariant: the vendored path crate shadows the git one (only root lines are checked; bun_js_parser legitimately depends on it).
       - run: cargo tree -p brust-compiler -i bun_react_compiler | tee tree.txt && grep -q "^bun_react_compiler .*vendor/bun_react_compiler" tree.txt && ! grep -q "^bun_react_compiler .*github.com" tree.txt
       # Invariant: brust-core stays host-agnostic (no tokio/hyper/moka/crossbeam/parking_lot in its normal deps).
@@ -51,27 +54,29 @@ jobs:
       # --exclude: the vendored crate's own lib-test cannot link (its native stubs live in brust-compiler).
       - run: cargo test --workspace --exclude bun_react_compiler
       - run: bun build --no-bundle scripts/bun-codegen.ts > /dev/null
+      - run: sccache --show-stats
+        if: always()
   # M4-CF: ONE blocking job for every Cloudflare test. Order: the release-shape wasm first (a release-leg break shows on every PR),
   # then workerd e2e (cf-min + pokedex on D1, tests/cf), the build-target unit tests, and the scaffold --target cloudflare case.
   # No Cloudflare credentials: `deploy --dry-run` only; the real-edge proof is local-only.
   # Making `cf` a required check is a human branch-protection setting.
   cf:
     runs-on: ubuntu-latest
+    needs: addon
     timeout-minutes: 45
+    env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: nightly-2026-09-15, components: "rust-src", targets: wasm32-unknown-unknown }
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            target
-          key: cargo-cf-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: |
-            cargo-cf-${{ runner.os }}-
-            cargo-${{ runner.os }}-
+          key: cargo-reg-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-reg-${{ runner.os }}-
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: oven-sh/setup-bun@v2
@@ -79,19 +84,26 @@ jobs:
       # worker-build's version has ONE source: npm/core-cf/package.json brust.workerBuild (core-cf-check --versions pins it to Cargo.toml).
       - id: wb
         run: echo "v=$(bun -e "console.log(require('./npm/core-cf/package.json').brust.workerBuild)")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - id: wbc
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/bin/worker-build
             ~/.cache/worker-build
           key: worker-build-${{ runner.os }}-${{ steps.wb.outputs.v }}
-      - run: worker-build --version 2>/dev/null | grep -qF "${{ steps.wb.outputs.v }}" || cargo install worker-build --version "${{ steps.wb.outputs.v }}" --locked --force
+      # Print what the cache gave us, so a miss is visible in the log; install only when the pinned version is not on PATH.
+      - run: |
+          echo "worker-build cache-hit=${{ steps.wbc.outputs.cache-hit }} have='$(worker-build --version 2>&1 | head -1)' want=${{ steps.wb.outputs.v }}"
+          worker-build --version 2>/dev/null | grep -qF "${{ steps.wb.outputs.v }}" || cargo install worker-build --version "${{ steps.wb.outputs.v }}" --locked --force
       - uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
           key: bun-cf-${{ runner.os }}-${{ hashFiles('bun.lock', 'tests/cf/tools.ts', 'packages/create-app/templates/blank/package.json.tmpl') }}
       - run: bun install --frozen-lockfile
-      - run: cd packages/brust && bun run build:debug
+      - uses: actions/download-artifact@v4
+        with: { name: addon-linux-x64, path: packages/brust/native }
+      # The artifact must add files only: the tracked native/.gitignore stays untouched, the tree stays clean.
+      - run: test -z "$(git status --porcelain)"
       # 1. the release-shape wasm (what release.yml build-core-cf runs) + its gate; the copy is the scaffold case's package source (R6).
       - run: |
           bun crates/brust-wasm/scripts/build.ts
@@ -104,6 +116,8 @@ jobs:
       - run: cd packages/brust && bun test test/cf-*.test.ts
       # 4. the scaffold case: blank from packed tarballs → `brust build --target cloudflare` (BRUST_CORE_CF_DIR unset in the app build) → wrangler deploy --dry-run.
       - run: cd packages/create-app && BRUST_CORE_CF_DIR="$RUNNER_TEMP/core-cf" bun test --timeout 600000 test/scaffold.test.ts -t cloudflare
+      - run: sccache --show-stats
+        if: always()
   runtime-dom:
     runs-on: ubuntu-latest
     steps:
@@ -117,10 +131,12 @@ jobs:
   # The battery and the browser harness drive the real `brustc` (built in the job).
   battery:
     runs-on: ubuntu-latest
+    env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "canary" }
       - uses: actions/cache@v4
@@ -128,21 +144,24 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: cargo-${{ runner.os }}-
+          key: cargo-reg-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-reg-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run battery
       # The reports are generated: a diff means the committed ones are stale.
       - run: git diff --exit-code docs/react-coverage.md docs/plans/m1-exit-report.md
       # Exit criteria checked by code (also re-runs dual evaluation and the browser cases).
       - run: bun test scripts/battery
+      - run: sccache --show-stats
+        if: always()
   browser:
     runs-on: ubuntu-latest
+    env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "canary" }
       - uses: actions/cache@v4
@@ -150,16 +169,43 @@ jobs:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: cargo-${{ runner.os }}-
+          key: cargo-reg-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-reg-${{ runner.os }}-
       - run: bun install --frozen-lockfile
       - run: bun run browser-test
+      - run: sccache --show-stats
+        if: always()
+  # ONE addon build per run (L27): server and cf download the artifact instead of compiling it again.
+  # All jobs run on ubuntu-latest, so the .node is portable between them.
+  addon:
+    runs-on: ubuntu-latest
+    env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: nightly-2026-09-15, components: "rust-src" }
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: "canary" }
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+          key: cargo-reg-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-reg-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: cd packages/brust && bun run build:debug
+      - uses: actions/upload-artifact@v4
+        with: { name: addon-linux-x64, path: packages/brust/native, retention-days: 1, if-no-files-found: error }
+      - run: sccache --show-stats
+        if: always()
   # @brust/core: the napi addon (built with `napi build` on this runner), the package's unit
   # tests and the end-to-end run of the real CLI (build the fixture app, start it, assert from the
-  # outside). A cold addon build compiles the Bun crates (~10+ min): the cargo cache is shared.
+  # outside). The addon itself comes from the `addon` job (artifact); this job compiles no Rust.
   server:
     runs-on: ubuntu-latest
+    needs: addon
     timeout-minutes: 60
     # cache-redis: the adapter's suites run against real servers; REQUIRED makes a missing URL a failure, not a skip.
     services:
@@ -174,21 +220,13 @@ jobs:
     env: { BRUST_REDIS_URL: "redis://127.0.0.1:6379", BRUST_DRAGONFLY_URL: "redis://127.0.0.1:6380", BRUST_REDIS_REQUIRED: "1" }
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with: { toolchain: nightly-2026-09-15, components: "rust-src, clippy" }
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "canary" }
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/git
-            ~/.cargo/registry
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: cargo-${{ runner.os }}-
       - run: bun install --frozen-lockfile
-      - run: cargo clippy -p brust-napi --no-deps -- -D warnings && cargo test -p brust-napi
-      - run: cd packages/brust && bun run build:debug
+      - uses: actions/download-artifact@v4
+        with: { name: addon-linux-x64, path: packages/brust/native }
+      # The artifact must add files only: the tracked native/.gitignore stays untouched, the tree stays clean.
+      - run: test -z "$(git status --porcelain)"
       - run: cd packages/brust && bun run typecheck
       # Unit files together; each server-starting file on its own (port/process hygiene).
       - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/store-server-context.test.ts test/worker-store.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-client.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/run-options.test.ts test/actions-bridge.test.ts test/cache-adapter-memory.test.ts test/cache-adapter-bridge.test.ts test/cache-adapter-runtime.test.ts test/build-config-cache.test.ts test/build-cache.test.ts test/ssg.test.ts test/dev-unit.test.ts test/config-l10.test.ts
