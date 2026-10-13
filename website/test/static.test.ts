@@ -97,6 +97,12 @@ test('served like Pages: every route 200 with its canonical and og:url, an unkno
   }
 })
 
+test('the first mention of Elysia on a page links to elysiajs.com in a new tab', () => {
+  const link = '<a href="https://elysiajs.com/" target="_blank" rel="noopener noreferrer">'
+  for (const f of ['index.html', 'docs/actions.html', 'docs/installation.html', 'docs/cloudflare/workers.html', 'docs/cookbook/form-action.html'])
+    expect([f, readFileSync(join(out, f), 'utf8').includes(link)]).toEqual([f, true])
+})
+
 test('every built page, the 404 included, links the hashed stylesheet exactly once and never /public/app.css (F130)', () => {
   const pages = [...ssg.pages.map((p) => p.file), ssg.notFound.file]
   const hashed = readdirSync(join(out, '_brust/client')).find((f) => /^app-[0-9a-f]{10}\.css$/.test(f))!
