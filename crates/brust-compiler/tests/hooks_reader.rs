@@ -242,7 +242,9 @@ fn destructured_props_keep_rename_and_default() {
         .iter()
         .filter(|d| d.rule == "prop-pattern")
         .collect();
-    assert_eq!(pattern.len(), 2, "{:?}", bad.diagnostics);
+    // Only the nested pattern: `...rest` is read (shadcn S1.2, R34.14).
+    assert_eq!(pattern.len(), 1, "{:?}", bad.diagnostics);
+    assert_eq!(bad.props_rest.as_deref(), Some("rest"));
     assert!(pattern.iter().all(|d| d.class == DiagClass::Fallback));
     assert_eq!(
         bad.props

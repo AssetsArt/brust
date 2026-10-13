@@ -172,6 +172,22 @@ fn components_fragments_events_refs_spread() {
             .iter()
             .any(|a| matches!(a, Attr::Event { event, .. } if event == "change"))
     );
+    // A spread of a props path is kept as that read (shadcn S1.2); no fallback.
+    assert!(attrs.iter().any(|a| matches!(
+        a,
+        Attr::Spread(Expr::Raw(RawExpr {
+            kind: RawKind::Ident { name, kind: IdentKind::Prop },
+            ..
+        })) if name == "rest"
+    )));
+    assert!(!d.iter().any(|x| x.rule == "spread-props"), "{d:?}");
+    // Anything else spread (a local object) is still a fallback, kept opaque.
+    let (n, d) = tpl(
+        "export default function T({ a }: any) { const o = { id: a }; return <input {...o} /> }",
+    );
+    let Node::Element { attrs, .. } = n else {
+        panic!("{n:?}")
+    };
     assert!(attrs.iter().any(|a| matches!(
         a,
         Attr::Spread(Expr::Raw(RawExpr {

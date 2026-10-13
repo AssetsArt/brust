@@ -224,8 +224,11 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
             MemberDef::Link { props, bindings } => {
                 let fields: Vec<String> = props
                     .iter()
-                    .filter(|(k, _)| k != "...")
                     .map(|(k, r)| {
+                        if k == crate::ir::SPREAD_KEY {
+                            // `<Child {...x} />` (shadcn S1.2): the props object spreads as in JS.
+                            return format!("...{}", spread_js(r, &f));
+                        }
                         let v = if super::common::is_function_raw(r)
                             || matches!(
                                 &r.kind,
@@ -379,3 +382,30 @@ fn event_handlers(n: &Node) -> Vec<String> {
 
 #[allow(dead_code)]
 fn _expr(_: &Expr) {}
+
+/// The chunk's value of a spread source: the whole props signal, the props minus the names the
+/// pattern binds (`...rest`), or a props path.
+fn spread_js(r: &RawExpr, f: &Facts<'_>) -> String {
+    match &r.kind {
+        crate::ir::RawKind::Ident {
+            name,
+            kind: crate::ir::IdentKind::Prop,
+        } if name == "*" => "props()".into(),
+        crate::ir::RawKind::Ident {
+            name,
+            kind: crate::ir::IdentKind::Prop,
+        } if name == crate::ir::REST_PROPS => {
+            let named: Vec<String> =
+                f.ir.props
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| format!("{}: _{i}", crate::ir::expr::js_string(&p.name)))
+                    .collect();
+            format!(
+                "(({{ {}...r }}) => r)(props())",
+                named.iter().map(|n| format!("{n}, ")).collect::<String>()
+            )
+        }
+        _ => format!("({})", client_js(r, f)),
+    }
+}

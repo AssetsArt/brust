@@ -18,6 +18,8 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug, Default)]
 pub struct BodyDecls {
     pub props: Vec<PropDecl>,
+    /// The local of a `...rest` in the props pattern (R34.14).
+    pub props_rest: Option<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -300,9 +302,10 @@ pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
 }
 
 /// The component's props: one per destructured property, or `props` for a
-/// plain parameter. TS type text is not recovered in M1b-1. Renames and
-/// defaults are read; nested patterns, `...rest`, computed keys and a default
-/// for the whole parameter are a `prop-pattern` fallback.
+/// plain parameter. TS type text is not recovered in M1b-1. Renames, defaults
+/// and a `...rest` binding (R34.14: `ir.props_rest`) are read; nested patterns,
+/// computed keys and a default for the whole parameter are a `prop-pattern`
+/// fallback.
 fn read_props(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, out: &mut BodyDecls) {
     let Some(arg) = func.args.slice().first() else {
         return;
@@ -333,7 +336,10 @@ fn read_props(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, out: &mut BodyDecls)
             for p in obj.properties() {
                 let ploc = loc_of(&p.key);
                 if p.flags.contains(js_ast::flags::Property::IsSpread) {
-                    pattern(out, ploc, "...rest");
+                    match p.value.data {
+                        B::BIdentifier(id) => out.props_rest = Some(r.names.name(id.r#ref)),
+                        _ => pattern(out, ploc, "a pattern after `...`"),
+                    }
                     continue;
                 }
                 let E::EString(key) = &p.key.data else {
