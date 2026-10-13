@@ -134,7 +134,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run battery
       # The reports are generated: a diff means the committed ones are stale.
-      - run: git diff --exit-code docs/react-coverage.md docs/plans/m1-exit-report.md
+      - run: git diff --exit-code docs/react-coverage.md docs/react-coverage.json docs/plans/m1-exit-report.md
       # Exit criteria checked by code (also re-runs dual evaluation and the browser cases).
       - run: bun test scripts/battery
   browser:

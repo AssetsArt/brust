@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 26 | 16 | 7 | 3 | 0 | 0 | 0 | 0 |
+| A JSX basics | 37 | 23 | 11 | 3 | 0 | 0 | 0 | 0 |
 | B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
-| C Hooks | 17 | 1 | 10 | 6 | 0 | 0 | 0 | 0 |
-| D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 24 | 4 | 10 | 5 | 4 | 1 | 0 | 0 |
-| **Total** | 84 | 27 | 30 | 22 | 4 | 1 | 0 | 0 |
+| C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
+| D API surface | 29 | 4 | 1 | 23 | 1 | 0 | 0 | 0 |
+| E v2 specifics | 27 | 7 | 10 | 5 | 4 | 1 | 0 | 0 |
+| **Total** | 135 | 41 | 37 | 51 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -52,6 +52,17 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-state-list-static-child | static child listing a state-fed prop (F96d) | native | native | 0 | ok | — | F96d: the linked child repaints its own list (x-for over props()) |
 | a-linked-child-prop-precompute | state-fed prop derived with a callback in a linked child (F96d) | react | react | ssr | ok | fallback:linked-prop-precompute | F96d fail-closed: a server-computed value over a prop the parent changes would freeze; fallback linked-prop-precompute |
 | a-spread-host | spread props on a host element (F31) | react | react | ssr | ok | fallback:spread-props | fallback spread-props until the template backend can expand a known-shape spread |
+| a-form-onsubmit | <form onSubmit> | native | native | 0 | ok | — |  |
+| a-form-action | <form action={fn}> | react | static | precompute | ok | — | known gap: F115: a function action becomes a precompute value that the url_ok guard drops, so the form renders without an action and submits nowhere; it should fall back to react |
+| a-input-controlled | controlled <input> | native | native | 0 | ok | — |  |
+| a-input-static | <input> with a default value | static | static | 0 | ok | — |  |
+| a-select-controlled | controlled <select> | native | native | 0 | ok | — |  |
+| a-textarea-controlled | controlled <textarea> | native | native | 0 | ok | — |  |
+| a-title | <title> in a component body | static | static | 0 | ok | — |  |
+| a-meta | <meta> in a component body | static | static | 0 | ok | — |  |
+| a-link | <link rel=stylesheet> in a component body | static | static | 0 | ok | — |  |
+| a-style | <style> element | static | static | 0 | ok | — |  |
+| a-script-async | <script async src> | static | static | 0 | ok | — |  |
 
 ## B. Composition
 
@@ -91,6 +102,19 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-usesyncexternalstore | useSyncExternalStore | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-use-hook | use(promise) | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usestate-load | useState(load) with a module function (F26) | native | native | precompute | ok | — | seeds the call, not the function |
+| c-useeffect-nocleanup | useEffect without cleanup | native | native | 0 | ok | — | spec §4.3 useEffect |
+| c-usestate-functional | useState with a functional update | native | native | 0 | ok | — | spec §4.3 useState (functional updates supported) |
+| c-useactionstate | useActionState | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-usedebugvalue | useDebugValue in a hook-using component | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-usedeferredvalue | useDeferredValue | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-useeffectevent | useEffectEvent | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-useimperativehandle | useImperativeHandle | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-useinsertioneffect | useInsertionEffect | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-useoptimistic | useOptimistic | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: any hook outside §4.3 |
+| c-usetransition-start | startTransition from the useTransition pair | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: startTransition is outside the supported set |
+| c-use-context | use(context) | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: use |
+| c-useformstatus | useFormStatus read in the component | react | react | ssr | ok | fallback:hook-unsupported | react-dom hook, outside the supported set |
+| c-useformstatus-child | useFormStatus in a child inside a static <form> | react | static | ssr | ok | — | known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react |
 
 ## D. API surface
 
@@ -101,6 +125,30 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | d-createcontext | createContext provider | react | react | ssr | ok | fallback:member-tag, warning:fragment-root |  |
 | d-clone-element | cloneElement | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-expression |  |
+| d-suspense-static | <Suspense> around static content | react | react | ssr | ok | fallback:external-component, fallback:island-children, fallback:jsx-expression, warning:fragment-root | spec §3 react tier: Suspense |
+| d-fragment-keyed | <Fragment key> inside a list | static | static | 0 | ok | — |  |
+| d-activity | <Activity mode> | react | react | ssr | ok | fallback:external-component, fallback:island-children, warning:fragment-root |  |
+| d-profiler | <Profiler onRender> | error | error | ssr | refused | error:island-prop, fallback:external-component, fallback:island-children, warning:fragment-root | a function prop to an external component is refused (island-prop) |
+| d-profiler-bare | <Profiler> without onRender | react | react | ssr | ok | fallback:external-component, fallback:island-children, warning:fragment-root |  |
+| d-strictmode | <StrictMode> | react | react | ssr | ok | fallback:external-component, fallback:island-children, warning:fragment-root |  |
+| d-viewtransition | <ViewTransition> | react | react | ssr | ok | fallback:external-component, fallback:island-children, warning:fragment-root |  |
+| d-act | act() in a component module | static | static | 0 | ok | — | a test helper: importing it changes nothing about the component |
+| d-addtransitiontype | addTransitionType inside startTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
+| d-cachesignal | cacheSignal() in a cached function | static | static | precompute | ok | — | spec §3.4 cache(): the call is a precompute job on the server |
+| d-captureownerstack | captureOwnerStack in a handler | react | react | ssr | ok | fallback:hook-unsupported |  |
+| d-taint-object | experimental_taintObjectReference | react | react | ssr | ok | fallback:hook-unsupported |  |
+| d-taint-unique | experimental_taintUniqueValue | react | react | ssr | ok | fallback:hook-unsupported |  |
+| d-lazy-component | lazy component without Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:local-component, warning:fragment-root |  |
+| d-memo-state | default export memo(function …) with state | react | react | ssr | ok | fallback:default-export-shape | fail-closed: an inline function inside the default export is the default-export-shape fallback (memo(Named) is b-memo) |
+| d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | fallback:member-tag, fallback:jsx-expression, warning:fragment-root |  |
+| d-createportal | createPortal | react | react | ssr | ok | fallback:browser-global, warning:fragment-root |  |
+| d-flushsync | flushSync in a handler | react | native | 0 | ok | — | known gap: F115: compiles native but the client chunk imports react-dom (a native chunk must contain no react import); it should fall back to react |
+| d-preconnect | preconnect in render | react | react | ssr | ok | fallback:body-shape |  |
+| d-prefetchdns | prefetchDNS in render | react | react | ssr | ok | fallback:body-shape |  |
+| d-preinit | preinit in render | react | react | ssr | ok | fallback:body-shape |  |
+| d-preinitmodule | preinitModule in render | react | react | ssr | ok | fallback:body-shape |  |
+| d-preload | preload in render | react | react | ssr | ok | fallback:body-shape |  |
+| d-preloadmodule | preloadModule in render | react | react | ssr | ok | fallback:body-shape |  |
 
 ## E. v2 specifics
 
@@ -130,3 +178,114 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-store-write-in-render | store write during render | react | react | ssr | ok | fallback:store-write-in-render | M3-F D7: fallback store-write-in-render |
 | e-store-computed-key | store computed key read | react | react | ssr | ok | fallback:store-key-unsupported | M3-F R1: fallback store-key-unsupported |
 | e-parse-error | snippet that does not parse | compile-error | compile-error | 0 | — | — | compile error: Syntax Error (input.tsx:1:43); reported as a row, never aborts the battery |
+| e-use-server | 'use server' function | react | static | precompute | ok | — | known gap: F115: the directive is ignored and the function becomes a precompute value the url_ok guard drops (a form with no action); actions are an Elysia app under [actions] |
+| e-server-component-async | async Server Component | react | static | precompute | ok | — | known gap: F115: an async component becomes a precompute job whose function is not async (`await` in a sync function: a broken job); it should fall back to react or refuse. Loaders and jobs are the server half |
+| e-server-function-prop | server function passed to a client component | react | static | precompute | ok | warning:fragment-root | known gap: F115: the function crosses as a precompute value into x-props (json null), so the child calls undefined at click time; it should refuse like e-function-prop-react-child. Use [actions] |
+
+## By React API
+
+Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `scripts/battery/react-api.ts`), each backed by at least one row above. Generated with `docs/react-coverage.json`.
+`native`: compiles to the native tier, no React shipped. `static`: no client code. `island`: works, rendered as a React island. `partial`: some shapes native/static, others island or refused. `unsupported`: a build error. `n/a`: no meaning in brust. Legacy APIs are out of scope.
+
+| Status | Entries |
+|---|---|
+| native | 11 |
+| static | 9 |
+| partial | 3 |
+| island | 30 |
+| unsupported | 0 |
+| n/a | 5 |
+| **Total** | 58 |
+
+### Hooks
+
+| Entry | Status | Rows | Note |
+|---|---|---|---|
+| [`useActionState`](https://react.dev/reference/react/useActionState) | island | c-useactionstate | spec §3 react tier: any hook outside §4.3 |
+| [`useCallback`](https://react.dev/reference/react/useCallback) | native | c-usecallback | spec §4.3 useCallback |
+| [`useContext`](https://react.dev/reference/react/useContext) | island | c-usecontext | useContext |
+| [`useDebugValue`](https://react.dev/reference/react/useDebugValue) | island | c-usedebugvalue | spec §3 react tier: any hook outside §4.3 |
+| [`useDeferredValue`](https://react.dev/reference/react/useDeferredValue) | island | c-usedeferredvalue | spec §3 react tier: any hook outside §4.3 |
+| [`useEffect`](https://react.dev/reference/react/useEffect) | native | c-useeffect-cleanup, c-useeffect-missing-dep, c-useeffect-nocleanup | spec §8.1 effect-deps: the deps array is complete, so no warning (F41) |
+| [`useEffectEvent`](https://react.dev/reference/react/useEffectEvent) | island | c-useeffectevent | spec §3 react tier: any hook outside §4.3 |
+| [`useId`](https://react.dev/reference/react/useId) | static | c-useid | spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static |
+| [`useImperativeHandle`](https://react.dev/reference/react/useImperativeHandle) | island | c-useimperativehandle | spec §3 react tier: any hook outside §4.3 |
+| [`useInsertionEffect`](https://react.dev/reference/react/useInsertionEffect) | island | c-useinsertioneffect | spec §3 react tier: any hook outside §4.3 |
+| [`useLayoutEffect`](https://react.dev/reference/react/useLayoutEffect) | native | c-uselayouteffect | spec §4.3 useLayoutEffect |
+| [`useMemo`](https://react.dev/reference/react/useMemo) | native | c-usememo | spec §4.3 useMemo |
+| [`useOptimistic`](https://react.dev/reference/react/useOptimistic) | island | c-useoptimistic | spec §3 react tier: any hook outside §4.3 |
+| [`useReducer`](https://react.dev/reference/react/useReducer) | island | c-usereducer | useReducer |
+| [`useRef`](https://react.dev/reference/react/useRef) | native | c-useref | spec §4.3 useRef |
+| [`useState`](https://react.dev/reference/react/useState) | native | c-usestate, c-usestate-functional | spec §4.3 useState |
+| [`useSyncExternalStore`](https://react.dev/reference/react/useSyncExternalStore) | island | c-usesyncexternalstore | useSyncExternalStore |
+| [`useTransition`](https://react.dev/reference/react/useTransition) | island | c-usetransition, c-usetransition-start | spec §3 react tier: startTransition is outside the supported set |
+
+### Components
+
+| Entry | Status | Rows | Note |
+|---|---|---|---|
+| [`<Activity>`](https://react.dev/reference/react/Activity) | island | d-activity | <Activity mode> |
+| [`<Fragment>`](https://react.dev/reference/react/Fragment) | static | a-fragment, d-fragment-keyed | warning fragment-root: wrapped in <brust-host> |
+| [`<Profiler>`](https://react.dev/reference/react/Profiler) | partial | d-profiler, d-profiler-bare | island: d-profiler-bare; refused: d-profiler |
+| [`<StrictMode>`](https://react.dev/reference/react/StrictMode) | island | d-strictmode | <StrictMode> |
+| [`<Suspense>`](https://react.dev/reference/react/Suspense) | island | d-lazy-suspense, d-suspense-static | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
+| [`<ViewTransition>`](https://react.dev/reference/react/ViewTransition) | island | d-viewtransition | <ViewTransition> |
+
+### APIs
+
+| Entry | Status | Rows | Note |
+|---|---|---|---|
+| [`act`](https://react.dev/reference/react/act) | n/a | d-act | A test helper; it has no runtime meaning in a brust page. Importing it changes nothing about a component. |
+| [`addTransitionType`](https://react.dev/reference/react/addTransitionType) | island | d-addtransitiontype | addTransitionType inside startTransition |
+| [`cache`](https://react.dev/reference/react/cache) | static | d-cache | spec §3.4 cache() |
+| [`cacheSignal`](https://react.dev/reference/react/cacheSignal) | static | d-cachesignal | spec §3.4 cache(): the call is a precompute job on the server |
+| [`captureOwnerStack`](https://react.dev/reference/react/captureOwnerStack) | island | d-captureownerstack | captureOwnerStack in a handler |
+| [`createContext`](https://react.dev/reference/react/createContext) | island | d-createcontext, d-createcontext-consumer | createContext provider |
+| [`experimental_taintObjectReference`](https://react.dev/reference/react/experimental_taintObjectReference) | island | d-taint-object | experimental_taintObjectReference |
+| [`experimental_taintUniqueValue`](https://react.dev/reference/react/experimental_taintUniqueValue) | island | d-taint-unique | experimental_taintUniqueValue |
+| [`lazy`](https://react.dev/reference/react/lazy) | island | d-lazy-suspense, d-lazy-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
+| [`memo`](https://react.dev/reference/react/memo) | partial | b-memo, d-memo-state | native/static: b-memo; island: d-memo-state |
+| [`startTransition`](https://react.dev/reference/react/startTransition) | island | c-usetransition-start | spec §3 react tier: startTransition is outside the supported set |
+| [`use`](https://react.dev/reference/react/use) | island | c-use-hook, c-use-context | spec §3 react tier: use |
+
+### react-dom hooks
+
+| Entry | Status | Rows | Note |
+|---|---|---|---|
+| [`useFormStatus`](https://react.dev/reference/react-dom/hooks/useFormStatus) | partial | c-useformstatus, c-useformstatus-child | native/static: c-useformstatus-child; island: c-useformstatus; known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react |
+
+### react-dom components
+
+| Entry | Status | Rows | Note |
+|---|---|---|---|
+| [`<form>`](https://react.dev/reference/react-dom/components/form) | native | a-form-onsubmit, a-form-action | <form onSubmit>; known gap: F115: a function action becomes a precompute value that the url_ok guard drops, so the form renders without an action and submits nowhere; it should fall back to react |
+| [`<input>`](https://react.dev/reference/react-dom/components/input) | native | a-input-controlled, a-input-static | controlled <input> |
+| [`<select>`](https://react.dev/reference/react-dom/components/select) | native | a-select-controlled | controlled <select> |
+| [`<textarea>`](https://react.dev/reference/react-dom/components/textarea) | native | a-textarea-controlled | controlled <textarea> |
+| [`<title>`](https://react.dev/reference/react-dom/components/title) | static | a-title | <title> in a component body |
+| [`<meta>`](https://react.dev/reference/react-dom/components/meta) | static | a-meta | <meta> in a component body |
+| [`<link>`](https://react.dev/reference/react-dom/components/link) | static | a-link | <link rel=stylesheet> in a component body |
+| [`<style>`](https://react.dev/reference/react-dom/components/style) | static | a-style | <style> element |
+| [`<script>`](https://react.dev/reference/react-dom/components/script) | static | a-script-async | <script async src> |
+
+### react-dom APIs
+
+| Entry | Status | Rows | Note |
+|---|---|---|---|
+| [`createPortal`](https://react.dev/reference/react-dom/createPortal) | island | d-createportal | createPortal |
+| [`flushSync`](https://react.dev/reference/react-dom/flushSync) | native | d-flushsync | flushSync in a handler; known gap: F115: compiles native but the client chunk imports react-dom (a native chunk must contain no react import); it should fall back to react |
+| [`preconnect`](https://react.dev/reference/react-dom/preconnect) | island | d-preconnect | preconnect in render |
+| [`prefetchDNS`](https://react.dev/reference/react-dom/prefetchDNS) | island | d-prefetchdns | prefetchDNS in render |
+| [`preinit`](https://react.dev/reference/react-dom/preinit) | island | d-preinit | preinit in render |
+| [`preinitModule`](https://react.dev/reference/react-dom/preinitModule) | island | d-preinitmodule | preinitModule in render |
+| [`preload`](https://react.dev/reference/react-dom/preload) | island | d-preload | preload in render |
+| [`preloadModule`](https://react.dev/reference/react-dom/preloadModule) | island | d-preloadmodule | preloadModule in render |
+
+### Server
+
+| Entry | Status | Rows | Note |
+|---|---|---|---|
+| [`'use client'`](https://react.dev/reference/rsc/use-client) | n/a | e-use-client | No directives: every component is classified by the compiler. The directive is ignored with a warning. |
+| [`'use server'`](https://react.dev/reference/rsc/use-server) | n/a | e-use-server | No directives: server work is an Elysia app under `[actions]`, or a loader/job. A `'use server'` function is not a server function here. |
+| [`Server Components`](https://react.dev/reference/rsc/server-components) | n/a | e-server-component-async | No Server Components: a loader and the compiled jobs are the server half, components render to HTML on the Rust server. |
+| [`Server Functions`](https://react.dev/reference/rsc/server-functions) | n/a | e-server-function-prop | No Server Functions: call an `[actions]` route (`@brust/core/actions`) instead. |
