@@ -8,7 +8,7 @@
 bun create @brust/app my-app
 cd my-app
 bun install
-bun run dev        # brust build routes.tsx && brust start  ->  http://127.0.0.1:1337
+bun run dev        # brust dev routes.tsx (hot reload)  ->  http://127.0.0.1:1337
 ```
 
 Requires Bun 1.4 or newer on a platform that has a native package (`@brust/native-<platform>`: darwin x64/arm64, linux x64/arm64 gnu and musl). Cloudflare Workers is a build target (`brust build --target cloudflare`); its prebuilt wasm, `@brust/core-cf`, installs with `@brust/core`. See [brust on Cloudflare Workers](./cloudflare.md) and, for a shared cache across instances, [Cache adapters](./cache-adapters.md).

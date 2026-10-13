@@ -35,7 +35,7 @@ Every finding below was reproduced on 2026-10-13 by research agents against v2 @
   | F103 | gap-const-fold | F109 | gap-build-eval | | |
   | F104 | gap-map-cond | F110 | gap-ssg-actions | F115 | react-coverage-api |
   | F116 | css-pipeline | F117 | css-module-fold | F118 | tailwind |
-  | F119 | external-island | F120 | lucide-native | | |
+  | F119 | external-island | F120 | lucide-native | F121 | route-nonascii |
 
   When two lanes add rows, the second one to merge resolves the textual conflict by keeping both rows.
 - **R0.5 Each lane updates its own docs.** Update `docs/*.md` where the behaviour is documented, and add a `docs/plans/m1a-followups.md` row (F99+) marked DONE with the PR number.
@@ -758,7 +758,7 @@ The research verified this on 2026-10-13: `@import "tailwindcss"`, `@theme` and 
 The human: "หลังจากทำทั้งหมด public version ให้ แล้ว มาทำให้ brust ใช้ https://ui.shadcn.com/docs ได้ง่ายๆแบบ framework อื่นๆ แล้วมาเก็บ coverage shadcn Components ให้หมด".
 
 **P1. Publish.**
-- **When:** after every lane L1–L23 has merged with CI green and the docs site is synced (L17).
+- **When:** after every lane L1–L24 has merged with CI green and the docs site is synced (L17).
 - **What:** the lead publishes the next prerelease, **2.0.0-alpha.4**. This is the human's explicit go for this publish.
 - **How:**
   - follow the release flow (`/release` skill and memory notes): `bun scripts/release-bump.ts` covers every version reference, including `bun.lock`;
@@ -837,11 +837,33 @@ The human asked on 2026-10-13: "lucide มัน support native ไหม". Toda
 
 **Docs-site follow-up (lead):** the site can use lucide icons and drop hand-written SVGs.
 
+### L24 `route-nonascii`: a static route with non-ASCII literals 404s (bug). Wave 1, size S
+
+**Found by Dew in `gap-ssg` (2026-10-13).** A route whose pattern has a non-ASCII literal segment, e.g. `/ข่าว` or `/docs/ภาษาไทย`, answers 404 on `brust start`. Browsers send the path percent-encoded (`/%E0%B8%82…`).
+
+**Suspected cause.** The router matches the raw (encoded) path against the unencoded pattern. Params are already decoded **after** `router.at` (0.1.48 rule, memory "decode params shipped"); the literal part of the path never is.
+
+**R24.1 (ruled).**
+- **Routes:** patterns are normalised once at install. Each literal segment is stored percent-encoded the way browsers encode it (UTF-8, uppercase hex), so matching the raw request path works with no per-request decode. Never decode the path before matching: `%2F` must keep meaning a literal slash inside a param.
+- **Requests:**
+  - A request that spells a literal with different hex case (`%e0` vs `%E0`) is matched case-insensitively for the hex digits only.
+  - An unencoded non-ASCII request path (curl allows it) still matches.
+- **Every surface uses the same normalisation:**
+  - L1 cache keys;
+  - `cache.invalidate({ path })`;
+  - the action prefix check;
+  - SSG output file names: these come out decoded, through L9's path mapping.
+
+**Tests:**
+- Rust router unit tests: Thai literal; mixed literal + param; hex case; raw UTF-8.
+- e2e: `curl` both forms → 200; Chromium navigates to a Thai URL → 200.
+- An invalidation by a Thai path.
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
 |---|---|---|
-| 1 | L1, L5, L6, L7, L10, L11, L18, L22 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
+| 1 | L1, L5, L6, L7, L10, L11, L18, L22, L24 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
 | 2 | L3 (after L1), L8, L9, L13, L19, L23 (after L1; uses L22's fallback) | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
 | 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14), L16 (after L9; L12 and L16 both touch the CF build: second rebases), L20 (after L1 + L19), L21 (after L19) | |
 
