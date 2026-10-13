@@ -351,6 +351,14 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
                                 .flatten();
                             let mut resp = crate::pipeline::handle(req, &state).await;
                             state.core.finish(origin.as_ref(), resp.headers_mut());
+                            // F127: a refused body (413) is read out only up to a bound (`read_capped`), so the connection
+                            // must not be reused: the rest of that body could still be in flight.
+                            if resp.status() == http::StatusCode::PAYLOAD_TOO_LARGE {
+                                resp.headers_mut().insert(
+                                    http::header::CONNECTION,
+                                    http::HeaderValue::from_static("close"),
+                                );
+                            }
                             Ok::<_, Infallible>(resp)
                         }
                     });
