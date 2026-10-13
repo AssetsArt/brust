@@ -189,6 +189,7 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
         drain_done: Arc::new(Notify::new()),
         drain_timeout_ms: AtomicU64::new(10_000),
         local_addr: OnceLock::new(),
+        announced: std::sync::atomic::AtomicBool::new(false),
         tls: cfg.tls,
     });
 
@@ -269,6 +270,9 @@ pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
             let tls_label = if acceptor.is_some() { ", tls" } else { "" };
             println!("[brust] listening on {local} (io: {IO_NAME}{tls_label})");
             let _ = std::io::Write::flush(&mut std::io::stdout());
+            state
+                .announced
+                .store(true, std::sync::atomic::Ordering::SeqCst);
 
             let sem = Arc::new(tokio::sync::Semaphore::new(accept_cap));
 
