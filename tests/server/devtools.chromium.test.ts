@@ -147,6 +147,32 @@ test('the indicator appears in dev with the build state and the tier counts of t
   await page.close()
 }, 60_000)
 
+test('the host takes no part in the page layout (grid and flex bodies give it no cell or track)', async () => {
+  const page = await browser.newPage()
+  await openPanel(page, '/counter')
+  for (const css of ['display:grid;grid-template-columns:repeat(2,1fr)', 'display:flex;flex-direction:row;justify-content:space-between']) {
+    const r = await page.evaluate((style) => {
+      document.body.setAttribute('style', style)
+      const rect = (el: Element) => {
+        const b = el.getBoundingClientRect()
+        return [b.x, b.y, b.width, b.height].join(',')
+      }
+      const hostEl = document.querySelector('brust-devtools') as HTMLElement
+      const before = [rect(document.querySelector('nav') as Element), rect(document.querySelector('main') as Element)]
+      const hb = hostEl.getBoundingClientRect()
+      const pos = getComputedStyle(hostEl).position
+      hostEl.remove()
+      const after = [rect(document.querySelector('nav') as Element), rect(document.querySelector('main') as Element)]
+      document.body.append(hostEl)
+      return { before, after, size: [hb.width, hb.height], pos }
+    }, css)
+    expect(r.before).toEqual(r.after)
+    expect(r.size).toEqual([0, 0])
+    expect(r.pos).toBe('fixed')
+  }
+  await page.close()
+}, 60_000)
+
 test('it is dev-only: `brust start` serves no <brust-devtools> and no devtools bundle', async () => {
   const out = join(app, '.start-dist')
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out], { cwd: app, stdout: 'pipe', stderr: 'pipe' })

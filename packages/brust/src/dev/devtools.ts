@@ -29,7 +29,7 @@ const TABS = ['Page', 'Components', 'Jobs', 'Store', 'Islands', 'Build', 'Reques
 type TabName = (typeof TABS)[number]
 
 const CSS = `
-:host { all: initial; --bg: #ffffff; --fg: #1a1a1f; --muted: #4a4a55; --line: #c9c9d2; --accent: #0b57d0; --accent-fg: #ffffff;
+:host { all: initial; position: fixed; width: 0; height: 0; --bg: #ffffff; --fg: #1a1a1f; --muted: #4a4a55; --line: #c9c9d2; --accent: #0b57d0; --accent-fg: #ffffff;
   --static: #0b6b3a; --native: #0b57d0; --react: #8a3b00; --err: #b3261e; --warn: #7a5300; --hl: rgba(11, 87, 208, .25); }
 @media (prefers-color-scheme: dark) { :host { --bg: #1b1b1f; --fg: #f2f2f5; --muted: #c4c4cf; --line: #4a4a55; --accent: #8ab4f8; --accent-fg: #0a0a0c;
   --static: #6ee7a8; --native: #8ab4f8; --react: #ffb27a; --err: #ff8a80; --warn: #ffd180; --hl: rgba(138, 180, 248, .3); } }
