@@ -1,8 +1,8 @@
 # shadcn S1 — lane `member-tag` (draft for the lead's ruling)
 
-owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: TBD · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F138g (proposed)
+owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: knock2 · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F138g
 
-Author: knock2. Status: **DRAFT for the lead's ruling; no lane started.** Base: origin/main 91ed5f2c. Numbers are from `docs/shadcn-coverage.md` at that commit (36 measured rows carry `fallback:member-tag`, ranked #4) and from a count over `tests/fixtures/shadcn/components/ui/*.tsx`. R-numbers continue after R34.34 (local-component).
+Author: knock2. Status: **RULED 2026-10-14 (see §11); lane may start.** Base: origin/main 91ed5f2c. Numbers are from `docs/shadcn-coverage.md` at that commit (36 measured rows carry `fallback:member-tag`, ranked #4) and from a count over `tests/fixtures/shadcn/components/ui/*.tsx`. R-numbers continue after R34.34 (local-component).
 
 ## 1. What the diagnostic is today
 
@@ -126,3 +126,15 @@ Gates (targeted): `cargo test -p brust-compiler`, clippy `-D warnings`, fmt; the
 - **Q5 Which packages.** Recommended **any non-relative source**, not only `radix-ui` (cmdk, vaul, `@base-ui/react`, recharts, react-resizable-panels, `@shadcn/react` carry 43 of the 201 sites with the identical shape and the identical diagnostic today). A named allow-list would only keep `member-tag` for them.
 - **Q6 Kind B (local object members, 8 sites).** Recommended: unchanged, `member-tag` renamed message "member of a local object (context provider?): S2". They are the context lane.
 - **Q7 Order.** Recommended: this lane **after island-children merges** (the user-visible flips depend on it) but its code is independent; it can run in parallel with local-component (disjoint files except `children.rs`).
+
+## 11. Lead ruling (2026-10-14)
+
+The design in §4 is accepted (member of an imported binding → `ExternalRef` with an export path; wrapper compiled, Radix primitive stays an island, sub-wrappers run inside it through the island-children registry). The lane is a prerequisite and the PR says so: no tier flip is claimed for this lane alone. Rulings on §10:
+
+- **Q1 Member existence: (a) plus a named guard, (c) as an F-row.** The generated import in the island shim and in `jobs.js` checks the resolved value once: `if (X === undefined) throw new Error("brust: <source> has no export <path>")`. SSR runs that import at build/request time, so a wrong path fails the build or the request loudly, never a silent blank. The static export check without execution is an F-row.
+- **Q2 Module-level alias consts: in this lane.** `const X = BASE.MEMBER` (never reassigned, `BASE` an import from a non-relative source) resolves through the same path as `<BASE.MEMBER>`; the recognition lives in `names.rs` and is the same rule, so splitting it to local-component would duplicate it. Battery rows: alias used as a tag, alias reassigned (`let`) → `local-component` unchanged.
+- **Q3 Relative namespace imports: not in v1** (`member-tag`, F-row: resolve to that module's named export so it compiles instead of becoming an island).
+- **Q4 Depth: single level only.**
+- **Q5 Packages: any non-relative source.** No allow-list.
+- **Q6 Local object members: unchanged**, `member-tag` with the renamed message pointing at the context lane (S2).
+- **Q7 Order: start now, in parallel.** Same readiness-order merge rule as S1.3 / island-children / local-component (shared `children.rs`, `bundle.ts`): the lane that is ready later merges `origin/main` in, resolves, and regenerates the generated docs; the lead integrates. The group-A flips are reported only once island-children is on main; if this lane is ready first, its PR reports code swaps only.
