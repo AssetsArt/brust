@@ -37,7 +37,7 @@ export default function CacheKeyPlayground({ presets }: { presets: Preset[] }) {
   const [f, dispatch] = useReducer(reduce, presets, initial)
   const r = evaluatePlayground(f)
   return (
-    <div className="builder">
+    <div className="builder keypg">
       <div className="fields">
         <label>
           Example

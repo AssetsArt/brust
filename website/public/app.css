@@ -476,6 +476,12 @@ footer.site p { margin-top: .5rem }
 .fields { display: flex; flex-wrap: wrap; gap: .75rem 1rem; align-items: end }
 .fields label { display: grid; gap: .25rem; font-family: var(--mono); font-size: 12px; color: var(--ink-2) }
 .fields .demo-in { width: 8rem }
+/* Cache-key playground (Caching page): one label style, code-font inputs, fields that fill the row. */
+.keypg label { display: grid; gap: .3rem; font-family: var(--mono); font-size: 12px; color: var(--ink-2); min-width: 0 }
+.keypg .demo-in { font-family: var(--mono); font-size: 13.5px; width: 100% }
+.keypg textarea.demo-in { resize: vertical }
+.keypg .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .75rem 1rem; align-items: end }
+.keypg .fields:has(select) { grid-template-columns: minmax(0, 1fr) }
 .fields label.sw { display: inline-flex; font-family: var(--text); font-size: 14.5px; color: var(--ink) }
 .sig-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; font-size: 13px }
 .sig-list code { overflow-wrap: anywhere }
