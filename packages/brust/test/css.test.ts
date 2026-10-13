@@ -81,13 +81,15 @@ test('R19.2: one minified, content-hashed file per source; a shared file is one 
   expect(client.filter((f) => f.endsWith('.css')).length).toBe(9)
 })
 
-test('R19.4: the class map is the same in jobs.js and the client chunk, and the classes are in the CSS', () => {
+test('R19.4/L20: the classes are in the CSS; a template folds them to literals (no jobs.js entry), an island carries the map', () => {
   const card = readFileSync(join(fixture, 'dist', manifest.routes[0]!.css![2]!), 'utf8')
   const classes = [...card.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((m) => m[1]!)
   // review N2: `composes: base from './Base.module.css'` brings Base's rule into Card's file
   expect(classes.map((c) => c.split('_')[0])).toEqual(['base', 'card', 'title'])
-  const jobs = readFileSync(join(fixture, 'dist/jobs.js'), 'utf8')
-  for (const c of classes) expect(jobs).toContain(c)
+  // L20: `styles.title` in the static Home page is the literal class in its template, not a precompute job.
+  const home = Object.entries(JSON.parse(readFileSync(join(fixture, 'dist/manifest.json'), 'utf8')).components as Record<string, { template: string; jobs: unknown[]; needs_worker: boolean }>).find(([id]) => id.startsWith('home_'))![1]
+  expect([home.jobs, home.needs_worker]).toEqual([[], false])
+  expect(readFileSync(join(fixture, 'dist', home.template), 'utf8')).toContain(`"${classes.join(' ')}" | attr_str`) // `composes` makes the title class a three-class string
   // A React island renders className itself, so its chunk carries the map.
   const isl = readFileSync(join(fixture, 'dist', manifest.routes.find((r) => r.pattern === '/islands')!.css![2]!), 'utf8')
   const islClass = /\.([A-Za-z_][\w-]*)/.exec(isl)![1]!

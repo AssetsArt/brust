@@ -62,7 +62,7 @@ Every JS build uses the same map. The build checks that every generated class ex
 
 Types ship with `@brust/core`: `import styles from './x.module.css'` types as `{ readonly [name: string]: string }`, and a side-effect `import './x.css'` typechecks.
 
-For now, `styles.card` in a static or native template is computed by a precompute job, so it works but costs a worker call. Folding it into the template at compile time is the follow-up lane L20.
+`styles.card` and `styles['card']` in a static or native template fold at compile time into the literal class string, so the component keeps `needs_worker: false` and no job is planned. A class the module does not define is a build error with the file, line and column of the use (rule `css-module-class`). Only a property read of a default import of a relative `*.module.css` folds; passing the whole `styles` object to a function, `Object.keys(styles)` and similar uses keep reading the map at run time, as before. This is an explicit exception to the rule that imported objects do not fold: the map is frozen.
 
 ## 5. What does not change
 
