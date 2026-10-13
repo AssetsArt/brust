@@ -234,6 +234,9 @@ pub struct ComponentIR {
     /// chunk and the job re-emit the ones they reach); not serialized.
     #[serde(skip)]
     pub module_decls: Vec<ModuleDecl>,
+    /// Import bindings the module assigns to, mutates or hands to a call (R1.1); not serialized.
+    #[serde(skip)]
+    pub mutated_imports: std::collections::BTreeSet<String>,
     /// The structural IR (every value still `Raw`) as the passes received it.
     /// Placement only rewrites expressions, so lowering walks this in lockstep
     /// with the placed template to print client code from the original
@@ -249,6 +252,19 @@ pub struct ModuleDecl {
     pub names: Vec<String>,
     /// The printed statement without a leading `export`.
     pub source: String,
+    /// The `const name = value` bindings it declares, read as expressions (G5/G9/G10):
+    /// the placer folds a value it can prove constant into the template.
+    pub consts: Vec<ConstVal>,
+}
+
+/// A module-level `const` with its initializer read as an expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstVal {
+    pub name: String,
+    pub value: RawExpr,
+    /// The binding (or an alias of it) is assigned to, mutated through a method,
+    /// or handed to a call: an array or object must not fold (R1.1).
+    pub mutated: bool,
 }
 
 /// The structural parts of a `ComponentIR` before placement.
@@ -289,6 +305,7 @@ impl ComponentIR {
             stores: vec![],
             diagnostics: vec![],
             module_scope: vec![],
+            mutated_imports: Default::default(),
             module_decls: vec![],
             structural: None,
         }

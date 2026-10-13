@@ -405,6 +405,18 @@ optional chaining beyond `?.member` (lowered to `and` chains), destructuring in 
 template. The list is extended only by adding a lowering to BOTH printers and a
 golden test; never by special-casing a backend.
 
+**Module consts fold (L1, gap round 2026-10-13).** A module-level `const` whose value is
+built only from literals, template literals, `!`/`-`, binary operators, ternaries, arrays,
+objects, member / literal-index reads and other folding consts (chain depth ≤ 16, cycle-safe)
+is substituted into the template, so `{LABEL}`, `{ITEMS.map(…)}` and `useState(START)` need no
+precompute job. Consts imported by a relative path (named or default) fold the same way; calls,
+globals (`Date`, `process.env`), `new`, regex, functions, JSX, `let`/`var`, destructured consts and
+package imports do not (the value stays a precompute slot, as before). An array or object const
+folds only if it is never assigned to, mutated through a method (`push`, `sort`, `set`, …) or
+handed to a call anywhere in its module; a primitive always folds. A folded value that prints to
+more than 8 KiB of Jinja per use stays a slot. `NaN` / `Infinity` print as React prints them.
+The client chunk is unchanged: it still reads the const.
+
 ### 6.3 Seeding guarantee
 
 The seed of each state and the initial value of each painted slot are computed once

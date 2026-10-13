@@ -360,7 +360,7 @@ fn read_function(
         ));
     }
     let body = read_body(func, &mut reader);
-    (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
+    (ir.module_scope, ir.module_decls, ir.mutated_imports) = reader.module_scope(ast);
     check_printer_panic(ir);
     ir.props = body.props;
     ir.state = body.state;

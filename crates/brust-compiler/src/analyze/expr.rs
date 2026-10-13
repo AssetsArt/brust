@@ -340,16 +340,19 @@ impl<'r, 'a> Reader<'r, 'a> {
     /// identifier-bound `const`/`let`/`var` (exported or not).
     #[allow(clippy::type_complexity)]
     pub fn module_scope(
-        &self,
+        &mut self,
         ast: &js_ast::Ast<'_>,
     ) -> (
         Vec<(String, Vec<(String, IdentKind)>)>,
         Vec<crate::ir::ModuleDecl>,
+        std::collections::BTreeSet<String>,
     ) {
         let mut out = Vec::new();
         let mut decls = Vec::new();
+        let (mutated, mutated_imports) = self.module_mutations(ast);
+        let print = self.print;
         let source = |stmt: &js_ast::Stmt| {
-            let s = self.print_stmt(stmt);
+            let s = print(Js::Stmt(stmt));
             s.strip_prefix("export ").map(str::to_string).unwrap_or(s)
         };
         for part in ast.parts.iter() {
@@ -364,11 +367,13 @@ impl<'r, 'a> Reader<'r, 'a> {
                             decls.push(crate::ir::ModuleDecl {
                                 names: vec![name],
                                 source: source(stmt),
+                                consts: vec![],
                             });
                         }
                     }
                     S::SLocal(l) => {
                         let mut names = Vec::new();
+                        let mut consts = Vec::new();
                         for d in l.decls.iter() {
                             if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) {
                                 let mut w = Walk::default();
@@ -376,6 +381,20 @@ impl<'r, 'a> Reader<'r, 'a> {
                                 let (captures, _) = self.captured(w);
                                 let name = self.names.name(id.r#ref);
                                 names.push(name.clone());
+                                if matches!(l.kind, js_ast::S::Kind::KConst) {
+                                    // Reading the initializer must leave no diagnostic or
+                                    // handler behind: it is only a candidate for folding.
+                                    let (nd, nh) =
+                                        (self.diagnostics.len(), self.pending_handlers.len());
+                                    let value = self.expr(v);
+                                    self.diagnostics.truncate(nd);
+                                    self.pending_handlers.truncate(nh);
+                                    consts.push(crate::ir::ConstVal {
+                                        name: name.clone(),
+                                        value,
+                                        mutated: mutated.contains(&id.r#ref.inner_index()),
+                                    });
+                                }
                                 out.push((name, captures));
                             }
                         }
@@ -383,6 +402,7 @@ impl<'r, 'a> Reader<'r, 'a> {
                             decls.push(crate::ir::ModuleDecl {
                                 names,
                                 source: source(stmt),
+                                consts,
                             });
                         }
                     }
@@ -390,7 +410,34 @@ impl<'r, 'a> Reader<'r, 'a> {
                 }
             }
         }
-        (out, decls)
+        (out, decls, mutated_imports)
+    }
+
+    /// Symbols the module may change or hand to code that could (R1.1), plus the names of the
+    /// import bindings among them.
+    fn module_mutations(
+        &self,
+        ast: &js_ast::Ast<'_>,
+    ) -> (HashSet<u32>, std::collections::BTreeSet<String>) {
+        let mut w = Walk::default();
+        for part in ast.parts.iter() {
+            w.stmts(part.stmts.slice());
+        }
+        let set = module_mutations_of(&w, |r| self.names.name(r) == "useState");
+        let imports = w
+            .mutated
+            .iter()
+            .chain(
+                w.passed
+                    .iter()
+                    .filter(|(c, _)| !c.is_some_and(|c| self.names.name(c) == "useState"))
+                    .map(|(_, a)| a),
+            )
+            .chain(w.aliases.iter().map(|(_, root)| root))
+            .filter(|r| self.names.import_of(**r).is_some() && set.contains(&r.inner_index()))
+            .map(|r| self.names.name(*r))
+            .collect();
+        (set, imports)
     }
 
     /// A `function name(…) {…}` declaration in the component body, read as the
@@ -557,6 +604,42 @@ pub struct Walk {
     /// Location of the first dynamic `import()` reached (F38): the printer
     /// cannot print one (no import record), so such code is never printed.
     pub dynamic_import: Option<u32>,
+    /// Bindings assigned to, deleted from, or mutated through a method call, by the root of the
+    /// target (`a.b.push(x)` mutates `a`), plus bindings handed to a call (R1.1).
+    pub mutated: Vec<js_ast::Ref>,
+    /// `(declared, root)` for `const x = a.b`: `x` aliases `a`.
+    pub aliases: Vec<(js_ast::Ref, js_ast::Ref)>,
+    /// `(callee identifier, root of an argument)`: the callee may keep or change what it is handed.
+    pub passed: Vec<(Option<js_ast::Ref>, js_ast::Ref)>,
+}
+
+/// Methods that change an array, map or set in place (R1.1).
+const MUTATING_METHODS: &[&str] = &[
+    "push",
+    "pop",
+    "shift",
+    "unshift",
+    "splice",
+    "sort",
+    "reverse",
+    "fill",
+    "copyWithin",
+    "set",
+    "delete",
+    "add",
+    "clear",
+];
+
+/// The identifier a member / index chain starts at.
+fn root_ref(e: &js_ast::Expr) -> Option<js_ast::Ref> {
+    match &e.data {
+        E::EIdentifier(id) => Some(id.ref_),
+        E::EImportIdentifier(id) => Some(id.ref_),
+        E::EDot(d) => root_ref(&d.target),
+        E::EIndex(i) => root_ref(&i.target),
+        E::ESpread(s) => root_ref(&s.value),
+        _ => None,
+    }
 }
 
 impl Walk {
@@ -639,10 +722,17 @@ impl Walk {
                 for d in l.decls.iter() {
                     self.declare_binding(&d.binding);
                     if let Some(v) = &d.value {
+                        if let (B::BIdentifier(id), Some(root)) = (d.binding.data, root_ref(v)) {
+                            self.aliases.push((id.r#ref, root));
+                        }
                         self.expr(v);
                     }
                 }
             }
+            S::SExportDefault(ed) => match &ed.value {
+                js_ast::StmtOrExpr::Expr(e) => self.expr(e),
+                js_ast::StmtOrExpr::Stmt(s) => self.stmt(s),
+            },
             S::SReturn(r) => {
                 if let Some(v) = &r.value {
                     self.expr(v);
@@ -719,17 +809,57 @@ impl Walk {
             E::EIdentifier(id) => self.used.push(id.ref_),
             E::EImportIdentifier(id) => self.used.push(id.ref_),
             E::EArray(a) => a.items.iter().for_each(|x| self.expr(x)),
-            E::EUnary(u) => self.expr(&u.value),
+            E::EUnary(u) => {
+                if matches!(
+                    u.op,
+                    OpCode::UnPreInc
+                        | OpCode::UnPreDec
+                        | OpCode::UnPostInc
+                        | OpCode::UnPostDec
+                        | OpCode::UnDelete
+                ) {
+                    self.mutated.extend(root_ref(&u.value));
+                }
+                self.expr(&u.value)
+            }
             E::EBinary(b) => {
+                if !matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None) {
+                    self.mutated.extend(root_ref(&b.left));
+                }
                 self.expr(&b.left);
                 self.expr(&b.right);
             }
             E::ENew(n) => {
                 self.expr(&n.target);
+                self.passed
+                    .extend(n.args.iter().filter_map(root_ref).map(|r| (None, r)));
                 n.args.iter().for_each(|x| self.expr(x));
             }
             E::ECall(c) => {
                 self.calls.push(*e);
+                if !c.was_jsx_element {
+                    if let E::EDot(d) = &c.target.data
+                        && MUTATING_METHODS
+                            .iter()
+                            .any(|m| m.as_bytes() == d.name.slice())
+                    {
+                        self.mutated.extend(root_ref(&d.target));
+                    }
+                    // `Object.keys(a)` / `Object.entries(a)` only read; any other call may keep
+                    // or change the value it is handed.
+                    let reads_only = matches!(&c.target.data, E::EDot(d)
+                        if matches!(d.target.data, E::EIdentifier(_))
+                            && matches!(d.name.slice(), b"keys" | b"entries"));
+                    if !reads_only {
+                        let callee = match &c.target.data {
+                            E::EIdentifier(id) => Some(id.ref_),
+                            E::EImportIdentifier(id) => Some(id.ref_),
+                            _ => None,
+                        };
+                        self.passed
+                            .extend(c.args.iter().filter_map(root_ref).map(|r| (callee, r)));
+                    }
+                }
                 self.expr(&c.target);
                 c.args.iter().for_each(|x| self.expr(x));
             }
@@ -787,6 +917,30 @@ impl Walk {
                 self.expr(&i.no);
             }
             _ => {}
+        }
+    }
+}
+
+/// Symbols the module may change after their declaration, or hand to code that could (R1.1):
+/// the roots of assignments, mutating calls and call arguments, closed over `const x = a.b`
+/// aliases.
+fn module_mutations_of(w: &Walk, hook_arg: impl Fn(js_ast::Ref) -> bool) -> HashSet<u32> {
+    let mut set: HashSet<u32> = w.mutated.iter().map(|r| r.inner_index()).collect();
+    for (callee, arg) in &w.passed {
+        // `useState(ITEMS)` keeps the reference but React forbids changing state in place.
+        if !callee.is_some_and(&hook_arg) {
+            set.insert(arg.inner_index());
+        }
+    }
+    loop {
+        let before = set.len();
+        for (decl, root) in &w.aliases {
+            if set.contains(&decl.inner_index()) {
+                set.insert(root.inner_index());
+            }
+        }
+        if set.len() == before {
+            return set;
         }
     }
 }
