@@ -51,6 +51,12 @@ export const rows: Row[] = [
   { id: 'a-style-object', category: 'A', authoring: 'style object from props', expect: 'static', jobs: 0,
     snippet: `export default function C({ color }: any) { return <p style={{ color, fontSize: 12 }}>x</p> }`,
     note: 'spec §6.2 style object' },
+  { id: 'a-list-cond-element', category: 'A', authoring: '.map returning a ternary between two elements', expect: 'static', jobs: 0,
+    snippet: `export default function C({ xs }: any) { return <ul>{xs.map((x: any) => x.href ? <li key={x.id}><a href={x.href}>{x.t}</a></li> : <li key={x.id}><h4>{x.t}</h4></li>)}</ul> }`,
+    note: 'spec §6.2 map-as-For; L6 conditional element arms desugar to For + If' },
+  { id: 'a-list-cond-state', category: 'A', authoring: '.map returning a conditional element over state', expect: 'native', jobs: 0,
+    snippet: `${R}export default function C({ xs }: any) { const [on, setOn] = useState(true); return <div onClick={() => setOn(!on)}>{xs.map((x: any) => on && x.href ? <a key={x.id} href={x.href}>{x.t}</a> : <h4 key={x.id}>{x.t}</h4>)}</div> }`,
+    note: 'spec §6.2 map-as-For; L6 conditional element arms' },
   { id: 'a-and-guard', category: 'A', authoring: '&& guard on a prop', expect: 'static', jobs: 0,
     snippet: `export default function C({ ok }: any) { return <div>{ok && <b>yes</b>}</div> }`,
     note: 'spec §6.2 && guard' },
@@ -225,6 +231,9 @@ export const rows: Row[] = [
     snippet: `import { Children } from 'react'\nexport default function C(props: any) { return <ul>{Children.map(props.children, (c: any) => <li>{c}</li>)}</ul> }` },
 
   // ---- E. v2 specifics ------------------------------------------------------
+  { id: 'e-list-block-body', category: 'E', authoring: '.map with a block body names list-shape', expect: 'react',
+    snippet: `export default function C({ xs }: any) { return <ul>{xs.map((x: any) => { const t = x.t; return <li key={x.id}>{t}</li> })}</ul> }`,
+    note: 'L6: block bodies stay React with a list-shape fallback naming the reason' },
   { id: 'e-precompute-props', category: 'E', authoring: 'props-only value outside the template subset', expect: 'static', jobs: 1,
     snippet: `import { fmt } from './fmt'\nexport default function C({ price }: any) { return <p>{fmt(price)}</p> }`,
     files: { 'fmt.ts': `export const fmt = (n: number) => n.toFixed(2)` },

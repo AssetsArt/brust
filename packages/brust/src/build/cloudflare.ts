@@ -124,7 +124,7 @@ function cfAlias(alias: Record<string, string>, sourceOf: SourceOf): BunPlugin {
 /** The CF bundle's stand-in for the napi addon (`native.ts` `require('../native/index.js')`, R8): every call
  * fails loudly, since a Worker has no addon. */
 function cfNativeStub(handlersPath: string): BunPlugin {
-  const names = ['startServer', 'registerWorker', 'untilReady', 'beginDrain', 'cacheInvalidate', 'cacheStats', 'localAddr', 'planJobs', 'takeFetchBody', 'putFetchReply', 'cacheReplay', 'cacheL2Count', 'cacheClear']
+  const names = ['startServer', 'registerWorker', 'untilReady', 'beginDrain', 'cacheInvalidate', 'cacheStats', 'localAddr', 'planJobs', 'planJobsBuf', 'takeFetchBody', 'putFetchReply', 'cacheReplay', 'cacheL2Count', 'cacheClear']
   return {
     name: 'brust-cf-native',
     setup(b) {

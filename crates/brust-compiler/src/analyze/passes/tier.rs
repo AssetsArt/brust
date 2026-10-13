@@ -86,10 +86,17 @@ pub fn react_jobs(ir: &mut ComponentIR) {
     // precompute slots and child islands are React's business then.
     if matches!(ir.tier, Tier::React { .. }) && ir.uses_outlet {
         // A React-tier page renders as one island: its template has no `__outlet` slot.
+        // Name what made it React: the first fallback, with its own location.
+        let (why, loc) = ir
+            .diagnostics
+            .iter()
+            .find(|d| d.class == DiagClass::Fallback && !CHILD_ONLY.contains(&d.rule.as_str()))
+            .map(|d| (format!(" ({}: {})", d.rule, d.message), d.loc))
+            .unwrap_or_default();
         ir.diagnostics.push(crate::ir::Diagnostic::error(
             "outlet-in-react",
-            "<Outlet/> is used in a component that renders as a React island",
-            0,
+            format!("<Outlet/> is used in a component that renders as a React island{why}"),
+            loc,
             "keep layouts native: remove the construct that forces the React tier",
         ));
     }

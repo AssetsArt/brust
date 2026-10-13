@@ -6,12 +6,16 @@
 /// Borrowed request data the evaluator reads. Slices, not maps — the caller
 /// already holds these as small vecs at the cache-decision site.
 ///
-/// NOTE: header/cookie/query values are passed through verbatim — NOT
-/// percent-decoded. An `eq(cookie(x), "/")` will not match a `%2F`-encoded
-/// value. The L1 sorted_query path is likewise undecoded, so key-building stays
-/// internally consistent. PATH PARAMS are the exception: param() values arrive
-/// percent-DECODED (decoded once at envelope production in
-/// routing/routes.rs::decode_path_param — same values the loaders see).
+/// NOTE on encoding (credit: knock2):
+/// - headers and cookies are passed through verbatim, NOT percent-decoded: an
+///   `eq(cookie(x), "/")` will not match a `%2F`-encoded value;
+/// - query names and values ARE decoded (`routing/routes.rs::decode_search`, `+`
+///   becomes a space): the same pairs as the loader's `req.search`, so
+///   `?pre%76iew=1` is `preview`;
+/// - the L1 key keeps the raw sorted query: distinct raw spellings split entries,
+///   they never merge;
+/// - params are decoded (once, at envelope production in
+///   routing/routes.rs::decode_path_param: the values the loaders see).
 pub struct EvalCtx<'a> {
     pub headers: &'a [(&'a str, &'a str)],
     pub cookies: &'a [(&'a str, &'a str)],
