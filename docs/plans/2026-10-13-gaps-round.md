@@ -493,13 +493,74 @@ Two later crashes came from swapping workers in-process (`983fb16`, and `docs/su
   - hover highlights a static chain level;
   - the keyboard flow works.
 
+### L16 `actions-standalone`: action base URL, separate action deploys, cross-domain calls. Wave 3 (after L9; coordinate with L12), size M–L
+
+The human asked for this on 2026-10-13: "config custom prefix path และ base domain ของ actions ได้เอง", "build แล้ว action ออกมาไป deploy แยกได้", "ทำให้ FE call action แบบต่าง domain ได้".
+
+**What already exists** (`docs/actions.md` §6–§9):
+- `[actions] prefix` is configurable. The server injects `__BRUST_ACTION_PREFIX__` when it is not the default (`crates/brust-core/src/render.rs`, `core.rs`).
+- `client({ baseUrl })` takes a base per call (`packages/brust/src/actions/client.ts`).
+- `[cors]` answers preflights and stamps headers.
+- The cross-site guard lets an `Origin` listed in `[cors].origins` through.
+
+The lane adds the three missing pieces below and documents the whole flow as one recipe.
+
+**R16.1 Base URL as configuration (ruled).**
+- **Runtime setting:** `[actions] base_url = "https://api.example.com"` / env `BRUST_ACTIONS_BASE_URL` / `run({ config: { actionsBaseUrl } })`. Precedence: env > run > toml.
+- **Runtime, not build time:** each environment points at its own API without a rebuild, the same reason `[cors]` is runtime.
+- **Validation:** an absolute http(s) origin with no path, query or fragment.
+- **Injection:** when set, the server injects `globalThis.__BRUST_ACTION_BASE__` next to the prefix script. The same escaping rules as the prefix apply; it is a JSON string literal inside `<script>`, so escape `<`, `>`, `&`, U+2028 and U+2029.
+- **Client resolution order:**
+  1. `opts.baseUrl`
+  2. the page's `__BRUST_ACTION_BASE__`
+  3. relative
+- Prefix resolution is unchanged. The injected prefix **does** apply when the base comes from the page global, because both come from the same deployment's config. A per-call `opts.baseUrl` keeps today's rule (prefix defaults to `/_brust/action` unless `opts.prefix` is given).
+- **SSG (L9):** the value is baked at build. `--target static` reads the same setting from the build env.
+
+**R16.2 Credentials (ruled).**
+- `[actions] credentials = "same-origin" | "include" | "omit"` (default `same-origin`) is injected with the base. The client uses it as the default `RequestInit.credentials`; `opts.init` overrides it.
+- `include` only works if the action deployment's `[cors]` lists the exact page origin with `credentials = true`. Document it.
+- Cross-site cookies need `SameSite=None; Secure`. Document it, with the Elysia cookie example.
+
+**R16.3 Actions-only build (ruled).**
+- `brust build --actions-only`, combinable with `--target bun` (default) and `--target cloudflare`.
+- The output has **no page routes**: the manifest gets empty routes and no templates, jobs or client chunks. The actions app runs behind the same Rust admission: method gate, body caps, `Content-Encoding`, the cross-site guard, CORS.
+- Every non-action path answers 404 as `application/problem+json`.
+- **Bun:** `brust start` serves the dist unchanged.
+- **Cloudflare:** a Worker serving only actions. Reuse the CF target (`docs/cloudflare.md` §6); `wrangler.jsonc` without Static Assets.
+- **R16.4 Root prefix.** Only in an actions-only build, `prefix = "/"` is allowed, so `https://api.example.com/team` maps to the app's `/team`.
+  - `prefixError` (`actions/prefix.ts`) keeps refusing `/` in a normal build, where page routes would be unreachable.
+  - The server's prefix match and the worker mount must handle the root without a double slash. `request.url` stays the real URL.
+- `[cache]` and route options are ignored with an info line. Loaders don't exist in this mode.
+
+**R16.4b Page-only build.** A page build may point at a separately deployed actions app. `[actions]` with `base_url` and **no** `entry` file present is valid:
+- the build skips bundling actions;
+- the server mounts no local app (the prefix answers 404 locally);
+- `__BRUST_ACTION_BASE__` and the prefix are still injected so `client()` reaches the remote app.
+- The typed client keeps importing `type App` from the shared source.
+
+This is how "static pages on Pages + actions on their own domain" works without L12's `_worker.js`. L12 stays the single-domain option.
+
+**R16.5 Tests:**
+- **Unit:** config precedence, validation messages, escaping of the injected base, client resolution order (base + injected prefix, per-call override).
+- **e2e, Bun, two deployments:**
+  - an actions-only server on `127.0.0.1:<a>` with `[cors] origins=["http://localhost:<b>"]` and `credentials = true`;
+  - a page server on `localhost:<b>` with `base_url="http://127.0.0.1:<a>"` and `credentials="include"`.
+  - In Chromium, a page action POST succeeds cross-origin with a cookie round trip.
+  - An unlisted origin gets 403 `CrossSiteRejected`.
+  - The preflight answers 204 with the right headers.
+  - The root prefix works on the actions-only server.
+- **CF:** the actions-only Worker under `wrangler dev`/miniflare answers an action and 404s a page path. A real deploy only under the standing `brust-test-<slug>-<sha>` rule.
+
+**Docs:** `docs/actions.md` gets a new section, "Deploy actions separately", walking end to end through two deployments, CORS, credentials and cookies. Also update `docs/cloudflare.md`. The website docs follow on docs-site (lead).
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
 |---|---|---|
 | 1 | L1, L5, L6, L7, L10, L11 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
 | 2 | L3 (after L1), L8, L9, L13 | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
-| 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14) | |
+| 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14), L16 (after L9; L12 and L16 both touch the CF build: second rebases) | |
 
 Each lane is one PR to v2 and goes through the usual flow: READY → REVIEW-PASS → GATES-OK (full CI mirror: `cargo fmt --check`, clippy `-D warnings`, cargo test, `bun run ci`, bun tests, browser tests) → MERGE-READY. The lead merges after CI is green.
 
