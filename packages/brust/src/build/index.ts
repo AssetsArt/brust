@@ -241,6 +241,7 @@ async function buildInto(
     componentIssue: o.componentIssue,
     runtimeImport: `/_brust/${runtime}`,
     serverOnly: o.serverOnly,
+    cssMaps: css.maps,
   }
   let { compiled, routeComponent } = compileApp({ ...compileOpts, log: o.log })
   // L2: slots that read nothing request- or time-dependent are computed once, here, and the app is
