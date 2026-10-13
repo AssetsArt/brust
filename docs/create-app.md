@@ -21,7 +21,7 @@ Requires Bun 1.4 or newer on a platform that has a native package (`@brust/nativ
 |---|---|
 | `<name>` | The project name and, by default, the directory. Lowercase letters, digits, `-` and `_`; it starts with a letter or digit; at most 50 characters. |
 | `--template blank\|pokedex` | The starting point. Default `blank`. Without the flag, an interactive terminal shows a picker; `--yes` or a non-interactive shell takes `blank`. |
-| `--tailwind` | Accepted and ignored: `blank` uses Tailwind CSS v4 by default (see section 3). The command prints `Tailwind CSS v4 is the default; the --tailwind flag does nothing`. |
+| `--tailwind` | Accepted and ignored: `blank` uses Tailwind CSS v4 by default (see section 3), and `pokedex` is unchanged by it. The command prints `Tailwind CSS v4 is the default; the --tailwind flag does nothing`. |
 | `--dir <path>` | Scaffold into `<path>` instead of `./<name>`. |
 | `--yes` | Accept defaults and never prompt. |
 | `--brust-dep <spec>` | The `@brust/core` dependency to write (see section 4). For CI and tarball tests. |
@@ -37,7 +37,7 @@ The target directory must be empty or absent; a directory that has files is refu
   - `app.css` at the project root starts with `@import "tailwindcss";`, then a `@theme` block with the colour tokens the page uses (`--color-paper`, `--color-sheet`, `--color-ink`, `--color-ink-2`, `--color-rule`, `--color-amber`, `--color-amber-ink`) and a `prefers-color-scheme: dark` block that overrides the same tokens. Each token is a utility: `bg-paper`, `text-ink`, `border-rule`. There is no `tailwind.config`: v4 is configured in CSS.
   - The layout imports `app.css`; brust builds it with the Tailwind plugin into one hashed, minified file and links it in `<head>` (see [CSS](./css.md)). Only the utilities the app uses are in it.
   - `tailwindcss` and `bun-plugin-tailwind` are pinned dev dependencies, the versions brust is tested with. Nothing is fetched at runtime: no CDN, no web font.
-  - For plain CSS, remove the `@import "tailwindcss";` line and write your own rules in `app.css`.
+  - For plain CSS, removing the `@import "tailwindcss";` line is not enough: brust still runs the Tailwind plugin for a stylesheet that has a `@theme` block, and the page's `bg-paper`, `text-ink` classes then produce nothing. Replace the whole of `app.css` with your own rules (move the tokens to `:root` custom properties if you want to keep the palette), change the `className`s in `components/` and `pages/` to your own classes, and remove `tailwindcss` and `bun-plugin-tailwind` from `devDependencies`.
 - **`pokedex`**: the `examples/pokedex` app from this repository: loaders over an offline dataset, the L1 page cache, native components and a React island, and a persistent team (SQLite + Elysia actions + the unified store). It is generated from the example when the package is packed, so it never drifts from it. Its tests are not included.
 
 Scripts in both: `dev` (build, then start, until `brust dev` ships), `build` (`brust build routes.tsx`), `start` (`brust start`), `typecheck` (`bun check`). `blank` also has `dev:cf` (build for Cloudflare Workers and run `wrangler dev`) and `deploy:cf` (build, then `wrangler deploy` of `dist/cf`).
