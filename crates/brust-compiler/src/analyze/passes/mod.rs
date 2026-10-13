@@ -40,6 +40,9 @@ pub struct PassState {
     pub all_uses: Vec<ClientUse>,
     /// Slots the build may evaluate once (L2), filled by placement.
     pub build_eval: Vec<crate::ir::BuildEvalSlot>,
+    /// Every component prop as read, by (component node loc, prop key), before placement
+    /// rewrote it: `children` hoists a forwarded handler from it (shadcn S1.3).
+    pub prop_raws: HashMap<(u32, String), crate::ir::RawExpr>,
 }
 
 /// Something the client chunk runs, with what it reads.
