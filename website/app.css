@@ -173,11 +173,6 @@
   .th { font-family: var(--display); font-weight: 400; font-size: 1.2rem; color: var(--ink); margin: 0 0 .9rem; line-height: 1.5 }
 
   /* ===== header ===== */
-  .site-header { display: flex; align-items: center; gap: 1.5rem; padding-block: 1rem }
-  .brand { font-family: var(--display); font-weight: 600; text-transform: uppercase; letter-spacing: .14em; font-size: 19px; color: var(--ink); text-decoration: none; display: flex; align-items: center; gap: .6rem }
-  .brand .v { font-family: var(--mono); font-weight: 400; white-space: nowrap; font-size: 12px; color: var(--ink-2); border: 1px solid var(--rule); border-radius: 4px; padding: 0 .4rem; letter-spacing: .02em; text-transform: none }
-  .site-header nav { margin-left: auto; display: flex; align-items: center; gap: 1.25rem; font-size: 15px }
-  .site-header nav a { text-decoration: none; color: var(--ink-2) } .site-header nav a:hover { color: var(--ink) }
 
   /* ===== buttons ===== */
   .btn { display: inline-flex; align-items: center; gap: .5rem; min-height: 46px; padding: .7rem 1.15rem; border: 1px solid var(--ink); border-radius: 0; background: transparent; color: var(--ink);
@@ -187,14 +182,6 @@
   .cta { display: flex; gap: .75rem; flex-wrap: wrap }
 
   /* ===== code / terminal blocks ===== */
-  .code { background: var(--term); color: var(--term-fg); border-radius: 2px; margin: 0; overflow: hidden; font-size: 13.5px; line-height: 1.6; min-width: 0; border: 1px solid var(--term-rule) }
-  .code .bar { display: flex; align-items: stretch; justify-content: space-between; background: var(--term-2); border-bottom: 1px solid var(--term-rule); font-family: var(--mono); font-size: 12px; color: var(--term-dim) }
-  .code .bar .tab { padding: .4rem .9rem; background: var(--term); color: var(--term-fg); box-shadow: 1px 0 0 var(--term-rule); position: relative }
-  .code .bar .tab::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--sun) }
-  .code .bar .cwd { padding: .4rem .9rem; color: var(--term-dim) }
-  .code .bar button { font: inherit; color: var(--term-dim); background: transparent; border: 0; border-left: 1px solid var(--term-rule); padding: 0 .9rem; cursor: pointer }
-  .code .bar button:hover { color: var(--term-fg) } .code .bar button.done { color: #8fd694 }
-  .code pre { margin: 0; padding: .9rem 1rem; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--term-rule) transparent }
   /* Always-visible scrollbars in code (macOS overlay scrollbars hide that a long line continues). */
   .code pre::-webkit-scrollbar { width: 10px; height: 10px }
   .code pre::-webkit-scrollbar-track { background: transparent }
@@ -434,52 +421,28 @@
   .closing .btn { border-color: var(--on-amber); color: var(--on-amber) } .closing .btn.primary { background: var(--on-amber); border-color: var(--on-amber); color: var(--rice) }
   .seal { width: 7.5rem; aspect-ratio: 1; border-radius: 50%; border: 2px solid var(--on-amber); display: grid; place-content: center; text-align: center; font-family: var(--mono); font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--on-amber); transform: rotate(-9deg); line-height: 1.5 }
   .seal b { font-family: var(--display); font-size: 1.4rem; letter-spacing: .1em; font-weight: 600 }
-  footer.site { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 2rem; padding-block: 2.5rem; font-size: 14px; color: var(--ink-2) }
-  footer.site h4 { margin: 0 0 .5rem; color: var(--ink); font-size: 14px }
-  footer.site a { display: block; text-decoration: none; color: var(--ink-2); padding: .12rem 0 } footer.site a:hover { color: var(--ink) }
-  footer.site .brand { display: inline-flex; color: var(--ink); font-size: 18px; padding: 0 }
-  footer.site p { margin-top: .5rem }
 
   /* ===== 404 ===== */
-  .not-found { min-height: 100vh; display: grid; align-content: center; gap: 1.25rem; padding-block: 4rem }
-  .not-found h1 { font-weight: 300; text-transform: uppercase; font-size: clamp(2.6rem, 6vw, 4.5rem); line-height: .96 }
 
   /* ===== docs page ===== */
-  .docs { display: grid; grid-template-columns: 250px minmax(0, 1fr) 210px; gap: 3rem; max-width: 1280px; margin: 0 auto; padding-inline: 16px; border-top: 1px solid var(--rule) }
-  .side { padding-block: 2rem; font-size: 14.5px; align-self: start; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 40px); max-height: calc(100vh - 40px); overflow-y: auto }
-  .side h4 { margin: 1.4rem 0 .35rem; font-family: var(--display); font-size: 13px; font-weight: 750; color: var(--ink) } .side h4:first-child { margin-top: 0 }
-  .side a { display: block; text-decoration: none; color: var(--ink-2); padding: .22rem .7rem; margin-left: -.7rem; border-radius: 4px }
-  .side a:hover { color: var(--ink); background: var(--sheet) }
-  .side a[aria-current="page"] { color: var(--ink); background: var(--sheet); outline: 1px solid var(--rule); font-weight: 600 }
-  .doc { padding-block: 2.25rem 3.5rem; min-width: 0; display: grid; gap: 1.1rem; align-content: start }
   .crumbs { font-size: 13px; color: var(--ink-2); font-family: var(--mono) }
+  /* Docs body (R32.3 exception): the pages write bare h1/h2/h3/p/ul/ol/li/table/th/td/code elements (about 1,500 of
+     them, from page data and prose), so these rules style them through the `.doc` article class, which stays on
+     DocsLayout's <article> as the hook. The chrome around the body (layout, sidebar, pager, TOC, note, frames, code
+     blocks, tier tags, table frame) is utilities in markup. */
   .doc h1 { font-family: var(--display); font-weight: 300; text-transform: uppercase; letter-spacing: 0; font-size: clamp(2rem, 4vw, 2.7rem) }
-  .doc .lead { font-size: 1.12rem; color: var(--ink-2); max-width: 62ch }
   .doc h2 { font-size: 1.45rem; display: flex; align-items: center; gap: .75rem; margin-top: 1.75rem; scroll-margin-top: 60px }
-  .doc h2 .n { width: 2rem; height: 2rem; display: inline-grid; place-items: center; border-radius: 50%; background: var(--amber-fill); color: var(--on-amber); font-family: var(--mono); font-size: 13px; font-weight: 400; flex: none }
   .doc p, .doc li { max-width: 68ch }
   .doc ul { margin: 0; padding-left: 1.2rem } .doc li { margin: .3rem 0 }
   .doc h3 { margin-top: 1rem; scroll-margin-top: 60px }
   .doc :not(pre) > code { background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; padding: 0 .3em; font-size: .86em; overflow-wrap: anywhere }
-  .table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 2px; background: var(--sheet) }
-  .table-wrap:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px }
   .doc table { border-collapse: collapse; width: 100%; font-size: 14.5px; line-height: 1.5 }
   /* the 34rem floor only inside .table-wrap, which scrolls; a bare table must shrink with the column (its code wraps) */
-  .table-wrap table { min-width: 34rem }
   .doc th, .doc td { text-align: left; vertical-align: top; padding: .55rem .8rem; border-bottom: 1px solid var(--rule) }
   .doc th { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--ink-2); white-space: nowrap }
   .doc tr:last-child td { border-bottom: 0 }
   .note { display: grid; grid-template-columns: auto 1fr; gap: .9rem; background: var(--sheet); border: 1px solid var(--rule); border-radius: 2px; padding: .85rem 1rem; font-size: 15px; max-width: 68ch }
   .note .tag { font-family: var(--mono); font-size: 11px; background: var(--amber-fill); color: var(--on-amber); border-radius: 3px; padding: .05rem .4rem; height: fit-content; margin-top: .15rem }
-  .foot-meta { display: flex; gap: 1.5rem; font-size: 13.5px; color: var(--ink-2); margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--rule) }
-  .pager { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem }
-  .pager a { display: grid; gap: .1rem; text-decoration: none; border: 1px solid var(--rule); background: var(--sheet); border-radius: 2px; padding: .8rem 1rem; color: var(--ink) }
-  .pager a span { font-size: 12.5px; color: var(--ink-2) } .pager a b { font-weight: 600 } .pager a.next { text-align: right }
-  .toc { padding-block: 2.25rem; font-size: 13.5px; align-self: start; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 40px); padding-left: 15px }
-  .toc::before { content: ""; position: absolute; left: 0; top: 2.25rem; bottom: 2.25rem; width: 1px; background: var(--rule) }
-  .toc h4 { margin: 0 0 .5rem; font-size: 12.5px; color: var(--ink); font-family: var(--display); font-weight: 750 }
-  .toc a { display: block; text-decoration: none; color: var(--ink-2); padding: .2rem 0 } .toc a.active, .toc a[aria-current] { color: var(--ink); font-weight: 600 }
-  .toc .ind { position: absolute; left: -3px; top: 0; width: 7px; height: 7px; border-radius: 50%; margin-top: .62em; background: var(--sun); transform: translateY(var(--ind-y, 0)) }
 
   /* ===== responsive ===== */
   @media (max-width: 980px) {
@@ -493,12 +456,8 @@
     .pkg { grid-template-columns: 1fr; gap: .3rem }
     .nots { grid-template-columns: 1fr; gap: 1.5rem }
     .closing .wrap { grid-template-columns: 1fr } .seal { justify-self: start }
-    footer.site { grid-template-columns: 1fr 1fr }
-    .docs { grid-template-columns: 1fr; gap: 0 } .side, .toc { position: static; max-height: none } .toc { display: none }
-    .side { display: flex; flex-wrap: wrap; gap: .1rem 1rem; padding-bottom: 0 } .side h4 { flex-basis: 100% }
   }
   @media (max-width: 560px) {
-    .site-header { flex-wrap: wrap; row-gap: .35rem } .site-header nav { gap: 1rem }
     .cards { grid-template-columns: 1fr 1fr } .demo-list { grid-template-columns: 1fr }
     .shipbar { grid-template-columns: 1fr } .shipbar > div { border-left: 0; border-top: 1px solid var(--rule) } .shipbar > div:first-child { border-top: 0 }
     .nvp { grid-template-columns: 1fr }
@@ -511,7 +470,6 @@
   @media (prefers-reduced-motion: no-preference) {
     html { scroll-behavior: smooth }
     .btn { transition: transform .2s var(--ease), background .2s var(--ease), box-shadow .15s } .btn:hover { transform: translateY(-1px) } .btn.primary:hover { box-shadow: 0 8px 18px -10px var(--amber) }
-    .pager a, .side a, .toc a { transition: background .15s, color .15s, border-color .15s } .pager a:hover { border-color: var(--ink) }
     .pane, .pane header { transition: border-color .25s, color .25s }
     .play .type { animation: type calc(var(--n) * 22ms) steps(var(--n)) var(--d, 0s) both }
     .play .ln { animation: rise .35s ease-out var(--d, 0s) both }
@@ -521,8 +479,6 @@
     .tabs .ink { transition: transform .4s var(--ease) }
     .panel.enter { animation: rise .35s ease-out }
     .pipe.go .wire i { animation: travel .6s ease-in-out var(--d, 0s) both }
-    .doc h2 .n.pop { animation: pop .55s var(--ease) }
-    .toc .ind { transition: transform .35s var(--ease) }
     .hg i { transform-origin: bottom; transition: transform .8s var(--ease) var(--d, 0s) }
     .hg.armed i { transform: scaleY(0) }
     .bcard { transition: transform .2s, border-color .2s } .bcard:hover { transform: translateY(-3px) }

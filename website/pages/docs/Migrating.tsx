@@ -5,6 +5,8 @@ import Note from '../../components/docs/Note'
 import SwitchPanels from '../../components/demos/SwitchPanels'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface MigratingData {
   toc: TocItem[]
@@ -71,7 +73,7 @@ export default function Migrating({ blocks, panels }: MigratingData) {
   return (
     <>
       <h1>Migrating from 0.1.x</h1>
-      <p className="lead">brust 2 is a rewrite. 0.1.x lives on the main branch as brustjs; 2.x is @brust/core. Most app code moves over with renamed imports and fewer route fields.</p>
+      <Lead>brust 2 is a rewrite. 0.1.x lives on the main branch as brustjs; 2.x is @brust/core. Most app code moves over with renamed imports and fewer route fields.</Lead>
 
       <h2 id="packages">Packages and imports</h2>
       <CodeBlock code={blocks.install.code} lang={blocks.install.lang} cwd={blocks.install.cwd} html={blocks.install.html} />
@@ -120,15 +122,10 @@ export default function Migrating({ blocks, panels }: MigratingData) {
 
       <h2 id="routes">Routes</h2>
       <p>A route has exactly five fields now: path, Component, loader, cache, children. Switch between the two versions of the pokedex's routes:</p>
-      <div className="browser">
-        <div className="url">
-          <span>routes.tsx</span>
-          <span className="lbl">SwitchPanels · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="routes.tsx" label="SwitchPanels · native">
           <SwitchPanels label="Version" panels={panels} />
-        </div>
-      </div>
+        
+      </Frame>
       <p>
         Also rejected now: <code>errorBoundary</code>, <code>ssg</code>, <code>middleware</code>, <code>sse</code>, <code>websocket</code>, <code>cache.key</code> and <code>cache.key_ttl_seconds</code>.
       </p>

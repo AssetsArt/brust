@@ -5,6 +5,7 @@ import Note from '../../../components/docs/Note'
 import Step from '../../../components/docs/Step'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
 
 const SRC = {
   route: {
@@ -74,7 +75,7 @@ export default function InvalidateCache({ blocks }: InvalidateCacheData) {
   return (
     <>
       <h1>Invalidate the cache</h1>
-      <p className="lead">Cache a Pokémon page for a minute, then drop it the moment the team changes.</p>
+      <Lead>Cache a Pokémon page for a minute, then drop it the moment the team changes.</Lead>
 
       <Step n={1} id="route" title="Cache the route and tag it" />
       <p>

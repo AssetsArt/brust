@@ -4,6 +4,7 @@ import CodeBlock from '../../../components/CodeBlock'
 import Note from '../../../components/docs/Note'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
 
 const SRC = {
   route: {
@@ -46,9 +47,9 @@ export default function CloudflareCache({ blocks }: CloudflareCacheData) {
   return (
     <>
       <h1>Cache on KV and DO</h1>
-      <p className="lead">
+      <Lead>
         On Workers every isolate has its own page cache. This page explains what that means for <code>cache.invalidate</code> and when to add a shared tier.
-      </p>
+      </Lead>
 
       <h2 id="tiers">Two tiers</h2>
       <p>

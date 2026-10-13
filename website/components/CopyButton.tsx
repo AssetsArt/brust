@@ -15,7 +15,7 @@ export default function CopyButton({ text, lang }: { text: string; lang: string 
   return (
     <button
       type="button"
-      className={label === 'Copied' ? 'done' : ''}
+      className={`cursor-pointer border-0 border-l border-term-rule bg-transparent px-[.9rem] py-0 [font:inherit] ${label === 'Copied' ? 'text-[#8fd694]' : 'text-term-dim hover:text-term-fg'}`}
       onClick={(e) => {
         const pre = e.currentTarget.closest('.code')?.querySelector('pre')
         const show = (next: string) => {

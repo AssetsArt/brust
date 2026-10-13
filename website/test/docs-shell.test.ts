@@ -29,6 +29,9 @@ afterAll(async () => {
   freshOut('shell')
 }, HOOK_MS)
 
+/** A pager link: styling is utilities now, so match the structure (an anchor to `href` holding the label and the title). */
+const pager = (label: string, href: string, title: string) => new RegExp(`<a class="[^"]*" href="${href}"><span class="[^"]*">${label}</span><b class="[^"]*">${title}</b></a>`)
+
 test('routes: /docs plus one /docs/{slug} per nav entry, in nav order; the canon slugs are present', () => {
   // the /demo/... routes belong to the Guide demos (guide.test.ts), not to the docs shell
   const patterns = manifest.routes.map((r) => r.pattern).filter((p) => !p.startsWith('/demo/'))
@@ -58,28 +61,28 @@ test('every docs route is 200 with its title and current sidebar link; /docs is 
     const html = await r.text()
     expect(html).toContain(`<title>${p.title} · brust docs</title>`)
     // page loader keys merge over the layouts': the header version must survive every page
-    expect(html).toContain(`<span class="v">${coreVersion}</span>`)
-    expect(html).toContain(`<a href="/docs/${p.slug}" aria-current="page">${p.title}</a>`)
-    expect(html).toContain(`<div class="crumbs">${p.group} / ${p.title}</div>`)
+    expect(html).toMatch(new RegExp(`<span class="[^"]*">${coreVersion}</span>`))
+    expect(html).toMatch(new RegExp(`<a class="[^"]*" href="/docs/${p.slug}" aria-current="page">${p.title}</a>`))
+    expect(html).toMatch(new RegExp(`<div class="[^"]*">${p.group} / ${p.title}</div>`))
     expect(html).toContain(`${EDIT_BASE}${p.file}`)
   }
   const home = PAGES.find((p) => p.slug === DOCS_HOME)!
   const docs = await (await fetch(`${base}/docs`)).text()
-  expect(docs).toContain(`<a href="/docs/${home.slug}" aria-current="page">${home.title}</a>`)
+  expect(docs).toMatch(new RegExp(`<a class="[^"]*" href="/docs/${home.slug}" aria-current="page">${home.title}</a>`))
   expect((await fetch(`${base}/docs/nope`)).status).toBe(404)
 }, TEST_MS)
 
 test('pager: previous/next follow the nav order across groups; the ends have one side', async () => {
   const first = await (await fetch(`${base}/docs/introduction`)).text()
-  expect(first).not.toContain('<span>Previous</span>')
-  expect(first).toContain('<a class="next" href="/docs/installation"><span>Next</span><b>Installation</b></a>')
+  expect(first).not.toContain('>Previous</span>')
+  expect(first).toMatch(pager('Next', '/docs/installation', 'Installation'))
   const qs = await (await fetch(`${base}/docs/quickstart`)).text()
-  expect(qs).toContain('<a href="/docs/installation"><span>Previous</span><b>Installation</b></a>')
-  expect(qs).toContain('<a class="next" href="/docs/project-structure"><span>Next</span><b>Project structure</b></a>')
+  expect(qs).toMatch(pager('Previous', '/docs/installation', 'Installation'))
+  expect(qs).toMatch(pager('Next', '/docs/project-structure', 'Project structure'))
   const cross = await (await fetch(`${base}/docs/migrating`)).text()
-  expect(cross).toContain('<a class="next" href="/docs/cloudflare/workers"><span>Next</span><b>Workers target</b></a>')
+  expect(cross).toMatch(pager('Next', '/docs/cloudflare/workers', 'Workers target'))
   const last = await (await fetch(`${base}/docs/cookbook/invalidate-the-cache`)).text()
-  expect(last).not.toContain('<span>Next</span>')
+  expect(last).not.toContain('>Next</span>')
 })
 
 test('On this page: the section being read is aria-current and the dot moves to it', async () => {
@@ -137,7 +140,7 @@ test('CopyButton with the Clipboard API: copies the shell commands without promp
   const btn = page.locator('figure.code button').nth(1)
   await ready(page, 'figure.code button', 1)
   await btn.click()
-  await page.locator('figure.code button.done').waitFor()
+  await page.locator('figure.code button', { hasText: 'Copied' }).waitFor()
   expect(await btn.textContent()).toBe('Copied')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('bun create @brust/app@latest my-app\ncd my-app && bun install')
   await ctx.close()

@@ -5,6 +5,8 @@ import Note from '../../components/docs/Note'
 import SwitchPanels from '../../components/demos/SwitchPanels'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
+import Frame from '../../components/docs/Frame'
+import Lead from '../../components/docs/Lead'
 
 export interface CliData {
   toc: TocItem[]
@@ -63,7 +65,7 @@ export default function Cli({ blocks, panels }: CliData) {
   return (
     <>
       <h1>CLI</h1>
-      <p className="lead">Three commands: build compiles the app into dist/, start serves it, dev rebuilds and reloads while you edit.</p>
+      <Lead>Three commands: build compiles the app into dist/, start serves it, dev rebuilds and reloads while you edit.</Lead>
 
       <h2 id="usage">The commands</h2>
       <CodeBlock code={blocks.usage.code} lang={blocks.usage.lang} file={blocks.usage.file} html={blocks.usage.html} />
@@ -73,15 +75,10 @@ export default function Cli({ blocks, panels }: CliData) {
 
       <h2 id="run">What they print</h2>
       <p>Real output, from the pokedex example and from this site's own build.</p>
-      <div className="browser">
-        <div className="url">
-          <span>Live demo</span>
-          <span className="lbl">SwitchPanels · native</span>
-        </div>
-        <div className="vp">
+      <Frame title="Live demo" label="SwitchPanels · native">
           <SwitchPanels label="Commands" panels={panels} />
-        </div>
-      </div>
+        
+      </Frame>
 
       <h2 id="build">brust build</h2>
       <ul>

@@ -3,6 +3,8 @@
 import CodeBlock from '../../../components/CodeBlock'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import Lead from '../../../components/docs/Lead'
+import TableWrap from '../../../components/docs/TableWrap'
 
 const SRC = {
   tiers: {
@@ -61,7 +63,7 @@ export default function Overview({ blocks }: OverviewData) {
   return (
     <>
       <h1>Cache adapters</h1>
-      <p className="lead">A cache adapter adds an optional shared second tier behind brust&rsquo;s in-process page cache.</p>
+      <Lead>A cache adapter adds an optional shared second tier behind brust&rsquo;s in-process page cache.</Lead>
       <p>It does two jobs:</p>
       <ol>
         <li>
@@ -105,7 +107,7 @@ export default function Overview({ blocks }: OverviewData) {
 
       <h2 id="config">Configuration</h2>
       <CodeBlock code={blocks.config.code} lang={blocks.config.lang} file={blocks.config.file} html={blocks.config.html} />
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="cache keys">
+      <TableWrap label="cache keys">
         <table>
           <thead>
             <tr>
@@ -192,7 +194,7 @@ export default function Overview({ blocks }: OverviewData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <p>Rules the build enforces:</p>
       <ul>
         <li>Unknown keys are an error.</li>
@@ -211,7 +213,7 @@ export default function Overview({ blocks }: OverviewData) {
       </ul>
 
       <h3 id="runtimes">Runtimes</h3>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Runtimes">
+      <TableWrap label="Runtimes">
         <table>
           <thead>
             <tr>
@@ -244,11 +246,11 @@ export default function Overview({ blocks }: OverviewData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
 
       <h2 id="semantics">Semantics per backend</h2>
       <p>What each backend gives:</p>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Semantics per backend">
+      <TableWrap label="Semantics per backend">
         <table>
           <thead>
             <tr>
@@ -319,7 +321,7 @@ export default function Overview({ blocks }: OverviewData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <p>
         <b>KV is a long-TTL store, not an invalidation channel.</b> KV writes are visible in other locations &ldquo;up to 60 seconds&rdquo; later (source C9 on the <a href="/docs/cache-adapters/cloudflare">Cloudflare page</a>), and KV has no compare-and-set, so brust cannot refuse a stale write. The KV adapter therefore refuses to store pages with a TTL below 300 seconds by default, and the docs advise pairing it with the Durable Object broadcast (<code>broadcast = &quot;cloudflare-do&quot;</code>). Alone, a deleted page can still be read for a while from other locations.
       </p>
@@ -329,7 +331,7 @@ export default function Overview({ blocks }: OverviewData) {
 
       <h2 id="failure">Failure behaviour and stats</h2>
       <p>Everything on the request path has a budget and fails open:</p>
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="Failure behaviour">
+      <TableWrap label="Failure behaviour">
         <table>
           <thead>
             <tr>
@@ -390,7 +392,7 @@ export default function Overview({ blocks }: OverviewData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
       <p>
         A tier-2 hit answers with <code>x-brust-cache: HIT-L2</code>; a tier-1 hit stays <code>HIT</code>. A stored page&rsquo;s TTL is what is left of its original TTL, so a page never lives longer in total than its route&rsquo;s <code>ttl_seconds</code>.
       </p>
@@ -398,7 +400,7 @@ export default function Overview({ blocks }: OverviewData) {
         With an adapter configured, <code>/_brust/cache/stats</code> gains an <code>l2</code> object. Without one, the JSON is unchanged. On Workers the path needs <code>[cloudflare] stats = true</code>, and the numbers are per isolate.
       </p>
       <CodeBlock code={blocks.stats.code} lang={blocks.stats.lang} file={blocks.stats.file} html={blocks.stats.html} />
-      <div className="table-wrap" tabIndex={0} role="region" aria-label="l2 counters">
+      <TableWrap label="l2 counters">
         <table>
           <thead>
             <tr>
@@ -461,7 +463,7 @@ export default function Overview({ blocks }: OverviewData) {
             </tr>
           </tbody>
         </table>
-      </div>
+      </TableWrap>
 
       <h2 id="non-goals">What v1 does not do</h2>
       <ul>
