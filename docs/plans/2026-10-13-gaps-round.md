@@ -236,7 +236,10 @@ Clear both in `react_jobs`. Regression fixture: a page with state passes `code={
 **R6.1 Keys (ruled).**
 - The same key in both arms → that key.
 - Different keys → `Cond(test, kA, kB)`.
-- A keyed arm next to a null arm → that arm's key (a duplicate-key warning from `runtime-dom/directives/for.ts:47` is acceptable).
+- A keyed arm next to a null arm → **guarded**: `Cond(test, kA, undefined)`.
+  - This is the lead amendment of 2026-10-13, after Mellow's review of `gap-map-cond` round 1, F1. An unguarded `it.link.id` throws for a row whose `link` is null, and the whole list dies.
+  - `runtime-dom/directives/for.ts` treats an `undefined` key as a positional empty row, key `__nil_<i>`, **with no duplicate-key warning**. This matches React, where a `null` element carries no key.
+  - Browser case: a list mixing null-link and linked rows renders, reorders, and toggles a row's link on and off.
 - A JSX arm without a key → the existing `list-key` error at that arm.
 
 **Shapes still refused** (block body, pattern/default parameter, `?.map`, non-array `Array.from`): fallback `list-shape` with the reason, e.g. "`.map` callback has a block body; return one JSX expression". Placement then skips `jsx-expression` at that location. `outlet-in-react` names the island's reason and location.
