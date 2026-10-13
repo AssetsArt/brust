@@ -35,7 +35,7 @@ test('package.json.tmpl: name/version/private, @brust/core = __BRUST_DEP__ unquo
   const src = JSON.parse(readFileSync(join(FROM, 'package.json'), 'utf8'))
   expect([pkg.name, pkg.version, pkg.private]).toEqual(['__PROJECT_NAME__', '0.0.1', true])
   expect(pkg.scripts.test).toBeUndefined()
-  expect(pkg.scripts.dev).toBe('brust build routes.tsx && brust start')
+  expect(pkg.scripts.dev).toBe('brust dev routes.tsx')
   expect(pkg.scripts.build).toBe(src.scripts.build)
   expect(pkg.dependencies).toEqual({ ...src.dependencies, '@brust/core': '^1.0.0' })
   expect(pkg.devDependencies).toEqual({ ...src.devDependencies, wrangler: blankWrangler })

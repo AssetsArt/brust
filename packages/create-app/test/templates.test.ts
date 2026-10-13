@@ -48,7 +48,7 @@ test('blank pins equal the repo', () => {
 })
 test('blank scripts are dev/build/start/typecheck per R6 plus the Cloudflare pair (M4-CF R11)', () => {
   expect(blankPkg().scripts).toEqual({
-    dev: 'brust build routes.tsx && brust start',
+    dev: 'brust dev routes.tsx',
     build: 'brust build routes.tsx',
     start: 'brust start',
     typecheck: 'bun check',
