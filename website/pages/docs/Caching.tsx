@@ -1,6 +1,6 @@
 // Caching — the per-route page cache (L1), its key, bypass, the x-brust-cache header, invalidation. This site is a
 // static export (plan R6): the probe is a labelled browser simulation of the demo route's rules, and the real headers
-// are a transcript recorded from `brust start` (curl -sI x3, 2026-10-13, brust 2.0.0-alpha.3), not typed by hand.
+// are a transcript recorded from `brust start` (curl -sI x3, 2026-10-13, brust 2.0.0-alpha.4), not typed by hand.
 import CodeBlock from '../../components/CodeBlock'
 import Note from '../../components/docs/Note'
 import CacheProbe from '../../components/demos/CacheProbe'
@@ -45,29 +45,29 @@ if (added) cache.invalidate({ tags: ['team'] })
 cache.invalidate({ path: '/pokemon/pikachu' })   // every cached query of that path, GET by default`
 
 // recorded from `brust build && brust start --port 0` of this site, three `curl -sI` runs; do not edit by hand
-const RECORDED = `$ curl -sI 'http://127.0.0.1:55084/demo/pokemon/eevee?v=docs'
+const RECORDED = `$ curl -sI 'http://127.0.0.1:53577/demo/pokemon/eevee?v=docs'
 HTTP/1.1 200 OK
 content-type: text/html; charset=utf-8
 x-brust-cache: MISS
-content-length: 2238
-x-powered-by: brust/2.0.0-alpha.3
-date: Tue, 13 Oct 2026 01:45:40 GMT
+content-length: 4453
+x-powered-by: brust/2.0.0-alpha.4
+date: Tue, 13 Oct 2026 15:20:02 GMT
 
-$ curl -sI 'http://127.0.0.1:55084/demo/pokemon/eevee?v=docs'
+$ curl -sI 'http://127.0.0.1:53577/demo/pokemon/eevee?v=docs'
 HTTP/1.1 200 OK
 content-type: text/html; charset=utf-8
 x-brust-cache: HIT
-content-length: 2238
-x-powered-by: brust/2.0.0-alpha.3
-date: Tue, 13 Oct 2026 01:45:40 GMT
+content-length: 4453
+x-powered-by: brust/2.0.0-alpha.4
+date: Tue, 13 Oct 2026 15:20:02 GMT
 
-$ curl -sI 'http://127.0.0.1:55084/demo/pokemon/eevee?v=docs&nocache=1'
+$ curl -sI 'http://127.0.0.1:53577/demo/pokemon/eevee?v=docs&nocache=1'
 HTTP/1.1 200 OK
 content-type: text/html; charset=utf-8
 x-brust-cache: BYPASS
-content-length: 2238
-x-powered-by: brust/2.0.0-alpha.3
-date: Tue, 13 Oct 2026 01:45:40 GMT`
+content-length: 4453
+x-powered-by: brust/2.0.0-alpha.4
+date: Tue, 13 Oct 2026 15:20:02 GMT`
 
 // The prefix examples (lib/cache-examples.ts) with the transcripts recorded from a real `brust start` of test/fixtures/cache-prefix.
 function exampleData(ex: Example, n: number): ExampleData {
@@ -356,8 +356,8 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
 
       <h3 id="pitfalls">Pitfalls</h3>
       {/* source: pipeline.rs:1085-1091 (a query name sent twice bypasses), :1130-1132 (names that differ only in case bypass), :1120-1128 (decoded query), :1155-1162 (bypass skips the read and the write) */}
-      <div className="note">
-        <span className="tag">Pitfalls</span>
+      <div className="grid max-w-[68ch] grid-cols-[auto_1fr] gap-[.9rem] rounded-[2px] border border-rule bg-sheet px-4 py-[.85rem] text-[15px]">
+        <span className="mt-[.15rem] h-fit rounded-[3px] bg-amber-fill px-[.4rem] py-[.05rem] font-mono text-[11px] text-on-amber">Pitfalls</span>
         <div>
           <ul>
             <li>
