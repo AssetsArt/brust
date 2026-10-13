@@ -179,11 +179,18 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
   const env = process.env
   const slots = Math.max(1, Number.parseInt(env.BRUST_RENDER_SLOTS ?? '1', 10) || 1)
   const dist = resolve(env.BRUST_DIST_DIR ?? 'dist')
-  const entry = env.BRUST_APP_ENTRY
+  // L16 R16.3: an actions-only dist has no routes module (so no BRUST_APP_ENTRY either).
+  const manifestFile = join(dist, 'manifest.json')
+  const hasManifest = await Bun.file(manifestFile).exists()
+  const actionsOnly = hasManifest && !env.BRUST_APP_ENTRY && ((await Bun.file(manifestFile).json()) as { actions_only?: boolean }).actions_only === true
+  const entry = env.BRUST_APP_ENTRY ?? (actionsOnly ? join(dist, 'index.js') : undefined)
   if (!entry) throw new Error('BRUST_APP_ENTRY is not set')
-  const manifest = (await Bun.file(join(dist, 'manifest.json')).json()) as ManifestLike & { cache?: CacheManifest | null }
-  const app = await import(resolve(entry))
-  const routes = (app.routes ?? app.default) as Route[] | undefined
+  const manifest = (await Bun.file(manifestFile).json()) as ManifestLike & { cache?: CacheManifest | null; actions_only?: boolean }
+  let routes: Route[] | undefined = []
+  if (!manifest.actions_only) {
+    const app = await import(resolve(entry))
+    routes = (app.routes ?? app.default) as Route[] | undefined
+  }
   if (!Array.isArray(routes)) throw new Error(`${entry} exports no routes (export const routes or default)`)
   const jobsMod = await import(join(dist, manifest.jobs_module ?? 'jobs.js'))
   const jobs = (jobsMod.default ?? jobsMod) as JobsModule

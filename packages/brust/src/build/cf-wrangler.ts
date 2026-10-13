@@ -20,6 +20,8 @@ export interface MergeOpts {
   /** worker-build entry, relative to `worker/` (core-cf `brust.main`) */
   main: string
   version: string
+  /** L16: an actions-only Worker has no Static Assets (and no ASSETS binding). */
+  noAssets?: boolean
 }
 
 const OWNED = ['main', 'assets', 'compatibility_date', 'no_bundle', 'find_additional_modules', 'base_dir', 'rules', 'build', 'site']
@@ -106,7 +108,7 @@ export function mergeWrangler(user: UserWrangler, o: MergeOpts): { config: Json;
     ...(name !== undefined ? { name } : {}),
     main: `worker/${o.main}`,
     compatibility_date: o.compatibilityDate,
-    assets: { directory: 'assets', binding: 'ASSETS', run_worker_first: false, html_handling: 'none', not_found_handling: 'none' },
+    ...(o.noAssets ? {} : { assets: { directory: 'assets', binding: 'ASSETS', run_worker_first: false, html_handling: 'none', not_found_handling: 'none' } }),
     ...Object.fromEntries(Object.entries(rest).filter(([k]) => k !== 'name')),
   }
   return { config, warnings }

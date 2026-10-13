@@ -69,6 +69,10 @@ export interface ManifestJson {
   assets: { runtime: string }
   jobs_module: string
   actions: ActionsRecord | null
+  /** L16 R16.3: an actions-only build (no routes, no templates); everything but the prefix is a 404 problem+json. */
+  actions_only?: true
+  /** L16 R16.4b: a page-only build: no local actions app, `base_url` points at the deployment that has it. */
+  actions_remote?: { prefix: string }
   /** `[cache]` (cache adapters); absent without one (the manifest is then byte-identical). */
   cache?: CacheRecord
 }

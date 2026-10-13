@@ -18,6 +18,9 @@ pub struct Manifest {
     pub components: BTreeMap<String, ComponentRecord>,
     pub assets: Assets,
     pub jobs_module: String,
+    /// L16 (R16.3): `brust build --actions-only`: no page routes; everything but the actions prefix is a 404 problem+json.
+    #[serde(default)]
+    pub actions_only: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -428,7 +431,10 @@ fn walk(
             }
         }
     }
-    file("assets", &manifest.assets.runtime, FileUse::Asset)?;
+    // L16: an actions-only build has no client runtime (and renders no page that would link one).
+    if !(manifest.actions_only && manifest.assets.runtime.is_empty()) {
+        file("assets", &manifest.assets.runtime, FileUse::Asset)?;
+    }
     if let Some(r) = &manifest.assets.react {
         file("assets", r, FileUse::Asset)?;
     }

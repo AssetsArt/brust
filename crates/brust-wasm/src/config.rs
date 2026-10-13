@@ -158,6 +158,7 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
                 CfCrossSite::Allow => CrossSite::Allow,
             },
         }),
+        actions_client: None,
         https: true,
         l2,
         dev_token: None,

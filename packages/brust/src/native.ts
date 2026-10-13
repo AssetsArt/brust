@@ -33,6 +33,8 @@ export interface StartOptions {
   cors?: CorsOptions
   /** The actions subtree (M3-F A3); absent = no actions. Boot error `actions: …` when invalid. */
   actions?: ActionsOptions
+  /** L16: what the page tells the browser `client()` (base URL, credentials, a non-default prefix); absent = from `actions` alone. */
+  actionsClient?: ActionsClientOptions
   /** The cache adapter (`manifest.cache`); absent = none (byte-identical server). */
   l2?: L2Options
   /** `brust dev` only (L14): a request carrying this token (`x-brust-dev-token`) is traced; absent in production. */
@@ -54,6 +56,12 @@ export interface CorsOptions {
   exposeHeaders?: string[]
   credentials?: boolean
   maxAgeSeconds?: number
+}
+/** napi `NapiActionsClient`. */
+export interface ActionsClientOptions {
+  prefix?: string
+  baseUrl?: string
+  credentials?: 'same-origin' | 'include' | 'omit'
 }
 /** napi `NapiActionsOptions`; defaults `/_brust/action`, 1048576, 8388608. */
 export interface ActionsOptions {

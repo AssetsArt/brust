@@ -333,8 +333,8 @@ When the prefix is **not** the default, the server injects a script into every r
 With the default prefix nothing is injected. The client resolves its prefix in this order:
 
 1. `opts.prefix`, if given.
-2. `/_brust/action`, if `opts.baseUrl` is set (another deployment's page global does not apply to it).
-3. `globalThis.__BRUST_ACTION_PREFIX__`, if the page defined it.
+2. `/_brust/action`, if `opts.baseUrl` is set (another deployment's page globals do not apply to a per-call base).
+3. `globalThis.__BRUST_ACTION_PREFIX__`, if the page defined it. A base that comes from the page (`__BRUST_ACTION_BASE__`, section 11) pairs with this prefix, since both come from the same deployment's configuration.
 4. `/_brust/action`.
 
 The action app answers the **whole** prefix subtree, so a page route under the prefix would be unreachable. `brust build` refuses it:
@@ -432,6 +432,56 @@ The pokedex example has no auth on purpose (it is a demo); it relies on the defa
 - **Running without Rust** is not built in. If you want the app on another server, `export default app.fetch` from your own entry; the `brust()` adapter's `listen` will still throw.
 - **Beta pin.** Elysia 2 is a beta. Both packages are pinned exactly; never use `next` or a range, and re-test before bumping.
 
-## 11. Next
+## 11. Deploy actions separately
+
+The pages and the actions can be two deployments on two origins: static pages on Cloudflare Pages and the actions on their own domain, or an API server next to a separately hosted front end. Three settings and one build flag make that work.
+
+**1. The actions deployment: `brust build --actions-only`.** The output has no pages: the manifest has no routes, and there are no templates, jobs or client chunks. The actions app runs behind the same Rust admission as always (method gate, body caps, `Content-Encoding`, the cross-site guard, CORS). Every path outside the prefix is a `404` `application/problem+json`. It combines with `--target bun` (the default; `brust start` serves the dist) and `--target cloudflare` (a Worker with only actions and no Static Assets, see [Cloudflare](./cloudflare.md), section 6). It cannot be combined with `--target static`. `[cache]` and route options are ignored with an info line.
+
+In an actions-only build, and only there, `prefix = "/"` is allowed, so `https://api.example.com/team` is the app's `/team`. Your routes are still written without a prefix and `request.url` is the real URL. The server's own paths (`/ping`, `/_brust/...`, `/public/...`) stay the server's. A normal build still refuses `prefix = "/"`, because its page routes would be unreachable.
+
+```toml
+# api/brust.toml
+[actions]
+entry = "actions.ts"
+prefix = "/"
+
+[cors]
+origins = ["https://app.example.com"]   # the exact page origin
+credentials = true                      # only if the page sends cookies
+```
+
+**2. The pages deployment: `[actions] base_url`.** The page tells the browser client where the actions live:
+
+```toml
+# web/brust.toml
+[actions]
+base_url = "https://api.example.com"   # an absolute http(s) origin: no path, query, fragment or credentials
+prefix = "/"                           # the prefix the other deployment mounts at (default /_brust/action)
+credentials = "include"                # same-origin (default) | include | omit
+```
+
+`base_url` is a runtime setting, like `[cors]`: every environment points at its own API without a rebuild. Precedence: env `BRUST_ACTIONS_BASE_URL`, then `run({ config: { actionsBaseUrl } })`, then the toml. `credentials` is `run({ config: { actionsCredentials } })` or the toml. The server injects them next to the prefix script (a JSON string literal, with `<`, `>`, `&`, U+2028 and U+2029 escaped):
+
+```html
+<script>globalThis.__BRUST_ACTION_PREFIX__="/"</script><script>globalThis.__BRUST_ACTION_BASE__="https://api.example.com";globalThis.__BRUST_ACTION_CREDENTIALS__="include"</script>
+```
+
+The client resolves the base in this order: `opts.baseUrl`, the page's `__BRUST_ACTION_BASE__`, then relative. `credentials` is the default `RequestInit.credentials` of every call; `opts.init` overrides it. The typed client keeps importing `type App` from the shared source, so calls stay typed across deployments.
+
+**A page-only build.** When `[actions]` has a `base_url` and the actions file (`actions.ts`, or `entry`) is **absent**, the build is valid: it bundles no actions, the server mounts no local app (the prefix is a page 404 locally), and the base and prefix are still injected. A missing file that `entry` names explicitly is an error, never a page-only build. With `--target static` the base is baked into the rendered pages, from the build's environment. This is how "static pages on Pages + actions on their own domain" works without the single-domain Worker of [Static output](./static.md), section 8.
+
+**Credentials and cookies.** `credentials = "include"` only works if the actions deployment's `[cors]` lists the exact page origin (a wildcard does not count) with `credentials = true`; the cross-site guard lets a listed origin through. A cookie that must travel cross-site needs `SameSite=None; Secure`:
+
+```ts
+.post('/login', ({ cookie: { session } }) => {
+  session.set({ value: token, httpOnly: true, sameSite: 'none', secure: true, path: '/' })
+  return { ok: true }
+})
+```
+
+Browsers treat `http://localhost` and `http://127.0.0.1` as secure for this, so it works in development. An origin that is not listed gets `403` `CrossSiteRejected` before the body is read, and the preflight of a listed origin answers `204` with the CORS headers.
+
+## 12. Next
 
 The pokedex example builds a team with these pieces: an Elysia app on a database file ([`examples/pokedex/actions.ts`](../examples/pokedex/actions.ts)), the typed client and the shared store ([`examples/pokedex/lib/team-client.ts`](../examples/pokedex/lib/team-client.ts)). The store is explained in [The unified store](./store.md).

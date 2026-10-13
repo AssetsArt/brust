@@ -942,3 +942,155 @@ fn put_fetch_reply_declines_outside_a_fetch_call() {
     assert_eq!(brust_server::take_fetch_body(&s, id, 0), None);
     assert_eq!(brust_server::take_fetch_body(&s, id + 99, 0), None);
 }
+
+// ---- L16: base URL / credentials injection, actions-only, the root prefix ----
+
+fn boot_client(
+    client: brust_server::ActionsClient,
+    actions: Option<ActionsConfig>,
+) -> Arc<brust_server::Server> {
+    let fake = fake().with_fetch(echo);
+    let mut cfg = config(&fx());
+    cfg.actions = actions;
+    cfg.actions_client = Some(client);
+    let s = start(cfg).expect("start");
+    let id = s.register_worker(Box::new(FakeBunHandle(Arc::clone(&fake))));
+    fake.bind(&s, id);
+    s
+}
+
+#[test]
+fn base_url_and_credentials_are_injected_after_the_prefix_script() {
+    let s = boot_client(
+        brust_server::ActionsClient {
+            prefix: Some("/api".into()),
+            base_url: Some("https://api.example.com".into()),
+            credentials: brust_server::ActionCredentials::Include,
+        },
+        Some(ActionsConfig {
+            prefix: "/api".into(),
+            ..ActionsConfig::default()
+        }),
+    );
+    let (status, _, b) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(status, 200, "{b}");
+    let want = format!(
+        "{PREFIX_TAG}<script>globalThis.__BRUST_ACTION_BASE__=\"https://api.example.com\";globalThis.__BRUST_ACTION_CREDENTIALS__=\"include\"</script><script type=\"module\" src=\"/_brust/client/runtime-"
+    );
+    assert!(b.contains(&want), "{b}");
+}
+
+#[test]
+fn a_page_only_build_injects_the_remote_base_without_a_local_app() {
+    let s = boot_client(
+        brust_server::ActionsClient {
+            base_url: Some("http://127.0.0.1:9".into()),
+            ..Default::default()
+        },
+        None,
+    );
+    let (status, _, b) = get(&s, "/pokemon/pikachu", &[]);
+    assert_eq!(status, 200, "{b}");
+    assert!(
+        b.contains("<script>globalThis.__BRUST_ACTION_BASE__=\"http://127.0.0.1:9\"</script>"),
+        "{b}"
+    );
+    assert!(
+        !b.contains("__BRUST_ACTION_PREFIX__") && !b.contains("__BRUST_ACTION_CREDENTIALS__"),
+        "{b}"
+    );
+    // No local app: the prefix is a page 404, never forwarded.
+    let (status, _, _) = request_body(&s, "POST", "/_brust/action/x", &[], b"{}".to_vec());
+    assert_eq!(status, 405);
+}
+
+#[test]
+fn a_bad_base_url_is_refused_at_boot() {
+    for bad in [
+        "api.example.com",
+        "ftp://x",
+        "https://x/path",
+        "https://x?q=1",
+        "https://x#f",
+        "https://u:p@x",
+        "https://",
+    ] {
+        let mut cfg = config(&fx());
+        cfg.actions_client = Some(brust_server::ActionsClient {
+            base_url: Some(bad.into()),
+            ..Default::default()
+        });
+        let e = start(cfg)
+            .err()
+            .unwrap_or_else(|| panic!("{bad} was accepted"));
+        assert!(e.starts_with("actions: base_url"), "{bad}: {e}");
+    }
+}
+
+fn actions_only_dist() -> tempfile::TempDir {
+    temp_dist(|m| {
+        m["routes"] = json!([]);
+        m["actions_only"] = json!(true);
+    })
+}
+
+#[test]
+fn actions_only_answers_non_actions_with_a_404_problem() {
+    let dist = actions_only_dist();
+    let fake = fake().with_fetch(echo);
+    let s = boot_actions(
+        Arc::clone(&fake),
+        dist.path(),
+        ActionsConfig::default(),
+        None,
+    );
+    for (method, path) in [
+        ("GET", "/"),
+        ("GET", "/pokemon/pikachu"),
+        ("POST", "/anything"),
+        ("GET", "/public/x.css"),
+    ] {
+        let (status, h, b) = request(&s, method, path, &[]);
+        assert_eq!(status, 404, "{method} {path}");
+        assert_eq!(
+            hdr(&h, "content-type"),
+            Some("application/problem+json"),
+            "{path}"
+        );
+        assert!(b.contains("\"Not Found\""), "{b}");
+    }
+    let (status, _, _) = request(&s, "GET", "/ping", &[]);
+    assert_eq!(status, 200);
+    let (status, _, _) = request_body(&s, "POST", "/_brust/action/x", &[], b"{}".to_vec());
+    assert_eq!(status, 200);
+}
+
+#[test]
+fn the_root_prefix_is_only_for_actions_only_and_maps_the_path_as_is() {
+    let root = ActionsConfig {
+        prefix: "/".into(),
+        ..ActionsConfig::default()
+    };
+    // a normal build refuses it
+    let mut cfg = config(&fx());
+    cfg.actions = Some(root.clone());
+    let e = start(cfg).err().expect("refused");
+    assert!(
+        e.starts_with("actions: prefix \"/\" is only allowed in an actions-only build"),
+        "{e}"
+    );
+    // an actions-only build serves it: /team reaches the app as /team
+    let dist = actions_only_dist();
+    let fake = fake().with_fetch(echo);
+    let s = boot_actions(Arc::clone(&fake), dist.path(), root, None);
+    let (status, _, _) = request_body(&s, "POST", "/team", &[], b"{}".to_vec());
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["url"], "/team");
+    let (status, _, _) = request_body(&s, "POST", "/a/b?x=1", &[], b"{}".to_vec());
+    assert_eq!(status, 200);
+    assert_eq!(last(&fake)["url"], "/a/b?x=1");
+    // the server's own paths stay the server's
+    let (status, _, b) = request(&s, "GET", "/ping", &[]);
+    assert_eq!((status, b.as_str()), (200, "pong\n"));
+    assert_eq!(fake.fetch_count(), 2);
+}
