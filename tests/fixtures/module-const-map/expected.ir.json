@@ -1,0 +1,160 @@
+{
+  "id": "input_9f40627a",
+  "source": "tests/fixtures/module-const-map/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 128,
+      "tag": "ul",
+      "attrs": [],
+      "children": [
+        {
+          "For": {
+            "source": {
+              "Server": {
+                "loc": 14,
+                "kind": {
+                  "Array": [
+                    {
+                      "loc": 18,
+                      "kind": {
+                        "Object": [
+                          [
+                            "id",
+                            {
+                              "loc": 24,
+                              "kind": {
+                                "Lit": {
+                                  "Str": "a"
+                                }
+                              }
+                            }
+                          ],
+                          [
+                            "title",
+                            {
+                              "loc": 36,
+                              "kind": {
+                                "Lit": {
+                                  "Str": "Alpha"
+                                }
+                              }
+                            }
+                          ]
+                        ]
+                      }
+                    },
+                    {
+                      "loc": 49,
+                      "kind": {
+                        "Object": [
+                          [
+                            "id",
+                            {
+                              "loc": 55,
+                              "kind": {
+                                "Lit": {
+                                  "Str": "b"
+                                }
+                              }
+                            }
+                          ],
+                          [
+                            "title",
+                            {
+                              "loc": 67,
+                              "kind": {
+                                "Lit": {
+                                  "Str": "Beta"
+                                }
+                              }
+                            }
+                          ]
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "item": "it",
+            "index": null,
+            "key": {
+              "Server": {
+                "loc": 177,
+                "kind": {
+                  "Member": {
+                    "target": {
+                      "loc": 177,
+                      "kind": {
+                        "Ident": {
+                          "name": "it",
+                          "kind": "LoopBinding"
+                        }
+                      }
+                    },
+                    "name": "id",
+                    "optional": false
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Element": {
+                  "loc": 168,
+                  "tag": "li",
+                  "attrs": [],
+                  "children": [
+                    {
+                      "Slot": {
+                        "Server": {
+                          "loc": 185,
+                          "kind": {
+                            "Member": {
+                              "target": {
+                                "loc": 185,
+                                "kind": {
+                                  "Ident": {
+                                    "name": "it",
+                                    "kind": "LoopBinding"
+                                  }
+                                }
+                              },
+                              "name": "title",
+                              "optional": false
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "host": false,
+                  "ref_name": null
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

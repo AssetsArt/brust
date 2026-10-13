@@ -1,0 +1,51 @@
+{
+  "id": "input_c1150feb",
+  "source": "tests/fixtures/module-const-nested-g10/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 388,
+      "tag": "main",
+      "attrs": [],
+      "children": [
+        {
+          "Component": {
+            "loc": 401,
+            "name": "Panel",
+            "source": null,
+            "imported": null,
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": "Static"
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [
+    {
+      "name": "Panel",
+      "id": "panel_855e19f5",
+      "path": "tests/fixtures/module-const-nested-g10/input.tsx",
+      "tier": "Static"
+    }
+  ],
+  "diagnostics": []
+}

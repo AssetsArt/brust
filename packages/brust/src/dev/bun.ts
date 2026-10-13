@@ -2,7 +2,7 @@
 // build is booted as a NEW child (`brust start` on a loopback port) and swapped in blue/green. A failed
 // build or a failed boot keeps the old child serving. Never an in-process reload: one SERVER per
 // process, workers never restart, SABs are never freed (R13.1).
-import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { loadConfig } from '../config'
@@ -53,6 +53,36 @@ function pumpLines(stream: ReadableStream<Uint8Array> | null | undefined, onLine
     }
     if (buf) onLine(buf)
   })()
+}
+
+/** L19/L21 dev swap: the built stylesheets of the old and the new generation, paired by source stem
+ * (`<stem>-<hex10>.css`), as `/_brust/client/<old>` → `/_brust/client/<new>`. `null` when the pairing is not
+ * one-to-one (a stylesheet was added or removed, or two sources share a stem): the page must reload. */
+export function cssSwapMap(oldDir: string, newDir: string): Record<string, string> | null {
+  const byStem = (dir: string) => {
+    const m = new Map<string, string>()
+    let files: string[] = []
+    try {
+      files = readdirSync(join(dir, 'client'))
+    } catch {}
+    for (const f of files) {
+      const s = /^(.*)-[0-9a-f]{10}\.css$/.exec(f)?.[1]
+      if (s === undefined) continue
+      if (m.has(s)) return null
+      m.set(s, f)
+    }
+    return m
+  }
+  const a = byStem(oldDir)
+  const b = byStem(newDir)
+  if (!a || !b || a.size !== b.size) return null
+  const map: Record<string, string> = {}
+  for (const [stem, f] of a) {
+    const g = b.get(stem)
+    if (g === undefined) return null
+    if (g !== f) map[`/_brust/client/${f}`] = `/_brust/client/${g}`
+  }
+  return map
 }
 
 /** The child server's own tracing chatter is not forwarded; the app's console output is. */
@@ -211,7 +241,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
   }
 
   /** One build -> boot -> swap cycle. */
-  async function cycle(): Promise<void> {
+  async function cycle(cssOnly = false): Promise<void> {
     state = 'building'
     publish()
     const g = ++counter
@@ -248,7 +278,12 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
     buildMs = b.ms
     state = 'ready'
     diag = null
-    proxy.broadcast({ type: 'reload', gen })
+    // A stylesheet-only edit (L19/L21): the pages keep their DOM and swap their brust CSS links.
+    const swap = cssOnly && old ? cssSwapMap(old.dir, child.dir) : null
+    if (swap) {
+      proxy.broadcast({ type: 'css-swap', gen, map: swap })
+      tui.log(`[brust] css rebuilt (${Object.keys(swap).length} stylesheet${Object.keys(swap).length === 1 ? '' : 's'} swapped, no reload)`)
+    } else proxy.broadcast({ type: 'reload', gen })
     publish()
     if (old) void stopChild(old)
   }
@@ -271,7 +306,8 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
         return
       }
       tui.log(`[brust] change detected: ${[...changed].slice(0, 3).join(', ')}${changed.size > 3 ? ` +${changed.size - 3}` : ''}`)
-      await cycle()
+      // Only built stylesheets changed (L19/L21): rebuild, boot, then swap the links instead of reloading.
+      await cycle(active !== null && state === 'ready' && [...changed].every((r) => r.endsWith('.css') && !isCss(r)))
     },
   })
 

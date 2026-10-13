@@ -32,6 +32,16 @@ const NO_SAMPLES: &[&str] = &[
     "jsx-shapes",
     "lazy-import",
     "missing-key",
+    // Negative cases: they stay jobs (R0.1/R1.1/R1.3); the manifest test pins that.
+    "module-const-call",
+    "module-const-child-job",
+    "module-const-cycle",
+    "module-const-mutated",
+    "module-const-mutated-container",
+    "module-const-mutated-forof",
+    "module-const-mutated-length",
+    "module-const-mutated-foreach",
+    "module-const-size-cap",
     "react-child",
     "react-child-nested",
     "react-hook",
@@ -50,6 +60,14 @@ const NO_DIRECTIVES: &[&str] = &[
     // F70: a static child in a row the client cannot re-create has no directives.
     "keyed-list-child-job",
     "static-list-child",
+    // L1: folded into the template, no directives to compare.
+    "module-const-attr",
+    "module-const-chain",
+    "module-const-imported",
+    "module-const-map",
+    "module-const-nested-g10",
+    "module-const-shadowed",
+    "module-const-template-literal",
     // L6: a static list with conditional element arms has no directives.
     "list-cond-element",
 ];

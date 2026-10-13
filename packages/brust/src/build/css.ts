@@ -111,10 +111,25 @@ export const SERVED_ASSET_EXT = ['.woff2', '.woff', '.ttf', '.otf', '.eot', '.pn
 
 /** R19.2/R19.4: builds every source stylesheet (one JS entry each) into `<dist>/client/`. `minify`
  * is off only for a development build (`brust dev`, review N3). */
-export async function buildCss(dist: string, sources: string[], minify = true): Promise<CssBuild> {
+export async function buildCss(
+  dist: string,
+  sources: string[],
+  minify = true,
+  o: { appRoot?: string; log?: (s: string) => void } = {},
+): Promise<CssBuild> {
   const file = new Map<string, string>()
   const maps = new Map<string, Record<string, string>>()
   if (sources.length === 0) return { file, maps }
+  const appRoot = o.appRoot ?? process.cwd()
+  const tw = tailwindUse(sources)
+  const plugins: BunPlugin[] = []
+  if (tw.using.length > 0) {
+    plugins.push(await loadTailwind(appRoot, tw.using[0]!))
+    if (tw.imports.length > 1)
+      o.log?.(
+        `[brust] warning tailwind @import "tailwindcss" is in ${tw.imports.length} files (${tw.imports.map((f) => relative(appRoot, f)).join(', ')}): each one ships the whole of Tailwind; import it once (e.g. app.css) and use @reference elsewhere`,
+      )
+  }
   const stage = join(dist, '.stage', 'css')
   mkdirSync(stage, { recursive: true })
   const entries = sources.map((src, i) => {
@@ -129,6 +144,9 @@ export async function buildCss(dist: string, sources: string[], minify = true): 
     minify,
     naming: { entry: '[name]-[hash].[ext]', chunk: '[name]-[hash].[ext]', asset: '[name]-[hash].[ext]' },
     external: ['/public/*', '/_brust/*'],
+    // L21: Tailwind's content detection scans the app (bun-plugin-tailwind reads `root`).
+    root: appRoot,
+    plugins,
   })
   if (!res.success) throw new BuildError('css', res.logs.map(String).join('\n'))
   // Assets a stylesheet references (fonts, images): `<name>-<hex10>.<ext>`, references rewritten.
@@ -190,6 +208,54 @@ export async function buildCss(dist: string, sources: string[], minify = true): 
     maps.set(src, map)
   }
   return { file, maps }
+}
+
+// ---- Tailwind CSS v4 (gaps round L21, R21.1) ----
+
+/** A stylesheet that needs the Tailwind compiler. */
+const TAILWIND_USE = /@import\s+(?:url\(\s*)?["']tailwindcss(?:\/[^"']*)?["']|@apply\b|@reference\b|@theme\b|@plugin\b/
+const TAILWIND_IMPORT = /@import\s+(?:url\(\s*)?["']tailwindcss["']/
+const CSS_IMPORT = /@import\s+(?:url\(\s*)?["'](\.{1,2}\/[^"']+)["']/g
+
+/** Which sources (or the relative `@import`s they pull in) use Tailwind, and which `@import "tailwindcss"`. */
+export function tailwindUse(sources: string[]): { using: string[]; imports: string[] } {
+  const using: string[] = []
+  const imports: string[] = []
+  const seen = new Set<string>()
+  const visit = (f: string) => {
+    if (seen.has(f)) return
+    seen.add(f)
+    let text = ''
+    try {
+      text = readFileSync(f, 'utf8')
+    } catch {
+      return
+    }
+    if (TAILWIND_USE.test(text)) using.push(f)
+    if (TAILWIND_IMPORT.test(text)) imports.push(f)
+    for (const m of text.matchAll(CSS_IMPORT)) visit(resolve(dirname(f), m[1]!))
+  }
+  for (const s of sources) visit(s)
+  return { using, imports }
+}
+
+/** `bun-plugin-tailwind`, resolved from the app (R21.1: `tailwindcss@4` and the plugin are the app's own dev
+ * dependencies). Missing → `tailwind-missing` with the exact install command. */
+export async function loadTailwind(appRoot: string, usedBy: string): Promise<BunPlugin> {
+  const missing = ['tailwindcss', 'bun-plugin-tailwind'].filter((p) => {
+    try {
+      Bun.resolveSync(`${p}/package.json`, appRoot)
+      return false
+    } catch {
+      return true
+    }
+  })
+  if (missing.length > 0)
+    throw new BuildError(
+      'tailwind-missing',
+      `${relative(appRoot, usedBy)} uses Tailwind CSS, but ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not installed in the app: run \`bun add -d tailwindcss@4 bun-plugin-tailwind\``,
+    )
+  return (await import(Bun.resolveSync('bun-plugin-tailwind', appRoot))).default as BunPlugin
 }
 
 /** R19.4: the one CSS plugin of every JS build. A `.module.css` import is its class map
