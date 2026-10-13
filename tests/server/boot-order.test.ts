@@ -1,7 +1,8 @@
 // F128: `[brust] listening on` (printed by the Rust server thread) must come BEFORE `[brust] ready` (printed by run.ts after
 // `untilReady`), because ~35 callers read the address from the log once they saw `ready`. Both threads wake on the same worker
 // registrations, so the order used to be a race (3 of 120 boots printed `ready` first with 16 boots at once). `untilReady`
-// now also waits for the server's own announcement. Many concurrent boots make the old race show; the log is in every failure.
+// now also waits for the server's own announcement. 4 boots at once (the host load cap), 40 rounds = 160 boots per run; the
+// log of every wrong-order boot is in the failure.
 import { expect, test } from 'bun:test'
 import { join } from 'node:path'
 
@@ -28,11 +29,11 @@ async function boot(): Promise<{ log: string; listeningFirst: boolean }> {
   }
 }
 
-test('`listening on` is printed before `ready` on every boot (16 at once, 3 rounds)', async () => {
+test('`listening on` is printed before `ready` on every boot (4 at once, 40 rounds)', async () => {
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}`)
-  for (let round = 0; round < 3; round++) {
-    const boots = await Promise.all(Array.from({ length: 16 }, boot))
+  for (let round = 0; round < 40; round++) {
+    const boots = await Promise.all(Array.from({ length: 4 }, boot))
     const bad = boots.filter((x) => !x.listeningFirst)
     expect(bad.map((x) => x.log)).toEqual([])
   }
