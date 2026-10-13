@@ -1658,6 +1658,17 @@ impl<'a, 'c> Printer<'a, 'c> {
                 });
                 d
             });
+        // A row-invariant instance (F142, R34.42) is fed once: its record has no loops, and its
+        // slot is read without the row index.
+        let invariant = ir
+            .instances
+            .iter()
+            .any(|r| r.child_id == id && r.k == k && r.loops.is_empty());
+        let (loops, slot_loops) = if invariant {
+            (String::new(), Vec::new())
+        } else {
+            (loops, slot_loops)
+        };
         let inline = Inline {
             segs,
             bind: bind.clone(),
