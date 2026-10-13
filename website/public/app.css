@@ -86,7 +86,15 @@ pre code { background: none; border: 0; padding: 0; font-size: inherit; border-r
 .code .bar .cwd { padding: .4rem .9rem; color: var(--term-dim) }
 .code .bar button { font: inherit; color: var(--term-dim); background: transparent; border: 0; border-left: 1px solid var(--term-rule); padding: 0 .9rem; cursor: pointer }
 .code .bar button:hover { color: var(--term-fg) } .code .bar button.done { color: #8fd694 }
-.code pre { margin: 0; padding: .9rem 1rem; overflow-x: auto }
+.code pre { margin: 0; padding: .9rem 1rem; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--term-rule) transparent }
+/* Always-visible scrollbars in code (macOS overlay scrollbars hide that a long line continues). */
+.code pre::-webkit-scrollbar { width: 10px; height: 10px }
+.code pre::-webkit-scrollbar-track { background: transparent }
+.code pre::-webkit-scrollbar-thumb { background: var(--term-rule); border-radius: 999px; border: 2px solid var(--term) }
+.code pre::-webkit-scrollbar-thumb:hover { background: var(--term-dim) }
+.code pre::-webkit-scrollbar-corner { background: transparent }
+/* Tier panels on the landing: a long source scrolls inside its block instead of stretching the panel. */
+.panel .code pre { max-height: 30rem; overflow: auto }
 .code pre code { font: inherit }
 .k { color: var(--sy-kw) } .s { color: var(--sy-str) } .f { color: var(--sy-fn) } .t { color: var(--sy-tag) } .c { color: var(--sy-cm) } .n { color: var(--sy-fn) }
 .ps { color: var(--amber); user-select: none }
