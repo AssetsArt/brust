@@ -2,8 +2,9 @@ export default function Facts() {
   return (
     <div className="wrap facts">
       <div>
+        {/* Measured 2026-10-13: /demo/pokemon/pikachu (all static) ships no <script>; runtime-dom is 17.5 KB raw, 5.9 KB gzip -9. */}
         <b>0 KB</b>
-        <span>client JavaScript on a page that only reads data</span>
+        <span>JavaScript on a page with nothing interactive. The 6 KB runtime loads only where a component needs it</span>
       </div>
       <div>
         <b>3 tiers</b>
