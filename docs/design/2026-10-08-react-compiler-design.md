@@ -239,10 +239,22 @@ The analyzer never mutates the AST. It produces the IR (§5) plus diagnostics.
 | `useLayoutEffect` | same as `useEffect` but runs before the chunk's first DOM write | none |
 | `useRef(init)` | `{ current: init }`; when passed as `ref={r}` to an element, bound to the node via `x-ref` after mount | none |
 | `useId()` | server generates, client reads it from the DOM | deterministic per component instance |
-| anything else (`useContext`, `use`, `useReducer`, `useTransition`, `useSyncExternalStore`, custom `useX`) | → tier `react` | — |
+| custom `useX(…)` (G3) | inlined at the call site: the hook's locals are renamed `<local>_<hook><n>` (`d_useDebounced1`), an identifier argument reads the caller's binding, any other argument is a derived const; the result binds to `const x`, or to an array/object pattern matched against a literal `return [..]` / `return {..}` | as its inlined body |
+| anything else (`useContext`, `use`, `useReducer`, `useTransition`, `useSyncExternalStore`) | → tier `react` | — |
 
 Hooks must be called unconditionally at the top level of the component (React's own
 rule); the HIR already rejects violations.
+
+A custom hook is inlined when its callee is a `function` in the same module, or a named or
+default import of a function from a **relative** module (G3, plan 2026-10-13-gaps-round L5).
+Hooks calling hooks are inlined recursively (8 deep; a cycle is `hook-recursive`). It stays
+`react` (the fallback is reported at the call site and names the hook, e.g. `hook useReducer is
+not supported (in custom hook useCart, hooks/useCart.ts:4)`) when the hook: calls a hook brust
+does not support; builds JSX or returns early; has a default, rest or destructured parameter
+or assigns one (`hook-shape`); is destructured against a return that is not a literal of that
+shape (`hook-return-shape`); is imported and reads its own module's bindings or imports
+(other than React hooks), or uses `useStore` (import paths are not rebased); or reads a
+module name the component shadows.
 
 ### 4.4 Lower
 

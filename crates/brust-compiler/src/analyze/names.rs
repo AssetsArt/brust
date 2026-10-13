@@ -5,6 +5,18 @@ use bun_ast as js_ast;
 use js_ast::b::B;
 use std::collections::{HashMap, HashSet};
 
+/// What the printer prints a renamed symbol as, by symbol index (custom hooks, G3).
+pub type Aliases = HashMap<u32, String>;
+
+/// A symbol renamed while a custom hook is inlined (G3): what it prints as, and what it
+/// reads as when that is not its own classification (an argument bound to the caller's
+/// value reads as the caller's identifier).
+#[derive(Clone, Debug)]
+pub struct Alias {
+    pub print: String,
+    pub kind: Option<(String, IdentKind)>,
+}
+
 /// Symbol-indexed facts about one component. Keys are `Ref::inner_index` of the
 /// symbol after following links.
 pub struct NameTable<'a> {
@@ -25,6 +37,9 @@ pub struct NameTable<'a> {
     /// The exact symbols the parser generated for the JSX runtime: callees of
     /// lowered JSX calls and the generated `Fragment` tag (never by spelling).
     jsx_runtime: HashSet<u32>,
+    /// Renamed symbols (G3), and the same map as print names for the printer.
+    aliases: HashMap<u32, Alias>,
+    printed: Aliases,
 }
 
 /// Every `import` binding of the module: local symbol (`Ref::inner_index`) → (module path,
@@ -64,19 +79,7 @@ pub fn module_imports(ast: &js_ast::Ast<'_>) -> HashMap<u32, (String, String)> {
 
 impl<'a> NameTable<'a> {
     pub fn new(ast: &'a js_ast::Ast<'_>, component: &js_ast::G::Fn) -> Self {
-        let imports = module_imports(ast);
-        let mut table = NameTable {
-            symbols: ast.symbols.as_slice(),
-            imports,
-            props: HashMap::new(),
-            props_ident: None,
-            state: HashSet::new(),
-            setters: HashSet::new(),
-            loop_bindings: HashSet::new(),
-            stores: HashMap::new(),
-            jsx_runtime: HashSet::new(),
-        };
-        table.jsx_runtime = table.collect_jsx_runtime(ast);
+        let mut table = Self::for_hook(ast);
         if let Some(arg) = component.args.slice().first() {
             match arg.binding.data {
                 B::BIdentifier(id) => table.props_ident = Some(table.key(id.r#ref)),
@@ -100,6 +103,27 @@ impl<'a> NameTable<'a> {
                 B::BArray(_) | B::BMissing(_) => {}
             }
         }
+        table
+    }
+
+    /// The table for a custom hook's body (G3): the same module facts, and no props (a
+    /// hook's first parameter is an ordinary argument).
+    pub fn for_hook(ast: &'a js_ast::Ast<'_>) -> Self {
+        let imports = module_imports(ast);
+        let mut table = NameTable {
+            symbols: ast.symbols.as_slice(),
+            imports,
+            props: HashMap::new(),
+            props_ident: None,
+            state: HashSet::new(),
+            setters: HashSet::new(),
+            loop_bindings: HashSet::new(),
+            stores: HashMap::new(),
+            jsx_runtime: HashSet::new(),
+            aliases: HashMap::new(),
+            printed: HashMap::new(),
+        };
+        table.jsx_runtime = table.collect_jsx_runtime(ast);
         table
     }
 
@@ -167,6 +191,9 @@ impl<'a> NameTable<'a> {
     }
 
     pub fn name(&self, r: js_ast::Ref) -> String {
+        if let Some(a) = self.aliases.get(&self.key(r)) {
+            return a.print.clone();
+        }
         self.symbols
             .get(self.key(r) as usize)
             .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())
@@ -175,6 +202,9 @@ impl<'a> NameTable<'a> {
 
     pub fn kind_of(&self, r: js_ast::Ref) -> (String, IdentKind) {
         let k = self.key(r);
+        if let Some((name, kind)) = self.aliases.get(&k).and_then(|a| a.kind.clone()) {
+            return (name, kind);
+        }
         if let Some(prop) = self.props.get(&k) {
             return (prop.clone(), IdentKind::Prop);
         }
@@ -239,7 +269,15 @@ impl<'a> NameTable<'a> {
 
     /// The handle of the store view `r` (`s` of `const s = useStore(h)`), if it is one.
     pub fn store_view(&self, r: js_ast::Ref) -> Option<&str> {
-        match self.stores.get(&self.key(r)) {
+        let k = self.key(r);
+        if let Some(Alias {
+            kind: Some((_, IdentKind::Store { handle, key: None })),
+            ..
+        }) = self.aliases.get(&k)
+        {
+            return Some(handle.as_str());
+        }
+        match self.stores.get(&k) {
             Some((handle, None)) => Some(handle.as_str()),
             _ => None,
         }
@@ -273,6 +311,25 @@ impl<'a> NameTable<'a> {
     /// `jsxs_*`, `Fragment_*`): never a capture or a dependency.
     pub fn is_jsx_runtime(&self, r: js_ast::Ref) -> bool {
         self.jsx_runtime.contains(&self.key(r))
+    }
+
+    /// Renames `r` (G3): it prints as `alias.print`, and reads as `alias.kind` when set.
+    pub fn set_alias(&mut self, r: js_ast::Ref, alias: Alias) {
+        let k = self.key(r);
+        self.printed.insert(k, alias.print.clone());
+        self.aliases.insert(k, alias);
+    }
+
+    /// The renamed symbols as the printer needs them.
+    pub fn print_aliases(&self) -> &Aliases {
+        &self.printed
+    }
+
+    /// Every symbol name the module declares or references, as spelled in the source.
+    pub fn spellings(&self) -> impl Iterator<Item = String> + '_ {
+        self.symbols
+            .iter()
+            .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())
     }
 
     /// Same symbol, links followed.
