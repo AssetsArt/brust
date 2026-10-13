@@ -40,7 +40,7 @@ test('the ranked list follows the stated rule: app rows, then library components
   expect(ranked.some((b) => b.libComponents > 0)).toBe(true)
 })
 
-test('the repro isolates the named-export rule: only the named-export island fails to build', () => {
+test('the repro guards the named-export rule (S1.1): a named-export island builds like a default one', () => {
   const by = Object.fromEntries(repro.map((r) => [r.id, r.build.ok]))
-  expect(by).toEqual({ named: false, default: true, static: true })
+  expect(by).toEqual({ named: true, default: true, static: true })
 })
