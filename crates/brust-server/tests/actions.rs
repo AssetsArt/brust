@@ -108,8 +108,9 @@ fn no_actions_config_is_byte_identical() {
 #[test]
 fn body_over_cap_by_content_length_is_413() {
     let (fake, s) = server_cap(echo, 1024);
-    let (status, _, body) = request_body(&s, "POST", URL, &[], vec![b'a'; 1025]);
+    let (status, h, body) = request_body(&s, "POST", URL, &[], vec![b'a'; 1025]);
     assert_eq!((status, body.as_slice()), (413, &b"payload too large"[..]));
+    assert_eq!(hdr(&h, "connection"), Some("close"));
     let (status, _, _) = request_body(&s, "POST", URL, &[], vec![b'a'; 1024]);
     assert_eq!(status, 200);
     assert_eq!(fake.fetch_count(), 1);
@@ -118,8 +119,10 @@ fn body_over_cap_by_content_length_is_413() {
 #[test]
 fn chunked_body_over_cap_is_413() {
     let (fake, s) = server_cap(ok, 262_144);
-    let (status, _, body) = request_chunked(&s, "POST", URL, &[], vec![vec![b'a'; 1024]; 300]);
+    let (status, h, body) = request_chunked(&s, "POST", URL, &[], vec![vec![b'a'; 1024]; 300]);
     assert_eq!((status, body.as_slice()), (413, &b"payload too large"[..]));
+    // F127: the connection of a refused body is not reused (the read-out is bounded).
+    assert_eq!(hdr(&h, "connection"), Some("close"));
     assert_eq!(fake.fetch_count(), 0);
 }
 
