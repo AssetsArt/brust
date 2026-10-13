@@ -91,6 +91,11 @@ pub struct AnalyzeOptions {
     pub server_only: Vec<String>,
     /// Directory module paths are relative to.
     pub root: std::path::PathBuf,
+    /// SVG markup the build rendered for `IconRequest.key`s (L23): those icons become inline elements.
+    pub icon_svgs: std::collections::HashMap<String, String>,
+    /// The last compile (icons were rendered): a lucide icon that is still a component is judged
+    /// as an island, so a prop it cannot hydrate from is an error again (L23).
+    pub icons_final: bool,
 }
 
 /// Parses `source` as the module at `path` and runs the full analysis,

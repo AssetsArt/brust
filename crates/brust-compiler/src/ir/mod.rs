@@ -207,6 +207,9 @@ pub struct ComponentIR {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub uses_outlet: bool,
     pub jobs: Vec<JobDecl>,
+    /// lucide icons the build should render to inline SVG (L23); empty when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub icon_requests: Vec<IconRequest>,
     pub child_links: Vec<ChildLink>,
     /// Inlined child instances with a precompute job or `useId` values (S6 `children[].instances`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -294,6 +297,7 @@ impl ComponentIR {
             template: Node::Fragment(vec![]),
             uses_outlet: false,
             jobs: vec![],
+            icon_requests: vec![],
             child_links: vec![],
             instances: vec![],
             client_props: vec![],

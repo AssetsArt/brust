@@ -50,10 +50,27 @@ pub(crate) fn compile_tree_impl(
     root: &str,
     runtime_import: &str,
     server_only: Vec<String>,
+    icon_svgs: Option<String>,
 ) -> CompiledTree {
+    // `{ "final": bool, "svgs": { "<key>": "<svg markup>" } }`: lucide icons the build rendered (L23).
+    let (icon_svgs, icons_final) = icon_svgs
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .map(|v| {
+            let svgs = v
+                .get("svgs")
+                .and_then(|s| serde_json::from_value(s.clone()).ok())
+                .unwrap_or_default();
+            (
+                svgs,
+                v.get("final").and_then(|f| f.as_bool()).unwrap_or(false),
+            )
+        })
+        .unwrap_or_default();
     let opts = AnalyzeOptions {
         server_only,
         root: std::path::PathBuf::from(root),
+        icon_svgs,
+        icons_final,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -94,9 +111,10 @@ pub fn compile_tree(
     root: String,
     runtime_import: String,
     server_only: Vec<String>,
+    icon_svgs: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
-    compile_tree_impl(&path, &root, &runtime_import, server_only)
+    compile_tree_impl(&path, &root, &runtime_import, server_only, icon_svgs)
 }
 
 #[cfg(test)]
@@ -109,6 +127,7 @@ mod tests {
             root,
             "brust/runtime-dom",
             vec![],
+            None,
         );
         assert!(t.error.is_none(), "{:?}", t.error);
         let c = &t.components[0];
@@ -126,6 +145,7 @@ mod tests {
             root,
             "brust/runtime-dom",
             vec![],
+            None,
         );
         assert_eq!(t.error.as_ref().map(|d| d.class.as_str()), Some("error"));
     }

@@ -517,6 +517,22 @@ impl Walker<'_, '_> {
             return;
         }
         let child = self.resolve_child(name, source.as_deref(), imported.as_deref(), *loc);
+        // L23: a lucide icon with reactive props is inlined by the second compile; only if it is
+        // still a component then (`icons_final`) is a prop it cannot hydrate from an error.
+        let pending_icon = !self.ctx.opts.icons_final
+            && source.as_deref().is_some_and(super::icons::is_lucide)
+            && !self
+                .ctx
+                .opts
+                .icon_svgs
+                .contains_key(&format!("{}@{loc}", self.ctx.path));
+        let island_err = |rule: &str, msg: String, loc: u32, fix: &str| {
+            if pending_icon {
+                Diagnostic::warning(rule, msg, loc, fix)
+            } else {
+                Diagnostic::error(rule, msg, loc, fix)
+            }
+        };
         *tier = child.tier.clone();
         if !self.refs.iter().any(|r| r.name == *name) {
             self.refs.push(ChildRef {
@@ -552,7 +568,7 @@ impl Walker<'_, '_> {
                     };
                     if let Some(why) = why {
                         ok = false;
-                        self.diagnostics.push(Diagnostic::error(
+                        self.diagnostics.push(island_err(
                             "island-prop",
                             format!("prop `{k}` passed to the React island <{name}> is {why}"),
                             *loc,
@@ -584,7 +600,7 @@ impl Walker<'_, '_> {
                 }
                 if ok && self.lists.iter().any(|(_, stateful)| *stateful) {
                     ok = false;
-                    self.diagnostics.push(Diagnostic::error(
+                    self.diagnostics.push(island_err(
                         "island-prop",
                         format!("the React island <{name}> sits in a list that changes with state"),
                         *loc,

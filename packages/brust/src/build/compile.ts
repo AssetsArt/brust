@@ -94,8 +94,13 @@ export function compileApp(opts: {
   runtimeImport: string
   serverOnly: string[]
   log: (s: string) => void
+  /** SVG markup the build rendered for lucide icon requests (L23), by `ir.icon_requests[].key`. */
+  iconSvgs?: Record<string, string>
+  /** The compile after icons were rendered (even if none could be): icons still components are judged as islands. */
+  iconsFinal?: boolean
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
+  const iconSvgsJson = opts.iconsFinal ? JSON.stringify({ final: true, svgs: opts.iconSvgs ?? {} }) : undefined
   const seen = new Map<string, Seen>()
   const rootIdOfFile = new Map<string, string>()
   const routeComponent = new Map<string, string>()
@@ -113,7 +118,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, iconSvgsJson)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).

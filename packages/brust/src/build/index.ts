@@ -11,6 +11,7 @@ import { BrustRouteError, type FlatRoute, validateRoutes } from '../routes'
 import { type BrowserCtx, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
 import { runActionsOnly } from './actions-only'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
+import { renderIcons } from './build-icons'
 import { type Compiled, compileApp } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
@@ -233,15 +234,24 @@ async function buildInto(
   const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps }
   // The runtime first: its hashed URL is the `runtimeImport` every client chunk is compiled with.
   const runtime = await buildRuntime(out, ctx)
-  const { compiled, routeComponent } = compileApp({
+  const compileOpts = {
     appRoot,
     leaves,
     componentFile: o.componentFile,
     componentIssue: o.componentIssue,
     runtimeImport: `/_brust/${runtime}`,
     serverOnly: o.serverOnly,
-    log: o.log,
-  })
+  }
+  const firstLog: string[] = []
+  let { compiled, routeComponent } = compileApp({ ...compileOpts, log: (l) => firstLog.push(l) })
+  // L23: lucide icons the compiler could inline are rendered here (react-dom/server) and the app is
+  // compiled again with their SVG (an icon with no markup stays the L22 island). The first compile's
+  // warnings describe icons that are inline now, so only the last compile's are shown.
+  const hasIcons = [...compiled.values()].some((c) => (c.ir.icon_requests ?? []).length > 0)
+  if (hasIcons) {
+    const iconSvgs = await renderIcons(compiled, appRoot, o.log)
+    ;({ compiled, routeComponent } = compileApp({ ...compileOpts, iconSvgs, iconsFinal: true, log: o.log }))
+  } else firstLog.forEach((l) => o.log(l))
 
   mkdirSync(join(out, 'jinja'), { recursive: true })
   for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
