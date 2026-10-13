@@ -1,10 +1,11 @@
 // Renders docs/shadcn-coverage.md. Pure: every number comes from the rows, nothing from the clock, the host or the bundler.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { AppRow, Repro } from './app.ts'
+import type { AppRow, Measured, Repro } from './app.ts'
 import { CONSTRUCTS, type LibPackage } from './lib.ts'
 import { FIXTURE } from './paths.ts'
 
+const kb = (n: number): string => (n === 0 ? '0' : String(Math.max(1, Math.round(n / 1024))))
 const cell = (s: string) => s.replaceAll('|', '\\|')
 const list = (xs: string[]) => (xs.length ? xs.join(', ') : '—')
 const installed = (pkg: string): string => {
@@ -12,30 +13,31 @@ const installed = (pkg: string): string => {
 }
 const lock = () => JSON.parse(readFileSync(join(FIXTURE, 'shadcn.lock.json'), 'utf8')) as { cli: string; registry: string; style: string; baseColor: string; items: string }
 
-export interface Blocker { key: string; kind: 'compiler code' | 'construct' | 'build' | 'compile error'; appRows: number; appComponents: number; libComponents: number; why: string }
+export interface Blocker { key: string; kind: 'compiler code' | 'construct' | 'build' | 'compile error'; measuredRows: number; analysisRows: number; appComponents: number; libComponents: number; why: string }
 
-/** Combined ranking: how many app rows and how many library components each blocker stops. */
+/** How many built (measured) pages, refused (analysis-only) pages and library components each blocker stops. */
 export function rankBlockers(rows: AppRow[], libs: LibPackage[]): Blocker[] {
   const m = new Map<string, Blocker>()
   const get = (key: string, kind: Blocker['kind'], why: string) => {
     let b = m.get(key)
-    if (!b) m.set(key, (b = { key, kind, appRows: 0, appComponents: 0, libComponents: 0, why }))
+    if (!b) m.set(key, (b = { key, kind, measuredRows: 0, analysisRows: 0, appComponents: 0, libComponents: 0, why }))
     return b
   }
   const compilerWhy = (code: string) =>
     code.includes('published .js/.mjs') ? 'the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy)' : `\`${code}\` diagnostic (docs/react-coverage.md)`
   const comps = new Map<string, Set<string>>()
+  const bucket = (r: AppRow) => (r.build.ok ? 'measuredRows' : 'analysisRows') as 'measuredRows' | 'analysisRows'
   for (const r of rows) {
     for (const code of r.codes) {
       const isErr = code.startsWith('error:')
-      get(isErr ? code : `fallback:${code}`, isErr ? 'compile error' : 'compiler code', compilerWhy(code)).appRows++
+      get(isErr ? code : `fallback:${code}`, isErr ? 'compile error' : 'compiler code', compilerWhy(code))[bucket(r)]++
     }
     for (const b of r.blocked) for (const c of b.codes) {
       const k = `fallback:${c}`
       if (!comps.has(k)) comps.set(k, new Set())
       comps.get(k)!.add(`${b.file}#${b.name}`)
     }
-    if (!r.build.ok && r.tier !== 'error') get(`build: ${r.build.message}`, 'build', 'named-export islands: every React-tier component gets an island entry (bundle.ts `islandShim`) that imports its file\'s DEFAULT export (`componentImport`), and shadcn files export by name only, so the page\'s `brust build` fails').appRows++
+    if (!r.build.ok && r.tier !== 'error') get(`build: ${r.build.message}`, 'build', 'named-export islands: every React-tier component gets an island entry (bundle.ts `islandShim`) that imports its file\'s DEFAULT export (`componentImport`), and shadcn files export by name only, so the page\'s `brust build` fails')[bucket(r)]++
   }
   for (const [k, s] of comps) m.get(k)!.appComponents = s.size
   const blocks = new Map(CONSTRUCTS.filter((c) => c.blocks).map((c) => [c.name, c.why]))
@@ -46,9 +48,10 @@ export function rankBlockers(rows: AppRow[], libs: LibPackage[]): Blocker[] {
   return [...m.values()].sort(byRule)
 }
 
-/** The ranking rule, stated in the doc header and tested: fixture pages blocked first, library components second, name last. */
-export const RANKING_RULE = 'fixture pages blocked (App rows), descending; ties by library components blocked, descending; then by name'
-export const byRule = (a: Blocker, b: Blocker): number => b.appRows - a.appRows || b.libComponents - a.libComponents || a.key.localeCompare(b.key)
+/** The ranking rule, stated in the doc header and tested: MEASURED pages first, then analysis-only pages, then library components, then name. */
+export const RANKING_RULE = 'measured rows (pages that built) blocked, descending; ties by analysis-only rows (refused pages), then by library components blocked, all descending; then by name'
+export const byRule = (a: Blocker, b: Blocker): number =>
+  b.measuredRows - a.measuredRows || b.analysisRows - a.analysisRows || b.libComponents - a.libComponents || a.key.localeCompare(b.key)
 
 /** Survey truth = the product (compiler or build) really behaves so on shadcn's own code; census = a construct seen in library code, not proven to block that component; fixture mistake = caused by how the fixture is set up (none found). */
 export function classify(b: Blocker): string {
@@ -63,14 +66,26 @@ export function renderReport(rows: AppRow[], libs: LibPackage[], repro: Repro[])
   const out: string[] = []
   const count = (t: AppRow['tier']) => rows.filter((r) => r.tier === t).length
   out.push('# shadcn/ui coverage (v2)', '')
-  out.push('Generated by `bun run shadcn` (scripts/shadcn); do not edit. The scoreboard of plan `2026-10-13-shadcn` (R34.2): every row is a page of the fixture app `tests/fixtures/shadcn`, analysed by the real compiler (`compileTree`, the call `brust build` makes) and built by the real `brust build`. CI fails on a diff.', '')
+  out.push('Generated by `bun run shadcn` (scripts/shadcn); do not edit. The scoreboard of plan `2026-10-13-shadcn` (R34.2): every row is a page of the fixture app `tests/fixtures/shadcn`, built ALONE by the real `brust build` (S0.1: a whole-app build stops at the first refusal, so one build per page). A page that builds is measured; a refused page keeps its refusal and the compiler\'s analysis. CI fails on a diff of this file.', '')
   out.push('## Pinned', '')
   out.push(`- shadcn CLI \`${L.cli}\`, registry \`${L.registry}\` (style ${L.style}, base colour ${L.baseColor}), ${L.items.split(' ').length} \`registry:ui\` items added with \`shadcn add\`; the list is \`tests/fixtures/shadcn/shadcn.lock.json\`.`)
   out.push(`- react \`${installed('react')}\`, radix-ui \`${installed('radix-ui')}\`, lucide-react \`${installed('lucide-react')}\`, class-variance-authority \`${installed('class-variance-authority')}\`, cn \`${installed('cn')}\`. Upgrading any of them is a deliberate PR that regenerates this file.`, '')
   out.push('## Summary', '')
-  out.push('| Rows | static | native | react | error (compile refused) | build ok | build failed | islands on all pages |', '|---|---|---|---|---|---|---|---|')
-  out.push(`| ${rows.length} | ${count('static')} | ${count('native')} | ${count('react')} | ${count('error')} | ${rows.filter((r) => r.build.ok).length} | ${rows.filter((r) => !r.build.ok).length} | ${rows.reduce((n, r) => n + r.islands, 0)} |`, '')
-  out.push('**What is measured and what is analysed.** Only the `Build` column (and the Summary build counts) comes from a real `brust build` of the page, and a build of the whole fixture stops at the first refusal, so there is no `dist/manifest.json` behind the rest (per-page measured builds: plan S0.1, lane shadcn-measured). Tier, Islands, Components, Fallback codes and Client bytes are **analysis-only**: the compiler\'s own `compileTree` result for the page (the same call the build makes first), with Islands derived by walking the IR (page root React = 1; otherwise the React components reached through static/native ones). Read "react 53" as "the compiler puts 53 page roots on the React tier", not as a measured island count of a working build. Library numbers are analysis-only too.', '')
+  const built = rows.filter((r): r is AppRow & { build: { ok: true; measured: Measured } } => r.build.ok)
+  const refused = rows.filter((r) => !r.build.ok)
+  const mt = (t: Measured['tier']) => built.filter((r) => r.build.measured.tier === t).length
+  const gz = built.map((r) => r.build.measured.jsGzip).sort((a, b) => a - b)
+  const med = gz.length ? gz[Math.floor(gz.length / 2)]! : 0
+  out.push('**Units.** Client JS = the gzip size of the client JS the page loads (the runtime, the chunk of each island and native component it reaches, and the shared chunks those import; the chunk of a React child of an island is not loaded, the island renders it), rounded to the nearest 1 KB (a non-zero size never shows 0); a page with no island and no native chunk loads no JS and shows exactly `0`. Exact raw and gzip bytes per page go to `tests/fixtures/shadcn/.rows/shadcn-sizes.json` on every run (not committed; CI uploads it as an artifact). Byte regressions are guarded by the runtime-split budget, not by this file.', '')
+  out.push(`### Measured (${built.length} of ${rows.length} pages built)`, '')
+  out.push('A page is **measured** when its own `brust build` succeeded: tier, components, islands and client JS are read from its `dist/manifest.json` and `dist/client`.', '')
+  out.push('| Pages | static | native | react | islands in total | pages with 0 JS | Client JS gzip, smallest / median / largest |', '|---|---|---|---|---|---|---|')
+  out.push(`| ${built.length} | ${mt('static')} | ${mt('native')} | ${mt('react')} | ${built.reduce((n, r) => n + r.build.measured.islands, 0)} | ${gz.filter((n) => n === 0).length} | ${kb(gz[0] ?? 0)} / ${kb(med)} / ${kb(gz.at(-1) ?? 0)} KB |`, '')
+  out.push(`### Analysis-only (${refused.length} of ${rows.length} pages refused)`, '')
+  out.push('A page the build refuses has no manifest. It keeps the refusal (rule, place, construct) and the compiler\'s own `compileTree` analysis of the page (tier and fallback codes); there are no island or byte counts for it. Library numbers below are analysis-only too.', '')
+  out.push('| Page | Refusal | Where | Construct |', '|---|---|---|---|')
+  for (const r of refused) out.push(`| ${r.id} | ${r.build.ok ? '' : cell(r.build.refusal?.rule ?? r.build.message)} | ${r.build.ok ? '' : cell(r.build.refusal?.at ?? '—')} | ${r.build.ok ? '' : cell(r.build.refusal?.construct ?? '—')} |`)
+  out.push('')
   out.push('"Tier" is the page component\'s own tier. A static or native page can still carry React islands (its shadcn children), so read it with the Islands column; a React page is one island.', '')
   const libComps = libs.flatMap((p) => p.components)
   const lt = (t: string) => libComps.filter((c) => c.result.tier === t).length
@@ -78,28 +93,31 @@ export function renderReport(rows: AppRow[], libs: LibPackage[], repro: Repro[])
 
   const ranked = rankBlockers(rows, libs)
   out.push('## Ranked blockers (app + library)', '')
-  out.push(`One line per thing that keeps a row or a library component off the static/native tiers. **Ranking rule (generated, tested): ${RANKING_RULE}.** App rows = fixture pages showing it; app components = distinct shadcn component declarations carrying it; library components = declarations in the survey of packages below (a construct counts only when the compiler cannot handle it today). This is the input for lanes S1+.`, '')
-  out.push('| # | Blocker | Kind | Classification | App rows | App components | Library components | Why |', '|---|---|---|---|---|---|---|---|')
-  ranked.forEach((b, i) => out.push(`| ${i + 1} | ${cell(b.key)} | ${b.kind} | ${classify(b)} | ${b.appRows} | ${b.appComponents} | ${b.libComponents} | ${cell(b.why)} |`))
+  out.push(`One line per thing that keeps a row or a library component off the static/native tiers. **Ranking rule (generated, tested): ${RANKING_RULE}.** Measured rows = pages that built and show it; analysis-only rows = refused pages whose compiler analysis shows it; app components = distinct shadcn component declarations carrying it; library components = declarations in the survey of packages below (a construct counts only when the compiler cannot handle it today). This is the input for lanes S1+.`, '')
+  out.push('| # | Blocker | Kind | Classification | Measured rows | Analysis-only rows | App components | Library components | Why |', '|---|---|---|---|---|---|---|---|---|')
+  ranked.forEach((b, i) => out.push(`| ${i + 1} | ${cell(b.key)} | ${b.kind} | ${classify(b)} | ${b.measuredRows} | ${b.analysisRows} | ${b.appComponents} | ${b.libComponents} | ${cell(b.why)} |`))
   out.push('')
 
   const cls = new Map<string, number>()
   for (const b of ranked) cls.set(classify(b).replace(/ \(.*/, ''), (cls.get(classify(b).replace(/ \(.*/, '')) ?? 0) + 1)
   out.push('## Classification', '')
   out.push(`Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (${[...cls].map(([k, n]) => `${n} ${k}`).join(', ')}). The fixture deviates from the CLI output in one place only (the sibling imports rewritten from \`@/\` to relative, which changes resolution, never the exports), and it uses a plain \`brust build <entry>\` with \`[css] global\` only: no build option, no pin, no config that could cause a blocker.`, '')
-  out.push('### The named-export build rule (fixed by S1.1, PR #198)', '')
-  const named = repro.find((r) => r.id === 'named')
-  out.push(`Not a fixture problem. A React-tier component is built as an island whose entry is \`import Comp from "<its file>"\` (\`componentImport\`, packages/brust/src/build/bundle.ts); shadcn files export every component **by name** (\`Card\`, \`CardHeader\`, \`CardTitle\`, …), so as soon as one of them falls back to React (rest props → \`fallback:prop-pattern\` + \`fallback:spread-props\`, \`asChild\` → \`fallback:local-component\`, …) the bundler has no default export to import and the whole build fails. There is no diagnostic code for it: it is a build error, so every page with one React shadcn component fails to build, and it hides all other rows behind it. Exact text for the repro below: \`${named?.build.ok === false ? named.build.raw ?? named.build.message : '—'}\`.`, '')
-  out.push('Minimal repro (`tests/fixtures/shadcn/repro/`: one component file + one page, three variants of the same component):', '')
+  out.push('### History: the named-export build rule (S0 → S1.1, PR #198)', '')
+  out.push('The first survey (S0) found that 63 of 64 whole-page builds failed, and it was not a fixture problem: a React-tier component is built as an island whose entry was `import Comp from "<its file>"` (`componentImport`, packages/brust/src/build/bundle.ts), while shadcn files export every component **by name** (`Card`, `CardHeader`, …), so one React shadcn component made the bundler fail with `No matching export in "<file>" for import "default"`. There is no diagnostic code for that kind of failure (a build error, hiding every other row of the page). S1.1 (PR #198) made named-export islands build; the minimal repro below stays as the guard (`bun test scripts/shadcn` fails if the named variant stops building):', '')
   out.push('| Variant | Component | Fallback codes | `brust build` |', '|---|---|---|---|')
   for (const r of repro) out.push(`| ${r.id} | ${cell(r.what)} | ${cell(list(r.codes))} | ${r.build.ok ? 'ok' : cell(`failed: ${r.build.message}`)} |`)
-  out.push('', 'So the lane is: a React-tier component that is a *named* export (of a file with several components) must be buildable as an island, and the page must still pick it up; the same component as a default export builds today. Making the components leave the React tier (S1) shrinks the problem but cannot remove it for the ones that stay islands (Calendar, Chart, Carousel, Command, …).', '')
+  out.push('')
   out.push('## App rows', '')
-  out.push('Islands = React islands the page ships (1 when the page root is React). Components = compiled components in the tree (React ones in brackets). Client bytes = compiler-emitted native client chunks (0 until a component reaches the native tier; island bundles are produced by the bundler and left out so the file is stable across Bun versions: `bun run shadcn -- --sizes` prints them).', '')
-  out.push('| Row | Tier | Islands | Components | Fallback codes | Client bytes | Build |', '|---|---|---|---|---|---|---|')
+  out.push('Basis `measured` = read from the page\'s own successful build; `analysis-only` = the build was refused, tier and codes are the compiler\'s `compileTree` analysis. Islands = React islands the page ships (a React page root is one island). Components = components in the tree (React ones in brackets). Client JS in KB as defined under Summary.', '')
+  out.push('| Row | Basis | Tier | Islands | Components | Client JS gzip KB | Fallback codes | Outcome |', '|---|---|---|---|---|---|---|---|')
   for (const r of rows) {
-    const tier = r.error ? `error (${cell(r.error.slice(0, 90))})` : r.tier
-    out.push(`| ${r.id} | ${tier} | ${r.islands} | ${r.components} (${r.reactComponents}) | ${cell(list(r.codes))} | ${r.clientBytes} | ${r.build.ok ? 'ok' : cell(`failed: ${r.build.message}`)} |`)
+    if (r.build.ok) {
+      const m = r.build.measured
+      out.push(`| ${r.id} | measured | ${m.tier} | ${m.islands} | ${m.components} (${m.reactComponents}) | ${kb(m.jsGzip)} | ${cell(list(r.codes))} | built |`)
+    } else {
+      const rf = r.build.refusal
+      out.push(`| ${r.id} | analysis-only | ${r.error ? 'error' : r.tier} | — | ${r.components ? `${r.components} (${r.reactComponents})` : '—'} | — | ${cell(list(r.codes))} | ${rf ? cell(`refused: ${rf.rule} at ${rf.at}, ${rf.construct}`) : cell(`failed: ${r.build.message}`)} |`)
+    }
   }
   out.push('')
 

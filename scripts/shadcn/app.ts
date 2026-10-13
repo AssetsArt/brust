@@ -1,8 +1,10 @@
-// App-level survey: every fixture page goes through the compiler (`compileTree`, the call `brust build` makes per
-// route) and then through the real `brust build`, one page per build. Both are recorded, never judged: a row's tier
-// is whatever the compiler says, a failed build is a result.
+// App-level survey: every fixture page is built ALONE by the real `brust build` (its own entry, its own dist) and the
+// outcome is recorded, never judged. A page that builds is MEASURED: tier per component, islands and client JS come
+// from its `dist/manifest.json` and `dist/client`. A page that is refused keeps its refusal (rule, place, construct) and
+// the compiler's own `compileTree` analysis, and is ANALYSIS-ONLY.
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import { compileTree } from '../../packages/brust/native/index.js'
 import { FIXTURE, repo } from './paths.ts'
@@ -27,12 +29,30 @@ export interface AppRow {
   clientBytes: number
   /** per blocked component: `Name (file) rule…` for the ranked list */
   blocked: { name: string; file: string; codes: string[] }[]
-  build: { ok: true } | { ok: false; message: string; raw?: string }
-  /** island bundle bytes (`dist/client/*.js`) when the build worked; measured by the bundler, so NOT written to the doc */
-  bundleBytes: number | null
+  build: { ok: true; measured: Measured } | { ok: false; message: string; raw?: string; refusal: Refusal | null }
   /** compile error text when `compileTree` itself refused (an Error diagnostic) */
   error: string | null
 }
+
+/** What a built page really is, read from its dist. */
+export interface Measured {
+  /** the page component's tier in `manifest.json` */
+  tier: Exclude<Tier, 'error'>
+  /** React islands: walk down from the page through static/native components, count each React one */
+  islands: number
+  /** components in the manifest, and how many are React */
+  components: number
+  reactComponents: number
+  /** components with a native client chunk */
+  nativeChunks: number
+  /** client JS the page loads (runtime + the chunks of its islands/native components + the shared chunks they import; 0 when it has none) */
+  jsRaw: number
+  jsGzip: number
+  files: { name: string; raw: number; gzip: number }[]
+}
+
+/** The build error of a refused page: `error <rule> <file>:<line>:<col> <message>` split into its parts. */
+export interface Refusal { rule: string; at: string; construct: string }
 
 type Ir = { tier: unknown; children?: { name: string; id: string | null; path: string | null; tier: unknown }[]; external?: unknown }
 const tierName = (t: unknown): Exclude<Tier, 'error'> => (t === 'Static' ? 'static' : t === 'Native' ? 'native' : 'react')
@@ -41,7 +61,7 @@ const reasonOf = (t: unknown): string | null => (t && typeof t === 'object' && '
 export const pageNames = (): string[] =>
   readdirSync(join(FIXTURE, 'pages')).filter((f) => f.endsWith('.tsx')).map((f) => f.slice(0, -4)).sort()
 
-export function analysePage(id: string): Omit<AppRow, 'build' | 'bundleBytes'> {
+export function analysePage(id: string): Omit<AppRow, 'build'> {
   const base = { id, tier: 'error' as Tier, reason: null, codes: [], islands: 0, components: 0, reactComponents: 0, clientBytes: 0, blocked: [], error: null }
   let tree: ReturnType<typeof compileTree>
   try {
@@ -103,12 +123,12 @@ export function surveyRepro(): Repro[] {
   return cases.map((c) => {
     const tree = compileTree(`repro/page-${c.id}.tsx`, FIXTURE, '/_brust/runtime.js', [])
     const codes = [...new Set(tree.components.flatMap((x) => x.diagnostics.filter((d) => d.class === 'fallback').map((d) => d.rule)))].sort()
-    return { ...c, codes, build: buildEntry(`repro/r-${c.id}.tsx`, `repro-${c.id}`).build }
+    return { ...c, codes, build: buildEntry(`repro/r-${c.id}.tsx`, `repro-${c.id}`) }
   })
 }
 
 /** One page, one `brust build` (its own entry and dist under `.rows/`, both removed after). */
-export function buildPage(id: string): { build: AppRow['build']; bundleBytes: number | null } {
+export function buildPage(id: string): AppRow['build'] {
   const dir = join(FIXTURE, '.rows')
   mkdirSync(dir, { recursive: true })
   const entry = join(dir, `${id}.routes.tsx`)
@@ -120,27 +140,98 @@ export function buildPage(id: string): { build: AppRow['build']; bundleBytes: nu
   }
 }
 
+type Manifest = {
+  routes: { chain: string[] }[]
+  components: Record<string, { tier: 'static' | 'native' | 'react'; template: string; client: string | null; children: { id: string }[] }>
+  assets: { runtime: string }
+}
+
+/** Relative JS imports of a chunk (`from"./x.js"`, `import("./x.js")`). */
+const importsOf = (text: string): string[] => [...text.matchAll(/(?:from\s*|import\s*\(\s*)["']\.\/([^"']+\.js)["']/g)].map((m) => m[1]!)
+
+/** Reads a finished dist: tier of the page, islands, native chunks, and the client JS the page loads: the runtime plus
+ * the chunk of every island and native component the page reaches, plus the shared chunks those import (a React child
+ * of an island is rendered by the island, so its own chunk is not loaded). */
+export function measureDist(out: string): Measured {
+  const m = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')) as Manifest
+  const root = m.routes[0]!.chain.at(-1)!
+  const seen = new Set<string>()
+  const entries: string[] = []
+  let islands = 0
+  let nativeChunks = 0
+  // An island instance is a `<brust-island data-id=…>` in a template; static and native components are walked through
+  // their templates and their child records.
+  const walk = (id: string): void => {
+    const c = m.components[id]
+    if (!c || seen.has(id)) return
+    seen.add(id)
+    const template = readFileSync(join(out, c.template), 'utf8')
+    if (c.tier !== 'react' && c.client) {
+      entries.push(c.client.replace(/^client\//, ''))
+      nativeChunks++
+    }
+    for (const mk of template.matchAll(/<brust-island\b[^>]*\bdata-id="([^"]+)"/g)) {
+      islands++
+      const isl = m.components[mk[1]!]
+      if (isl?.client) entries.push(isl.client.replace(/^client\//, ''))
+    }
+    for (const ch of c.children) if (m.components[ch.id]?.tier !== 'react') walk(ch.id)
+  }
+  walk(root)
+  const client = join(out, 'client')
+  const loaded = new Set<string>()
+  const visit = (name: string): void => {
+    if (loaded.has(name)) return
+    loaded.add(name)
+    for (const dep of importsOf(readFileSync(join(client, name), 'utf8'))) visit(dep)
+  }
+  if (entries.length) {
+    visit(m.assets.runtime.replace(/^client\//, ''))
+    for (const e of entries) visit(e)
+  }
+  const files = [...loaded].sort().map((name) => {
+    const buf = readFileSync(join(client, name))
+    return { name: name.replace(/-[0-9a-f]{8,12}(?=\.js$)/, ''), raw: buf.length, gzip: gzipSync(buf).length }
+  })
+  const comps = Object.values(m.components)
+  return {
+    tier: m.components[root]!.tier,
+    islands,
+    components: comps.length,
+    reactComponents: comps.filter((c) => c.tier === 'react').length,
+    nativeChunks,
+    jsRaw: files.reduce((n, f) => n + f.raw, 0),
+    jsGzip: files.reduce((n, f) => n + f.gzip, 0),
+    files,
+  }
+}
+
+/** `error island-prop pages/calendar.tsx:31:5 prop \`components\` passed to the React island <DayPicker> is a function` */
+export function parseRefusal(text: string): Refusal | null {
+  const m = /^error (\S+) (\S+) (.*)$/m.exec(text)
+  if (!m) return null
+  const prop = /prop `([^`]+)` passed to the React island <([^>]+)>/.exec(m[3]!)
+  return { rule: m[1]!, at: m[2]!, construct: prop ? `prop \`${prop[1]}\` on <${prop[2]}>` : m[3]! }
+}
+
 /** `brust build <entry>` in the fixture, into a throwaway dist. */
-function buildEntry(entryRel: string, id: string): { build: AppRow['build']; bundleBytes: number | null } {
+function buildEntry(entryRel: string, id: string): AppRow['build'] {
   const out = join(FIXTURE, '.rows', `dist-${id}`)
   mkdirSync(join(FIXTURE, '.rows'), { recursive: true })
   try {
     const p = spawnSync(process.execPath, [join(repo, 'packages/brust/bin/brust'), 'build', entryRel, '--out-dir', `.rows/dist-${id}`], { cwd: FIXTURE, encoding: 'utf8' })
-    if (p.status === 0) {
-      const client = join(out, 'client')
-      const bytes = readdirSync(client).filter((f) => f.endsWith('.js')).reduce((n, f) => n + Bun.file(join(client, f)).size, 0)
-      return { build: { ok: true }, bundleBytes: bytes }
-    }
+    if (p.status === 0) return { ok: true, measured: measureDist(out) }
     const text = (p.stderr || p.stdout).replaceAll(FIXTURE, '.')
-    // The bundler wants `export default` for a React island's component file; shadcn files export by name.
-    if (/No matching export in "[^"]+" for import "default"/.test(text)) return { build: { ok: false, message: 'bundle: island component is not a default export', raw: `${text.split('\n').find((l) => /^error /.test(l))} / ${text.split('\n').find((l) => /^BuildMessage/.test(l))}` }, bundleBytes: null }
+    const refusal = parseRefusal(text)
+    // A bundler failure (no diagnostic code): the island entry could not import its component.
+    if (/No matching export in "[^"]+" for import "default"/.test(text)) return { ok: false, message: 'bundle: island component is not a default export', raw: `${text.split('\n').find((l) => /^error /.test(l))} / ${text.split('\n').find((l) => /^BuildMessage/.test(l))}`, refusal: null }
     const line = text.split('\n').find((l) => /^error /.test(l))
-    return { build: { ok: false, message: line ? line.replace(/^error /, '') : `exit ${p.status}` }, bundleBytes: null }
+    return { ok: false, message: line ? line.replace(/^error /, '') : `exit ${p.status}`, refusal }
   } finally {
     rmSync(out, { recursive: true, force: true })
   }
 }
 
 export function surveyApp(): AppRow[] {
-  return pageNames().map((id) => ({ ...analysePage(id), ...buildPage(id) }))
+  return pageNames().map((id) => ({ ...analysePage(id), build: buildPage(id) }))
 }
