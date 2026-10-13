@@ -117,7 +117,7 @@ export async function actionsLoader(): Promise<ActionsData> {
 
 export default function Actions({ blocks, candidates }: ActionsData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Actions</h1>
       <p className="lead">Actions are the server endpoints your pages call. In brust they are one Elysia 2 app, served behind the Rust server: no second port, no second router.</p>
 
@@ -267,6 +267,6 @@ export default function Actions({ blocks, candidates }: ActionsData) {
         <li>A cookie that must travel cross-site needs <code>SameSite=None; Secure</code>. Browsers treat <code>http://localhost</code> and <code>http://127.0.0.1</code> as secure, so this works in development.</li>
       </ul>
       <CodeBlock code={blocks.cookie.code} lang={blocks.cookie.lang} file={blocks.cookie.file} html={blocks.cookie.html} />
-    </section>
+    </>
   )
 }

@@ -66,7 +66,7 @@ export async function storeLoader(): Promise<StoreData> {
 
 export default function Store({ blocks, candidates }: StoreData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Store</h1>
       <p className="lead">A store is a named bag of signals that a loader, a native component and a React island all read and write. One name, one value, three surfaces.</p>
 
@@ -140,6 +140,6 @@ export default function Store({ blocks, candidates }: StoreData) {
       <Note>
         A cached page carries its store snapshot. Do not cache pages that paint per-user store data, such as a team seeded from the reader's cookie.
       </Note>
-    </section>
+    </>
   )
 }

@@ -59,7 +59,7 @@ export async function overviewLoader(): Promise<OverviewData> {
 
 export default function Overview({ blocks }: OverviewData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Cache adapters</h1>
       <p className="lead">A cache adapter adds an optional shared second tier behind brust&rsquo;s in-process page cache.</p>
       <p>It does two jobs:</p>
@@ -484,6 +484,6 @@ export default function Overview({ blocks }: OverviewData) {
           <b>No KV or Durable Object adapter on native.</b>
         </li>
       </ul>
-    </section>
+    </>
   )
 }

@@ -61,6 +61,7 @@ export async function routingLoader(): Promise<RoutingData> {
       { id: 'routes', title: 'Map paths to components' },
       { id: 'try', title: 'Try a path' },
       { id: 'params', title: 'Params and the catch-all' },
+      { id: 'nonascii', title: 'Paths beyond ASCII' },
       { id: 'layouts', title: 'Layouts and Outlet' },
       { id: 'rules', title: 'What the build checks' },
     ],
@@ -74,7 +75,7 @@ export async function routingLoader(): Promise<RoutingData> {
 
 export default function Routing({ blocks }: RoutingData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Routing</h1>
       <p className="lead">One file, routes.tsx, maps paths to components. Routes nest: a route with children is a layout.</p>
 
@@ -110,6 +111,17 @@ export default function Routing({ blocks }: RoutingData) {
           Two routes that differ only in a param name, such as <code>/a/{'{id}'}</code> and <code>/a/{'{slug}'}</code>, are the same route: the build fails with <code>duplicate-route</code>.
         </li>
       </ul>
+
+      <h2 id="nonascii">Paths beyond ASCII</h2>
+      {/* source: crates/brust-core/src/routing/routes.rs:407-408 and :483-488 (patterns and request paths are normalised to the browser's
+          percent-encoding, UTF-8 and uppercase hex, and never decoded, so %2F inside a param stays a literal slash); :225 (the match happens in that
+          form); tests/server/nonascii.chromium.test.ts:76-95 (encoded, lowercase-hex and raw-UTF-8 requests all answer 200 and share one cache entry). */}
+      <p>
+        A literal path may contain any character: <code>{`{ path: '/café' }`}</code> matches what a browser sends, <code>/caf%C3%A9</code>. The build stores the pattern in that encoded form and
+        normalises every request path the same way (lowercase hex is uppercased, raw UTF-8 is encoded) before matching, so <code>/café</code>, <code>/caf%c3%a9</code> and <code>/caf%C3%A9</code> are one
+        route and one cache entry. The path is never decoded before matching: <code>%2F</code> inside a param stays a literal slash in the param's value, and a loader still gets the
+        decoded value in <code>params</code>.
+      </p>
 
       <h2 id="layouts">Layouts and Outlet</h2>
       <p>
@@ -159,6 +171,6 @@ export default function Routing({ blocks }: RoutingData) {
           </tr>
         </tbody>
       </table>
-    </section>
+    </>
   )
 }

@@ -98,7 +98,7 @@ export async function workersLoader(): Promise<WorkersData> {
 
 export default function Workers({ blocks }: WorkersData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Workers target</h1>
       <p className="lead">
         brust builds the same app for Cloudflare Workers that it runs natively with <code>brust start</code>. The page renderer is the same Rust code, compiled to WebAssembly.
@@ -574,6 +574,6 @@ export default function Workers({ blocks }: WorkersData) {
           </tbody>
         </table>
       </div>
-    </section>
+    </>
   )
 }

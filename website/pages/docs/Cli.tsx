@@ -57,7 +57,7 @@ export async function cliLoader(): Promise<CliData> {
 
 export default function Cli({ blocks, panels }: CliData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>CLI</h1>
       <p className="lead">Three commands: build compiles the app into dist/, start serves it, dev runs the Cloudflare development loop.</p>
 
@@ -111,6 +111,6 @@ export default function Cli({ blocks, panels }: CliData) {
       <Note>
         For the Bun server there is no watch mode: <code>bun run dev</code> in the template is <code>brust build routes.tsx &amp;&amp; brust start</code>. Run it again after a change.
       </Note>
-    </section>
+    </>
   )
 }

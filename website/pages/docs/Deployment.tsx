@@ -84,7 +84,7 @@ export async function deploymentLoader(): Promise<DeploymentData> {
 
 export default function Deployment({ blocks, panels }: DeploymentData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Deployment</h1>
       <p className="lead">The same app runs as one Bun process on your own machine, as static files on any static host, or as a Cloudflare Worker.</p>
 
@@ -211,6 +211,6 @@ export default function Deployment({ blocks, panels }: DeploymentData) {
       <Note>
         The full Workers guide, with D1 and the cache on KV and Durable Objects, is in <a href="/docs/cloudflare/workers">Cloudflare</a>.
       </Note>
-    </section>
+    </>
   )
 }
