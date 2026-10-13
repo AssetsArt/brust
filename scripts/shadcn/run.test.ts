@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { analysePage, pageNames } from './app.ts'
 import { REPORT } from './paths.ts'
 import { RANKING_RULE, byRule, rankBlockers, renderReport } from './report.ts'
-import { survey } from './run.ts'
+import { SIZES, survey } from './run.ts'
 
 const { rows, libs, repro } = survey() // one build per page: shared by the tests below
 
@@ -13,7 +13,7 @@ test('the committed scoreboard equals a fresh run (CI diffs it too)', () => {
 
 test('the analysis is deterministic: a second compile of every page gives the same rows', () => {
   const again = pageNames().map((id) => analysePage(id))
-  expect(again).toEqual(rows.map(({ build: _b, bundleBytes: _s, ...r }) => r))
+  expect(again).toEqual(rows.map(({ build: _b, ...r }) => r))
 })
 
 test('every fixture page is a row, and every row has a tier', () => {
@@ -25,22 +25,44 @@ test('the doc names no machine path', () => {
   expect(renderReport(rows, libs, repro)).not.toMatch(/\/Users\/|\/tmp\/|\/var\/|shadcn-lib-/)
 })
 
-test('the ranked list follows the stated rule: app rows, then library components, then name', () => {
+test('the ranked list follows the stated rule: measured rows, analysis-only rows, library components, name', () => {
   const ranked = rankBlockers(rows, libs)
   for (let i = 1; i < ranked.length; i++) {
     const [a, b] = [ranked[i - 1]!, ranked[i]!]
     expect(byRule(a, b)).toBeLessThanOrEqual(0)
-    expect(a.appRows).toBeGreaterThanOrEqual(b.appRows)
-    if (a.appRows === b.appRows) expect(a.libComponents).toBeGreaterThanOrEqual(b.libComponents)
+    expect(a.measuredRows).toBeGreaterThanOrEqual(b.measuredRows)
+    if (a.measuredRows === b.measuredRows) expect(a.analysisRows).toBeGreaterThanOrEqual(b.analysisRows)
+    if (a.measuredRows === b.measuredRows && a.analysisRows === b.analysisRows) expect(a.libComponents).toBeGreaterThanOrEqual(b.libComponents)
   }
   expect(renderReport(rows, libs, repro)).toContain(RANKING_RULE)
-  // the build blocker (every page behind it) ranks first or second, never below blockers that hit fewer pages
-  expect(ranked.findIndex((b) => b.kind === 'build')).toBeLessThan(2)
-  expect(ranked.some((b) => b.appRows > 0)).toBe(true)
+  expect(ranked.some((b) => b.measuredRows > 0)).toBe(true)
   expect(ranked.some((b) => b.libComponents > 0)).toBe(true)
 })
 
 test('the repro guards the named-export rule (S1.1): a named-export island builds like a default one', () => {
   const by = Object.fromEntries(repro.map((r) => [r.id, r.build.ok]))
   expect(by).toEqual({ named: true, default: true, static: true })
+})
+
+test('measured and analysis-only rows add up, and the doc rounds client JS to KB with an exact 0', () => {
+  const built = rows.filter((r) => r.build.ok)
+  const refused = rows.filter((r) => !r.build.ok)
+  expect(built.length + refused.length).toBe(rows.length)
+  for (const r of built) {
+    if (!r.build.ok) continue
+    const m = r.build.measured
+    expect(m.jsGzip === 0).toBe(m.islands === 0 && m.nativeChunks === 0)
+    expect(m.jsGzip).toBeLessThanOrEqual(m.jsRaw)
+  }
+  const doc = renderReport(rows, libs, repro)
+  expect(doc).toContain(`### Measured (${built.length} of ${rows.length} pages built)`)
+  expect(doc).toContain(`### Analysis-only (${refused.length} of ${rows.length} pages refused)`)
+  for (const r of refused) expect(r.build.ok ? null : r.build.refusal?.rule).toBe('island-prop')
+})
+
+test('the exact sizes go to the git-ignored JSON, not the doc', () => {
+  const j = JSON.parse(readFileSync(SIZES, 'utf8')) as { pages: { id: string; built: boolean; raw?: number; gzip?: number }[] }
+  expect(j.pages.length).toBe(rows.length)
+  expect(j.pages.filter((p) => p.built).every((p) => typeof p.gzip === 'number' && typeof p.raw === 'number')).toBe(true)
+  expect(renderReport(rows, libs, repro)).not.toMatch(/"gzip"/)
 })
