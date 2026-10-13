@@ -815,9 +815,22 @@ The human asked on 2026-10-13: "lucide มัน support native ไหม". Toda
 - **Where it works:** static, native and react (inside an island it is just React).
 - **Version:** whatever `lucide-react` the app installs. No pinned copy in brust.
 
+**R23.2 Target lucide-react 1.x (lead re-test, 2026-10-13).** The human pointed out that the latest release is 1.55.0. The lead re-ran the scratch probe on `lucide-react@1.55.0` and got the same L22 failure (`ssr-target … _ssr_Heart`). Version 1.x differs from 0.4xx in three ways:
+- **`__iconData`:** icon modules expose `{name, size, node}` (`dist/esm/icons/heart.mjs`).
+- **New prop:** there is a `nonScalingStroke` prop.
+- **`LucideProvider`:** a context (`dist/esm/context.mjs`) supplies default `size`, `color`, `strokeWidth`, `absoluteStrokeWidth`, `nonScalingStroke` and `className` to the icons beneath it.
+
+**How each is handled:**
+- **Render, don't rebuild.** The build-time render of R23.1 stays the mechanism, so output always matches the installed version. `__iconData` may be used only for detection, never to hand-build the SVG.
+- **A provider whose props are all literal** is applied at build: the icon is rendered inside a `LucideProvider` with those values.
+- **A provider with dynamic props** makes the icons under it fall back to L22's island, with diagnostic `icon-provider-dynamic`.
+- **Test version:** tests pin `lucide-react@1.55.0` as a dev dependency of the test package. A 0.4xx compatibility check is optional, not required.
+
 **Tests:**
 - static and native fixtures have `needs_worker:false`, no `client` chunk for a pure icon page, and the SVG equals React's output byte for byte;
 - dynamic `size` and `color` from state update in the browser;
+- a literal `LucideProvider` is applied, and a dynamic one falls back;
+- `nonScalingStroke`;
 - an alias import;
 - a fallback diagnostic.
 - Battery rows plus a lucide entry on the coverage pages (L18/P3).
