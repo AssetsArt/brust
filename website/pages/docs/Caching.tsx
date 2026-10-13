@@ -1,5 +1,6 @@
-// Caching — the per-route page cache (L1), its key, bypass, the x-brust-cache header, invalidation, and a live probe
-// that fetches the cached demo route and shows the real headers.
+// Caching — the per-route page cache (L1), its key, bypass, the x-brust-cache header, invalidation. This site is a
+// static export (plan R6): the probe is a labelled browser simulation of the demo route's rules, and the real headers
+// are a transcript recorded from `brust start` (curl -sI x3, 2026-10-13, brust 2.0.0-alpha.3), not typed by hand.
 import CodeBlock from '../../components/CodeBlock'
 import Note from '../../components/docs/Note'
 import CacheProbe from '../../components/demos/CacheProbe'
@@ -8,7 +9,7 @@ import type { TocItem } from '../../lib/nav'
 
 export interface CachingData {
   toc: TocItem[]
-  blocks: Record<'route' | 'config' | 'invalidate', CodeBlockData>
+  blocks: Record<'route' | 'config' | 'invalidate' | 'recorded', CodeBlockData>
   names: string[]
 }
 
@@ -33,6 +34,30 @@ import { cache } from '@brust/core'
 if (added) cache.invalidate({ tags: ['team'] })
 cache.invalidate({ path: '/pokemon/pikachu' })   // every cached query of that path, GET by default`
 
+// recorded from `brust build && brust start --port 0` of this site, three `curl -sI` runs; do not edit by hand
+const RECORDED = `$ curl -sI 'http://127.0.0.1:55084/demo/pokemon/eevee?v=docs'
+HTTP/1.1 200 OK
+content-type: text/html; charset=utf-8
+x-brust-cache: MISS
+content-length: 2238
+x-powered-by: brust/2.0.0-alpha.3
+date: Tue, 13 Oct 2026 01:45:40 GMT
+
+$ curl -sI 'http://127.0.0.1:55084/demo/pokemon/eevee?v=docs'
+HTTP/1.1 200 OK
+content-type: text/html; charset=utf-8
+x-brust-cache: HIT
+content-length: 2238
+x-powered-by: brust/2.0.0-alpha.3
+date: Tue, 13 Oct 2026 01:45:40 GMT
+
+$ curl -sI 'http://127.0.0.1:55084/demo/pokemon/eevee?v=docs&nocache=1'
+HTTP/1.1 200 OK
+content-type: text/html; charset=utf-8
+x-brust-cache: BYPASS
+content-length: 2238
+x-powered-by: brust/2.0.0-alpha.3
+date: Tue, 13 Oct 2026 01:45:40 GMT`
 
 export async function cachingLoader(): Promise<CachingData> {
   return {
@@ -47,6 +72,7 @@ export async function cachingLoader(): Promise<CachingData> {
       route: codeBlock({ lang: 'ts', file: 'routes.tsx', code: ROUTE }),
       config: codeBlock({ lang: 'ts', file: '@brust/core/routes', code: CONFIG }),
       invalidate: codeBlock({ lang: 'ts', file: 'actions.ts', code: INVALIDATE }),
+      recorded: codeBlock({ lang: 'sh', cwd: '~/brust/website', code: RECORDED }),
     },
     names: ['pikachu', 'eevee', 'snorlax', 'gengar', 'lapras', 'dragonite'],
   }
@@ -67,17 +93,19 @@ export default function Caching({ blocks, names }: CachingData) {
 
       <h2 id="probe">Watch it work</h2>
       <p>
-        The button fetches <a href="/demo/pokemon/pikachu">/demo/pokemon/{'{name}'}</a> three times with a fresh query string: the same URL twice, then with <code>?nocache=1</code>. The values are the real <code>x-brust-cache</code> headers of the three responses.
+        The button requests <a href="/demo/pokemon/pikachu">/demo/pokemon/{'{name}'}</a> three times with a fresh query string: the same URL twice, then with <code>?nocache=1</code>. This site is static, so the requests go to a simulation of the route's rules in your browser, and each row shows the <code>x-brust-cache</code> header a brust server sends for it.
       </p>
       <div className="browser">
         <div className="url">
-          <span>Live demo</span>
+          <span>Simulated demo</span>
           <span className="lbl">CacheProbe · native</span>
         </div>
         <div className="vp">
           <CacheProbe names={names} />
         </div>
       </div>
+      <p>The same three requests against this site on <code>brust start</code>, recorded:</p>
+      <CodeBlock code={blocks.recorded.code} lang={blocks.recorded.lang} cwd={blocks.recorded.cwd} html={blocks.recorded.html} />
       <table>
         <thead>
           <tr>

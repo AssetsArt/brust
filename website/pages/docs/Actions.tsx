@@ -1,11 +1,9 @@
-// Actions — one Elysia 2 app behind the Rust server, the typed client, errors; the demo calls this site's real actions.
-import type { LoaderCtx } from '@brust/core/routes'
+// Actions — one Elysia 2 app behind the Rust server, the typed client, errors. This site is a static export (plan R5),
+// so the demo runs the same rules in the browser; the Elysia app below is the reference, not this site's code.
 import CodeBlock from '../../components/CodeBlock'
 import Note from '../../components/docs/Note'
 import Step from '../../components/docs/Step'
 import TeamPicker from '../../components/demos/TeamPicker'
-import { MAX_TEAM, teamFromValue } from '../../components/demos/team-cookie'
-import { team } from '../../components/demos/team-store'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { byId, displayName, spriteUrl } from '../../lib/pokemon'
@@ -24,7 +22,7 @@ const TOML = `[actions]
 # max_response_bytes = 8388608
 # cross_site = "reject"`
 
-const APP = `// actions.ts (this site's, trimmed): the team lives in a cookie
+const APP = `// actions.ts: a team kept in a cookie (the app the demo below mirrors in the browser)
 import { brust } from '@brust/core/elysia'
 import { Elysia, problem, t } from 'elysia'
 
@@ -41,9 +39,9 @@ const app = new Elysia({ adapter: brust() })
 export default app
 export type App = typeof app`
 
-const CLIENT = `// components/demos/team-client.ts
+const CLIENT = `// components/team-client.ts
 import { client } from '@brust/core/client'
-import type { App } from '../../actions'   // a type import: no Elysia in the browser
+import type { App } from '../actions'   // a type import: no Elysia in the browser
 import { team } from './team-store'
 
 const api = client<App>()
@@ -61,9 +59,7 @@ throw new Error('boom')                                // 500 problem+json, deta
 
 const PICK = [25, 1, 4, 7, 133, 143, 150, 94]
 
-export async function actionsLoader({ req }: LoaderCtx): Promise<ActionsData> {
-  team.members.set(teamFromValue(req.cookies.brust_docs_team))
-  team.max.set(MAX_TEAM)
+export async function actionsLoader(): Promise<ActionsData> {
   return {
     toc: [
       { id: 'install', title: 'Turn actions on' },
@@ -76,7 +72,7 @@ export async function actionsLoader({ req }: LoaderCtx): Promise<ActionsData> {
       install: codeBlock({ lang: 'sh', cwd: '~/my-app', code: '$ bun add elysia@2.0.0-beta.30 @elysia/eden@2.0.0-beta.6' }),
       toml: codeBlock({ lang: 'toml', file: 'brust.toml', code: TOML }),
       app: codeBlock({ lang: 'ts', file: 'actions.ts', code: APP }),
-      client: codeBlock({ lang: 'ts', file: 'components/demos/team-client.ts', code: CLIENT }),
+      client: codeBlock({ lang: 'ts', file: 'components/team-client.ts', code: CLIENT }),
       errors: codeBlock({ lang: 'ts', file: 'actions.ts', code: ERRORS }),
     },
     candidates: PICK.map((id) => ({ id, name: displayName(byId(id)!.name), sprite: spriteUrl(id) })),
@@ -114,11 +110,11 @@ export default function Actions({ blocks, candidates }: ActionsData) {
 
       <Step n={4} id="try" title="Try it" />
       <p>
-        Each button calls <code>POST /_brust/action/team</code> on this site. The team is kept in a cookie, so it is yours alone, and the reply goes into the <code>team</code> store that the buttons read. The <a href="/docs/store">Store</a> page shows the same team.
+        On this site the demo runs in your browser; with <code>[actions]</code> on a brust server the same buttons call <code>POST /_brust/action/team</code>. The rules are the app's above: at most 6, a Pokémon already in the team is not added twice, and the seventh gets the <code>TeamFull</code> 409. The team is kept in your browser's storage and goes into the <code>team</code> store that the buttons read. The <a href="/docs/store">Store</a> page shows the same team.
       </p>
       <div className="browser">
         <div className="url">
-          <span>POST /_brust/action/team</span>
+          <span>runs in your browser</span>
           <span className="lbl">TeamPicker · native</span>
         </div>
         <div className="vp">

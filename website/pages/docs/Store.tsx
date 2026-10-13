@@ -1,13 +1,10 @@
 // Store — defineStore, seeding in a loader, reading from a native component and a React island; the demo shares
 // one team between a native badge, a native picker and a React island.
-import type { LoaderCtx } from '@brust/core/routes'
 import CodeBlock from '../../components/CodeBlock'
 import Note from '../../components/docs/Note'
 import TeamBadge from '../../components/demos/TeamBadge'
 import TeamIsland from '../../components/demos/TeamIsland'
 import TeamPicker from '../../components/demos/TeamPicker'
-import { MAX_TEAM, teamFromValue } from '../../components/demos/team-cookie'
-import { team } from '../../components/demos/team-store'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 import { byId, displayName, spriteUrl } from '../../lib/pokemon'
@@ -26,9 +23,9 @@ export const team = defineStore('team', () => ({
   max: signal(6),
 }))`
 
-const SEED = `// pages/docs/Store.tsx: the page loader seeds this request's store
-export async function storeLoader({ req }: LoaderCtx) {
-  team.members.set(teamFromValue(req.cookies.brust_docs_team))
+const SEED = `// pages/TeamPage.tsx: the page loader seeds this request's store
+export async function teamPageLoader({ req }: LoaderCtx) {
+  team.members.set(teamFromCookie(req.cookies.team))
   team.max.set(MAX_TEAM)
   return { ... }
 }`
@@ -48,9 +45,7 @@ const [open, toggle] = useReducer(flip, true)`
 
 const PICK = [25, 1, 4, 7, 133, 143, 150, 94]
 
-export async function storeLoader({ req }: LoaderCtx): Promise<StoreData> {
-  team.members.set(teamFromValue(req.cookies.brust_docs_team))
-  team.max.set(MAX_TEAM)
+export async function storeLoader(): Promise<StoreData> {
   return {
     toc: [
       { id: 'define', title: 'Define a store' },
@@ -61,7 +56,7 @@ export async function storeLoader({ req }: LoaderCtx): Promise<StoreData> {
     ],
     blocks: {
       define: codeBlock({ lang: 'ts', file: 'components/demos/team-store.ts', code: DEFINE }),
-      seed: codeBlock({ lang: 'ts', file: 'pages/docs/Store.tsx', code: SEED }),
+      seed: codeBlock({ lang: 'ts', file: 'pages/TeamPage.tsx', code: SEED }),
       native: codeBlock({ lang: 'tsx', file: 'components/demos/TeamBadge.tsx', code: NATIVE }),
       island: codeBlock({ lang: 'tsx', file: 'components/demos/TeamIsland.tsx', code: ISLAND }),
     },
@@ -86,6 +81,9 @@ export default function Store({ blocks, candidates }: StoreData) {
         On the server every request gets its own instance. Write it in a loader, and the page carries the values as a snapshot, so the first paint is already right, with or without JavaScript.
       </p>
       <CodeBlock code={blocks.seed.code} lang={blocks.seed.lang} file={blocks.seed.file} html={blocks.seed.html} />
+      <p>
+        This site is a static export, so it has no request to seed from: its pages are painted with an empty team, and the browser fills the store from its own storage when the demo mounts.
+      </p>
 
       <h2 id="read">Read it anywhere</h2>
       <p>
@@ -140,7 +138,7 @@ export default function Store({ blocks, candidates }: StoreData) {
         <li>Navigating without a reload does not carry a snapshot.</li>
       </ul>
       <Note>
-        A cached page carries its store snapshot. Do not cache pages that paint per-user store data, as this page would if it were cached: it paints your own team.
+        A cached page carries its store snapshot. Do not cache pages that paint per-user store data, such as a team seeded from the reader's cookie.
       </Note>
     </section>
   )
