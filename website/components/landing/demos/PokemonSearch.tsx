@@ -7,12 +7,12 @@ export default function PokemonSearch({ all }: { all: { id: number; no: string; 
   const term = deferred.trim().toLowerCase()
   const hits = all.filter((p) => p.name.includes(term)).slice(0, 8)
   return (
-    <div className="min-h-60 flex-1 p-5">
+    <div className="min-h-60 flex-1 p-5 [.doc_&]:min-h-0">
       <label className="sr-only" htmlFor="demo-q">
         Search Pokémon
       </label>
       <input id="demo-q" className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font:inherit]" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Pokémon, e.g. char" autoComplete="off" />
-      <ul className="m-0 mt-[.8rem] grid list-none grid-cols-2 gap-x-[.9rem] gap-y-[.35rem] p-0 text-[14.5px] max-narrow:grid-cols-1">
+      <ul className="m-0 mt-[.8rem] grid list-none grid-cols-2 gap-x-[.9rem] gap-y-[.35rem] p-0 text-[14.5px] max-narrow:grid-cols-1 [.doc_&]:mt-0 [.doc_&]:pl-[1.2rem]">
         {hits.map((p) => (
           <li key={p.id} className="flex min-w-0 items-center gap-[.4rem]">
             <img className="size-10 flex-none [image-rendering:pixelated]" src={p.sprite} alt="" width="40" height="40" />

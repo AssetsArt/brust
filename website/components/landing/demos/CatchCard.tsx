@@ -6,7 +6,7 @@ export default function CatchCard({ no, name, art, shinyArt }: { no: string; nam
   const [log, setLog] = useState<{ id: number; name: string; from: string; to: string }[]>([])
   const [wiggle, setWiggle] = useState(false)
   return (
-    <div className="grid min-h-60 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,13rem)] items-stretch gap-4 p-5 max-narrow:grid-cols-1">
+    <div className="grid min-h-60 [.doc_&]:min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,13rem)] items-stretch gap-4 p-5 max-narrow:grid-cols-1">
       <article className="grid min-w-0 content-start gap-[.6rem] rounded-xs border border-rule bg-paper p-[.9rem]">
         <div className="grid place-items-center rounded-lg bg-sheet p-[.4rem]">
           <img className={wiggle ? 'aspect-square h-auto w-full max-w-[170px] motion-safe:[transition:opacity_.2s] motion-safe:animate-mirai-wiggle' : 'aspect-square h-auto w-full max-w-[170px] motion-safe:[transition:opacity_.2s]'} src={shiny ? shinyArt : art} alt={shiny ? 'Shiny ' + name : name} width="200" height="200" />
@@ -50,7 +50,7 @@ export default function CatchCard({ no, name, art, shinyArt }: { no: string; nam
           <span className="text-amber">Signals</span>
           <span>no re-render</span>
         </div>
-        <ol className="m-0 grid list-none content-start gap-[.35rem] px-[.7rem] py-2" aria-live="polite">
+        <ol className="m-0 grid list-none content-start gap-[.35rem] px-[.7rem] py-2 [.doc_&]:pl-[1.4rem]" aria-live="polite">
           {log.length === 0 ? <li className="text-term-dim">Use the switch or the button.</li> : null}
           {log.map((e) => (
             <li key={e.id} className="flex justify-between gap-2 whitespace-nowrap motion-safe:animate-mirai-slidein">
