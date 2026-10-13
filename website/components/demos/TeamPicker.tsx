@@ -18,14 +18,14 @@ export default function TeamPicker({ candidates }: { candidates: { id: number; n
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   return (
-    <div className="picker">
-      <ul className="demo-list" ref={root}>
+    <div className="picker grid min-w-0 gap-3">
+      <ul className="m-0 grid list-none grid-cols-2 gap-x-[.9rem] gap-y-[.35rem] pl-[1.2rem] text-[14.5px] max-narrow:grid-cols-1" ref={root}>
         {candidates.map((c) => (
-          <li key={c.id}>
-            <img src={c.sprite} alt="" width={40} height={40} loading="lazy" />
+          <li key={c.id} className="motion-safe:animate-[rise_.2s_ease-out_both] my-[.3rem] flex max-w-[68ch] min-w-0 items-center gap-2">
+            <img src={c.sprite} alt="" width={40} height={40} loading="lazy" className="size-10 flex-none [image-rendering:pixelated]" />
             <button
               type="button"
-              className="demo-btn"
+              className="cursor-pointer rounded-xs border border-ink bg-paper px-[.7rem] py-[.35rem] text-ink tabular-nums [font-family:inherit] [line-height:inherit] text-[14px] font-semibold motion-safe:transition-transform motion-safe:duration-100 motion-safe:active:scale-[.97] disabled:cursor-default disabled:opacity-60"
               disabled={busy || s.members.some((m) => m.id === c.id)}
               onClick={async () => {
                 setBusy(true)
@@ -41,7 +41,7 @@ export default function TeamPicker({ candidates }: { candidates: { id: number; n
           </li>
         ))}
       </ul>
-      <p className="vp-note" aria-live="polite">
+      <p className="vp-note max-w-[68ch] text-[13.5px] text-ink-2" aria-live="polite">
         {status === '' ? `Team ${s.members.length} / ${s.max}. Add a seventh to see the 409.` : `${status} · team ${s.members.length} / ${s.max}`}
       </p>
     </div>

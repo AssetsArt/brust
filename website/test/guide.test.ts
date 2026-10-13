@@ -48,7 +48,7 @@ test('every Guide page is 200 with its title, a live demo frame and no compiler 
     const html = await r.text()
     expect(html).toContain(`<title>${p.title} · brust docs</title>`)
     // the coverage page is a reference table generated from docs/react-coverage.json: it has no demo frame
-    expect([p.slug, p.slug === 'react-coverage' || html.includes('class="browser"')]).toEqual([p.slug, true])
+    expect([p.slug, p.slug === 'react-coverage' || /class="browser[ "]/.test(html)]).toEqual([p.slug, true])
   }
 }, TEST_MS)
 
@@ -127,7 +127,7 @@ test('Caching: the simulated probe shows MISS, HIT, BYPASS like the real server'
 test('Actions + Store: browser-only team, a TeamFull 409 at the seventh, one store across native and react', async () => {
   const page = await open('/docs/actions')
   await ready(page, '.picker')
-  const buttons = page.locator('.picker .demo-btn')
+  const buttons = page.locator('.picker button')
   for (let i = 0; i < 6; i++) {
     await buttons.nth(i).click()
     await page.locator('.picker .vp-note', { hasText: `team ${i + 1} / 6` }).waitFor()
@@ -142,9 +142,9 @@ test('Actions + Store: browser-only team, a TeamFull 409 at the seventh, one sto
   await ready(page, '.team-badge')
   await page.locator('.team-badge b', { hasText: '6' }).waitFor()
   await page.locator('brust-island[data-hydrated] .team-island').waitFor()
-  await page.locator('.team-island .demo-list button').first().click()
+  await page.locator('.team-island ul button').first().click()
   await page.locator('.team-badge b', { hasText: '5' }).waitFor()
-  expect(await until(() => page.locator('.team-island .demo-list li').count(), (n) => n === 5)).toBe(5)
+  expect(await until(() => page.locator('.team-island ul li').count(), (n) => n === 5)).toBe(5)
   expect(errorsOf(page)).toEqual([])
   await ctx.close()
 }, TEST_MS)
@@ -168,7 +168,7 @@ test('Installation, Project structure, Configuration, CLI, Deployment, Migrating
   page = await open('/docs/configuration')
   await ready(page, '.builder')
   await page.locator('.fields input').first().fill('8080')
-  await page.locator('.fields label.sw').click()
+  await page.locator('.fields label:has(input[type=checkbox])').click()
   const toml = await until(() => page.locator('.builder .cmd').first().textContent(), (t) => !!t?.includes('port = 8080') && !t.includes('[actions]'))
   expect(toml).toContain('port = 8080')
   expect(toml).not.toContain('[actions]')

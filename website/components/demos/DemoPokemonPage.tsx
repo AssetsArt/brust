@@ -23,12 +23,12 @@ export async function demoPokemonLoader({ params }: LoaderCtx<{ name: string }>)
 
 export default function DemoPokemonPage({ pokemon, served }: DemoPokemonData) {
   return (
-    <section className="wrap demo-page">
-      <p className="crumbs">GET /demo/pokemon/{'{name}'}</p>
-      <div className="cards">
+    <section className="mx-auto grid max-w-[40rem] gap-4 px-4 py-8">
+      <p className="font-mono text-[13px] text-ink-2">GET /demo/pokemon/{'{name}'}</p>
+      <div className="grid grid-cols-3 gap-3 max-narrow:grid-cols-2">
         <PokemonCard no={pokemon.no} name={pokemon.name} art={pokemon.art} types={pokemon.types} />
       </div>
-      <p className="muted">
+      <p className="text-ink-2">
         Rendered by the loader at <code>{served}</code>. A cached response repeats this time until the entry expires.
       </p>
     </section>
