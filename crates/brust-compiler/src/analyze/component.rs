@@ -84,6 +84,16 @@ pub fn analyze_component_in(
     Ok(ir)
 }
 
+/// What the build rendered for one lucide icon (L23).
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct IconMarkup {
+    /// The icon with every dynamic prop rendered as a sentinel.
+    pub svg: String,
+    /// The same icon with the dynamic props absent: what React renders for `undefined` (its defaults
+    /// and the enclosing provider's values).
+    pub base: String,
+}
+
 /// Options for the full analysis (structural read + M1b-2 passes).
 #[derive(Debug, Clone, Default)]
 pub struct AnalyzeOptions {
@@ -91,6 +101,11 @@ pub struct AnalyzeOptions {
     pub server_only: Vec<String>,
     /// Directory module paths are relative to.
     pub root: std::path::PathBuf,
+    /// SVG markup the build rendered for `IconRequest.key`s (L23): those icons become inline elements.
+    pub icon_svgs: std::collections::HashMap<String, IconMarkup>,
+    /// The last compile (icons were rendered): a lucide icon that is still a component is judged
+    /// as an island, so a prop it cannot hydrate from is an error again (L23).
+    pub icons_final: bool,
     /// Values the build computed for precompute slots, by `BuildEvalSlot.key` (L2): the slot is
     /// replaced by the literal, so its job (and the worker) is not needed for it.
     pub slot_values: std::collections::HashMap<String, serde_json::Value>,

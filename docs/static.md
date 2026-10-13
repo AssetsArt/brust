@@ -99,7 +99,7 @@ Workers Static Assets also reads `_headers` and `_redirects`.
 
 ## 8. Static pages with actions
 
-**Cloudflare Pages only.** This output is for `wrangler pages deploy`. Do not point Workers Static Assets at `dist/static` for it. The build writes a `.assetsignore` (`_worker.js`, `_routes.json`) so those files are never uploaded as public assets, but Pages is the supported target.
+**Cloudflare Pages only.** This output is for `wrangler pages deploy`. Do not point Workers Static Assets at `dist/static` for it. The build writes a `.assetsignore` (`_worker.js`, `_routes.json` and `.assetsignore` itself) so those files are never uploaded as public assets, and `_routes.json` sends requests for them to the Worker, which answers 404, but Pages is the supported target.
 
 When `[actions]` is configured, `--target static` writes the same static pages and also a Cloudflare Pages advanced-mode Worker that serves **only** the action prefix:
 
@@ -107,10 +107,10 @@ When `[actions]` is configured, `--target static` writes the same static pages a
 dist/static/
   _worker.js/index.js    the Worker: the action prefix goes to the Cloudflare core, anything else to env.ASSETS
   _worker.js/core/       the worker tree of --target cloudflare (wasm host + your actions.ts, bundled)
-  _routes.json           { "include": ["<prefix>", "<prefix>/*"] }
+  _routes.json           { "version": 1, "include": ["<prefix>", "<prefix>/*", "/_worker.js", "/_worker.js/*", "/_routes.json", "/.assetsignore"], "exclude": [] }
 dist/wrangler.jsonc    the Pages project file: name, compatibility date, pages_build_output_dir (next to static/)
 ```
 
-`_routes.json` lists only the prefix, so pages and assets are served as static files and never invoke the Worker (they stay free). A request that reaches the Worker and is not an action falls through to the static files. Admission still runs in Rust (method gate, body cap, `Content-Encoding`, the cross-site guard with its 403), exactly as on Workers; see [Cloudflare](./cloudflare.md), "Static pages + actions on Pages".
+`_routes.json` lists the action prefix and the deploy inputs themselves (`_worker.js/*`, `_routes.json`, `.assetsignore`), so pages and assets are served as static files and never invoke the Worker (they stay free), and the deploy inputs are a 404 from the Worker instead of public files (the L12 security delta, N1). A request that reaches the Worker and is not an action falls through to the static files. Admission still runs in Rust (method gate, body cap, `Content-Encoding`, the cross-site guard with its 403), exactly as on Workers; see [Cloudflare](./cloudflare.md), "Static pages + actions on Pages".
 
 `ttl_seconds`, `[cache]` and the L1 cache do not apply: pages are static files and the Worker serves actions only.
