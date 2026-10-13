@@ -120,12 +120,12 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: "1.4.2" }
       - run: bun install --frozen-lockfile
-      - name: Guard — every @brust/* version must equal the tag (F88) and the commit must be on v2
+      - name: Guard — every @brust/* version must equal the tag (F88) and the commit must be on main
         run: |
           set -e
           bun scripts/release-check.ts "${GITHUB_REF_NAME#v}"
-          git fetch origin v2
-          git merge-base --is-ancestor HEAD origin/v2 || { echo "tagged commit is not on origin/v2"; exit 1; }
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main || { echo "tagged commit is not on origin/main"; exit 1; }
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: nightly-2026-09-15, components: "rust-src" }
       - run: cd packages/brust && bun run build:debug
