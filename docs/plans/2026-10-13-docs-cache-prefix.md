@@ -16,7 +16,7 @@ Lead verified on a running server (2026-10-13): `?a=1` and `?a=2` are different 
 - **P1. New section "Split the cache with prefix"** (id `prefix`, in the TOC after `key`). The key is prefix +
   method + path + sorted query; the prefix is evaluated per request, `""` is a valid (shared) prefix.
 - **P2. Grammar reference table**, every function from `key_expr.rs`, each with what it returns:
-  `header(n)`, `cookie(n)`, `query(n)` (raw, not percent-decoded), `param(n)` (decoded), `request(host|method|scheme|path)`,
+  `header(n)`, `cookie(n)`, `query(n)` (DECODED, as the loader's `req.search` — pipeline.rs:1119-1127; amended per knock2's challenge, the key_expr.rs:9-13 comment is stale), `param(n)` (decoded); header and cookie values raw; the key's own query part stays raw, `request(host|method|scheme|path)`,
   `env(NAME)` (read once when the route is installed; refused on Cloudflare Workers), `'literal'` / bare word,
   `or(...)` (first non-empty), `and(...)` (all non-empty → joined by U+001F, else `""`), `concat(...)`,
   `eq(a, b)` (a when equal, else `""`), `eq(a, b, v)` (v when equal), `lower`, `upper`; `uuid()`/`timestamp()` are
@@ -33,7 +33,7 @@ Lead verified on a running server (2026-10-13): `?a=1` and `?a=2` are different 
   code block (captured, not typed). Example 4 must show a signed-in request is `BYPASS` (whatever header value the
   server really sends — record it).
 - **P4. Pitfalls box:** an unbounded value (raw `accept-language`, `user-agent`, a user id) makes one entry per value
-  → normalise to a small set with `eq`/`or`; values are not decoded; a page with per-user data needs `bypass`, not a prefix.
+  → normalise to a small set with `eq`/`or`; header/cookie values are not decoded (query values are); a repeated query name or case-colliding names make the request BYPASS; a page with per-user data needs `bypass`, not a prefix.
 - **P5. Interactive key playground (client-only, works in the static export):** pick a preset expression or type one,
   set request fields (path, query, a few cookies/headers, host), see the evaluated prefix and the resulting key parts,
   or the parse error. A TS port of the parser/evaluator in `website/lib/cache-key.ts`, with a header comment naming
