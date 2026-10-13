@@ -53,3 +53,21 @@ export function featuresOf(id: string, template: string, react: boolean): Runtim
   }
   return RUNTIME_FEATURES.filter((f) => need.has(f))
 }
+
+/** Matches the `/_brust/<file>` URL of `file` in a built chunk's text. */
+const mentions = (text: string, file: string) => text.includes(`/_brust/${file}`)
+
+/**
+ * Whether the built client file `entry` (`client/<file>`) imports the store module `storeFile`, directly or through the
+ * shared `chunk-*.js` files it imports. A component whose chunk does gets `store` in its features: the page preloads
+ * the module (the chunk imports it itself, so it has no script tag).
+ */
+export function importsStore(read: (rel: string) => string | undefined, entry: string, storeFile: string, seen = new Set<string>()): boolean {
+  if (seen.has(entry)) return false
+  seen.add(entry)
+  const text = read(entry)
+  if (text === undefined) return false
+  if (mentions(text, storeFile)) return true
+  for (const m of text.matchAll(/(?:from|import)\s*"\.\/([^"]+\.js)"/g)) if (importsStore(read, `client/${m[1]}`, storeFile, seen)) return true
+  return false
+}

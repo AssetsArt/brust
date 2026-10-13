@@ -52,7 +52,7 @@ test('statusOf: the status table', () => {
 })
 
 const fake = (id: string, api: string[], observed: Result['observed'], note?: string): Result =>
-  ({ row: { id, category: 'C', authoring: id, snippet: '', expect: observed as never, api, note } as unknown as Row, observed, jobs: [], diagnostics: observed === 'react' ? ['fallback:x'] : [], build: 'ok', built: true, rawSinks: 0, runtime: { features: [], needed: false }, warn: false })
+  ({ row: { id, category: 'C', authoring: id, snippet: '', expect: observed as never, api, note } as unknown as Row, observed, jobs: [], diagnostics: observed === 'react' ? ['fallback:x'] : [], build: 'ok', built: true, rawSinks: 0, warn: false })
 
 test('apiCoverage: rows, tiers, diagnostics and a one-line note per entry', () => {
   const res = [fake('a', ['useState'], 'native', 'spec'), fake('b', ['useState'], 'react'), fake('c', ['useReducer'], 'react')]

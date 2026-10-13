@@ -17,6 +17,7 @@ import { type Compiled, compileApp } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
+import { importsStore } from './features'
 import { type CacheRecord, type ManifestJson, tierOf, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
 import { type ExprReads, prepareStatic, writeStatic } from './static'
@@ -264,7 +265,10 @@ async function buildInto(
   for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
 
   const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrls)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrls))])
-  const manifest = writeManifest({ leaves, routeComponent, compiled, runtime, chunks })
+  const manifest = writeManifest({ leaves, routeComponent, compiled, runtime: { core: runtime.core, features: { ...runtime.features, store: runtime.store } }, chunks })
+  // L33: a component whose chunk imports the store module (directly or through a shared chunk) has the page preload it.
+  const readClient = (rel: string) => (existsSync(join(out, rel)) ? readFileSync(join(out, rel), 'utf8') : undefined)
+  for (const rec of Object.values(manifest.components)) if (rec.client && importsStore(readClient, rec.client, runtime.store)) rec.features.push('store')
   for (const r of manifest.routes) {
     const files = [...new Set((routeCss.get(r.id) ?? []).flatMap((s) => (css.file.has(s) ? [css.file.get(s)!] : [])))]
     if (files.length > 0) r.css = files

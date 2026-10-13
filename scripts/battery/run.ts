@@ -9,7 +9,6 @@ import { dirname, join, resolve } from 'node:path'
 import { CATEGORIES, rows, type Expect, type Row } from './rows.ts'
 import { renderExitReport } from './exit.ts'
 import { coverageJson, renderApiSection } from './api-coverage.ts'
-import { runtimeCell, runtimeFeatures } from '../runtime-bytes.ts'
 
 const repo = resolve(import.meta.dir, '../..')
 export const REPORT = join(repo, 'docs/react-coverage.md')
@@ -32,8 +31,6 @@ export interface Result {
   built: boolean
   /** `html_raw` occurrences in the printed templates: the one unescaped sink (`dangerouslySetInnerHTML`) */
   rawSinks: number
-  /** L33: the client runtime modules the printed templates need, and whether the row ships any client runtime at all */
-  runtime: { features: string[]; needed: boolean }
   /** expectation not met (tier or job count), and the row is not a known gap */
   warn: boolean
 }
@@ -71,7 +68,7 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
       const message = lines[0]!.includes('panicked')
         ? `compiler panic: ${lines[1] ?? ''}`
         : lines[0]!.replace(/^error:\s*/, '').replaceAll(dir, '.')
-      return { row, observed: 'compile-error', jobs: [], diagnostics: [], message, build: 'ok', built: false, rawSinks: 0, runtime: { features: [], needed: false } }
+      return { row, observed: 'compile-error', jobs: [], diagnostics: [], message, build: 'ok', built: false, rawSinks: 0 }
     }
     const ir = JSON.parse(p.stdout) as IR
     const diagnostics = [...new Set(ir.diagnostics.map((d) => `${d.class.toLowerCase()}:${d.rule}`))]
@@ -83,7 +80,7 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
     const buildMessage = build === 'failed'
       ? ((b.stderr ?? '').split('\n').find((l) => l.trim()) ?? `exit ${b.status}`).replace(/^error:\s*/, '').replaceAll(dir, '.')
       : undefined
-    return { row, observed: hasError ? 'error' : tier, jobs, diagnostics, build, buildMessage, built: true, rawSinks: countRawSinks(join(dir, 'out')), runtime: runtimeOf(join(dir, 'out'), tier) }
+    return { row, observed: hasError ? 'error' : tier, jobs, diagnostics, build, buildMessage, built: true, rawSinks: countRawSinks(join(dir, 'out')) }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -95,15 +92,6 @@ function countRawSinks(out: string): number {
     try { return readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(d, e.name)) : [join(d, e.name)])) } catch { return [] }
   }
   return files(out).filter((f) => f.endsWith('.jinja')).reduce((n, f) => n + (readFileSync(f, 'utf8').match(/html_raw/g)?.length ?? 0), 0)
-}
-
-/** The runtime a row's output loads: the union over its printed templates (a static row loads nothing; a React row is an island). */
-function runtimeOf(out: string, tier: Expect): { features: string[]; needed: boolean } {
-  const files = (d: string): string[] => {
-    try { return readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(d, e.name)) : [join(d, e.name)])) } catch { return [] }
-  }
-  const templates = files(out).filter((f) => f.endsWith('.jinja')).sort().map((f) => readFileSync(f, 'utf8'))
-  return { features: runtimeFeatures(templates, tier === 'react'), needed: tier === 'native' || tier === 'react' }
 }
 
 export function runBattery(): Result[] {
@@ -148,12 +136,12 @@ export function renderReport(results: Result[]): string {
   L.push('Every attribute whose name starts with `x-` written in component JSX is reserved for brust\'s runtime: it is never printed (static, dynamic or spread), and the build warns `reserved-attr`. Rename it (`data-x-…`) or move the component to React. The compiler emits its own directives itself; runtime-dom binds nothing else.', '')
   for (const [cat, title] of Object.entries(CATEGORIES)) {
     L.push(`## ${cat}. ${title}`, '')
-    L.push('| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Runtime (core + modules · gzip B, budget bound) | Diagnostics | Note |', '|---|---|---|---|---|---|---|---|---|')
+    L.push('| Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |', '|---|---|---|---|---|---|---|---|')
     for (const r of results.filter((x) => x.row.category === cat)) {
       const observed = `${r.warn ? '⚠ ' : ''}${r.observed}`
       const note = [r.message ? `compile error: ${r.message}` : '', r.row.note ?? '', r.row.knownGap ? `known gap: ${r.row.knownGap}` : '']
         .filter(Boolean).join('; ')
-      L.push(`| ${r.row.id} | ${cell(r.row.authoring)} | ${r.row.expect} | ${observed} | ${jobsCell(r.jobs)} | ${buildCell(r)} | ${runtimeCell(r.runtime.features, r.runtime.needed)} | ${cell(r.diagnostics.join(', ') || '—')} | ${cell(note)} |`)
+      L.push(`| ${r.row.id} | ${cell(r.row.authoring)} | ${r.row.expect} | ${observed} | ${jobsCell(r.jobs)} | ${buildCell(r)} | ${cell(r.diagnostics.join(', ') || '—')} | ${cell(note)} |`)
     }
     L.push('')
   }

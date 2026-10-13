@@ -493,12 +493,20 @@ pub fn inject_document_assets_into(
     }
     tags.push_str(&tag(&m.assets.runtime));
     // L33: the runtime features this page's components need, sorted by name (the core first, then
-    // features, then the chunks that define behaviors: module scripts run in document order).
-    for (name, file) in &m.assets.features {
-        if features.contains(name.as_str()) {
-            tags.push_str(&tag(file));
-        }
-    }
+    // features, then the chunks that define behaviors: module scripts run in document order). A
+    // preload-only feature (the store module) is imported by the chunks that use it: no tag of its own.
+    let needed: Vec<&str> = m
+        .assets
+        .features
+        .iter()
+        .filter(|(name, _)| features.contains(name.as_str()))
+        .map(|(name, file)| {
+            if !PRELOAD_ONLY.contains(&name.as_str()) {
+                tags.push_str(&tag(file));
+            }
+            file.as_str()
+        })
+        .collect();
     for c in &chunks {
         tags.push_str(&tag(c));
     }
@@ -514,6 +522,30 @@ pub fn inject_document_assets_into(
         Some(i) => html.insert_str(i, &tags),
         None => html.push_str(&tags),
     }
+    // L33 (R35.2): `<link rel="modulepreload">` for the core and every feature module the page uses, in the head
+    // (after the route's stylesheet links, before anything the author wrote there), so the browser fetches them
+    // while it parses the body instead of discovering the store module and the features through the scripts.
+    let mut links = String::new();
+    for f in std::iter::once(m.assets.runtime.as_str()).chain(needed) {
+        links.push_str("<link rel=\"modulepreload\" href=\"/_brust/");
+        links.push_str(f);
+        links.push_str("\">");
+    }
+    let at = preload_insert_at(html);
+    html.insert_str(at, &links);
+}
+
+/// Features that are preloaded but not linked as a script: modules the component chunks import themselves.
+const PRELOAD_ONLY: &[&str] = &["store"];
+
+/// Where the modulepreload links go: the CSS insertion point, past the stylesheet links `inject_css_into` wrote there.
+fn preload_insert_at(html: &str) -> usize {
+    const CSS: &str = "<link rel=\"stylesheet\" href=\"/_brust/";
+    let mut at = css_insert_at(html);
+    while html[at..].starts_with(CSS) {
+        at = html[at..].find('>').map_or(html.len(), |e| at + e + 1);
+    }
+    at
 }
 
 /// 0.1.x `storeScriptTag` x each store: `<script type="application/json" data-brust-store="NAME">`
