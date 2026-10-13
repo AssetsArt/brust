@@ -8,10 +8,13 @@ import { parseOptions, type ResolvedOptions } from './options'
 import { type SubscriberState, startSubscriber } from './subscriber'
 
 const STAGE_TTL_MS = 30_000
+const MAX_ORPHAN_BATCHES = 64
 
 export interface RedisAdapterTest {
   /** Close the subscriber socket as a network loss would. */
   dropSubscriber(): void
+  /** Close the command socket as a network loss would (the loop reconnects). */
+  dropCommands(): void
   state(): { connected: boolean; subscribed: boolean; last: number | null; reconnects: number }
   /** The command client (raw access for tests). */
   client(): import('bun').RedisClient
@@ -30,7 +33,9 @@ export function createAdapter(name: 'redis' | 'dragonfly', raw: Record<string, u
     throw new Error('cache-redis: used before init')
   }
   const sub: SubscriberState = { link: null, subscribed: false, last: null }
-  const pairing = new Pairing(() => link().c, k, o.markerTtlMs)
+  const pairing = new Pairing(() => link().c, k, o.markerTtlMs, () => k().channel)
+  // N2: page batches whose UNLINK failed (the link dropped between the script and the delete); retried once on reconnect.
+  const orphaned: string[][] = []
 
   const store = {
     maxBodyBytes: o.maxBodyBytes,
@@ -70,16 +75,21 @@ export function createAdapter(name: 'redis' | 'dragonfly', raw: Record<string, u
       if (!members.length) return
       const c = link().c
       // UNLINK frees off the main thread (Dragonfly too); batched so one call never carries every key.
-      const jobs: Promise<number>[] = []
-      for (let i = 0; i < members.length; i += o.unlinkBatch) jobs.push(c.unlink(...members.slice(i, i + o.unlinkBatch)))
-      await Promise.all(jobs)
+      const batches: string[][] = []
+      for (let i = 0; i < members.length; i += o.unlinkBatch) batches.push(members.slice(i, i + o.unlinkBatch))
+      const done = await Promise.allSettled(batches.map((b) => c.unlink(...b)))
+      // A failed batch is kept (at most MAX_ORPHAN_BATCHES, then the page TTL is the bound) and retried once on reconnect.
+      const failed = done.flatMap((d, i) => (d.status === 'rejected' ? [i] : []))
+      for (const i of failed) if (orphaned.length < MAX_ORPHAN_BATCHES) orphaned.push(batches[i]!)
+      const first = done.find((d): d is PromiseRejectedResult => d.status === 'rejected')
+      if (first) throw first.reason
     },
   }
 
   const broadcast = {
     async publish(args: InvalidateArgs, origin: string): Promise<number> {
-      const { seq } = await pairing.run(args, 'publish')
-      await link().c.publish(k().channel, JSON.stringify({ seq, origin, args }))
+      // The event is published by the script itself (N1): a failure here means no seq was taken and no event went out.
+      const { seq } = await pairing.run(args, 'publish', origin)
       return seq
     },
     async subscribe(on: (e: InvalidationEvent) => void, onGap: () => void): Promise<() => Promise<void>> {
@@ -94,7 +104,9 @@ export function createAdapter(name: 'redis' | 'dragonfly', raw: Record<string, u
     broadcast,
     async init(ctx: CacheAdapterInit) {
       ks = makeKeys(ctx.namespace)
-      cmd = new Link(o, 'commands')
+      cmd = new Link(o, 'commands', async (cl) => {
+        for (const b of orphaned.splice(0)) await cl.unlink(...b).catch(() => 0) // once: a second failure leaves it to the TTL
+      })
       await cmd.start()
     },
     async close() {
@@ -103,6 +115,7 @@ export function createAdapter(name: 'redis' | 'dragonfly', raw: Record<string, u
     },
     __test: {
       dropSubscriber: () => sub.link?.drop(),
+      dropCommands: () => cmd?.drop(),
       state: () => ({ connected: !!cmd?.connected, subscribed: sub.subscribed, last: sub.last, reconnects: (cmd?.reconnects ?? 0) + (sub.link?.reconnects ?? 0) }),
       client: () => link().c,
       keys: () => k(),
