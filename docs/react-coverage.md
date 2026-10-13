@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 41 | 26 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 19 | 12 | 3 | 4 | 0 | 0 | 0 | 0 |
+| A JSX basics | 47 | 33 | 12 | 2 | 0 | 0 | 0 | 0 |
+| B Composition | 22 | 14 | 3 | 5 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 4 | 1 | 23 | 1 | 0 | 0 | 0 |
 | E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 150 | 54 | 38 | 52 | 5 | 1 | 0 | 0 |
+| **Total** | 159 | 63 | 38 | 52 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -55,7 +55,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-state-spread-handler | spread of a state array in a handler and a helper (F96b) | native | native | precompute | ok | — | F96b: a verbatim body nested in a structured expression gets its captures bound (xs → xs()) |
 | a-state-list-static-child | static child listing a state-fed prop (F96d) | native | native | 0 | ok | — | F96d: the linked child repaints its own list (x-for over props()) |
 | a-linked-child-prop-precompute | state-fed prop derived with a callback in a linked child (F96d) | react | react | ssr | ok | fallback:linked-prop-precompute | F96d fail-closed: a server-computed value over a prop the parent changes would freeze; fallback linked-prop-precompute |
-| a-spread-host | spread props on a host element (F31) | react | react | ssr | ok | fallback:spread-props | fallback spread-props until the template backend can expand a known-shape spread |
+| a-spread-host | spread props on a host element (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15 (b): keys known only at render are printed by spread_attrs (same rules as written attributes) |
+| a-rest-pattern | rest in the props pattern, read and spread (R34.14) | static | static | 0 | ok | — | shadcn S1.2 R34.14: rest.k reads prop k; {...rest} is the props minus the named keys |
+| a-spread-then-override | spread, then an attribute that overrides it | static | static | 0 | ok | — | shadcn S1.2 R34.15: later wins (id is never the spread one) |
+| a-override-then-spread | an attribute, then a spread that may override it | static | static | 0 | ok | — | shadcn S1.2 R34.15: later wins (the spread replaces id/className when it has them) |
+| a-spread-props-path | spread of an object of unknown keys (a props path) | static | static | 0 | ok | — | shadcn S1.2 R34.15 (b): the runtime path (spread_attrs) |
+| a-spread-hostile-names | object keys that are not attribute names, in a spread | static | static | 0 | ok | warning:unsafe-attr | shadcn S1.2 R34.17: dropped and warned (unsafe-attr); spread_attrs drops the same names at render |
+| a-spread-reserved-x | x-* attributes inside a spread (F94) | static | static | 0 | ok | warning:reserved-attr | F94 + shadcn S1.2: never printed, reserved-attr warning |
 | a-form-onsubmit | <form onSubmit> | native | native | 0 | ok | — |  |
 | a-form-action | <form action={fn}> | react | static | precompute | ok | — | known gap: F115: a function action becomes a precompute value that the url_ok guard drops, so the form renders without an action and submits nowhere; it should fall back to react |
 | a-input-controlled | controlled <input> | native | native | 0 | ok | — |  |
@@ -90,7 +96,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
 | b-forwardref | forwardRef component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
-| b-spread-child | spread props onto a component (F31) | react | react | ssr | ok | fallback:spread-props |  |
+| b-spread-child | spread props onto a component (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get) |
+| b-spread-known-shape | data-*, aria-*, boolean and style props through a child's rest spread | static | static | 0 | ok | — | shadcn S1.2 R34.15 (a): keys known at the call site expand at compile time; children from the spread are the element children |
+| b-fed-child-local-list | a child with a job of its own in a list over a local array | react | react | ssr | ok | fallback:instance-list-path | ruling on challenge 4dc45c45 (F142): the server cannot feed a per-row job over a non-props list; an island, never a build error (instance-list-path fallback) |
+| b-spread-event-handler | an event handler that reaches an element through a child's spread | native | react | ssr | ok | fallback:spread-props | known gap: F141 (challenge d3f9154b, upheld): a handler through a spread fails closed (the parent is a React island, fallback spread-props); parent-scope binding is lane spread-handlers (S1.3) |
 
 ## C. Hooks
 

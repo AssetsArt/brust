@@ -107,16 +107,63 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     for p in obj.properties.iter() {
         let Some(value) = &p.value else { continue };
         if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
-            r.diagnostics.push(Diagnostic::fallback(
-                "spread-props",
-                "spread props cannot be expanded by the template backend",
-                loc_of(value),
-                "list the props explicitly",
-            ));
-            let raw = r.opaque(value, "spread props");
-            match tag {
-                Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
-                _ => props_out.push(("...".to_string(), Expr::Raw(raw))),
+            match spread_source(r, value) {
+                // An object literal is a known shape here: its entries are ordinary attributes
+                // and props, read as if written one by one (React: later wins, which the
+                // lowering applies to the merged list, `lower::template::merge_attrs`).
+                Spread::Literal(entries) => {
+                    for (name, v) in entries {
+                        // Object keys are any string, unlike JSX attribute names (R34.17).
+                        if matches!(tag, Tag::Host(_)) && !brust_jinja::spread::attr_name_ok(&name)
+                        {
+                            r.diagnostics.push(Diagnostic::warning(
+                                "unsafe-attr",
+                                format!("`{name}` in a spread is not a valid attribute name; it is not rendered"),
+                                loc_of(v),
+                                "use attribute names only",
+                            ));
+                            continue;
+                        }
+                        // `key` is never a prop; `children` from a spread is not read natively.
+                        if name == "key" {
+                            continue;
+                        }
+                        if name == "children" {
+                            r.diagnostics.push(Diagnostic::fallback(
+                                "children-prop",
+                                "`children` passed in a spread object is not supported natively",
+                                loc_of(v),
+                                "pass children between the tags",
+                            ));
+                            continue;
+                        }
+                        match tag {
+                            Tag::Host(_) => {
+                                if let Some(attr) = read_attr(r, &name, v, &mut ref_name) {
+                                    attrs.push(attr);
+                                }
+                            }
+                            _ => props_out.push((name, Expr::Raw(r.expr(v)))),
+                        }
+                    }
+                }
+                Spread::Props(raw) => match tag {
+                    Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
+                    _ => props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
+                },
+                Spread::Other => {
+                    r.diagnostics.push(Diagnostic::fallback(
+                        "spread-props",
+                        "only the props object, its `...rest`, a props path or an object literal can be spread natively",
+                        loc_of(value),
+                        "spread props (or a props path), or list the attributes explicitly",
+                    ));
+                    let raw = r.opaque(value, "spread props");
+                    match tag {
+                        Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
+                        _ => props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
+                    }
+                }
             }
             continue;
         }
@@ -212,12 +259,76 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     }
 }
 
+/// What a JSX spread spreads (shadcn S1.2, R34.15).
+enum Spread<'e> {
+    /// `{...{ a: 1, 'data-x': v }}`: the entries, in order (keys are plain strings).
+    Literal(Vec<(String, &'e js_ast::Expr)>),
+    /// The whole props object, its `...rest`, or a props path: keys known only per call site
+    /// (an inlined instance) or at render (`spread_attrs`).
+    Props(RawExpr),
+    /// Anything else (a local object, a call, state): not expanded.
+    Other,
+}
+
+fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<'e> {
+    match &value.data {
+        E::EIdentifier(id) if r.names.is_rest(id.ref_) => Spread::Props(RawExpr {
+            loc: loc_of(value),
+            kind: RawKind::Ident {
+                name: crate::ir::REST_PROPS.into(),
+                kind: IdentKind::Prop,
+            },
+        }),
+        E::EObject(obj) => {
+            let mut entries = Vec::new();
+            for p in obj.properties.iter() {
+                let (Some(k), Some(v)) = (&p.key, &p.value) else {
+                    return Spread::Other;
+                };
+                let E::EString(k) = &k.data else {
+                    return Spread::Other;
+                };
+                if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
+                    || p.flags.contains(js_ast::flags::Property::IsComputed)
+                {
+                    return Spread::Other;
+                }
+                entries.push((estring(k), v));
+            }
+            Spread::Literal(entries)
+        }
+        _ => {
+            let raw = r.expr(value);
+            if crate::analyze::passes::deps::prop_path(&raw).is_some() {
+                Spread::Props(raw)
+            } else {
+                Spread::Other
+            }
+        }
+    }
+}
+
 fn read_attr(
     r: &mut Reader<'_, '_>,
     name: &str,
     value: &js_ast::Expr,
     ref_name: &mut Option<String>,
 ) -> Option<Attr> {
+    // Bun inlines a literal spread (`{...{ 'a b': 1 }}`) into the props object, so an attribute
+    // name here can be any string: one that is not an attribute name is never printed (R34.17).
+    if !brust_jinja::spread::attr_name_ok(name) {
+        r.diagnostics.push(Diagnostic::warning(
+            "unsafe-attr",
+            format!("`{name}` is not a valid attribute name; it is not rendered"),
+            loc_of(value),
+            "use attribute names only",
+        ));
+        return None;
+    }
+    // `key` from an inlined spread is React's element key, never an attribute.
+    if name == "key" {
+        return None;
+    }
     if name == "ref" {
         if let E::EIdentifier(id) = &value.data {
             let n = r.names.name(id.ref_);

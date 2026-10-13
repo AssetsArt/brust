@@ -3,7 +3,7 @@
   "source": "tests/fixtures/jsx-shapes/input.tsx",
   "tier": {
     "React": {
-      "reason": "spread props cannot be expanded by the template backend",
+      "reason": "member-expression component tags (`<Ctx.Provider>`) are not supported natively",
       "client_only": false
     }
   },
@@ -114,15 +114,14 @@
         },
         {
           "Spread": {
-            "Precomputed": {
-              "slot": "_s1",
-              "js": "rest",
-              "client_js": null,
-              "inputs": [
-                "rest"
-              ],
-              "state_dependent": false,
-              "per_item": null
+            "Server": {
+              "loc": 217,
+              "kind": {
+                "Ident": {
+                  "name": "rest",
+                  "kind": "Prop"
+                }
+              }
             }
           }
         }
@@ -337,15 +336,6 @@
     }
   ],
   "diagnostics": [
-    {
-      "class": "Fallback",
-      "rule": "spread-props",
-      "message": "spread props cannot be expanded by the template backend",
-      "loc": 217,
-      "line": 6,
-      "col": 77,
-      "remediation": "list the props explicitly"
-    },
     {
       "class": "Fallback",
       "rule": "member-tag",

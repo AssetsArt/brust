@@ -11,6 +11,14 @@ pub use template::*;
 
 use serde::{Deserialize, Serialize};
 
+/// The prop name a JSX spread of the props `...rest` object reads (`ComponentIR::props_rest`,
+/// shadcn S1.2): `Ident { REST_PROPS, Prop }`. A spread of the whole props object is `Ident { "*", Prop }`.
+pub const REST_PROPS: &str = "...";
+
+/// The prop key of a spread passed to a component (`<Child {...x} />`): `props` keeps it in
+/// source order among the named props (`("...", x)`).
+pub const SPREAD_KEY: &str = "...";
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Tier {
     Pending,
@@ -198,6 +206,11 @@ pub struct ComponentIR {
     pub unexported: bool,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
+    /// The local of a `...rest` in the props pattern (shadcn S1.2, R34.14): the props minus every
+    /// key in `props`. Read only as `rest.k` (an ordinary prop read) or spread in JSX, where it is
+    /// the identifier `REST_PROPS` of kind `Prop`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub props_rest: Option<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -298,6 +311,7 @@ impl ComponentIR {
             unexported: false,
             tier: Tier::Pending,
             props: vec![],
+            props_rest: None,
             state: vec![],
             derived: vec![],
             effects: vec![],

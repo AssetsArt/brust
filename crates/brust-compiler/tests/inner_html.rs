@@ -234,12 +234,16 @@ fn reserved_x_attributes_never_reach_the_template() {
     );
     assert!(!j.contains("x-"), "{j}");
     assert_eq!(tier, Tier::Static);
-    // A spread is a fallback: the component is a React island, the template carries no source attribute
-    // and runtime-dom treats the island subtree as inert (runtime test).
+    // A spread of a props path renders through `spread_attrs` (shadcn S1.2), which never prints
+    // an `x-` name, whatever the data holds.
     let (j, _, tier) =
         lower("export default function T({ p }: any) { return <div {...p}>k</div> }");
-    assert!(matches!(tier, Tier::React { .. }), "{tier:?}");
-    assert!(!j.contains("x-on") && !j.contains("x-data"), "{j}");
+    assert_eq!(tier, Tier::Static);
+    let html = render(
+        &j,
+        serde_json::json!({ "p": { "x-on-click": "_h1", "X-Data": "victim", "x-html": "<b>", "id": "i" } }),
+    );
+    assert_eq!(html, "<div id=\"i\">k</div>");
     let (j, _, tier) = lower(&format!(
         "{STATE}export default function T({{ t }}: any) {{ const [n, setN] = useState(0); return <div x-on-click={{t}} x-bind-class=\"c\" onClick={{() => setN(n + 1)}}><p x-text={{t}}>{{n}}</p></div> }}"
     ));

@@ -265,6 +265,10 @@ pub fn prop_path(e: &RawExpr) -> Option<String> {
         RawKind::Ident {
             name,
             kind: IdentKind::Prop,
+        } if name == crate::ir::REST_PROPS => Some("*".into()),
+        RawKind::Ident {
+            name,
+            kind: IdentKind::Prop,
         } => Some(name.clone()),
         RawKind::Member { target, name, .. } => {
             let base = prop_path(target)?;
@@ -360,6 +364,10 @@ impl Walker<'_> {
             return;
         }
         match kind {
+            // A spread of the props `...rest` reads every prop it may carry: the whole object.
+            IdentKind::Prop if name == crate::ir::REST_PROPS => {
+                out.props.insert("*".into());
+            }
             IdentKind::Prop => {
                 out.props.insert(name.into());
             }

@@ -13,6 +13,8 @@ export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }
   'e-use-server': { ledger: 'F115', observed: 'static' },
   'e-server-component-async': { ledger: 'F115', observed: 'static' },
   'e-server-function-prop': { ledger: 'F115', observed: 'static' },
+  // shadcn S1.2 (challenge d3f9154b): a handler forwarded through a spread fails closed for now.
+  'b-spread-event-handler': { ledger: 'F141', observed: 'react' },
 }
 /** Rows that must produce an `Error` diagnostic and refuse to build. */
 export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key', 'd-profiler'] as const
