@@ -112,6 +112,9 @@ pub fn react_jobs(ir: &mut ComponentIR) {
             props: None,
             literals: Default::default(),
         }];
+        // F105: React renders the children itself, so nothing feeds or links them per instance.
+        ir.instances.clear();
+        ir.child_links.clear();
     }
     ir.needs_worker = !ir.jobs.is_empty();
 }

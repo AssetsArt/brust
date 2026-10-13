@@ -95,6 +95,14 @@ build **or a failed boot** keeps the old child serving and shows the error as an
   a production build writes none. In dev only, every chain level is wrapped in `<!--brust:<id>-->…<!--/brust-->` (never inside a
   `<brust-island>`), and the runtime exposes its live instances on `globalThis.__brustDev.instances` (`__BRUST_DEV__` is a
   build define that is `false`, and removed by the minifier, in every other build).
+- **`<brust-devtools>` (L15).** The dev proxy serves `/_brust/dev/devtools.js` (bundled from `src/dev/devtools.ts` on first request) and
+  injects it into every HTML response, so `brust start` and production builds contain none of it. A corner indicator shows the build state
+  and the page's tier counts (`ready · 2s 1n 1r`); `Alt+Shift+B` toggles the panel (real buttons and tabs, arrow keys, `Esc` closes and
+  restores focus, contrast ≥ 4.5:1 in light and dark). Panels, each from the trace, `dev.json`, the DOM or `__brustDev` only: **Page**
+  (route, params, cache, timings), **Components** (tree with tier badges; a react component shows its reason and diagnostic location;
+  hover highlights it), **Jobs**, **Store** (seed from `data-brust-store`, live values of mounted native stores), **Islands**
+  (hydrated or not), **Build** (diagnostics with `file:line:col`, the current build error), **Requests** (the last 50). The terminal
+  status block shows the same tier counts for the last page.
 - Not hot module replacement: component state does not survive an edit. `brust dev --target cloudflare` keeps
   its wrangler loop (now on the same watch loop).
 

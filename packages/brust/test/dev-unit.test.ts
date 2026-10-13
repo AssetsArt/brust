@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseBuildError, parseWarnings } from '../src/dev/diag'
+import { contrast, tierCounts } from '../src/dev/devtools-data'
 import { allowedHosts, inject, sameOriginOrNone } from '../src/dev/proxy'
 import { HOTKEYS, MAX_STATUS_LINES, renderStatus, rowsFor, Tui, tuiMode } from '../src/dev/tui'
 import { defaultIgnored, watchLoop } from '../src/dev/watch'
@@ -141,8 +142,8 @@ test('parseBuildError / parseWarnings read the CLI output', () => {
 })
 
 test('inject puts the dev client before </head>, else at the end', () => {
-  expect(inject('<html><head><title>x</title></head><body></body></html>', 7)).toBe('<html><head><title>x</title><script type="module" src="/_brust/dev/client.js?g=7"></script></head><body></body></html>')
-  expect(inject('<p>hi</p>', 2)).toBe('<p>hi</p><script type="module" src="/_brust/dev/client.js?g=2"></script>')
+  expect(inject('<html><head><title>x</title></head><body></body></html>', 7)).toBe('<html><head><title>x</title><script type="module" src="/_brust/dev/client.js?g=7"></script><script type="module" src="/_brust/dev/devtools.js"></script></head><body></body></html>')
+  expect(inject('<p>hi</p>', 2)).toBe('<p>hi</p><script type="module" src="/_brust/dev/client.js?g=2"></script><script type="module" src="/_brust/dev/devtools.js"></script>')
 })
 
 test('watchLoop: reading a directory (atime) is not a change; a file written in it is', async () => {
@@ -177,4 +178,18 @@ test('allowedHosts / sameOriginOrNone: the DNS-rebinding and cross-site WebSocke
   expect(sameOriginOrNone('http://localhost:1337', 'localhost:1337')).toBe(true)
   expect(sameOriginOrNone('https://evil.example', 'localhost:1337')).toBe(false)
   expect(sameOriginOrNone('null', 'localhost:1337')).toBe(false)
+})
+
+test('the status block shows the last page\'s tier counts from its trace', () => {
+  const lines = renderStatus({ ...base, state: 'ready', last: { method: 'GET', path: '/x', status: 200, tiers: { static: 2, native: 1, react: 0 } } }, 100)
+  expect(lines[1]).toBe('  last: GET /x → 200  ·  2 static 1 native 0 react')
+})
+
+test('devtools data: tierCounts reads dev.json tiers (unknown ids are not counted), contrast is WCAG', () => {
+  const meta = { components: { a: { tier: 'static' as const }, b: { tier: 'native' as const }, c: { tier: 'react' as const } } }
+  expect(tierCounts(['a', 'b', 'b', 'c', 'zzz'], meta)).toEqual({ static: 1, native: 2, react: 1 })
+  expect(tierCounts(['a'], null)).toEqual({ static: 0, native: 0, react: 0 })
+  expect(contrast([0, 0, 0], [255, 255, 255])).toBeCloseTo(21, 5)
+  expect(contrast([119, 119, 119], [255, 255, 255])).toBeCloseTo(4.48, 1)
+  expect(contrast([255, 255, 255], [255, 255, 255])).toBe(1)
 })

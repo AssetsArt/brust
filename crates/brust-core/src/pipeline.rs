@@ -1468,10 +1468,12 @@ impl PlanIndex {
                     Instances::Static => None,
                     Instances::PerRow(list) => Some(Path::parse(list)?),
                 };
+                let props =
+                    inputs::PropsMap::child(&ch.props, &ch.literals, &ch.exprs, rows.clone())?;
                 children.push(ChildTpl {
                     child,
                     rows,
-                    props: inputs::PropsMap::new(&ch.props)?,
+                    props,
                     slot: format!("__{}_{k}", ch.id),
                     use_id_instance: format!("{id}.{}_{k}", ch.id),
                     call_prefixes: m.components[&ch.id]

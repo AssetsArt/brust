@@ -103,8 +103,16 @@ pub struct InstanceRecord {
     /// (`items`); `None` when the list is not a plain props path. Empty = a static instance.
     pub loops: Vec<Option<String>>,
     /// Each child prop → the parent props path it is bound to, `[idx]` standing for the
-    /// current row of the innermost list; `None` for anything not a plain path.
+    /// current row of the innermost list; `None` for anything that is neither a plain path,
+    /// a literal nor an expression the server evaluates.
     pub props: std::collections::BTreeMap<String, Option<String>>,
+    /// Constant props (`code="a"`): part of the child's job inputs and keys (F105).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub literals: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Props the server computes from the parent's props: jinja over `__props`, and in a row
+    /// `__row` (the item) and `__idx` (F105, ledger F60).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub exprs: std::collections::BTreeMap<String, String>,
 }
 
 /// One child component used by the template (deduplicated by name).

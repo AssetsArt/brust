@@ -18,18 +18,58 @@ async function seed(ids: number[]) {
   for (const m of cur.team) await srv.action(`/team/${m.id}`, { method: 'DELETE' })
   for (const id of ids) await srv.action('/team', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
 }
+/** What a page that never hydrated can tell us (R26.2): islands and their state, which `/_brust/` requests failed
+ *  or came back non-2xx, whether the react chunk loaded, and the console so far. */
+async function explain(page: Page, errors: string[], net: { failed: string[]; bad: string[]; chunks: string[]; doc?: string }): Promise<string> {
+  const dom = await page
+    .evaluate(() => ({
+      title: document.title,
+      bodyBytes: document.body?.innerHTML.length,
+      islands: Array.from(document.querySelectorAll('brust-island')).map((h) => `${h.getAttribute('data-id')} hydrated=${h.getAttribute('data-hydrated')}`),
+      scripts: Array.from(document.querySelectorAll('script[src]')).map((s) => s.getAttribute('src')),
+      visibility: document.visibilityState,
+      queued: ((globalThis as { __brustIslands?: unknown[] }).__brustIslands ?? []).length,
+      ric: typeof (globalThis as { requestIdleCallback?: unknown }).requestIdleCallback,
+    }))
+    .catch((e) => ({ evaluateFailed: String(e) }))
+  return [
+    `document: ${net.doc ?? 'no navigation response'}`,
+    `url: ${page.url()}`,
+    `dom: ${JSON.stringify(dom)}`,
+    `react chunks loaded (200): ${JSON.stringify(net.chunks)}`,
+    `requestfailed: ${JSON.stringify(net.failed)}`,
+    `non-2xx under /_brust/: ${JSON.stringify(net.bad)}`,
+    `console errors/warnings: ${JSON.stringify(errors)}`,
+  ].join('\n  ')
+}
+
 /** A page that records console errors/warnings + pageerrors; `finish()` asserts none happened. */
 async function open(path: string, hold?: { islandsMs: number }) {
   const page = await browser.newPage()
   const errors: string[] = []
+  const net: { failed: string[]; bad: string[]; chunks: string[]; doc?: string } = { failed: [], bad: [], chunks: [] }
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  page.on('requestfailed', (r) => net.failed.push(`${r.url()} ${r.failure()?.errorText ?? ''}`))
+  page.on('response', (r) => {
+    if (!r.url().includes('/_brust/')) return
+    if (r.status() < 200 || r.status() >= 300) net.bad.push(`${r.status()} ${r.url()}`)
+    else if (/\/react-/.test(r.url())) net.chunks.push(r.url())
+  })
   await page.route(/raw\.githubusercontent\.com/, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: PNG }))   // offline CI
   // hold: delay every react island chunk (and do not wait for hydration), so native handlers run (and write the store) before islands hydrate.
   if (hold) await page.route(/\/_brust\/client\/react-/, async (r) => { await Bun.sleep(hold.islandsMs); await r.continue() })
-  await page.goto(`${srv.base}${path}`, { waitUntil: hold ? 'commit' : 'domcontentloaded' })
+  const nav = await page.goto(`${srv.base}${path}`, { waitUntil: hold ? 'commit' : 'domcontentloaded' })
+  net.doc = nav ? `${nav.status()} ${nav.url()}` : undefined
   if (hold) await page.waitForSelector('[data-testid="unified-native-inc"]', { state: 'attached' })
-  if (!hold) await page.waitForSelector('brust-island[data-hydrated="1"]', { state: 'attached', timeout: 15_000 })
+  if (!hold) {
+    try {
+      await page.waitForSelector('brust-island[data-hydrated="1"]', { state: 'attached', timeout: 15_000 })
+    } catch (e) {
+      // A timeout alone says nothing about why: report what the page knew (R26.2).
+      throw new Error(`${path}: no brust-island hydrated within 15s\n  ${await explain(page, errors, net)}\n  cause: ${String(e).split('\n')[0]}`)
+    }
+  }
   await page.evaluate(() => { (window as unknown as { __noReload: number }).__noReload = 1 })
   return { page, finish: async () => { expect(await page.evaluate(() => (window as unknown as { __noReload?: number }).__noReload)).toBe(1); expect(errors).toEqual([]); await page.close() } }
 }
