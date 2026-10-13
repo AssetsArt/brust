@@ -124,6 +124,11 @@ pub struct ChildRef {
     /// Source path of the child module, `None` for a package import.
     pub path: Option<String>,
     pub tier: crate::ir::Tier,
+    /// `Some` when this file passes lowered JSX children to this child, a React island (shadcn S1,
+    /// R34.21): the ids of the components inside the tree. The island's chunk and its SSR job import
+    /// them to revive the tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested: Option<Vec<String>>,
 }
 
 /// A component that lives in a package, rendered as a React island: the island's code is the

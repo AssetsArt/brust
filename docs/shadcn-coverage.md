@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|
-| 60 | 14 | 0 | 46 | 54 | 8 | 0 / 87 / 324 KB |
+| 60 | 55 | 0 | 5 | 76 | 8 | 0 / 87 / 324 KB |
 
 ### Analysis-only (4 of 64 pages refused)
 
@@ -40,11 +40,11 @@ One line per thing that keeps a row or a library component off the static/native
 
 | # | Blocker | Kind | Classification | Measured rows | Analysis-only rows | App components | Library components | Why |
 |---|---|---|---|---|---|---|---|---|
-| 1 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 45 | 0 | 56 | 7 | `island-children` diagnostic (docs/react-coverage.md) |
-| 2 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 36 | 0 | 131 | 1 | `member-tag` diagnostic (docs/react-coverage.md) |
-| 3 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 28 | 0 | 17 | 10 | `spread-props` diagnostic (docs/react-coverage.md) |
-| 4 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 23 | 0 | 7 | 2 | `local-component` diagnostic (docs/react-coverage.md) |
-| 5 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 17 | 0 | 26 | 0 | `external-component` diagnostic (docs/react-coverage.md) |
+| 1 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 36 | 0 | 131 | 1 | `member-tag` diagnostic (docs/react-coverage.md) |
+| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 28 | 0 | 17 | 10 | `spread-props` diagnostic (docs/react-coverage.md) |
+| 3 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 23 | 0 | 7 | 2 | `local-component` diagnostic (docs/react-coverage.md) |
+| 4 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 17 | 0 | 26 | 0 | `external-component` diagnostic (docs/react-coverage.md) |
+| 5 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 9 | 0 | 11 | 7 | `island-children` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 6 | 2 | `jsx-expression` diagnostic (docs/react-coverage.md) |
 | 7 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 7 | 22 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 8 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 2 | `child-component` diagnostic (docs/react-coverage.md) |
@@ -95,70 +95,70 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 
 | Row | Basis | Tier | Islands | Components | Client JS gzip KB | Fallback codes | Outcome |
 |---|---|---|---|---|---|---|---|
-| accordion | measured | react | 1 | 5 (5) | 94 | external-component, island-children, member-tag | built |
+| accordion | measured | static | 1 | 5 (4) | 94 | external-component, member-tag | built |
 | alert | measured | static | 0 | 4 (0) | 0 | — | built |
-| alert-dialog | measured | react | 1 | 13 (11) | 99 | island-children, local-component, member-tag, spread-props | built |
-| aspect-ratio | measured | react | 1 | 2 (2) | 74 | island-children, member-tag | built |
+| alert-dialog | measured | static | 1 | 13 (10) | 100 | island-children, local-component, member-tag, spread-props | built |
+| aspect-ratio | measured | static | 1 | 2 (1) | 73 | member-tag | built |
 | attachment | measured | static | 0 | 7 (0) | 0 | — | built |
-| avatar | measured | react | 1 | 4 (4) | 86 | island-children, member-tag | built |
-| badge | measured | react | 1 | 2 (2) | 85 | island-children, local-component, spread-props | built |
-| badge-aslink | measured | react | 1 | 2 (2) | 85 | island-children, local-component, spread-props | built |
-| breadcrumb | measured | react | 1 | 7 (3) | 86 | island-children, jsx-expression, local-component, spread-props | built |
-| bubble | measured | react | 1 | 4 (2) | 86 | island-children, local-component, spread-props | built |
-| button | measured | react | 1 | 2 (2) | 85 | island-children, local-component, spread-props | built |
-| button-alias | measured | react | 1 | 2 (2) | 85 | external-component, island-children | built |
-| button-aschild | measured | react | 1 | 2 (2) | 85 | island-children, local-component, spread-props | built |
-| button-group | measured | react | 1 | 5 (4) | 87 | island-children, local-component, member-tag, spread-props | built |
+| avatar | measured | static | 2 | 4 (3) | 87 | member-tag | built |
+| badge | measured | static | 4 | 2 (1) | 85 | local-component, spread-props | built |
+| badge-aslink | measured | static | 1 | 2 (1) | 85 | local-component, spread-props | built |
+| breadcrumb | measured | static | 4 | 7 (2) | 86 | jsx-expression, local-component, spread-props | built |
+| bubble | measured | static | 2 | 4 (1) | 85 | local-component, spread-props | built |
+| button | measured | static | 9 | 2 (1) | 85 | local-component, spread-props | built |
+| button-alias | measured | static | 1 | 2 (1) | 85 | external-component | built |
+| button-aschild | measured | static | 1 | 2 (1) | 85 | local-component, spread-props | built |
+| button-group | measured | static | 3 | 5 (3) | 87 | local-component, member-tag, spread-props | built |
 | calendar | analysis-only | error | — | — | — | error:island-prop | refused: island-prop at pages/calendar.tsx:31:5, prop `components` on <DayPicker> |
-| card | measured | react | 1 | 9 (2) | 86 | island-children, local-component, spread-props | built |
+| card | measured | static | 2 | 9 (1) | 85 | local-component, spread-props | built |
 | carousel | measured | react | 1 | 9 (7) | 96 | control-flow, event-capture, external-component, hook-unsupported, instance-list-path, island-children, local-component, member-tag, ref-shape, spread-props | built |
 | chart | measured | react | 1 | 7 (7) | 324 | child-component, external-component, island-children, jsx-expression, local-component, member-tag, use-id-in-render | built |
-| checkbox | measured | react | 1 | 3 (3) | 91 | external-component, island-children, member-tag | built |
-| collapsible | measured | react | 1 | 5 (5) | 89 | island-children, local-component, member-tag, spread-props | built |
-| combobox | measured | react | 1 | 12 (10) | 160 | child-component, external-component, island-children, jsx-expression, local-component, member-tag, spread-props | built |
-| command | measured | react | 1 | 10 (9) | 103 | external-component, island-children, member-tag, spread-props | built |
-| context-menu | measured | react | 1 | 7 (6) | 116 | island-children, member-tag | built |
-| dialog | measured | react | 1 | 14 (12) | 101 | external-component, island-children, local-component, member-tag, spread-props | built |
-| direction | measured | react | 1 | 2 (2) | 70 | island-children, member-tag | built |
-| drawer | measured | react | 1 | 12 (10) | 108 | island-children, local-component, member-tag, spread-props | built |
-| dropdown-menu | measured | react | 1 | 10 (9) | 117 | island-children, local-component, member-tag, spread-props | built |
-| empty | measured | react | 1 | 8 (2) | 86 | island-children, local-component, spread-props | built |
-| field | measured | react | 1 | 8 (3) | 87 | island-children, member-tag, spread-props | built |
+| checkbox | measured | static | 2 | 3 (2) | 91 | external-component, member-tag | built |
+| collapsible | measured | static | 1 | 5 (4) | 89 | local-component, member-tag, spread-props | built |
+| combobox | measured | react | 1 | 12 (10) | 159 | child-component, external-component, island-children, jsx-expression, local-component, member-tag, spread-props | built |
+| command | measured | static | 1 | 10 (8) | 104 | external-component, member-tag, spread-props | built |
+| context-menu | measured | static | 1 | 7 (5) | 116 | member-tag | built |
+| dialog | measured | static | 1 | 14 (11) | 102 | external-component, island-children, local-component, member-tag, spread-props | built |
+| direction | measured | static | 1 | 2 (1) | 69 | member-tag | built |
+| drawer | measured | static | 1 | 12 (9) | 109 | island-children, local-component, member-tag, spread-props | built |
+| dropdown-menu | measured | static | 1 | 10 (8) | 117 | local-component, member-tag, spread-props | built |
+| empty | measured | static | 1 | 8 (1) | 85 | local-component, spread-props | built |
+| field | measured | static | 1 | 8 (2) | 86 | member-tag, spread-props | built |
 | form | analysis-only | error | — | — | — | error:island-prop | refused: island-prop at pages/form.tsx:11:9, prop `render` on <FormField> |
-| hover-card | measured | react | 1 | 5 (5) | 103 | island-children, local-component, member-tag, spread-props | built |
+| hover-card | measured | static | 1 | 5 (4) | 103 | local-component, member-tag, spread-props | built |
 | input | measured | static | 0 | 2 (0) | 0 | — | built |
 | input-group | measured | static | 1 | 5 (1) | 87 | spread-props | built |
-| input-otp | measured | react | 1 | 6 (4) | 86 | body-shape, external-component, hook-unsupported, island-children, spread-props | built |
-| item | measured | react | 1 | 7 (3) | 87 | island-children, local-component, spread-props | built |
+| input-otp | measured | static | 1 | 6 (3) | 87 | body-shape, external-component, hook-unsupported, spread-props | built |
+| item | measured | static | 1 | 7 (2) | 87 | local-component, spread-props | built |
 | kbd | measured | static | 0 | 3 (0) | 0 | — | built |
-| label | measured | react | 1 | 3 (2) | 85 | island-children, member-tag | built |
-| marker | measured | react | 1 | 3 (2) | 85 | island-children, local-component, spread-props | built |
-| menubar | measured | react | 1 | 9 (8) | 116 | island-children, member-tag | built |
+| label | measured | static | 1 | 3 (1) | 84 | member-tag | built |
+| marker | measured | static | 1 | 3 (1) | 85 | local-component, spread-props | built |
+| menubar | measured | static | 1 | 9 (7) | 116 | island-children, member-tag | built |
 | message | measured | static | 0 | 2 (0) | 0 | — | built |
-| message-scroller | measured | react | 1 | 7 (7) | 93 | island-children, jsx-expression, member-tag | built |
+| message-scroller | measured | static | 1 | 7 (6) | 94 | jsx-expression, member-tag | built |
 | native-select | measured | static | 0 | 3 (0) | 0 | external-component | built |
-| navigation-menu | measured | react | 1 | 8 (8) | 99 | external-component, island-children, member-tag | built |
+| navigation-menu | measured | static | 1 | 8 (7) | 99 | external-component, member-tag | built |
 | pagination | measured | static | 2 | 8 (2) | 87 | external-component, spread-props | built |
-| popover | measured | react | 1 | 5 (5) | 109 | island-children, local-component, member-tag, spread-props | built |
+| popover | measured | static | 1 | 5 (4) | 109 | local-component, member-tag, spread-props | built |
 | progress | measured | static | 1 | 2 (1) | 85 | member-tag | built |
-| radio-group | measured | react | 1 | 4 (4) | 96 | external-component, island-children, member-tag | built |
-| resizable | measured | react | 1 | 4 (4) | 103 | external-component, island-children, member-tag | built |
+| radio-group | measured | static | 1 | 4 (3) | 96 | external-component, member-tag | built |
+| resizable | measured | static | 1 | 4 (3) | 103 | external-component, member-tag | built |
 | scroll-area | measured | react | 1 | 4 (4) | 92 | island-children, member-tag | built |
-| select | measured | react | 1 | 10 (10) | 117 | external-component, island-children, member-tag | built |
+| select | measured | static | 1 | 10 (9) | 118 | external-component, member-tag | built |
 | separator | measured | static | 2 | 2 (1) | 84 | member-tag | built |
-| sheet | measured | react | 1 | 12 (10) | 100 | external-component, island-children, local-component, member-tag, spread-props | built |
+| sheet | measured | static | 1 | 12 (9) | 101 | external-component, island-children, local-component, member-tag, spread-props | built |
 | sidebar | analysis-only | error | — | — | — | error:island-prop | refused: island-prop at pages/sidebar.tsx:264:5, prop `onClick` on <Button> |
 | skeleton | measured | static | 0 | 2 (0) | 0 | — | built |
 | slider | measured | static | 1 | 2 (1) | 93 | member-tag | built |
 | sonner | analysis-only | error | — | — | — | error:island-prop | refused: island-prop at pages/sonner.tsx:8:7, prop `onClick` on <Button> |
 | spinner | measured | static | 1 | 3 (2) | 231 | external-component, spread-props | built |
-| switch | measured | react | 1 | 3 (3) | 89 | island-children, member-tag | built |
+| switch | measured | static | 2 | 3 (2) | 89 | member-tag | built |
 | table | measured | react | 1 | 8 (1) | 81 | instance-list-path | built |
-| tabs | measured | react | 1 | 5 (5) | 94 | island-children, member-tag | built |
+| tabs | measured | static | 1 | 5 (4) | 94 | member-tag | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | — | built |
-| toggle | measured | react | 1 | 2 (2) | 87 | island-children, member-tag | built |
-| toggle-group | measured | react | 1 | 3 (3) | 93 | hook-unsupported, island-children, member-tag | built |
-| tooltip | measured | react | 1 | 6 (6) | 105 | island-children, local-component, member-tag, spread-props | built |
+| toggle | measured | static | 2 | 2 (1) | 86 | member-tag | built |
+| toggle-group | measured | static | 1 | 3 (2) | 93 | hook-unsupported, member-tag | built |
+| tooltip | measured | static | 1 | 6 (5) | 105 | local-component, member-tag, spread-props | built |
 
 ## App components that block
 
@@ -194,8 +194,8 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/carousel.tsx#carousel | event-capture, hook-unsupported, member-tag | 1 |
 | components/ui/carousel.tsx#carouselContent | control-flow, hook-unsupported, ref-shape | 1 |
 | components/ui/carousel.tsx#carouselItem | control-flow, hook-unsupported | 1 |
-| components/ui/carousel.tsx#carouselNext | control-flow, external-component, hook-unsupported, island-children, spread-props | 1 |
-| components/ui/carousel.tsx#carouselPrevious | control-flow, external-component, hook-unsupported, island-children, spread-props | 1 |
+| components/ui/carousel.tsx#carouselNext | control-flow, external-component, hook-unsupported, spread-props | 1 |
+| components/ui/carousel.tsx#carouselPrevious | control-flow, external-component, hook-unsupported, spread-props | 1 |
 | components/ui/chart.tsx#chartContainer | local-component, member-tag, use-id-in-render | 1 |
 | components/ui/checkbox.tsx#checkbox | external-component, member-tag | 1 |
 | components/ui/collapsible.tsx#collapsible | member-tag | 1 |
@@ -204,7 +204,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/combobox.tsx#comboboxClear | external-component, jsx-expression, member-tag | 1 |
 | components/ui/combobox.tsx#comboboxContent | member-tag | 1 |
 | components/ui/combobox.tsx#comboboxEmpty | member-tag | 1 |
-| components/ui/combobox.tsx#comboboxInput | island-children, jsx-expression, member-tag | 1 |
+| components/ui/combobox.tsx#comboboxInput | jsx-expression, member-tag | 1 |
 | components/ui/combobox.tsx#comboboxList | member-tag | 1 |
 | components/ui/combobox.tsx#comboboxTrigger | external-component, member-tag | 1 |
 | components/ui/command.tsx#command | external-component, spread-props | 1 |
@@ -223,7 +223,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/dialog.tsx#dialogClose | member-tag | 1 |
 | components/ui/dialog.tsx#dialogContent | external-component, island-children, member-tag | 1 |
 | components/ui/dialog.tsx#dialogDescription | member-tag | 1 |
-| components/ui/dialog.tsx#dialogFooter | island-children, member-tag | 1 |
+| components/ui/dialog.tsx#dialogFooter | member-tag | 1 |
 | components/ui/dialog.tsx#dialogOverlay | member-tag | 1 |
 | components/ui/dialog.tsx#dialogPortal | member-tag | 1 |
 | components/ui/dialog.tsx#dialogTitle | member-tag | 1 |
@@ -321,52 +321,12 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/tooltip.tsx#tooltipContent | member-tag | 1 |
 | components/ui/tooltip.tsx#tooltipProvider | member-tag | 1 |
 | components/ui/tooltip.tsx#tooltipTrigger | member-tag | 1 |
-| pages/accordion.tsx#accordion | island-children | 1 |
-| pages/alert-dialog.tsx#alertDialog | island-children | 1 |
-| pages/aspect-ratio.tsx#aspectRatio | island-children | 1 |
-| pages/avatar.tsx#avatar | island-children | 1 |
-| pages/badge-aslink.tsx#badgeAslink | island-children | 1 |
-| pages/badge.tsx#badge | island-children | 1 |
-| pages/breadcrumb.tsx#breadcrumb | island-children | 1 |
-| pages/bubble.tsx#bubble | island-children | 1 |
-| pages/button-alias.tsx#buttonAlias | external-component, island-children | 1 |
-| pages/button-aschild.tsx#buttonAschild | island-children | 1 |
-| pages/button-group.tsx#buttonGroup | island-children | 1 |
-| pages/button.tsx#button | island-children | 1 |
-| pages/card.tsx#card | island-children | 1 |
+| pages/button-alias.tsx#buttonAlias | external-component | 1 |
 | pages/carousel.tsx#carousel | instance-list-path, island-children | 1 |
 | pages/chart.tsx#chart | child-component, external-component, island-children, jsx-expression | 1 |
-| pages/checkbox.tsx#checkbox | island-children | 1 |
-| pages/collapsible.tsx#collapsible | island-children | 1 |
 | pages/combobox.tsx#combobox | child-component, island-children, jsx-expression | 1 |
-| pages/command.tsx#command | island-children | 1 |
-| pages/context-menu.tsx#contextMenu | island-children | 1 |
-| pages/dialog.tsx#dialog | island-children | 1 |
-| pages/direction.tsx#direction | island-children | 1 |
-| pages/drawer.tsx#drawer | island-children | 1 |
-| pages/dropdown-menu.tsx#dropdownMenu | island-children | 1 |
-| pages/empty.tsx#empty | island-children | 1 |
-| pages/field.tsx#field | island-children | 1 |
-| pages/hover-card.tsx#hoverCard | island-children | 1 |
-| pages/input-otp.tsx#inputOtp | island-children | 1 |
-| pages/item.tsx#item | island-children | 1 |
-| pages/label.tsx#label | island-children | 1 |
-| pages/marker.tsx#marker | island-children | 1 |
-| pages/menubar.tsx#menubar | island-children | 1 |
-| pages/message-scroller.tsx#messageScroller | island-children | 1 |
-| pages/navigation-menu.tsx#navigationMenu | island-children | 1 |
-| pages/popover.tsx#popover | island-children | 1 |
-| pages/radio-group.tsx#radioGroup | island-children | 1 |
-| pages/resizable.tsx#resizable | island-children | 1 |
 | pages/scroll-area.tsx#scrollArea | island-children | 1 |
-| pages/select.tsx#select | island-children | 1 |
-| pages/sheet.tsx#sheet | island-children | 1 |
-| pages/switch.tsx#switch | island-children | 1 |
 | pages/table.tsx#table | instance-list-path | 1 |
-| pages/tabs.tsx#tabs | island-children | 1 |
-| pages/toggle-group.tsx#toggleGroup | island-children | 1 |
-| pages/toggle.tsx#toggle | island-children | 1 |
-| pages/tooltip.tsx#tooltip | island-children | 1 |
 
 ## Libraries
 

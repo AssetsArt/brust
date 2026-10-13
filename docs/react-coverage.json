@@ -11,8 +11,8 @@
   "summary": {
     "entries": 58,
     "native": 11,
-    "static": 9,
-    "island": 30,
+    "static": 12,
+    "island": 27,
     "partial": 3,
     "unsupported": 0,
     "n/a": 5
@@ -527,30 +527,28 @@
       "name": "<Activity>",
       "group": "components",
       "url": "https://react.dev/reference/react/Activity",
-      "status": "island",
+      "status": "static",
       "rows": [
         "d-activity"
       ],
       "tiers": [
-        "react"
+        "static"
       ],
       "diagnostics": [
-        "fallback:external-component",
-        "fallback:island-children"
+        "fallback:external-component"
       ],
       "shapes": [
         {
           "row": "d-activity",
           "authoring": "<Activity mode>",
-          "expected": "react",
-          "observed": "react",
+          "expected": "static",
+          "observed": "static",
           "diagnostics": [
-            "fallback:external-component",
-            "fallback:island-children"
+            "fallback:external-component"
           ]
         }
       ],
-      "note": "<Activity mode>"
+      "note": "R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children"
     },
     {
       "name": "<Fragment>",
@@ -594,12 +592,11 @@
       ],
       "tiers": [
         "error",
-        "react"
+        "static"
       ],
       "diagnostics": [
         "error:island-prop",
-        "fallback:external-component",
-        "fallback:island-children"
+        "fallback:external-component"
       ],
       "shapes": [
         {
@@ -609,51 +606,47 @@
           "observed": "error",
           "diagnostics": [
             "error:island-prop",
-            "fallback:external-component",
-            "fallback:island-children"
+            "fallback:external-component"
           ]
         },
         {
           "row": "d-profiler-bare",
           "authoring": "<Profiler> without onRender",
-          "expected": "react",
-          "observed": "react",
+          "expected": "static",
+          "observed": "static",
           "diagnostics": [
-            "fallback:external-component",
-            "fallback:island-children"
+            "fallback:external-component"
           ]
         }
       ],
-      "note": "island: d-profiler-bare; refused: d-profiler"
+      "note": "native/static: d-profiler-bare; refused: d-profiler"
     },
     {
       "name": "<StrictMode>",
       "group": "components",
       "url": "https://react.dev/reference/react/StrictMode",
-      "status": "island",
+      "status": "static",
       "rows": [
         "d-strictmode"
       ],
       "tiers": [
-        "react"
+        "static"
       ],
       "diagnostics": [
-        "fallback:external-component",
-        "fallback:island-children"
+        "fallback:external-component"
       ],
       "shapes": [
         {
           "row": "d-strictmode",
           "authoring": "<StrictMode>",
-          "expected": "react",
-          "observed": "react",
+          "expected": "static",
+          "observed": "static",
           "diagnostics": [
-            "fallback:external-component",
-            "fallback:island-children"
+            "fallback:external-component"
           ]
         }
       ],
-      "note": "<StrictMode>"
+      "note": "R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children"
     },
     {
       "name": "<Suspense>",
@@ -695,7 +688,6 @@
           "observed": "react",
           "diagnostics": [
             "fallback:external-component",
-            "fallback:island-children",
             "fallback:jsx-expression"
           ]
         }
@@ -706,30 +698,28 @@
       "name": "<ViewTransition>",
       "group": "components",
       "url": "https://react.dev/reference/react/ViewTransition",
-      "status": "island",
+      "status": "static",
       "rows": [
         "d-viewtransition"
       ],
       "tiers": [
-        "react"
+        "static"
       ],
       "diagnostics": [
-        "fallback:external-component",
-        "fallback:island-children"
+        "fallback:external-component"
       ],
       "shapes": [
         {
           "row": "d-viewtransition",
           "authoring": "<ViewTransition>",
-          "expected": "react",
-          "observed": "react",
+          "expected": "static",
+          "observed": "static",
           "diagnostics": [
-            "fallback:external-component",
-            "fallback:island-children"
+            "fallback:external-component"
           ]
         }
       ],
-      "note": "<ViewTransition>"
+      "note": "R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children"
     },
     {
       "name": "act",
