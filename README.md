@@ -1,24 +1,50 @@
-# brust v2
+<p align="center">
+  <a href="https://brust.dev"><img src="website/public/favicon.svg" width="96" height="96" alt="brust"></a>
+</p>
 
-Write React. Get a native page: HTML rendered by Rust from a compiled template, interactivity
-as a small react-free chunk, React only where the compiler proves it is needed.
+<h1 align="center">brust</h1>
 
-## Quick start
+<p align="center"><b>React you write. Rust that serves it.</b></p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@brust/core"><img src="https://img.shields.io/npm/v/@brust/core/alpha?label=%40brust%2Fcore&color=f2a516" alt="npm"></a>
+  <a href="https://github.com/AssetsArt/brust/actions/workflows/ci.yml"><img src="https://github.com/AssetsArt/brust/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/license-MIT-062323" alt="MIT">
+</p>
+
+<p align="center">
+  <a href="https://brust.dev">Website</a> ·
+  <a href="https://brust.dev/docs/quickstart">Quickstart</a> ·
+  <a href="https://brust.dev/docs">Docs</a>
+</p>
+
+---
+
+brust compiles your React components ahead of time. A page that never changes ships as static HTML, rendered by Rust. Interactive parts become small native handlers. React runs only where the compiler finds it is needed.
 
 ```bash
-bun create @brust/app my-app      # blank (default) or --template pokedex
+bun create @brust/app my-app
 cd my-app && bun install
-bun run dev                       # http://127.0.0.1:1337
+bun run dev
 ```
 
-More in [`docs/create-app.md`](docs/create-app.md). Cloudflare Workers: [`docs/cloudflare.md`](docs/cloudflare.md); shared cache adapters: [`docs/cache-adapters.md`](docs/cache-adapters.md).
+| Tier | What you write | What ships |
+|---|---|---|
+| **static** | a component with no state | HTML from a compiled template, no JavaScript |
+| **native** | `useState`, events, effects | the HTML plus a small handler chunk, no React |
+| **react** | what only React can do | a React island, hydrated in place |
 
-- Design: `docs/design/2026-10-08-react-compiler-design.md`
-- Plans: `docs/plans/`
-- Browser runtime: `packages/runtime-dom` (directive contract in its README; `cd packages/runtime-dom && bun test`)
-- Build: Rust `nightly-2026-09-15` (see `rust-toolchain.toml`) + Bun 1.4.x. `cargo test --workspace --exclude bun_react_compiler`.
-- Coverage battery: `bun run battery` regenerates `docs/react-coverage.md` and `docs/plans/m1-exit-report.md` (61 rows through the real `brustc`; CI fails on a diff). Exit criteria as tests: `bun test scripts/battery`.
-- Browser harness: `bun run browser-test` mounts the generated chunks over `brustc --render` HTML (happy-dom). `--render` is a debug command, never a production path.
-- CLI: `cargo run -p brust-compiler-cli -- <file.tsx> --emit parse|hir`
+Runs on Bun with a Rust server, or on Cloudflare Workers. `brust build --target static` writes plain files for any static host.
 
-This branch (`v2`) is an orphan rewrite; 0.1.x lives on `main`.
+## Contributing
+
+Rust `nightly-2026-09-15` (`rust-toolchain.toml`) and Bun 1.4.x.
+
+```bash
+cargo test --workspace --exclude bun_react_compiler
+cd packages/brust && bun run build:debug && bun test
+```
+
+Design notes live in [`docs/design/`](docs/design/), work plans in [`docs/plans/`](docs/plans/). The 0.1.x line (`brustjs` on npm) is kept on the [`v01x`](https://github.com/AssetsArt/brust/tree/v01x) branch.
+
+MIT

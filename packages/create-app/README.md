@@ -17,4 +17,4 @@ bun run dev                       # http://127.0.0.1:1337
 
 `bun create` rejects `-t` and `-y`; use the long flags (the short ones work with `bunx @brust/create-app`).
 
-Full guide: [docs/create-app.md](https://github.com/AssetsArt/brust/blob/v2/docs/create-app.md).
+Full guide: [docs/create-app.md](https://github.com/AssetsArt/brust/blob/main/docs/create-app.md).

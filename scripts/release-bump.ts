@@ -3,7 +3,7 @@
 // partial bumps). Refs: packages/brust, packages/runtime-dom, packages/create-app, npm/<6>, npm/core-cf. Dependencies between them are `workspace:*`
 // (rewritten by `bun publish`), so there is nothing else to pin — the verify step enforces that invariant.
 //   bun scripts/release-bump.ts 0.2.0-alpha.1            # bump + verify
-//   bun scripts/release-bump.ts 0.2.0-alpha.1 --release  # + commit, tag v<version>, push (on v2 only)
+//   bun scripts/release-bump.ts 0.2.0-alpha.1 --release  # + commit, tag v<version>, push (on main only)
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { $ } from 'bun'
@@ -48,7 +48,7 @@ if (problems.length || verified !== EXPECTED) { console.error(`✗ verification 
 console.log(`✓ bumped ${verified}/${EXPECTED} refs + bun.lock to ${NEW}`); for (const c of changes) console.log(c)
 if (!RELEASE) { console.log(`\nnext: git commit -am "chore(release): ${NEW}" && git tag -a v${NEW} -m "brust ${NEW}" && git push origin HEAD v${NEW}`); process.exit(0) }
 const branch = (await $`git rev-parse --abbrev-ref HEAD`.text()).trim()
-if (branch !== 'v2') { console.error(`✗ --release refuses to run off v2 (on "${branch}")`); process.exit(1) }
+if (branch !== 'main') { console.error(`✗ --release refuses to run off main (on "${branch}")`); process.exit(1) }
 await $`git add ${FILES} bun.lock`; await $`git commit -m ${`chore(release): ${NEW}`}`; await $`git tag -a ${`v${NEW}`} -m ${`brust ${NEW}`}`
 await $`git push origin HEAD`; await $`git push origin ${`v${NEW}`}`
 console.log(`✓ pushed v${NEW} — release.yml publishes (human-confirmed by the tag)`)
