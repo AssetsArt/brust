@@ -1,0 +1,267 @@
+{
+  "id": "input_c0e8de97",
+  "source": "tests/fixtures/module-const-usestate/input.tsx",
+  "tier": "Native",
+  "props": [],
+  "state": [
+    {
+      "name": "n",
+      "setter": "setN",
+      "init": {
+        "Server": {
+          "loc": 48,
+          "kind": {
+            "Lit": {
+              "Num": 5.0
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "tab",
+      "setter": "setTab",
+      "init": {
+        "Server": {
+          "loc": 181,
+          "kind": {
+            "Index": {
+              "target": {
+                "loc": 63,
+                "kind": {
+                  "Array": [
+                    {
+                      "loc": 64,
+                      "kind": {
+                        "Lit": {
+                          "Str": "one"
+                        }
+                      }
+                    },
+                    {
+                      "loc": 71,
+                      "kind": {
+                        "Lit": {
+                          "Str": "two"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "index": {
+                "loc": 186,
+                "kind": {
+                  "Lit": {
+                    "Num": 0.0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [],
+  "effects": [],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 234,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 240,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 240,
+                      "kind": {
+                        "Ident": {
+                          "name": "setN",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 245,
+                        "kind": {
+                          "Binary": {
+                            "op": "Add",
+                            "left": {
+                              "loc": 245,
+                              "kind": {
+                                "Ident": {
+                                  "name": "n",
+                                  "kind": "State"
+                                }
+                              }
+                            },
+                            "right": {
+                              "loc": 249,
+                              "kind": {
+                                "Lit": {
+                                  "Num": 1.0
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setN",
+                "Setter"
+              ],
+              [
+                "n",
+                "State"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    },
+    {
+      "name": "_h2",
+      "body": {
+        "loc": 287,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Expr": {
+                "loc": 293,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 293,
+                      "kind": {
+                        "Ident": {
+                          "name": "setTab",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 300,
+                        "kind": {
+                          "Lit": {
+                            "Str": "two"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setTab",
+                "Setter"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 205,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 217,
+            "tag": "button",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 254,
+                    "kind": {
+                      "Ident": {
+                        "name": "n",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 272,
+            "tag": "span",
+            "attrs": [
+              {
+                "Event": {
+                  "event": "click",
+                  "handler": "_h2"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 309,
+                    "kind": {
+                      "Ident": {
+                        "name": "tab",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

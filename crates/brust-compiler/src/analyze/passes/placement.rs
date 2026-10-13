@@ -10,6 +10,7 @@
 use super::PassState;
 use super::deps::{Deps, minimal_paths};
 use super::server_expr::try_server;
+use crate::analyze::const_fold::{Folder, imported_const, map_idents};
 use crate::ir::{
     Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobDecl, JobKind, Node, RawExpr, RawKind,
 };
@@ -62,6 +63,10 @@ const FUNCTION_WHYS: &[&str] = &[
 struct Placer<'s> {
     st: &'s mut PassState,
     derived_raw: HashMap<String, RawExpr>,
+    /// Module `const`s whose value folds into the template (G5/G9/G10), fully substituted.
+    consts: HashMap<String, RawExpr>,
+    /// Relatively imported consts the template or a state initializer reads, folded (by local name).
+    imported_vals: HashMap<String, RawExpr>,
     places: HashMap<String, Place>,
     visiting: Vec<String>,
     next_slot: u32,
@@ -87,8 +92,8 @@ struct Placer<'s> {
     list_shape_locs: BTreeSet<u32>,
 }
 
-pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
-    let derived_raw = ir
+pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>) {
+    let derived_raw: HashMap<String, RawExpr> = ir
         .derived
         .iter()
         .filter_map(|d| match &d.expr {
@@ -96,9 +101,62 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
             _ => None,
         })
         .collect();
+    let handler_names = st.handler_names.clone();
+    let imports: std::cell::RefCell<HashMap<(String, String), Option<RawExpr>>> =
+        Default::default();
+    let imported = |source: &str, name: &str| {
+        imports
+            .borrow_mut()
+            .entry((source.to_string(), name.to_string()))
+            .or_insert_with(|| imported_const(ctx.path, source, name, ctx.opts, 0))
+            .clone()
+    };
+    let shadowed = |n: &str| {
+        derived_raw.contains_key(n)
+            || ir.id_bindings.iter().any(|i| i == n)
+            || ir.refs.iter().any(|r| r.name == n)
+            || handler_names.contains(n)
+    };
+    let consts = Folder::new(&ir.module_decls, &shadowed, &imported).all();
+    // Import bindings read straight from the template or a state initializer fold too.
+    let imported_vals: std::cell::RefCell<HashMap<String, RawExpr>> = Default::default();
+    let note = |e: &RawExpr| {
+        let _ = map_idents(e, &|id| {
+            if let RawKind::Ident {
+                name,
+                kind:
+                    IdentKind::Import {
+                        source,
+                        imported: imp,
+                    },
+            } = &id.kind
+                && !shadowed(name)
+                && let Some(v) = imported(source, imp)
+                && crate::analyze::const_fold::FOLD_MAX_JINJA
+                    >= crate::lower::server_expr::to_jinja(
+                        &crate::ir::ServerExpr(v.clone()),
+                        &crate::lower::server_expr::JinjaCtx::plain(),
+                    )
+                    .len()
+            {
+                imported_vals.borrow_mut().insert(name.clone(), v);
+            }
+            None
+        });
+    };
+    collect_raw(&ir.template, &mut |e| note(e));
+    ir.state.iter().for_each(|s| {
+        if let Expr::Raw(r) = &s.init {
+            note(r)
+        }
+    });
+    derived_raw.values().for_each(note);
+    let imported_vals = imported_vals.into_inner();
     let mut p = Placer {
         st,
         derived_raw,
+        consts,
+        imported_vals,
         places: HashMap::new(),
         visiting: Vec::new(),
         next_slot: 0,
@@ -136,7 +194,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState) {
         let Expr::Raw(r) = &d.expr else { continue };
         let r = r.clone();
         d.expr = match p.places.get(&d.name) {
-            Some(Place::Server) => Expr::Server(crate::ir::ServerExpr(r)),
+            Some(Place::Server) => Expr::Server(crate::ir::ServerExpr(p.fold(&r))),
             Some(Place::Slot) => p.slot(&r),
             Some(Place::Code) if p.st.cx.deps(&r, &[]).browser => Expr::Raw(r),
             _ => Expr::ClientOnly {
@@ -357,6 +415,24 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 }
 
 impl Placer<'_> {
+    /// `e` with the folding module consts it reads replaced by their values.
+    fn fold(&self, e: &RawExpr) -> RawExpr {
+        if self.consts.is_empty() && self.imported_vals.is_empty() {
+            return e.clone();
+        }
+        map_idents(e, &|id| match &id.kind {
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Local,
+            } => self.consts.get(name).cloned(),
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Import { .. },
+            } => self.imported_vals.get(name).cloned(),
+            _ => None,
+        })
+    }
+
     fn place_of(&mut self, name: &str) -> Option<Place> {
         if let Some(p) = self.places.get(name) {
             return Some(p.clone());
@@ -372,12 +448,15 @@ impl Placer<'_> {
         if contains_jsx(&raw) {
             self.st.jsx_code.push((raw.loc, "a local function"));
         }
-        let place = if matches!(raw.kind, RawKind::Arrow { .. })
+        let code = matches!(raw.kind, RawKind::Arrow { .. })
             || self.st.cx.deps(&raw, &[]).browser
-            || contains_jsx(&raw)
-        {
+            || contains_jsx(&raw);
+        let folded = self.fold(&raw);
+        // Placing the locals it reads is a side effect: only a first-paint value does it.
+        let server_ok = !code && try_server(&folded).is_ok() && self.locals_placed(&folded);
+        let place = if code {
             Place::Code
-        } else if try_server(&raw).is_ok() && self.locals_placed(&raw) {
+        } else if server_ok {
             Place::Server
         } else if self.reads_id(&raw) {
             // A job cannot read a `useId` value.
@@ -506,8 +585,9 @@ impl Placer<'_> {
             }
             return Expr::Raw(r.clone());
         }
-        if try_server(r).is_ok() && self.locals_placed(r) {
-            return Expr::Server(crate::ir::ServerExpr(r.clone()));
+        let folded = self.fold(r);
+        if try_server(&folded).is_ok() && self.locals_placed(&folded) {
+            return Expr::Server(crate::ir::ServerExpr(folded));
         }
         if self.reads_id(r) {
             self.flag_use_id(r.loc);
@@ -706,5 +786,50 @@ impl Placer<'_> {
             }
             Node::Fragment(cs) => cs.iter_mut().for_each(|c| self.node(c)),
         }
+    }
+}
+
+/// Calls `f` on every raw expression of a template (attributes, text slots, conditions, lists,
+/// component props).
+fn collect_raw(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
+    let expr = |e: &Expr, f: &mut dyn FnMut(&RawExpr)| {
+        if let Expr::Raw(r) = e {
+            f(r)
+        }
+    };
+    match n {
+        Node::Element {
+            attrs, children, ..
+        } => {
+            for a in attrs {
+                if let Attr::Dynamic { value, .. }
+                | Attr::Spread(value)
+                | Attr::InnerHtml { value } = a
+                {
+                    expr(value, f);
+                }
+            }
+            children.iter().for_each(|c| collect_raw(c, f));
+        }
+        Node::Slot(e) => expr(e, f),
+        Node::If { cond, then, else_ } => {
+            expr(cond, f);
+            then.iter().chain(else_).for_each(|c| collect_raw(c, f));
+        }
+        Node::For {
+            source, key, body, ..
+        } => {
+            expr(source, f);
+            expr(key, f);
+            body.iter().for_each(|c| collect_raw(c, f));
+        }
+        Node::Component {
+            props, children, ..
+        } => {
+            props.iter().for_each(|(_, v)| expr(v, f));
+            children.iter().for_each(|c| collect_raw(c, f));
+        }
+        Node::Fragment(cs) => cs.iter().for_each(|c| collect_raw(c, f)),
+        Node::Text(_) | Node::Outlet => {}
     }
 }

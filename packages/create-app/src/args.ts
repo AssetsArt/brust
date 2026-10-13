@@ -5,7 +5,7 @@ import { isAbsolute, resolve } from 'node:path'
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/
 const MAX_NAME_LEN = 50
 
-export const USAGE = 'usage: bun create @brust/app <name> [--template blank|pokedex] [--dir <path>] [--yes] [--brust-dep <spec>]'
+export const USAGE = 'usage: bun create @brust/app <name> [--template blank|pokedex] [--tailwind] [--dir <path>] [--yes] [--brust-dep <spec>]'
 
 export interface ParsedArgs {
   projectName: string
@@ -13,6 +13,8 @@ export interface ParsedArgs {
   template?: string
   yes: boolean
   brustDep?: string
+  /** `--tailwind` (L21): the blank template with Tailwind CSS v4. */
+  tailwind: boolean
   help: boolean
 }
 
@@ -22,6 +24,7 @@ export function parseArgs(args: string[]): ParsedArgs {
   let template: string | undefined
   let brustDep: string | undefined
   let yes = false
+  let tailwind = false
   let help = false
   const need = (flag: string, v: string | undefined): string => {
     if (!v) throw new Error(`create-app: ${flag} requires a value`)
@@ -39,12 +42,13 @@ export function parseArgs(args: string[]): ParsedArgs {
     else if (a === '--brust-dep') brustDep = need('--brust-dep', args[++i])
     else if (a.startsWith('--brust-dep=')) brustDep = need('--brust-dep', a.slice('--brust-dep='.length))
     else if (a === '--yes' || a === '-y') yes = true
+    else if (a === '--tailwind') tailwind = true
     else if (a.startsWith('-')) throw new Error(`create-app: unknown flag "${a}"`)
     else if (name === undefined) name = a
     else throw new Error(`create-app: unexpected positional argument "${a}"`)
   }
 
-  if (help) return { projectName: name ?? '', targetDir: '', template, yes, brustDep, help }
+  if (help) return { projectName: name ?? '', targetDir: '', template, yes, brustDep, tailwind, help }
   if (!name) throw new Error(`create-app: missing project name. ${USAGE}`)
   if (name.length > MAX_NAME_LEN) throw new Error(`create-app: project name too long (max ${MAX_NAME_LEN} chars)`)
   if (!NAME_RE.test(name)) {
@@ -52,5 +56,5 @@ export function parseArgs(args: string[]): ParsedArgs {
   }
   const cwd = process.cwd()
   const targetDir = dir ? (isAbsolute(dir) ? dir : resolve(cwd, dir)) : resolve(cwd, name)
-  return { projectName: name, targetDir, template, yes, brustDep, help }
+  return { projectName: name, targetDir, template, yes, brustDep, tailwind, help }
 }

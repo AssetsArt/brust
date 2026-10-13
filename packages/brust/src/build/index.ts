@@ -213,7 +213,7 @@ async function buildInto(
   const serverCss = [o.actionsEntry, o.cacheModule].flatMap((f) => (f ? graph.of(f) : []))
   mkdirSync(join(out, 'client'), { recursive: true })
   // Review N3: `brust dev` builds with BRUST_BUILD_MODE=development (as the JS bundles): readable, unminified CSS.
-  const css = await buildCss(out, [...new Set([...[...routeCss.values()].flat(), ...serverCss])], process.env.BRUST_BUILD_MODE !== 'development')
+  const css = await buildCss(out, [...new Set([...[...routeCss.values()].flat(), ...serverCss])], process.env.BRUST_BUILD_MODE !== 'development', { appRoot, log: o.log })
   for (const c of directCss(entry))
     o.log(`[brust] warning css ${relative(appRoot, entry)} imports ${c}: the route entry belongs to no route, so it is linked nowhere; import it from a layout, or list it in [css] global`)
   const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps }

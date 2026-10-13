@@ -5,10 +5,12 @@
 //   reload                      a new generation is serving
 //   error  {diag}               a build/boot failed
 //   css    {href, v}            a public/*.css changed: swap the <link>, keep the page
+//   css-swap {gen, map}          only built stylesheets changed (L19/L21): a new generation serves; swap each
+//                              data-brust-css link old href -> new href, keep the page (no reload)
 // WS, not SSE: SSE holds one of the six per-host connections, so six tabs would stall (R13.2).
 // The overlay lives in a shadow root, so page CSS cannot touch it and it cannot touch the page.
 export const DEV_CLIENT_JS = String.raw`
-const pageGen = Number(new URL(import.meta.url).searchParams.get('g') || 0)
+let pageGen = Number(new URL(import.meta.url).searchParams.get('g') || 0)
 let host = null
 let delay = 150
 
@@ -47,6 +49,18 @@ function swapCss(href, v) {
   }
 }
 
+function swapBuiltCss(map) {
+  for (const old of document.querySelectorAll('link[data-brust-css]')) {
+    const to = map[new URL(old.href, location.href).pathname]
+    if (!to) continue
+    const next = old.cloneNode()
+    next.href = to
+    next.onload = () => old.remove()
+    next.onerror = () => next.remove()
+    old.after(next)
+  }
+}
+
 function handle(m) {
   if (m.type === 'hello') {
     if (m.state === 'error' && m.diag) showOverlay(m.diag)
@@ -57,6 +71,10 @@ function handle(m) {
   } else if (m.type === 'reload') location.reload()
   else if (m.type === 'error') showOverlay(m.diag)
   else if (m.type === 'css') swapCss(m.href, m.v)
+  else if (m.type === 'css-swap') {
+    pageGen = m.gen
+    swapBuiltCss(m.map)
+  }
 }
 
 function connect() {

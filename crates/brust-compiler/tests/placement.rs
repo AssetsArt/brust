@@ -175,3 +175,133 @@ fn truthiness_guard_contributes_the_prop_root_to_job_inputs() {
         .expect("precompute job");
     assert_eq!(job.inputs, vec!["user".to_string()], "{:?}", job.inputs);
 }
+
+// L1 (gap-const-fold): module consts fold into the template; anything unprovable stays a slot.
+
+fn module_const(head: &str, body: &str) -> ComponentIR {
+    analyze(
+        "C.tsx",
+        &format!("{head}\nexport default function C() {{ {body} }}"),
+    )
+}
+
+fn painted(ir: &ComponentIR) -> Vec<Expr> {
+    let mut s = Vec::new();
+    slots(&ir.template, &mut s);
+    s
+}
+
+#[test]
+fn module_const_folds_to_a_server_value_with_no_job() {
+    let ir = module_const(
+        "const A = 2\nconst B = A * 3\nconst O = { k: [1, B] }",
+        "return <p>{O.k[1]}</p>",
+    );
+    assert!(painted(&ir).iter().all(|e| matches!(e, Expr::Server(_))));
+    assert!(ir.jobs.is_empty() && !ir.needs_worker, "{:?}", ir.jobs);
+}
+
+#[test]
+fn module_const_used_by_use_state_folds() {
+    let ir = module_const(
+        "import { useState } from 'react'\nconst START = 5",
+        "const [n] = useState(START); return <p>{n}</p>",
+    );
+    assert!(
+        matches!(ir.state[0].init, Expr::Server(_)),
+        "{:?}",
+        ir.state
+    );
+    assert!(ir.jobs.is_empty() && !ir.needs_worker);
+}
+
+#[test]
+fn mutated_array_const_stays_a_slot_but_a_primitive_folds() {
+    for head in [
+        "const A = [1]\nA.push(2)",
+        "const A = [1]\nA[0] = 9",
+        "const A = [1]\nconst B = A\nB.sort()",
+        "const A = [1]\nfunction touch(x: number[]) { x.length = 0 }\ntouch(A)",
+        // R1.1a: a written `.length` is a mutation
+        "const A = [1]\nA.length = 0",
+        "const A = [1]\nA.length++",
+        "const A = [1]\nA.length -= 1",
+        // R1.1a: element aliases and literal containers
+        "const A = [{ v: 1 }]\nfor (const x of A) x.v = 2",
+        "const A = [{ v: 1 }]\nA.forEach((x) => { x.v = 2 })",
+        "const A = [{ v: 1 }]\nconst BOX = { items: A }\nBOX.items.push({ v: 2 })",
+        "const A = [{ v: 1 }]\nconst B = [A]\nB[0].push({ v: 2 })",
+        "const A = [{ v: 1 }]\nA.map((x) => { x.v = 2; return x })",
+        "const A = [{ v: 1 }]\nA.find((x) => x.v === 1)!.v = 3",
+        "const A = [{ v: 1 }]\nconst first = A[0]\nfirst.v = 4",
+        "const A = [{ v: 1 }]\nObject.values(A)[0].v = 5",
+        "const A = [{ v: 1 }]\nfunction f() { return A }\nf().push({ v: 2 })",
+    ] {
+        let ir = module_const(head, "return <p>{A.length}</p>");
+        assert!(ir.needs_worker, "{head}: must stay a job");
+    }
+    let ir = module_const("const A = [1]\nconsole.log(A)", "return <p>{A.length}</p>");
+    assert!(ir.needs_worker, "an array handed to a call stays a job");
+    // Proven read-only uses keep the fold.
+    for head in [
+        "const A = [{ v: 1 }]\nconst n = A.filter((x) => x.v > 0).length",
+        "const A = [{ v: 1 }]\nconst s = [...A]\nconst k = Object.keys(A)",
+        "const A = [{ v: 1 }]\nA.some((x) => x.v === 1)",
+    ] {
+        let ir = module_const(head, "return <p>{A.length}</p>");
+        assert!(!ir.needs_worker, "{head}: read-only uses still fold");
+    }
+    let ir = module_const("const N = 4\nconsole.log(N)", "return <p>{N}</p>");
+    assert!(
+        !ir.needs_worker,
+        "a primitive folds even when passed to a call"
+    );
+}
+
+#[test]
+fn const_with_a_call_global_or_let_stays_a_slot() {
+    for head in [
+        "const A = Date.now()",
+        "const A = [3, 1].slice()",
+        "let A = 1",
+        "const A = process.env.X",
+        "const A = new Map()",
+    ] {
+        let ir = module_const(head, "return <p>{A}</p>");
+        assert!(ir.needs_worker, "{head}: must stay a job");
+    }
+}
+
+#[test]
+fn a_body_local_shadowing_a_const_wins() {
+    let ir = analyze(
+        "C.tsx",
+        "const label = 'module'\nexport default function C({ name }: { name: string }) { const label = name.toUpperCase(); return <p>{label}</p> }",
+    );
+    let src = format!("{:?}", painted(&ir));
+    assert!(!src.contains("module"), "{src}");
+}
+
+#[test]
+fn a_cycle_and_a_deep_chain_do_not_fold_or_hang() {
+    let ir = module_const("const A = B + 1\nconst B = A + 1", "return <p>{A}</p>");
+    assert!(ir.needs_worker);
+    let chain: String = (0..20)
+        .map(|i| {
+            format!(
+                "const C{} = {}",
+                i + 1,
+                if i == 0 {
+                    "1".into()
+                } else {
+                    format!("C{i} + 1")
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ir = module_const(&chain, "return <p>{C20}</p>");
+    assert!(ir.needs_worker, "a chain deeper than 16 stays a job");
+    let ir = module_const(&chain, "return <p>{C10}</p>");
+    assert!(!ir.needs_worker, "a chain within 16 folds");
+}
