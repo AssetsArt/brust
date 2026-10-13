@@ -25,16 +25,16 @@ import { run } from '@brust/core'
 
 await run({
   distDir: 'dist',          // default 'dist'
-  entry: 'routes.tsx',      // the routes module the workers import; default 'routes.tsx'
+  entry: 'routes.tsx',      // the routes module; default 'routes.tsx'
   config: {
     host: '127.0.0.1',      // default 'localhost'
     port: 8080,             // 0..65535 (0 = any free port); default 1337
     workers: 4,             // 1..1024; default one per CPU core
     renderSlots: 4,         // 1..64 per worker; default min(cores, 16)
     ioThreads: 4,           // 1..256 Rust I/O threads; default one per core
-    callTimeoutMs: 30_000,  // a loader or job call still running after this answers 504
+    callTimeoutMs: 30_000,  // a call still running after this answers 504
     drainTimeoutMs: 10_000, // how long a graceful shutdown waits
-    bootTimeoutMs: 30_000,  // how long start waits for every worker to register
+    bootTimeoutMs: 30_000,  // start waits this long for every worker
   },
 })`
 
