@@ -1,5 +1,5 @@
 // CSS — global stylesheets linked into <head> for you, CSS Modules (and how `styles.x` folds at compile time), Tailwind CSS v4 built in, the dev swap; one browser-only demo of the fold.
-// Every factual claim below has a `source:` comment next to it (file:line at this repo's v2 / docs-site as of the gaps round; the CSS Module fold (L20) is cited from lane css-module-fold @f302c51a because v2 had not landed it when this page was written).
+// Every factual claim below has a `source:` comment next to it (file:line at this repo's v2 / docs-site as of the gaps round; the CSS Module fold (L20) is cited at v2 @34232c7, PR #177).
 import CodeBlock from '../../components/CodeBlock'
 import ClassFold from '../../components/demos/ClassFold'
 import Note from '../../components/docs/Note'
@@ -105,8 +105,6 @@ export async function cssLoader(): Promise<CssData> {
   }
 }
 
-const cb = (b: CodeBlockData) => <CodeBlock code={b.code} lang={b.lang} file={b.file} html={b.html} />
-
 export default function Css({ blocks }: CssData) {
   return (
     <section style={{ display: 'contents' }}>
@@ -118,7 +116,7 @@ export default function Css({ blocks }: CssData) {
       <p>
         A plain <code>import './layout.css'</code> in a component is enough. The build collects every <code>.css</code> import reachable from a page and the server links them.
       </p>
-      {cb(blocks.imports)}
+      <CodeBlock code={blocks.imports.code} lang={blocks.imports.lang} file={blocks.imports.file} html={blocks.imports.html} />
 
       <h2 id="order">Which, and in what order</h2>
       {/* source: docs/css.md:20-21 (order: [css] global, then root layout, nested layouts, page, depth-first) and :23 (linked once, first occurrence; layout import is site-wide); css.ts:82-86 (the loop that builds the list) */}
@@ -130,13 +128,13 @@ export default function Css({ blocks }: CssData) {
         <li>every CSS import reachable from the page's chain: the root layout first, then nested layouts, then the page, each depth-first in import order.</li>
       </ol>
       <p>A file is linked once, at its first occurrence. So a layout's import is site-wide, and a page's import is linked on that page only.</p>
-      {cb(blocks.global)}
+      <CodeBlock code={blocks.global.code} lang={blocks.global.lang} file={blocks.global.file} html={blocks.global.html} />
       {/* source: docs/css.md:23 and :30 (static and dynamic imports of your own source files, including child components; CSS behind import() is linked eagerly; package CSS is collected; JavaScript inside node_modules is not followed); css.ts:31-34 (CssGraph: a .css import is collected, never followed); css.ts:60 (the lazy case) */}
       <p>
         The walk follows static imports and dynamic <code>import()</code> of your own source files, including child components, so a lazily loaded component is styled on first paint. It also collects CSS imported from packages, for example{' '}
         <code>import 'some-ui/dist/style.css'</code>. It does not read the JavaScript inside <code>node_modules</code>.
       </p>
-      {/* source: docs/css.md:30 (a CSS import in routes.tsx belongs to no route: the build warns and links it nowhere); packages/brust/test/css.test.ts (the warning is asserted) */}
+      {/* source: docs/css.md:30 (a CSS import in routes.tsx belongs to no route: the build warns and links it nowhere); packages/brust/test/css.test.ts:235-243 (the warning is asserted) */}
       <Note>
         A CSS import in <code>routes.tsx</code> itself belongs to no route: the build warns and links it nowhere. Import it from a layout, or list it in <code>[css] global</code>.
       </Note>
@@ -151,7 +149,7 @@ export default function Css({ blocks }: CssData) {
       <p>
         A relative <code>url()</code> to a font or image is copied next to the stylesheet with a hash in its name and the URL is rewritten. An absolute <code>/public/…</code> or <code>/_brust/…</code> URL is left as written.
       </p>
-      {cb(blocks.urls)}
+      <CodeBlock code={blocks.urls.code} lang={blocks.urls.lang} file={blocks.urls.file} html={blocks.urls.html} />
       <p>
         The types served from there are woff2, woff, ttf, otf, eot, png, jpg, jpeg, gif, webp, avif, svg and ico. Any other type, a cursor file or a video, fails the build with <code>css-asset-type</code> because the server would answer 404 for it. Put that file in{' '}
         <code>public/</code> and reference it as <code>/public/…</code>.
@@ -163,7 +161,7 @@ export default function Css({ blocks }: CssData) {
         The server inserts one <code>&lt;link rel="stylesheet" data-brust-css&gt;</code> per stylesheet right after the opening <code>&lt;head&gt;</code>, or right after a <code>&lt;meta charset&gt;</code> that comes first. Everything you wrote in the head follows, so
         your own <code>&lt;link&gt;</code> and <code>&lt;style&gt;</code> tags come later and win the cascade.
       </p>
-      {cb(blocks.head)}
+      <CodeBlock code={blocks.head.code} lang={blocks.head.lang} file={blocks.head.file} html={blocks.head.html} />
       <p>
         This happens on every page, including all-static pages that load no JavaScript. A page with no <code>&lt;head&gt;</code> gets the links first, after its doctype; <code>&lt;header&gt;</code> is not a head. Cloudflare Workers and <code>--target static</code> use the same
         server code.
@@ -174,24 +172,24 @@ export default function Css({ blocks }: CssData) {
       <p>
         A file named <code>*.module.css</code> is scoped. <code>import styles from './Card.module.css'</code> gives a frozen object that maps each class to a generated name, such as <code>card_nBzD1A</code>. <code>composes:</code> works.
       </p>
-      {cb(blocks.mod)}
-      {cb(blocks.modSrc)}
+      <CodeBlock code={blocks.mod.code} lang={blocks.mod.lang} file={blocks.mod.file} html={blocks.mod.html} />
+      <CodeBlock code={blocks.modSrc.code} lang={blocks.modSrc.lang} file={blocks.modSrc.file} html={blocks.modSrc.html} />
       <p>
         Class names are plain strings, so the same map works in static and native templates, in a React island's server render and its hydration, and in the Cloudflare worker. Types ship with <code>@brust/core</code>: the import is typed as an object of strings.
       </p>
 
       <h2 id="fold">Class names fold at compile time</h2>
-      {/* source: docs/css.md:65 (lane css-module-fold @f302c51a): styles.x and styles['x'] in a static or native template fold into the literal class, so the component keeps needs_worker false and no job; an unknown class is a build error with file, line and column (rule css-module-class); only a property read of a default import of a relative *.module.css folds */}
+      {/* source: docs/css.md:65 (v2 @34232c7 (PR #177)): styles.x and styles['x'] in a static or native template fold into the literal class, so the component keeps needs_worker false and no job; an unknown class is a build error with file, line and column (rule css-module-class); only a property read of a default import of a relative *.module.css folds */}
       <p>
         In a static or native template, <code>styles.card</code> and <code>styles['card']</code> are replaced by the literal class string when the page is compiled. The component keeps <code>needs_worker: false</code> and the build plans no job for it, so the worker is
         not called for a string the build already knew.
       </p>
-      {cb(blocks.compiled)}
-      {/* source: crates/brust-compiler/tests/css_module_fold.rs:34 (a known class folds and leaves no job) and :85 (bracket access, a conditional and a template literal fold) — lane css-module-fold @f302c51a; observed: the same conditional on a native page keeps both arms as literals, the template literal becomes a concatenation of literals (packages/brust/test/css-module-fold.test.ts) */}
+      <CodeBlock code={blocks.compiled.code} lang={blocks.compiled.lang} file={blocks.compiled.file} html={blocks.compiled.html} />
+      {/* source: crates/brust-compiler/tests/css_module_fold.rs:34 (a known class folds and leaves no job) and :85 (bracket access, a conditional and a template literal fold) — v2 @34232c7 (PR #177); observed: the same conditional on a native page keeps both arms as literals, the template literal becomes a concatenation of literals (packages/brust/test/css-module-fold.test.ts) */}
       <p>
         It folds inside a conditional (<code>on ? styles.on : styles.off</code>) and inside a template literal too. A native component keeps its interactivity: the client chunk gets the literals as well.
       </p>
-      {/* source: crates/brust-compiler/src/analyze/passes/placement.rs:513 (rule css-module-class, lane css-module-fold @f302c51a) and tests css_module_fold.rs:65 (an unknown class is an error at its location) */}
+      {/* source: crates/brust-compiler/src/analyze/passes/placement.rs:513 (rule css-module-class, v2 @34232c7 (PR #177)) and tests css_module_fold.rs:65 (an unknown class is an error at its location) */}
       <p>
         A class the module does not define is a build error with the file, line and column of the use, rule <code>css-module-class</code>. The build never guesses.
       </p>
@@ -217,9 +215,9 @@ export default function Css({ blocks }: CssData) {
       <p>
         Tailwind is built in through the official <code>bun-plugin-tailwind</code>. Install it and Tailwind as your app's own dev dependencies, or scaffold with <code>--tailwind</code>.
       </p>
-      {cb(blocks.install)}
-      {cb(blocks.entry)}
-      {cb(blocks.layout)}
+      <CodeBlock code={blocks.install.code} lang={blocks.install.lang} file={blocks.install.file} html={blocks.install.html} />
+      <CodeBlock code={blocks.entry.code} lang={blocks.entry.lang} file={blocks.entry.file} html={blocks.entry.html} />
+      <CodeBlock code={blocks.layout.code} lang={blocks.layout.lang} file={blocks.layout.file} html={blocks.layout.html} />
       {/* source: docs/css.md:96 (brust loads Tailwind only when a stylesheet, or a file it @imports, contains @import "tailwindcss", @apply, @reference, @theme or @plugin; packages missing: tailwind-missing with the bun add -d command); css.ts:216 (TAILWIND_USE) and :244-258 (loadTailwind: tailwind-missing) */}
       <h3>When it loads</h3>
       <p>
@@ -242,12 +240,12 @@ export default function Css({ blocks }: CssData) {
       <p>
         A CSS Module that uses <code>@apply</code> must reference your Tailwind entry itself. This is standard in v4; brust does not add it.
       </p>
-      {cb(blocks.apply)}
+      <CodeBlock code={blocks.apply.code} lang={blocks.apply.lang} file={blocks.apply.file} html={blocks.apply.html} />
       <p>
         Tailwind v4 puts its utilities in a cascade layer, and unlayered CSS beats layered CSS whatever the file order. Your CSS Modules and plain stylesheets are unlayered, so they beat a utility. To let a utility override a module class, put the module rule in a
         layer too.
       </p>
-      {cb(blocks.layer)}
+      <CodeBlock code={blocks.layer.code} lang={blocks.layer.lang} file={blocks.layer.file} html={blocks.layer.html} />
 
       <h2 id="dev">In brust dev</h2>
       {/* source: docs/css.md:108 (editing a stylesheet rebuilds the CSS and the page swaps its data-brust-css links without reloading; editing a .tsx file rebuilds and reloads, Tailwind rescans) and :34 (dev does not minify); packages/brust/src/dev/client.ts:8-9 and :52-62 (swapBuiltCss: replaces each data-brust-css link with the new href, no reload) */}

@@ -41,7 +41,7 @@ test('tiers: the page is static, the fold demo is native with no job', () => {
 test('every cited source line exists', () => {
   const root = join(import.meta.dir, '..', '..')
   const src = readFileSync(join(import.meta.dir, '..', 'pages/docs/Css.tsx'), 'utf8')
-  const SHORT: Record<string, string> = { 'css.ts': 'packages/brust/src/build/css.ts', 'render.rs': 'crates/brust-core/src/render.rs' }
+  const SHORT: Record<string, string> = { 'css.ts': 'packages/brust/src/build/css.ts', 'render.rs': 'crates/brust-core/src/render.rs', 'placement.rs': 'crates/brust-compiler/src/analyze/passes/placement.rs', 'css_module_fold.rs': 'crates/brust-compiler/tests/css_module_fold.rs' }
   let cites = 0
   for (const line of src.split('\n').filter((l) => /source:|observed:/.test(l))) {
     let file = ''
@@ -66,7 +66,7 @@ test('the fold demo (Chromium): a known class folds, an unknown one is the build
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(String(e)))
   await page.goto(`${base}/docs/css`, { waitUntil: 'networkidle' })
-  await ready(page, '#cf-expr')
+  await ready(page, '.matcher')
   const out = page.getByTestId('fold-out')
   const status = page.getByTestId('fold-status')
   expect(await out.innerText()).toBe('class="card_nBzD1A"')
