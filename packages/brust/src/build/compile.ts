@@ -34,6 +34,8 @@ export type ComponentIR = Record<string, any> & {
   stores?: { handle: string; resolved: { name: string; module: string } | null }[]
   /** A package export rendered as a React island (L22): `source` is then not a file. */
   external?: { source: string; export: string }
+  /** The binding a React island imports this component by from `source` (absent: the default export). */
+  export?: string
 }
 
 export interface Compiled {

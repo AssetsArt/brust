@@ -190,6 +190,12 @@ pub struct ComponentIR {
     /// `package_<specifier>_<export>` made filename-safe, not a file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external: Option<ExternalRef>,
+    /// The name a React island imports this component by from `source`; absent for the default export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export: Option<String>,
+    /// `export` names a function nothing exports (a helper component of its module): the build exposes it for the island.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unexported: bool,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     pub state: Vec<StateDecl>,
@@ -288,6 +294,8 @@ impl ComponentIR {
             id,
             source,
             external: None,
+            export: None,
+            unexported: false,
             tier: Tier::Pending,
             props: vec![],
             state: vec![],

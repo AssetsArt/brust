@@ -279,13 +279,39 @@ export function stage(sourceOf: SourceOf, file: string, c: Compiled): void {
 
 const isReact = (c: Compiled) => typeof c.ir.tier === 'object' && c.ir.tier !== null && 'React' in c.ir.tier
 
-/** The `import` line that brings a react-tier component's code in as `local`: its own module, or
- * for a package export (L22) the export itself. */
+/** An import/export binding spelled as the module wrote it: bare when an identifier, else a string name. */
+const bindingName = (name: string) => (/^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name))
+
+/** The `import` line that brings a react-tier component's code in as `local`: the binding its importer used
+ * (`import Foo` → the default export, `import { Foo }` / `export { A as Foo }` / `export const Foo` → `Foo`),
+ * or for a package export (L22) the export itself. Each component of a file with several is its own island
+ * entry; the bundler keeps ONE instance of the file for all of them (splitting). */
 export function componentImport(c: Compiled, local: string): string {
   const ext = c.ir.external
-  if (!ext) return `import ${local} from ${JSON.stringify(c.file)}`
-  const from = JSON.stringify(ext.source)
-  return ext.export === 'default' ? `import ${local} from ${from}` : `import { ${JSON.stringify(ext.export).replace(/^"|"$/g, '')} as ${local} } from ${from}`
+  const [from, binding] = ext ? [JSON.stringify(ext.source), ext.export] : [JSON.stringify(c.file), c.ir.export ?? 'default']
+  return binding === 'default' ? `import ${local} from ${from}` : `import { ${bindingName(binding)} as ${local} } from ${from}`
+}
+
+/** A helper component its module does not export (`ir.unexported`: `function SheetOverlay() {…}` rendered by an exported
+ * `SheetContent`) that still renders as an island has nothing to import: the module is loaded with `export { Name }`
+ * appended, for the island chunks and the SSR jobs alike (one module, one instance, either way). */
+export function exposePlugin(compiled: Map<string, Compiled>): BunPlugin {
+  const names = new Map<string, Set<string>>()
+  for (const c of compiled.values()) {
+    if (!isReact(c) || !c.ir.unexported || c.ir.external || !c.ir.export) continue
+    for (const f of new Set([c.file, realpathSync(c.file)])) names.set(f, (names.get(f) ?? new Set()).add(c.ir.export))
+  }
+  return {
+    name: 'brust-expose-local-islands',
+    setup(b) {
+      b.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async (a) => {
+        const exposed = names.get(a.path)
+        if (!exposed) return undefined
+        const loader = /\.[cm]?ts$/.test(a.path) ? 'ts' : /\.[cm]?js$/.test(a.path) ? 'js' : a.path.endsWith('.jsx') ? 'jsx' : 'tsx'
+        return { contents: `${await Bun.file(a.path).text()}\nexport { ${[...exposed].join(', ')} }\n`, loader }
+      })
+    },
+  }
 }
 
 /** The island entry of a react-tier component: registers `(host, props) => …` under its id. A
@@ -319,7 +345,7 @@ export async function buildReactChunks(dist: string, compiled: Map<string, Compi
     entrypoints,
     splitting: true,
     external: ['/_brust/*'],
-    plugins: [runtimeAliasPlugin(runtimeUrl), sourceDirPlugin(ctx.sourceOf, ctx.appRoot)],
+    plugins: [runtimeAliasPlugin(runtimeUrl), sourceDirPlugin(ctx.sourceOf, ctx.appRoot), exposePlugin(compiled)],
   })
   return new Map([...out].map(([stem, path]) => [stem.slice('react-'.length), path]))
 }
@@ -416,7 +442,7 @@ export async function buildJobs(
     format: 'esm',
     define: PRODUCTION,
     external: JOBS_EXTERNALS,
-    plugins: [cssPlugin(cssMaps), workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS)],
+    plugins: [cssPlugin(cssMaps), workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS), exposePlugin(compiled)],
   })
   if (!res.success) throw new BuildError('bundle', `jobs: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'jobs.js'), await res.outputs[0]!.text())

@@ -1,5 +1,6 @@
 pub mod component;
 pub mod const_fold;
+pub mod exports;
 pub mod expr;
 pub mod hir;
 pub mod hooks;

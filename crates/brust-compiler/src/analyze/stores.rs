@@ -281,14 +281,14 @@ fn find_export(ast: &js_ast::Ast<'_>, path: &str, export: &str) -> Result<Found,
 }
 
 /// Module-level facts the reader needs: imports and top-level `const` initialisers.
-struct Module<'a> {
+pub(crate) struct Module<'a> {
     symbols: &'a [js_ast::Symbol],
     imports: HashMap<u32, (String, String)>,
     consts: HashMap<u32, js_ast::Expr>,
 }
 
 impl<'a> Module<'a> {
-    fn new(ast: &'a js_ast::Ast<'_>) -> Self {
+    pub(crate) fn new(ast: &'a js_ast::Ast<'_>) -> Self {
         let mut m = Module {
             symbols: ast.symbols.as_slice(),
             imports: module_imports(ast),
@@ -336,14 +336,14 @@ impl<'a> Module<'a> {
         idx
     }
 
-    fn name(&self, r: js_ast::Ref) -> String {
+    pub(crate) fn name(&self, r: js_ast::Ref) -> String {
         self.symbols
             .get(self.key(r) as usize)
             .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())
             .unwrap_or_default()
     }
 
-    fn import_of(&self, r: js_ast::Ref) -> Option<(&str, &str)> {
+    pub(crate) fn import_of(&self, r: js_ast::Ref) -> Option<(&str, &str)> {
         let (s, i) = self
             .imports
             .get(&self.key(r))
