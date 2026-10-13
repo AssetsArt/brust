@@ -19,3 +19,7 @@ brust covers almost all of React as it is used in most apps. Writing a brust app
 ## Headline today (2026-10-14, docs/react-coverage.md)
 
 145 rows: 49 static, 38 native, 52 react, 5 error, 1 compile error. The large react buckets are hooks (`useContext`, `useReducer`, `useTransition`, `useSyncExternalStore`, `use`, …) and API surface (`createContext`, `forwardRef`, `cloneElement`, `Children.*`, `createPortal`, `lazy`/`Suspense`, `StrictMode`), plus spread props (F31) and external components. These are the expected first lanes once S0 ranks them by real usage.
+
+## Amendment 2026-10-14 (human): shadcn is the driver, coverage grows step by step
+
+Human: "คือค่อยๆเก็บ support ไปเลื่อยๆ ไม่ต้องทำที่เดียว ใช้ shadcn เป็น base ในการตามเก็บ คิดว่าถ้า support shadcn เกือบหมด การใช้งาน react ส่วนก็แทบจะได้ผลตามทั้งหมดอยู่แล้ว". Coverage is collected incrementally, one blocker lane at a time, never as one big rewrite. `docs/shadcn-coverage.md` (components + the libraries under them) is THE driver: the next lane is always the construct that blocks the most shadcn rows; `docs/react-coverage.md` gains the matching battery rows as a side effect. The third scoreboard (point 4) is deferred until shadcn is nearly all static/native.
