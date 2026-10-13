@@ -82,8 +82,9 @@
 
 /* Motion tokens (L31 tw-landing, R32.4): `animate-mirai-<name>`, always used as `motion-safe:animate-mirai-<name>`. The prefix keeps
    them clear of Tailwind's built-ins (animate-pulse, ...). The @keyframes they name stay unlayered at the end of this file;
-   --d / --n / --i are set per element in the markup (style={{ '--d': '.3s' }}). */
-@theme {
+   --d / --n / --i are set per element in the markup (style={{ '--d': '.3s' }}), so this block is `inline`: a plain @theme
+   would resolve var(--n) / var(--d) at :root (animation-name `none`, every delay 0s). */
+@theme inline {
   --animate-mirai-type: type calc(var(--n) * 22ms) steps(var(--n)) var(--d, 0s) both;
   --animate-mirai-ln: rise .35s ease-out var(--d, 0s) both;
   --animate-mirai-reveal: rise .6s cubic-bezier(.2, .7, .2, 1) var(--d, 0s) both;

@@ -144,6 +144,10 @@ test('the stylesheet is Tailwind CSS v4 in one hashed file: its layers, the site
   for (const f of [...ssg.pages.map((p) => p.file), ssg.notFound.file]) for (const m of readFileSync(join(out, f), 'utf8').matchAll(/class="([^"]*)"/g)) for (const c of m[1]!.split(/\s+/)) used.add(c)
   const utilities = new Set([...layer('utilities').matchAll(/\.([a-z][\w-]*)\{/g)].map((m) => m[1]!))
   expect([...utilities].filter((u) => used.has(u)).length).toBeGreaterThan(0)
+  // The motion tokens read per-element vars (--n, --d, --i): declared in a plain @theme they would resolve at :root
+  // (animation-name `none`, every delay 0s). They must stay @theme inline, i.e. never appear as a :root declaration, and the utility carries the var().
+  expect(text).not.toMatch(/--animate-mirai-[\w-]+:[^;}]*var\(--(?:n|d|i)\b/)
+  expect(layer('utilities')).toMatch(/animation:type calc\(var\(--n\)\*22ms\) ?steps\(var\(--n\)\) ?var\(--d,0s\) ?both/)
 })
 
 test('sitemap.xml and llms.txt list every route under the production origin', () => {
