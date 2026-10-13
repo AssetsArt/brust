@@ -39,6 +39,7 @@ const NO_SAMPLES: &[&str] = &[
     "module-const-mutated",
     "module-const-mutated-container",
     "module-const-mutated-forof",
+    "module-const-mutated-length",
     "module-const-mutated-foreach",
     "module-const-size-cap",
     "react-child",

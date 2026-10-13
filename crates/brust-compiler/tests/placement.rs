@@ -222,6 +222,10 @@ fn mutated_array_const_stays_a_slot_but_a_primitive_folds() {
         "const A = [1]\nA[0] = 9",
         "const A = [1]\nconst B = A\nB.sort()",
         "const A = [1]\nfunction touch(x: number[]) { x.length = 0 }\ntouch(A)",
+        // R1.1a: a written `.length` is a mutation
+        "const A = [1]\nA.length = 0",
+        "const A = [1]\nA.length++",
+        "const A = [1]\nA.length -= 1",
         // R1.1a: element aliases and literal containers
         "const A = [{ v: 1 }]\nfor (const x of A) x.v = 2",
         "const A = [{ v: 1 }]\nA.forEach((x) => { x.v = 2 })",

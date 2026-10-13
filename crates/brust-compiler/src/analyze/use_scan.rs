@@ -35,6 +35,7 @@ pub fn unsafe_to_fold(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u
         bad: HashSet::new(),
         aliases: Vec::new(),
         ret_esc: true,
+        writing: false,
     };
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
@@ -61,6 +62,8 @@ struct Scan<'x, 'a> {
     aliases: Vec<(u32, Vec<u32>)>,
     /// Whether a `return` value (or an expression body) flows somewhere unknown.
     ret_esc: bool,
+    /// The expression being visited is the target of a write: even `.length` is a mutation.
+    writing: bool,
 }
 
 impl Scan<'_, '_> {
@@ -113,6 +116,13 @@ impl Scan<'_, '_> {
         }
     }
 
+    /// `e` is assigned to, incremented or deleted: its root is mutated, `.length` included.
+    fn write(&mut self, e: &js_ast::Expr) {
+        let saved = std::mem::replace(&mut self.writing, true);
+        self.expr(e, true);
+        self.writing = saved;
+    }
+
     fn expr(&mut self, e: &js_ast::Expr, esc: bool) {
         match &e.data {
             E::EIdentifier(id) => {
@@ -125,15 +135,20 @@ impl Scan<'_, '_> {
                     self.mark(id.ref_)
                 }
             }
-            E::EDot(d) => self.expr(&d.target, esc && d.name.slice() != b"length"),
+            E::EDot(d) => self.expr(
+                &d.target,
+                esc && (self.writing || d.name.slice() != b"length"),
+            ),
             E::EIndex(i) => {
                 self.expr(&i.target, esc);
+                let writing = std::mem::take(&mut self.writing);
                 self.expr(&i.index, false);
+                self.writing = writing;
             }
             E::ECall(c) => self.call(e, c, esc),
             E::EBinary(b) => match b.op {
                 op if !matches!(op.binary_assign_target(), js_ast::AssignTarget::None) => {
-                    self.expr(&b.left, true);
+                    self.write(&b.left);
                     self.expr(&b.right, true);
                 }
                 OpCode::BinLogicalAnd | OpCode::BinLogicalOr | OpCode::BinNullishCoalescing => {
@@ -158,7 +173,11 @@ impl Scan<'_, '_> {
                         | OpCode::UnPostDec
                         | OpCode::UnDelete
                 );
-                self.expr(&u.value, writes);
+                if writes {
+                    self.write(&u.value);
+                } else {
+                    self.expr(&u.value, false);
+                }
             }
             E::EIf(i) => {
                 self.expr(&i.test, false);
