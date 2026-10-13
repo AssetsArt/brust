@@ -468,20 +468,21 @@ fn different_arm_keys_become_a_conditional_key() {
 }
 
 #[test]
-fn and_with_a_null_arm_uses_the_keyed_arm() {
+fn a_keyed_arm_next_to_a_null_arm_has_a_guarded_key() {
+    // R6.1: the client evaluates the key for every row, so `it.link.id` must not run for a null link.
     for body in [
         "x.ok && <i key={x.id}>y</i>",
         "x.ok ? <i key={x.id}>y</i> : null",
+        "x.ok ? null : <i key={x.id}>y</i>",
+        "x.a && (x.b ? <i key={x.id}>y</i> : null)",
     ] {
         let (n, d) = tpl(&format!(
             "export default function T({{ xs }}: any) {{ return <ul>{{xs.map((x: any) => {body})}}</ul> }}"
         ));
         assert!(d.is_empty(), "{body}: {d:?}");
         let (key, b) = list_of(&n);
-        assert!(
-            !key_text(key).contains("Cond") && !key_text(key).contains("Undefined"),
-            "{key:?}"
-        );
+        let k = key_text(key);
+        assert!(k.contains("Cond") && k.contains("Undefined"), "{body}: {k}");
         assert!(matches!(b.as_slice(), [Node::If { .. }]));
     }
 }

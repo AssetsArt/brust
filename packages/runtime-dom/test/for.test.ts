@@ -42,6 +42,23 @@ test('duplicate keys warn once and fall back to index identity (no infinite loop
   console.warn = orig
 })
 
+test('an undefined key is a positional empty row: no warning, no duplicate, rows keep identity by position', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  type It = { id: string; link: { id: string } | null }
+  const items = signal<It[]>([{ id: 'a', link: null }, { id: 'b', link: { id: 'lb' } }, { id: 'c', link: null }])
+  // `it.link && <li key={it.link.id}/>`: the key is guarded, so a null link is `undefined`.
+  defineBehavior('f3n', () => ({ items, key: (i: It) => (i.link ? i.link.id : undefined), show: (i: It) => i.id }))
+  document.body.innerHTML = `<ul x-data="f3n"><li x-for="item in items by key" x-text="show:item"></li></ul>`
+  mount()
+  expect(texts()).toEqual(['a', 'b', 'c'])
+  const b = document.querySelectorAll('li')[1]
+  items.set([{ id: 'b', link: { id: 'lb' } }, { id: 'a', link: null }, { id: 'c', link: { id: 'lc' } }])
+  expect(texts()).toEqual(['b', 'a', 'c'])
+  expect(document.querySelectorAll('li')[0]).toBe(b)   // keyed row moved with its key
+  expect(warns.filter((w) => w.includes('duplicate key'))).toEqual([])
+  console.warn = orig
+})
+
 test('server rendered zero rows: the x-for template is still found via the comment marker', () => {
   const items = signal<string[]>([])
   defineBehavior('f4', () => ({ items, key: (s: string) => s, t: (s: string) => s }))
