@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 28 | 17 | 8 | 3 | 0 | 0 | 0 | 0 |
+| A JSX basics | 30 | 19 | 8 | 3 | 0 | 0 | 0 | 0 |
 | B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
 | C Hooks | 17 | 1 | 10 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 26 | 5 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 88 | 29 | 31 | 23 | 4 | 1 | 0 | 0 |
+| **Total** | 90 | 31 | 31 | 23 | 4 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -31,6 +31,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-attributes | static and dynamic attributes | static | static | 0 | ok | — | spec §3.1 static tier; §6.2 attributes |
 | a-classname-template | className template literal | static | static | 0 | ok | — | spec §6.2 template literal |
 | a-style-object | style object from props | static | static | 0 | ok | — | spec §6.2 style object |
+| a-module-const | module const (literal, array) in render | static | static | 0 | ok | — | spec §6.2 literals/arrays; module consts fold at compile time (L1) |
+| a-module-const-mutated | module const array mutated in its module | static | static | precompute | ok | — | R1.1: a mutated array never folds; it stays a precompute slot |
 | a-list-cond-element | .map returning a ternary between two elements | static | static | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms desugar to For + If |
 | a-list-cond-state | .map returning a conditional element over state | native | native | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms |
 | a-and-guard | && guard on a prop | static | static | 0 | ok | — | spec §6.2 && guard |

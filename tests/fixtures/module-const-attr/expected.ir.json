@@ -1,0 +1,107 @@
+{
+  "id": "input_0b25765d",
+  "source": "tests/fixtures/module-const-attr/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 120,
+      "tag": "button",
+      "attrs": [
+        {
+          "Dynamic": {
+            "name": "title",
+            "value": {
+              "Server": {
+                "loc": 14,
+                "kind": {
+                  "Lit": {
+                    "Str": "Save \"now\""
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "Dynamic": {
+            "name": "data-limit",
+            "value": {
+              "Server": {
+                "loc": 57,
+                "kind": {
+                  "Binary": {
+                    "op": "Add",
+                    "left": {
+                      "loc": 57,
+                      "kind": {
+                        "Binary": {
+                          "op": "Mul",
+                          "left": {
+                            "loc": 41,
+                            "kind": {
+                              "Lit": {
+                                "Num": 3.0
+                              }
+                            }
+                          },
+                          "right": {
+                            "loc": 65,
+                            "kind": {
+                              "Lit": {
+                                "Num": 2.0
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "right": {
+                      "loc": 69,
+                      "kind": {
+                        "Lit": {
+                          "Num": 1.0
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "children": [
+        {
+          "Slot": {
+            "Server": {
+              "loc": 14,
+              "kind": {
+                "Lit": {
+                  "Str": "Save \"now\""
+                }
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}
