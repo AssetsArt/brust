@@ -10,3 +10,5 @@ cd website && bun run dev   # brust build routes.tsx && brust start → http://1
 Scripts: `dev`, `build`, `start`, `test` (the build smoke test), `typecheck`.
 
 Layout: `routes.tsx` (`/`, `/docs`, `*`), `components/Layout.tsx` (document root + site header), `pages/*.tsx` (one component per page), `public/` (static files at `/public/...`).
+
+Production: `bun run deploy` builds the static output (`brust build --target static`) and uploads `dist/static` to the Cloudflare Pages project behind https://brust.dev (the `*.pages.dev` address is closed by an Access policy; only the custom domain is public). The 0.1.x docs stay on their own project and domain.
