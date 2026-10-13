@@ -244,7 +244,7 @@ test('a failing build leaves the previous dist untouched', async () => {
   expect(existsSync(join(out, 'client', 'keep-0123456789.js'))).toBe(true)
   // A successful build then replaces it whole.
   await build(join(safety, 'shared-store'), out)
-  expect(JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')).version).toBe(1)
+  expect(JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')).version).toBe(2)
   expect(existsSync(join(out, 'client', 'keep-0123456789.js'))).toBe(false)
   expect(readdirSync(join(out, '..')).filter((f) => f.startsWith(`.${out.split('/').pop()}`))).toEqual([])
 }, 60_000)

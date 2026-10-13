@@ -3,6 +3,8 @@ import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'no
 import { join } from 'node:path'
 import { beginDrain, cacheStats, localAddr, registerWorker, startServer, untilReady } from '../native/index.js'
 import { runBuild } from '../src/build'
+import type { Compiled } from '../src/build/compile'
+import { childRecords } from '../src/build/manifest'
 import { flattenRoutes } from '../src/routes'
 import { type JobsModule, makeDispatch, makeHandlers } from '../src/worker'
 
@@ -165,4 +167,14 @@ test('every chunk-bearing native descendant of a chain component is linked once 
   for (const id of [toggle, deep, counted, stat]) expect(m.components[id!].children).toEqual([])
   // An all-static chain links nothing.
   expect(m.components[allStatic!].children).toEqual([])
+})
+
+test('children[] carries literal and expression props, and names what an unbound prop may be (F105)', () => {
+  const inst = (props: Record<string, string | null>, more: object = {}) => ({ child_id: 'code_1', k: 1, loops: [], props, ...more })
+  const compiled = (instances: object[]) => ({ ir: { id: 'page_1', instances } }) as unknown as Compiled
+  expect(childRecords(compiled([inst({ n: 'n' }, { literals: { code: 'a' }, exprs: { lang: '__props.l' } })]))).toEqual([
+    { id: 'code_1', instances: 'static', props: { n: 'n' }, literals: { code: 'a' }, exprs: { lang: '__props.l' } },
+  ])
+  expect(childRecords(compiled([inst({}, { literals: {}, exprs: {} })]))).toEqual([{ id: 'code_1', instances: 'static', props: {} }])
+  expect(() => childRecords(compiled([inst({ code: null })]))).toThrow(/a JSON literal or a template expression over props; compute it in a loader/)
 })

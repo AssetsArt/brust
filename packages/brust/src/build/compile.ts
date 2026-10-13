@@ -17,7 +17,14 @@ export type ComponentIR = Record<string, any> & {
   tier: any
   // biome-ignore lint/suspicious/noExplicitAny: IR JSON
   jobs: any[]
-  instances: { child_id: string; k: number; loops: (string | null)[]; props: Record<string, string | null> }[]
+  instances: {
+    child_id: string
+    k: number
+    loops: (string | null)[]
+    props: Record<string, string | null>
+    literals?: Record<string, unknown>
+    exprs?: Record<string, string>
+  }[]
   use_id_slots: number
   uses_outlet: boolean
   needs_worker: boolean

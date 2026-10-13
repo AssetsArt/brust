@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { loadConfig } from '../config'
 import { type Diag, parseBuildError, parseWarnings } from './diag'
+import { tierCounts } from './devtools-data'
 import { type DevProxy, startProxy } from './proxy'
 import { HOTKEYS, Tui, type TuiOut, tuiMode } from './tui'
 import { defaultIgnored, watchLoop } from './watch'
@@ -115,7 +116,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
   let active: Child | null = null
   let buildMs: number | undefined
   let warnings: string[] = []
-  let last: { method: string; path: string; status: number } | undefined
+  let last: { method: string; path: string; status: number; tiers?: { static: number; native: number; react: number } } | undefined
   let stopping = false
   let url = ''
   /** Processes spawned by an in-flight cycle (a build, a booting child): `stop()` must reach them (R13.5, own PIDs only). */
@@ -132,6 +133,14 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       error: diag && state === 'error' ? `${diag.rule} ${diag.file ? `${diag.file}${diag.line ? `:${diag.line}` : ''} ` : ''}${diag.message}`.trim() : undefined,
     })
 
+  const devMeta = (): unknown | null => {
+    try {
+      return active ? JSON.parse(readFileSync(join(active.dir, 'dev.json'), 'utf8')) : null
+    } catch {
+      return null
+    }
+  }
+
   const proxy: DevProxy = startProxy(
     { hostname: cfg.host, port: cfg.port, token: devToken },
     {
@@ -139,17 +148,12 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
       state: () => state,
       diag: () => diag,
       upstream: () => active?.port ?? null,
-      meta: () => {
-        try {
-          return active ? JSON.parse(readFileSync(join(active.dir, 'dev.json'), 'utf8')) : null
-        } catch {
-          return null
-        }
-      },
+      meta: devMeta,
       onRequest(r) {
         tui.log(`${r.method} ${r.path} ${r.status} ${r.ms}ms${r.cache ? ` ${r.cache}` : ''}`)
         if (!r.path.startsWith('/_brust/')) {
-          last = { method: r.method, path: r.path, status: r.status }
+          const rendered = (r.trace as { rendered?: string[] } | null)?.rendered
+          last = { method: r.method, path: r.path, status: r.status, ...(rendered ? { tiers: tierCounts(rendered, devMeta() as Parameters<typeof tierCounts>[1]) } : {}) }
           publish()
         }
       },

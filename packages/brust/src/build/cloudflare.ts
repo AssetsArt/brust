@@ -196,7 +196,7 @@ plugin({
 const m = await import(${JSON.stringify(app)})
 const bad = []
 for (const k of ['loader', 'jobs', 'action', 'install']) if (typeof m[k] !== 'function') bad.push(k + ' is not a function')
-if (typeof m.MANIFEST !== 'string' || JSON.parse(m.MANIFEST).version !== 1) bad.push('MANIFEST.version !== 1')
+if (typeof m.MANIFEST !== 'string' || JSON.parse(m.MANIFEST).version !== 2) bad.push('MANIFEST.version !== 2')
 if (typeof m.CONFIG !== 'string' || JSON.parse(m.CONFIG).abi !== 1) bad.push('CONFIG.abi !== 1')
 if (typeof m.TEMPLATES !== 'object' || m.TEMPLATES === null) bad.push('TEMPLATES is not an object')
 const r = await m.loader('{}')

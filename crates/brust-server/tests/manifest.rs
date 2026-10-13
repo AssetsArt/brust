@@ -49,11 +49,11 @@ fn wrong_version_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::write(
         tmp.path().join("manifest.json"),
-        r#"{"version":2,"routes":[],"components":{},"assets":{"runtime":"client/runtime.js"},"jobs_module":"jobs.js"}"#,
+        r#"{"version":1,"routes":[],"components":{},"assets":{"runtime":"client/runtime.js"},"jobs_module":"jobs.js"}"#,
     )
     .unwrap();
     match Manifest::load(tmp.path()).unwrap_err() {
-        ManifestError::Version(v) => assert_eq!(v, 2),
+        ManifestError::Version(v) => assert_eq!(v, 1),
         e => panic!("{e}"),
     }
 }

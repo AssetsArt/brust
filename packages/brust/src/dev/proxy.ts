@@ -1,6 +1,7 @@
 // The long-lived parent of `brust dev` for the Bun target (R13.1, R13.2): owns the user's port with
 // `Bun.serve`, proxies to the active child (`brust start` on a loopback port), injects the dev client
 // into every HTML response and serves the WebSocket the client listens on.
+import { join } from 'node:path'
 import type { Server, ServerWebSocket } from 'bun'
 import { DEV_CLIENT_JS } from './client'
 import type { Diag } from './diag'
@@ -12,7 +13,7 @@ export interface DevView {
   diag(): Diag | null
   /** The active child's loopback port; null before the first successful boot. */
   upstream(): number | null
-  onRequest(r: { method: string; path: string; status: number; ms: number; cache: string | null }): void
+  onRequest(r: { method: string; path: string; status: number; ms: number; cache: string | null; trace: unknown | null }): void
   /** The active build's `dev.json` (L14), or null before the first build. */
   meta(): unknown | null
 }
@@ -44,9 +45,10 @@ export interface DevProxy {
 
 export const CLIENT_PATH = '/_brust/dev/client.js'
 export const WS_PATH = '/_brust/dev/ws'
+export const DEVTOOLS_PATH = '/_brust/dev/devtools.js'
 export const TRACES_PATH = '/_brust/dev/traces'
 export const META_PATH = '/_brust/dev/meta'
-const scriptTag = (gen: number) => `<script type="module" src="${CLIENT_PATH}?g=${gen}"></script>`
+const scriptTag = (gen: number) => `<script type="module" src="${CLIENT_PATH}?g=${gen}"></script><script type="module" src="${DEVTOOLS_PATH}"></script>`
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string)
 
@@ -107,6 +109,20 @@ export function sameOriginOrNone(origin: string | null, hostHeader: string | nul
   }
 }
 
+let devtoolsJs: Promise<string> | null = null
+/** `<brust-devtools>` (L15), bundled from `devtools.ts` on first request and kept: it is only ever served by this proxy. */
+function devtoolsBundle(): Promise<string> {
+  devtoolsJs ??= Bun.build({ entrypoints: [join(import.meta.dir, 'devtools.ts')], target: 'browser', format: 'esm', minify: false }).then(async (r) => {
+    const out = r.outputs[0]
+    if (!r.success || !out) throw new Error(`devtools bundle failed: ${r.logs.map(String).join('\n')}`)
+    return out.text()
+  })
+  return devtoolsJs
+}
+
+/** The trace a proxied response carried (read by `onRequest`; the header itself never reaches the browser). */
+const traceOf = new WeakMap<Response, unknown>()
+
 export function startProxy(o: { hostname: string; port: number; allowedHosts?: string; token: string }, view: DevView): DevProxy {
   const traces: TraceEntry[] = []
   let seq = 0
@@ -156,6 +172,7 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
       traces.push({ id: ++seq, at: Date.now(), kind: trace ? 'page' : 'action', method: req.method, path: url.pathname + url.search, status: res.status, ms: Math.round(performance.now() - t0), trace })
       if (traces.length > MAX_TRACES) traces.shift()
     }
+    const tag = (r: Response) => (traceOf.set(r, trace), r)
     out.set('cache-control', 'no-store')
     out.delete('content-length')
     out.delete('content-encoding')
@@ -165,10 +182,10 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
     if (req.method === 'HEAD' || res.status === 204 || res.status === 304) return new Response(null, { status: res.status, headers: out })
     if (/text\/html/i.test(type)) {
       out.set('content-type', type)
-      return new Response(inject(await res.text(), gen, trace), { status: res.status, headers: out })
+      return tag(new Response(inject(await res.text(), gen, trace), { status: res.status, headers: out }))
     }
-    if (doc && res.status >= 500) return htmlPage(res.status, `${res.status} ${res.statusText || 'server error'}`, await res.text(), gen, trace)
-    return new Response(res.body, { status: res.status, headers: out })
+    if (doc && res.status >= 500) return tag(htmlPage(res.status, `${res.status} ${res.statusText || 'server error'}`, await res.text(), gen, trace))
+    return tag(new Response(res.body, { status: res.status, headers: out }))
   }
 
   const server = Bun.serve<undefined>({
@@ -183,10 +200,16 @@ export function startProxy(o: { hostname: string; port: number; allowedHosts?: s
       if (url.pathname === WS_PATH) return srv.upgrade(req, { data: undefined }) ? undefined : new Response('websocket expected', { status: 426 })
       if (url.pathname === TRACES_PATH) return Response.json({ traces }, { headers: { 'cache-control': 'no-store' } })
       if (url.pathname === META_PATH) return Response.json(view.meta() ?? {}, { headers: { 'cache-control': 'no-store' } })
+      if (url.pathname === DEVTOOLS_PATH) {
+        return devtoolsBundle().then(
+          (js) => new Response(js, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } }),
+          (e: Error) => new Response(e.message, { status: 500 }),
+        )
+      }
       if (url.pathname === CLIENT_PATH) return new Response(DEV_CLIENT_JS, { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } })
       const t0 = performance.now()
       const res = await forward(req)
-      view.onRequest({ method: req.method, path: url.pathname + url.search, status: res.status, ms: Math.round(performance.now() - t0), cache: res.headers.get('x-brust-cache') })
+      view.onRequest({ method: req.method, path: url.pathname + url.search, status: res.status, ms: Math.round(performance.now() - t0), cache: res.headers.get('x-brust-cache'), trace: traceOf.get(res) ?? null })
       return res
     },
     websocket: {

@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { baseUrlError, prefixError } from '../src/actions/prefix'
 import { client, resolveBaseUrl, resolvePrefix } from '../src/actions/client'
 import { loadBuildConfig } from '../src/build/config'
+import { MANIFEST_VERSION } from '../src/build/manifest'
 import { BrustConfigError, type BrustConfig, loadConfig } from '../src/config'
 import { startOptions } from '../src/run'
 import fixtureApp, { type App } from './fixtures/actions/app'
@@ -180,7 +181,7 @@ describe('R16.3 --actions-only', () => {
     expect(r.err).toBe('')
     expect(r.code).toBe(0)
     const m = JSON.parse(readFileSync(join(cwd, 'dist/manifest.json'), 'utf8'))
-    expect(m).toMatchObject({ routes: [], components: {}, actions_only: true, actions: { entry: 'actions.js', prefix: '/' } })
+    expect(m).toMatchObject({ version: MANIFEST_VERSION, routes: [], components: {}, actions_only: true, actions: { entry: 'actions.js', prefix: '/' } })
     expect(existsSync(join(cwd, 'dist/actions.js'))).toBe(true)
     expect(existsSync(join(cwd, 'dist/client'))).toBe(false)
     expect(readFileSync(join(cwd, 'dist/index.js'), 'utf8')).not.toContain('BRUST_APP_ENTRY')

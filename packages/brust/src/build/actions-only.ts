@@ -8,7 +8,7 @@ import { buildActions } from './bundle'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import type { ActionsBuildConfig, BuildConfig } from './config'
 import { BuildError } from './errors'
-import { type ManifestJson } from './manifest'
+import { MANIFEST_VERSION, type ManifestJson } from './manifest'
 
 const MARKER = '.brust'
 
@@ -40,7 +40,7 @@ export async function runActionsOnly(o: {
   mkdirSync(tmp, { recursive: true })
   try {
     const manifest: ManifestJson = {
-      version: 1,
+      version: MANIFEST_VERSION,
       routes: [],
       components: {},
       assets: { runtime: '' },

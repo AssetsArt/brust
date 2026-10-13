@@ -140,13 +140,32 @@ pub struct JobCache {
 /// One inlined child instance group of a component. `props` maps each child
 /// prop name to a parent-context path; the literal `[idx]` stands for the
 /// current row of a `per-row` list (`"move": "pokemon.moves[idx]"`).
+/// `literals` are constant props (`code="a"`), `exprs` jinja expressions over
+/// `__props` (the parent context) and, per row, `__row`/`__idx` (F105). The three
+/// maps name disjoint props; all of them feed the child's job inputs and keys.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChildRecord {
     pub id: String,
     pub instances: Instances,
     #[serde(default)]
     pub props: BTreeMap<String, String>,
+    #[serde(default)]
+    pub literals: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub exprs: BTreeMap<String, String>,
 }
+
+impl ChildRecord {
+    /// Whether the record binds child prop `name` (by path, literal or expression).
+    pub fn binds(&self, name: &str) -> bool {
+        self.props.contains_key(name)
+            || self.literals.contains_key(name)
+            || self.exprs.contains_key(name)
+    }
+}
+
+/// The manifest format this server reads; 2 added `children[].literals`/`exprs` (F105).
+pub const MANIFEST_VERSION: u32 = 2;
 
 /// `"static"` | `"per-row:<list path>"` (the list's context path, not the
 /// client loop member).
@@ -208,7 +227,9 @@ pub enum ManifestError {
         path: PathBuf,
         source: serde_json::Error,
     },
-    #[error("manifest version {0} unsupported (want 1)")]
+    #[error(
+        "manifest version {0} unsupported (want {MANIFEST_VERSION}): rebuild the app with this brust version"
+    )]
     Version(u32),
     #[error("route {route}: unknown component {component}")]
     UnknownComponent { route: String, component: String },
@@ -321,6 +342,23 @@ fn check_paths(id: &str, c: &ComponentRecord) -> Result<(), ManifestError> {
                 return Err(bad(field, src, "[idx] needs a per-row instance".into()));
             }
         }
+        for prop in ch.literals.keys().chain(ch.exprs.keys()) {
+            let twice = ch.props.contains_key(prop)
+                || (ch.literals.contains_key(prop) && ch.exprs.contains_key(prop));
+            if twice {
+                let field = format!("child {} {prop}", ch.id);
+                return Err(bad(
+                    field,
+                    prop,
+                    "bound by more than one of props/literals/exprs".into(),
+                ));
+            }
+        }
+        for (prop, src) in &ch.exprs {
+            if let Err(e) = crate::inputs::compile_expr(src) {
+                return Err(bad(format!("child {} exprs.{prop}", ch.id), src, e));
+            }
+        }
     }
     Ok(())
 }
@@ -361,7 +399,7 @@ fn walk(
     manifest: Manifest,
     file: &mut FileFn<'_>,
 ) -> Result<(Manifest, BTreeMap<String, String>), ManifestError> {
-    if manifest.version != 1 {
+    if manifest.version != MANIFEST_VERSION {
         return Err(ManifestError::Version(manifest.version));
     }
     for r in &manifest.routes {
@@ -419,7 +457,7 @@ fn walk(
                 // `*` is the child's whole props object: covered by definition.
                 for i in j.inputs.iter().filter(|i| i.as_str() != ALL_PROPS) {
                     let root = input_root(i);
-                    if !ch.props.contains_key(root) {
+                    if !ch.binds(root) {
                         return Err(ManifestError::UncoveredInput {
                             component: id.clone(),
                             child: ch.id.clone(),
@@ -597,9 +635,38 @@ mod tests {
     #[test]
     fn from_parts_bad_version() {
         let (mut m, files) = parts();
-        m["version"] = 2.into();
+        m["version"] = 1.into();
         let e = Manifest::from_parts(&m.to_string(), &files).unwrap_err();
-        assert!(matches!(e, ManifestError::Version(2)), "{e:?}");
+        assert!(matches!(e, ManifestError::Version(1)), "{e:?}");
+        assert!(e.to_string().contains("rebuild"), "{e}");
+    }
+
+    /// F105: a child bound by literals and expressions round-trips, and covers its job inputs.
+    #[test]
+    fn child_literals_and_exprs_round_trip() {
+        let (mut m, files) = parts();
+        let ch = &mut m["components"]["detailPage_c3"]["children"][0];
+        ch["props"] = serde_json::json!({});
+        ch["exprs"] = serde_json::json!({"move": "{\"name\": (__row.name | upper)}"});
+        ch["literals"] = serde_json::json!({"size": 2});
+        let ok = Manifest::from_parts(&m.to_string(), &files).unwrap();
+        let rec = &ok.manifest.components["detailPage_c3"].children[0];
+        assert_eq!(rec.literals["size"], serde_json::json!(2));
+        assert!(rec.exprs.contains_key("move"));
+        // A prop bound twice, and an expression that does not compile, are refused at load.
+        let mut twice = m.clone();
+        twice["components"]["detailPage_c3"]["children"][0]["literals"]["move"] = 1.into();
+        let e = Manifest::from_parts(&twice.to_string(), &files).unwrap_err();
+        assert!(e.to_string().contains("more than one"), "{e}");
+        let mut broken = m.clone();
+        broken["components"]["detailPage_c3"]["children"][0]["exprs"]["move"] = "(".into();
+        let e = Manifest::from_parts(&broken.to_string(), &files).unwrap_err();
+        assert!(e.to_string().contains("exprs.move"), "{e}");
+        // Unbound, the job's input root `move` is uncovered.
+        let mut bare = m.clone();
+        bare["components"]["detailPage_c3"]["children"][0]["exprs"] = serde_json::json!({});
+        let e = Manifest::from_parts(&bare.to_string(), &files).unwrap_err();
+        assert!(matches!(e, ManifestError::UncoveredInput { .. }), "{e:?}");
     }
 
     #[test]
