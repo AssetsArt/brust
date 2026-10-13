@@ -34,9 +34,13 @@ export function whenIsland(id: string, cb: (h: IslandHydrate) => void): void {
 
 // ---- scheduler ----------------------------------------------------------------------------
 type Idle = (cb: () => void) => void
+/** Longest an island waits for an idle period. Without a timeout `requestIdleCallback` never fires while
+ *  the main thread has no idle gap (a loaded runner, a throttled or hidden tab), and an island whose host
+ *  is already painted would stay server HTML indefinitely. */
+export const IDLE_TIMEOUT_MS = 250
 const defaultIdle: Idle = (cb) => {
-  const ric = (globalThis as { requestIdleCallback?: (cb: () => void) => number }).requestIdleCallback
-  if (typeof ric === 'function') ric(cb); else setTimeout(cb, 1)
+  const ric = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback
+  if (typeof ric === 'function') ric(cb, { timeout: IDLE_TIMEOUT_MS }); else setTimeout(cb, 1)
 }
 let idle: Idle = defaultIdle
 export function _setIdle(fn: Idle | null): void { idle = fn ?? defaultIdle }

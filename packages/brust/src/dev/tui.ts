@@ -10,7 +10,7 @@ export interface TuiStatus {
   gen: number
   buildMs?: number
   /** The last page request (route + status) until L14's per-page trace lands. */
-  last?: { method: string; path: string; status: number }
+  last?: { method: string; path: string; status: number; /** Components of the last page by tier (from its trace + `dev.json`). */ tiers?: { static: number; native: number; react: number } }
   warnings: string[]
   /** One line shown under the state while `error` (the first line of the diagnostic). */
   error?: string
@@ -44,7 +44,7 @@ export function renderStatus(s: TuiStatus, width: number): string[] {
   const head = `${STATE_DOT[s.state]} ${s.state}  ${s.url}  gen ${s.gen}${s.buildMs !== undefined ? ` · built in ${s.buildMs}ms` : ''}`
   const lines = [head]
   if (s.state === 'error' && s.error) lines.push(`  error: ${s.error}`)
-  else if (s.last) lines.push(`  last: ${s.last.method} ${s.last.path} → ${s.last.status}`)
+  else if (s.last) lines.push(`  last: ${s.last.method} ${s.last.path} → ${s.last.status}${s.last.tiers ? `  ·  ${s.last.tiers.static} static ${s.last.tiers.native} native ${s.last.tiers.react} react` : ''}`)
   else lines.push('  last: (no request yet)')
   if (s.warnings.length > 0) lines.push(`  warnings: ${s.warnings.length} — ${s.warnings[0]}`)
   lines.push(`  ${HOTKEYS}`)

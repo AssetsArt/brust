@@ -185,6 +185,11 @@ and never asks Bun what a route is:
 - `children[]` records carry `"props": { "<childProp>": "<parent context path>" }` where the
   literal `[idx]` stands for the current row of `per_instance` (`"move": "pokemon.moves[idx]"`);
   it must cover the root of every input of the child's jobs (boot rule `UncoveredInput`).
+  Manifest version 2 (F105, gaps round L3) adds `"literals": { "<childProp>": <json> }` and
+  `"exprs": { "<childProp>": "<jinja expression>" }` (over `__props` = the parent context, and per
+  row `__row`/`__idx`); the three maps bind disjoint props, all count for `UncoveredInput`, and the
+  server merges them into the child's props before projection, so they are part of the job key.
+  The server refuses any other version ("rebuild the app").
   `children[].instances` stays the STRING form of the example above: `"static"` or
   `"per-row:<list context path>"` (e.g. `"per-row:pokemon.moves"`). `k` is NOT on the wire: both
   sides derive it as the 1-based ordinal of that child id within `children` in template order, and
