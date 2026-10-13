@@ -8,3 +8,7 @@ next-env.d.ts
 
 # brust dev tests write a throwaway app here
 tests/fixtures/cf-min/.devtest-*
+
+# the shadcn survey builds one page at a time here
+tests/fixtures/shadcn/.rows/
+tests/fixtures/shadcn/dist/
