@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from 'node:fs'
 const result = await Bun.build({
-  entrypoints: ['./src/index.ts'], outdir: './dist', format: 'esm', target: 'browser', minify: true,
+  entrypoints: ['./src/index.ts'], outdir: './dist', format: 'esm', target: 'browser', minify: true, define: { __BRUST_DEV__: 'false' },
 })
 if (!result.success) { for (const l of result.logs) console.error(l); process.exit(1) }
 const js = readFileSync('./dist/index.js', 'utf8')

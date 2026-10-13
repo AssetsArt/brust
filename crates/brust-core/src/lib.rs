@@ -40,3 +40,4 @@ pub mod render;
 pub mod routing;
 #[doc(hidden)]
 pub mod static_rules;
+pub mod trace;
