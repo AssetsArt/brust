@@ -5,6 +5,7 @@ import Note from '../../../components/docs/Note'
 import Step from '../../../components/docs/Step'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import ElysiaLink from '../../../components/ElysiaLink'
 
 const SRC = {
   install: {
@@ -101,7 +102,7 @@ export default function FormAction({ blocks }: FormActionData) {
     <>
       <h1>Form action</h1>
       <p className="lead">
-        A form that adds a Pokémon to a team of up to six. The server side is one Elysia 2 app behind the Rust server; the form is a native component.
+        A form that adds a Pokémon to a team of up to six. The server side is one <ElysiaLink label="Elysia 2" /> app behind the Rust server; the form is a native component.
       </p>
 
       <Step n={1} id="setup" title="Turn actions on" />

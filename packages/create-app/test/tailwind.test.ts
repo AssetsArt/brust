@@ -28,7 +28,7 @@ test('--tailwind is accepted, prints that Tailwind is the default, and scaffolds
   expect([plain.code, flagged.code]).toEqual([0, 0])
   expect(flagged.out).toContain(TAILWIND_DEFAULT_NOTE)
   expect(plain.out).not.toContain(TAILWIND_DEFAULT_NOTE)
-  expect(flagged.out).toContain('(template: blank)')
+  expect(flagged.out).toContain('(template: blank, @brust/core file:/x)')
   expect(flagged.tree).toEqual(plain.tree)
   expect(Object.keys(plain.tree)).toContain('app.css')
   expect(plain.tree['app.css']).toStartWith('@import "tailwindcss";\n')

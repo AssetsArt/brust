@@ -25,6 +25,7 @@ Requires Bun 1.4 or newer on a platform that has a native package (`@brust/nativ
 | `--dir <path>` | Scaffold into `<path>` instead of `./<name>`. |
 | `--yes` | Accept defaults and never prompt. |
 | `--brust-dep <spec>` | The `@brust/core` dependency to write (see section 4). For CI and tarball tests. |
+| `--version` | Print the bare create-app version and exit; nothing is scaffolded. |
 | `--help` | Print the usage and exit. |
 
 The target directory must be empty or absent; a directory that has files is refused. If the copy fails, a directory that the command created is removed again.
@@ -40,7 +41,7 @@ The target directory must be empty or absent; a directory that has files is refu
   - For plain CSS, removing the `@import "tailwindcss";` line is not enough: brust still runs the Tailwind plugin for a stylesheet that has a `@theme` block, and the page's `bg-paper`, `text-ink` classes then produce nothing. Replace the whole of `app.css` with your own rules (move the tokens to `:root` custom properties if you want to keep the palette), change the `className`s in `components/` and `pages/` to your own classes, and remove `tailwindcss` and `bun-plugin-tailwind` from `devDependencies`.
 - **`pokedex`**: the `examples/pokedex` app from this repository: loaders over an offline dataset, the L1 page cache, native components and a React island, and a persistent team (SQLite + Elysia actions + the unified store). It is generated from the example when the package is packed, so it never drifts from it. Its tests are not included.
 
-Scripts in both: `dev` (build, then start, until `brust dev` ships), `build` (`brust build routes.tsx`), `start` (`brust start`), `typecheck` (`bun check`). `blank` also has `dev:cf` (build for Cloudflare Workers and run `wrangler dev`) and `deploy:cf` (build, then `wrangler deploy` of `dist/cf`).
+Scripts in both: `dev` (`brust dev routes.tsx`, with hot reload), `build` (`brust build routes.tsx`), `start` (`brust start`), `typecheck` (`bun check`). `blank` also has `dev:cf` (build for Cloudflare Workers and run `wrangler dev`) and `deploy:cf` (build, then `wrangler deploy` of `dist/cf`).
 
 ## 4. The `@brust/core` version
 

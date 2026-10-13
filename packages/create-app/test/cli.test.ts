@@ -30,6 +30,30 @@ test('--help → usage on stdout, exit 0', () => {
   expect(r.code).toBe(0)
   expect(r.out).toContain('usage: bun create @brust/app')
 })
+const PKG_VERSION = (JSON.parse(readFileSync(join(import.meta.dir, '../package.json'), 'utf8')) as { version: string }).version
+test('banner is the first line and carries the package.json version; result line names the core spec (explicit)', () => {
+  const w = work()
+  const r = run(['demo', '--yes', '--brust-dep', 'file:/x'], w)
+  expect(r.code).toBe(0)
+  expect(r.out.split('\n')[0]).toBe(`@brust/create-app ${PKG_VERSION}`)
+  expect(r.out).toContain('Created demo at')
+  expect(r.out).toContain('(template: blank, @brust/core file:/x)')
+})
+test('result line carries exactly the spec written into the scaffold (resolved dep)', () => {
+  const w = work()
+  const r = run(['demo', '--yes'], w)
+  expect(r.code).toBe(0)
+  const spec = JSON.parse(readFileSync(join(w, 'demo/package.json'), 'utf8')).dependencies['@brust/core'] as string
+  expect(r.out).toContain(`@brust/core ${spec})`)
+})
+test('--version prints the bare version, exit 0, scaffolds nothing', () => {
+  const w = work()
+  const r = run(['--version'], w)
+  expect(r.code).toBe(0)
+  expect(r.out).toBe(`${PKG_VERSION}\n`)
+  expect(readdirSync(w)).toEqual([])
+})
+test('--help has no banner', () => expect(run(['--help'], work()).out).not.toContain('@brust/create-app '))
 test('blank scaffold emits the tree with no .tmpl, no _gitignore, no placeholder leaks; package.json name + @brust/core', () => {
   const w = work()
   const r = run(['demo', '--yes', '--brust-dep', 'file:/x'], w)

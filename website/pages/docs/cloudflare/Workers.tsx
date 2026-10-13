@@ -5,6 +5,7 @@ import CodeBlock from '../../../components/CodeBlock'
 import Note from '../../../components/docs/Note'
 import { type CodeBlockData, type CodeBlockInput, codeBlock } from '../../../lib/highlight'
 import type { TocItem } from '../../../lib/nav'
+import ElysiaLink from '../../../components/ElysiaLink'
 
 const SRC = {
   create: {
@@ -295,7 +296,7 @@ export default function Workers({ blocks }: WorkersData) {
 
       <h2 id="actions">Actions on Workers</h2>
       <p>
-        <a href="/docs/actions">Actions</a> run as on native: one Elysia 2 app, <code>[actions]</code> read from <code>brust.toml</code>. What differs:
+        <a href="/docs/actions">Actions</a> run as on native: one <ElysiaLink label="Elysia 2" /> app, <code>[actions]</code> read from <code>brust.toml</code>. What differs:
       </p>
       <ul>
         <li>

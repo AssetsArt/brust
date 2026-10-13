@@ -1,11 +1,14 @@
 // `create-app` main — a port of 0.1.x runNew (runtime/cli/new.ts:221-294) with the v2 dependency resolution.
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { readdir, rm } from 'node:fs/promises'
 import { copyTemplate } from './copy.ts'
 import { parseArgs, USAGE } from './args.ts'
 import { applyOverrides, monorepoRoot, resolveBrustDep } from './dep.ts'
 import { TAILWIND_DEFAULT_NOTE } from './tailwind.ts'
 import { selectTemplate } from './templates.ts'
+
+// F131: read at run time from the package.json that `bun publish` ships, so release-bump.ts stays the only place versions change.
+const ownVersion = (): string => (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: string }).version ?? '0.0.0'
 
 const fail = (msg: string): never => {
   console.error(msg)
@@ -20,6 +23,11 @@ export async function main(argv: string[]): Promise<void> {
     console.log(USAGE)
     return
   }
+  if (parsed.version) {
+    console.log(ownVersion())
+    return
+  }
+  console.log(`@brust/create-app ${ownVersion()}\n`)
   const { projectName, targetDir } = parsed
 
   const targetExisted = existsSync(targetDir)
@@ -47,13 +55,13 @@ export async function main(argv: string[]): Promise<void> {
     if (!targetExisted) await rm(targetDir, { recursive: true, force: true }).catch(() => {})
     return fail(`create-app: failed to scaffold (${msg(e)})`)
   }
-  printNextSteps(projectName, targetDir, tmpl.name, dep.kind === 'workspace')
+  printNextSteps(projectName, targetDir, tmpl.name, dep.spec, dep.kind === 'workspace')
 }
 
-function printNextSteps(name: string, targetDir: string, template: string, workspace: boolean): void {
+function printNextSteps(name: string, targetDir: string, template: string, spec: string, workspace: boolean): void {
   const cwd = process.cwd()
   const displayPath = targetDir.startsWith(`${cwd}/`) ? `./${targetDir.slice(cwd.length + 1)}` : targetDir
-  console.log(`Created ${name} at ${targetDir} (template: ${template})\n`)
+  console.log(`Created ${name} at ${targetDir} (template: ${template}, @brust/core ${spec})\n`)
   console.log('Next:')
   console.log(`  cd ${displayPath}`)
   console.log(workspace ? '  bun install   # run it at the brust repo root: this app is a workspace member' : '  bun install')
