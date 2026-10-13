@@ -159,14 +159,7 @@ test('--strict: a loader reading the request fails the build, and the previous d
   expect(readFileSync(join(out, 'index.html'), 'utf8')).toBe(before)
 })
 
-test('R9.4: [actions] is ssg-actions, a cache key that reads a cookie is ssg-varies; nothing is written', () => {
-  const actions = variant('actions', (d) => {
-    writeFileSync(join(d, 'brust.toml'), '[actions]\nentry = "actions.ts"\n')
-    writeFileSync(join(d, 'actions.ts'), 'export const app = null\n')
-  })
-  const a = build(actions)
-  expect([a.code, a.stderr.startsWith('error ssg-actions [actions] is configured')]).toEqual([1, true])
-  expect(existsSync(join(actions, 'dist'))).toBe(false)
+test('R9.4: a cache key that reads a cookie is ssg-varies; nothing is written ([actions] is test/static-actions.test.ts)', () => {
   const varies = variant('varies', (d) => {
     const src = readFileSync(join(d, 'routes.tsx'), 'utf8')
     writeFileSync(join(d, 'routes.tsx'), src.replace("{ path: '/', Component: Home }", "{ path: '/', Component: Home, cache: { ttl_seconds: 60, prefix: 'cookie(currency)' } }"))

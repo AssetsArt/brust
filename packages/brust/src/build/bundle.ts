@@ -12,12 +12,19 @@ import { builtinModules } from 'node:module'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
+import { cssPlugin } from './css'
 import { BuildError } from './errors'
 
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
 /** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). `brust dev` builds set
  * `BRUST_BUILD_MODE=development` for readable errors and hydration diffs (R13.4); `brust build` never does. */
-export const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify(process.env.BRUST_BUILD_MODE === 'development' ? 'development' : 'production') }
+export const PRODUCTION: Record<string, string> = { 'process.env.NODE_ENV': JSON.stringify(process.env.BRUST_BUILD_MODE === 'development' ? 'development' : 'production'), __BRUST_DEV__: 'false' }
+
+/** `brust build --dev` (L14, R14.3): the client runtime exposes its live instances on a dev global. `__BRUST_DEV__` is a
+ * define, `false` in every other build, so the minifier removes the dev code from production bundles. */
+export function setDevBuild(dev: boolean): void {
+  PRODUCTION.__BRUST_DEV__ = dev ? 'true' : 'false'
+}
 
 const matchesExternal = (spec: string, external: string[]) =>
   // A trailing `*` is a prefix (`elysia/*`, `node:*`, `cloudflare:*`): the generated CF entry imports `cloudflare:workers`.
@@ -35,6 +42,8 @@ export interface BrowserCtx {
   serverOnly: string[]
   /** Real paths of server-only files (the actions entry, R8): a browser import of one is refused. */
   serverFiles?: string[]
+  /** L19: CSS Module class maps for `cssPlugin` (absent: no CSS was built). */
+  cssMaps?: Map<string, Record<string, string>>
 }
 
 /** Resolution for staged artifacts (`importer` = a staged file registered in `sourceOf`): relative
@@ -167,7 +176,7 @@ async function browserBuild(
   try {
     res = await Bun.build({
       ...config,
-      plugins: [serverOnlyPlugin(ctx, violations), ...(config.plugins ?? [])],
+      plugins: [serverOnlyPlugin(ctx, violations), cssPlugin(ctx.cssMaps ?? new Map()), ...(config.plugins ?? [])],
       target: 'browser',
       format: 'esm',
       minify: true,
@@ -270,6 +279,15 @@ function stage(sourceOf: SourceOf, file: string, c: Compiled): void {
 
 const isReact = (c: Compiled) => typeof c.ir.tier === 'object' && c.ir.tier !== null && 'React' in c.ir.tier
 
+/** The `import` line that brings a react-tier component's code in as `local`: its own module, or
+ * for a package export (L22) the export itself. */
+export function componentImport(c: Compiled, local: string): string {
+  const ext = c.ir.external
+  if (!ext) return `import ${local} from ${JSON.stringify(c.file)}`
+  const from = JSON.stringify(ext.source)
+  return ext.export === 'default' ? `import ${local} from ${from}` : `import { ${JSON.stringify(ext.export).replace(/^"|"$/g, '')} as ${local} } from ${from}`
+}
+
 /** The island entry of a react-tier component: registers `(host, props) => …` under its id. A
  * `client_only` component was never server-rendered (its host is empty), so it mounts with
  * `createRoot`; hydrating it would fail (React #418). Everything else hydrates the SSR markup. */
@@ -279,7 +297,7 @@ export function islandShim(c: Compiled): string {
     ? ['createRoot', `createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }).render(createElement(Comp, props))`]
     : ['hydrateRoot', `hydrateRoot(host, createElement(Comp, props), { identifierPrefix: ${JSON.stringify(c.id)} })`]
   return (
-    `import { ${api} } from 'react-dom/client'\nimport { createElement } from 'react'\nimport Comp from ${JSON.stringify(c.file)}\n` +
+    `import { ${api} } from 'react-dom/client'\nimport { createElement } from 'react'\n${componentImport(c, 'Comp')}\n` +
     `;((globalThis as any).__brustIslands ||= []).push([${JSON.stringify(c.id)}, (host: Element, props: any) => { ${mount} }])\n` +
     `;(globalThis as any).__brustIslandReady?.()\n`
   )
@@ -336,8 +354,8 @@ const ACTIONS_EXTERNALS = [...JOBS_EXTERNALS, 'elysia', 'elysia/*', '@elysia/*']
 
 /** `dist/actions.js` (M3-F E1): the actions entry for the worker (`target: 'bun'`). No `define`: Elysia
  * and app code read NODE_ENV at runtime (run.ts sets production). */
-export async function buildActions(dist: string, entry: string): Promise<string> {
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [workerStorePlugin] })
+export async function buildActions(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [cssPlugin(cssMaps), workerStorePlugin] })
   if (!res.success) throw new BuildError('bundle', `actions: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'actions.js'), await res.outputs[0]!.text())
   return 'actions.js'
@@ -345,8 +363,8 @@ export async function buildActions(dist: string, entry: string): Promise<string>
 
 /** `dist/cache-adapter.js` (cache adapters R8): a custom adapter module for the worker (`target: 'bun'`), with
  * the actions externals so it shares the app's dependencies. */
-export async function buildCacheAdapter(dist: string, entry: string): Promise<string> {
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS })
+export async function buildCacheAdapter(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [cssPlugin(cssMaps)] })
   if (!res.success) throw new BuildError('bundle', `cache adapter: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'cache-adapter.js'), await res.outputs[0]!.text())
   return 'cache-adapter.js'
@@ -354,7 +372,14 @@ export async function buildCacheAdapter(dist: string, entry: string): Promise<st
 
 /** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
-export async function buildJobs(dist: string, compiled: Map<string, Compiled>, sourceOf: SourceOf, appRoot: string, stores: string[] = []): Promise<void> {
+export async function buildJobs(
+  dist: string,
+  compiled: Map<string, Compiled>,
+  sourceOf: SourceOf,
+  appRoot: string,
+  stores: string[] = [],
+  cssMaps: Map<string, Record<string, string>> = new Map(),
+): Promise<void> {
   const imports: string[] = ["import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"]
   const entries: string[] = []
   const storePaths = [...new Set(stores)].sort()
@@ -375,7 +400,7 @@ export async function buildJobs(dist: string, compiled: Map<string, Compiled>, s
       fns.push(`precompute: j${n}.precompute`)
     }
     if (isReact(c) && !c.ir.tier.React.client_only) {
-      imports.push(`import C${n} from ${JSON.stringify(c.file)}`)
+      imports.push(componentImport(c, `C${n}`))
       // Ruling 2bf3775a (R1): the island's component id prefixes React's useId on BOTH sides
       // (the shim's hydrateRoot passes the same prefix), so ids differ across islands.
       fns.push(`ssr: (props: any) => renderToString(createElement(C${n}, props), { identifierPrefix: ${JSON.stringify(c.id)} })`)
@@ -391,7 +416,7 @@ export async function buildJobs(dist: string, compiled: Map<string, Compiled>, s
     format: 'esm',
     define: PRODUCTION,
     external: JOBS_EXTERNALS,
-    plugins: [workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS)],
+    plugins: [cssPlugin(cssMaps), workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS)],
   })
   if (!res.success) throw new BuildError('bundle', `jobs: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'jobs.js'), await res.outputs[0]!.text())

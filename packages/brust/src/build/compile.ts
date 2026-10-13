@@ -24,6 +24,8 @@ export type ComponentIR = Record<string, any> & {
   /** `useStore(handle)` bindings (`decls.rs` `StoreUse`); `resolved` = `StoreRef`, `null` when
    * unresolved (the component falls back). `module` is root-relative (C3). */
   stores?: { handle: string; resolved: { name: string; module: string } | null }[]
+  /** A package export rendered as a React island (L22): `source` is then not a file. */
+  external?: { source: string; export: string }
 }
 
 export interface Compiled {
@@ -34,6 +36,8 @@ export interface Compiled {
   jinja: string
   serverTs?: string
   clientJs?: string
+  /** The compiler's diagnostics for this component (`dev.json`, L14). */
+  diagnostics?: { class: string; rule: string; message: string; line: number; col: number; remediation: string }[]
 }
 
 type Diag = NonNullable<CompiledTree['error']>
@@ -135,7 +139,15 @@ export function compileApp(opts: {
       jinja: c.jinja,
       serverTs: c.serverTs,
       clientJs: c.clientJs,
+      diagnostics: c.diagnostics.map((d) => ({ class: d.class, rule: d.rule, message: d.message, line: d.line, col: d.col, remediation: d.remediation })),
     })
+  }
+  // A package export has no file of its own: bare imports in its island entries resolve from a
+  // component that uses it (the first one in build order).
+  for (const c of compiled.values()) {
+    if (!c.ir.external) continue
+    const user = [...compiled.values()].find((p) => !p.ir.external && (p.ir.children ?? []).some((ref: { id: string | null }) => ref.id === c.id))
+    c.file = user?.file ?? c.file
   }
   for (const [routeId, route] of nodes) {
     const rootId = routeComponent.get(routeId)!

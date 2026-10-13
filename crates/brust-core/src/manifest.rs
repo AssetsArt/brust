@@ -28,6 +28,10 @@ pub struct RouteRecord {
     pub loaders: Vec<String>,
     pub cache: Option<RouteCache>,
     pub catch_all: bool,
+    /// L19 (R19.3): the route's stylesheets, `client/<file>.css`, in cascade order. Linked right
+    /// after `<head>` on every response of the route, whatever its tier.
+    #[serde(default)]
+    pub css: Vec<String>,
 }
 
 /// Route-level L1 directives (0.1.x `CacheConfig`, `response_cache.rs:22-35`;
@@ -207,6 +211,8 @@ pub enum ManifestError {
     UnknownComponent { route: String, component: String },
     #[error("component {component}: missing file {path}")]
     MissingFile { component: String, path: PathBuf },
+    #[error("route {route}: css {path:?} is not client/<file>.css")]
+    BadCss { route: String, path: String },
     #[error(
         "component {component}: child {child} job {job} input root {root} is not in the child's `props` map"
     )]
@@ -364,6 +370,20 @@ fn walk(
                 });
             }
         }
+        // Printed into an attribute as is: only a name the static rules serve.
+        for p in &r.css {
+            match p.split_once('/') {
+                Some(("client", f)) if crate::static_rules::is_safe_css_filename(f) => {
+                    file(&r.id, p, FileUse::Client)?;
+                }
+                _ => {
+                    return Err(ManifestError::BadCss {
+                        route: r.id.clone(),
+                        path: p.clone(),
+                    });
+                }
+            }
+        }
     }
     let mut templates = BTreeMap::new();
     for (id, c) in &manifest.components {
@@ -512,6 +532,25 @@ mod tests {
             files.insert(format!("jinja/{name}"), src);
         }
         (m, files)
+    }
+
+    #[test]
+    fn route_css_must_be_a_served_client_css_file() {
+        let (mut m, files) = parts();
+        m["routes"][0]["css"] = serde_json::json!(["client/../manifest.json"]);
+        let e = Manifest::from_parts(&m.to_string(), &files).unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            r#"route r1: css "client/../manifest.json" is not client/<file>.css"#
+        );
+        m["routes"][0]["css"] = serde_json::json!(["jobs.js"]);
+        assert!(matches!(
+            Manifest::from_parts(&m.to_string(), &files),
+            Err(ManifestError::BadCss { .. })
+        ));
+        m["routes"][0]["css"] = serde_json::json!(["client/site-1a2b3c4d5e.css"]);
+        let ok = Manifest::from_parts(&m.to_string(), &files).unwrap();
+        assert_eq!(ok.manifest.routes[0].css, ["client/site-1a2b3c4d5e.css"]);
     }
 
     #[test]

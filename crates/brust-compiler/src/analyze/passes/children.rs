@@ -7,8 +7,9 @@ use super::{PassCtx, PassState, run_passes};
 use crate::analyze::component::finish_diagnostics;
 use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
 use crate::ir::{
-    Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, IdentKind, InstanceRecord, JobDecl,
-    JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier, component_id, named_component_id,
+    Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind,
+    InstanceRecord, JobDecl, JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier,
+    component_id, named_component_id,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -107,6 +108,23 @@ fn linked_prop_precompute(name: &str, loc: u32) -> Diagnostic {
         loc,
         "derive the value in the parent, or keep the child's props constant; the component renders as a React island",
     )
+}
+
+/// `lucide-react` + `Heart` → `heart_1a2b3c4d`: the export's name and a hash of where it is from.
+fn external_component_id(source: &str, export: &str) -> String {
+    let base = if export == "default" {
+        source.rsplit('/').next().unwrap_or(source)
+    } else {
+        export
+    };
+    let mut name: String = base.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    if let Some(first) = name.get(..1).map(str::to_ascii_lowercase) {
+        name.replace_range(..1, &first);
+    }
+    if name.is_empty() {
+        name = "external".into();
+    }
+    named_component_id(&format!("package:{source}"), &name)
 }
 
 fn react(reason: &str) -> Tier {
@@ -226,8 +244,30 @@ impl Walker<'_, '_> {
                 loc,
                 "use a component from this project to keep it native",
             ));
+            // The island is the package export itself: a synthetic React-tier component the
+            // build resolves as `{package, export}` (L22).
+            let export = imported.unwrap_or("default");
+            let id = external_component_id(source, export);
+            // Not a path: the key and `source` only need to be unique and safe as a file stem.
+            let key: String = format!("package {source} {export}")
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                .collect();
+            let known = ctx.modules.borrow().get(&key).is_some();
+            if !known {
+                let mut synthetic = ComponentIR::new(id.clone(), key.clone());
+                synthetic.external = Some(ExternalRef {
+                    source: source.to_string(),
+                    export: export.to_string(),
+                });
+                synthetic.tier = react("external component");
+                super::tier::react_jobs(&mut synthetic);
+                ctx.modules
+                    .borrow_mut()
+                    .insert(key, Entry::Done(Rc::new(synthetic)));
+            }
             return Child {
-                id: None,
+                id: Some(id),
                 path: None,
                 tier: react("external component"),
                 fed: false,

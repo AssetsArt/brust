@@ -160,6 +160,7 @@ pub fn parse_all(json: &str) -> Result<Parsed, String> {
         }),
         https: true,
         l2,
+        dev_token: None,
     };
     Ok(Parsed {
         core,

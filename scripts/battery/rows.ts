@@ -237,6 +237,9 @@ export const rows: Row[] = [
     snippet: `import { Children } from 'react'\nexport default function C(props: any) { return <ul>{Children.map(props.children, (c: any) => <li>{c}</li>)}</ul> }` },
 
   // ---- E. v2 specifics ------------------------------------------------------
+  { id: 'e-package-component', category: 'E', authoring: 'component from a package in a static parent', expect: 'static', jobs: 1,
+    snippet: `import { Heart } from 'icons'\nexport default function C() { return <p>love <Heart size={16} /></p> }`,
+    note: 'L22: a package export renders as a React island (one ssr job); the parent stays static' },
   { id: 'e-list-block-body', category: 'E', authoring: '.map with a block body names list-shape', expect: 'react',
     snippet: `export default function C({ xs }: any) { return <ul>{xs.map((x: any) => { const t = x.t; return <li key={x.id}>{t}</li> })}</ul> }`,
     note: 'L6: block bodies stay React with a list-shape fallback naming the reason' },

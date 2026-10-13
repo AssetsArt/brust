@@ -7,15 +7,17 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
-import { BrustRouteError, validateRoutes } from '../routes'
-import { type BrowserCtx, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
+import { BrustRouteError, type FlatRoute, validateRoutes } from '../routes'
+import { type BrowserCtx, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
-import { compileApp } from './compile'
+import { type Compiled, compileApp } from './compile'
+import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
-import { type CacheRecord, type ManifestJson, writeManifest } from './manifest'
+import { type CacheRecord, type ManifestJson, tierOf, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
 import { type ExprReads, prepareStatic, writeStatic } from './static'
+import { writeStaticWorker } from './static-worker'
 
 export { BuildError } from './errors'
 
@@ -90,14 +92,17 @@ export async function runBuild(opts: {
   exprReads?: ExprReads
   /** `--wasm-from-source` (cloudflare only). */
   wasmFromSource?: boolean
+  /** `brust build --dev` (L14, used by `brust dev`): also writes `dev.json` and builds the client runtime with `__BRUST_DEV__`. */
+  dev?: boolean
   log: (s: string) => void
 }): Promise<void> {
+  setDevBuild(opts.dev === true)
   const appRoot = resolve(opts.appRoot)
   const entry = resolve(appRoot, opts.entry)
   const dist = resolve(appRoot, opts.outDir)
   assertSafeOutDir(dist, appRoot, [entry, join(appRoot, 'public')])
   assertReplaceable(dist, opts.force)
-  const { serverOnly, actions, cloudflare, cache } = await loadBuildConfig(appRoot)
+  const { serverOnly, actions, cloudflare, cache, cssGlobal } = await loadBuildConfig(appRoot)
 
   // Everything that can fail on the app's own input runs before a byte is written.
   const { routes, componentFile, componentIssue } = await scanRoutes(entry, appRoot)
@@ -138,11 +143,13 @@ export async function runBuild(opts: {
   // R9.3/R9.4: every reason to refuse a static build, before any write.
   const ssgPlan =
     opts.target === 'static'
-      ? await prepareStatic(leaves, actions !== null, opts.exprReads ?? (await import('../native')).cacheExprReads, opts.log)
+      ? await prepareStatic(leaves, actions !== null, opts.exprReads ?? (await import('../native')).cacheExprReads, opts.log, cache)
       : null
 
   // Config, @brust/core-cf resolution and the user's wrangler file fail here, before any write.
-  const cf = opts.target === 'cloudflare' ? await prepareCloudflare(appRoot, cloudflare, { fromSource: opts.wasmFromSource === true, env: process.env }) : null
+  // L12: a static build with `[actions]` also builds the Cloudflare worker (its Pages `_worker.js`).
+  const hybrid = ssgPlan !== null && actions !== null
+  const cf = opts.target === 'cloudflare' || hybrid ? await prepareCloudflare(appRoot, cloudflare, { fromSource: opts.wasmFromSource === true, env: process.env }) : null
 
   // Sibling of `dist` (same filesystem: the final rename is atomic), fixed name (no random bytes in
   // anything the bundler sees).
@@ -150,11 +157,12 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, log: opts.log })
+    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
       await writeStatic(tmp, { entry, appRoot, plan: ssgPlan, version, strict: opts.strict === true, log: opts.log, shownDir: join(dist, 'static') })
+      if (hybrid && cf && actions) writeStaticWorker(tmp, actions, cf, opts.log)
     }
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
     if (existsSync(dist)) {
@@ -173,6 +181,8 @@ export async function runBuild(opts: {
 async function buildInto(
   out: string,
   o: {
+    /** Write `dev.json` (L14). */
+    dev: boolean
     appRoot: string
     entry: string
     /** The final dist dir (`index.js` points at the entry relative to it). */
@@ -188,11 +198,25 @@ async function buildInto(
     /** Absolute path of a custom cache adapter module. */
     cacheModule: string | null
     cf: CfPrepared | null
+    /** `[css] global` as written (app-root relative). */
+    cssGlobal: string[]
+    /** `--target static` with `[actions]`: the worker is built without the cache (static pages are never cached). */
+    hybrid: boolean
     log: (s: string) => void
   },
 ): Promise<void> {
   const { appRoot, entry, leaves } = o
-  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [] }
+  // L19: every stylesheet first, so each JS build below reads one set of CSS Module class maps.
+  const graph = new CssGraph()
+  const chainFiles = (l: FlatRoute) => l.chain.flatMap((n) => (n.Component && o.componentFile.has(n.Component) ? [o.componentFile.get(n.Component)!] : []))
+  const routeCss = routeCssSources(leaves, chainFiles, resolveGlobals(appRoot, o.cssGlobal), graph)
+  const serverCss = [o.actionsEntry, o.cacheModule].flatMap((f) => (f ? graph.of(f) : []))
+  mkdirSync(join(out, 'client'), { recursive: true })
+  // Review N3: `brust dev` builds with BRUST_BUILD_MODE=development (as the JS bundles): readable, unminified CSS.
+  const css = await buildCss(out, [...new Set([...[...routeCss.values()].flat(), ...serverCss])], process.env.BRUST_BUILD_MODE !== 'development')
+  for (const c of directCss(entry))
+    o.log(`[brust] warning css ${relative(appRoot, entry)} imports ${c}: the route entry belongs to no route, so it is linked nowhere; import it from a layout, or list it in [css] global`)
+  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps }
   // The runtime first: its hashed URL is the `runtimeImport` every client chunk is compiled with.
   const runtime = await buildRuntime(out, ctx)
   const { compiled, routeComponent } = compileApp({
@@ -211,13 +235,18 @@ async function buildInto(
   const runtimeUrl = `/_brust/${runtime}`
   const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrl)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrl))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime, chunks })
-  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest))
+  for (const r of manifest.routes) {
+    const files = [...new Set((routeCss.get(r.id) ?? []).flatMap((s) => (css.file.has(s) ? [css.file.get(s)!] : [])))]
+    if (files.length > 0) r.css = files
+  }
+  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps)
   manifest.actions =
     o.actions && o.actionsEntry
-      ? { entry: await buildActions(out, o.actionsEntry), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite }
+      ? { entry: await buildActions(out, o.actionsEntry, css.maps), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite }
       : null
-  if (o.cache) manifest.cache = await cacheRecord(out, manifest, o.cache, o.cacheModule)
+  if (o.cache) manifest.cache = await cacheRecord(out, manifest, o.cache, o.cacheModule, css.maps)
   writeFileSync(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  if (o.dev) writeFileSync(join(out, 'dev.json'), `${JSON.stringify(devJson(appRoot, compiled), null, 2)}\n`)
   writeFileSync(join(out, MARKER), 'generated by `brust build`: this directory is replaced on every build\n')
 
   const pub = join(appRoot, 'public')
@@ -225,7 +254,19 @@ async function buildInto(
   if (o.cf) {
     const warnings = await buildCloudflare(
       out,
-      { appRoot, entry, dist: o.dist, compiled, manifest, sourceOf: ctx.sourceOf, actionsEntry: o.actionsEntry, cacheModule: o.cacheModule, cacheGetTimeoutMs: o.cache?.getTimeoutMs, log: o.log },
+      {
+        appRoot,
+        entry,
+        dist: o.dist,
+        compiled,
+        manifest: o.hybrid ? { ...manifest, cache: undefined } : manifest,
+        sourceOf: ctx.sourceOf,
+        actionsEntry: o.actionsEntry,
+        cacheModule: o.hybrid ? null : o.cacheModule,
+        cacheGetTimeoutMs: o.hybrid ? undefined : o.cache?.getTimeoutMs,
+        cssMaps: css.maps,
+        log: o.log,
+      },
       o.cf,
     )
     for (const w of warnings) o.log(w)
@@ -246,10 +287,34 @@ async function buildInto(
   )
 }
 
+/** `dev.json` (L14, R14.2): component id → source file, tier, the react reason, diagnostics. Only `brust build --dev` writes it. */
+export function devJson(appRoot: string, compiled: Map<string, Compiled>): { version: 1; components: Record<string, DevComponent> } {
+  const components: Record<string, DevComponent> = {}
+  for (const c of compiled.values()) {
+    const tier = tierOf(c.ir)
+    const t = c.ir.tier
+    components[c.id] = {
+      file: relative(appRoot, c.file),
+      tier,
+      ...(tier === 'react' && t && typeof t === 'object' && 'React' in t ? { reason: String((t as { React: { reason: string } }).React.reason) } : {}),
+      diagnostics: (c.diagnostics ?? []).map((d) => ({ class: d.class, rule: d.rule, line: d.line, col: d.col, message: d.message, remediation: d.remediation })),
+    }
+  }
+  return { version: 1, components }
+}
+
+export interface DevComponent {
+  file: string
+  tier: 'static' | 'native' | 'react'
+  /** Why the compiler chose the react tier (the IR's `React.reason`). */
+  reason?: string
+  diagnostics: { class: string; rule: string; line: number; col: number; message: string; remediation: string }[]
+}
+
 /** `manifest.cache` (R7, R8): the custom module bundled for the worker, the native defaults, and the
  * build id every L2 key carries. */
-async function cacheRecord(out: string, manifest: ManifestJson, c: CacheBuildConfig, moduleAbs: string | null): Promise<CacheRecord> {
-  const module = moduleAbs ? await buildCacheAdapter(out, moduleAbs) : undefined
+async function cacheRecord(out: string, manifest: ManifestJson, c: CacheBuildConfig, moduleAbs: string | null, cssMaps: Map<string, Record<string, string>>): Promise<CacheRecord> {
+  const module = moduleAbs ? await buildCacheAdapter(out, moduleAbs, cssMaps) : undefined
   return {
     adapter: c.adapter,
     ...(module ? { module } : {}),

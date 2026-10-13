@@ -186,6 +186,10 @@ fn is_zero(n: &usize) -> bool {
 pub struct ComponentIR {
     pub id: String,
     pub source: String,
+    /// Set on the synthetic React-tier component of a package export (`source` is then
+    /// `package_<specifier>_<export>` made filename-safe, not a file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalRef>,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     pub state: Vec<StateDecl>,
@@ -277,6 +281,7 @@ impl ComponentIR {
         Self {
             id,
             source,
+            external: None,
             tier: Tier::Pending,
             props: vec![],
             state: vec![],

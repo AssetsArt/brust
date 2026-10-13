@@ -4,6 +4,7 @@
 // process, workers never restart, SABs are never freed (R13.1).
 import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { loadConfig } from '../config'
 import { type Diag, parseBuildError, parseWarnings } from './diag'
 import { type DevProxy, startProxy } from './proxy'
@@ -75,6 +76,8 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
   rmSync(devRoot, { recursive: true, force: true })
   mkdirSync(devRoot, { recursive: true })
 
+  // R14.1: only this process and its children know the token; the core traces a request only if it carries it.
+  const devToken = crypto.randomUUID()
   let counter = 0
   let gen = 0
   let state: 'building' | 'ready' | 'error' = 'building'
@@ -100,12 +103,19 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
     })
 
   const proxy: DevProxy = startProxy(
-    { hostname: cfg.host, port: cfg.port },
+    { hostname: cfg.host, port: cfg.port, token: devToken },
     {
       gen: () => gen,
       state: () => state,
       diag: () => diag,
       upstream: () => active?.port ?? null,
+      meta: () => {
+        try {
+          return active ? JSON.parse(readFileSync(join(active.dir, 'dev.json'), 'utf8')) : null
+        } catch {
+          return null
+        }
+      },
       onRequest(r) {
         tui.log(`${r.method} ${r.path} ${r.status} ${r.ms}ms${r.cache ? ` ${r.cache}` : ''}`)
         if (!r.path.startsWith('/_brust/')) {
@@ -121,7 +131,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
   /** Build into `dir`; a child process, so module caches never leak between builds. */
   async function build(dir: string): Promise<{ ok: boolean; text: string; ms: number }> {
     const t0 = performance.now()
-    const p = Bun.spawn([process.execPath, cliPath, 'build', o.entry, '--out-dir', dir], {
+    const p = Bun.spawn([process.execPath, cliPath, 'build', o.entry, '--out-dir', dir, '--dev'], {
       cwd: appRoot,
       env: { ...process.env, NODE_ENV: 'development', BRUST_BUILD_MODE: 'development' },
       stdout: 'pipe',
@@ -146,6 +156,7 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
         BRUST_WORKERS: String(workers),
         BRUST_DIST_DIR: dir,
         BRUST_APP_ENTRY: entry,
+        BRUST_DEV_TOKEN: devToken,
       },
       stdout: 'pipe',
       stderr: 'pipe',
