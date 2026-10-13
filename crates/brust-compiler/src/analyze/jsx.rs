@@ -424,7 +424,7 @@ fn read_inner_html(r: &mut Reader<'_, '_>, value: &js_ast::Expr) -> Option<Attr>
 /// name, except where React's synthetic event differs. `onchange`, `on` and
 /// `once` are not events. `onChange` stays `change`; the template backend makes
 /// it `input` on text-like fields, as React does.
-fn event_name(attr: &str) -> Option<String> {
+pub(crate) fn event_name(attr: &str) -> Option<String> {
     let rest = attr.strip_prefix("on")?;
     if !rest.starts_with(|c: char| c.is_ascii_uppercase()) {
         return None;
@@ -458,6 +458,7 @@ fn hoist_handler(r: &mut Reader<'_, '_>, value: &js_ast::Expr) -> String {
         name: name.clone(),
         body,
         item_scoped: r.loop_scope.clone(),
+        forwarded: None,
     });
     name
 }

@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 23 | 15 | 3 | 5 | 0 | 0 | 0 | 0 |
+| B Composition | 29 | 15 | 6 | 8 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 4 | 1 | 23 | 1 | 0 | 0 | 0 |
 | E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 162 | 66 | 38 | 52 | 5 | 1 | 0 | 0 |
+| **Total** | 168 | 66 | 41 | 55 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -102,7 +102,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-spread-known-shape | data-*, aria-*, boolean and style props through a child's rest spread | static | static | 0 | ok | — | shadcn S1.2 R34.15 (a): keys known at the call site expand at compile time; children from the spread are the element children |
 | b-spread-alias-known | HTML aliases at the call site into a child that writes React names after its spread | static | static | 0 | ok | — | shadcn S1.2 review F1: compile-time expansion merges on the HTML attribute too (class="x", for="a", once each) |
 | b-fed-child-local-list | a child with a job of its own in a list over a local array | react | react | ssr | ok | fallback:instance-list-path | ruling on challenge 4dc45c45 (F142): the server cannot feed a per-row job over a non-props list; an island, never a build error (instance-list-path fallback) |
-| b-spread-event-handler | an event handler that reaches an element through a child's spread | native | react | ssr | ok | fallback:spread-props | known gap: F141 (challenge d3f9154b, upheld): a handler through a spread fails closed (the parent is a React island, fallback spread-props); parent-scope binding is lane spread-handlers (S1.3) |
+| b-spread-event-handler | an event handler that reaches an element through a child's spread | native | native | 0 | ok | — | shadcn S1.3 R34.18 (F141): the parent hoists the handler as its own member (_hN) and the inline print binds it on the child's element (x-on-click); the child stays static |
+| b-spread-handler-row | a handler reading the row, through a child's spread in a list | native | native | 0 | ok | — | shadcn S1.3 R34.18: the row is client-rendered (x-for) and the binding names the row (x-on-click="_h1:it"), as a hand-written handler |
+| b-spread-handler-input | onChange through a text field's spread (shadcn Input) | native | native | 0 | ok | — | shadcn S1.3 R34.18: React's onChange on a text field is the input event (x-on-input) |
+| b-spread-handler-native-child | a handler through the spread of a child with state of its own | react | react | ssr | ok | fallback:spread-handler | shadcn S1.3 R34.19: only a static child's element can carry the parent's binding (fallback spread-handler) |
+| b-spread-handler-onward | a handler a child passes on through a second spread | react | react | ssr | ok | fallback:spread-handler | shadcn S1.3 R34.19: bound one level deep only (fallback spread-handler) |
+| b-spread-handler-row-prop | a handler through a child's spread next to a prop that reads the row | react | react | ssr | ok | fallback:spread-handler | shadcn S1.3 R34.19: the handler makes the client render the row, so a row-reading prop would link the child (fallback spread-handler); pass row values as children instead |
+| b-spread-render-prop | a function that is not an event handler, through a child's spread | react | react | ssr | ok | fallback:spread-function | shadcn S1.3 R34.19: a render prop has no element binding (fallback spread-function) |
 
 ## C. Hooks
 
