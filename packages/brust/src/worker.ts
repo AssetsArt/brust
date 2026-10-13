@@ -46,14 +46,15 @@ export function writeSlot(view: Uint8Array, slot: number, slots: number, json: s
   const dst = view.subarray(slot * sub, slot * sub + sub)
   const r = enc.encodeInto(json, dst)
   if (r.read === json.length) return r.written
-  let limit = `${sub}`
+  let why = `response too large: ${Buffer.byteLength(json)} > ${sub}`
   if (io && cap !== undefined && sub >= HEAP_MARKER_BYTES) {
     const bytes = enc.encode(json)
     const n = heapMarker(dst, slot, bytes, io, cap)
     if (n > 0) return n
-    limit = `${cap} (maxLoaderResponseBytes)`
+    // Name the real reason: over the cap, or a put Rust declined while under it (idle slot, a second put).
+    why = bytes.length > cap ? `response too large: ${bytes.length} > ${cap} (maxLoaderResponseBytes)` : `heap reply declined: ${bytes.length} bytes did not fit the ${sub}-byte slot and Rust refused the handover`
   }
-  const err = JSON.stringify({ error: `response too large: ${Buffer.byteLength(json)} > ${limit}` })
+  const err = JSON.stringify({ error: why })
   const e = enc.encodeInto(err, dst)
   if (e.read === err.length) return e.written
   // Not even the message fits: the first `sub` bytes of a fixed one (ASCII, so byte = char).

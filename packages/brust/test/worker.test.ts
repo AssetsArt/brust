@@ -437,7 +437,8 @@ test('writeSlot: over the cap, or declined by Rust → {error} naming the cap; n
   expect(over.put.length).toBe(0)
   const no = fakeHeap({ accept: false })
   const b = writeSlot(view, 0, 1, json, no.heap.io, no.heap.cap)
-  expect(dec(view, b).error).toContain('(maxLoaderResponseBytes)')
+  // under the cap but declined by Rust: the message names the real reason, not the cap
+  expect(dec(view, b).error).toBe(`heap reply declined: ${Buffer.byteLength(json)} bytes did not fit the 4096-byte slot and Rust refused the handover`)
   const c = writeSlot(view, 0, 1, json)
   expect(dec(view, c)).toEqual({ error: `response too large: ${Buffer.byteLength(json)} > 4096` })
 })

@@ -142,3 +142,71 @@ test('L10: a 300 KB loader ctx and a 300 KB job result cross the heap through th
   expect(JSON.parse(cacheStats())).toMatchObject({ loader_calls: 1, job_calls: 1, worker_calls: 1 })
   await beginDrain(1000)
 })
+
+// L10 delta (lead ruling): the HTTP-level over-cap case and a non-default slotBytes, through the real addon.
+async function serveWithLoader(opts: { maxLoaderResponseBytes?: number; slotBytes: number; padBytes: number }) {
+  const { makeDispatch, makeHandlers } = await import('../src/worker')
+  const { defineRoutes, flattenRoutes } = await import('../src/routes')
+  const pad = 'p'.repeat(opts.padBytes)
+  const leaves = flattenRoutes(
+    defineRoutes([
+      {
+        Component: () => null,
+        children: [
+          {
+            path: '/pokemon/{name}',
+            Component: () => null,
+            loader: async ({ params }: { params: { name: string } }) => ({ pokemon: { name: params.name, stats: { hp: 35 }, moves: [{ name: 'tackle' }, { name: 'growl' }] }, team: ['a'], who: 'anon', pad }),
+          },
+        ],
+      },
+    ]),
+  ).leaves.map((l) => ({ ...l, id: 'r2' })) // the fixture dist's route id
+  const jobs = {
+    detailPage_c3: { precompute: () => ({ _s1: 'HP 35' }) },
+    moveCard_d4: { precompute: (p: { move: { name: string } }) => ({ _s1: `MOVE ${p.move.name}` }) },
+  }
+  startServer({ host: '127.0.0.1', port: 0, distDir: dist, workers: 1, claimTimeoutMs: 2000, ...(opts.maxLoaderResponseBytes !== undefined ? { maxLoaderResponseBytes: opts.maxLoaderResponseBytes } : {}) })
+  const view = new Uint8Array(new SharedArrayBuffer(opts.slotBytes))
+  // biome-ignore lint/suspicious/noExplicitAny: handler fixtures
+  // As `startWorker` configures it under `run()`: the worker's cap is the server's cap (BRUST_MAX_LOADER_RESPONSE_BYTES).
+  const { planJobsBuf, putFetchReply } = await import('../src/native')
+  const heap = { io: { takeBody: () => null, putReply: putFetchReply }, planBuf: planJobsBuf, cap: opts.maxLoaderResponseBytes ?? 8_388_608 }
+  const dispatch = makeDispatch(makeHandlers({ leaves: leaves as any, jobs: jobs as any }), view, 1, undefined, heap)
+  const replies: string[] = []
+  registerWorker(view, 1, async (kind, json, slot) => {
+    const n = await dispatch(kind, json, slot)
+    replies.push(new TextDecoder().decode(view.subarray(0, Math.min(n, 200))))
+    return n
+  })
+  await untilReady(2000)
+  return { base: `http://${localAddr()}`, replies }
+}
+
+test('L10: a loader reply over maxLoaderResponseBytes answers 500 at the HTTP level, and the worker names the cap', async () => {
+  const s = await serveWithLoader({ maxLoaderResponseBytes: 262_144, slotBytes: 256 * 1024, padBytes: 300_000 })
+  const res = await fetch(`${s.base}/pokemon/pikachu`)
+  expect(res.status).toBe(500)
+  expect(s.replies.join('\n')).toMatch(/response too large: \d+ > 262144 \(maxLoaderResponseBytes\)/)
+  await beginDrain(1000)
+})
+
+test('L10: slotBytes (BRUST_SLOT_BYTES) end to end: a 100 KiB loader reply over a 64 KiB slot still answers 200 through the heap', async () => {
+  const { loadConfig } = await import('../src/config')
+  const prev = process.env.BRUST_SLOT_BYTES
+  process.env.BRUST_SLOT_BYTES = '65536'
+  let slotBytes: number
+  try {
+    slotBytes = (await loadConfig(resolve(import.meta.dir, 'fixtures'))).slotBytes // the env layer, as `run()` reads it
+  } finally {
+    if (prev === undefined) delete process.env.BRUST_SLOT_BYTES
+    else process.env.BRUST_SLOT_BYTES = prev
+  }
+  expect(slotBytes).toBe(65_536)
+  const s = await serveWithLoader({ slotBytes, padBytes: 100 * 1024 })
+  const res = await fetch(`${s.base}/pokemon/pikachu`)
+  expect(res.status).toBe(200)
+  expect(await res.text()).toContain('<li>tackle: MOVE tackle</li><li>growl: MOVE growl</li>')
+  expect(JSON.parse(cacheStats())).toMatchObject({ loader_calls: 1, job_calls: 1, worker_calls: 1 })
+  await beginDrain(1000)
+})
