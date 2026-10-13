@@ -3,35 +3,35 @@
 // the lit/flash state lives on the <svg> in Poster.tsx.
 export default function PosterScene() {
   return (
-    <g className="scene">
-      <rect width="400" height="300" className="sky0" />
-      <rect y="168" width="400" height="62" className="sky1" />
-      <rect y="230" width="400" height="40" className="sky2" />
-      <rect y="270" width="400" height="30" className="sky3" />
-      <g className="clouds">
-        <rect className="cl c1" x="34" y="118" width="120" height="9" rx="4.5" />
-        <rect className="cl c1" x="70" y="132" width="78" height="7" rx="3.5" />
-        <rect className="cl c2" x="250" y="74" width="96" height="8" rx="4" />
-        <rect className="cl c2" x="286" y="87" width="58" height="6" rx="3" />
+    <g>
+      <rect width="400" height="300" className="fill-pz-sky0" />
+      <rect y="168" width="400" height="62" className="fill-pz-sky1" />
+      <rect y="230" width="400" height="40" className="fill-pz-sky2" />
+      <rect y="270" width="400" height="30" className="fill-pz-sky3" />
+      <g>
+        <rect className="fill-pz-sky2 opacity-70 motion-safe:animate-mirai-drift-a" x="34" y="118" width="120" height="9" rx="4.5" />
+        <rect className="fill-pz-sky2 opacity-70 motion-safe:animate-mirai-drift-a" x="70" y="132" width="78" height="7" rx="3.5" />
+        <rect className="fill-pz-sky1 motion-safe:animate-mirai-drift-b" x="250" y="74" width="96" height="8" rx="4" />
+        <rect className="fill-pz-sky1 motion-safe:animate-mirai-drift-b" x="286" y="87" width="58" height="6" rx="3" />
       </g>
-      <g className="birds">
+      <g className="fill-none stroke-pz-ink stroke-[1.4] opacity-70 [stroke-linecap:round] [stroke-linejoin:round] motion-safe:animate-mirai-glide">
         <polyline points="96,156 102,160 108,156" />
         <polyline points="114,146 119,149 124,146" />
         <polyline points="128,160 132,163 136,160" />
       </g>
-      <circle className="orbit" cx="236" cy="236" r="122" />
-      <circle className="sunf" cx="236" cy="236" r="92" />
-      <polygon className="far" points="0,300 0,262 40,250 78,262 120,238 160,258 205,244 250,266 300,242 345,258 400,246 400,300" />
-      <polygon className="fuji" points="0,300 0,282 40,262 92,206 108,201 124,206 178,262 214,300" />
-      <polygon className="snow" points="92,206 108,201 124,206 133,215 121,221 113,213 105,224 97,213 84,215" />
-      <g className="towers">
+      <circle className="origin-center fill-none stroke-pz-ink stroke-[1.2] opacity-45 [stroke-dasharray:2_7] [transform-box:fill-box] motion-safe:animate-mirai-turn" cx="236" cy="236" r="122" />
+      <circle className="origin-center fill-pz-sun [transform-box:fill-box] group-[.flash]/orb:motion-safe:animate-mirai-pulse" cx="236" cy="236" r="92" />
+      <polygon className="fill-pz-far" points="0,300 0,262 40,250 78,262 120,238 160,258 205,244 250,266 300,242 345,258 400,246 400,300" />
+      <polygon className="fill-pz-near" points="0,300 0,282 40,262 92,206 108,201 124,206 178,262 214,300" />
+      <polygon className="fill-pz-snow" points="92,206 108,201 124,206 133,215 121,221 113,213 105,224 97,213 84,215" />
+      <g className="fill-pz-ink">
         <rect x="270" y="214" width="24" height="86" />
         <rect x="300" y="172" width="30" height="128" />
         <rect x="306" y="160" width="18" height="12" />
         <rect x="314" y="140" width="2" height="20" />
         <rect x="336" y="228" width="22" height="72" />
       </g>
-      <g className="wins">
+      <g className="fill-pz-snow group-[.lit]/orb:fill-pz-sun *:opacity-50 group-[.lit]/orb:*:opacity-100 motion-safe:*:[transition:fill_.25s,opacity_.25s] motion-safe:group-[.lit]/orb:*:[transition-delay:calc(var(--k)*14ms)]">
         <rect x="273.8" y="222" width="3" height="3" style={{ '--k': '0' }} />
         <rect x="280.5" y="222" width="3" height="3" style={{ '--k': '1' }} />
         <rect x="287.2" y="222" width="3" height="3" style={{ '--k': '2' }} />
@@ -102,31 +102,33 @@ export default function PosterScene() {
         <rect x="341.3" y="290" width="3" height="3" style={{ '--k': '67' }} />
         <rect x="349.7" y="290" width="3" height="3" style={{ '--k': '68' }} />
       </g>
-      <circle className="beacon b1" cx="282" cy="207" r="4" />
-      <circle className="beacon b2" cx="315" cy="136" r="4" />
-      <circle className="beacon b3" cx="347" cy="221" r="4" />
-      <g className="tls">
-        <text className="tl" x="264" y="210" textAnchor="end" style={{ '--t': '0' }}>
+      <circle className="fill-pz-static motion-safe:animate-mirai-beacon" cx="282" cy="207" r="4" />
+      <circle className="fill-pz-native motion-safe:animate-mirai-beacon motion-safe:[animation-delay:1s]" cx="315" cy="136" r="4" />
+      <circle className="fill-pz-react motion-safe:animate-mirai-beacon motion-safe:[animation-delay:2s]" cx="347" cy="221" r="4" />
+      <g className="fill-pz-ink font-mono text-[9.5px] font-bold tracking-[.06em] *:opacity-0 group-[.lit]/orb:*:opacity-100 motion-safe:*:[transition:opacity_.35s_var(--ease)] motion-safe:group-[.lit]/orb:*:[transition-delay:calc(.35s+var(--t)*.3s)]">
+        <text x="264" y="210" textAnchor="end" style={{ '--t': '0' }}>
           static
         </text>
-        <text className="tl" x="315" y="125" textAnchor="middle" style={{ '--t': '1' }}>
+        <text x="315" y="125" textAnchor="middle" style={{ '--t': '1' }}>
           native
         </text>
-        <text className="tl" x="364" y="224" textAnchor="start" style={{ '--t': '2' }}>
+        <text x="364" y="224" textAnchor="start" style={{ '--t': '2' }}>
           react
         </text>
       </g>
-      <rect y="300" width="400" height="150" className="sea" />
-      <rect y="299.5" width="400" height="1.5" className="horizon" />
-      <rect className="rb" x="161" y="308" width="150" height="4" style={{ opacity: '0.95', '--i': '0' }} />
-      <rect className="rb" x="175" y="318" width="122" height="4" style={{ opacity: '0.85', '--i': '1' }} />
-      <rect className="rb" x="187" y="329" width="98" height="4" style={{ opacity: '0.75', '--i': '2' }} />
-      <rect className="rb" x="198" y="342" width="76" height="4" style={{ opacity: '0.6', '--i': '3' }} />
-      <rect className="rb" x="208" y="357" width="56" height="3" style={{ opacity: '0.5', '--i': '4' }} />
-      <rect className="rb" x="217" y="373" width="38" height="3" style={{ opacity: '0.38', '--i': '5' }} />
-      <rect className="rb" x="224" y="391" width="24" height="3" style={{ opacity: '0.28', '--i': '6' }} />
-      <rect className="rb" x="229" y="410" width="14" height="2" style={{ opacity: '0.2', '--i': '7' }} />
-      <g className="waves">
+      <rect y="300" width="400" height="150" className="fill-pz-sea" />
+      <rect y="299.5" width="400" height="1.5" className="fill-pz-sun opacity-70" />
+      <g className="fill-pz-sun *:origin-center *:[transform-box:fill-box] motion-safe:*:animate-mirai-shimmer motion-safe:*:[animation-delay:calc(var(--i)*-.4s)] group-[.flash]/orb:motion-safe:*:animate-mirai-shimmer-glint">
+        <rect x="161" y="308" width="150" height="4" style={{ opacity: '0.95', '--i': '0' }} />
+        <rect x="175" y="318" width="122" height="4" style={{ opacity: '0.85', '--i': '1' }} />
+        <rect x="187" y="329" width="98" height="4" style={{ opacity: '0.75', '--i': '2' }} />
+        <rect x="198" y="342" width="76" height="4" style={{ opacity: '0.6', '--i': '3' }} />
+        <rect x="208" y="357" width="56" height="3" style={{ opacity: '0.5', '--i': '4' }} />
+        <rect x="217" y="373" width="38" height="3" style={{ opacity: '0.38', '--i': '5' }} />
+        <rect x="224" y="391" width="24" height="3" style={{ opacity: '0.28', '--i': '6' }} />
+        <rect x="229" y="410" width="14" height="2" style={{ opacity: '0.2', '--i': '7' }} />
+      </g>
+      <g className="fill-pz-snow opacity-[.14]">
         <rect x="24" y="322" width="40" height="1.2" />
         <rect x="92" y="338" width="26" height="1.2" />
         <rect x="330" y="330" width="34" height="1.2" />
@@ -138,17 +140,23 @@ export default function PosterScene() {
         <rect x="250" y="432" width="40" height="1.2" />
         <rect x="20" y="436" width="24" height="1.2" />
       </g>
-      <rect className="tr t1" x="280" y="306" width="4" height="9" />
-      <rect className="tr t1" x="280" y="319" width="4" height="7" />
-      <rect className="tr t1" x="280" y="331" width="4" height="4" />
-      <rect className="tr t2" x="313" y="306" width="4" height="12" />
-      <rect className="tr t2" x="313" y="322" width="4" height="9" />
-      <rect className="tr t2" x="313" y="336" width="4" height="6" />
-      <rect className="tr t2" x="313" y="348" width="4" height="3" />
-      <rect className="tr t3" x="345" y="306" width="4" height="7" />
-      <rect className="tr t3" x="345" y="317" width="4" height="5" />
-      <rect className="tr t3" x="345" y="327" width="4" height="3" />
-      <rect y="450" width="400" height="30" className="cap" />
+      <g className="fill-pz-static opacity-45">
+        <rect x="280" y="306" width="4" height="9" />
+        <rect x="280" y="319" width="4" height="7" />
+        <rect x="280" y="331" width="4" height="4" />
+      </g>
+      <g className="fill-pz-native opacity-45">
+        <rect x="313" y="306" width="4" height="12" />
+        <rect x="313" y="322" width="4" height="9" />
+        <rect x="313" y="336" width="4" height="6" />
+        <rect x="313" y="348" width="4" height="3" />
+      </g>
+      <g className="fill-pz-react opacity-45">
+        <rect x="345" y="306" width="4" height="7" />
+        <rect x="345" y="317" width="4" height="5" />
+        <rect x="345" y="327" width="4" height="3" />
+      </g>
+      <rect y="450" width="400" height="30" className="fill-pz-ink" />
     </g>
   )
 }

@@ -64,7 +64,7 @@ test('demo route: param, notFound 404, and real MISS / HIT / BYPASS headers', as
   const v = `t${Date.now()}`
   const a = await fetch(`${base}/demo/pokemon/eevee?v=${v}`)
   expect(a.status).toBe(200)
-  expect(await a.text()).toContain('<h4>Eevee</h4>')
+  expect(await a.text()).toMatch(/<h4[^>]*>Eevee<\/h4>/)
   expect(a.headers.get('x-brust-cache')).toBe('MISS')
   expect((await fetch(`${base}/demo/pokemon/eevee?v=${v}`)).headers.get('x-brust-cache')).toBe('HIT')
   expect((await fetch(`${base}/demo/pokemon/eevee?v=${v}&nocache=1`)).headers.get('x-brust-cache')).toBe('BYPASS')
