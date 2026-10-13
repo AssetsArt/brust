@@ -349,10 +349,11 @@ pub fn inject_page_assets_into(
 fn doctype_end(html: &str) -> usize {
     let lead = html.len() - html.trim_start().len();
     let rest = &html[lead..];
-    if rest.len() >= 9 && rest.as_bytes()[..9].eq_ignore_ascii_case(b"<!doctype") {
-        if let Some(i) = rest.find('>') {
-            return lead + i + 1;
-        }
+    if rest.len() >= 9
+        && rest.as_bytes()[..9].eq_ignore_ascii_case(b"<!doctype")
+        && let Some(i) = rest.find('>')
+    {
+        return lead + i + 1;
     }
     0
 }
