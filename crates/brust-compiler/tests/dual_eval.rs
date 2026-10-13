@@ -53,6 +53,8 @@ const NO_SAMPLES: &[&str] = &[
 /// Sampled fixtures with no client directives to compare (every other sampled
 /// fixture must contribute at least one check).
 const NO_DIRECTIVES: &[&str] = &[
+    // L20: the class is a literal in the template; a static component has no chunk to compare.
+    "css-module-static",
     "static-text",
     "cached-card",
     "outlet-layout",
@@ -127,12 +129,14 @@ fn with_store_shim(src: &str) -> String {
 fn build(case: &Path, dir: &Path) -> (String, Option<PathBuf>, Vec<String>) {
     let name = case.file_name().unwrap().to_str().unwrap().to_string();
     let rt = harness().join("rt.ts").to_string_lossy().into_owned();
+    let css = lower_common::css_modules(case);
     let tree = run_on_compiler_thread(move || {
         compile_tree(
             &format!("tests/fixtures/{name}/input.tsx"),
             None,
             &AnalyzeOptions {
                 root: repo(),
+                css_modules: css,
                 ..Default::default()
             },
             &rt,
@@ -156,6 +160,15 @@ fn build(case: &Path, dir: &Path) -> (String, Option<PathBuf>, Vec<String>) {
         let n = p.file_name().unwrap().to_string_lossy().into_owned();
         // The modules the fixture imports (`money.ts`, `cart.ts`), not its expectations.
         // A store module's `brust/store` resolves to the seeded shim (`harness/store.ts`).
+        // A CSS Module becomes its class map (JSON), which `harness/eval.ts` serves as the module's default export.
+        if n.ends_with(".module.css") {
+            let map = lower_common::css_modules(case)
+                .into_iter()
+                .next()
+                .map(|(_, m)| m)
+                .unwrap_or_default();
+            std::fs::write(dir.join(&n), serde_json::to_string(&map).unwrap()).unwrap();
+        }
         if n.ends_with(".ts") && !n.ends_with(".tsx") && !n.starts_with("expected.") {
             let src = std::fs::read_to_string(&p).unwrap();
             std::fs::write(dir.join(&n), with_store_shim(&src)).unwrap();

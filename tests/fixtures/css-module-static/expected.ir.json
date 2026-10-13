@@ -1,0 +1,138 @@
+{
+  "id": "input_37c3b89d",
+  "source": "tests/fixtures/css-module-static/input.tsx",
+  "tier": "Static",
+  "props": [
+    {
+      "name": "title",
+      "local": "title",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 116,
+      "tag": "section",
+      "attrs": [
+        {
+          "Dynamic": {
+            "name": "className",
+            "value": {
+              "Server": {
+                "loc": 136,
+                "kind": {
+                  "Lit": {
+                    "Str": "card_fx"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "children": [
+        {
+          "Element": {
+            "loc": 156,
+            "tag": "h2",
+            "attrs": [
+              {
+                "Dynamic": {
+                  "name": "className",
+                  "value": {
+                    "Server": {
+                      "loc": 171,
+                      "kind": {
+                        "Template": {
+                          "head": "",
+                          "parts": [
+                            [
+                              {
+                                "loc": 174,
+                                "kind": {
+                                  "Lit": {
+                                    "Str": "title_fx"
+                                  }
+                                }
+                              },
+                              " lead"
+                            ]
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 196,
+                    "kind": {
+                      "Ident": {
+                        "name": "title",
+                        "kind": "Prop"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 214,
+            "tag": "p",
+            "attrs": [
+              {
+                "Dynamic": {
+                  "name": "className",
+                  "value": {
+                    "Server": {
+                      "loc": 228,
+                      "kind": {
+                        "Lit": {
+                          "Str": "note_fx"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "children": [
+              {
+                "Text": "note"
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

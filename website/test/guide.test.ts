@@ -41,7 +41,7 @@ async function open(path: string): Promise<Page> {
 const errorsOf = (p: Page) => (p as Page & { errors: string[] }).errors
 
 test('every Guide page is 200 with its title, a live demo frame and no compiler warning besides the react demos', async () => {
-  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'configuration', 'cli', 'deployment', 'migrating'])
+  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'css', 'configuration', 'cli', 'deployment', 'migrating'])
   for (const p of GUIDE) {
     const r = await fetch(`${base}/docs/${p.slug}`)
     expect([p.slug, r.status]).toEqual([p.slug, 200])
