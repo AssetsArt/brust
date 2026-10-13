@@ -123,6 +123,139 @@ fn chunked_body_over_cap_is_413() {
     assert_eq!(fake.fetch_count(), 0);
 }
 
+/// A raw HTTP/1.1 client for the refusal tests: writes `head`, then `body` in pieces, and reports what it saw. Unlike
+/// the hyper client, a write error does not hide the response: it is recorded and the response is still read.
+struct Raw {
+    write_err: Option<std::io::ErrorKind>,
+    response: Result<String, std::io::ErrorKind>,
+}
+
+fn raw_exchange(
+    s: &brust_server::Server,
+    head: &str,
+    body: &[Vec<u8>],
+    finish: Option<&[u8]>,
+) -> Raw {
+    use std::io::{Read, Write};
+    let mut c = std::net::TcpStream::connect(s.local_addr()).unwrap();
+    c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    c.write_all(head.as_bytes()).unwrap();
+    let mut write_err = None;
+    for piece in body {
+        if let Err(e) = c.write_all(piece) {
+            write_err = Some(e.kind());
+            break;
+        }
+    }
+    if write_err.is_none()
+        && let Some(f) = finish
+    {
+        let _ = c.write_all(f);
+    }
+    let mut got = Vec::new();
+    let mut buf = [0u8; 2048];
+    let response = loop {
+        match c.read(&mut buf) {
+            Ok(0) => break Ok(String::from_utf8_lossy(&got).into_owned()),
+            Ok(n) => {
+                got.extend_from_slice(&buf[..n]);
+                if got.windows(4).any(|w| w == b"\r\n\r\n") && got.len() > 20 {
+                    break Ok(String::from_utf8_lossy(&got).into_owned());
+                }
+            }
+            Err(e) => break Err(e.kind()),
+        }
+    };
+    Raw {
+        write_err,
+        response,
+    }
+}
+
+fn chunk(n: usize) -> Vec<u8> {
+    let mut c = format!("{n:x}\r\n").into_bytes();
+    c.extend(vec![b'a'; n]);
+    c.extend(b"\r\n");
+    c
+}
+
+/// F127: a refused body is read out (up to a bound) before the connection closes, so the 413 reaches the client
+/// instead of a reset. Before the fix a client still writing when the server closed got EPIPE/ECONNRESET in about a
+/// fifth of the attempts (macOS, a raw client: 44/200 write errors; 130/200 reads ended in ECONNRESET).
+#[test]
+fn refused_chunked_body_is_read_out_so_the_413_survives() {
+    let (_fake, s) = server_cap(ok, 262_144);
+    for attempt in 0..100 {
+        let body: Vec<Vec<u8>> = (0..300).map(|_| chunk(1024)).collect();
+        let r = raw_exchange(
+            &s,
+            &format!("POST {URL} HTTP/1.1\r\nhost: fx\r\ntransfer-encoding: chunked\r\n\r\n"),
+            &body,
+            Some(b"0\r\n\r\n"),
+        );
+        assert_eq!(
+            r.write_err, None,
+            "attempt {attempt}: the client's write failed (the server closed first)"
+        );
+        let resp = r
+            .response
+            .unwrap_or_else(|k| panic!("attempt {attempt}: reading the answer failed: {k:?}"));
+        assert!(
+            resp.starts_with("HTTP/1.1 413"),
+            "attempt {attempt}: {resp:?}"
+        );
+    }
+}
+
+#[test]
+fn refused_content_length_body_is_read_out_so_the_413_survives() {
+    let (_fake, s) = server_cap(ok, 1024);
+    for attempt in 0..100 {
+        let body = vec![vec![b'a'; 300 * 1024]];
+        let r = raw_exchange(
+            &s,
+            &format!(
+                "POST {URL} HTTP/1.1\r\nhost: fx\r\ncontent-length: {}\r\n\r\n",
+                300 * 1024
+            ),
+            &body,
+            None,
+        );
+        assert_eq!(
+            r.write_err, None,
+            "attempt {attempt}: the client's write failed (the server closed first)"
+        );
+        let resp = r
+            .response
+            .unwrap_or_else(|k| panic!("attempt {attempt}: reading the answer failed: {k:?}"));
+        assert!(
+            resp.starts_with("HTTP/1.1 413"),
+            "attempt {attempt}: {resp:?}"
+        );
+    }
+}
+
+/// The read-out is bounded: a client that sends past the cap and then goes quiet (never ends its body) still gets its
+/// 413 within the discard timeout, not after the call timeout.
+#[test]
+fn refused_body_that_never_ends_is_answered_within_the_discard_bound() {
+    let (_fake, s) = server_cap(ok, 1024);
+    let t0 = Instant::now();
+    let r = raw_exchange(
+        &s,
+        &format!("POST {URL} HTTP/1.1\r\nhost: fx\r\ntransfer-encoding: chunked\r\n\r\n"),
+        &[chunk(2048)],
+        None,
+    );
+    let resp = r.response.unwrap_or_else(|k| panic!("no answer: {k:?}"));
+    assert!(resp.starts_with("HTTP/1.1 413"), "{resp:?}");
+    assert!(
+        t0.elapsed() < Duration::from_secs(4),
+        "the 413 took {:?}",
+        t0.elapsed()
+    );
+}
+
 #[test]
 fn chunked_body_at_cap_is_forwarded() {
     let (fake, s) = server(ok);
