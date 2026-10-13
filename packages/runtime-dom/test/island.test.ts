@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { defineIsland, whenIsland, _resetIslands, _setIdle } from '../src/island'
+import { defineIsland, whenIsland, _resetIslands, _setIdle, IDLE_TIMEOUT_MS } from '../src/island'
 import { mount, unmount } from '../src'
 
 const def = defineIsland
@@ -125,4 +125,28 @@ test('islands inserted after mount (MutationObserver) are scheduled', async () =
   flush()
   expect(seen).toEqual(['z'])
   unmount()
+})
+
+test('the default scheduler bounds the wait for an idle period (a starved requestIdleCallback still hydrates)', () => {
+  _resetIslands()
+  const g = globalThis as { requestIdleCallback?: unknown }
+  const saved = g.requestIdleCallback
+  let seen: { timeout?: number } | undefined
+  let run: (() => void) | undefined
+  // A main thread with no idle gap: the callback only runs when the timeout expires.
+  g.requestIdleCallback = (cb: () => void, opts?: { timeout: number }) => { seen = opts; run = cb; return 1 }
+  try {
+    document.body.innerHTML = '<brust-island data-id="starved_9"></brust-island>'
+    defineIsland('starved_9', (h) => { h.setAttribute('data-ran', '1') })
+    mount()
+    const host = document.querySelector('brust-island')!
+    expect(host.hasAttribute('data-hydrated')).toBe(false)
+    expect(seen?.timeout).toBe(IDLE_TIMEOUT_MS)   // without a timeout this stays unhydrated forever
+    run!()   // the browser fires it at the timeout
+    expect(host.getAttribute('data-hydrated')).toBe('1')
+  } finally {
+    g.requestIdleCallback = saved
+    unmount()
+    document.body.innerHTML = ''
+  }
 })
