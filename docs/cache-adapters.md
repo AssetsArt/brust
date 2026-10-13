@@ -238,7 +238,7 @@ Only page keys are scoped by build id. The index sets, markers, counter and chan
 ### Guard and invalidation
 
 - **A stale write is refused exactly.** `get` returns the counter as the stamp. `set` runs a Lua script that checks the invalidation markers of the page's tags and of its `METHOD path`, and refuses (returns false) if any is newer than the stamp. A page rendered before an invalidation therefore cannot be stored after it, even if the two race.
-- **Invalidate and publish are one script.** It increments the counter, raises the markers and drops the index sets. The adapter then deletes the pages (`UNLINK`, in batches) and publishes `{seq, origin, args}` on the channel. Every script declares all its keys, as Dragonfly requires.
+- **Invalidate and publish are one script.** It increments the counter, raises the markers, drops the index sets and publishes `{seq, origin, args}` on the channel, all inside the script. Scripts run one at a time, so events reach subscribers in counter order even when several processes invalidate at once. The adapter then deletes the pages (`UNLINK`, in batches). Every script declares all its keys, as Dragonfly requires.
 - **Receiving.** Worker 0 of each process holds the subscription and replays events into the process's tier 1. Events from the same process are skipped.
 
 ### Connections
@@ -251,9 +251,8 @@ Each Bun worker keeps one command connection. Worker 0 keeps one more for the su
 - While disconnected, commands fail at once; they are not queued. Tier-2 `get`/`set` failures count as `errors`, failed publishes as `publish_errors`, and pages keep being served from tier 1 and rendered on a miss. Logged failures are rate-limited (the first, then every 10th).
 - After every re-subscribe the adapter reads the counter. If it moved beyond the last event this process saw, tier 1 is cleared once (`resets` +1), so an event missed during the outage cannot leave a stale page.
 
-Two limits you should know about (tracked as follow-ups):
-- **Out-of-order delivery under concurrent invalidation.** The publish happens after the script, so two processes invalidating at the same moment can deliver events out of order. Other instances read that as a gap and clear their tier 1. This costs hit rate under bursts of invalidations from several processes; it does not serve stale pages.
-- **Orphaned pages after a dropped `UNLINK` batch.** The index sets are deleted inside the script, but pages are deleted afterwards. If the connection drops in between, those pages stay in Redis, with no index entry, until their TTL. Instances that replayed the event reject them through the invalidation floor, so the cost is storage and an occasional extra render, not a stale page.
+One limit you should know about:
+- **Orphaned pages after a dropped `UNLINK` batch.** The index sets are deleted inside the script, but pages are deleted afterwards. If the connection drops in between, those pages have no index entry. The adapter keeps the failed batch (at most 64 batches of `unlink_batch` pages) and tries it once more when the command connection comes back; if that fails too, or the batch was not kept, the pages stay until their TTL. Instances that replayed the event reject them through the invalidation floor, so the cost is storage and an occasional extra render, not a stale page.
 
 ### Dragonfly
 

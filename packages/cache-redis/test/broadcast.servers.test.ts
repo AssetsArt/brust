@@ -70,6 +70,50 @@ for (const [flavor, url] of servers()) {
       expect(await a.broadcast!.publish({ key: 'k' }, 'o')).toBe(1)
     })
 
+    test('N1: events from two processes invalidating at once arrive in seq order (PUBLISH is inside the script)', async () => {
+      const namespace = ns()
+      const sub = await make(flavor, url, {}, namespace)
+      const pub = await make(flavor, url, {}, namespace)
+      const seen: number[] = []
+      const stop = await sub.broadcast!.subscribe!((e: InvalidationEvent) => void seen.push(e.seq), () => {})
+      await until('subscribed', () => sub.__test.state().subscribed)
+      const N = 400
+      // The other process: its own connections, so its scripts and PUBLISHes race ours on the server.
+      const child = Bun.spawn([process.execPath, `${import.meta.dir}/ordering.child.ts`, flavor, url, namespace, String(N), 'child'], { stdout: 'inherit', stderr: 'inherit' })
+      let sent = 0
+      while (sent < N) {
+        const batch = Math.min(20, N - sent)
+        await Promise.all(Array.from({ length: batch }, (_, i) => pub.broadcast!.publish({ tags: [`t${(sent + i) % 5}`] }, 'parent')))
+        sent += batch
+      }
+      expect(await child.exited).toBe(0)
+      await until('all 2N events delivered', () => seen.length >= 2 * N, 10000)
+      await stop()
+      const inversions = seen.flatMap((v, i) => (i > 0 && v < seen[i - 1]! ? [`${seen[i - 1]} then ${v} at ${i}`] : []))
+      expect(inversions.slice(0, 5)).toEqual([])
+      expect(seen.length).toBe(2 * N)
+      expect(new Set(seen).size).toBe(2 * N) // every seq exactly once
+    }, 60000)
+
+    test('N2: a page batch whose UNLINK failed is retried once when the command link reconnects', async () => {
+      const a = await make(flavor, url, { reconnect_min_ms: 20, reconnect_max_ms: 50 })
+      await a.store!.set('o1', html('x'), meta({ tags: ['orph'], path: '/o1' }))
+      await a.store!.set('o2', html('y'), meta({ tags: ['orph'], path: '/o2' }))
+      // The link drops between the script (which deletes the index sets) and the UNLINK.
+      const c = a.__test.client()
+      const real = c.unlink.bind(c)
+      c.unlink = (() => Promise.reject(new Error('link dropped'))) as typeof c.unlink
+      await expect(a.store!.invalidate({ tags: ['orph'] })).rejects.toThrow('link dropped')
+      c.unlink = real
+      // No index entry is left, so only the retry can remove the pages.
+      expect(await a.__test.client().send('SCARD', [a.__test.keys().tag('orph')])).toBe(0)
+      expect((await a.store!.get('o1')).page).not.toBeNull()
+      const before = a.__test.state().reconnects
+      a.__test.dropCommands()
+      await until('reconnected', () => a.__test.state().connected && a.__test.state().reconnects > before)
+      await until('orphans unlinked on reconnect', async () => (await a.store!.get('o1')).page === null && (await a.store!.get('o2')).page === null)
+    })
+
     test('1 200 tagged pages invalidated in UNLINK batches', async () => {
       const a = await make(flavor, url, { unlink_batch: 500 })
       const c = a.__test.client()

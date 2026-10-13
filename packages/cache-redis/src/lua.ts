@@ -20,7 +20,10 @@ for i = 1, n do
 end
 return 1`
 
-// INVAL_LUA  KEYS = [seq, idx_1..idx_n, mark_1..mark_n]  ARGV = [mode ('both'|'delete'|'publish'), n, marker_ttl_ms]
+// INVAL_LUA  KEYS = [seq, idx_1..idx_n, mark_1..mark_n]
+//            ARGV = [mode ('both'|'delete'|'publish'), n, marker_ttl_ms, channel, origin_json, args_json]
+// The `publish` and `both` modes PUBLISH {seq, origin, args} from INSIDE the script (N1): scripts run one at a time, so
+// the order of events on the channel is the order of seq, however many processes invalidate at once.
 export const INVAL_LUA = `local unpack = table.unpack or unpack  -- Lua 5.1 (Redis) and 5.4 (Dragonfly)
 local mode = ARGV[1]; local n = tonumber(ARGV[2]); local mttl = tonumber(ARGV[3])
 local v
@@ -34,6 +37,9 @@ if mode ~= 'publish' and n > 0 then
   local idx = {}; for i = 1, n do idx[i] = KEYS[1 + i] end
   for _, m in ipairs(redis.call('SUNION', unpack(idx))) do out[#out + 1] = m end
   redis.call('DEL', unpack(idx))
+end
+if mode ~= 'delete' then
+  redis.call('PUBLISH', ARGV[4], '{"seq":' .. string.format('%d', v) .. ',"origin":' .. ARGV[5] .. ',"args":' .. ARGV[6] .. '}')
 end
 return out`
 
