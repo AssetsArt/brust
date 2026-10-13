@@ -749,6 +749,33 @@ The research verified this on 2026-10-13: `@import "tailwindcss"`, `@theme` and 
 - Chromium computed style of a utility class.
 - A dev CSS edit is swapped without reload.
 
+## After the round: publish, then shadcn/ui (human, 2026-10-13)
+
+The human: "หลังจากทำทั้งหมด public version ให้ แล้ว มาทำให้ brust ใช้ https://ui.shadcn.com/docs ได้ง่ายๆแบบ framework อื่นๆ แล้วมาเก็บ coverage shadcn Components ให้หมด".
+
+**P1. Publish.**
+- **When:** after every lane L1–L21 has merged with CI green and the docs site is synced (L17).
+- **What:** the lead publishes the next prerelease, **2.0.0-alpha.4**. This is the human's explicit go for this publish.
+- **How:**
+  - follow the release flow (`/release` skill and memory notes): `bun scripts/release-bump.ts` covers every version reference, including `bun.lock`;
+  - run CI on v2 and check the run's conclusion, not just the exit code;
+  - run the published-tarball install test.
+- **Not included:** deploying the docs site (brust.dev). That still waits for the human's word.
+
+**P2. shadcn/ui support** (a new plan written after P1; research first). The goal is that `npx shadcn@latest init` and `add <component>` work in a brust app the way they do in the frameworks shadcn documents. That needs:
+- `components.json` and the `@/` path aliases;
+- Tailwind v4 (L21) and the `cn` util;
+- a `create-app --shadcn` template;
+- docs.
+
+**Behaviour.** Radix-based interactive components run as React islands. Purely presentational ones (Card, Badge, …) should compile to static or native where possible.
+
+**P3. shadcn coverage.** Track every component in the shadcn registry, fetched from the registry rather than typed by hand, the same way L18 tracks React:
+- each component gets a build-and-render row;
+- the status is static, native, island, partial or unsupported, with notes;
+- the output is `docs/shadcn-coverage.json`;
+- it becomes a page on the docs site.
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
