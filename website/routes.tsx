@@ -1,5 +1,5 @@
 // website/routes.tsx — the brust docs site. Every page is TSX; no markdown pipeline (decision 2026-10-12).
-import { defineRoutes } from '@brust/core/routes'
+import { defineRoutes, redirect } from '@brust/core/routes'
 import DocsLayout, { docsLayoutLoader } from './components/docs/DocsLayout'
 import Layout, { layoutLoader } from './components/Layout'
 import { DOCS_HOME, PAGES } from './lib/nav'
@@ -38,5 +38,8 @@ export const routes = defineRoutes([
     ],
   },
   // Outside the layout: a static full document, no scripts.
+  // The blank template's starter page links /docs/routes; the page is /docs/routing. Outside the docs shell (its layout
+  // loader answers notFound for a path that is not a nav entry): a permanent redirect, one _redirects line in the static build.
+  { path: '/docs/routes', Component: NotFoundPage, loader: async () => redirect('/docs/routing', 301) },
   { path: '*', Component: NotFoundPage },
 ])
