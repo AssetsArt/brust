@@ -1,14 +1,45 @@
-:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-body { margin: 0; }
-main { max-width: 40rem; margin: 4rem auto; padding: 0 1.5rem; line-height: 1.5; }
-h1 { font-size: 2rem; margin: 0 0 0.5rem; }
+:root {
+  color-scheme: light dark;
+  --paper: oklch(94% 0.035 78);
+  --sheet: oklch(97% 0.02 82);
+  --ink: oklch(18% 0.035 82);
+  --ink-2: oklch(36% 0.045 80);
+  --rule: oklch(76% 0.05 77);
+  --amber: oklch(68% 0.145 74);
+  --amber-ink: oklch(46% 0.12 62);
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: oklch(20% 0.028 185);
+    --sheet: oklch(24% 0.032 182);
+    --ink: oklch(91% 0.02 82);
+    --ink-2: oklch(77% 0.03 82);
+    --rule: oklch(36% 0.032 180);
+    --amber: oklch(74% 0.12 78);
+    --amber-ink: oklch(81% 0.11 80);
+  }
+}
+body { margin: 0; background: var(--paper); color: var(--ink); line-height: 1.55; }
+main { max-width: 42rem; margin: 0 auto; padding: 4rem 16px; box-sizing: border-box; }
+.hero { display: flex; align-items: center; gap: 0.9rem; }
+.mark { flex: none; }
+h1 { font-size: 2.25rem; line-height: 1.1; margin: 0; letter-spacing: -0.01em; }
+.lead { font-size: 1.125rem; color: var(--ink-2); margin: 1rem 0 2rem; }
+.panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: 1rem; padding: 1.5rem; }
+.caption { margin: 1rem 0 0; font-size: 0.9375rem; color: var(--ink-2); }
 button {
   cursor: pointer;
   font: inherit;
-  padding: 0.5rem 1rem;
-  border: 1px solid currentColor;
-  border-radius: 0.5rem;
-  background: transparent;
-  color: inherit;
+  font-weight: 600;
+  padding: 0.5rem 1.1rem;
+  border: 1px solid var(--amber-ink);
+  border-radius: 0.6rem;
+  background: var(--amber);
+  color: oklch(18% 0.035 82);
 }
-button:hover { opacity: 0.8; }
+button:hover { filter: brightness(1.06); }
+.links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin-top: 2rem; }
+a { color: var(--amber-ink); font-weight: 600; text-underline-offset: 0.2em; }
+a:hover { text-decoration-thickness: 2px; }
+button:focus-visible, a:focus-visible { outline: 3px solid var(--amber-ink); outline-offset: 3px; border-radius: 0.25rem; }
