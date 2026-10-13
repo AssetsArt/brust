@@ -52,8 +52,8 @@ const MOD_SRC = `/* Card.module.css */
 const COMPILED = `<p{% if "card_nBzD1A" | present %} class="{{ "card_nBzD1A" | attr_str | e }}"{% endif %}>hello</p>`
 
 const INSTALL = `bun add -d tailwindcss@4 bun-plugin-tailwind
-# or scaffold with it:
-bun create @brust/app my-app --tailwind`
+# the blank starter already has both:
+bun create @brust/app my-app`
 
 const ENTRY = `/* app.css, imported by the root layout */
 @import "tailwindcss";

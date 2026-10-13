@@ -81,9 +81,10 @@ test('the dist block names the built CSS under client/', async () => {
 
 test('the built pages: Project structure shows app.css and the dev deps; Installation and CSS point at the starter', async () => {
   const ps = await (await fetch(`${base}/docs/project-structure`)).text()
-  expect(ps).toContain('app.css')
+  // the docs site's own layout links /public/app.css, so look at the tree block only
+  expect(ps).toContain('├── app.css\n')
+  expect(ps).toContain('├── public/\n│   └── favicon.svg\n')
   expect(ps).toContain('bun-plugin-tailwind')
-  expect(ps).not.toContain('public/app.css')
   expect(ps).toContain('.brust/dev')
   const inst = await (await fetch(`${base}/docs/installation`)).text()
   expect(inst).toContain('styled with Tailwind CSS v4')
