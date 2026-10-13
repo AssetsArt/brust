@@ -86,7 +86,7 @@ export async function configurationLoader(): Promise<ConfigurationData> {
 
 export default function Configuration({ blocks }: ConfigurationData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Configuration</h1>
       <p className="lead">One optional file, brust.toml, next to package.json. Every key has a default; a missing file is fine, a malformed one stops the server with a message.</p>
 
@@ -259,6 +259,6 @@ export default function Configuration({ blocks }: ConfigurationData) {
       <Note>
         <code>brust start</code> has no TLS option. Put a proxy or a load balancer in front of it for HTTPS.
       </Note>
-    </section>
+    </>
   )
 }

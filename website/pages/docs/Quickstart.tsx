@@ -1,7 +1,7 @@
 // Quickstart — the reference docs page (canon port): four steps from an empty folder to a page served by Rust.
 // Every code block is built in the loader (lib/highlight.ts); the CLI output is copied from a real run.
-// The root is one element (a fragment root gets wrapped in <brust-host>); display: contents keeps every block a grid
-// item of the docs article, so the article's rhythm applies.
+// The root is a fragment: a static component's fragment root emits no wrapper (F106), so every block is a grid item
+// of the docs article and the article's rhythm applies.
 import CodeBlock from '../../components/CodeBlock'
 import Note from '../../components/docs/Note'
 import Step from '../../components/docs/Step'
@@ -67,7 +67,7 @@ export async function quickstartLoader(): Promise<QuickstartData> {
 
 export default function Quickstart({ blocks }: QuickstartData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Quickstart</h1>
       <p className="lead">From an empty folder to a page served by Rust. Four steps, each one a command or a file you can copy as is.</p>
 
@@ -111,6 +111,6 @@ export default function Quickstart({ blocks }: QuickstartData) {
           <a href="/docs/rendering-tiers">Rendering tiers</a>: what makes a component static, native, or a React island.
         </li>
       </ul>
-    </section>
+    </>
   )
 }

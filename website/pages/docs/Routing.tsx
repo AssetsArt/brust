@@ -74,7 +74,7 @@ export async function routingLoader(): Promise<RoutingData> {
 
 export default function Routing({ blocks }: RoutingData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Routing</h1>
       <p className="lead">One file, routes.tsx, maps paths to components. Routes nest: a route with children is a layout.</p>
 
@@ -159,6 +159,6 @@ export default function Routing({ blocks }: RoutingData) {
           </tr>
         </tbody>
       </table>
-    </section>
+    </>
   )
 }

@@ -98,7 +98,7 @@ export async function formActionLoader(): Promise<FormActionData> {
 
 export default function FormAction({ blocks }: FormActionData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Form action</h1>
       <p className="lead">
         A form that adds a Pokémon to a team of up to six. The server side is one Elysia 2 app behind the Rust server; the form is a native component.
@@ -128,6 +128,6 @@ export default function FormAction({ blocks }: FormActionData) {
       <Note>
         Actions are public endpoints. brust rejects cross-site non-GET requests by default (403), and nothing more: authentication is your app&rsquo;s job. The team array above lives in one worker&rsquo;s memory, so keep real state in a database. See <a href="/docs/actions">Actions</a>.
       </Note>
-    </section>
+    </>
   )
 }

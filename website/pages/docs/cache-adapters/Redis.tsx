@@ -41,7 +41,7 @@ export async function redisLoader(): Promise<RedisData> {
 
 export default function Redis({ blocks }: RedisData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Redis and Dragonfly</h1>
       <p className="lead">
         One package serves both servers: <code>adapter = &quot;redis&quot;</code> or <code>adapter = &quot;dragonfly&quot;</code>. Native only; push broadcast over pub/sub.
@@ -251,6 +251,6 @@ export default function Redis({ blocks }: RedisData) {
           When running the container yourself, pass <code>--ulimit memlock=-1</code>.
         </li>
       </ul>
-    </section>
+    </>
   )
 }

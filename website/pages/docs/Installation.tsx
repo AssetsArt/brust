@@ -38,7 +38,7 @@ export async function installationLoader(): Promise<InstallationData> {
 
 export default function Installation({ blocks, starters }: InstallationData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Installation</h1>
       <p className="lead">brust needs Bun and nothing else: the Rust server ships prebuilt inside the npm package for your platform.</p>
 
@@ -116,6 +116,6 @@ export default function Installation({ blocks, starters }: InstallationData) {
       <p>
         Then write a <code>routes.tsx</code> as in the <a href="/docs/quickstart">Quickstart</a>, and see <a href="/docs/project-structure">Project structure</a> for where each file goes.
       </p>
-    </section>
+    </>
   )
 }

@@ -2,7 +2,7 @@
 // it React; useStore alone stays native). Removing a member runs the DELETE rule in the browser (team-client.ts); the
 // native badge updates too.
 import { useStore } from '@brust/core/store/react'
-import { useEffect, useReducer, useState } from 'react'
+import { useEffect, useReducer } from 'react'
 import { loadTeam, removeMember } from './team-client'
 import { team } from './team-store'
 
@@ -11,15 +11,12 @@ const flip = (open: boolean): boolean => !open
 export default function TeamIsland() {
   const s = useStore(team)
   const [open, toggle] = useReducer(flip, true)
-  // The island hydrates against the LIVE store, and the native badge and picker may already have filled it from
-  // storage, so the first render paints the empty team the static page was exported with (else React #418, gap G13);
-  // the real team follows right after hydration.
-  const [hydrated, setHydrated] = useState(false)
+  // The island hydrates against the snapshot the page was rendered with (F102), then follows the live store; loadTeam
+  // fills it from storage after mount.
   useEffect(() => {
     loadTeam()
-    setHydrated(true)
   }, [])
-  const members = hydrated ? s.members : []
+  const members = s.members
   const max = s.max
   return (
     <div className="team-island">

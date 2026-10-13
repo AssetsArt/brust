@@ -129,7 +129,7 @@ export async function cachingLoader(): Promise<CachingData> {
 
 export default function Caching({ blocks, names, ex, probe, presets }: CachingData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Caching</h1>
       <p className="lead">A route with a cache field is stored in the Rust server's memory after its first render. A hit is answered without calling Bun.</p>
 
@@ -143,7 +143,7 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
 
       <h2 id="probe">Watch it work</h2>
       <p>
-        The button requests <a href="/demo/pokemon/pikachu">/demo/pokemon/{'{name}'}</a> three times with a fresh query string: the same URL twice, then with <code>?nocache=1</code>. This site is built to ship as static files, so the requests go to a simulation of the route's rules in your browser, and each row shows the <code>x-brust-cache</code> header a brust server sends for it.
+        The button requests <code>/demo/pokemon/{'{name}'}</code> three times with a fresh query string: the same URL twice, then with <code>?nocache=1</code>. This site is built to ship as static files, so the requests go to a simulation of the route's rules in your browser, and each row shows the <code>x-brust-cache</code> header a brust server sends for it.
       </p>
       <div className="browser">
         <div className="url">
@@ -404,6 +404,6 @@ export default function Caching({ blocks, names, ex, probe, presets }: CachingDa
       <p>
         The page cache lives in one server's memory. To share it between instances, and to send every invalidation to all of them, configure a cache adapter (Redis or Dragonfly, Cloudflare KV or Durable Objects, or your own) in <code>[cache]</code>. A hit from it is reported as <code>HIT-L2</code>. See <a href="/docs/cache-adapters/overview">Cache adapters</a>.
       </p>
-    </section>
+    </>
   )
 }

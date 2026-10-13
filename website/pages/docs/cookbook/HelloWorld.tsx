@@ -95,7 +95,7 @@ export async function helloWorldLoader(): Promise<HelloWorldData> {
 
 export default function HelloWorld({ blocks }: HelloWorldData) {
   return (
-    <section style={{ display: 'contents' }}>
+    <>
       <h1>Hello world</h1>
       <p className="lead">The smallest app: one page, one route. Then a route with a path param and a loader.</p>
 
@@ -121,6 +121,6 @@ export default function HelloWorld({ blocks }: HelloWorldData) {
       <Note>
         Loaders have their own page: <a href="/docs/loaders">Loaders and params</a>. For the catch-all 404 document, see <a href="/docs/cookbook/static-404">Static 404 page</a>.
       </Note>
-    </section>
+    </>
   )
 }
