@@ -14,42 +14,44 @@ export default function LoaderDemo({ initial, names }: { initial: Lookup; names:
     queueMicrotask(() => root.current?.setAttribute('data-ready', ''))
   }, [])
   return (
-    <div className="browser loader-demo">
-      <div className="url">
-        <span>/docs/loaders?pokemon={demo.query}</span>
-        <span className="lbl">LoaderDemo · native</span>
-      </div>
-      <div className="vp" ref={root}>
-        <p className="cta">
-          {names.map((n) => (
-            <button
-              key={n}
-              type="button"
-              className="btn"
-              onClick={() => {
-                setDemo(lookup(n))
-                history.replaceState(null, '', `?pokemon=${n}#demo`)
-              }}
-            >
-              {n}
-            </button>
-          ))}
-        </p>
-        <div className="cards">
-          <article className="pk">
-            <img src={demo.card.art} alt={demo.card.name} width="200" height="200" />
-            <span className="no">{demo.card.no}</span>
-            <h4>{demo.card.name}</h4>
-            <div>
-              {demo.card.types.map((t) => (
-                <span key={t} className={'ty ' + t}>
-                  {t}
-                </span>
-              ))}
-            </div>
-          </article>
+    <div className="loader-demo">
+      <div className="browser">
+        <div className="url">
+          <span>/docs/loaders?pokemon={demo.query}</span>
+          <span className="lbl">LoaderDemo · native</span>
         </div>
-        <p className="vp-note">{demo.found ? 'Found in lib/pokemon.ts.' : 'Not in this demo set. A real route would answer notFound().'}</p>
+        <div className="vp" ref={root}>
+          <p className="cta">
+            {names.map((n) => (
+              <button
+                key={n}
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setDemo(lookup(n))
+                  history.replaceState(null, '', `?pokemon=${n}#demo`)
+                }}
+              >
+                {n}
+              </button>
+            ))}
+          </p>
+          <div className="cards">
+            <article className="pk">
+              <img src={demo.card.art} alt={demo.card.name} width="200" height="200" />
+              <span className="no">{demo.card.no}</span>
+              <h4>{demo.card.name}</h4>
+              <div>
+                {demo.card.types.map((t) => (
+                  <span key={t} className={'ty ' + t}>
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </article>
+          </div>
+          <p className="vp-note">{demo.found ? 'Found in lib/pokemon.ts.' : 'Not in this demo set. A real route would answer notFound().'}</p>
+        </div>
       </div>
     </div>
   )

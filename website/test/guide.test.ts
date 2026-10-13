@@ -71,7 +71,7 @@ test('demo route: param, notFound 404, and real MISS / HIT / BYPASS headers', as
 })
 
 test('Loaders: the page is painted with pikachu whatever the query (static export), the browser reads ?pokemon=', async () => {
-  for (const q of ['', '?pokemon=snorlax']) expect(await (await fetch(`${base}/docs/loaders${q}`)).text()).toContain('<h4>Pikachu</h4>')
+  for (const q of ['', '?pokemon=snorlax']) expect(await (await fetch(`${base}/docs/loaders${q}`)).text()).toMatch(/<h4[^>]*>Pikachu<\/h4>/)
   const page = await open('/docs/loaders?pokemon=snorlax')
   await ready(page, '.loader-demo')
   await page.locator('.loader-demo h4', { hasText: 'Snorlax' }).waitFor()
