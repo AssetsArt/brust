@@ -1,16 +1,16 @@
-// Loaders and params — the loader context, how results reach components, verdicts; the demo IS this page's loader.
+// Loaders and params — the loader context, how results reach components, verdicts. This site is a static export
+// (plan R7): the demo runs the page loader's lookup in the browser; the loader snippet stays the reference.
 import CodeBlock from '../../components/CodeBlock'
 import Note from '../../components/docs/Note'
-import PokemonCard from '../../components/landing/demos/PokemonCard'
-import type { LoaderCtx } from '@brust/core/routes'
+import LoaderDemo from '../../components/demos/LoaderDemo'
+import { type Lookup, lookup } from '../../components/demos/loader-lookup'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
-import { artworkUrl, byName, dexNo, displayName } from '../../lib/pokemon'
 
 export interface LoadersData {
   toc: TocItem[]
   blocks: Record<'loader' | 'ctx' | 'page' | 'verdicts' | 'mine', CodeBlockData>
-  demo: { query: string; card: { no: string; name: string; art: string; types: string[] }; found: boolean; links: { href: string; label: string }[] }
+  demo: { initial: Lookup; names: string[] }
 }
 
 const LOADER = `import { type LoaderCtx, notFound } from '@brust/core/routes'
@@ -53,24 +53,22 @@ return notFound({ name })            // 404, renders this route's page with the 
 return redirect('/pokedex', 308)     // Location header, nothing rendered (default 302)
 httpError(429, 'slow down')          // throw-only: any 400-599 status and a body`
 
-const MINE = `// website/pages/docs/Loaders.tsx: this page's loader (trimmed)
+const MINE = `// pages/docs/Loaders.tsx on a brust server (this static site runs the lookup in the browser)
 export async function loadersLoader({ req }: LoaderCtx): Promise<LoadersData> {
   const query = (req.search.pokemon ?? 'pikachu').trim().toLowerCase().slice(0, 30)
   const p = byName(query) // lib/pokemon.ts
   return { toc, blocks, demo: { query, found: p !== undefined, card: p ? cardOf(p) : unknownCard(query) } }
 }`
 
-const LINKS = ['pikachu', 'eevee', 'snorlax', 'mewtwo', 'agumon']
+const NAMES = ['pikachu', 'eevee', 'snorlax', 'mewtwo', 'agumon']
 
-export async function loadersLoader({ req }: LoaderCtx): Promise<LoadersData> {
-  const query = (req.search.pokemon ?? 'pikachu').trim().toLowerCase().slice(0, 30)
-  const p = byName(query)
+export async function loadersLoader(): Promise<LoadersData> {
   return {
     toc: [
       { id: 'write', title: 'Write a loader' },
       { id: 'ctx', title: 'What a loader gets' },
       { id: 'props', title: 'How the data reaches components' },
-      { id: 'demo', title: 'This page has a loader' },
+      { id: 'demo', title: 'Try a lookup' },
       { id: 'verdicts', title: 'Not found, redirect, errors' },
     ],
     blocks: {
@@ -80,14 +78,7 @@ export async function loadersLoader({ req }: LoaderCtx): Promise<LoadersData> {
       verdicts: codeBlock({ lang: 'ts', file: 'lib/loaders.ts', code: VERDICTS }),
       mine: codeBlock({ lang: 'ts', file: 'pages/docs/Loaders.tsx', code: MINE }),
     },
-    demo: {
-      query,
-      found: p !== undefined,
-      card: p
-        ? { no: dexNo(p.id), name: displayName(p.name), art: artworkUrl(p.id), types: p.types }
-        : { no: '#???', name: query || '(empty)', art: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=', types: [] },
-      links: LINKS.map((n) => ({ href: `/docs/loaders?pokemon=${n}#demo`, label: n })),
-    },
+    demo: { initial: lookup('pikachu'), names: NAMES },
   }
 }
 
@@ -113,32 +104,14 @@ export default function Loaders({ blocks, demo }: LoadersData) {
         The merge is flat, so name keys with care. On this site the layout loader returns <code>version</code> for the header; a page loader returning its own <code>version</code> would replace it on that page. Group page data under one key (this page uses <code>demo</code>).
       </Note>
 
-      <h2 id="demo">This page has a loader</h2>
+      <h2 id="demo">Try a lookup</h2>
       <p>
-        This page's loader reads <code>?pokemon=</code> from <code>req.search</code> and looks the name up in the site's Pokémon module. Pick one, and the page is rendered again on the server with the new data.
+        On a brust server, a loader like the one below reads <code>?pokemon=</code> from <code>req.search</code> and looks the name up in the site's Pokémon module, and the page is rendered again with the new data. This site is a static export, so the demo runs the same lookup in your browser and rewrites the address.
       </p>
-      <div className="browser">
-        <div className="url">
-          <span>/docs/loaders?pokemon={demo.query}</span>
-          <span className="lbl">PokemonCard · static</span>
-        </div>
-        <div className="vp">
-          <p className="cta">
-            {demo.links.map((l) => (
-              <a key={l.href} className="btn" href={l.href}>
-                {l.label}
-              </a>
-            ))}
-          </p>
-          <div className="cards">
-            <PokemonCard no={demo.card.no} name={demo.card.name} art={demo.card.art} types={demo.card.types} />
-          </div>
-          <p className="vp-note">{demo.found ? 'Found in lib/pokemon.ts.' : 'Not in this demo set. A real route would answer notFound(), see /demo/pokemon/agumon.'}</p>
-        </div>
-      </div>
+      <LoaderDemo initial={demo.initial} names={demo.names} />
       <CodeBlock code={blocks.mine.code} lang={blocks.mine.lang} file={blocks.mine.file} html={blocks.mine.html} />
       <p>
-        For a route param, open <a href="/demo/pokemon/eevee">/demo/pokemon/eevee</a>: its loader reads <code>params.name</code>, and an unknown name such as <a href="/demo/pokemon/agumon">/demo/pokemon/agumon</a> returns <code>notFound()</code>.
+        For a route param, open <a href="/demo/pokemon/eevee">/demo/pokemon/eevee</a>: its loader reads <code>params.name</code>, and on a brust server an unknown name such as <a href="/demo/pokemon/agumon">/demo/pokemon/agumon</a> returns <code>notFound()</code>. This site exported one page per known Pokémon, so an unknown name is its 404 page.
       </p>
 
       <h2 id="verdicts">Not found, redirect, errors</h2>

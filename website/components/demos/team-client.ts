@@ -1,26 +1,71 @@
-// The one place demo UI calls the team actions; every reply is written to the store, so every reader updates.
-import { client } from '@brust/core/client'
-import type { App } from '../../actions'
-import { team } from './team-store'
+// The one place demo UI changes the team. This site is a static export (no server at runtime, plan R4/R5), so the
+// rules of the Actions page's `POST /team` run here, in the browser: the same cap of 6, the same duplicate and
+// remove rules, the same error titles. The team is kept in localStorage; every write goes into the `team` store, so
+// every reader updates. A blocked storage (private mode, cleared site data) leaves an in-memory team.
+import { byId, displayName, spriteUrl } from '../../lib/pokemon'
+import { team, type TeamMember } from './team-store'
 
-const api = client<App>()
+export const MAX_TEAM = 6
+export const TEAM_KEY = 'brust_docs_team'
 
-type Reply = { data: { team: { id: number; name: string; sprite: string }[]; max: number } | null; error: { status: unknown } | null }
-const apply = (r: Reply): void => {
-  if (r.data) {
-    team.members.set(r.data.team)
-    team.max.set(r.data.max)
+export function member(id: number): TeamMember {
+  return { id, name: displayName(byId(id)!.name), sprite: spriteUrl(id) }
+}
+
+/** The team in a stored value (`25.1.4`): unknown or repeated ids dropped, at most MAX_TEAM. */
+export function teamFromValue(value: string | null | undefined): TeamMember[] {
+  const ids = [...new Set((value ?? '').split('.').map(Number))].filter((id) => byId(id) !== undefined)
+  return ids.slice(0, MAX_TEAM).map(member)
+}
+
+export type TeamResult = { ok: true; team: TeamMember[] } | { ok: false; status: 404 | 409; title: 'UnknownPokemon' | 'TeamFull'; detail: string }
+
+/** The add rule of the Actions page's `POST /team`: unknown id 404, already in the team = unchanged, a seventh 409. */
+export function addTo(current: TeamMember[], id: number): TeamResult {
+  if (!byId(id)) return { ok: false, status: 404, title: 'UnknownPokemon', detail: `no Pokémon #${id} in this demo` }
+  if (current.some((m) => m.id === id)) return { ok: true, team: current }
+  if (current.length >= MAX_TEAM) return { ok: false, status: 409, title: 'TeamFull', detail: `the team already has ${MAX_TEAM} members` }
+  return { ok: true, team: [...current, member(id)] }
+}
+
+function read(): string | null {
+  try {
+    return globalThis.localStorage?.getItem(TEAM_KEY) ?? null
+  } catch {
+    return null
   }
 }
 
-/** Adds a Pokémon; resolves to an error line for the demo (409 team full, or the status), or '' on success. */
+function save(next: TeamMember[]): void {
+  team.members.set(next)
+  team.max.set(MAX_TEAM)
+  try {
+    globalThis.localStorage?.setItem(TEAM_KEY, next.map((m) => m.id).join('.'))
+  } catch {
+    // storage blocked: the team lives in memory until the tab closes
+  }
+}
+
+let loaded = false
+
+/** Fills the store from localStorage once per page; every team component calls it when it mounts. */
+export function loadTeam(): void {
+  if (loaded) return
+  loaded = true
+  team.members.set(teamFromValue(read()))
+  team.max.set(MAX_TEAM)
+}
+
+/** Adds a Pokémon; resolves to an error line for the demo (`409 TeamFull: …`), or '' on success. */
 export async function addMember(id: number): Promise<string> {
-  const r = await api.team.post({ id })
-  if (r.error) return r.error.status === 409 ? `409 · team full (max ${team.max()})` : `failed with status ${String(r.error.status)}`
-  apply(r)
+  loadTeam()
+  const r = addTo(team.members(), id)
+  if (!r.ok) return `${r.status} ${r.title}: ${r.detail}`
+  save(r.team)
   return ''
 }
 
 export async function removeMember(id: number): Promise<void> {
-  apply(await api.team({ id }).delete())
+  loadTeam()
+  save(team.members().filter((m) => m.id !== id))
 }

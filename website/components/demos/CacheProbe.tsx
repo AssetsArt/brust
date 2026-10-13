@@ -1,7 +1,8 @@
-// Demo, native tier: fetches the cached demo route and shows the REAL x-brust-cache header of each response.
-// A fresh query string makes a fresh L1 key, so the first request is a MISS and the second a HIT; ?nocache=1 hits the
-// route's bypass expression.
+// Demo, native tier: the Caching page's probe. This site is a static export, so the three requests go to a
+// simulation of the demo route's cache rules (cache-sim.ts) and the rows show the x-brust-cache header a real
+// `brust start` sends for them. The visible label says so; there are no timings, because nothing is measured.
 import { useEffect, useRef, useState } from 'react'
+import { demoCache } from './cache-sim'
 
 export default function CacheProbe({ names }: { names: string[] }) {
   const root = useRef<HTMLButtonElement>(null)
@@ -11,7 +12,6 @@ export default function CacheProbe({ names }: { names: string[] }) {
     queueMicrotask(() => root.current?.setAttribute('data-ready', ''))
   }, [])
   const [rows, setRows] = useState<string[]>([])
-  const [busy, setBusy] = useState(false)
   const [turn, setTurn] = useState(0)
   return (
     <div className="probe">
@@ -20,24 +20,19 @@ export default function CacheProbe({ names }: { names: string[] }) {
           ref={root}
           type="button"
           className="demo-btn"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true)
+          onClick={() => {
             const name = names[turn % names.length]!
             const v = Math.random().toString(36).slice(2, 8)
             const out: string[] = []
             for (const url of [`/demo/pokemon/${name}?v=${v}`, `/demo/pokemon/${name}?v=${v}`, `/demo/pokemon/${name}?v=${v}&nocache=1`]) {
-              const t0 = performance.now()
-              const r = await fetch(url)
-              await r.text()
-              out.push(`${r.status} · x-brust-cache: ${r.headers.get('x-brust-cache') ?? '(none)'} · ${(performance.now() - t0).toFixed(1)} ms · GET ${url}`)
+              const r = demoCache.get(url)
+              out.push(`${r.status} · x-brust-cache: ${r.cache} · GET ${url}`)
             }
             setRows(out)
             setTurn(turn + 1)
-            setBusy(false)
           }}
         >
-          Fetch three times
+          Request three times
         </button>
       </div>
       <ol className="sig-list" aria-live="polite">
@@ -48,6 +43,9 @@ export default function CacheProbe({ names }: { names: string[] }) {
           </li>
         ))}
       </ol>
+      <p className="vp-note">
+        Simulated in your browser: <code>brust start</code> sends these headers for real.
+      </p>
     </div>
   )
 }

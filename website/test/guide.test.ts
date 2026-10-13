@@ -54,7 +54,7 @@ test('every Guide page is 200 with its title, a live demo frame and no compiler 
 test('tiers: pages static; demos as the docs text claims', () => {
   for (const name of ['Introduction', 'Installation', 'ProjectStructure', 'Routing', 'Loaders', 'RenderingTiers', 'Caching', 'Actions', 'Store', 'Configuration', 'Cli', 'Deployment', 'Migrating', 'DemoPokemonPage'])
     expect([name, tierOf(name).tier, tierOf(name).client]).toEqual([name, 'static', null])
-  for (const name of ['CacheProbe', 'StarterPicker', 'FileTree', 'RouteMatcher', 'ConfigBuilder', 'SwitchPanels', 'TeamPicker', 'TeamBadge'])
+  for (const name of ['CacheProbe', 'StarterPicker', 'FileTree', 'RouteMatcher', 'ConfigBuilder', 'SwitchPanels', 'TeamPicker', 'TeamBadge', 'LoaderDemo'])
     expect([name, tierOf(name).tier]).toEqual([name, 'native'])
   expect(tierOf('TeamIsland').tier).toBe('react')
 })
@@ -70,9 +70,22 @@ test('demo route: param, notFound 404, and real MISS / HIT / BYPASS headers', as
   expect((await fetch(`${base}/demo/pokemon/agumon`)).status).toBe(404)
 })
 
-test('Loaders: the page loader reads ?pokemon=', async () => {
-  expect(await (await fetch(`${base}/docs/loaders?pokemon=snorlax`)).text()).toContain('<h4>Snorlax</h4>')
-  expect(await (await fetch(`${base}/docs/loaders?pokemon=agumon`)).text()).toContain('Not in this demo set')
+test('Loaders: the page is painted with pikachu whatever the query (static export), the browser reads ?pokemon=', async () => {
+  for (const q of ['', '?pokemon=snorlax']) expect(await (await fetch(`${base}/docs/loaders${q}`)).text()).toMatch(/<h4[^>]*>Pikachu<\/h4>/)
+  const page = await open('/docs/loaders?pokemon=snorlax')
+  await ready(page, '.loader-demo')
+  await page.locator('.loader-demo h4', { hasText: 'Snorlax' }).waitFor()
+  await page.locator('.loader-demo button', { hasText: 'agumon' }).click()
+  await page.locator('.loader-demo .vp-note', { hasText: 'Not in this demo set' }).waitFor()
+  expect(new URL(page.url()).search).toBe('?pokemon=agumon')
+  expect(errorsOf(page)).toEqual([])
+  await page.context().close()
+}, TEST_MS)
+
+test('no server features: no actions app, no /_brust/action, no cookie', async () => {
+  expect((manifest as Manifest & { actions: unknown }).actions).toBeNull()
+  expect((await fetch(`${base}/_brust/action/team`)).status).toBe(404)
+  for (const p of ['/docs/actions', '/docs/store']) expect([p, (await fetch(`${base}${p}`)).headers.get('set-cookie')]).toEqual([p, null])
 })
 
 test('Rendering tiers: the labels come from the manifest', async () => {
@@ -99,7 +112,7 @@ test('Routing: the matcher finds the route and decodes params', async () => {
   await page.context().close()
 }, TEST_MS)
 
-test('Caching: the probe shows the real headers MISS, HIT, BYPASS', async () => {
+test('Caching: the simulated probe shows MISS, HIT, BYPASS like the real server', async () => {
   const page = await open('/docs/caching')
   await ready(page, '.probe')
   await page.locator('.probe button').click()
@@ -110,7 +123,7 @@ test('Caching: the probe shows the real headers MISS, HIT, BYPASS', async () => 
   await page.context().close()
 }, TEST_MS)
 
-test('Actions + Store: real actions, a 409 at the seventh, one store across native and react', async () => {
+test('Actions + Store: browser-only team, a TeamFull 409 at the seventh, one store across native and react', async () => {
   const page = await open('/docs/actions')
   await ready(page, '.picker')
   const buttons = page.locator('.picker .demo-btn')
@@ -119,13 +132,14 @@ test('Actions + Store: real actions, a 409 at the seventh, one store across nati
     await page.locator('.picker .vp-note', { hasText: `team ${i + 1} / 6` }).waitFor()
   }
   await buttons.nth(6).click()
-  await page.locator('.picker .vp-note', { hasText: '409' }).waitFor()
+  await page.locator('.picker .vp-note', { hasText: '409 TeamFull' }).waitFor()
   const ctx = page.context()
-  expect((await ctx.cookies()).find((c) => c.name === 'brust_docs_team')?.value.split('.').length).toBe(6)
-  // the Store page paints the same team from the cookie on the server, then the island and the badge share the store
+  expect(await ctx.cookies()).toEqual([])
+  expect(await page.evaluate(() => localStorage.getItem('brust_docs_team')?.split('.').length)).toBe(6)
+  // the Store page is painted with an empty team, then the browser fills the badge and the island from storage
   await page.goto(`${base}/docs/store`, { waitUntil: 'networkidle' })
-  expect(await page.locator('.team-badge b').textContent()).toBe('6')
   await ready(page, '.team-badge')
+  await page.locator('.team-badge b', { hasText: '6' }).waitFor()
   await page.locator('brust-island[data-hydrated] .team-island').waitFor()
   await page.locator('.team-island .demo-list button').first().click()
   await page.locator('.team-badge b', { hasText: '5' }).waitFor()

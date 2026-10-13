@@ -6,14 +6,13 @@
   "scripts": {
     "dev": "brust build routes.tsx && brust start",
     "build": "brust build routes.tsx",
+    "export": "bun scripts/export-static.ts",
     "start": "brust start",
     "test": "bun test",
     "typecheck": "bun check"
   },
   "dependencies": {
     "@brust/core": "workspace:*",
-    "@elysia/eden": "2.0.0-beta.6",
-    "elysia": "2.0.0-beta.30",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "shiki": "^4.5.0"
