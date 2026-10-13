@@ -253,12 +253,13 @@ jobs:
       # m2e: the pokedex dogfood (spec §10). Each server-starting file runs alone.
       - run: cd examples/pokedex && bun test
       - run: cd examples/pokedex && bun run typecheck
-      # website/: the docs site (TSX pages on the workspace @brust/core).
-      - run: cd website && bun run typecheck && bun test
       # m3f-create-app: unit + pack, then the scaffold run (packs core/runtime-dom, bun install from npm, build, start) on its own.
       - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/sync-template.test.ts test/pack.test.ts test/tailwind.test.ts
       - run: cd packages/create-app && bun test --timeout 600000 test/scaffold.test.ts
       - run: bunx playwright install --with-deps chromium
+      # website/: the docs site (TSX pages on the workspace @brust/core); several files drive Chromium, so it runs after
+      # the browser install, and each file runs alone (each starts its own server; a combined run raced on ports).
+      - run: cd website && bun run typecheck && for f in test/*.test.ts; do bun test --timeout 180000 "$f" || exit 1; done
       - run: bun test --timeout 120000 tests/server/pokedex.test.ts
       - run: bun test --timeout 120000 tests/server/cache-adapter.test.ts
       - run: bun test --timeout 120000 tests/server/inner-html.test.ts
