@@ -73,10 +73,9 @@ test('blank: install → build → typecheck → start; / is the native counter;
   expect(html).toContain('/public/favicon.svg')
   // R25.4: HomePage static, Counter native, no react chunk.
   const manifest = JSON.parse(readFileSync(join(dir, 'dist/manifest.json'), 'utf8')) as { components: Record<string, { tier?: string }> }
-  const tiers = Object.values(manifest.components).map((c) => c.tier)
-  expect(tiers).toContain('static')
-  expect(tiers).toContain('native')
-  expect(tiers).not.toContain('react')
+  const tierOf = (prefix: string) => Object.entries(manifest.components).find(([id]) => id.startsWith(prefix))?.[1].tier
+  expect([tierOf('homePage_'), tierOf('counter_')]).toEqual(['static', 'native'])
+  expect(Object.values(manifest.components).map((c) => c.tier)).not.toContain('react')
   const srcs = [...html.matchAll(/<script[^>]*src="([^"]+)"/g)].map((m) => m[1]!)
   expect(srcs.length).toBeGreaterThan(0)
   for (const s of srcs) expect((await fetch(new URL(s, app.base))).status, s).toBe(200)

@@ -42,4 +42,4 @@ button:hover { filter: brightness(1.06); }
 .links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin-top: 2rem; }
 a { color: var(--amber-ink); font-weight: 600; text-underline-offset: 0.2em; }
 a:hover { text-decoration-thickness: 2px; }
-button:focus-visible, a:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; border-radius: 0.25rem; }
+button:focus-visible, a:focus-visible { outline: 3px solid var(--amber-ink); outline-offset: 3px; border-radius: 0.25rem; }

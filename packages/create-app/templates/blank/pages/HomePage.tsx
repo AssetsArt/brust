@@ -4,7 +4,7 @@ export default function HomePage() {
   return (
     <>
       <header className="hero">
-        <svg className="mark" viewBox="0 0 32 32" width="44" height="44" role="img" aria-label="brust">
+        <svg className="mark" viewBox="0 0 32 32" width="44" height="44" aria-hidden="true">
           <rect width="32" height="32" rx="8" fill="#062323" />
           <path d="M7 19a9 9 0 0 1 18 0z" fill="#f2a516" />
           <rect x="5" y="20.5" width="22" height="2.2" rx="1.1" fill="#f2a516" />
