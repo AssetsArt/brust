@@ -73,6 +73,22 @@ test('an import of bun:sqlite fails with cf-unsupported', () => {
   expect(r.err).toContain('lib/db.cf.ts imports bun:sqlite')
 })
 
+test('an island whose component its module does not export builds for Cloudflare (R34.11)', () => {
+  const dir = join(FIX, 'cf-app-helper')
+  cleanup.push(dir)
+  cpSync(APP, dir, { recursive: true })
+  // `Helper` is a React island (useReducer) that nothing exports: the Worker bundle re-bundles jobs.ts and must expose it.
+  writeFileSync(
+    join(dir, 'Home.tsx'),
+    "import { useReducer } from 'react'\n\nfunction Helper({ label }: { label: string }) {\n  const [n, hit] = useReducer((x: number) => x + 1, 0)\n  return <button type=\"button\" onClick={() => hit()}>{label} {n}</button>\n}\n\nexport default function Home() {\n  return <main><Helper label=\"helper\" /></main>\n}\n",
+  )
+  const out = join(outDir(), 'dist')
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])
+  expect(r.err).not.toContain('No matching export')
+  expect(r.code).toBe(0)
+  expect(readFileSync(join(out, 'cf', 'worker', 'brust-app.js'), 'utf8')).toContain('helper')
+})
+
 test('--target nope is a usage error; without --target there is no dist/cf', () => {
   expect(brust(APP, ['build', 'routes.tsx', '--target', 'nope']).code).toBe(2)
   const out = join(outDir(), 'dist')
