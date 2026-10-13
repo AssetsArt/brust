@@ -220,6 +220,7 @@ jobs:
       - run: bun test --timeout 180000 tests/server/dev.chromium.test.ts
       - run: bun test --timeout 180000 tests/server/dev-lifecycle.chromium.test.ts
       - run: bun test --timeout 180000 tests/server/dev-trace.chromium.test.ts
+      - run: bun test --timeout 180000 tests/server/devtools.chromium.test.ts
       - run: cd packages/cache-redis && bun run typecheck && bun test
       - run: bun test --timeout 180000 tests/server/cache-redis.test.ts
       - run: bun test --timeout 120000 tests/server/hydrate.chromium.test.ts
