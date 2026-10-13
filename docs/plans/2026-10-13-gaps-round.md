@@ -554,6 +554,34 @@ This is how "static pages on Pages + actions on their own domain" works without 
 
 **Docs:** `docs/actions.md` gets a new section, "Deploy actions separately", walking end to end through two deployments, CORS, credentials and cookies. Also update `docs/cloudflare.md`. The website docs follow on docs-site (lead).
 
+### L17 `docs-site-sync`: the website documents every merged lane (docs-site branch, lead-owned)
+
+The human asked for this on 2026-10-13: "ถ้าทำเสร็จแล้ว update document site ด้วยนะ".
+
+After each lane merges into v2, the lead merges v2 into `docs-site`, rebuilds the addon, and updates `website/` in the same pass:
+- new pages or sections for each feature;
+- live demos where the feature allows;
+- every example run for real.
+
+The changes per lane:
+
+| Lane | Website change |
+|---|---|
+| L1 | Remove the workarounds that inlined literals by hand. |
+| L3 | `CodeBlock` with literal props. |
+| L2 | `buildTime()` for highlighting. |
+| L5 | The landing's react demo becomes native; pick a genuine react demo. |
+| L6 | Map conditionals in the Rendering tiers page. |
+| L7 | `routes.tsx` drops its 25 workaround imports. |
+| L8 | Drop `display: contents` wrappers. |
+| L9 | The site builds with `--target static`; restore the export test. |
+| L10 | Configuration: response size, `slotBytes`, `run()` cors. |
+| L11 | Remove the TeamIsland workaround. |
+| L12, L16 | Deployment and Actions pages. |
+| L13–L15 | A new "Dev mode" page, plus the CLI page. |
+
+Each pass gets screenshots in light, dark and at 400px, plus the website tests. It is a direct commit on docs-site (no PR), as before.
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
