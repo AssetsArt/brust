@@ -147,7 +147,10 @@ impl RouteTable {
             // still get entries so route_id == array index is preserved on both
             // sides (Rust idx as u32 ↔ TS byRouteId).
             if c.not_found {
-                nf_table.push((normalize_route_pattern(&c.not_found_prefix).into_owned(), idx as u32));
+                nf_table.push((
+                    normalize_route_pattern(&c.not_found_prefix).into_owned(),
+                    idx as u32,
+                ));
                 // Still push to the parallel Vecs to keep indices aligned.
                 caches.push(c.cache.clone());
                 compiled.push(CompiledCache::default());
@@ -229,7 +232,12 @@ impl RouteTable {
                 params: m
                     .params
                     .into_iter()
-                    .map(|(k, v)| (std::borrow::Cow::Owned(k.into_owned()), std::borrow::Cow::Owned(v.into_owned())))
+                    .map(|(k, v)| {
+                        (
+                            std::borrow::Cow::Owned(k.into_owned()),
+                            std::borrow::Cow::Owned(v.into_owned()),
+                        )
+                    })
                     .collect(),
             }),
         }
@@ -447,8 +455,16 @@ fn normalize(s: &str, braces: bool) -> std::borrow::Cow<'_, str> {
             out.push(c);
         } else if depth > 0 {
             out.push(c);
-        } else if c == b'%' && i + 2 < b.len() && b[i + 1].is_ascii_hexdigit() && b[i + 2].is_ascii_hexdigit() {
-            out.extend_from_slice(&[b'%', b[i + 1].to_ascii_uppercase(), b[i + 2].to_ascii_uppercase()]);
+        } else if c == b'%'
+            && i + 2 < b.len()
+            && b[i + 1].is_ascii_hexdigit()
+            && b[i + 2].is_ascii_hexdigit()
+        {
+            out.extend_from_slice(&[
+                b'%',
+                b[i + 1].to_ascii_uppercase(),
+                b[i + 2].to_ascii_uppercase(),
+            ]);
             i += 3;
             continue;
         } else if needs_encode(c) {
@@ -1231,7 +1247,10 @@ mod tests {
         t.match_route(path).map(|m| {
             (
                 m.route_id,
-                m.params.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+                m.params
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
             )
         })
     }
@@ -1245,7 +1264,10 @@ mod tests {
         assert_eq!(normalize_request_path("/ข/%e0"), "/%E0%B8%82/%E0");
         // ASCII and uppercase hex are untouched (and borrowed: no allocation on the hot path)
         for p in ["/", "/items/42", "/a%2Fb", "/%E0%B8%82", "/a~b-c_d.e"] {
-            assert!(matches!(normalize_request_path(p), std::borrow::Cow::Borrowed(_)), "{p}");
+            assert!(
+                matches!(normalize_request_path(p), std::borrow::Cow::Borrowed(_)),
+                "{p}"
+            );
             assert_eq!(normalize_request_path(p), p);
         }
         // %2F stays an escape (never turned into a slash); a lone or malformed % is left alone
@@ -1256,19 +1278,33 @@ mod tests {
 
     #[test]
     fn normalize_route_pattern_keeps_params_verbatim() {
-        assert_eq!(normalize_route_pattern("/ข่าว/{id}"), format!("{NEWS_ENC}/{{id}}"));
-        assert_eq!(normalize_route_pattern("/docs/ภาษาไทย/{*rest}"), "/docs/%E0%B8%A0%E0%B8%B2%E0%B8%A9%E0%B8%B2%E0%B9%84%E0%B8%97%E0%B8%A2/{*rest}");
+        assert_eq!(
+            normalize_route_pattern("/ข่าว/{id}"),
+            format!("{NEWS_ENC}/{{id}}")
+        );
+        assert_eq!(
+            normalize_route_pattern("/docs/ภาษาไทย/{*rest}"),
+            "/docs/%E0%B8%A0%E0%B8%B2%E0%B8%A9%E0%B8%B2%E0%B9%84%E0%B8%97%E0%B8%A2/{*rest}"
+        );
         assert_eq!(normalize_route_pattern("/items/{id}"), "/items/{id}");
     }
 
     #[test]
     fn thai_literal_route_matches_encoded_lowercase_hex_and_raw_utf8() {
         let t = table(&["/", NEWS]);
-        for p in [NEWS_ENC, "/%e0%b8%82%e0%b9%88%e0%b8%b2%e0%b8%a7", NEWS, "/%e0%B8%82%E0%b9%88%E0%B8%b2%E0%B8%A7"] {
+        for p in [
+            NEWS_ENC,
+            "/%e0%b8%82%e0%b9%88%e0%b8%b2%e0%b8%a7",
+            NEWS,
+            "/%e0%B8%82%E0%b9%88%E0%B8%b2%E0%B8%A7",
+        ] {
             assert_eq!(route_of(&t, p).map(|r| r.0), Some(1), "{p}");
         }
         // a query does not disturb it
-        assert_eq!(route_of(&t, &format!("{NEWS_ENC}?q=1")).map(|r| r.0), Some(1));
+        assert_eq!(
+            route_of(&t, &format!("{NEWS_ENC}?q=1")).map(|r| r.0),
+            Some(1)
+        );
         // and a neighbour does not match
         assert_eq!(route_of(&t, "/%E0%B8%82").map(|r| r.0), None);
     }
@@ -1283,7 +1319,11 @@ mod tests {
     #[test]
     fn mixed_literal_and_param_decode_the_param_only() {
         let t = table(&["/ข่าว/{id}", "/docs/{name}/ภาษาไทย"]);
-        let (id, params) = route_of(&t, &format!("{NEWS_ENC}/%E0%B8%AA%E0%B8%A7%E0%B8%B1%E0%B8%AA")).unwrap();
+        let (id, params) = route_of(
+            &t,
+            &format!("{NEWS_ENC}/%E0%B8%AA%E0%B8%A7%E0%B8%B1%E0%B8%AA"),
+        )
+        .unwrap();
         assert_eq!((id, params), (0, vec![("id".into(), "สวัส".into())]));
         // raw UTF-8 in the param position decodes to the same value
         let (_, params) = route_of(&t, "/ข่าว/สวัส").unwrap();
@@ -1292,7 +1332,11 @@ mod tests {
         let (id, params) = route_of(&t, &format!("{NEWS_ENC}/a%2fb")).unwrap();
         assert_eq!((id, params), (0, vec![("id".into(), "a/b".into())]));
         assert_eq!(route_of(&t, &format!("{NEWS_ENC}/a/b")), None);
-        let (id, params) = route_of(&t, "/docs/x%20y/%E0%B8%A0%E0%B8%B2%E0%B8%A9%E0%B8%B2%E0%B9%84%E0%B8%97%E0%B8%A2").unwrap();
+        let (id, params) = route_of(
+            &t,
+            "/docs/x%20y/%E0%B8%A0%E0%B8%B2%E0%B8%A9%E0%B8%B2%E0%B9%84%E0%B8%97%E0%B8%A2",
+        )
+        .unwrap();
         assert_eq!((id, params), (1, vec![("name".into(), "x y".into())]));
     }
 
@@ -1309,7 +1353,9 @@ mod tests {
         ];
         let mut t = RouteTable::new();
         t.install_with_config(&configs).unwrap();
-        let m = t.match_route("/%E0%B8%82%E0%B9%88%E0%B8%B2%E0%B8%A7/nope").unwrap();
+        let m = t
+            .match_route("/%E0%B8%82%E0%B9%88%E0%B8%B2%E0%B8%A7/nope")
+            .unwrap();
         assert!(m.not_found);
         assert_eq!(m.route_id, 1);
         assert!(t.match_route("/ข่าว/nope").unwrap().not_found);

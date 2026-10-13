@@ -175,7 +175,9 @@ impl<H: Host> Core<H> {
         if let Some(p) = &args.path {
             let m = args.method.as_deref().unwrap_or("GET");
             // L24: the key's spelling (browser percent-encoding), whatever the caller wrote.
-            r.l1_removed += self.l1.invalidate_path(m, &crate::routing::routes::normalize_request_path(p));
+            r.l1_removed += self
+                .l1
+                .invalidate_path(m, &crate::routing::routes::normalize_request_path(p));
         }
         r
     }
