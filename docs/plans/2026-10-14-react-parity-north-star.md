@@ -23,3 +23,7 @@ brust covers almost all of React as it is used in most apps. Writing a brust app
 ## Amendment 2026-10-14 (human): shadcn is the driver, coverage grows step by step
 
 Human: "คือค่อยๆเก็บ support ไปเลื่อยๆ ไม่ต้องทำที่เดียว ใช้ shadcn เป็น base ในการตามเก็บ คิดว่าถ้า support shadcn เกือบหมด การใช้งาน react ส่วนก็แทบจะได้ผลตามทั้งหมดอยู่แล้ว". Coverage is collected incrementally, one blocker lane at a time, never as one big rewrite. `docs/shadcn-coverage.md` (components + the libraries under them) is THE driver: the next lane is always the construct that blocks the most shadcn rows; `docs/react-coverage.md` gains the matching battery rows as a side effect. The third scoreboard (point 4) is deferred until shadcn is nearly all static/native.
+
+## Amendment 2026-10-14 (human): the client runtime stays small as coverage grows
+
+Human: "แบ่ง runtime js ที่ต้อง load ฝั่ง client เป็นกลุ่มๆ ... ตัว js จะได้ไม่ใหญ่แบบ react ในตอนที่ support เยอะแล้ว". Principle 6: a page loads only the runtime features its components use (core + per-feature modules, chosen by the compiler), with a byte budget in CI. Plan: `docs/plans/2026-10-14-runtime-split.md` (L33, F139); every new runtime feature from then on is its own module.
