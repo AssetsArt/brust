@@ -52,8 +52,8 @@ const MOD_SRC = `/* Card.module.css */
 const COMPILED = `<p{% if "card_nBzD1A" | present %} class="{{ "card_nBzD1A" | attr_str | e }}"{% endif %}>hello</p>`
 
 const INSTALL = `bun add -d tailwindcss@4 bun-plugin-tailwind
-# or scaffold with it:
-bun create @brust/app my-app --tailwind`
+# the blank starter already has both:
+bun create @brust/app my-app`
 
 const ENTRY = `/* app.css, imported by the root layout */
 @import "tailwindcss";
@@ -211,9 +211,10 @@ export default function Css({ blocks }: CssData) {
       </div>
 
       <h2 id="tailwind">Tailwind CSS v4</h2>
-      {/* source: docs/css.md:74 (Tailwind is built in through bun-plugin-tailwind; install tailwindcss 4 and the plugin as your app's own dev dependencies; create-app --tailwind does it); packages/create-app/src/args.ts:8 and :45 (the --tailwind flag) */}
+      {/* source: docs/css.md:74 (Tailwind is built in through bun-plugin-tailwind; install tailwindcss 4 and the plugin as your app's own dev dependencies); packages/create-app/src/tailwind.ts:7 and :9 (L28, PR #180: the blank template ships both, pinned; --tailwind does nothing) */}
       <p>
-        Tailwind is built in through the official <code>bun-plugin-tailwind</code>. Install it and Tailwind as your app's own dev dependencies, or scaffold with <code>--tailwind</code>.
+        Tailwind is built in through the official <code>bun-plugin-tailwind</code>. Install it and Tailwind as your app's own dev dependencies. The blank starter already ships both and an <code>app.css</code> to start from, see{' '}
+        <a href="/docs/project-structure">Project structure</a>.
       </p>
       <CodeBlock code={blocks.install.code} lang={blocks.install.lang} file={blocks.install.file} html={blocks.install.html} />
       <CodeBlock code={blocks.entry.code} lang={blocks.entry.lang} file={blocks.entry.file} html={blocks.entry.html} />

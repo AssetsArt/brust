@@ -1,4 +1,6 @@
 // Project structure — the blank template's files, the scripts, and what `brust build` writes to dist/.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import CodeBlock from '../../components/CodeBlock'
 import FileTree from '../../components/demos/FileTree'
 import { type CodeBlockData, codeBlock } from '../../lib/highlight'
@@ -10,8 +12,12 @@ export interface ProjectStructureData {
   files: { path: string; role: string }[]
 }
 
+// source: packages/create-app/templates/blank (L28 part A, PR #180): app.css at the root (Tailwind CSS v4), imported
+// by components/Layout.tsx:4; public/ holds only favicon.svg; _gitignore is written as .gitignore, *.tmpl without .tmpl.
+// website/test/project-structure.test.ts checks this tree against the template folder.
 const TREE = `my-app/
 ├── routes.tsx
+├── app.css
 ├── components/
 │   ├── Layout.tsx
 │   └── Counter.tsx
@@ -19,28 +25,31 @@ const TREE = `my-app/
 │   └── HomePage.tsx
 ├── actions.ts
 ├── public/
-│   ├── app.css
 │   └── favicon.svg
 ├── brust.toml
 ├── wrangler.jsonc
 ├── package.json
-└── tsconfig.json`
+├── tsconfig.json
+├── README.md
+└── .gitignore`
 
-const SCRIPTS = `{
-  "scripts": {
-    "dev": "brust build routes.tsx && brust start",
-    "build": "brust build routes.tsx",
-    "start": "brust start",
-    "typecheck": "bun check",
-    "dev:cf": "brust dev routes.tsx --target cloudflare",
-    "deploy:cf": "brust build routes.tsx --target cloudflare && wrangler deploy -c dist/cf/wrangler.jsonc"
-  }
-}`
+// The scripts and dev dependencies are read at build time from the template's package.json, so the block is what
+// `bun create @brust/app` writes. source: packages/create-app/templates/blank/package.json.tmpl:7 (dev = brust dev)
+// and :21 (devDependencies: tailwindcss 4 and bun-plugin-tailwind, pinned).
+const TEMPLATE_PKG = join(import.meta.dir, '../../../packages/create-app/templates/blank/package.json.tmpl')
+const templatePkg = JSON.parse(readFileSync(TEMPLATE_PKG, 'utf8').replace('__BRUST_DEP__', '""')) as {
+  scripts: Record<string, string>
+  devDependencies: Record<string, string>
+}
+const SCRIPTS = JSON.stringify({ scripts: templatePkg.scripts, devDependencies: templatePkg.devDependencies }, null, 2)
 
+// source: packages/brust/src/build/css.ts:1-2 and :194-197 (one minified client/<stem>-<hex10>.css per source
+// stylesheet) and :5-6 (a route links the CSS its layout and page import, in <head>); docs/css.md:70 (no JS bundle has CSS).
 const DIST = `dist/
 ├── manifest.json      every route and component, with its tier
 ├── jinja/<id>.jinja   the compiled template of each component
 ├── client/*.js        native chunks and React islands, content-hashed
+├── client/*.css       app.css and the Tailwind utilities you use, minified, hashed
 ├── jobs.js            the server code: loaders and jobs
 ├── actions.js         your actions app, when [actions] is on
 ├── public/            a copy of ./public
@@ -60,14 +69,17 @@ export async function projectStructureLoader(): Promise<ProjectStructureData> {
     },
     files: [
       { path: 'routes.tsx', role: 'Maps paths to components with defineRoutes. The entry brust build reads.' },
-      { path: 'components/Layout.tsx', role: 'The document root: <html>, <head>, and <Outlet/> where each page renders.' },
+      { path: 'app.css', role: 'Tailwind CSS v4: @import "tailwindcss" and a @theme of color tokens (bg-paper, text-ink, ...). The layout imports it; brust builds it and links it in <head>.' },
+      { path: 'components/Layout.tsx', role: "The document root: <html>, <head>, and <Outlet/> where each page renders. It imports ../app.css." },
       { path: 'pages/HomePage.tsx', role: 'The page at /. A heading and the counter.' },
       { path: 'components/Counter.tsx', role: 'A useState counter. The compiler makes it native: a signal in the browser, no React shipped.' },
       { path: 'actions.ts', role: 'An Elysia 2 app built with the brust() adapter, one GET /hello route. Never call app.listen(): Rust owns HTTP.' },
-      { path: 'public/', role: 'Static files, served as they are at /public/... (the layout links /public/app.css and /public/favicon.svg).' },
+      { path: 'public/', role: 'Static files, served as they are at /public/... (the layout links /public/favicon.svg).' },
       { path: 'brust.toml', role: 'Server address and port, and an empty [actions] table that turns actions on with their defaults.' },
       { path: 'wrangler.jsonc', role: 'Cloudflare bindings for the Workers target. brust owns the build keys (main, assets, compatibility_date, ...).' },
-      { path: 'package.json', role: 'The scripts below, @brust/core, React 19 and the pinned Elysia packages.' },
+      { path: 'package.json', role: 'The scripts below, @brust/core, React 19, the pinned Elysia packages, and Tailwind as dev dependencies.' },
+      { path: 'README.md', role: 'How to run the app, what each file is for, and how to call the hello action.' },
+      { path: '.gitignore', role: 'Keeps node_modules/, dist/, .brust/ and .wrangler/ out of git.' },
     ],
   }
 }
@@ -96,14 +108,16 @@ export default function ProjectStructure({ blocks, files }: ProjectStructureData
 
       <h2 id="scripts">The scripts</h2>
       <CodeBlock code={blocks.scripts.code} lang={blocks.scripts.lang} file={blocks.scripts.file} html={blocks.scripts.html} />
+      {/* source: packages/brust/src/cli.ts:12 (brust dev: proxy + hot reload) and packages/brust/src/dev/bun.ts:106 (it builds into .brust/dev) */}
       <p>
-        <code>dev</code> builds once and starts the server; it does not watch files. Run it again after a change. The <code>:cf</code> scripts target Cloudflare Workers, see <a href="/docs/deployment">Deployment</a>.
+        <code>dev</code> runs <code>brust dev</code>: it builds into <code>.brust/dev</code>, starts the server and rebuilds when you save, see <a href="/docs/dev-mode">Dev mode</a>. The <code>:cf</code> scripts target Cloudflare Workers, see{' '}
+        <a href="/docs/deployment">Deployment</a>. <code>tailwindcss</code> and <code>bun-plugin-tailwind</code> are pinned dev dependencies: the build uses them, the server does not.
       </p>
 
       <h2 id="dist">What brust build writes</h2>
       <CodeBlock code={blocks.dist.code} lang={blocks.dist.lang} cwd={blocks.dist.cwd} html={blocks.dist.html} />
       <p>
-        The build writes to a temporary folder next to <code>dist/</code> and swaps it in only when it succeeds, so a failed build leaves the last good one in place. <code>dist/</code> imports <code>react</code> and <code>@brust/core</code> at runtime: keep it inside the app, next to its <code>node_modules</code>.
+        The build writes to a temporary folder next to <code>dist/</code> and swaps it in only when it succeeds, so a failed build leaves the last good one in place. Each page links the CSS its layout and page import from <code>client/</code> in <code>&lt;head&gt;</code>; no JS bundle carries CSS. <code>dist/</code> imports <code>react</code> and <code>@brust/core</code> at runtime: keep it inside the app, next to its <code>node_modules</code>.
       </p>
     </>
   )
