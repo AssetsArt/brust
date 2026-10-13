@@ -422,25 +422,59 @@ fn read_list_arms(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Vec<Node> {
 /// `test ? a : b`, a keyed arm beside a null arm is that arm's key (R6.1). An element arm
 /// without a key is a `list-key` error at that arm.
 fn list_arm_key(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Option<RawExpr> {
+    let undefined = |loc| RawExpr {
+        loc,
+        kind: RawKind::Lit(crate::ir::Literal::Undefined),
+    };
     match &e.data {
         E::EIf(i) => {
             let yes = list_arm_key(r, &i.yes);
             let no = list_arm_key(r, &i.no);
+            let loc = loc_of(&i.test);
             match (yes, no) {
                 // Compared by the code they print: the two arms sit at different locations.
                 (Some(a), Some(b)) if a.to_js() == b.to_js() => Some(a),
                 (Some(a), Some(b)) => Some(RawExpr {
-                    loc: loc_of(&i.test),
+                    loc,
                     kind: RawKind::Cond {
                         test: Box::new(r.expr(&i.test)),
                         yes: Box::new(a),
                         no: Box::new(b),
                     },
                 }),
-                (a, b) => a.or(b),
+                // The client evaluates the key for every row, so a key that only exists in
+                // one arm is guarded by that arm's condition.
+                (Some(a), None) => Some(RawExpr {
+                    loc,
+                    kind: RawKind::Cond {
+                        test: Box::new(r.expr(&i.test)),
+                        yes: Box::new(a),
+                        no: Box::new(undefined(loc)),
+                    },
+                }),
+                (None, Some(b)) => Some(RawExpr {
+                    loc,
+                    kind: RawKind::Cond {
+                        test: Box::new(r.expr(&i.test)),
+                        yes: Box::new(undefined(loc)),
+                        no: Box::new(b),
+                    },
+                }),
+                (None, None) => None,
             }
         }
-        E::EBinary(b) if b.op == OpCode::BinLogicalAnd => list_arm_key(r, &b.right),
+        E::EBinary(b) if b.op == OpCode::BinLogicalAnd => {
+            let k = list_arm_key(r, &b.right)?;
+            let loc = loc_of(&b.left);
+            Some(RawExpr {
+                loc,
+                kind: RawKind::Cond {
+                    test: Box::new(r.expr(&b.left)),
+                    yes: Box::new(k),
+                    no: Box::new(undefined(loc)),
+                },
+            })
+        }
         E::ECall(c) if c.was_jsx_element => match c.args.get(2) {
             Some(k) => Some(r.expr(k)),
             None => {

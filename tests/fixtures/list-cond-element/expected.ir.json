@@ -237,20 +237,51 @@
                   "index": null,
                   "key": {
                     "Server": {
-                      "loc": 505,
+                      "loc": 483,
                       "kind": {
-                        "Member": {
-                          "target": {
-                            "loc": 505,
+                        "Cond": {
+                          "test": {
+                            "loc": 483,
                             "kind": {
-                              "Ident": {
-                                "name": "it",
-                                "kind": "LoopBinding"
+                              "Member": {
+                                "target": {
+                                  "loc": 483,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "it",
+                                      "kind": "LoopBinding"
+                                    }
+                                  }
+                                },
+                                "name": "hidden",
+                                "optional": false
                               }
                             }
                           },
-                          "name": "id",
-                          "optional": false
+                          "yes": {
+                            "loc": 505,
+                            "kind": {
+                              "Member": {
+                                "target": {
+                                  "loc": 505,
+                                  "kind": {
+                                    "Ident": {
+                                      "name": "it",
+                                      "kind": "LoopBinding"
+                                    }
+                                  }
+                                },
+                                "name": "id",
+                                "optional": false
+                              }
+                            }
+                          },
+                          "no": {
+                            "loc": 483,
+                            "kind": {
+                              "Lit": "Undefined"
+                            }
+                          }
                         }
                       }
                     }
