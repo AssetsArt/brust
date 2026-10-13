@@ -8,7 +8,7 @@ use crate::analyze::component::finish_diagnostics;
 use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
 use crate::ir::{
     Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind,
-    InstanceRecord, JobDecl, JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier,
+    InstanceRecord, JobDecl, JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier, UnOp,
     component_id, named_component_id,
 };
 use std::collections::HashMap;
@@ -25,6 +25,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         loop_scope: Vec::new(),
         lists: Vec::new(),
         items: Vec::new(),
+        indexes: Vec::new(),
         list_uses: Vec::new(),
         loop_sources: Vec::new(),
         instance_counts: HashMap::new(),
@@ -68,6 +69,8 @@ struct Walker<'s, 'c> {
     lists: Vec<(Vec<String>, bool)>,
     /// Item bindings of the enclosing `For`s, innermost last.
     items: Vec<String>,
+    /// Index bindings of the enclosing `For`s, aligned with `items`.
+    indexes: Vec<Option<String>>,
     /// The enclosing `For` sources as client reads, used when a linked child sits in the row.
     list_uses: Vec<super::ClientUse>,
     /// The enclosing `For` sources as props paths (`None` = not a plain path).
@@ -173,7 +176,9 @@ impl Walker<'_, '_> {
                 self.lists.push(src);
                 self.list_uses.push(use_);
                 self.items.push(item.clone());
+                self.indexes.push(index.clone());
                 body.iter_mut().for_each(|c| self.node(c));
+                self.indexes.pop();
                 self.items.pop();
                 self.loop_sources.pop();
                 self.list_uses.pop();
@@ -619,12 +624,28 @@ impl Walker<'_, '_> {
                         child_id: child_id.clone(),
                         k,
                         loops: self.loop_sources.clone(),
-                        props: props
-                            .iter()
-                            .filter(|(_, v)| !matches!(v, Expr::ClientOnly { .. }))
-                            .map(|(name, v)| (name.clone(), self.prop_path(v)))
-                            .collect(),
+                        props: Default::default(),
+                        literals: Default::default(),
+                        exprs: Default::default(),
                     };
+                    for (name, v) in props.iter() {
+                        if matches!(v, Expr::ClientOnly { .. }) {
+                            continue;
+                        }
+                        let lit = match v {
+                            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
+                            _ => None,
+                        };
+                        if let Some(p) = self.prop_path(v) {
+                            record.props.insert(name.clone(), Some(p));
+                        } else if let Some(j) = lit {
+                            record.literals.insert(name.clone(), j);
+                        } else if let Some(e) = self.instance_expr(v) {
+                            record.exprs.insert(name.clone(), e);
+                        } else {
+                            record.props.insert(name.clone(), None);
+                        }
+                    }
                     // C5: the child's jobs read `__store`; a fed child sits under a chain component
                     // whose props are the ctx, so the path is `__store` itself (else the manifest
                     // refuses the child job's input root as uncovered).
@@ -712,6 +733,34 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// `e` as a jinja expression the server evaluates per instance (F105): a §6.2 value over
+    /// the props (`__props`) and the innermost row (`__row`, `__idx`). `None` for anything
+    /// else, and always for a value that reads state or a store (R3.2: the parent's job).
+    fn instance_expr(&self, e: &Expr) -> Option<String> {
+        let Expr::Server(se) = e else { return None };
+        if self.deps_of(e).reactive() {
+            return None;
+        }
+        let item = self.items.last().map(String::as_str);
+        let index = self.indexes.last().cloned().flatten();
+        if !server_subset(&se.0, item, index.as_deref()) {
+            return None;
+        }
+        let names = |name: &str, kind: &IdentKind| match kind {
+            IdentKind::LoopBinding if Some(name) == item => Some("__row".to_string()),
+            IdentKind::LoopBinding if Some(name) == index.as_deref() => Some("__idx".to_string()),
+            _ => None,
+        };
+        Some(crate::lower::server_expr::to_jinja(
+            se,
+            &crate::lower::server_expr::JinjaCtx {
+                in_loop: None,
+                props_prefix: Some("__props."),
+                names: &names,
+            },
+        ))
+    }
+
     /// The path of a `For` source relative to props, when it is a plain path of the
     /// props or of the enclosing row.
     fn list_path(&self, source: &Expr) -> Option<String> {
@@ -776,6 +825,66 @@ pub fn instance_needs_link(tier: &Tier, props: impl IntoIterator<Item = (bool, D
         (false, _) => LinkNeed::None,
         (true, Tier::Static) => LinkNeed::RowOnly,
         (true, _) => LinkNeed::Always,
+    }
+}
+
+/// Whether the server can evaluate `r` for a child instance: literals, props, the innermost
+/// row's item and index, and the operators and calls the jinja printer maps one to one.
+fn server_subset(r: &RawExpr, item: Option<&str>, index: Option<&str>) -> bool {
+    let sub = |e: &RawExpr| server_subset(e, item, index);
+    match &r.kind {
+        RawKind::Lit(_) => true,
+        RawKind::Ident { name, kind } => match kind {
+            // The whole props object (`*`) would hand the child the server's own context keys.
+            IdentKind::Prop => name != "*",
+            IdentKind::LoopBinding => Some(name.as_str()) == item || Some(name.as_str()) == index,
+            _ => false,
+        },
+        RawKind::Member { target, .. } => {
+            let whole_props = matches!(&target.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "*");
+            whole_props || sub(target)
+        }
+        RawKind::Index { target, index: i } => sub(target) && sub(i),
+        RawKind::Unary { op, value } => *op != UnOp::Typeof && sub(value),
+        RawKind::Binary { left, right, .. } => sub(left) && sub(right),
+        RawKind::Cond { test, yes, no } => sub(test) && sub(yes) && sub(no),
+        RawKind::Template { parts, .. } => parts.iter().all(|(p, _)| sub(p)),
+        RawKind::Array(items) => items.iter().all(sub),
+        RawKind::Object(props) => props.iter().all(|(_, v)| sub(v)),
+        RawKind::Call { callee, args } => {
+            let RawKind::Member { target, name, .. } = &callee.kind else {
+                return false;
+            };
+            let global = match &target.kind {
+                RawKind::Ident {
+                    name: obj,
+                    kind: IdentKind::Global,
+                } => Some(obj.as_str()),
+                _ => None,
+            };
+            let known = match global {
+                Some(obj) => {
+                    matches!((obj, name.as_str()), ("Object", "keys" | "entries"))
+                        && args.len() == 1
+                }
+                None => {
+                    sub(target)
+                        && matches!(
+                            name.as_str(),
+                            "toUpperCase"
+                                | "toLowerCase"
+                                | "trim"
+                                | "slice"
+                                | "startsWith"
+                                | "endsWith"
+                                | "includes"
+                                | "join"
+                        )
+                }
+            };
+            known && args.iter().all(sub)
+        }
+        RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => false,
     }
 }
 

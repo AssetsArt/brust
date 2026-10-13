@@ -129,7 +129,9 @@ fn a_react_fallback_parent_drops_child_instances_and_links() {
     );
     assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
     assert!(
-        ir.diagnostics.iter().any(|d| d.rule == "linked-prop-precompute"),
+        ir.diagnostics
+            .iter()
+            .any(|d| d.rule == "linked-prop-precompute"),
         "{:?}",
         ir.diagnostics
     );
