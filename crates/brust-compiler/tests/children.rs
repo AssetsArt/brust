@@ -406,7 +406,10 @@ fn a_package_component_gets_an_island_id_and_an_ssr_job() {
         "import { Heart } from 'tiny-icons'\nexport default function P() { return <p><Heart size={16} /></p> }",
     );
     let heart = a.children.iter().find(|c| c.name == "Heart").unwrap();
-    let id = heart.id.clone().expect("a package component has an island id");
+    let id = heart
+        .id
+        .clone()
+        .expect("a package component has an island id");
     assert!(id.starts_with("heart_"), "{id}");
     assert!(matches!(heart.tier, Tier::React { .. }));
     assert!(heart.path.is_none());
@@ -452,8 +455,14 @@ fn the_synthetic_component_names_the_package_export() {
         .map(|l| (l.ir.external.clone(), l.ir.id.clone(), l.artifacts.jinja))
         .collect::<Vec<_>>()
     });
-    let ext = tree.iter().find(|(e, _, _)| e.is_some()).expect("a synthetic component");
+    let ext = tree
+        .iter()
+        .find(|(e, _, _)| e.is_some())
+        .expect("a synthetic component");
     let e = ext.0.as_ref().unwrap();
-    assert_eq!((e.source.as_str(), e.export.as_str()), ("tiny-icons", "Heart"));
+    assert_eq!(
+        (e.source.as_str(), e.export.as_str()),
+        ("tiny-icons", "Heart")
+    );
     assert!(ext.2.contains(&format!("_ssr_{}", ext.1)), "{}", ext.2);
 }

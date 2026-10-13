@@ -7,8 +7,9 @@ use super::{PassCtx, PassState, run_passes};
 use crate::analyze::component::finish_diagnostics;
 use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
 use crate::ir::{
-    Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind, InstanceRecord, JobDecl,
-    JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier, component_id, named_component_id,
+    Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind,
+    InstanceRecord, JobDecl, JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier,
+    component_id, named_component_id,
 };
 use std::collections::HashMap;
 use std::rc::Rc;
