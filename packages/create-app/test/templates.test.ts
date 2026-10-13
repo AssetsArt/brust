@@ -61,9 +61,13 @@ test('R29.3: app.css holds the docs palette as @theme tokens with a dark overrid
   for (const f of ['tailwind.config.js', 'tailwind.config.ts']) expect(existsSync(join(blank, f)), f).toBe(false)
 })
 test('R29.2: the blank template pins the Tailwind dev dependencies to the versions brust builds with', () => {
-  expect({ 'bun-plugin-tailwind': blankPkg().devDependencies['bun-plugin-tailwind'], tailwindcss: blankPkg().devDependencies.tailwindcss }).toEqual(TAILWIND_DEV_DEPS)
+  const pick = (deps: Record<string, string>) => Object.fromEntries(Object.keys(TAILWIND_DEV_DEPS).map((k) => [k, deps[k]]))
+  expect(pick(blankPkg().devDependencies)).toEqual(TAILWIND_DEV_DEPS)
   const root = json(join(repo, 'package.json'))
-  expect({ 'bun-plugin-tailwind': root.devDependencies['bun-plugin-tailwind'], tailwindcss: root.devDependencies.tailwindcss }).toEqual(TAILWIND_DEV_DEPS)
+  expect(pick(root.devDependencies)).toEqual(TAILWIND_DEV_DEPS)
+  // L32 R33.2: one exact version for the compiler, its Node API and the scanner; the old plugin is gone
+  expect(new Set(Object.values(TAILWIND_DEV_DEPS)).size).toBe(1)
+  expect(blankPkg().devDependencies['bun-plugin-tailwind']).toBeUndefined()
 })
 test('blank pins equal the repo', () => {
   const core = json(join(repo, 'packages/brust/package.json'))

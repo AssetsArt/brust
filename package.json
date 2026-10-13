@@ -30,7 +30,8 @@
     "bench:test": "bun check -p bench && bun test bench/lib"
   },
   "devDependencies": {
-    "bun-plugin-tailwind": "0.1.2",
+    "@tailwindcss/node": "4.3.3",
+    "@tailwindcss/oxide": "4.3.3",
     "tailwindcss": "4.3.3"
   }
 }
