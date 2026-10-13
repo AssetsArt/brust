@@ -44,7 +44,10 @@ BINDERS.push({
       const seen = new Set<unknown>()
       list.forEach((item, i) => {
         let key = (keyFn as (x: unknown) => unknown)(item)
-        if (seen.has(key)) { warnOnce(`fd:${inst.name}:${raw}`, `x-for in ${inst.name}: duplicate key ${JSON.stringify(key)}`); key = `__dup_${i}` }
+        // `undefined` is a row whose element arm is null (`it.link && <li key={it.link.id}/>`): it
+        // carries no key in React either, so it is positional and never a duplicate.
+        if (key === undefined) key = `__nil_${i}`
+        else if (seen.has(key)) { warnOnce(`fd:${inst.name}:${raw}`, `x-for in ${inst.name}: duplicate key ${JSON.stringify(key)}`); key = `__dup_${i}` }
         seen.add(key)
         const pool = rows.get(key)
         let node = pool?.shift()

@@ -245,7 +245,7 @@ impl<'r, 'a> Reader<'r, 'a> {
         let body = match stmts {
             [only] if a.prefer_expr => match &only.data {
                 S::SReturn(r) => match &r.value {
-                    Some(v) if list_body && crate::analyze::jsx::is_jsx(v) => {
+                    Some(v) if list_body && crate::analyze::jsx::is_list_body(v) => {
                         let node = crate::analyze::jsx::read_list_body(self, v);
                         ArrowBody::Expr(Box::new(RawExpr {
                             loc: loc_of(v),
