@@ -85,6 +85,16 @@ build **or a failed boot** keeps the old child serving and shows the error as an
 - The terminal shows request lines (`method path status ms cache`) and a status block of at most 6 lines at the
   bottom (state, URL, generation, build time, last request, warnings, hotkeys `r` reload, `o` open, `w` warnings,
   `c` clear, `q` quit). It never uses the alternate screen. Not a TTY, `CI` or `NO_COLOR`: plain lines only.
+- **Trace for dev tools (L14).** The dev proxy generates a token per session and gives it to each child (`BRUST_DEV_TOKEN`,
+  napi `devToken`) and to every upstream request (`x-brust-dev-token`). Only then the core answers `x-brust-dev: base64(json)`
+  (route, pattern, chain, params, cache outcome, loader and render ms, jobs with kind/key/tags/hit, bun calls, the components the
+  page is made of). It is added after the L1 store, so it is never cached; a core without a token (production) never makes it.
+  The proxy strips the header, puts the trace in the page as `<script type=application/json id=__brust_trace>` and keeps the
+  last 50 (actions included) at `/_brust/dev/traces`. `brust build --dev` (used by `brust dev`) also writes `dev.json`
+  (component id → source file, tier, the react reason, diagnostics with rule/line/col/remediation; served at `/_brust/dev/meta`);
+  a production build writes none. In dev only, every chain level is wrapped in `<!--brust:<id>-->…<!--/brust-->` (never inside a
+  `<brust-island>`), and the runtime exposes its live instances on `globalThis.__brustDev.instances` (`__BRUST_DEV__` is a
+  build define that is `false`, and removed by the minifier, in every other build).
 - Not hot module replacement: component state does not survive an edit. `brust dev --target cloudflare` keeps
   its wrangler loop (now on the same watch loop).
 

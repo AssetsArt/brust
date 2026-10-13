@@ -18,7 +18,13 @@ import { BuildError } from './errors'
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
 /** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). `brust dev` builds set
  * `BRUST_BUILD_MODE=development` for readable errors and hydration diffs (R13.4); `brust build` never does. */
-export const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify(process.env.BRUST_BUILD_MODE === 'development' ? 'development' : 'production') }
+export const PRODUCTION: Record<string, string> = { 'process.env.NODE_ENV': JSON.stringify(process.env.BRUST_BUILD_MODE === 'development' ? 'development' : 'production'), __BRUST_DEV__: 'false' }
+
+/** `brust build --dev` (L14, R14.3): the client runtime exposes its live instances on a dev global. `__BRUST_DEV__` is a
+ * define, `false` in every other build, so the minifier removes the dev code from production bundles. */
+export function setDevBuild(dev: boolean): void {
+  PRODUCTION.__BRUST_DEV__ = dev ? 'true' : 'false'
+}
 
 const matchesExternal = (spec: string, external: string[]) =>
   // A trailing `*` is a prefix (`elysia/*`, `node:*`, `cloudflare:*`): the generated CF entry imports `cloudflare:workers`.

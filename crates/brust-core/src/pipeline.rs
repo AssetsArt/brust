@@ -67,6 +67,8 @@ pub(crate) struct PageMeta {
     pub route: Option<usize>,
     pub cache: CacheOutcome,
     pub bun_calls: u8,
+    /// L14: collected only for a request carrying the dev token (`brust dev`); `None` otherwise.
+    pub trace: Option<crate::trace::Trace>,
 }
 
 /// One request through the core: CORS preflight, actions, the method gate, `/ping`, stats,
@@ -131,12 +133,27 @@ pub async fn handle<H: Host>(
     }
 
     let t0 = s.host.now_ns();
+    let traced = s.dev_token.as_deref().is_some_and(|t| {
+        headers
+            .get(crate::trace::REQUEST_TOKEN_HEADER)
+            .is_some_and(|v| v.as_bytes() == t.as_bytes())
+    });
     let mut meta = PageMeta {
         route: None,
         cache: CacheOutcome::None,
         bun_calls: 0,
+        trace: traced.then(Default::default),
     };
-    let resp = page(s, full, headers, &mut meta).await;
+    let mut resp = page(s, full, headers, &mut meta).await;
+    // The trace is attached after `page` returned, i.e. after the L1 store: a cached body never carries one.
+    if let Some(mut t) = meta.trace.take() {
+        t.status = resp.status().as_u16();
+        t.cache = meta.cache.to_string();
+        t.bun_calls = meta.bun_calls;
+        if let Some(v) = t.header_value() {
+            resp.headers_mut().insert(crate::trace::RESPONSE_HEADER, v);
+        }
+    }
     tracing::debug!(
         target: "brust::request",
         route = %meta.route.map_or("-", |ri| s.manifest.routes[ri].id.as_str()),
@@ -198,6 +215,19 @@ async fn page<H: Host>(
     let ri = s.routes.route_index(route_id);
     let route = &s.manifest.routes[ri];
     meta.route = Some(ri);
+    if let Some(t) = &mut meta.trace {
+        t.route = Some(crate::trace::TraceRoute {
+            id: route.id.clone(),
+            pattern: route.pattern.clone(),
+            chain: route.chain.clone(),
+            params: rm
+                .params
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        });
+        t.rendered = crate::render::page_components(&route.chain, &s.manifest);
+    }
     let accept_enc = headers
         .get(http::header::ACCEPT_ENCODING)
         .and_then(|v| v.to_str().ok())
@@ -285,7 +315,11 @@ async fn page<H: Host>(
             route: ri,
             base: ctx.clone(),
         });
+        let t_loader = meta.trace.is_some().then(|| s.host.now_ns());
         let r = s.host.loader(&req, seed).await;
+        if let (Some(t0), Some(t)) = (t_loader, &mut meta.trace) {
+            t.loader_ms = Some(s.host.now_ns().saturating_sub(t0) as f64 / 1e6);
+        }
         let (r, cell) = match r {
             Ok((v, c)) => (Ok(v), c),
             Err(e) => (Err(e), None),
@@ -392,6 +426,9 @@ async fn page<H: Host>(
             }
             let plans = rehydrate(&s.plans, pc.rows);
             let mut lookup = pc.lookup;
+            if let Some(t) = &mut meta.trace {
+                t.set_jobs(trace_jobs(&plans, &lookup));
+            }
             note_planned_outcome(&s.plan_offer[ri], lookup.misses.is_empty());
             if !lookup.misses.is_empty() {
                 s.job_calls.fetch_add(1, Ordering::Relaxed);
@@ -413,6 +450,9 @@ async fn page<H: Host>(
                 }
             };
             let mut lookup = lookup_jobs(&s.jobs, &plans);
+            if let Some(t) = &mut meta.trace {
+                t.set_jobs(trace_jobs(&plans, &lookup));
+            }
             if !lookup.misses.is_empty() {
                 // M3-P P7 (R1): a miss planned on tokio turns the route's plan offer back on.
                 let offer = &s.plan_offer[ri];
@@ -464,7 +504,15 @@ async fn page<H: Host>(
         CacheOutcome::Bypass => Some("BYPASS"),
         _ => None,
     };
-    let html = match render_document(s, route, ri, &ctx) {
+    let t_render = meta.trace.is_some().then(|| s.host.now_ns());
+    let rendered = render_document(s, route, ri, &ctx);
+    if let (Some(t0), Some(t)) = (t_render, &mut meta.trace) {
+        t.render_ms = Some(s.host.now_ns().saturating_sub(t0) as f64 / 1e6);
+        if let Err(e) = &rendered {
+            t.render_error = Some(e.to_string());
+        }
+    }
+    let html = match rendered {
         Ok(h) => h,
         Err(e) => return render_failed(route, &e),
     };
@@ -517,6 +565,25 @@ async fn page<H: Host>(
         tracing::debug!(target: "brust::cache", route = %route.id, "L1 insert skipped: invalidated during the render");
     }
     resp
+}
+
+/// L14: the page's planned jobs as the trace lists them (`hit` = served by the job cache, before any worker call).
+fn trace_jobs(plans: &[JobPlan], lookup: &Lookup) -> Vec<crate::trace::TraceJob> {
+    plans
+        .iter()
+        .enumerate()
+        .map(|(i, p)| crate::trace::TraceJob {
+            call_id: p.call_id(),
+            kind: match p.kind {
+                JobKind::Precompute => "precompute",
+                JobKind::Ssr => "ssr",
+            },
+            component_id: p.component_id.to_string(),
+            user_key: p.user_key.clone(),
+            tags: p.tags.to_vec(),
+            hit: lookup.values[i].is_some(),
+        })
+        .collect()
 }
 
 /// The outcome of the adapter read on an L1 miss.
