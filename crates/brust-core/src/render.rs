@@ -532,21 +532,27 @@ pub fn inject_document_assets_into(
         links.push_str(f);
         links.push_str("\">");
     }
-    let at = preload_insert_at(html);
-    html.insert_str(at, &links);
+    // A fragment or a document without a `<head>` gets no links (the scripts still load every module).
+    if let Some(at) = preload_insert_at(html) {
+        html.insert_str(at, &links);
+    }
 }
 
 /// Features that are preloaded but not linked as a script: modules the component chunks import themselves.
 const PRELOAD_ONLY: &[&str] = &["store"];
 
-/// Where the modulepreload links go: the CSS insertion point, past the stylesheet links `inject_css_into` wrote there.
-fn preload_insert_at(html: &str) -> usize {
+/// Where the modulepreload links go: the CSS insertion point, past the stylesheet links `inject_css_into` wrote there;
+/// `None` when the document has no `<head>` (a link before `<html>` or in a fragment is not a head link).
+fn preload_insert_at(html: &str) -> Option<usize> {
     const CSS: &str = "<link rel=\"stylesheet\" href=\"/_brust/";
+    if !html.contains("<head>") && !html.contains("<head ") {
+        return None;
+    }
     let mut at = css_insert_at(html);
     while html[at..].starts_with(CSS) {
         at = html[at..].find('>').map_or(html.len(), |e| at + e + 1);
     }
-    at
+    Some(at)
 }
 
 /// 0.1.x `storeScriptTag` x each store: `<script type="application/json" data-brust-store="NAME">`
@@ -935,9 +941,13 @@ mod tests {
         let chain = m.routes[1].chain.clone();
         let preloads = |out: &str| out.matches("rel=\"modulepreload\"").count();
         // No component asks for a feature: the core is preloaded and linked, nothing else of the rt-* family.
-        let bare = inject_assets(String::new(), &chain, &m);
+        let bare = inject_assets("<html><head></head><body></body></html>".into(), &chain, &m);
         assert!(!bare.contains("rt-"), "{bare}");
         assert_eq!(preloads(&bare), 1, "{bare}");
+        // A fragment (no `<head>`) gets the scripts and no links.
+        let frag = inject_assets(String::new(), &chain, &m);
+        assert_eq!(preloads(&frag), 0, "{frag}");
+        assert!(frag.contains("<script type=\"module\""), "{frag}");
         // One component asks for basics and the store: basics is preloaded and linked once (after the core,
         // before the chunks); the store module is preloaded only (the chunks that use it import it).
         let id = chain
