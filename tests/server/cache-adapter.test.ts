@@ -7,16 +7,20 @@ const app = join(import.meta.dir, '../fixtures/l2-relay')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
 const spawned: ReturnType<typeof Bun.spawn>[] = []
 
-async function readUntil(proc: ReturnType<typeof Bun.spawn>, re: RegExp): Promise<{ match: RegExpExecArray; log: () => string }> {
+// Waits until EVERY pattern matched the output so far (in any order), and returns the first pattern's match. A boot prints
+// `[brust] listening on` (Rust, after the workers registered) and `[brust] ready` (JS, after `untilReady` saw the same
+// registrations): two threads, so either line can come first (F128). On a dead process the error carries the whole log.
+async function readUntil(proc: ReturnType<typeof Bun.spawn>, ...res: RegExp[]): Promise<{ match: RegExpExecArray; log: () => string }> {
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
   let out = ''
   let m: RegExpExecArray | null = null
-  while (!(m = re.exec(out))) {
+  while (!res.every((re) => re.test(out))) {
     const { done, value } = await reader.read()
-    if (done) throw new Error(`exited before ${re}:\n${out}`)
+    if (done) throw new Error(`exited before ${res.join(' and ')} (pid ${proc.pid}); output so far:\n${out}`)
     out += dec.decode(value, { stream: true })
   }
+  m = res[0]!.exec(out)!
   void (async () => {
     for (;;) {
       const { done, value } = await reader.read()
@@ -38,8 +42,8 @@ async function boot(): Promise<Srv> {
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', NODE_ENV: 'production', BRUST_L2_RELAY: relayUrl }
   const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '2'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   spawned.push(proc)
-  const r = await readUntil(proc, /\[brust\] ready/)
-  const base = `http://${/listening on (\S+)/.exec(r.log())![1]}`
+  const r = await readUntil(proc, /listening on (\S+)/, /\[brust\] ready/)
+  const base = `http://${r.match[1]}`
   const stats = async () => (await (await fetch(`${base}/_brust/cache/stats`)).json()) as Record<string, unknown>
   return { base, get: (p) => fetch(base + p), stats, l2: async () => (await stats()).l2 as Record<string, number> }
 }
