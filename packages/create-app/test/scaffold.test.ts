@@ -97,8 +97,9 @@ test('blank --tailwind (L21): install → build → start; the layout links one 
   expect(links.length).toBe(1)
   expect(html).not.toContain('/public/app.css')
   const css = await (await fetch(new URL(links[0]!, app.base))).text()
-  expect(css).toContain('.max-w-2xl{')
-  expect(css).toContain('--color-brand:')
+  // only the utilities the app uses (Tailwind v4 also drops theme tokens nothing reads)
+  for (const u of ['.mx-auto{', '.max-w-2xl{', '.p-6{', '.font-sans{']) expect([u, css.includes(u)]).toEqual([u, true])
+  expect(css).toStartWith('@layer theme,base,components,utilities;')
   await stopOne(app)
 }, T)
 
