@@ -34,6 +34,7 @@ Every finding below was reproduced on 2026-10-13 by research agents against v2 @
   | F102 | gap-store-ssr-snapshot | F108 | gap-island-in-inlined | F114 | actions-standalone |
   | F103 | gap-const-fold | F109 | gap-build-eval | | |
   | F104 | gap-map-cond | F110 | gap-ssg-actions | F115 | react-coverage-api |
+  | F116 | css-pipeline | F117 | css-module-fold | F118 | tailwind |
 
   When two lanes add rows, the second one to merge resolves the textual conflict by keeping both rows.
 - **R0.5 Each lane updates its own docs.** Update `docs/*.md` where the behaviour is documented, and add a `docs/plans/m1a-followups.md` row (F99+) marked DONE with the PR number.
@@ -658,13 +659,103 @@ The human asked for this on 2026-10-13: "ทำ react coverage page ใน docs 
 - **Filters and summary:** filter by status (an interactive native component), plus the summary counts.
 - **Stays current:** every later lane that changes coverage changes this page through the regenerated JSON.
 
+### L19 `css-pipeline`: global CSS and CSS Modules, built, minified and injected. Wave 2, size M–L
+
+The human asked for this on 2026-10-13: "built-in plugin support tailwindcss v4, support scope css และ global css, auto inject เข้าไปใน tag <head> … ไม่เกี่ยวกับอันที่ user ใส่เอง, ตอน build ทำ .min."
+
+**Current state** (probed on 2026-10-13 against v2 with Bun 1.4.3):
+- `import './x.css'` is silently dropped: the compiler records only imports that bind names (`analyze/names.rs:34-62`).
+- `styles.card` from a `.module.css` becomes a precompute job on a static page.
+- In a native or island client build, a CSS module fails with `unexpected output …css` (`bundle.ts:187`).
+- The only CSS path today is a hand-written `<link>` to `public/`, copied unhashed (`build/index.ts:204-205`).
+- What already works:
+  - the server serves `/_brust/client/*.css` as `text/css` (`static_rules.rs:55,106,140`), immutable when hashed (`pipeline.rs:167`);
+  - CF copies `client/*.css` (`cf-assets.ts:25`);
+  - Bun's CSS bundler minifies, inlines `@import`, supports nesting and `composes:`, and does CSS Modules.
+
+**R19.1 Global CSS (ruled).**
+- **Which CSS a route gets:** every `.css` import (side-effect import, including package CSS) reachable from the route's chain files. Reachability is a BFS with `Bun.Transpiler.scanImports`, like L7's walk, so a layout import is site-wide and a page import is per-page.
+- **Order:**
+  1. chain order (root layout → nested layouts → page);
+  2. then depth-first import order;
+  3. the first occurrence wins.
+- **Config entry:** `[css] global = ["styles/global.css"]` in `brust.toml` for apps without a layout. It comes first in the order.
+
+**R19.2 Output (ruled).**
+- One minified, content-hashed file per source CSS file, at `dist/client/<stem>-<hex10>.css`. A file shared by routes is one URL, so nothing is duplicated.
+- Production builds always minify; dev (L13) does not.
+- **Name (ruled, explained to the human):** no `.min.` infix. The hash is the cache contract: `is_hashed` reads the stem, so `.min` would cost immutable caching. Minification is always on.
+- **`url()` handling:**
+  - absolute `/public/*` and `/_brust/*` stay external;
+  - relative font and image `url()`s are emitted as hashed assets under `client/`, and `safe_rel`/`clientOk` serve them (fold in the research's C5).
+
+**R19.3 Injection (ruled).**
+- **What:** the manifest gets `RouteRecord.css: Vec<String>` (default `[]`, `manifest.rs:24`). `inject_document_assets_into` (`render.rs:327-395`, called from `pipeline.rs:750`) inserts `<link rel="stylesheet" href="/_brust/client/…" data-brust-css>` for each entry.
+- **Where:** **right after the opening `<head>` tag**, after `<meta charset>` if that comes first. Match `<head>` or `<head ` exactly, never `<header>`. With no `<head>`, the links are prepended to the document.
+- **Never gated** by the all-static early return (`:367`).
+- **User tags are untouched and come later**, so the user's own CSS wins in the cascade. That is the separation the human asked for.
+- **Other targets:** SSG (L9) and CF reuse this through the real server and `layoutAssets`.
+
+**R19.4 CSS Modules = scoped CSS (ruled; Vue/Svelte data-attribute scoping rejected).**
+- **Why:** class names are plain strings, so the same mechanism works in static, native and react islands, and in SSR plus hydration.
+- **One brust Bun plugin** in **every** JS build (browser chunks, `jobs.js`, actions, the CF worker at `cloudflare.ts:264`):
+  - `.module.css` → `export default Object.freeze({…map})`;
+  - plain `.css` → an empty module.
+  - No JS build ever emits CSS, so the `:187` error goes away, and server and client read the same map.
+- **The map:** built from one in-process Bun.build of all `*.module.css` files. A build check asserts that every hashed name exists in the emitted CSS.
+- **Class names are Bun's.** They can depend on the working directory, which is harmless because one map is used per build. Switching to `lightningcss` patterns is deferred.
+- **Types:** an ambient `declare module '*.module.css'` ships with `@brust/core`.
+- **Without L20:** `styles.x` in a template is still a precompute job, so it works but costs a worker job.
+
+**Tests:**
+- Build fixtures for every probed case above.
+- Two routes sharing a module produce one file.
+- Layout/page/nested order.
+- `url()` fonts.
+- Rust injection with `<header>`, with no head, and with an all-static chain.
+- Chromium `getComputedStyle` for global, module, a hydrated island and a `client_only` island, with no hydration warnings.
+- CF and SSG layouts include the CSS.
+
+### L20 `css-module-fold`: `styles.x` folds to a literal class at compile time. Wave 3 (after L1 and L19), size S–M
+
+- **Fold:** `styles.x` or `styles['x']` from a `*.module.css` import becomes a string literal, so static and native templates stay static with no job.
+- **Map source:** the map from L19 is a new `compileTree` argument.
+- **Unknown class:** a build error with its source location.
+- **Exception:** this is an explicit exception to R1.1b (frozen CSS-module maps fold even though they are imported objects).
+- **Tests:** static and native fixtures have `needs_worker:false`; an unknown class gives an error; dual-eval.
+
+### L21 `tailwind`: built-in Tailwind CSS v4. Wave 3 (after L19), size M
+
+**R21.1 (ruled) Option A.** Use the official `bun-plugin-tailwind` (v0.1.x, zero dependencies, ships oxide), with `tailwindcss@4` as **user** dev dependencies. brust passes the plugin to the CSS Bun.build with `root: appRoot`, so content detection scans the app.
+
+The research verified this on 2026-10-13: `@import "tailwindcss"`, `@theme` and `@apply` compiled, and `.tsx` classes were scanned (`hover:underline`, `md:grid`), minified, in 57 ms.
+
+**Loading and errors:**
+- Tailwind is loaded only when some CSS file contains `@import "tailwindcss"`, `@apply`, `@reference`, `@theme` or `@plugin`.
+- If the packages are missing, the build fails with `tailwind-missing`, giving the exact `bun add -d` command.
+- A warning is emitted when more than one CSS file has `@import "tailwindcss"` (the whole of Tailwind would be duplicated).
+
+**R21.2 Users write `@reference`.** A `.module.css` that uses `@apply` needs `@reference "./app.css"`, which is standard v4. brust does not inject it; the docs show it.
+
+**Cascade (document it).** Tailwind v4 utilities live in `@layer`, so unlayered module CSS beats utilities whatever the file order.
+
+**create-app.** A `--tailwind` template option: `app.css` with `@import "tailwindcss"`, imported by the layout, plus the pinned dev dependencies.
+
+**Dev (L13).** A CSS-only edit rebuilds the CSS and swaps the `data-brust-css` links with no reload. Class maps depend on the path, not the content, so they are stable. A `.tsx` edit rebuilds and reloads, and Tailwind rescans. Whichever of L13 and L19/L21 lands second wires the swap.
+
+**Tests:**
+- A fixture with Tailwind pinned as a dev dependency.
+- Missing packages give the error.
+- Chromium computed style of a utility class.
+- A dev CSS edit is swapped without reload.
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
 |---|---|---|
 | 1 | L1, L5, L6, L7, L10, L11, L18 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
-| 2 | L3 (after L1), L8, L9, L13 | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
-| 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14), L16 (after L9; L12 and L16 both touch the CF build: second rebases) | |
+| 2 | L3 (after L1), L8, L9, L13, L19 | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
+| 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14), L16 (after L9; L12 and L16 both touch the CF build: second rebases), L20 (after L1 + L19), L21 (after L19) | |
 
 Each lane is one PR to v2 and goes through the usual flow: READY → REVIEW-PASS → GATES-OK (full CI mirror: `cargo fmt --check`, clippy `-D warnings`, cargo test, `bun run ci`, bun tests, browser tests) → MERGE-READY. The lead merges after CI is green.
 
