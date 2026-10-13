@@ -29,6 +29,10 @@ export interface ChildRecord {
   id: string
   instances: string
   props: Record<string, string>
+  /** F105: constant props; part of the child's job keys. */
+  literals?: Record<string, unknown>
+  /** F105: jinja over `__props` (and `__row`/`__idx` per row) the server evaluates. */
+  exprs?: Record<string, string>
 }
 
 export interface ComponentRecord {
@@ -63,7 +67,7 @@ export interface ActionsRecord {
 }
 
 export interface ManifestJson {
-  version: 1
+  version: 2
   routes: RouteRecord[]
   components: Record<string, ComponentRecord>
   assets: { runtime: string }
@@ -233,10 +237,16 @@ export function childRecords(c: Compiled, clientOnly: string[] = []): ChildRecor
     const props: Record<string, string> = {}
     for (const [name, path] of Object.entries(inst.props)) {
       if (path === null)
-        throw new BuildError('instance-prop-path', `${ir.id}: child ${inst.child_id} prop ${name} is not a props path`)
+        throw new BuildError(
+          'instance-prop-path',
+          `${ir.id}: child ${inst.child_id} prop ${name} is not a props path, a JSON literal or a template expression over props; compute it in a loader, or wrap the child's derived value in cache()`,
+        )
       props[name] = path
     }
-    return { id: inst.child_id, instances: list === undefined ? 'static' : `per-row:${list}`, props }
+    const rec: ChildRecord = { id: inst.child_id, instances: list === undefined ? 'static' : `per-row:${list}`, props }
+    if (inst.literals && Object.keys(inst.literals).length > 0) rec.literals = { ...inst.literals }
+    if (inst.exprs && Object.keys(inst.exprs).length > 0) rec.exprs = { ...inst.exprs }
+    return rec
   })
   for (const id of clientOnly) out.push({ id, instances: 'static', props: {} })
   return out
@@ -304,7 +314,7 @@ export function writeManifest(opts: {
     }
   })
   linkNativeChunks(routes, compiled, components)
-  return { version: 1, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
+  return { version: 2, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
 }
 
 /** S6 amendment (F66): the server's asset injection walks only each chain component's direct
