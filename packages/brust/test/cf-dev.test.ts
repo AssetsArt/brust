@@ -50,8 +50,8 @@ test('brust dev --target cloudflare builds, runs wrangler, rebuilds + restarts o
   expect(await p.exited).toBe(0)
 }, 120_000)
 
-test('brust dev without --target is a usage error', () => {
-  const r = Bun.spawnSync([process.execPath, CLI, 'dev', 'routes.tsx'], { cwd: join(FIX, 'cf-app'), stdout: 'pipe', stderr: 'pipe' })
+test('brust dev (Bun target) takes no wrangler arguments after --: a usage error', () => {
+  const r = Bun.spawnSync([process.execPath, CLI, 'dev', 'routes.tsx', '--', '--x'], { cwd: join(FIX, 'cf-app'), stdout: 'pipe', stderr: 'pipe' })
   expect(r.exitCode).toBe(2)
-  expect(r.stderr.toString()).toContain('only --target cloudflare')
+  expect(r.stderr.toString()).toContain('arguments after -- are for --target cloudflare')
 })
