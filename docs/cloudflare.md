@@ -2,7 +2,7 @@
 
 brust builds the same app for Cloudflare Workers that it runs natively with `brust start`. The page renderer is the same Rust code, compiled to WebAssembly. The only JavaScript that runs is the shim `worker-build` generates and your own compiled TypeScript: loaders, `jobs.js`, `actions.ts`, client chunks. brust adds no runtime layer of its own, and the runtime needs only Workers. It ships no Durable Object, KV namespace or D1 database.
 
-The target is **Workers with Static Assets**. Cloudflare Pages is not targeted: its landing page says "Start new projects with Workers" (source C1).
+The target is **Workers with Static Assets**. Cloudflare Pages is not targeted for the app itself: its landing page says "Start new projects with Workers" (source C1). The one exception is static pages with actions, section 12.
 
 This page covers the build, the generated project, bindings, actions, caching, a D1 recipe, the differences from native, limits, and troubleshooting. Cross-instance cache invalidation has its own page: [Cache adapters](./cache-adapters.md).
 
@@ -266,6 +266,38 @@ What this means for brust:
 **Error 10021 on deploy (startup too long).** The global scope took more than 1 s. Remove heavy work at module top level.
 
 **A page stays stale after a mutation.** Expected without a cache adapter: other isolates serve the old page up to `ttl_seconds`. See section 7.
+
+## 12. Static pages + actions on Pages
+
+`brust build --target static` (see [Static output](./static.md)) writes pages that a static host serves for free. With `[actions]` configured it also writes a Pages advanced-mode Worker, so one Pages project serves the pages and the actions on one domain. This is the one place brust targets Pages instead of Workers with Static Assets: Pages serves a `_worker.js` next to the static files, and `_routes.json` decides which requests reach it.
+
+The output in `dist/static/`:
+
+| File | What it is |
+|---|---|
+| `_worker.js/index.js` | The Worker. A request whose path is the action prefix or under it runs the Cloudflare core (section 6). Any other request that reaches it is answered with `env.ASSETS.fetch(request)`. |
+| `_worker.js/core/` | The same worker tree `--target cloudflare` writes: the wasm host plus your bundled actions app. |
+| `_routes.json` | `{ "version": 1, "include": ["<prefix>", "<prefix>/*"], "exclude": [] }`. Only the action prefix invokes the Worker. Pages and assets are static files and are never routed to it. |
+
+`dist/wrangler.jsonc` sits next to `static/` and holds the project `name` (`[cloudflare] name`, else the package name) and the `compatibility_date`. It carries no bindings and no secrets.
+
+Deploy from `dist/`, where the project file is:
+
+```sh
+brust build routes.tsx --target static
+cd dist && wrangler pages deploy --project-name my-site
+```
+
+The file names the output directory (`pages_build_output_dir: "./static"`), so `wrangler pages deploy` needs no directory argument. Secrets and bindings are yours: `wrangler pages secret put NAME --project-name my-site`, or the dashboard. brust does not write them. The deploy itself is not exercised by brust's tests (they run `wrangler pages dev`).
+
+What this mode refuses or ignores:
+
+- `[cache]` with a Cloudflare binding adapter (`cloudflare-kv`, `cloudflare-do`) fails the build with `ssg-actions-cache`. Pages are never cached, and the Worker serves actions only.
+- `ttl_seconds` and the L1 cache do not apply.
+- The `[cloudflare] alias` table applies to the Worker bundle, as on Workers.
+- `_headers` and `_redirects` apply to the static files only, not to responses the Worker produces.
+
+Test locally with `wrangler pages dev dist/static --compatibility-date <the date in dist/wrangler.jsonc>`. A page request shows `GET / 200` and runs no Worker code; `GET <prefix>/...` runs the action.
 
 ## Sources
 

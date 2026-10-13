@@ -75,7 +75,7 @@ These fail the build before anything is written:
 
 | Rule | When |
 |---|---|
-| `ssg-actions` | `[actions]` is configured. Static pages with actions on Pages is a later lane (gaps round L12). |
+| `ssg-actions-cache` | `[actions]` is configured together with a `[cache]` adapter that needs a Cloudflare binding (`cloudflare-kv`, `cloudflare-do`). The Pages Worker serves actions only, so the binding has nowhere to be used. Drop `[cache]`. See section 8. |
 | `ssg-varies` | A rendered route's `cache.prefix` or `cache.bypass` reads `header()`, `cookie()`, `query()` or `request(host)`. The page varies per request, and a static file is one page for everyone. The read-set comes from the server's own key grammar (napi `cacheExprReads`). |
 | `ssg-params-missing` / `ssg-params` | See section 2. |
 
@@ -96,3 +96,19 @@ These fail the build before anything is written:
 ```
 
 Workers Static Assets also reads `_headers` and `_redirects`.
+
+## 8. Static pages with actions
+
+When `[actions]` is configured, `--target static` writes the same static pages and also a Cloudflare Pages advanced-mode Worker that serves **only** the action prefix:
+
+```
+dist/static/
+  _worker.js/index.js    the Worker: the action prefix goes to the Cloudflare core, anything else to env.ASSETS
+  _worker.js/core/       the worker tree of --target cloudflare (wasm host + your actions.ts, bundled)
+  _routes.json           { "include": ["<prefix>", "<prefix>/*"] }
+dist/wrangler.jsonc    the Pages project file: name, compatibility date, pages_build_output_dir (next to static/)
+```
+
+`_routes.json` lists only the prefix, so pages and assets are served as static files and never invoke the Worker (they stay free). A request that reaches the Worker and is not an action falls through to the static files. Admission still runs in Rust (method gate, body cap, `Content-Encoding`, the cross-site guard with its 403), exactly as on Workers; see [Cloudflare](./cloudflare.md), "Static pages + actions on Pages".
+
+`ttl_seconds`, `[cache]` and the L1 cache do not apply: pages are static files and the Worker serves actions only.
