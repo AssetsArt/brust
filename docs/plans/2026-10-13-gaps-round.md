@@ -35,6 +35,7 @@ Every finding below was reproduced on 2026-10-13 by research agents against v2 @
   | F103 | gap-const-fold | F109 | gap-build-eval | | |
   | F104 | gap-map-cond | F110 | gap-ssg-actions | F115 | react-coverage-api |
   | F116 | css-pipeline | F117 | css-module-fold | F118 | tailwind |
+  | F119 | external-island | F120 | lucide-native | | |
 
   When two lanes add rows, the second one to merge resolves the textual conflict by keeping both rows.
 - **R0.5 Each lane updates its own docs.** Update `docs/*.md` where the behaviour is documented, and add a `docs/plans/m1a-followups.md` row (F99+) marked DONE with the PR number.
@@ -757,7 +758,7 @@ The research verified this on 2026-10-13: `@import "tailwindcss"`, `@theme` and 
 The human: "หลังจากทำทั้งหมด public version ให้ แล้ว มาทำให้ brust ใช้ https://ui.shadcn.com/docs ได้ง่ายๆแบบ framework อื่นๆ แล้วมาเก็บ coverage shadcn Components ให้หมด".
 
 **P1. Publish.**
-- **When:** after every lane L1–L21 has merged with CI green and the docs site is synced (L17).
+- **When:** after every lane L1–L23 has merged with CI green and the docs site is synced (L17).
 - **What:** the lead publishes the next prerelease, **2.0.0-alpha.4**. This is the human's explicit go for this publish.
 - **How:**
   - follow the release flow (`/release` skill and memory notes): `bun scripts/release-bump.ts` covers every version reference, including `bun.lock`;
@@ -779,12 +780,56 @@ The human: "หลังจากทำทั้งหมด public version ใ�
 - the output is `docs/shadcn-coverage.json`;
 - it becomes a page on the docs site.
 
+### L22 `external-island`: a component from a package must render as a React island, as the warning promises. Wave 1 (bug), size S–M
+
+**Bug, found by the lead on 2026-10-13** with `lucide-react@0.468.0` in a scratch app against v2. `<Heart size={16}/>` in a static component, or `<Plus/>` in a native one:
+- prints `warning external-component … <Heart> comes from the package lucide-react; it renders as a React island`;
+- then **fails the build** with `error ssr-target staticIcon_… job j0: output _ssr_Heart names no compiled react component`.
+- Inside an inlined child it fails earlier, with `nested-instance`.
+
+So no package component works in static or native parents. That also blocks shadcn/ui (P2).
+
+**Fix.** The ssr target of an external component is the package export itself:
+- the island registry and bundling resolve `{package, export}` instead of a compiled component id;
+- SSR renders it in the worker;
+- the client bundles the export as an island entry;
+- literal props ship as island props (the existing literals path).
+
+Keep `nested-instance` only where L4 cannot handle it yet.
+
+**Tests:** a scratch-package fixture (a tiny local package under the test fixtures, no network): a static parent and a native parent each use it; build OK, SSR markup present, hydrated in Chromium.
+
+### L23 `lucide-native`: lucide-react icons compile to inline SVG (static/native), no React. Wave 2 (after L1), size M
+
+The human asked on 2026-10-13: "lucide มัน support native ไหม". Today the answer is no; the build fails (L22). 0.1.x turned lucide icons in native routes into static SVG, including aliases (`git show main:` history of `followLucideAlias`); v2 lost that.
+
+**R23.1 (ruled).**
+- **Which imports:** a named import of an icon from `lucide-react` (or its `/icons/<name>` deep import, and aliases such as `Edit` → `SquarePen`, resolved through the package's own exports).
+- **How the SVG is produced:** the icon component is rendered **at build time** with `react-dom/server` `renderToStaticMarkup`, in the build process, for the literal props at that call site. The SVG markup is inlined into the template. No React, no island, no JS.
+  - The icon modules are `createLucideIcon(name, iconNode)`. Rendering keeps it exact for every lucide version and option: `size`, `color`, `strokeWidth`, `absoluteStrokeWidth`, `className`, `aria-*`, any SVG attribute.
+- **Props that are not compile-time constants** (props, state, loop item):
+  - Render once with sentinel values, then lower the sentinels to the template expression: `{{ … | e }}` for static, an `x-bind` for native.
+  - This applies to string and number attributes only (`size` → `width`/`height`, `color` → `stroke`, `strokeWidth`, `className`).
+  - Anything else falls back to L22's island, with diagnostic `icon-dynamic-prop` naming the prop.
+  - A whole dynamic icon choice (`const I = cond ? Plus : Minus`) becomes a native `x-if` over the two inlined SVGs. A dynamic icon from a map or variable → island.
+- **Where it works:** static, native and react (inside an island it is just React).
+- **Version:** whatever `lucide-react` the app installs. No pinned copy in brust.
+
+**Tests:**
+- static and native fixtures have `needs_worker:false`, no `client` chunk for a pure icon page, and the SVG equals React's output byte for byte;
+- dynamic `size` and `color` from state update in the browser;
+- an alias import;
+- a fallback diagnostic.
+- Battery rows plus a lucide entry on the coverage pages (L18/P3).
+
+**Docs-site follow-up (lead):** the site can use lucide icons and drop hand-written SVGs.
+
 ## Waves and conflicts
 
 | Wave | Lanes | Notes |
 |---|---|---|
-| 1 | L1, L5, L6, L7, L10, L11, L18 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
-| 2 | L3 (after L1), L8, L9, L13, L19 | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
+| 1 | L1, L5, L6, L7, L10, L11, L18, L22 | L1 and L6 both touch `analyze/expr.rs` (different functions): second to merge rebases. L5 owns `hooks.rs` and `names.rs`. |
+| 2 | L3 (after L1), L8, L9, L13, L19, L23 (after L1; uses L22's fallback) | L3 and L8 both touch `lower/template.rs`: second rebases. L13 is TS-only (`dev.ts`, `cli.ts`, new `dev/`). |
 | 3 | L4 (after L3), L2 (after L1), L12 (after L9), L14 (after L13 + L10: both touch `pipeline.rs`), L15 (after L14), L16 (after L9; L12 and L16 both touch the CF build: second rebases), L20 (after L1 + L19), L21 (after L19) | |
 
 Each lane is one PR to v2 and goes through the usual flow: READY → REVIEW-PASS → GATES-OK (full CI mirror: `cargo fmt --check`, clippy `-D warnings`, cargo test, `bun run ci`, bun tests, browser tests) → MERGE-READY. The lead merges after CI is green.
