@@ -94,7 +94,7 @@ export async function runBuild(opts: {
   const { serverOnly, actions, cloudflare, cache } = await loadBuildConfig(appRoot)
 
   // Everything that can fail on the app's own input runs before a byte is written.
-  const { routes, componentFile } = await scanRoutes(entry)
+  const { routes, componentFile, componentIssue } = await scanRoutes(entry, appRoot)
   let leaves: ReturnType<typeof validateRoutes>
   try {
     leaves = validateRoutes(routes)
@@ -138,7 +138,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, serverOnly, actions, actionsEntry, cache, cacheModule, cf, log: opts.log })
+    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, log: opts.log })
     rmSync(join(tmp, '.stage'), { recursive: true, force: true })
     if (existsSync(dist)) {
       const old = join(dirname(dist), `.${basename(dist)}.brust-old`)
@@ -162,6 +162,7 @@ async function buildInto(
     dist: string
     leaves: ReturnType<typeof validateRoutes>
     componentFile: Map<Function, string>
+    componentIssue: Map<Function, string>
     serverOnly: string[]
     actions: ActionsBuildConfig | null
     /** Absolute path of the actions entry (null when `[actions]` is off). */
@@ -181,6 +182,7 @@ async function buildInto(
     appRoot,
     leaves,
     componentFile: o.componentFile,
+    componentIssue: o.componentIssue,
     runtimeImport: `/_brust/${runtime}`,
     serverOnly: o.serverOnly,
     log: o.log,
