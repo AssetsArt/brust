@@ -26,6 +26,10 @@ export interface RunOptions {
 /** The manifest fields `run` needs (build/manifest.ts owns the full shape). */
 export interface RunManifest {
   actions?: { entry: string; prefix: string; maxBodyBytes: number; maxResponseBytes?: number; crossSite?: 'reject' | 'allow' } | null
+  /** L16 R16.3: `brust build --actions-only`: no page routes and no routes entry. */
+  actions_only?: boolean
+  /** L16 R16.4b: a page-only build; the actions app is deployed elsewhere (`[actions] base_url`). */
+  actions_remote?: { prefix: string } | null
   /** `[cache]`: the server's L2 settings (the workers load the adapter itself). */
   cache?: { adapter: string; getTimeoutMs: number; maxBodyBytes: number; namespace: string; buildId: string } | null
 }
@@ -42,10 +46,19 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     workerThreads: cfg.ioThreads,
     generator: `brust/${version}`,
     ...(m.actions ? { actions: { prefix: m.actions.prefix, maxBodyBytes: m.actions.maxBodyBytes, ...(m.actions.maxResponseBytes !== undefined ? { maxResponseBytes: m.actions.maxResponseBytes } : {}), ...(m.actions.crossSite ? { crossSite: m.actions.crossSite } : {}) } } : {}),
+    ...(actionsClient(cfg, m) ? { actionsClient: actionsClient(cfg, m) } : {}),
     ...(cfg.cors ? { cors: cfg.cors } : {}),
     ...(devToken ? { devToken } : {}),
     ...(m.cache ? { l2: { adapter: m.cache.adapter, getTimeoutMs: m.cache.getTimeoutMs, maxBodyBytes: m.cache.maxBodyBytes, namespace: m.cache.namespace, buildId: m.cache.buildId } } : {}),
   }
+}
+
+/** L16: what the page tells the browser `client()` (R16.1/R16.2); absent while it would only repeat the prefix script. */
+function actionsClient(cfg: BrustConfig, m: RunManifest): NonNullable<StartOptions['actionsClient']> | undefined {
+  const credentials = cfg.actionsCredentials !== undefined && cfg.actionsCredentials !== 'same-origin' ? cfg.actionsCredentials : undefined
+  if (cfg.actionsBaseUrl === undefined && credentials === undefined && !m.actions_remote) return undefined
+  const prefix = m.actions?.prefix ?? m.actions_remote?.prefix
+  return { ...(prefix ? { prefix } : {}), ...(cfg.actionsBaseUrl !== undefined ? { baseUrl: cfg.actionsBaseUrl } : {}), ...(credentials ? { credentials } : {}) }
 }
 
 /** Every worker's response buffer, kept reachable until the process exits (see run()). */
@@ -68,7 +81,8 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     fail(`bad manifest ${manifest}: ${(e as Error).message}`)
   }
   const entry = resolve(process.env.BRUST_APP_ENTRY || opts.entry || 'routes.tsx')
-  if (!existsSync(entry)) fail(`routes entry ${entry} not found`)
+  // R16.3: an actions-only dist has no pages, so no routes module either.
+  if (!m.actions_only && !existsSync(entry)) fail(`routes entry ${entry} not found`)
 
   let cfg: BrustConfig
   try {
@@ -77,6 +91,8 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     fail((e as Error).message)
   }
 
+  if (m.actions_remote && cfg.actionsBaseUrl === undefined)
+    fail('this build has no local actions app: set [actions] base_url (or BRUST_ACTIONS_BASE_URL) to the deployment that serves them')
   const version: string = (await Bun.file(join(import.meta.dir, '../package.json')).json()).version
   try {
     startServer(startOptions(cfg, distDir, m, version, process.env.BRUST_DEV_TOKEN || undefined))

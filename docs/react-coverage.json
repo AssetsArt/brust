@@ -1,0 +1,1666 @@
+{
+  "generated": "by `bun run battery`; do not edit",
+  "reference": {
+    "fetched": "2026-10-13",
+    "sources": [
+      "https://react.dev/reference/react",
+      "https://react.dev/reference/react-dom",
+      "https://react.dev/reference/rsc"
+    ]
+  },
+  "summary": {
+    "entries": 58,
+    "native": 11,
+    "static": 9,
+    "island": 30,
+    "partial": 3,
+    "unsupported": 0,
+    "n/a": 5
+  },
+  "groups": {
+    "hooks": "Hooks",
+    "components": "Components",
+    "apis": "APIs",
+    "react-dom-hooks": "react-dom hooks",
+    "react-dom-components": "react-dom components",
+    "react-dom-apis": "react-dom APIs",
+    "server": "Server"
+  },
+  "entries": [
+    {
+      "name": "useActionState",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useActionState",
+      "status": "island",
+      "rows": [
+        "c-useactionstate"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-useactionstate",
+          "authoring": "useActionState",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: any hook outside §4.3"
+    },
+    {
+      "name": "useCallback",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useCallback",
+      "status": "native",
+      "rows": [
+        "c-usecallback"
+      ],
+      "tiers": [
+        "native"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "c-usecallback",
+          "authoring": "useCallback handler",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        }
+      ],
+      "note": "spec §4.3 useCallback"
+    },
+    {
+      "name": "useContext",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useContext",
+      "status": "island",
+      "rows": [
+        "c-usecontext"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-usecontext",
+          "authoring": "useContext",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "useContext"
+    },
+    {
+      "name": "useDebugValue",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useDebugValue",
+      "status": "island",
+      "rows": [
+        "c-usedebugvalue"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-usedebugvalue",
+          "authoring": "useDebugValue in a hook-using component",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: any hook outside §4.3"
+    },
+    {
+      "name": "useDeferredValue",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useDeferredValue",
+      "status": "island",
+      "rows": [
+        "c-usedeferredvalue"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-usedeferredvalue",
+          "authoring": "useDeferredValue",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: any hook outside §4.3"
+    },
+    {
+      "name": "useEffect",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useEffect",
+      "status": "native",
+      "rows": [
+        "c-useeffect-cleanup",
+        "c-useeffect-missing-dep",
+        "c-useeffect-nocleanup"
+      ],
+      "tiers": [
+        "native"
+      ],
+      "diagnostics": [
+        "warning:effect-deps"
+      ],
+      "shapes": [
+        {
+          "row": "c-useeffect-cleanup",
+          "authoring": "useEffect with cleanup",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        },
+        {
+          "row": "c-useeffect-missing-dep",
+          "authoring": "useEffect missing a dependency",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": [
+            "warning:effect-deps"
+          ]
+        },
+        {
+          "row": "c-useeffect-nocleanup",
+          "authoring": "useEffect without cleanup",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        }
+      ],
+      "note": "spec §8.1 effect-deps: the deps array is complete, so no warning (F41)"
+    },
+    {
+      "name": "useEffectEvent",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useEffectEvent",
+      "status": "island",
+      "rows": [
+        "c-useeffectevent"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-useeffectevent",
+          "authoring": "useEffectEvent",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: any hook outside §4.3"
+    },
+    {
+      "name": "useId",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useId",
+      "status": "static",
+      "rows": [
+        "c-useid"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "c-useid",
+          "authoring": "useId read in render",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static"
+    },
+    {
+      "name": "useImperativeHandle",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useImperativeHandle",
+      "status": "island",
+      "rows": [
+        "c-useimperativehandle"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-useimperativehandle",
+          "authoring": "useImperativeHandle",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: any hook outside §4.3"
+    },
+    {
+      "name": "useInsertionEffect",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useInsertionEffect",
+      "status": "island",
+      "rows": [
+        "c-useinsertioneffect"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-useinsertioneffect",
+          "authoring": "useInsertionEffect",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: any hook outside §4.3"
+    },
+    {
+      "name": "useLayoutEffect",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useLayoutEffect",
+      "status": "native",
+      "rows": [
+        "c-uselayouteffect"
+      ],
+      "tiers": [
+        "native"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "c-uselayouteffect",
+          "authoring": "useLayoutEffect",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        }
+      ],
+      "note": "spec §4.3 useLayoutEffect"
+    },
+    {
+      "name": "useMemo",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useMemo",
+      "status": "native",
+      "rows": [
+        "c-usememo"
+      ],
+      "tiers": [
+        "native"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "c-usememo",
+          "authoring": "useMemo derived from state",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        }
+      ],
+      "note": "spec §4.3 useMemo"
+    },
+    {
+      "name": "useOptimistic",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useOptimistic",
+      "status": "island",
+      "rows": [
+        "c-useoptimistic"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-useoptimistic",
+          "authoring": "useOptimistic",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: any hook outside §4.3"
+    },
+    {
+      "name": "useReducer",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useReducer",
+      "status": "island",
+      "rows": [
+        "c-usereducer"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-usereducer",
+          "authoring": "useReducer",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "useReducer"
+    },
+    {
+      "name": "useRef",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useRef",
+      "status": "native",
+      "rows": [
+        "c-useref"
+      ],
+      "tiers": [
+        "native"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "c-useref",
+          "authoring": "useRef bound with ref=",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        }
+      ],
+      "note": "spec §4.3 useRef"
+    },
+    {
+      "name": "useState",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useState",
+      "status": "native",
+      "rows": [
+        "c-usestate",
+        "c-usestate-functional"
+      ],
+      "tiers": [
+        "native"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "c-usestate",
+          "authoring": "useState",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        },
+        {
+          "row": "c-usestate-functional",
+          "authoring": "useState with a functional update",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        }
+      ],
+      "note": "spec §4.3 useState"
+    },
+    {
+      "name": "useSyncExternalStore",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useSyncExternalStore",
+      "status": "island",
+      "rows": [
+        "c-usesyncexternalstore"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-usesyncexternalstore",
+          "authoring": "useSyncExternalStore",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "useSyncExternalStore"
+    },
+    {
+      "name": "useTransition",
+      "group": "hooks",
+      "url": "https://react.dev/reference/react/useTransition",
+      "status": "island",
+      "rows": [
+        "c-usetransition",
+        "c-usetransition-start"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-usetransition",
+          "authoring": "useTransition",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        },
+        {
+          "row": "c-usetransition-start",
+          "authoring": "startTransition from the useTransition pair",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: startTransition is outside the supported set"
+    },
+    {
+      "name": "<Activity>",
+      "group": "components",
+      "url": "https://react.dev/reference/react/Activity",
+      "status": "island",
+      "rows": [
+        "d-activity"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:external-component",
+        "fallback:island-children"
+      ],
+      "shapes": [
+        {
+          "row": "d-activity",
+          "authoring": "<Activity mode>",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:external-component",
+            "fallback:island-children"
+          ]
+        }
+      ],
+      "note": "<Activity mode>"
+    },
+    {
+      "name": "<Fragment>",
+      "group": "components",
+      "url": "https://react.dev/reference/react/Fragment",
+      "status": "static",
+      "rows": [
+        "a-fragment",
+        "d-fragment-keyed"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-fragment",
+          "authoring": "fragment root",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        },
+        {
+          "row": "d-fragment-keyed",
+          "authoring": "<Fragment key> inside a list",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "static fragment root: no <brust-host>, no warning (gaps L8)"
+    },
+    {
+      "name": "<Profiler>",
+      "group": "components",
+      "url": "https://react.dev/reference/react/Profiler",
+      "status": "partial",
+      "rows": [
+        "d-profiler",
+        "d-profiler-bare"
+      ],
+      "tiers": [
+        "error",
+        "react"
+      ],
+      "diagnostics": [
+        "error:island-prop",
+        "fallback:external-component",
+        "fallback:island-children"
+      ],
+      "shapes": [
+        {
+          "row": "d-profiler",
+          "authoring": "<Profiler onRender>",
+          "expected": "error",
+          "observed": "error",
+          "diagnostics": [
+            "error:island-prop",
+            "fallback:external-component",
+            "fallback:island-children"
+          ]
+        },
+        {
+          "row": "d-profiler-bare",
+          "authoring": "<Profiler> without onRender",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:external-component",
+            "fallback:island-children"
+          ]
+        }
+      ],
+      "note": "island: d-profiler-bare; refused: d-profiler"
+    },
+    {
+      "name": "<StrictMode>",
+      "group": "components",
+      "url": "https://react.dev/reference/react/StrictMode",
+      "status": "island",
+      "rows": [
+        "d-strictmode"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:external-component",
+        "fallback:island-children"
+      ],
+      "shapes": [
+        {
+          "row": "d-strictmode",
+          "authoring": "<StrictMode>",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:external-component",
+            "fallback:island-children"
+          ]
+        }
+      ],
+      "note": "<StrictMode>"
+    },
+    {
+      "name": "<Suspense>",
+      "group": "components",
+      "url": "https://react.dev/reference/react/Suspense",
+      "status": "island",
+      "rows": [
+        "d-lazy-suspense",
+        "d-suspense-static"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:dynamic-import",
+        "fallback:external-component",
+        "fallback:island-children",
+        "fallback:jsx-expression",
+        "fallback:local-component"
+      ],
+      "shapes": [
+        {
+          "row": "d-lazy-suspense",
+          "authoring": "lazy + Suspense",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:dynamic-import",
+            "fallback:external-component",
+            "fallback:island-children",
+            "fallback:jsx-expression",
+            "fallback:local-component"
+          ]
+        },
+        {
+          "row": "d-suspense-static",
+          "authoring": "<Suspense> around static content",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:external-component",
+            "fallback:island-children",
+            "fallback:jsx-expression"
+          ]
+        }
+      ],
+      "note": "F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic"
+    },
+    {
+      "name": "<ViewTransition>",
+      "group": "components",
+      "url": "https://react.dev/reference/react/ViewTransition",
+      "status": "island",
+      "rows": [
+        "d-viewtransition"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:external-component",
+        "fallback:island-children"
+      ],
+      "shapes": [
+        {
+          "row": "d-viewtransition",
+          "authoring": "<ViewTransition>",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:external-component",
+            "fallback:island-children"
+          ]
+        }
+      ],
+      "note": "<ViewTransition>"
+    },
+    {
+      "name": "act",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/act",
+      "status": "n/a",
+      "rows": [
+        "d-act"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "d-act",
+          "authoring": "act() in a component module",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "A test helper; it has no runtime meaning in a brust page. Importing it changes nothing about a component."
+    },
+    {
+      "name": "addTransitionType",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/addTransitionType",
+      "status": "island",
+      "rows": [
+        "d-addtransitiontype"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "d-addtransitiontype",
+          "authoring": "addTransitionType inside startTransition",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "addTransitionType inside startTransition"
+    },
+    {
+      "name": "cache",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/cache",
+      "status": "static",
+      "rows": [
+        "d-cache"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "d-cache",
+          "authoring": "cache() around a server helper",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "spec §3.4 cache()"
+    },
+    {
+      "name": "cacheSignal",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/cacheSignal",
+      "status": "static",
+      "rows": [
+        "d-cachesignal"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "d-cachesignal",
+          "authoring": "cacheSignal() in a cached function",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "spec §3.4 cache(): the call is a precompute job on the server"
+    },
+    {
+      "name": "captureOwnerStack",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/captureOwnerStack",
+      "status": "island",
+      "rows": [
+        "d-captureownerstack"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "d-captureownerstack",
+          "authoring": "captureOwnerStack in a handler",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "captureOwnerStack in a handler"
+    },
+    {
+      "name": "createContext",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/createContext",
+      "status": "island",
+      "rows": [
+        "d-createcontext",
+        "d-createcontext-consumer"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:member-tag",
+        "fallback:jsx-expression"
+      ],
+      "shapes": [
+        {
+          "row": "d-createcontext",
+          "authoring": "createContext provider",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:member-tag"
+          ]
+        },
+        {
+          "row": "d-createcontext-consumer",
+          "authoring": "createContext with a Consumer",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:member-tag",
+            "fallback:jsx-expression"
+          ]
+        }
+      ],
+      "note": "createContext provider"
+    },
+    {
+      "name": "experimental_taintObjectReference",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/experimental_taintObjectReference",
+      "status": "island",
+      "rows": [
+        "d-taint-object"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "d-taint-object",
+          "authoring": "experimental_taintObjectReference",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "experimental_taintObjectReference"
+    },
+    {
+      "name": "experimental_taintUniqueValue",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/experimental_taintUniqueValue",
+      "status": "island",
+      "rows": [
+        "d-taint-unique"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "d-taint-unique",
+          "authoring": "experimental_taintUniqueValue",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "experimental_taintUniqueValue"
+    },
+    {
+      "name": "lazy",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/lazy",
+      "status": "island",
+      "rows": [
+        "d-lazy-suspense",
+        "d-lazy-component"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:dynamic-import",
+        "fallback:external-component",
+        "fallback:island-children",
+        "fallback:jsx-expression",
+        "fallback:local-component"
+      ],
+      "shapes": [
+        {
+          "row": "d-lazy-suspense",
+          "authoring": "lazy + Suspense",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:dynamic-import",
+            "fallback:external-component",
+            "fallback:island-children",
+            "fallback:jsx-expression",
+            "fallback:local-component"
+          ]
+        },
+        {
+          "row": "d-lazy-component",
+          "authoring": "lazy component without Suspense",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:dynamic-import",
+            "fallback:local-component"
+          ]
+        }
+      ],
+      "note": "F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic"
+    },
+    {
+      "name": "memo",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/memo",
+      "status": "partial",
+      "rows": [
+        "b-memo",
+        "d-memo-state"
+      ],
+      "tiers": [
+        "native",
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:default-export-shape"
+      ],
+      "shapes": [
+        {
+          "row": "b-memo",
+          "authoring": "memo() wrapper around a plain component",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        },
+        {
+          "row": "d-memo-state",
+          "authoring": "default export memo(function …) with state",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:default-export-shape"
+          ]
+        }
+      ],
+      "note": "native/static: b-memo; island: d-memo-state"
+    },
+    {
+      "name": "startTransition",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/startTransition",
+      "status": "island",
+      "rows": [
+        "c-usetransition-start"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-usetransition-start",
+          "authoring": "startTransition from the useTransition pair",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: startTransition is outside the supported set"
+    },
+    {
+      "name": "use",
+      "group": "apis",
+      "url": "https://react.dev/reference/react/use",
+      "status": "island",
+      "rows": [
+        "c-use-hook",
+        "c-use-context"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-use-hook",
+          "authoring": "use(promise)",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        },
+        {
+          "row": "c-use-context",
+          "authoring": "use(context)",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        }
+      ],
+      "note": "spec §3 react tier: use"
+    },
+    {
+      "name": "useFormStatus",
+      "group": "react-dom-hooks",
+      "url": "https://react.dev/reference/react-dom/hooks/useFormStatus",
+      "status": "partial",
+      "rows": [
+        "c-useformstatus",
+        "c-useformstatus-child"
+      ],
+      "tiers": [
+        "react",
+        "static"
+      ],
+      "diagnostics": [
+        "fallback:hook-unsupported"
+      ],
+      "shapes": [
+        {
+          "row": "c-useformstatus",
+          "authoring": "useFormStatus read in the component",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:hook-unsupported"
+          ]
+        },
+        {
+          "row": "c-useformstatus-child",
+          "authoring": "useFormStatus in a child inside a static <form>",
+          "expected": "react",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "native/static: c-useformstatus-child; island: c-useformstatus; known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react"
+    },
+    {
+      "name": "<form>",
+      "group": "react-dom-components",
+      "url": "https://react.dev/reference/react-dom/components/form",
+      "status": "native",
+      "rows": [
+        "a-form-onsubmit",
+        "a-form-action"
+      ],
+      "tiers": [
+        "native",
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-form-onsubmit",
+          "authoring": "<form onSubmit>",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        },
+        {
+          "row": "a-form-action",
+          "authoring": "<form action={fn}>",
+          "expected": "react",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "<form onSubmit>; known gap: F115: a function action becomes a precompute value that the url_ok guard drops, so the form renders without an action and submits nowhere; it should fall back to react"
+    },
+    {
+      "name": "<input>",
+      "group": "react-dom-components",
+      "url": "https://react.dev/reference/react-dom/components/input",
+      "status": "native",
+      "rows": [
+        "a-input-controlled",
+        "a-input-static"
+      ],
+      "tiers": [
+        "native",
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-input-controlled",
+          "authoring": "controlled <input>",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        },
+        {
+          "row": "a-input-static",
+          "authoring": "<input> with a default value",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "controlled <input>"
+    },
+    {
+      "name": "<select>",
+      "group": "react-dom-components",
+      "url": "https://react.dev/reference/react-dom/components/select",
+      "status": "native",
+      "rows": [
+        "a-select-controlled"
+      ],
+      "tiers": [
+        "native"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-select-controlled",
+          "authoring": "controlled <select>",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        }
+      ],
+      "note": "controlled <select>"
+    },
+    {
+      "name": "<textarea>",
+      "group": "react-dom-components",
+      "url": "https://react.dev/reference/react-dom/components/textarea",
+      "status": "native",
+      "rows": [
+        "a-textarea-controlled"
+      ],
+      "tiers": [
+        "native"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-textarea-controlled",
+          "authoring": "controlled <textarea>",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        }
+      ],
+      "note": "controlled <textarea>"
+    },
+    {
+      "name": "<title>",
+      "group": "react-dom-components",
+      "url": "https://react.dev/reference/react-dom/components/title",
+      "status": "static",
+      "rows": [
+        "a-title"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-title",
+          "authoring": "<title> in a component body",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "<title> in a component body"
+    },
+    {
+      "name": "<meta>",
+      "group": "react-dom-components",
+      "url": "https://react.dev/reference/react-dom/components/meta",
+      "status": "static",
+      "rows": [
+        "a-meta"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-meta",
+          "authoring": "<meta> in a component body",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "<meta> in a component body"
+    },
+    {
+      "name": "<link>",
+      "group": "react-dom-components",
+      "url": "https://react.dev/reference/react-dom/components/link",
+      "status": "static",
+      "rows": [
+        "a-link"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-link",
+          "authoring": "<link rel=stylesheet> in a component body",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "<link rel=stylesheet> in a component body"
+    },
+    {
+      "name": "<style>",
+      "group": "react-dom-components",
+      "url": "https://react.dev/reference/react-dom/components/style",
+      "status": "static",
+      "rows": [
+        "a-style"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-style",
+          "authoring": "<style> element",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "<style> element"
+    },
+    {
+      "name": "<script>",
+      "group": "react-dom-components",
+      "url": "https://react.dev/reference/react-dom/components/script",
+      "status": "static",
+      "rows": [
+        "a-script-async"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "a-script-async",
+          "authoring": "<script async src>",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "<script async src>"
+    },
+    {
+      "name": "createPortal",
+      "group": "react-dom-apis",
+      "url": "https://react.dev/reference/react-dom/createPortal",
+      "status": "island",
+      "rows": [
+        "d-createportal"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:browser-global"
+      ],
+      "shapes": [
+        {
+          "row": "d-createportal",
+          "authoring": "createPortal",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:browser-global"
+          ]
+        }
+      ],
+      "note": "createPortal"
+    },
+    {
+      "name": "flushSync",
+      "group": "react-dom-apis",
+      "url": "https://react.dev/reference/react-dom/flushSync",
+      "status": "native",
+      "rows": [
+        "d-flushsync"
+      ],
+      "tiers": [
+        "native"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "d-flushsync",
+          "authoring": "flushSync in a handler",
+          "expected": "react",
+          "observed": "native",
+          "diagnostics": []
+        }
+      ],
+      "note": "flushSync in a handler; known gap: F115: compiles native but the client chunk imports react-dom (a native chunk must contain no react import); it should fall back to react"
+    },
+    {
+      "name": "preconnect",
+      "group": "react-dom-apis",
+      "url": "https://react.dev/reference/react-dom/preconnect",
+      "status": "island",
+      "rows": [
+        "d-preconnect"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:body-shape"
+      ],
+      "shapes": [
+        {
+          "row": "d-preconnect",
+          "authoring": "preconnect in render",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:body-shape"
+          ]
+        }
+      ],
+      "note": "preconnect in render"
+    },
+    {
+      "name": "prefetchDNS",
+      "group": "react-dom-apis",
+      "url": "https://react.dev/reference/react-dom/prefetchDNS",
+      "status": "island",
+      "rows": [
+        "d-prefetchdns"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:body-shape"
+      ],
+      "shapes": [
+        {
+          "row": "d-prefetchdns",
+          "authoring": "prefetchDNS in render",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:body-shape"
+          ]
+        }
+      ],
+      "note": "prefetchDNS in render"
+    },
+    {
+      "name": "preinit",
+      "group": "react-dom-apis",
+      "url": "https://react.dev/reference/react-dom/preinit",
+      "status": "island",
+      "rows": [
+        "d-preinit"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:body-shape"
+      ],
+      "shapes": [
+        {
+          "row": "d-preinit",
+          "authoring": "preinit in render",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:body-shape"
+          ]
+        }
+      ],
+      "note": "preinit in render"
+    },
+    {
+      "name": "preinitModule",
+      "group": "react-dom-apis",
+      "url": "https://react.dev/reference/react-dom/preinitModule",
+      "status": "island",
+      "rows": [
+        "d-preinitmodule"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:body-shape"
+      ],
+      "shapes": [
+        {
+          "row": "d-preinitmodule",
+          "authoring": "preinitModule in render",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:body-shape"
+          ]
+        }
+      ],
+      "note": "preinitModule in render"
+    },
+    {
+      "name": "preload",
+      "group": "react-dom-apis",
+      "url": "https://react.dev/reference/react-dom/preload",
+      "status": "island",
+      "rows": [
+        "d-preload"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:body-shape"
+      ],
+      "shapes": [
+        {
+          "row": "d-preload",
+          "authoring": "preload in render",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:body-shape"
+          ]
+        }
+      ],
+      "note": "preload in render"
+    },
+    {
+      "name": "preloadModule",
+      "group": "react-dom-apis",
+      "url": "https://react.dev/reference/react-dom/preloadModule",
+      "status": "island",
+      "rows": [
+        "d-preloadmodule"
+      ],
+      "tiers": [
+        "react"
+      ],
+      "diagnostics": [
+        "fallback:body-shape"
+      ],
+      "shapes": [
+        {
+          "row": "d-preloadmodule",
+          "authoring": "preloadModule in render",
+          "expected": "react",
+          "observed": "react",
+          "diagnostics": [
+            "fallback:body-shape"
+          ]
+        }
+      ],
+      "note": "preloadModule in render"
+    },
+    {
+      "name": "'use client'",
+      "group": "server",
+      "url": "https://react.dev/reference/rsc/use-client",
+      "status": "n/a",
+      "rows": [
+        "e-use-client"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [
+        "warning:use-client-leftover"
+      ],
+      "shapes": [
+        {
+          "row": "e-use-client",
+          "authoring": "'use client' leftover",
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": [
+            "warning:use-client-leftover"
+          ]
+        }
+      ],
+      "note": "No directives: every component is classified by the compiler. The directive is ignored with a warning."
+    },
+    {
+      "name": "'use server'",
+      "group": "server",
+      "url": "https://react.dev/reference/rsc/use-server",
+      "status": "n/a",
+      "rows": [
+        "e-use-server"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "e-use-server",
+          "authoring": "'use server' function",
+          "expected": "react",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "No directives: server work is an Elysia app under `[actions]`, or a loader/job. A `'use server'` function is not a server function here."
+    },
+    {
+      "name": "Server Components",
+      "group": "server",
+      "url": "https://react.dev/reference/rsc/server-components",
+      "status": "n/a",
+      "rows": [
+        "e-server-component-async"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "e-server-component-async",
+          "authoring": "async Server Component",
+          "expected": "react",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "No Server Components: a loader and the compiled jobs are the server half, components render to HTML on the Rust server."
+    },
+    {
+      "name": "Server Functions",
+      "group": "server",
+      "url": "https://react.dev/reference/rsc/server-functions",
+      "status": "n/a",
+      "rows": [
+        "e-server-function-prop"
+      ],
+      "tiers": [
+        "static"
+      ],
+      "diagnostics": [],
+      "shapes": [
+        {
+          "row": "e-server-function-prop",
+          "authoring": "server function passed to a client component",
+          "expected": "react",
+          "observed": "static",
+          "diagnostics": []
+        }
+      ],
+      "note": "No Server Functions: call an `[actions]` route (`@brust/core/actions`) instead."
+    }
+  ]
+}

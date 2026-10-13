@@ -5,9 +5,17 @@ import { CATEGORIES, type Expect } from './rows.ts'
 import type { Result } from './run.ts'
 
 /** Rows whose observed tier is accepted to differ from (or whose checks are relaxed against) the spec, by ledger id. Set-equal to the rows carrying `knownGap`. */
-export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }> = {}
+export const KNOWN_GAP_ROWS: Record<string, { ledger: string; observed: Expect }> = {
+  // L18 (F115): React reference entries whose observed behaviour disagrees with the spec; each row's knownGap says what and what it should do.
+  'c-useformstatus-child': { ledger: 'F115', observed: 'static' },
+  'a-form-action': { ledger: 'F115', observed: 'static' },
+  'd-flushsync': { ledger: 'F115', observed: 'native' },
+  'e-use-server': { ledger: 'F115', observed: 'static' },
+  'e-server-component-async': { ledger: 'F115', observed: 'static' },
+  'e-server-function-prop': { ledger: 'F115', observed: 'static' },
+}
 /** Rows that must produce an `Error` diagnostic and refuse to build. */
-export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key'] as const
+export const ERROR_ROWS = ['e-function-prop-react-child', 'e-server-only-handler', 'e-request-prop', 'e-missing-key', 'd-profiler'] as const
 export const COMPILE_ERROR_ROWS = ['e-parse-error'] as const
 
 /** Gaps still open after `m2a-compiler` (ledger ids in docs/plans/m1a-followups.md). F33, F35, F37, F39, F40 and F32 (single-root) are closed. */

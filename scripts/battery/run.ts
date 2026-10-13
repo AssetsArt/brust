@@ -8,9 +8,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { CATEGORIES, rows, type Expect, type Row } from './rows.ts'
 import { renderExitReport } from './exit.ts'
+import { coverageJson, renderApiSection } from './api-coverage.ts'
 
 const repo = resolve(import.meta.dir, '../..')
 export const REPORT = join(repo, 'docs/react-coverage.md')
+export const REPORT_JSON = join(repo, 'docs/react-coverage.json')
 export const EXIT_REPORT = join(repo, 'docs/plans/m1-exit-report.md')
 
 /** `ok` = `--emit all` succeeded; `refused` = an `Error` diagnostic refused the build by design; `failed` = anything else (crash, panic, signal). */
@@ -143,15 +145,19 @@ export function renderReport(results: Result[]): string {
     }
     L.push('')
   }
+  L.push(renderApiSection(results))
   return L.join('\n')
 }
+
+/** `docs/react-coverage.json`: per react.dev entry its status, rows, observed tiers, diagnostics and a one-line note (R18.3). */
+export const renderJson = (results: Result[]): string => `${JSON.stringify(coverageJson(results), null, 2)}\n`
 
 if (import.meta.main) {
   const results = runBattery()
   const report = renderReport(results)
-  if (!process.argv.includes('--check')) { writeFileSync(REPORT, report); writeFileSync(EXIT_REPORT, renderExitReport(results)) }
+  if (!process.argv.includes('--check')) { writeFileSync(REPORT, report); writeFileSync(REPORT_JSON, renderJson(results)); writeFileSync(EXIT_REPORT, renderExitReport(results)) }
   const bad = results.filter((r) => r.warn)
   for (const r of bad) console.error(`⚠ ${r.row.id}: expected ${r.row.expect}${r.row.jobs !== undefined ? ` (${r.row.jobs} jobs)` : ''}, observed ${r.observed} (${r.jobs.length} jobs) ${r.diagnostics.join(',')}`)
-  console.log(`[battery] ${results.length} rows, ${bad.length} unexplained ⚠${process.argv.includes('--check') ? '' : ' -> docs/react-coverage.md, docs/plans/m1-exit-report.md'}`)
+  console.log(`[battery] ${results.length} rows, ${bad.length} unexplained ⚠${process.argv.includes('--check') ? '' : ' -> docs/react-coverage.md, docs/react-coverage.json, docs/plans/m1-exit-report.md'}`)
   process.exit(bad.length ? 1 : 0)
 }

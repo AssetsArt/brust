@@ -8,7 +8,7 @@ import { runDev } from './dev'
 import { run } from './run'
 
 const USAGE = `usage:
-  brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare|static] [--strict] [--wasm-from-source] [--dev]
+  brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare|static] [--actions-only] [--strict] [--wasm-from-source] [--dev]
   brust dev [entry=routes.tsx] [--port N] [--workers N]    (Bun target: proxy + hot reload + inline TUI)
   brust dev [entry=routes.tsx] --target cloudflare [--out-dir dist] [--port N] [--wasm-from-source] [-- <wrangler args>]
   brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
@@ -56,6 +56,7 @@ export async function main(argv: string[]): Promise<void> {
         strict: { type: 'boolean' },
         target: { type: 'string' },
         'wasm-from-source': { type: 'boolean' },
+        'actions-only': { type: 'boolean' },
         dev: { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
@@ -72,6 +73,7 @@ export async function main(argv: string[]): Promise<void> {
   const target = str('target')
   if (target !== undefined && target !== 'bun' && target !== 'cloudflare' && target !== 'static')
     usage(`--target must be bun, cloudflare or static (got ${JSON.stringify(target)})`)
+  if (values['actions-only'] === true && cmd !== 'build') usage('--actions-only only applies to brust build')
   if (values.strict === true && (cmd !== 'build' || target !== 'static')) usage('--strict only applies to brust build --target static')
 
   if (cmd === 'build') {
@@ -86,6 +88,7 @@ export async function main(argv: string[]): Promise<void> {
         target: target as 'bun' | 'cloudflare' | 'static' | undefined,
         strict: values.strict === true,
         wasmFromSource: values['wasm-from-source'] === true,
+        actionsOnly: values['actions-only'] === true,
         dev: values.dev === true,
         log: (s) => console.log(s),
       })

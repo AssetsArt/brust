@@ -141,6 +141,7 @@ Rules that follow from Workers (source C3):
 
 - brust generates a startup `.compile()` of your Elysia app. Workers allow `eval()` and `new Function(text)` during the startup phase of a Worker script (source C4), and Elysia's compiler needs them, so compiling at startup is the safe place. Do not rely on lazy compilation in your own code.
 - The admission rules still run in Rust: method gate, ambiguous path (400), `Content-Encoding` (415), body cap (413) and the cross-site guard (403). `cross_site = "reject"` is the default and works the same way. See [Actions](./actions.md), "Security posture".
+- `brust build --actions-only --target cloudflare` builds a Worker that serves only actions (no pages, no Static Assets, no `assets` key in `wrangler.jsonc`, `prefix = "/"` allowed). Non-action paths are a 404. See [Actions](./actions.md), "Deploy actions separately". `[cloudflare] alias` and bindings work as for any Worker.
 - `cache.invalidate(...)` from an action clears the cache of the isolate that ran it. Section 7 explains how to reach the others.
 
 ## 7. Caching on Workers
