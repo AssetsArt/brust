@@ -67,6 +67,8 @@ export interface BuildConfig {
   actions: ActionsBuildConfig | null
   cloudflare: CloudflareBuildConfig | null
   cache: CacheBuildConfig | null
+  /** `[css] global` (L19, R19.1): app-root-relative stylesheets every route links first, in order. */
+  cssGlobal: string[]
 }
 
 const isTable = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -272,10 +274,22 @@ function parseActions(file: string, raw: unknown): ActionsBuildConfig | null {
 
 const DEFAULT_ENTRY = 'actions.ts'
 
+/** `[css]`: only `global`, a list of `.css` files relative to the app root (checked to exist by the build). */
+function parseCss(file: string, raw: unknown): string[] {
+  if (raw === undefined) return []
+  if (!isTable(raw)) throw new BuildError('config', `${file}: [css] must be a table`)
+  for (const k of Object.keys(raw)) if (k !== 'global') throw new BuildError('config', `${file}: unknown key css.${k} (allowed: global)`)
+  const g = raw.global
+  if (g === undefined) return []
+  if (!Array.isArray(g) || g.some((p) => typeof p !== 'string' || !p.trim().endsWith('.css')))
+    throw new BuildError('config', `${file}: css.global must be an array of .css paths (relative to the app root)`)
+  return g.map((p: string) => p.trim())
+}
+
 export async function loadBuildConfig(appRoot: string): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [] }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -286,12 +300,13 @@ export async function loadBuildConfig(appRoot: string): Promise<BuildConfig> {
   const actions = parseActions(file, root.actions)
   const cloudflare = parseCloudflare(file, appRoot, root.cloudflare)
   const cache = await parseCache(file, appRoot, root.cache)
+  const cssGlobal = parseCss(file, root.css)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache }
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => p.trim().replace(/^\.\//, '')), actions, cloudflare, cache }
+  return { serverOnly: so.map((p: string) => p.trim().replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal }
 }

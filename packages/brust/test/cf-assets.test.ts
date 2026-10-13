@@ -18,6 +18,12 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
 
+test('L19: the fonts and images a stylesheet references are copied from client/, other types are not', () => {
+  const out = tmp({ 'client/inter-1a2b3c4d5e.woff2': 'x', 'client/bg-0a1b2c3d4e.png': 'x', 'client/x.html': 'x', 'client/x.wasm': 'x' })
+  const cf = tmp({})
+  expect(layoutAssets(out, cf, '2.0.0').files.sort()).toEqual(['_brust/client/bg-0a1b2c3d4e.png', '_brust/client/inter-1a2b3c4d5e.woff2'])
+})
+
 test('inadmissible files are not copied; hashed gets immutable, plain gets 3600', () => {
   const out = tmp({
     'client/runtime-1a2b3c4d.js': 'x',

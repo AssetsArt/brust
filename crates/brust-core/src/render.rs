@@ -321,6 +321,54 @@ pub fn inject_page_assets_into(
     inject_document_assets_into(html, chain, m, store, None);
 }
 
+/// L19 (R19.3): a `<link rel="stylesheet" href="/_brust/…" data-brust-css>` per entry of the route's
+/// `css`, in order, right after the opening `<head>` (or after a `<meta charset>` that comes first in
+/// it), so every tag the author wrote in the head follows and wins the cascade. `<header>` is not a
+/// head. Without a `<head>` the links go first, after a leading doctype. Not gated by the tier: an
+/// all-static page is styled too. The paths were checked at boot (`client/<safe name>.css`).
+pub fn inject_css_into(html: &mut String, css: &[String]) {
+    if css.is_empty() {
+        return;
+    }
+    let mut links = String::new();
+    for p in css {
+        links.push_str("<link rel=\"stylesheet\" href=\"/_brust/");
+        links.push_str(p);
+        links.push_str("\" data-brust-css>");
+    }
+    let at = css_insert_at(html);
+    html.insert_str(at, &links);
+}
+
+/// Byte offset the CSS links go to (see [`inject_css_into`]).
+fn css_insert_at(html: &str) -> usize {
+    let b = html.as_bytes();
+    // The end of the tag starting at `i` (one past its `>`), or the end of the text.
+    let tag_end = |i: usize| html[i..].find('>').map_or(html.len(), |e| i + e + 1);
+    let head = [html.find("<head>"), html.find("<head ")]
+        .into_iter()
+        .flatten()
+        .min();
+    let Some(h) = head else {
+        let lead = html.len() - html.trim_start().len();
+        return if b.len() >= lead + 9 && b[lead..lead + 9].eq_ignore_ascii_case(b"<!doctype") {
+            tag_end(lead)
+        } else {
+            0
+        };
+    };
+    let after = tag_end(h);
+    let rest = &html[after..];
+    let k = after + (rest.len() - rest.trim_start().len());
+    if b.len() >= k + 5 && b[k..k + 5].eq_ignore_ascii_case(b"<meta") {
+        let end = tag_end(k);
+        if html[k..end].to_ascii_lowercase().contains("charset") {
+            return end;
+        }
+    }
+    after
+}
+
 /// M3-F A4: as [`inject_page_assets_into`], with `prefix_tag` (the server's prebuilt
 /// `__BRUST_ACTION_PREFIX__` script, only for a non-default prefix) first:
 /// `[prefix tag][store tags][runtime]…`; nothing for a static chain (R12).
@@ -451,6 +499,54 @@ pub fn use_ids(route_id: &str, instance: &str, slots: u32) -> Vec<(String, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn css_links_go_right_after_head_never_into_header() {
+        let css = vec![
+            "client/a-1a2b3c4d5e.css".to_string(),
+            "client/b-0a1b2c3d4e.css".to_string(),
+        ];
+        let links = "<link rel=\"stylesheet\" href=\"/_brust/client/a-1a2b3c4d5e.css\" data-brust-css><link rel=\"stylesheet\" href=\"/_brust/client/b-0a1b2c3d4e.css\" data-brust-css>";
+        let run = |html: &str| {
+            let mut s = html.to_string();
+            inject_css_into(&mut s, &css);
+            s
+        };
+        // The author's own head tags come after brust's links.
+        assert_eq!(
+            run(
+                "<html><head><title>t</title><link rel=\"stylesheet\" href=\"/public/me.css\"></head></html>"
+            ),
+            format!(
+                "<html><head>{links}<title>t</title><link rel=\"stylesheet\" href=\"/public/me.css\"></head></html>"
+            )
+        );
+        assert_eq!(
+            run("<head lang=\"x\">\n  <meta charset=\"utf-8\"><title>t</title></head>"),
+            format!("<head lang=\"x\">\n  <meta charset=\"utf-8\">{links}<title>t</title></head>")
+        );
+        // A meta that is not the charset does not move the links.
+        assert_eq!(
+            run("<head><meta name=\"x\"></head>"),
+            format!("<head>{links}<meta name=\"x\"></head>")
+        );
+        // `<header>` is not a head: no head at all, so the links go first (after a doctype).
+        assert_eq!(
+            run("<header>h</header><p>x</p>"),
+            format!("{links}<header>h</header><p>x</p>")
+        );
+        assert_eq!(
+            run("<!DOCTYPE html><header>h</header>"),
+            format!("<!DOCTYPE html>{links}<header>h</header>")
+        );
+        assert_eq!(
+            run("<body><header>h</header><head><title>late</title></head></body>"),
+            format!("<body><header>h</header><head>{links}<title>late</title></head></body>")
+        );
+        let mut none = "<p>x</p>".to_string();
+        inject_css_into(&mut none, &[]);
+        assert_eq!(none, "<p>x</p>");
+    }
     use serde_json::json;
 
     fn templates(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {

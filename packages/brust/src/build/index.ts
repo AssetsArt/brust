@@ -7,10 +7,11 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
-import { BrustRouteError, validateRoutes } from '../routes'
+import { BrustRouteError, type FlatRoute, validateRoutes } from '../routes'
 import { type BrowserCtx, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import { compileApp } from './compile'
+import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
 import { type CacheRecord, type ManifestJson, writeManifest } from './manifest'
@@ -97,7 +98,7 @@ export async function runBuild(opts: {
   const dist = resolve(appRoot, opts.outDir)
   assertSafeOutDir(dist, appRoot, [entry, join(appRoot, 'public')])
   assertReplaceable(dist, opts.force)
-  const { serverOnly, actions, cloudflare, cache } = await loadBuildConfig(appRoot)
+  const { serverOnly, actions, cloudflare, cache, cssGlobal } = await loadBuildConfig(appRoot)
 
   // Everything that can fail on the app's own input runs before a byte is written.
   const { routes, componentFile, componentIssue } = await scanRoutes(entry, appRoot)
@@ -150,7 +151,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, log: opts.log })
+    await buildInto(tmp, { appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, cssGlobal, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -188,11 +189,22 @@ async function buildInto(
     /** Absolute path of a custom cache adapter module. */
     cacheModule: string | null
     cf: CfPrepared | null
+    /** `[css] global` as written (app-root relative). */
+    cssGlobal: string[]
     log: (s: string) => void
   },
 ): Promise<void> {
   const { appRoot, entry, leaves } = o
-  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [] }
+  // L19: every stylesheet first, so each JS build below reads one set of CSS Module class maps.
+  const graph = new CssGraph()
+  const chainFiles = (l: FlatRoute) => l.chain.flatMap((n) => (n.Component && o.componentFile.has(n.Component) ? [o.componentFile.get(n.Component)!] : []))
+  const routeCss = routeCssSources(leaves, chainFiles, resolveGlobals(appRoot, o.cssGlobal), graph)
+  const serverCss = [o.actionsEntry, o.cacheModule].flatMap((f) => (f ? graph.of(f) : []))
+  mkdirSync(join(out, 'client'), { recursive: true })
+  const css = await buildCss(out, [...new Set([...[...routeCss.values()].flat(), ...serverCss])])
+  for (const c of directCss(entry))
+    o.log(`[brust] warning css ${relative(appRoot, entry)} imports ${c}: the route entry belongs to no route, so it is linked nowhere; import it from a layout, or list it in [css] global`)
+  const ctx: BrowserCtx = { sourceOf: new Map(), appRoot, serverOnly: o.serverOnly, serverFiles: o.actionsEntry ? [realpathSync(o.actionsEntry)] : [], cssMaps: css.maps }
   // The runtime first: its hashed URL is the `runtimeImport` every client chunk is compiled with.
   const runtime = await buildRuntime(out, ctx)
   const { compiled, routeComponent } = compileApp({
@@ -211,12 +223,16 @@ async function buildInto(
   const runtimeUrl = `/_brust/${runtime}`
   const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrl)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrl))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime, chunks })
-  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest))
+  for (const r of manifest.routes) {
+    const files = [...new Set((routeCss.get(r.id) ?? []).flatMap((s) => (css.file.has(s) ? [css.file.get(s)!] : [])))]
+    if (files.length > 0) r.css = files
+  }
+  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps)
   manifest.actions =
     o.actions && o.actionsEntry
-      ? { entry: await buildActions(out, o.actionsEntry), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite }
+      ? { entry: await buildActions(out, o.actionsEntry, css.maps), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite }
       : null
-  if (o.cache) manifest.cache = await cacheRecord(out, manifest, o.cache, o.cacheModule)
+  if (o.cache) manifest.cache = await cacheRecord(out, manifest, o.cache, o.cacheModule, css.maps)
   writeFileSync(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   writeFileSync(join(out, MARKER), 'generated by `brust build`: this directory is replaced on every build\n')
 
@@ -225,7 +241,7 @@ async function buildInto(
   if (o.cf) {
     const warnings = await buildCloudflare(
       out,
-      { appRoot, entry, dist: o.dist, compiled, manifest, sourceOf: ctx.sourceOf, actionsEntry: o.actionsEntry, cacheModule: o.cacheModule, cacheGetTimeoutMs: o.cache?.getTimeoutMs, log: o.log },
+      { appRoot, entry, dist: o.dist, compiled, manifest, sourceOf: ctx.sourceOf, actionsEntry: o.actionsEntry, cacheModule: o.cacheModule, cacheGetTimeoutMs: o.cache?.getTimeoutMs, cssMaps: css.maps, log: o.log },
       o.cf,
     )
     for (const w of warnings) o.log(w)
@@ -248,8 +264,8 @@ async function buildInto(
 
 /** `manifest.cache` (R7, R8): the custom module bundled for the worker, the native defaults, and the
  * build id every L2 key carries. */
-async function cacheRecord(out: string, manifest: ManifestJson, c: CacheBuildConfig, moduleAbs: string | null): Promise<CacheRecord> {
-  const module = moduleAbs ? await buildCacheAdapter(out, moduleAbs) : undefined
+async function cacheRecord(out: string, manifest: ManifestJson, c: CacheBuildConfig, moduleAbs: string | null, cssMaps: Map<string, Record<string, string>>): Promise<CacheRecord> {
+  const module = moduleAbs ? await buildCacheAdapter(out, moduleAbs, cssMaps) : undefined
   return {
     adapter: c.adapter,
     ...(module ? { module } : {}),

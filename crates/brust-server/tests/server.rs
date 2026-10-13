@@ -34,6 +34,41 @@ fn ping_and_stats_shape() {
     }
 }
 
+/// L19 (R19.3): a route's CSS is linked right after `<head>` on an all-static chain too (the
+/// script injection's early return does not gate it), before the author's own head tags.
+#[test]
+fn route_css_is_linked_after_head_on_an_all_static_page() {
+    let dist = temp_dist(|m| m["routes"][0]["css"] = json!(["client/site-1a2b3c4d5e.css"]));
+    // A listed stylesheet that is not in dist fails the boot, not a request.
+    let e = brust_server::start(config(dist.path()))
+        .err()
+        .expect("missing css must fail the boot");
+    assert!(e.to_string().contains("client/site-1a2b3c4d5e.css"), "{e}");
+    std::fs::write(
+        dist.path().join("client/site-1a2b3c4d5e.css"),
+        "body{color:red}",
+    )
+    .unwrap();
+    let s = boot_in(fake(), dist.path());
+    let (st, _, body) = get(&s, "/", &[]);
+    assert_eq!(st, 200);
+    assert!(
+        body.starts_with("<!doctype html><html><head><link rel=\"stylesheet\" href=\"/_brust/client/site-1a2b3c4d5e.css\" data-brust-css><title>fx</title>"),
+        "{body}"
+    );
+    assert!(!body.contains("<script"), "{body}");
+    // Other routes have no css.
+    let (_, _, ids) = get(&s, "/pokemon/pikachu", &[]);
+    assert!(!ids.contains("data-brust-css"), "{ids}");
+    let (st, h, css) = get(&s, "/_brust/client/site-1a2b3c4d5e.css", &[]);
+    assert_eq!((st, css.as_str()), (200, "body{color:red}"));
+    assert_eq!(h.get("content-type").unwrap(), "text/css; charset=utf-8");
+    assert_eq!(
+        h.get("cache-control").unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+}
+
 #[test]
 fn static_route_makes_zero_calls_on_first_request() {
     let f = fake();

@@ -12,6 +12,7 @@ import { builtinModules } from 'node:module'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
+import { cssPlugin } from './css'
 import { BuildError } from './errors'
 
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
@@ -35,6 +36,8 @@ export interface BrowserCtx {
   serverOnly: string[]
   /** Real paths of server-only files (the actions entry, R8): a browser import of one is refused. */
   serverFiles?: string[]
+  /** L19: CSS Module class maps for `cssPlugin` (absent: no CSS was built). */
+  cssMaps?: Map<string, Record<string, string>>
 }
 
 /** Resolution for staged artifacts (`importer` = a staged file registered in `sourceOf`): relative
@@ -167,7 +170,7 @@ async function browserBuild(
   try {
     res = await Bun.build({
       ...config,
-      plugins: [serverOnlyPlugin(ctx, violations), ...(config.plugins ?? [])],
+      plugins: [serverOnlyPlugin(ctx, violations), cssPlugin(ctx.cssMaps ?? new Map()), ...(config.plugins ?? [])],
       target: 'browser',
       format: 'esm',
       minify: true,
@@ -336,8 +339,8 @@ const ACTIONS_EXTERNALS = [...JOBS_EXTERNALS, 'elysia', 'elysia/*', '@elysia/*']
 
 /** `dist/actions.js` (M3-F E1): the actions entry for the worker (`target: 'bun'`). No `define`: Elysia
  * and app code read NODE_ENV at runtime (run.ts sets production). */
-export async function buildActions(dist: string, entry: string): Promise<string> {
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [workerStorePlugin] })
+export async function buildActions(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [cssPlugin(cssMaps), workerStorePlugin] })
   if (!res.success) throw new BuildError('bundle', `actions: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'actions.js'), await res.outputs[0]!.text())
   return 'actions.js'
@@ -345,8 +348,8 @@ export async function buildActions(dist: string, entry: string): Promise<string>
 
 /** `dist/cache-adapter.js` (cache adapters R8): a custom adapter module for the worker (`target: 'bun'`), with
  * the actions externals so it shares the app's dependencies. */
-export async function buildCacheAdapter(dist: string, entry: string): Promise<string> {
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS })
+export async function buildCacheAdapter(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [cssPlugin(cssMaps)] })
   if (!res.success) throw new BuildError('bundle', `cache adapter: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'cache-adapter.js'), await res.outputs[0]!.text())
   return 'cache-adapter.js'
@@ -354,7 +357,14 @@ export async function buildCacheAdapter(dist: string, entry: string): Promise<st
 
 /** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
-export async function buildJobs(dist: string, compiled: Map<string, Compiled>, sourceOf: SourceOf, appRoot: string, stores: string[] = []): Promise<void> {
+export async function buildJobs(
+  dist: string,
+  compiled: Map<string, Compiled>,
+  sourceOf: SourceOf,
+  appRoot: string,
+  stores: string[] = [],
+  cssMaps: Map<string, Record<string, string>> = new Map(),
+): Promise<void> {
   const imports: string[] = ["import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"]
   const entries: string[] = []
   const storePaths = [...new Set(stores)].sort()
@@ -391,7 +401,7 @@ export async function buildJobs(dist: string, compiled: Map<string, Compiled>, s
     format: 'esm',
     define: PRODUCTION,
     external: JOBS_EXTERNALS,
-    plugins: [workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS)],
+    plugins: [cssPlugin(cssMaps), workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS)],
   })
   if (!res.success) throw new BuildError('bundle', `jobs: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'jobs.js'), await res.outputs[0]!.text())
