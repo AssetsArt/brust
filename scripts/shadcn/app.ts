@@ -142,21 +142,22 @@ export function buildPage(id: string): AppRow['build'] {
 
 type Manifest = {
   routes: { chain: string[] }[]
-  components: Record<string, { tier: 'static' | 'native' | 'react'; template: string; client: string | null; children: { id: string }[] }>
-  assets: { runtime: string }
+  components: Record<string, { tier: 'static' | 'native' | 'react'; template: string; client: string | null; children: { id: string }[]; features?: string[] }>
+  assets: { runtime: string; features?: Record<string, string> }
 }
 
 /** Relative JS imports of a chunk (`from"./x.js"`, `import("./x.js")`). */
 const importsOf = (text: string): string[] => [...text.matchAll(/(?:from\s*|import\s*\(\s*)["']\.\/([^"']+\.js)["']/g)].map((m) => m[1]!)
 
-/** Reads a finished dist: tier of the page, islands, native chunks, and the client JS the page loads: the runtime plus
- * the chunk of every island and native component the page reaches, plus the shared chunks those import (a React child
+/** Reads a finished dist: tier of the page, islands, native chunks, and the client JS the page loads: the runtime core and
+ * the feature modules its components need, plus the chunk of every island and native component the page reaches, plus the shared chunks those import (a React child
  * of an island is rendered by the island, so its own chunk is not loaded). */
 export function measureDist(out: string): Measured {
   const m = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8')) as Manifest
   const root = m.routes[0]!.chain.at(-1)!
   const seen = new Set<string>()
   const entries: string[] = []
+  const features = new Set<string>()
   let islands = 0
   let nativeChunks = 0
   // An island instance is a `<brust-island data-id=…>` in a template; static and native components are walked through
@@ -166,6 +167,7 @@ export function measureDist(out: string): Measured {
     if (!c || seen.has(id)) return
     seen.add(id)
     const template = readFileSync(join(out, c.template), 'utf8')
+    for (const f of c.features ?? []) features.add(f)
     if (c.tier !== 'react' && c.client) {
       entries.push(c.client.replace(/^client\//, ''))
       nativeChunks++
@@ -173,6 +175,7 @@ export function measureDist(out: string): Measured {
     for (const mk of template.matchAll(/<brust-island\b[^>]*\bdata-id="([^"]+)"/g)) {
       islands++
       const isl = m.components[mk[1]!]
+      for (const f of isl?.features ?? []) features.add(f)
       if (isl?.client) entries.push(isl.client.replace(/^client\//, ''))
     }
     for (const ch of c.children) if (m.components[ch.id]?.tier !== 'react') walk(ch.id)
@@ -187,6 +190,8 @@ export function measureDist(out: string): Measured {
   }
   if (entries.length) {
     visit(m.assets.runtime.replace(/^client\//, ''))
+    // L33: the runtime feature modules the page preloads (the union over its components and islands, the store module included).
+    for (const f of [...features].sort()) if (m.assets.features?.[f]) visit(m.assets.features[f]!.replace(/^client\//, ''))
     for (const e of entries) visit(e)
   }
   const files = [...loaded].sort().map((name) => {

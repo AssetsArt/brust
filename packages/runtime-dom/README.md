@@ -95,3 +95,13 @@ tracking state lives on `globalThis[Symbol.for('brust.reactive.ctx')]`).
   React-free.
 - `@brust/runtime-dom/store/internal`: the server-resolver hook and serialization helpers the Bun worker uses.
   Not part of the public surface.
+
+## Feature modules (L33, F139)
+
+The runtime is a core plus feature modules, so a page loads only what its components use and the client JS does not grow as the compiler learns more of React.
+
+- `@brust/runtime-dom/core` (`src/core.ts`): signals, `defineBehavior`/`setChunkLoader`, `mount`/`unmount`, the binder registry (`BINDERS`) and the internals features need (`src/core-api.ts`). It knows no directive by name.
+- `@brust/runtime-dom/features/<name>` (`src/features/*.ts`): `basics` (`x-text`, `x-show`, `x-bind-*`, `x-on-*`, `x-ref`), `if`, `for`, `model`, `html`, `island` (React island hydration glue). A feature registers itself with the core when imported and imports the core only through `core-api`; in the browser build `core-api` is the shared core file, so there is one signal graph and one binder registry per page.
+- `@brust/runtime-dom` (`src/index.ts`) is core + every feature, for tests and non-split consumers. The browser build never uses it.
+
+**The rule for a new feature.** The micro-directives nearly every interactive page uses ship together in `basics`. Anything else gets its OWN module when it is at least about 1 KB gzip OR used by a minority of pages: `store`, `island`, `if`/`for`/`model`/`html` as measured, and every future feature (context, portal, focus trap, ...). Do not add a feature to `basics` or the core to save a file; add it as a module the compiler requests only for routes that use it. The CI byte budget (core + `basics`) holds the line.

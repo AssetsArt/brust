@@ -96,3 +96,18 @@ test('jobs.js keeps @brust/runtime-dom/store on the worker core', async () => {
   expect(text).toMatch(/from\s*"@brust\/core\/store"/)
   expect(text).not.toContain('@brust/runtime-dom/store')
 }, 60_000)
+
+test('L33: a chunk that imports the store module gets `store` in its features (the page preloads rt-store); one that does not, does not', async () => {
+  const withStore = tmpOut()
+  await build(join(fx, 'store-preload'), withStore)
+  const m = JSON.parse(readFileSync(join(withStore, 'manifest.json'), 'utf8'))
+  const rec = Object.values(m.components as Record<string, { features: string[]; client: string | null }>).find((c) => c.client)!
+  expect(rec.features).toContain('store')
+  expect(m.assets.features.store).toMatch(/^client\/rt-store-[0-9a-f]{10}\.js$/)
+  expect(readFileSync(join(withStore, rec.client!), 'utf8')).toContain(`/_brust/${m.assets.features.store}`)
+  // store-bundle reaches the reactive core through the bare runtime specifier only: nothing to preload.
+  const bare = tmpOut()
+  await build(join(fx, 'store-bundle'), bare)
+  const mb = JSON.parse(readFileSync(join(bare, 'manifest.json'), 'utf8'))
+  expect(Object.values(mb.components as Record<string, { features: string[] }>).some((c) => c.features.includes('store'))).toBe(false)
+}, 60_000)

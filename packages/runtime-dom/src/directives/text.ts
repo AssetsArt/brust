@@ -1,5 +1,4 @@
-import { BINDERS } from './index'
-import { parsed, read, mismatch } from './common'
+import { BINDERS, parsed, read, mismatch } from '../core-api'
 BINDERS.push({
   match: (a) => a === 'x-text',
   bind: ({ inst, el, attr, raw, scope }) => {

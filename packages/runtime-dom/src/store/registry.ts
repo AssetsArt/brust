@@ -1,6 +1,6 @@
 // Browser store registry + the server-resolver hook (M3-F D3/D6/C7).
 // The registry lives on globalThis (C7) so two copies of this module share one instance per name.
-import { isComputed, isSignal, untracked } from '../signal'
+import { isComputed, isSignal, untracked } from '../core-api'
 import { parseStoreScript } from './serialize'
 
 // The resolved per-scope store record, shared by the browser registry and the server per-request

@@ -6,6 +6,7 @@
 import type { FlatRoute } from '../routes'
 import type { Compiled, ComponentIR } from './compile'
 import { BuildError } from './errors'
+import { featuresOf } from './features'
 
 export interface JobCache {
   key: string | null
@@ -44,6 +45,8 @@ export interface ComponentRecord {
   needs_worker: boolean
   use_id_slots: number
   stores: string[]
+  /** L33: the client runtime feature modules (`assets.features` keys) this component's output needs, in load order. */
+  features: string[]
 }
 
 export interface RouteRecord {
@@ -73,7 +76,8 @@ export interface ManifestJson {
   version: typeof MANIFEST_VERSION
   routes: RouteRecord[]
   components: Record<string, ComponentRecord>
-  assets: { runtime: string }
+  /** `runtime` is the core; `features` maps each feature module name to its file (L33). */
+  assets: { runtime: string; features: Record<string, string> }
   jobs_module: string
   actions: ActionsRecord | null
   /** L16 R16.3: an actions-only build (no routes, no templates); everything but the prefix is a 404 problem+json. */
@@ -280,7 +284,8 @@ export function writeManifest(opts: {
   leaves: FlatRoute[]
   routeComponent: Map<string, string>
   compiled: Map<string, Compiled>
-  runtime: string
+  /** The runtime files `buildRuntime` wrote: the core and the feature modules. */
+  runtime: { core: string; features: Record<string, string> }
   /** component id → `client/<file>` (client chunk or react island chunk). */
   chunks: Map<string, string>
   actions?: ActionsRecord | null
@@ -299,7 +304,10 @@ export function writeManifest(opts: {
       needs_worker: jobs.length > 0,
       use_id_slots: c.ir.use_id_slots ?? 0,
       stores: storesOf(compiled, c.id),
+      features: featuresOf(c.id, c.jinja, tierOf(c.ir) === 'react'),
     }
+    for (const f of components[c.id]!.features)
+      if (!(f in opts.runtime.features)) throw new BuildError('runtime-feature-missing', `${c.id}: needs the client runtime feature ${f}, which the build did not ship`)
   }
   const routes: RouteRecord[] = opts.leaves.map((l) => {
     // A node without a Component (a pure path/loader group) renders nothing: not a chain entry.
@@ -321,7 +329,7 @@ export function writeManifest(opts: {
     }
   })
   linkNativeChunks(routes, compiled, components)
-  return { version: MANIFEST_VERSION, routes, components, assets: { runtime: opts.runtime }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
+  return { version: MANIFEST_VERSION, routes, components, assets: { runtime: opts.runtime.core, features: opts.runtime.features }, jobs_module: 'jobs.js', actions: opts.actions ?? null }
 }
 
 /** S6 amendment (F66): the server's asset injection walks only each chain component's direct
