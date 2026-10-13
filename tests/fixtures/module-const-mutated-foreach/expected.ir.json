@@ -92,6 +92,15 @@
       "per_item": null
     }
   ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-const-mutated-foreach/input.tsx@146",
+      "slot": "_s1",
+      "build_time": false,
+      "line": 9,
+      "col": 8
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],

@@ -92,6 +92,15 @@
       "per_item": null
     }
   ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-const-mutated-forof/input.tsx@141",
+      "slot": "_s1",
+      "build_time": false,
+      "line": 7,
+      "col": 8
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],

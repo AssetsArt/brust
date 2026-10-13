@@ -156,7 +156,7 @@ function serverOnlyPlugin(ctx: BrowserCtx, violations: string[]): BunPlugin {
 }
 
 const hex = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 10)
-const write = (file: string, text: string) => {
+export const write = (file: string, text: string) => {
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, text)
 }
@@ -272,7 +272,7 @@ export async function buildClientChunks(dist: string, compiled: Map<string, Comp
 }
 
 /** Registers a written artifact (by its path and its real path: the importer Bun reports). */
-function stage(sourceOf: SourceOf, file: string, c: Compiled): void {
+export function stage(sourceOf: SourceOf, file: string, c: Compiled): void {
   sourceOf.set(file, c.file)
   sourceOf.set(realpathSync(file), c.file)
 }

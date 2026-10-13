@@ -58,6 +58,15 @@
       "per_item": null
     }
   ],
+  "build_eval": [
+    {
+      "key": "tests/fixtures/module-const-call/input.tsx@126",
+      "slot": "_s2",
+      "build_time": false,
+      "line": 7,
+      "col": 16
+    }
+  ],
   "child_links": [],
   "client_props": [],
   "client_imports": [],
