@@ -20,7 +20,7 @@ A route links, in this order:
 1. every file listed in `[css] global` in `brust.toml`, in the listed order;
 2. every `.css` import reachable from the route's chain: the root layout first, then nested layouts, then the page, each depth-first in import order.
 
-A file is linked once, at its first occurrence. A layout's import is therefore site-wide, and a page's import is linked only on that page. The walk follows static imports of your own source files (`.tsx`, `.ts`, `.jsx`, `.js`), including child components. It collects `.css` imports from your files and from packages (`import 'some-ui/dist/style.css'`). It does not follow the JavaScript inside `node_modules`.
+A file is linked once, at its first occurrence. A layout's import is therefore site-wide, and a page's import is linked only on that page. The walk follows static imports and dynamic `import()`s of your own source files (`.tsx`, `.ts`, `.jsx`, `.js`), including child components. CSS behind a dynamic `import()` is linked eagerly for the route, so a lazily loaded component is styled on first paint. It collects `.css` imports from your files and from packages (`import 'some-ui/dist/style.css'`). It does not follow the JavaScript inside `node_modules`.
 
 ```toml
 [css]
@@ -31,12 +31,12 @@ A `.css` import in the route entry (`routes.tsx`) belongs to no route. The build
 
 ## 2. Output
 
-Each source stylesheet becomes `dist/client/<name>-<hash>.css`, where the hash is 10 hex characters. It is minified, its `@import`s are inlined and its nesting is flattened. A file used by several routes is one file and one URL. The hash is in the name, so the server sends it as `immutable`. There is no `.min.` in the name, and production builds always minify.
+Each source stylesheet becomes `dist/client/<name>-<hash>.css`, where the hash is 10 hex characters. It is minified, its `@import`s are inlined and its nesting is flattened. A file used by several routes is one file and one URL. The hash is in the name, so the server sends it as `immutable`. There is no `.min.` in the name. `brust build` always minifies; `brust dev` does not, so the CSS stays readable.
 
 In `url()`:
 
 - An absolute `/public/…` or `/_brust/…` URL stays as written.
-- A relative font or image is copied to `dist/client/<name>-<hash>.<ext>` and the URL is rewritten. A small file may be inlined as a `data:` URL instead.
+- A relative font or image is copied to `dist/client/<name>-<hash>.<ext>` and the URL is rewritten. A small file may be inlined as a `data:` URL instead. The types served from there are `.woff2 .woff .ttf .otf .eot .png .jpg .jpeg .gif .webp .avif .svg .ico`. Any other type (a `.cur`, a video) fails the build with `css-asset-type`, because the server would answer 404 for it. Put such a file in `public/` and reference it as `/public/…`.
 
 ## 3. Where the links go
 

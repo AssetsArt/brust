@@ -28,7 +28,7 @@ const isModule = (p: string) => p.endsWith('.module.css')
 /** A name the static rules serve (`[A-Za-z0-9_.-]`, no leading dot). */
 const safeName = (s: string) => s.replace(/[^A-Za-z0-9_.-]/g, '_').replace(/^\.+/, '_')
 
-/** The stylesheets one source file reaches through static imports, in order, real paths. Source
+/** The stylesheets one source file reaches through static and dynamic imports, in order, real paths. Source
  * files outside node_modules are followed; a `.css` import (an app file or a package's CSS) is
  * collected, never followed (its `@import`s are the CSS bundler's). */
 export class CssGraph {
@@ -56,7 +56,9 @@ export class CssGraph {
       let t = this.transpilers.get(l)
       if (!t) this.transpilers.set(l, (t = new Bun.Transpiler({ loader: l })))
       for (const imp of t.scanImports(src)) {
-        if (imp.kind !== 'import-statement') continue
+        // A dynamic import() is walked too (review N4): its CSS is linked eagerly for the route, so a
+        // lazily loaded component is styled on first paint and its CSS Modules are built.
+        if (imp.kind !== 'import-statement' && imp.kind !== 'dynamic-import') continue
         let dep: string
         try {
           dep = real(Bun.resolveSync(imp.path, dirname(f)))
@@ -104,8 +106,12 @@ export interface CssBuild {
 
 const CLASS = /\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g
 
-/** R19.2/R19.4: builds every source stylesheet (one JS entry each) into `<dist>/client/`. */
-export async function buildCss(dist: string, sources: string[]): Promise<CssBuild> {
+/** The asset types `static_rules::is_safe_client_asset_filename` serves from `/_brust/client/` (review N1). */
+export const SERVED_ASSET_EXT = ['.woff2', '.woff', '.ttf', '.otf', '.eot', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.ico']
+
+/** R19.2/R19.4: builds every source stylesheet (one JS entry each) into `<dist>/client/`. `minify`
+ * is off only for a development build (`brust dev`, review N3). */
+export async function buildCss(dist: string, sources: string[], minify = true): Promise<CssBuild> {
   const file = new Map<string, string>()
   const maps = new Map<string, Record<string, string>>()
   if (sources.length === 0) return { file, maps }
@@ -120,7 +126,7 @@ export async function buildCss(dist: string, sources: string[]): Promise<CssBuil
     entrypoints: entries,
     target: 'browser',
     format: 'esm',
-    minify: true,
+    minify,
     naming: { entry: '[name]-[hash].[ext]', chunk: '[name]-[hash].[ext]', asset: '[name]-[hash].[ext]' },
     external: ['/public/*', '/_brust/*'],
   })
@@ -130,6 +136,7 @@ export async function buildCss(dist: string, sources: string[]): Promise<CssBuil
   const assets: { name: string; bytes: Uint8Array }[] = []
   const css = new Map<number, string>()
   const js = new Map<number, string>()
+  const unserved: string[] = []
   for (const o of res.outputs) {
     const name = basename(o.path)
     const entry = /^s(\d+)-[^-.]+\.(css|js)$/.exec(name)
@@ -139,10 +146,27 @@ export async function buildCss(dist: string, sources: string[]): Promise<CssBuil
     }
     const m = /^(.*)-[^-.]+(\.[^.]+)$/.exec(name)
     if (!m) throw new BuildError('css', `unexpected output ${name}`)
+    const ext = m[2]!.toLowerCase()
+    if (!SERVED_ASSET_EXT.includes(ext)) {
+      unserved.push(name)
+      continue
+    }
     const bytes = new Uint8Array(await o.arrayBuffer())
-    const to = `${safeName(m[1]!)}-${hex(bytes)}${m[2]!.toLowerCase()}`
+    const to = `${safeName(m[1]!)}-${hex(bytes)}${ext}`
     rename.set(name, to)
     assets.push({ name: to, bytes })
+  }
+  // Fail closed (review N1): an asset the server would not serve from /_brust/client would 404.
+  if (unserved.length > 0) {
+    const lines = unserved.map((name) => {
+      const by = sources.filter((_, i) => css.get(i)?.includes(name))
+      const [, stem, ext] = /^(.*)-[^-.]+(\.[^.]+)$/.exec(name)!
+      return `${stem}${ext} (url() in ${by.join(', ') || 'a stylesheet'})`
+    })
+    throw new BuildError(
+      'css-asset-type',
+      `${lines.join('; ')}: brust serves only ${SERVED_ASSET_EXT.join(' ')} from /_brust/client; put the file in public/ and reference it as /public/…`,
+    )
   }
   for (const a of assets) writeFileSync(join(dist, 'client', a.name), a.bytes)
   for (const [i, src] of sources.entries()) {

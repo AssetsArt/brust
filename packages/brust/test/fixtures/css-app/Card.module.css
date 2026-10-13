@@ -1,2 +1,2 @@
-.card { border-left: 3px solid rgb(0, 128, 0) }
+.card { border-left: 3px solid rgb(0, 128, 0); composes: base from './Base.module.css' }
 .title { composes: card; font-weight: 700 }

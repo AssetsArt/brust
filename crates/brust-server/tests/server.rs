@@ -69,6 +69,44 @@ fn route_css_is_linked_after_head_on_an_all_static_page() {
     );
 }
 
+/// L19 review N1: the font and image families a stylesheet's `url()` may reference are served from
+/// `/_brust/client/` with their content type (hashed: immutable); other types are refused.
+#[test]
+fn client_font_and_image_assets_are_served_with_their_type() {
+    let dist = temp_dist(|_| {});
+    let cases = [
+        ("woff2", "font/woff2"),
+        ("woff", "font/woff"),
+        ("ttf", "font/ttf"),
+        ("otf", "font/otf"),
+        ("svg", "image/svg+xml; charset=utf-8"),
+        ("png", "image/png"),
+        ("jpg", "image/jpeg"),
+        ("jpeg", "image/jpeg"),
+        ("gif", "image/gif"),
+        ("webp", "image/webp"),
+        ("avif", "image/avif"),
+        ("ico", "image/x-icon"),
+    ];
+    for (ext, _) in &cases {
+        std::fs::write(dist.path().join(format!("client/f-1a2b3c4d5e.{ext}")), b"x").unwrap();
+    }
+    std::fs::write(dist.path().join("client/f-1a2b3c4d5e.cur"), b"x").unwrap();
+    let s = boot_in(fake(), dist.path());
+    for (ext, ty) in cases {
+        let (st, h, _) = get(&s, &format!("/_brust/client/f-1a2b3c4d5e.{ext}"), &[]);
+        assert_eq!(st, 200, "{ext}");
+        assert_eq!(h.get("content-type").unwrap(), ty, "{ext}");
+        assert_eq!(
+            h.get("cache-control").unwrap(),
+            "public, max-age=31536000, immutable",
+            "{ext}"
+        );
+    }
+    let (st, _, _) = get(&s, "/_brust/client/f-1a2b3c4d5e.cur", &[]);
+    assert_eq!(st, 404);
+}
+
 #[test]
 fn static_route_makes_zero_calls_on_first_request() {
     let f = fake();

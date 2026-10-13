@@ -43,7 +43,7 @@ afterAll(async () => {
   rmSync(join(app, 'dist'), { recursive: true, force: true })
 })
 
-async function open(path: string): Promise<{ page: Page; errors: string[]; close: () => Promise<void> }> {
+async function open(path: string, waitUntil: 'networkidle' | 'domcontentloaded' = 'networkidle'): Promise<{ page: Page; errors: string[]; close: () => Promise<void> }> {
   const ctx = await browser!.newContext()
   const page = await ctx.newPage()
   const errors: string[] = []
@@ -55,7 +55,7 @@ async function open(path: string): Promise<{ page: Page; errors: string[]; close
   page.on('response', (r) => {
     if (r.status() >= 400) errors.push(`${r.status()} ${r.url()}`)
   })
-  const res = await page.goto(base + path, { waitUntil: 'networkidle' })
+  const res = await page.goto(base + path, { waitUntil })
   expect(res?.status()).toBe(200)
   return { page, errors, close: () => ctx.close() }
 }
@@ -73,6 +73,9 @@ test('global, layout (@import, nesting), page CSS and a module apply; the author
   expect(await style(page, 'h2', 'text-transform')).toBe('uppercase') // home.css
   expect(await style(page, 'p', 'border-left-color')).toBe('rgb(0, 128, 0)') // Card.module.css (composes)
   expect(await style(page, 'p', 'font-weight')).toBe('700')
+  // review N2: `composes: base from './Base.module.css'` puts both modules' classes on the element
+  expect((await page.locator('p').getAttribute('class'))!.split(' ').map((c) => c.split('_')[0])).toEqual(['base', 'card', 'title'])
+  expect(await style(page, 'p', 'margin-top')).toBe('9px')
   expect(await page.locator('link[data-brust-css]').count()).toBe(4)
   expect(errors).toEqual([])
   await close()
@@ -96,6 +99,16 @@ test('a hydrated React island and a client_only island get the module class, wit
   await page.locator('#wide').waitFor()
   expect(await style(page, '#wide', 'outline-color')).toBe('rgb(255, 165, 0)')
   expect(await style(page, '#wide', 'outline-style')).toBe('solid')
+  expect(errors).toEqual([])
+  await close()
+}, 60_000)
+
+test('review N4: CSS reached only through a dynamic import() is applied on first paint', async () => {
+  const { page, errors, close } = await open('/lazy', 'domcontentloaded')
+  // before the lazy module is fetched, the page is already styled by its stylesheet
+  expect(await page.locator('link[data-brust-css][href*="/lazy-"]').count()).toBe(1)
+  expect(await style(page, '#lazy-target', 'color')).toBe('rgb(9, 8, 7)')
+  await page.locator('#lazy-target[data-loaded="yes"]').waitFor()
   expect(errors).toEqual([])
   await close()
 }, 60_000)

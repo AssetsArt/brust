@@ -61,6 +61,8 @@ test('R19.1: [css] global first, then chain order (layout → page), depth-first
   expect(cssOf(manifest, '/native')).toEqual(['client/global.css', 'client/layout.css', 'client/Btn.module.css'])
   // the page's children are walked too (Islands → Counter, Wide), and a module two files import is listed once
   expect(cssOf(manifest, '/islands')).toEqual(['client/global.css', 'client/layout.css', 'client/Island.module.css'])
+  // review N4: CSS reached only through a dynamic import() is linked eagerly for the route
+  expect(cssOf(manifest, '/lazy')).toEqual(['client/global.css', 'client/layout.css', 'client/lazy.css', 'client/Lazy.module.css'])
   // no layout: the global, then the page
   expect(cssOf(manifest, '/bare')).toEqual(['client/global.css', 'client/Card.module.css', 'client/other.css'])
 })
@@ -68,7 +70,7 @@ test('R19.1: [css] global first, then chain order (layout → page), depth-first
 test('R19.2: one minified, content-hashed file per source; a shared file is one URL; no .min. infix', () => {
   const client = readdirSync(join(fixture, 'dist/client'))
   const css = client.filter((f) => f.endsWith('.css')).sort()
-  expect(css.map((f) => f.replace(/-[0-9a-f]{10}\.css$/, ''))).toEqual(['Btn.module', 'Card.module', 'Island.module', 'global', 'home', 'layout', 'other'])
+  expect(css.map((f) => f.replace(/-[0-9a-f]{10}\.css$/, ''))).toEqual(['Btn.module', 'Card.module', 'Island.module', 'Lazy.module', 'global', 'home', 'layout', 'lazy', 'other'])
   expect(css.every((f) => /-[0-9a-f]{10}\.css$/.test(f) && !f.includes('.min.'))).toBe(true)
   const home = manifest.routes.find((r) => r.pattern === '/')!.css!
   const other = manifest.routes.find((r) => r.pattern === '/other')!.css!
@@ -76,13 +78,14 @@ test('R19.2: one minified, content-hashed file per source; a shared file is one 
   // @import inlined, nesting flattened, minified
   expect(readFileSync(join(fixture, 'dist', home[1]!), 'utf8')).toBe('p{padding-left:7px}h1{color:#0a141e;font-size:31px}main h2{color:#040506}\n')
   // no JS build emitted CSS: the only stylesheets are the per-source files
-  expect(client.filter((f) => f.endsWith('.css')).length).toBe(7)
+  expect(client.filter((f) => f.endsWith('.css')).length).toBe(9)
 })
 
 test('R19.4: the class map is the same in jobs.js and the client chunk, and the classes are in the CSS', () => {
   const card = readFileSync(join(fixture, 'dist', manifest.routes[0]!.css![2]!), 'utf8')
   const classes = [...card.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((m) => m[1]!)
-  expect(classes.length).toBe(2)
+  // review N2: `composes: base from './Base.module.css'` brings Base's rule into Card's file
+  expect(classes.map((c) => c.split('_')[0])).toEqual(['base', 'card', 'title'])
   const jobs = readFileSync(join(fixture, 'dist/jobs.js'), 'utf8')
   for (const c of classes) expect(jobs).toContain(c)
   // A React island renders className itself, so its chunk carries the map.
@@ -131,6 +134,34 @@ test('R19.3: the server links the route CSS right after <head> / <meta charset>,
     await proc.exited
   }
 }, 60_000)
+
+test('review N1: a url() asset of a type the server does not serve is css-asset-type; the served families pass', async () => {
+  const big = new Uint8Array(200_000).map((_, i) => (i * 13) % 251)
+  const d = tmp({ 'c.cur': big, 'a.css': ".x{cursor:url('./c.cur'),auto}" })
+  const dist = tmp({ 'client/.keep': '' })
+  const err = await buildCss(dist, [join(d, 'a.css')]).then(() => '', (e) => `${(e as { rule?: string }).rule}: ${(e as Error).message}`)
+  expect(err).toStartWith(`css-asset-type: c.cur (url() in ${join(d, 'a.css')}): brust serves only .woff2 .woff .ttf .otf .eot .png .jpg .jpeg .gif .webp .avif .svg .ico from /_brust/client`)
+  const files: Record<string, Uint8Array | string> = {}
+  const exts = ['woff2', 'woff', 'ttf', 'otf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'ico']
+  for (const e of exts) files[`f.${e}`] = big
+  files['all.css'] = exts.map((e, i) => `.c${i}{background:url('./f.${e}')}`).join('')
+  const ok = tmp(files)
+  const dist2 = tmp({ 'client/.keep': '' })
+  await buildCss(dist2, [join(ok, 'all.css')])
+  expect(readdirSync(join(dist2, 'client')).filter((f) => f.startsWith('f-')).map((f) => f.split('.').pop()).sort()).toEqual([...exts].sort())
+})
+
+test('review N3: brust dev (BRUST_BUILD_MODE=development) keeps CSS readable; brust build minifies', () => {
+  const dev = variant('dev', () => {})
+  const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: dev, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_BUILD_MODE: 'development' } })
+  expect([b.exitCode, b.stderr.toString()]).toEqual([0, ''])
+  const m = JSON.parse(readFileSync(join(dev, 'dist/manifest.json'), 'utf8')) as Manifest
+  const layout = readFileSync(join(dev, 'dist', m.routes[0]!.css![1]!), 'utf8')
+  expect(layout).toContain('h1 {\n')
+  expect(layout).toContain('padding-left: 7px')
+  const prod = readFileSync(join(fixture, 'dist', manifest.routes[0]!.css![1]!), 'utf8')
+  expect(prod).not.toContain('\n  ')
+}, 120_000)
 
 test('relative url() fonts are emitted as hashed client assets; /public and /_brust stay as written', async () => {
   const font = new Uint8Array(200_000).map((_, i) => (i * 7) % 251)
@@ -217,7 +248,7 @@ test('--target cloudflare: the stylesheets are Static Assets and the worker bund
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out, '--force'], { cwd: fixture, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, BRUST_CORE_CF_DIR: cfCore } })
   expect([b.exitCode, b.stderr.toString()]).toEqual([0, ''])
   const assets = readdirSync(join(out, 'cf/assets/_brust/client')).filter((f) => f.endsWith('.css'))
-  expect(assets.length).toBe(7)
+  expect(assets.length).toBe(9)
   const card = readFileSync(join(fixture, 'dist', manifest.routes[0]!.css![2]!), 'utf8')
   const cls = /\.([A-Za-z_][\w-]*)/.exec(card)![1]!
   const worker = readdirSync(join(out, 'cf/worker'), { recursive: true }).map(String).find((f) => f.endsWith('brust-app.js'))!
