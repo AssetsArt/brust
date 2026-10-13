@@ -35,7 +35,7 @@ export function rankBlockers(rows: AppRow[], libs: LibPackage[]): Blocker[] {
       if (!comps.has(k)) comps.set(k, new Set())
       comps.get(k)!.add(`${b.file}#${b.name}`)
     }
-    if (!r.build.ok && r.tier !== 'error') get(`build: ${r.build.message}`, 'build', 'the real `brust build` of the page fails').appRows++
+    if (!r.build.ok && r.tier !== 'error') get(`build: ${r.build.message}`, 'build', 'named-export islands: every React-tier component gets an island entry (bundle.ts `islandShim`) that imports its file\'s DEFAULT export (`componentImport`), and shadcn files export by name only, so the page\'s `brust build` fails').appRows++
   }
   for (const [k, s] of comps) m.get(k)!.appComponents = s.size
   const blocks = new Map(CONSTRUCTS.filter((c) => c.blocks).map((c) => [c.name, c.why]))
@@ -43,8 +43,12 @@ export function rankBlockers(rows: AppRow[], libs: LibPackage[]): Blocker[] {
     for (const name of c.constructs) if (blocks.has(name)) get(name, 'construct', blocks.get(name)!).libComponents++
     for (const code of c.result.codes) get(code, code.startsWith('error:') ? 'compile error' : 'compiler code', compilerWhy(code.replace(/^fallback:/, ''))).libComponents++
   }
-  return [...m.values()].sort((a, b) => b.appRows + b.libComponents - (a.appRows + a.libComponents) || b.appRows - a.appRows || a.key.localeCompare(b.key))
+  return [...m.values()].sort(byRule)
 }
+
+/** The ranking rule, stated in the doc header and tested: fixture pages blocked first, library components second, name last. */
+export const RANKING_RULE = 'fixture pages blocked (App rows), descending; ties by library components blocked, descending; then by name'
+export const byRule = (a: Blocker, b: Blocker): number => b.appRows - a.appRows || b.libComponents - a.libComponents || a.key.localeCompare(b.key)
 
 /** Survey truth = the product (compiler or build) really behaves so on shadcn's own code; census = a construct seen in library code, not proven to block that component; fixture mistake = caused by how the fixture is set up (none found). */
 export function classify(b: Blocker): string {
@@ -66,6 +70,7 @@ export function renderReport(rows: AppRow[], libs: LibPackage[], repro: Repro[])
   out.push('## Summary', '')
   out.push('| Rows | static | native | react | error (compile refused) | build ok | build failed | islands on all pages |', '|---|---|---|---|---|---|---|---|')
   out.push(`| ${rows.length} | ${count('static')} | ${count('native')} | ${count('react')} | ${count('error')} | ${rows.filter((r) => r.build.ok).length} | ${rows.filter((r) => !r.build.ok).length} | ${rows.reduce((n, r) => n + r.islands, 0)} |`, '')
+  out.push('**What is measured and what is analysed.** Only the `Build` column (and the Summary build counts) comes from a real `brust build` of the page, and 63 of 64 builds fail before a manifest exists (cause: see Classification), so there is no `dist/manifest.json` behind the rest. Tier, Islands, Components, Fallback codes and Client bytes are **analysis-only**: the compiler\'s own `compileTree` result for the page (the same call the build makes first), with Islands derived by walking the IR (page root React = 1; otherwise the React components reached through static/native ones). Read "react 53" as "the compiler puts 53 page roots on the React tier", not as a measured island count of a working build. Library numbers are analysis-only too.', '')
   out.push('"Tier" is the page component\'s own tier. A static or native page can still carry React islands (its shadcn children), so read it with the Islands column; a React page is one island.', '')
   const libComps = libs.flatMap((p) => p.components)
   const lt = (t: string) => libComps.filter((c) => c.result.tier === t).length
@@ -73,7 +78,7 @@ export function renderReport(rows: AppRow[], libs: LibPackage[], repro: Repro[])
 
   const ranked = rankBlockers(rows, libs)
   out.push('## Ranked blockers (app + library)', '')
-  out.push('One line per thing that keeps a row or a library component off the static/native tiers, most blocking first (sort key: app rows + library components). App rows = fixture pages showing it; app components = distinct shadcn component declarations carrying it; library components = declarations in the survey of packages below (a construct counts only when the compiler cannot handle it today). This is the input for lanes S1+.', '')
+  out.push(`One line per thing that keeps a row or a library component off the static/native tiers. **Ranking rule (generated, tested): ${RANKING_RULE}.** App rows = fixture pages showing it; app components = distinct shadcn component declarations carrying it; library components = declarations in the survey of packages below (a construct counts only when the compiler cannot handle it today). This is the input for lanes S1+.`, '')
   out.push('| # | Blocker | Kind | Classification | App rows | App components | Library components | Why |', '|---|---|---|---|---|---|---|---|')
   ranked.forEach((b, i) => out.push(`| ${i + 1} | ${cell(b.key)} | ${b.kind} | ${classify(b)} | ${b.appRows} | ${b.appComponents} | ${b.libComponents} | ${cell(b.why)} |`))
   out.push('')
