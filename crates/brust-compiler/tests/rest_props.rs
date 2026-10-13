@@ -290,3 +290,61 @@ fn fed_child_in_a_local_list_is_an_island_not_a_build_error() {
         props.diags
     );
 }
+
+/// Review F1: React/HTML aliases are one attribute through a spread, later wins, in both paths.
+#[test]
+fn aliases_are_one_attribute_in_both_paths() {
+    let count = |html: &str, name: &str| html.matches(&format!(" {name}=")).count();
+    // Keys known only at render (the route's props).
+    let after = lower(
+        "T.tsx",
+        "export default function T(props: any) { return <label {...props} className=\"x\" htmlFor=\"a\" tabIndex={1} /> }",
+    );
+    let h = render(
+        &after.jinja,
+        serde_json::json!({ "class": "y", "for": "b", "tabindex": 9 }),
+    );
+    assert_eq!(
+        (count(&h, "class"), count(&h, "for"), count(&h, "tabindex")),
+        (1, 1, 1),
+        "{h}"
+    );
+    assert!(
+        h.contains("class=\"x\"") && h.contains("for=\"a\"") && h.contains("tabindex=\"1\""),
+        "{h}"
+    );
+    let before = lower(
+        "T.tsx",
+        "export default function T(props: any) { return <label className=\"x\" htmlFor=\"a\" tabIndex={1} {...props} /> }",
+    );
+    let h = render(
+        &before.jinja,
+        serde_json::json!({ "class": "y", "for": "b", "tabindex": 9 }),
+    );
+    assert_eq!(
+        (count(&h, "class"), count(&h, "for"), count(&h, "tabindex")),
+        (1, 1, 1),
+        "{h}"
+    );
+    assert!(
+        h.contains("class=\"y\"") && h.contains("for=\"b\"") && h.contains("tabindex=\"9\""),
+        "{h}"
+    );
+    // Keys known at the call site (an inlined child), both orders.
+    let k = lower(
+        "P.tsx",
+        "import Card from './Card'\nimport First from './First'\nexport default function P() { return <main><Card class=\"y\" /><First class=\"y\" for=\"b\" /></main> }",
+    );
+    let h = render(&k.jinja, serde_json::json!({}));
+    // Card: <div className={className} {...props}>: the spread's `class` comes later and wins.
+    assert_eq!(
+        h,
+        "<main><div data-slot=\"card\" class=\"y\"></div><span class=\"y\" for=\"b\" role=\"note\"></span></main>"
+    );
+    let a = lower(
+        "P.tsx",
+        "import Alias from './Alias'\nexport default function P() { return <Alias class=\"y\" for=\"b\" /> }",
+    );
+    let h = render(&a.jinja, serde_json::json!({}));
+    assert_eq!(h, "<label class=\"x\" for=\"a\"></label>", "{h}");
+}

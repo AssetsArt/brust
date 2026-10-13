@@ -79,6 +79,32 @@ fn segment(v: &Value) -> Vec<(String, Value)> {
     }
 }
 
+/// The one key of the HTML attribute a React name prints as (`className` and `class` are both
+/// `class`, `htmlFor`/`for`, `tabIndex`/`tabindex`, `defaultValue`/`value`; HTML attribute names
+/// are case-insensitive). Attributes merge on it, so an alias written later still wins (review F1).
+pub fn attr_key(react_name: &str) -> String {
+    attr_name(react_name).to_ascii_lowercase()
+}
+
+/// Merges attribute pairs on [`attr_key`]: a later pair replaces an earlier one for the same HTML
+/// attribute (keeping the first position) and brings its own React name.
+fn merge_attrs(segs: &[Value]) -> Vec<(String, Value)> {
+    let mut out: Vec<(String, String, Value)> = Vec::new();
+    for s in segs {
+        for (k, v) in segment(s) {
+            let key = attr_key(&k);
+            match out.iter_mut().find(|(c, _, _)| *c == key) {
+                Some(slot) => {
+                    slot.1 = k;
+                    slot.2 = v;
+                }
+                None => out.push((key, k, v)),
+            }
+        }
+    }
+    out.into_iter().map(|(_, k, v)| (k, v)).collect()
+}
+
 /// Merges pairs as a JS object literal does: a repeated key replaces the value in place.
 fn merge(segs: &[Value]) -> Vec<(String, Value)> {
     let mut out: Vec<(String, Value)> = Vec::new();
@@ -129,7 +155,7 @@ pub fn render_attr(react_name: &str, v: &Value) -> String {
 
 /// `spread_attrs(seg, …)`: see the module docs.
 pub fn spread_attrs(segs: Rest<Value>) -> String {
-    merge(&segs)
+    merge_attrs(&segs)
         .iter()
         .map(|(k, v)| render_attr(k, v))
         .collect()
@@ -164,6 +190,17 @@ pub fn omit(d: Value, keys: Vec<String>) -> Value {
     let out: BTreeMap<String, Value> = map_pairs(&d)
         .into_iter()
         .filter(|(k, _)| !keys.contains(k))
+        .collect();
+    Value::from(out)
+}
+
+/// `d | omit_attrs(["className", …])`: the spread object without the keys that print as the same
+/// HTML attributes as the named ones (an attribute written after the spread wins, on [`attr_key`]).
+pub fn omit_attrs(d: Value, names: Vec<String>) -> Value {
+    let keys: Vec<String> = names.iter().map(|n| attr_key(n)).collect();
+    let out: BTreeMap<String, Value> = map_pairs(&d)
+        .into_iter()
+        .filter(|(k, _)| !keys.contains(&attr_key(k)))
         .collect();
     Value::from(out)
 }
@@ -317,6 +354,70 @@ mod tests {
                 json!({ "p": { "a": 1, "b": 2 } })
             ),
             "{&quot;a&quot;:1,&quot;b&quot;:3}"
+        );
+    }
+
+    /// Review F1: a React name and its HTML alias are ONE attribute; the later one wins, in both orders.
+    #[test]
+    fn aliases_merge_into_one_attribute_later_wins() {
+        let pairs = [
+            ("className", "class"),
+            ("htmlFor", "for"),
+            ("tabIndex", "tabindex"),
+            ("autoComplete", "autocomplete"),
+            ("defaultValue", "value"),
+            ("crossOrigin", "crossorigin"),
+            ("title", "TITLE"),
+        ];
+        for (react, html) in pairs {
+            let attr = crate::attr_name(react);
+            for (first, second, win) in [(react, html, "2"), (html, react, "2")] {
+                let src =
+                    format!(r#"<i{{{{ spread_attrs(["{first}", "1"], ["{second}", "2"]) }}}}>"#);
+                let out = render(&src, json!({}));
+                assert_eq!(
+                    out.matches(&format!(" {attr}=")).count()
+                        + out
+                            .matches(&format!(" {}=", attr.to_ascii_uppercase()))
+                            .count(),
+                    1,
+                    "{first}/{second}: {out}"
+                );
+                assert!(
+                    out.contains(&format!("=\"{win}\"")),
+                    "{first}/{second}: {out}"
+                );
+            }
+            // A spread map against a pair, both orders.
+            let a = render(
+                &format!(r#"<i{{{{ spread_attrs(["{react}", "mine"], p) }}}}>"#),
+                json!({ "p": { html: "theirs" } }),
+            );
+            assert!(a.contains("\"theirs\"") && !a.contains("mine"), "{a}");
+            let b = render(
+                &format!(r#"<i{{{{ spread_attrs(p, ["{react}", "mine"]) }}}}>"#),
+                json!({ "p": { html: "theirs" } }),
+            );
+            assert!(b.contains("\"mine\"") && !b.contains("theirs"), "{b}");
+        }
+        // Boolean aliases: readOnly / readonly print once.
+        let r = render(
+            r#"<i{{ spread_attrs(["readOnly", false], p) }}>"#,
+            json!({ "p": { "readonly": true } }),
+        );
+        assert_eq!(r, "<i readonly>");
+        let r = render(
+            r#"<i{{ spread_attrs(p, ["readOnly", false]) }}>"#,
+            json!({ "p": { "readonly": true } }),
+        );
+        assert_eq!(r, "<i>");
+        // omit_attrs drops every key that prints as a named attribute.
+        assert_eq!(
+            render(
+                "{{ p | omit_attrs(['className', 'htmlFor']) | json_attr }}",
+                json!({ "p": { "class": 1, "for": 2, "id": 3 } })
+            ),
+            "{&quot;id&quot;:3}"
         );
     }
 }

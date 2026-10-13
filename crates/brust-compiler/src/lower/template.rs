@@ -921,7 +921,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             Bound(String, PropBinding),
             Runtime(String),
         }
-        let key_of = |it: &It| -> Option<String> {
+        // Attributes merge on the HTML attribute they print as (review F1): `className` and
+        // `class`, `htmlFor` and `for`, `tabIndex` and `tabindex` are one key, so a later alias wins.
+        let name_of = |it: &It| -> Option<String> {
             match it {
                 It::Own(i) => match &attrs[*i] {
                     Attr::Static { name, .. } | Attr::Dynamic { name, .. } => Some(name.clone()),
@@ -931,6 +933,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 It::Runtime(_) => None,
             }
         };
+        let key_of = |it: &It| name_of(it).map(|n| brust_jinja::spread::attr_key(&n));
         let mut items: Vec<It> = Vec::new();
         let mut children: Vec<Seg> = Vec::new();
         for (i, a) in attrs.iter().enumerate() {
@@ -997,13 +1000,15 @@ impl<'a, 'c> Printer<'a, 'c> {
         // Keys the tail sets: they win over everything before.
         let mut tail_keys: Vec<String> = tail.iter().filter_map(key_of).collect();
         tail_keys.dedup();
+        let tail_names: Vec<String> = tail.iter().filter_map(name_of).collect();
+        let overridden = |name: &str| tail_keys.contains(&brust_jinja::spread::attr_key(name));
         if last_runtime.is_some() {
             let mut segs: Vec<String> = Vec::new();
             for it in head {
                 match it {
                     It::Own(i) => match (&attrs[*i], &sattrs[*i]) {
                         (Attr::Static { name, value }, _) => {
-                            if tail_keys.contains(name) {
+                            if overridden(name) {
                                 continue;
                             }
                             let v = if value.is_empty() {
@@ -1025,8 +1030,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                                 // value is final and needs no binding.
                                 let live =
                                     raw.is_some_and(|r| self.f.deps(r, &self.scope()).reactive());
-                                if tail_keys.contains(name) || !live {
-                                    if !tail_keys.contains(name) {
+                                if overridden(name) || !live {
+                                    if !overridden(name) {
                                         let v = self.value(value);
                                         segs.push(format!("[{}, {v}]", jinja_string(name)));
                                     }
@@ -1040,7 +1045,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                                 ));
                                 continue;
                             }
-                            if tail_keys.contains(name) {
+                            if overridden(name) {
                                 continue;
                             }
                             let v = self.value(value);
@@ -1049,11 +1054,17 @@ impl<'a, 'c> Printer<'a, 'c> {
                         // Events, refs and inner HTML are not keys of the merge.
                         (a, sa) => self.attr(a, sa, tag, attrs, model, open),
                     },
-                    It::Bound(k, PropBinding::Expr(e)) if !tail_keys.contains(k) => {
+                    It::Bound(k, PropBinding::Expr(e)) if !overridden(k) => {
                         segs.push(format!("[{}, {e}]", jinja_string(k)));
                     }
                     It::Bound(..) => {}
-                    It::Runtime(d) => segs.push(omit_jinja(d, &tail_keys)),
+                    It::Runtime(d) => segs.push(if tail_names.is_empty() {
+                        d.clone()
+                    } else {
+                        let names: Vec<String> =
+                            tail_names.iter().map(|n| jinja_string(n)).collect();
+                        format!("(({d}) | omit_attrs([{}]))", names.join(", "))
+                    }),
                 }
             }
             open.push_str(&format!("{{{{ spread_attrs({}) }}}}", segs.join(", ")));

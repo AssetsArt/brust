@@ -73,6 +73,7 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_function("spread_get", spread::spread_get);
     env.add_function("spread_merge", spread::spread_merge);
     env.add_filter("omit", spread::omit);
+    env.add_filter("omit_attrs", spread::omit_attrs);
     env.add_filter("css_val", |v: Value, prop: String| css_value(&prop, &v));
     // M3-P P7: a literal style object lowered at compile time. Arguments are
     // `key, value` pairs, already in the order minijinja's dict literal would

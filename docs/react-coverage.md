@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 47 | 33 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 22 | 14 | 3 | 5 | 0 | 0 | 0 | 0 |
+| A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
+| B Composition | 23 | 15 | 3 | 5 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 4 | 1 | 23 | 1 | 0 | 0 | 0 |
 | E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 159 | 63 | 38 | 52 | 5 | 1 | 0 | 0 |
+| **Total** | 162 | 66 | 38 | 52 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -59,6 +59,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-rest-pattern | rest in the props pattern, read and spread (R34.14) | static | static | 0 | ok | — | shadcn S1.2 R34.14: rest.k reads prop k; {...rest} is the props minus the named keys |
 | a-spread-then-override | spread, then an attribute that overrides it | static | static | 0 | ok | — | shadcn S1.2 R34.15: later wins (id is never the spread one) |
 | a-override-then-spread | an attribute, then a spread that may override it | static | static | 0 | ok | — | shadcn S1.2 R34.15: later wins (the spread replaces id/className when it has them) |
+| a-spread-alias-after | React names after a spread that may carry their HTML aliases (class, for, tabindex) | static | static | 0 | ok | — | shadcn S1.2 review F1: aliases merge on the HTML attribute (one class/for/tabindex), the later React name wins |
+| a-spread-alias-before | React names before a spread that may carry their HTML aliases | static | static | 0 | ok | — | shadcn S1.2 review F1: the spread's class/for/tabindex replace the earlier React names (one attribute each) |
 | a-spread-props-path | spread of an object of unknown keys (a props path) | static | static | 0 | ok | — | shadcn S1.2 R34.15 (b): the runtime path (spread_attrs) |
 | a-spread-hostile-names | object keys that are not attribute names, in a spread | static | static | 0 | ok | warning:unsafe-attr | shadcn S1.2 R34.17: dropped and warned (unsafe-attr); spread_attrs drops the same names at render |
 | a-spread-reserved-x | x-* attributes inside a spread (F94) | static | static | 0 | ok | warning:reserved-attr | F94 + shadcn S1.2: never printed, reserved-attr warning |
@@ -98,6 +100,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get) |
 | b-spread-known-shape | data-*, aria-*, boolean and style props through a child's rest spread | static | static | 0 | ok | — | shadcn S1.2 R34.15 (a): keys known at the call site expand at compile time; children from the spread are the element children |
+| b-spread-alias-known | HTML aliases at the call site into a child that writes React names after its spread | static | static | 0 | ok | — | shadcn S1.2 review F1: compile-time expansion merges on the HTML attribute too (class="x", for="a", once each) |
 | b-fed-child-local-list | a child with a job of its own in a list over a local array | react | react | ssr | ok | fallback:instance-list-path | ruling on challenge 4dc45c45 (F142): the server cannot feed a per-row job over a non-props list; an island, never a build error (instance-list-path fallback) |
 | b-spread-event-handler | an event handler that reaches an element through a child's spread | native | react | ssr | ok | fallback:spread-props | known gap: F141 (challenge d3f9154b, upheld): a handler through a spread fails closed (the parent is a React island, fallback spread-props); parent-scope binding is lane spread-handlers (S1.3) |
 
