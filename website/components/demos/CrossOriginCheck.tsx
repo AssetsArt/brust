@@ -77,7 +77,8 @@ export default function CrossOriginCheck() {
           [cors] credentials = true
         </label>
       </div>
-      <pre className="cmd" aria-live="polite" data-outcome={r.outcome}>
+      {/* the steps are sentences: wrap them instead of scrolling sideways (an inline style; app.css belongs to the lead) */}
+      <pre className="cmd" aria-live="polite" data-outcome={r.outcome} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
         <code>{`${r.steps.map((s) => `${s.who.padEnd(7)} ${s.text}`).join('\n')}\n\n=> ${BADGE[r.outcome]}`}</code>
       </pre>
     </div>
