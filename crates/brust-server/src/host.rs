@@ -15,7 +15,7 @@ use brust_core::protocol::{
 use brust_core::static_rules::content_type_for;
 use bytes::Bytes;
 use http::{HeaderMap, Response};
-use http_body_util::{BodyExt, LengthLimitError, Limited};
+use http_body_util::BodyExt;
 use hyper::body::Incoming;
 
 use crate::cache::job_cache::JobCache;
@@ -249,24 +249,63 @@ async fn inside_root(root: &std::path::Path, file: &std::path::Path) -> bool {
     file.starts_with(&root) && file != root
 }
 
-/// The whole body, at most `cap` bytes. A declared Content-Length over the cap is refused before any read; a chunked
-/// body is cut off by [`Limited`] the moment it passes the cap; the whole read must finish within `deadline`.
+/// After a body is refused (over the cap) this much more of it is read and thrown away, for at most
+/// [`DISCARD_TIMEOUT`], so the client has finished sending when the connection closes. A server that answers and
+/// closes while the client is still writing makes the kernel reset the connection: the client then sees
+/// `EPIPE`/`ECONNRESET` instead of the 413 that is already on the wire (F127). A body longer than this still ends
+/// in a reset: the bound is what keeps a refused upload from holding the connection.
+const DISCARD_AFTER_REFUSAL: usize = 1 << 20;
+const DISCARD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The whole body, at most `cap` bytes. A declared Content-Length over the cap is refused before any byte is kept; a
+/// chunked body is refused the moment it passes the cap; the whole read must finish within `deadline`. A refused body
+/// is then drained (see [`DISCARD_AFTER_REFUSAL`]) before `TooLarge` is returned.
 async fn read_capped<B>(b: B, cap: usize, deadline: std::time::Duration) -> Result<Bytes, ReadErr>
 where
     B: http_body::Body<Data = Bytes>,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    if b.size_hint().lower() > cap as u64 {
-        return Err(ReadErr::TooLarge);
+    let mut b = std::pin::pin!(b);
+    let mut over = b.size_hint().lower() > cap as u64;
+    let mut kept: Vec<u8> = Vec::new();
+    let mut seen = 0usize;
+    if !over {
+        let read = async {
+            while let Some(frame) = b.frame().await {
+                let Ok(frame) = frame else {
+                    return Err(ReadErr::Io);
+                };
+                if let Ok(data) = frame.into_data() {
+                    seen += data.len();
+                    if seen > cap {
+                        over = true;
+                        return Ok(());
+                    }
+                    kept.extend_from_slice(&data);
+                }
+            }
+            Ok(())
+        };
+        match tokio::time::timeout(deadline, read).await {
+            Err(_) => return Err(ReadErr::Slow),
+            Ok(Err(e)) => return Err(e),
+            Ok(Ok(())) => {}
+        }
     }
-    let Ok(read) = tokio::time::timeout(deadline, Limited::new(b, cap).collect()).await else {
-        return Err(ReadErr::Slow);
-    };
-    match read {
-        Ok(c) => Ok(c.to_bytes()),
-        Err(e) if e.downcast_ref::<LengthLimitError>().is_some() => Err(ReadErr::TooLarge),
-        Err(_) => Err(ReadErr::Io),
+    if !over {
+        return Ok(Bytes::from(kept));
     }
+    let mut discarded = 0usize;
+    let _ = tokio::time::timeout(DISCARD_TIMEOUT, async {
+        while discarded < DISCARD_AFTER_REFUSAL {
+            match b.frame().await {
+                Some(Ok(frame)) => discarded += frame.into_data().map_or(0, |d| d.len()),
+                _ => return,
+            }
+        }
+    })
+    .await;
+    Err(ReadErr::TooLarge)
 }
 
 #[cfg(test)]

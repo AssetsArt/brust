@@ -39,17 +39,30 @@ fn claim_timeout_is_503_all_workers_busy_and_static_still_answers() {
     assert_eq!(status, 200, "{body}");
 }
 
+/// "Immediately" means: the 503 is answered from the empty-pool check, WITHOUT waiting for a worker claim. A request
+/// that waited would take at least `claim_timeout_ms`, so the test sets a long claim timeout and asserts the answer
+/// came in under half of it. The bound is derived from the configured timeout, never a fixed few milliseconds, so a
+/// loaded runner (connect + round trip + scheduling) cannot trip it (F127, R28.2).
 #[test]
 fn no_workers_is_503_immediately() {
+    const CLAIM_TIMEOUT_MS: u64 = 10_000;
     let mut cfg = config(&fx());
     cfg.expected_workers = 0;
+    cfg.tuning = Tuning {
+        claim_timeout_ms: CLAIM_TIMEOUT_MS,
+        ..Default::default()
+    };
     let s = start(cfg).expect("start");
 
     let t0 = Instant::now();
     let (status, _, body) = get(&s, "/pokemon/a", &[]);
     let elapsed = t0.elapsed();
     assert_eq!((status, body.as_str()), (503, "no workers"));
-    assert!(elapsed < Duration::from_millis(50), "{elapsed:?}");
+    let bound = Duration::from_millis(CLAIM_TIMEOUT_MS / 2);
+    assert!(
+        elapsed < bound,
+        "the 503 took {elapsed:?}, bound {bound:?} (half of claim_timeout_ms = {CLAIM_TIMEOUT_MS}): it waited for a worker claim"
+    );
 }
 
 #[test]

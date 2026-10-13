@@ -334,7 +334,57 @@ pub fn boot_actions(
     s
 }
 
-/// One HTTP/1.1 request carrying `body` on a fresh connection (`host: fx` unless given).
+/// `e` and its whole `source()` chain, so a hyper failure says which layer (BodyWrite, Io, BrokenPipe …) broke.
+fn describe(e: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = format!("{e:?}");
+    let mut src = e.source();
+    while let Some(c) = src {
+        out.push_str(&format!(" <- {c:?}"));
+        src = c.source();
+    }
+    out
+}
+
+/// One HTTP/1.1 request carrying `body` on a fresh connection (`host: fx` unless given). The error is the
+/// full description of what the client saw, so a failing test explains itself (F127).
+async fn try_send<B>(
+    s: &Server,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: B,
+) -> Result<(u16, http::HeaderMap, Vec<u8>), String>
+where
+    B: http_body::Body<Data = bytes::Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let tcp = tokio::net::TcpStream::connect(s.local_addr())
+        .await
+        .map_err(|e| format!("connect: {}", describe(&e)))?;
+    let (mut sender, conn) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tcp))
+            .await
+            .map_err(|e| format!("handshake: {}", describe(&e)))?;
+    tokio::spawn(conn);
+    let mut b = http::Request::builder().method(method).uri(path);
+    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
+        b = b.header("host", "fx");
+    }
+    for (k, v) in headers {
+        b = b.header(*k, *v);
+    }
+    let resp = sender
+        .send_request(b.body(body).unwrap())
+        .await
+        .map_err(|e| format!("send_request: {}", describe(&e)))?;
+    let (parts, body) = resp.into_parts();
+    let bytes = http_body_util::BodyExt::collect(body)
+        .await
+        .map_err(|e| format!("reading the response body: {}", describe(&e)))?
+        .to_bytes();
+    Ok((parts.status.as_u16(), parts.headers, bytes.to_vec()))
+}
+
 async fn send<B>(
     s: &Server,
     method: &str,
@@ -346,28 +396,9 @@ where
     B: http_body::Body<Data = bytes::Bytes> + Send + 'static,
     B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    let tcp = tokio::net::TcpStream::connect(s.local_addr())
+    try_send(s, method, path, headers, body)
         .await
-        .unwrap();
-    let (mut sender, conn) =
-        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(tcp))
-            .await
-            .unwrap();
-    tokio::spawn(conn);
-    let mut b = http::Request::builder().method(method).uri(path);
-    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
-        b = b.header("host", "fx");
-    }
-    for (k, v) in headers {
-        b = b.header(*k, *v);
-    }
-    let resp = sender.send_request(b.body(body).unwrap()).await.unwrap();
-    let (parts, body) = resp.into_parts();
-    let bytes = http_body_util::BodyExt::collect(body)
-        .await
-        .unwrap()
-        .to_bytes();
-    (parts.status.as_u16(), parts.headers, bytes.to_vec())
+        .unwrap_or_else(|e| panic!("{method} {path}: {e}"))
 }
 
 fn block_on<F: std::future::Future>(f: F) -> F::Output {
@@ -399,7 +430,8 @@ type ChunkStream = tokio_stream::wrappers::ReceiverStream<
     Result<http_body::Frame<bytes::Bytes>, std::convert::Infallible>,
 >;
 
-/// A request whose body streams `chunks` with no size hint (→ `Transfer-Encoding: chunked`).
+/// A request whose body streams `chunks` with no size hint (→ `Transfer-Encoding: chunked`). A failure panics with
+/// the client error AND how many chunks had been handed to the body when it happened.
 pub fn request_chunked(
     s: &Server,
     method: &str,
@@ -408,7 +440,10 @@ pub fn request_chunked(
     chunks: Vec<Vec<u8>>,
 ) -> (u16, http::HeaderMap, Vec<u8>) {
     block_on(async {
+        let total = chunks.len();
+        let handed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let counted = Arc::clone(&handed);
         tokio::spawn(async move {
             for c in chunks {
                 if tx
@@ -418,11 +453,17 @@ pub fn request_chunked(
                 {
                     return;
                 }
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         });
         let body: http_body_util::StreamBody<ChunkStream> =
             http_body_util::StreamBody::new(tokio_stream::wrappers::ReceiverStream::new(rx));
-        send(s, method, path, headers, body).await
+        try_send(s, method, path, headers, body).await.unwrap_or_else(|e| {
+            panic!(
+                "{method} {path}: {e}; chunks handed to the body: {}/{total} (the server may have answered and closed first)",
+                handed.load(std::sync::atomic::Ordering::SeqCst)
+            )
+        })
     })
 }
 
