@@ -101,7 +101,7 @@ test('blank --tailwind (L21, a no-op since L28 R29.1): accepted, says so, and bu
   const dir = join(work, 'apps', 'tw-app')
   const out = sh(['bun', 'create', '@brust/app', 'tw-app', '--template', 'blank', '--tailwind', '--dir', dir, '--brust-dep', `file:${tgz.core}`, '--yes'], hostDir)
   expect(out).toContain('Tailwind CSS v4 is the default; the --tailwind flag does nothing')
-  expect(out).toContain('(template: blank)')
+  expect(out).toContain('(template: blank, @brust/core ')
   const pkg = readPkg(dir)
   expect([pkg.devDependencies.tailwindcss, pkg.devDependencies['bun-plugin-tailwind']]).toEqual(['4.3.3', '0.1.2'])
   setOverrides(dir)
