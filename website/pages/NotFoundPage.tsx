@@ -9,7 +9,6 @@ export default function NotFoundPage() {
         <link rel="icon" href="/public/favicon.svg" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@300..900&display=swap" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600;700&display=swap" />
-        <link rel="stylesheet" href="/public/app.css" />
       </head>
       <body>
         <main className="wrap not-found">
