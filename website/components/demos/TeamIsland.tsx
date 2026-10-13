@@ -19,18 +19,18 @@ export default function TeamIsland() {
   const members = s.members
   const max = s.max
   return (
-    <div className="team-island">
-      <button type="button" className="demo-btn" aria-expanded={open} onClick={() => toggle()}>
-        <span className="tier react">react</span> My team {members.length} / {max}
+    <div className="team-island grid gap-3">
+      <button type="button" className="cursor-pointer rounded-xs border border-ink bg-paper px-[.7rem] py-[.35rem] text-ink tabular-nums [font-family:inherit] [line-height:inherit] text-[14px] font-semibold motion-safe:transition-transform motion-safe:duration-100 motion-safe:active:scale-[.97]" aria-expanded={open} onClick={() => toggle()}>
+        <span className="inline-block min-w-[1ch] font-mono text-[12px] text-t-react">react</span> My team {members.length} / {max}
       </button>
       {open ? (
-        <ul className="demo-list">
-          {members.length === 0 ? <li className="empty">Empty. Add Pokémon on the Actions page or below.</li> : null}
+        <ul className="m-0 grid list-none grid-cols-2 gap-x-[.9rem] gap-y-[.35rem] pl-[1.2rem] text-[14.5px] max-narrow:grid-cols-1">
+          {members.length === 0 ? <li className="col-span-full text-ink-2">Empty. Add Pokémon on the Actions page or below.</li> : null}
           {members.map((m) => (
-            <li key={m.id}>
-              <img src={m.sprite} alt="" width={40} height={40} loading="lazy" />
+            <li key={m.id} className="motion-safe:animate-[rise_.2s_ease-out_both] my-[.3rem] flex max-w-[68ch] min-w-0 items-center gap-[.4rem]">
+              <img src={m.sprite} alt="" width={40} height={40} loading="lazy" className="size-10 flex-none [image-rendering:pixelated]" />
               {m.name}
-              <button type="button" className="demo-btn" onClick={() => removeMember(m.id)}>
+              <button type="button" className="ml-auto cursor-pointer rounded-xs border border-ink bg-paper px-[.7rem] py-[.35rem] text-ink tabular-nums [font-family:inherit] [line-height:inherit] text-[14px] font-semibold motion-safe:transition-transform motion-safe:duration-100 motion-safe:active:scale-[.97]" onClick={() => removeMember(m.id)}>
                 Remove
               </button>
             </li>

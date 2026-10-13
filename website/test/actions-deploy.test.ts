@@ -94,7 +94,7 @@ test('the cross-origin check (Chromium): hydrates, the default reaches the app, 
   const out = box.locator('pre.cmd')
   expect(await out.getAttribute('data-outcome')).toBe('ok')
   expect(await out.innerText()).toContain('=> reaches your app')
-  await box.locator('label.sw').click()
+  await box.locator('label:has(input[type=checkbox])').click()
   expect(await box.getByLabel('[cors] credentials = true').isChecked()).toBe(false)
   await box.getByLabel('[actions] credentials').selectOption('omit')
   await box.getByLabel('[cors] origins (api/brust.toml)').fill('*')

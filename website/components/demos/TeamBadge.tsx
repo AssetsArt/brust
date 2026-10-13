@@ -15,10 +15,10 @@ export default function TeamBadge() {
   }, [])
   const s = useStore(team)
   return (
-    <p className="team-badge">
-      <span className="tier native" ref={root}>
+    <p className="team-badge text-[1.1rem]">
+      <span className="inline-flex items-center gap-[.35rem] font-mono text-[12px] text-t-native before:size-2 before:rounded-xs before:bg-t-native before:content-['']" ref={root}>
         native
-      </span> Team <b>{s.members.length}</b> / {s.max}
+      </span> Team <b className="font-display text-[1.6rem] font-normal">{s.members.length}</b> / {s.max}
     </p>
   )
 }

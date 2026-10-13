@@ -14,12 +14,12 @@ export default function CacheProbe({ names }: { names: string[] }) {
   const [rows, setRows] = useState<string[]>([])
   const [turn, setTurn] = useState(0)
   return (
-    <div className="probe">
-      <div className="cta">
+    <div className="probe grid min-w-0 gap-3">
+      <div className="flex flex-wrap gap-3">
         <button
           ref={root}
           type="button"
-          className="demo-btn"
+          className="cursor-pointer rounded-xs border border-ink bg-paper px-[1.3rem] py-3 text-ink tabular-nums [font-family:inherit] [font-size:inherit] [line-height:inherit] font-semibold motion-safe:transition-transform motion-safe:duration-100 motion-safe:active:scale-[.97]"
           onClick={() => {
             const name = names[turn % names.length]!
             const v = Math.random().toString(36).slice(2, 8)
@@ -35,15 +35,15 @@ export default function CacheProbe({ names }: { names: string[] }) {
           Request three times
         </button>
       </div>
-      <ol className="sig-list" aria-live="polite">
-        {rows.length === 0 ? <li className="hint">Press the button: same URL twice, then once with ?nocache=1.</li> : null}
+      <ol className="m-0 grid list-none gap-[.35rem] pl-[1.4rem] text-[13px]" aria-live="polite">
+        {rows.length === 0 ? <li className="my-[.3rem] max-w-[68ch] text-ink-2">Press the button: same URL twice, then once with ?nocache=1.</li> : null}
         {rows.map((r) => (
-          <li key={r}>
-            <code>{r}</code>
+          <li key={r} className="my-[.3rem] max-w-[68ch]">
+            <code className="wrap-anywhere">{r}</code>
           </li>
         ))}
       </ol>
-      <p className="vp-note">
+      <p className="max-w-[68ch] text-[13.5px] text-ink-2">
         Simulated in your browser: <code>brust start</code> sends these headers for real.
       </p>
     </div>

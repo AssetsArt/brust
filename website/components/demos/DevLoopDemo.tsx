@@ -17,11 +17,11 @@ export default function DevLoopDemo() {
   const [what, setWhat] = useState('first load')
   const [log, setLog] = useState(`[brust] dev server on ${URL} — [r]eload  [o]pen  [w]arnings  [c]lear  [q]uit\n[brust] ready ${URL} gen 1`)
   return (
-    <div className="switch">
-      <div className="controls" role="group" aria-label="Save an edit" ref={root}>
+    <div className="switch grid min-w-0 gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3" role="group" aria-label="Save an edit" ref={root}>
         <button
           type="button"
-          className="demo-btn"
+          className="cursor-pointer rounded-xs border border-amber-fill bg-amber-fill px-4 py-[.55rem] text-on-amber tabular-nums [font-family:inherit] [font-size:inherit] [line-height:inherit] font-semibold motion-safe:transition-transform motion-safe:duration-100 motion-safe:active:scale-[.97]"
           data-testid="dl-page"
           onClick={() => {
             setTries(tries + 1)
@@ -35,7 +35,7 @@ export default function DevLoopDemo() {
         </button>
         <button
           type="button"
-          className="demo-btn"
+          className="cursor-pointer rounded-xs border border-amber-fill bg-amber-fill px-4 py-[.55rem] text-on-amber tabular-nums [font-family:inherit] [font-size:inherit] [line-height:inherit] font-semibold motion-safe:transition-transform motion-safe:duration-100 motion-safe:active:scale-[.97]"
           data-testid="dl-css"
           onClick={() => {
             setWhat('stylesheet swapped, the page kept its state')
@@ -46,7 +46,7 @@ export default function DevLoopDemo() {
         </button>
         <button
           type="button"
-          className="demo-btn"
+          className="cursor-pointer rounded-xs border border-amber-fill bg-amber-fill px-4 py-[.55rem] text-on-amber tabular-nums [font-family:inherit] [font-size:inherit] [line-height:inherit] font-semibold motion-safe:transition-transform motion-safe:duration-100 motion-safe:active:scale-[.97]"
           data-testid="dl-break"
           onClick={() => {
             setTries(tries + 1)
@@ -59,7 +59,7 @@ export default function DevLoopDemo() {
         </button>
         <button
           type="button"
-          className="demo-btn"
+          className="cursor-pointer rounded-xs border border-amber-fill bg-amber-fill px-4 py-[.55rem] text-on-amber tabular-nums [font-family:inherit] [font-size:inherit] [line-height:inherit] font-semibold motion-safe:transition-transform motion-safe:duration-100 motion-safe:active:scale-[.97]"
           data-testid="dl-fix"
           onClick={() => {
             setTries(tries + 1)
@@ -73,7 +73,7 @@ export default function DevLoopDemo() {
         </button>
         <button
           type="button"
-          className="demo-btn"
+          className="cursor-pointer rounded-xs border border-amber-fill bg-amber-fill px-4 py-[.55rem] text-on-amber tabular-nums [font-family:inherit] [font-size:inherit] [line-height:inherit] font-semibold motion-safe:transition-transform motion-safe:duration-100 motion-safe:active:scale-[.97]"
           data-testid="dl-reset"
           onClick={() => {
             setTries(1)
@@ -106,7 +106,7 @@ export default function DevLoopDemo() {
           </tr>
         </tbody>
       </table>
-      <pre className="cmd" data-testid="dl-log">
+      <pre className="m-0 mt-3 overflow-x-auto rounded-xs border border-term-rule bg-term px-4 py-[.8rem] text-[13px] leading-[1.6] text-term-fg" data-testid="dl-log">
         <code>{log}</code>
       </pre>
     </div>

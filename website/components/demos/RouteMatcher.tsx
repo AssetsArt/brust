@@ -13,14 +13,14 @@ export default function RouteMatcher({ initialPath, initialPattern, initialParam
   const [pattern, setPattern] = useState(initialPattern)
   const [params, setParams] = useState(initialParams)
   return (
-    <div className="matcher">
-      <label className="sr" htmlFor="rm-path">
+    <div className="matcher grid min-w-0 gap-3">
+      <label className="sr-only" htmlFor="rm-path">
         Path
       </label>
       <input
         ref={root}
         id="rm-path"
-        className="demo-in"
+        className="w-full rounded-xs border border-rule bg-paper px-3 py-[.55rem] text-ink [font-family:inherit] [font-size:inherit] [font-weight:inherit] [line-height:inherit]"
         value={path}
         spellCheck={false}
         autoComplete="off"
@@ -58,18 +58,18 @@ export default function RouteMatcher({ initialPath, initialPattern, initialParam
           setParams(found)
         }}
       />
-      <dl className="shipbar">
-        <div>
-          <dt>Route</dt>
-          <dd>{pattern}</dd>
+      <dl className="m-0 grid grid-cols-3 border border-rule max-narrow:grid-cols-1">
+        <div className="min-w-0 border-l border-rule px-[.8rem] py-[.6rem] first:border-l-0 max-narrow:border-t max-narrow:border-l-0 max-narrow:first:border-t-0">
+          <dt className="text-[12px] text-ink-2">Route</dt>
+          <dd className="m-0 font-mono text-[12.5px]">{pattern}</dd>
         </div>
-        <div>
-          <dt>Params</dt>
-          <dd className={params.length === 0 ? 'no' : ''}>{params.length === 0 ? 'none' : params.join(', ')}</dd>
+        <div className="min-w-0 border-l border-rule px-[.8rem] py-[.6rem] first:border-l-0 max-narrow:border-t max-narrow:border-l-0 max-narrow:first:border-t-0">
+          <dt className="text-[12px] text-ink-2">Params</dt>
+          <dd className={params.length === 0 ? 'm-0 font-mono text-[12.5px] text-ink-2' : 'm-0 font-mono text-[12.5px]'}>{params.length === 0 ? 'none' : params.join(', ')}</dd>
         </div>
-        <div>
-          <dt>Status</dt>
-          <dd>{pattern === '*' ? '404' : '200'}</dd>
+        <div className="min-w-0 border-l border-rule px-[.8rem] py-[.6rem] first:border-l-0 max-narrow:border-t max-narrow:border-l-0 max-narrow:first:border-t-0">
+          <dt className="text-[12px] text-ink-2">Status</dt>
+          <dd className="m-0 font-mono text-[12.5px]">{pattern === '*' ? '404' : '200'}</dd>
         </div>
       </dl>
     </div>
