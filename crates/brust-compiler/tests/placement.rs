@@ -417,6 +417,36 @@ fn build_time_that_reads_props_warns_and_stays_a_job() {
 }
 
 #[test]
+fn import_meta_is_build_host_input_like_process_env() {
+    // a same-file helper
+    assert!(
+        eval_slots(
+            "function api() { return String(import.meta.env.API_URL) }",
+            "return <p>{api()}</p>"
+        )
+        .is_empty()
+    );
+    assert!(
+        eval_slots(
+            "function where() { return import.meta.dir }",
+            "return <p>{where()}</p>"
+        )
+        .is_empty()
+    );
+    // and inside buildTime(…) it is refused, not evaluated
+    let ir = analyze(
+        "C.tsx",
+        "import { buildTime } from '@brust/core'\nexport default function C() { const h = buildTime(() => import.meta.url); return <p>{h}</p> }",
+    );
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "build-time-impure")
+        .unwrap();
+    assert!(d.message.contains("import.meta"), "{}", d.message);
+}
+
+#[test]
 fn build_time_reading_time_or_randomness_is_an_error() {
     let ir = analyze(
         "C.tsx",
@@ -557,6 +587,8 @@ fn a_relatively_imported_helper_is_read_before_it_counts_as_pure() {
         ("rand", "r", "r()"),
         ("dyn", "r", "r()"),
         ("badchain", "x", "x()"),
+        ("meta", "api", "api()"),
+        ("url", "where", "where()"),
     ] {
         assert_eq!(check(file, import, call), 0, "{file}: must stay a job");
     }

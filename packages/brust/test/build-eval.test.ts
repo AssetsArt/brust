@@ -25,7 +25,7 @@ beforeAll(() => {
   okBuild = build(ok)
 }, 120_000)
 afterAll(() => {
-  for (const app of ['ok', 'throws', 'client', 'envbt']) rmSync(join(root, app, 'dist'), { recursive: true, force: true })
+  for (const app of ['ok', 'throws', 'client', 'envbt', 'importmeta-bt']) rmSync(join(root, app, 'dist'), { recursive: true, force: true })
   rmSync(join(ok, 'dist-ref'), { recursive: true, force: true })
   uninstall?.()
 })
@@ -57,6 +57,21 @@ test('relatively imported helpers are read, not assumed: process.env, module sta
   const html = jinja(ok, 'impureImports_')
   for (const s of ['_s1', '_s2', '_s3']) expect(html).toContain(s)   // none was baked
   expect(html).not.toContain(process.env.HOME ?? '\u0000')
+})
+
+test('import.meta.env / .url / .dir are build-host input: imported and same-file helpers stay jobs', () => {
+  const c = comp(manifest(ok), 'importMeta_')
+  expect(c.jobs.map((j) => j.kind)).toEqual(['precompute'])
+  const html = jinja(ok, 'importMeta_')
+  for (const s of ['_s1', '_s2', '_s3', '_s4']) expect(html).toContain(s)   // none was baked
+  expect(html).not.toContain('file://')
+})
+
+test('the evaluator never sees the build host environment (explicit allowlist)', async () => {
+  const b = build(join(root, 'importmeta-bt'), { API_URL: 'https://secret.example' })
+  expect(b.exitCode).not.toBe(0)   // import.meta in a buildTime closure is refused before anything runs
+  expect(b.stderr.toString()).toMatch(/error build-time-impure ImpureMeta\.tsx:\d+:\d+ buildTime\(…\) reads `import\.meta`/)
+  expect(b.stderr.toString() + b.stdout.toString()).not.toContain('secret.example')
 })
 
 test('buildTime bakes a package call, async included, into the template (no job, no worker)', () => {

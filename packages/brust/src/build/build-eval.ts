@@ -59,6 +59,14 @@ for (let i = start; i < slots.length; i++) {
 }
 `
 
+/** The evaluator sees an explicit allowlist, never the build host's environment: `process.env`,
+ * `Bun.env` and `import.meta.env` all read from it, however they are spelled. */
+function evalEnv(): Record<string, string> {
+  const env: Record<string, string> = { TZ: 'UTC', NODE_ENV: 'production' }
+  for (const k of ['PATH', 'HOME']) if (process.env[k] !== undefined) env[k] = process.env[k]!
+  return env
+}
+
 type Outcome = { ok: true; value: unknown } | { ok: false; reason: string }
 
 /** Runs slots `[0, n)` of `entry` one after the other, restarting the subprocess after a timeout or crash. */
@@ -66,7 +74,7 @@ async function runAll(entry: string, runner: string, cands: Candidate[], cwd: st
   const out: (Outcome | undefined)[] = new Array(cands.length).fill(undefined)
   let next = 0
   while (next < cands.length) {
-    const proc = Bun.spawn([process.execPath, runner, entry, String(next)], { cwd, env: { ...process.env, TZ: 'UTC', NODE_ENV: 'production' }, stdout: 'pipe', stderr: 'pipe' })
+    const proc = Bun.spawn([process.execPath, runner, entry, String(next)], { cwd, env: evalEnv(), stdout: 'pipe', stderr: 'pipe' })
     const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
     const dec = new TextDecoder()
     let buf = ''

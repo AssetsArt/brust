@@ -35,6 +35,8 @@ const DENIED_GLOBALS: &[&str] = &[
     "fetch",
     "Bun",
     "globalThis",
+    // Build-host input: `import.meta.env` / `.url` / `.dir` (the reader records the read as this name).
+    "import.meta",
 ];
 
 pub enum Verdict {
@@ -222,7 +224,7 @@ pub fn module_is_pure(from: &str, source: &str, opts: &AnalyzeOptions) -> bool {
                     w.stmt(stmt);
                 }
             }
-            if w.dynamic_import.is_some() {
+            if w.dynamic_import.is_some() || w.import_meta {
                 return None;
             }
             for r in &w.used {

@@ -323,6 +323,10 @@ impl<'r, 'a> Reader<'r, 'a> {
             .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element));
         let mut seen: Vec<js_ast::Ref> = Vec::new();
         let mut out = Vec::new();
+        if w.import_meta {
+            // Seen by the dependency pass as a global no build-time slot may read.
+            out.push(("import.meta".to_string(), IdentKind::Global));
+        }
         for r in w.used {
             if self.names.is_jsx_runtime(r)
                 || w.declared.iter().any(|d| self.names.same(*d, r))
@@ -570,6 +574,8 @@ pub struct Walk {
     /// Location of the first dynamic `import()` reached (F38): the printer
     /// cannot print one (no import record), so such code is never printed.
     pub dynamic_import: Option<u32>,
+    /// `import.meta` (`.env`, `.url`, `.dir`) is read: ambient input of the build host (L2).
+    pub import_meta: bool,
     /// Identifiers written by an assignment or `++`/`--` (the left side's own bindings, not
     /// a member target's object).
     pub assigned: Vec<js_ast::Ref>,
@@ -818,6 +824,7 @@ impl Walk {
                     self.expr(&p.value);
                 }
             }
+            E::EImportMeta(_) | E::EImportMetaMain(_) => self.import_meta = true,
             E::EImport(i) => {
                 self.dynamic_import.get_or_insert(loc_of(e));
                 self.expr(&i.expr);
