@@ -1,6 +1,7 @@
 //! Ties the readers together into a `ComponentIR`.
-use crate::analyze::expr::{Js, Reader, print_js};
-use crate::analyze::hooks::{mark_state_bindings, read_body};
+use crate::analyze::expr::{Js, Reader, print_js_with};
+use crate::analyze::hooks::{Module, mark_state_bindings, read_body};
+use crate::analyze::names::Aliases;
 use crate::analyze::names::NameTable;
 use crate::ir::{
     Attr, BinOp, ComponentIR, Diagnostic, Expr, Literal, Node, RawExpr, RawKind, component_id,
@@ -34,14 +35,23 @@ pub(crate) fn default_export_fn<'x>(ast: &'x js_ast::Ast<'_>) -> Option<&'x js_a
 /// `Err` only when the module has no default export at all; every other problem
 /// is a diagnostic on the returned IR.
 pub fn analyze_component(parsed: &Parsed) -> Result<ComponentIR, Diagnostic> {
+    analyze_component_in(parsed, None)
+}
+
+/// [`analyze_component`] with the options custom hooks imported from other modules
+/// resolve through (G3); `None` keeps every imported hook a `hook-unsupported` fallback.
+pub fn analyze_component_in(
+    parsed: &Parsed,
+    opts: Option<&AnalyzeOptions>,
+) -> Result<ComponentIR, Diagnostic> {
     let path = parsed.path();
     let mut ir = ComponentIR::new(component_id(&path), path);
     parsed.with_ast(|ast| {
         let Some(func) = default_export_fn(ast) else {
-            if let Some(done) = read_cache_export(parsed, ast, &mut ir) {
+            if let Some(done) = read_cache_export(parsed, ast, opts, &mut ir) {
                 return done;
             }
-            if let Some(done) = read_memo_export(parsed, ast, &mut ir) {
+            if let Some(done) = read_memo_export(parsed, ast, opts, &mut ir) {
                 return done;
             }
             if has_default_export(ast) {
@@ -64,7 +74,7 @@ pub fn analyze_component(parsed: &Parsed) -> Result<ComponentIR, Diagnostic> {
                 "export the component with `export default function`",
             ));
         };
-        read_function(parsed, ast, func, &mut ir);
+        read_function(parsed, ast, opts, func, &mut ir);
         Ok(())
     })?;
     let text = parsed.text();
@@ -154,6 +164,7 @@ fn default_export_expr<'x>(ast: &'x js_ast::Ast<'_>) -> Option<&'x js_ast::Expr>
 fn read_cache_export(
     parsed: &Parsed,
     ast: &js_ast::Ast<'_>,
+    opts: Option<&AnalyzeOptions>,
     ir: &mut ComponentIR,
 ) -> Option<Result<(), Diagnostic>> {
     let e = default_export_expr(ast)?;
@@ -204,8 +215,8 @@ fn read_cache_export(
                 return None;
             }
             mark_state_bindings(func, &mut names);
-            read_function(parsed, ast, func, ir);
-            let print = |js: Js<'_>| print_js(parsed, ast, js);
+            read_function(parsed, ast, opts, func, ir);
+            let print = |js: Js<'_>, a: &Aliases| print_js_with(parsed, ast, a, js);
             let mut reader = Reader::new(&mut names, &print);
             let mut decl = crate::ir::CacheDecl {
                 key: None,
@@ -270,6 +281,7 @@ fn read_cache_export(
 fn read_memo_export(
     parsed: &Parsed,
     ast: &js_ast::Ast<'_>,
+    opts: Option<&AnalyzeOptions>,
     ir: &mut ComponentIR,
 ) -> Option<Result<(), Diagnostic>> {
     let e = default_export_expr(ast)?;
@@ -294,7 +306,7 @@ fn read_memo_export(
     if names.import_of(callee) != Some(("react", "memo")) {
         return None;
     }
-    read_function(parsed, ast, func, ir);
+    read_function(parsed, ast, opts, func, ir);
     Some(Ok(()))
 }
 
@@ -321,13 +333,14 @@ fn default_export_is_memo(ast: &js_ast::Ast<'_>) -> bool {
 fn read_function(
     parsed: &Parsed,
     ast: &js_ast::Ast<'_>,
+    opts: Option<&AnalyzeOptions>,
     func: &js_ast::G::Fn,
     ir: &mut ComponentIR,
 ) {
     crate::analyze::expr::take_printer_panic(); // a flag left by an earlier component is not ours
     let mut names = NameTable::new(ast, func);
     mark_state_bindings(func, &mut names);
-    let print = |js: Js<'_>| print_js(parsed, ast, js);
+    let print = |js: Js<'_>, a: &Aliases| print_js_with(parsed, ast, a, js);
     let mut reader = Reader::new(&mut names, &print);
     // F41 (§8.1): a leftover `'use client'` directive means nothing in brust.
     for part in ast.parts.iter() {
@@ -359,7 +372,16 @@ fn read_function(
             "import the module statically or keep the lazy component in a React-tier parent",
         ));
     }
-    let body = read_body(func, &mut reader);
+    let body = read_body(
+        func,
+        &mut reader,
+        Module {
+            parsed,
+            ast,
+            opts,
+            foreign: false,
+        },
+    );
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
     check_printer_panic(ir);
     ir.props = body.props;
@@ -434,11 +456,20 @@ fn module_fn<'x>(ast: &'x js_ast::Ast<'_>, name: &str) -> Option<&'x js_ast::G::
 /// to the module) into a structural `ComponentIR`; `None` when there is no
 /// function declaration of that name.
 pub fn analyze_named_component(parsed: &Parsed, name: &str) -> Option<ComponentIR> {
+    analyze_named_component_in(parsed, name, None)
+}
+
+/// [`analyze_named_component`] with the options imported custom hooks resolve through (G3).
+pub fn analyze_named_component_in(
+    parsed: &Parsed,
+    name: &str,
+    opts: Option<&AnalyzeOptions>,
+) -> Option<ComponentIR> {
     let path = parsed.path();
     let mut ir = ComponentIR::new(named_component_id(&path, name), path);
     let found = parsed.with_ast(|ast| {
         let func = module_fn(ast, name)?;
-        read_function(parsed, ast, func, &mut ir);
+        read_function(parsed, ast, opts, func, &mut ir);
         Some(())
     });
     found.map(|_| ir)
@@ -558,7 +589,7 @@ pub fn debug_first_slot(parsed: &Parsed) -> Option<RawExpr> {
         };
         let mut names = NameTable::new(ast, func);
         mark_state_bindings(func, &mut names);
-        let print = |js: Js<'_>| print_js(parsed, ast, js);
+        let print = |js: Js<'_>, a: &Aliases| print_js_with(parsed, ast, a, js);
         let mut reader = Reader::new(&mut names, &print);
         Some(reader.expr(&slot))
     })
@@ -574,7 +605,7 @@ pub fn debug_template(parsed: &Parsed) -> (Node, Vec<Diagnostic>) {
         };
         let mut names = NameTable::new(ast, func);
         mark_state_bindings(func, &mut names);
-        let print = |js: Js<'_>| print_js(parsed, ast, js);
+        let print = |js: Js<'_>, a: &Aliases| print_js_with(parsed, ast, a, js);
         let mut reader = Reader::new(&mut names, &print);
         let node = match first_return(func) {
             Some(ret) => crate::analyze::jsx::read_jsx(&mut reader, &ret),

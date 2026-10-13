@@ -1,0 +1,279 @@
+{
+  "id": "input_5d6490dd",
+  "source": "tests/fixtures/custom-hook-debounce/input.tsx",
+  "tier": "Native",
+  "props": [
+    {
+      "name": "initial",
+      "local": "initial",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [
+    {
+      "name": "q",
+      "setter": "setQ",
+      "init": {
+        "Server": {
+          "loc": 377,
+          "kind": {
+            "Ident": {
+              "name": "initial",
+              "kind": "Prop"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "settled_useDebounced1",
+      "setter": "setSettled_useDebounced1",
+      "init": {
+        "Server": {
+          "loc": 402,
+          "kind": {
+            "Ident": {
+              "name": "q",
+              "kind": "State"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "derived": [
+    {
+      "name": "ms_useDebounced1",
+      "expr": {
+        "ClientOnly": {
+          "js": "300"
+        }
+      }
+    }
+  ],
+  "effects": [
+    {
+      "body": {
+        "loc": 402,
+        "kind": {
+          "Arrow": {
+            "params": [],
+            "body": {
+              "Block": {
+                "source": "() => {\n  const t_useDebounced1 = setTimeout(() => setSettled_useDebounced1(q), ms_useDebounced1);\n  return () => clearTimeout(t_useDebounced1);\n}",
+                "captures_only": false
+              }
+            },
+            "captures": [
+              [
+                "setTimeout",
+                "Global"
+              ],
+              [
+                "setSettled_useDebounced1",
+                "Setter"
+              ],
+              [
+                "q",
+                "State"
+              ],
+              [
+                "ms_useDebounced1",
+                "Local"
+              ],
+              [
+                "clearTimeout",
+                "Global"
+              ]
+            ]
+          }
+        }
+      },
+      "deps": [
+        {
+          "loc": 402,
+          "kind": {
+            "Ident": {
+              "name": "q",
+              "kind": "State"
+            }
+          }
+        },
+        {
+          "loc": 402,
+          "kind": {
+            "Ident": {
+              "name": "ms_useDebounced1",
+              "kind": "Local"
+            }
+          }
+        }
+      ],
+      "layout": false
+    }
+  ],
+  "handlers": [
+    {
+      "name": "_h1",
+      "body": {
+        "loc": 483,
+        "kind": {
+          "Arrow": {
+            "params": [
+              "e"
+            ],
+            "body": {
+              "Expr": {
+                "loc": 490,
+                "kind": {
+                  "Call": {
+                    "callee": {
+                      "loc": 490,
+                      "kind": {
+                        "Ident": {
+                          "name": "setQ",
+                          "kind": "Setter"
+                        }
+                      }
+                    },
+                    "args": [
+                      {
+                        "loc": 495,
+                        "kind": {
+                          "Member": {
+                            "target": {
+                              "loc": 495,
+                              "kind": {
+                                "Member": {
+                                  "target": {
+                                    "loc": 495,
+                                    "kind": {
+                                      "Ident": {
+                                        "name": "e",
+                                        "kind": "Local"
+                                      }
+                                    }
+                                  },
+                                  "name": "currentTarget",
+                                  "optional": false
+                                }
+                              }
+                            },
+                            "name": "value",
+                            "optional": false
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "captures": [
+              [
+                "setQ",
+                "Setter"
+              ]
+            ]
+          }
+        }
+      },
+      "item_scoped": []
+    }
+  ],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 438,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Element": {
+            "loc": 450,
+            "tag": "input",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "q"
+                }
+              },
+              {
+                "Dynamic": {
+                  "name": "value",
+                  "value": {
+                    "Server": {
+                      "loc": 471,
+                      "kind": {
+                        "Ident": {
+                          "name": "q",
+                          "kind": "State"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "Event": {
+                  "event": "input",
+                  "handler": "_h1"
+                }
+              }
+            ],
+            "children": [],
+            "host": false,
+            "ref_name": null
+          }
+        },
+        {
+          "Element": {
+            "loc": 528,
+            "tag": "p",
+            "attrs": [
+              {
+                "Static": {
+                  "name": "id",
+                  "value": "shown"
+                }
+              }
+            ],
+            "children": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 543,
+                    "kind": {
+                      "Ident": {
+                        "name": "settled_useDebounced1",
+                        "kind": "State"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "host": false,
+            "ref_name": null
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [
+    "initial"
+  ],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [],
+  "diagnostics": []
+}

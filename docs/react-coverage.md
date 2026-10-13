@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 26 | 16 | 7 | 3 | 0 | 0 | 0 | 0 |
 | B Composition | 12 | 5 | 3 | 4 | 0 | 0 | 0 | 0 |
-| C Hooks | 15 | 1 | 8 | 6 | 0 | 0 | 0 | 0 |
+| C Hooks | 17 | 1 | 10 | 6 | 0 | 0 | 0 | 0 |
 | D API surface | 5 | 1 | 0 | 4 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 25 | 5 | 10 | 5 | 4 | 1 | 0 | 0 |
-| **Total** | 83 | 28 | 28 | 22 | 4 | 1 | 0 | 0 |
+| **Total** | 85 | 28 | 30 | 22 | 4 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -84,7 +84,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | — | spec §4.3 useLayoutEffect |
 | c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usecontext | useContext | react | react | ssr | ok | fallback:hook-unsupported |  |
-| c-custom-hook | custom hook | react | react | ssr | ok | fallback:hook-unsupported |  |
+| c-custom-hook | custom hook | native | native | 0 | ok | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
+| c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
+| c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
 | c-usetransition | useTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usesyncexternalstore | useSyncExternalStore | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-use-hook | use(promise) | react | react | ssr | ok | fallback:hook-unsupported |  |

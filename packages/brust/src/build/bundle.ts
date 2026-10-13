@@ -15,8 +15,9 @@ import type { Compiled } from './compile'
 import { BuildError } from './errors'
 
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
-/** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). */
-export const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify('production') }
+/** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). `brust dev` builds set
+ * `BRUST_BUILD_MODE=development` for readable errors and hydration diffs (R13.4); `brust build` never does. */
+export const PRODUCTION = { 'process.env.NODE_ENV': JSON.stringify(process.env.BRUST_BUILD_MODE === 'development' ? 'development' : 'production') }
 
 const matchesExternal = (spec: string, external: string[]) =>
   // A trailing `*` is a prefix (`elysia/*`, `node:*`, `cloudflare:*`): the generated CF entry imports `cloudflare:workers`.
