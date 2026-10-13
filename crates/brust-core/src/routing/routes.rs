@@ -147,14 +147,14 @@ impl RouteTable {
             // still get entries so route_id == array index is preserved on both
             // sides (Rust idx as u32 ↔ TS byRouteId).
             if c.not_found {
-                nf_table.push((c.not_found_prefix.clone(), idx as u32));
+                nf_table.push((normalize_route_pattern(&c.not_found_prefix).into_owned(), idx as u32));
                 // Still push to the parallel Vecs to keep indices aligned.
                 caches.push(c.cache.clone());
                 compiled.push(CompiledCache::default());
                 continue;
             }
             router
-                .insert(c.path.clone(), idx as u32)
+                .insert(normalize_route_pattern(&c.path).into_owned(), idx as u32)
                 .map_err(|e| RouteInstallError::Insert {
                     pattern: c.path.clone(),
                     reason: e.to_string(),
@@ -219,6 +219,23 @@ impl RouteTable {
     /// further; a MISS/BYPASS calls [`RouteMatch::into_envelope`].
     pub fn match_route<'a>(&'a self, full_path: &'a str) -> Option<RouteMatch<'a>> {
         let path_only = full_path.split_once('?').map_or(full_path, |(p, _)| p);
+        // L24: match in the form literals are stored in (browser percent-encoding, uppercase hex). Never a decode.
+        match normalize_request_path(path_only) {
+            std::borrow::Cow::Borrowed(p) => self.match_normalized(p),
+            // A rewritten path is local: the params are copied out of it (only for non-ASCII / lowercase-hex URLs).
+            std::borrow::Cow::Owned(p) => self.match_normalized(&p).map(|m| RouteMatch {
+                route_id: m.route_id,
+                not_found: m.not_found,
+                params: m
+                    .params
+                    .into_iter()
+                    .map(|(k, v)| (std::borrow::Cow::Owned(k.into_owned()), std::borrow::Cow::Owned(v.into_owned())))
+                    .collect(),
+            }),
+        }
+    }
+
+    fn match_normalized<'p>(&'p self, path_only: &'p str) -> Option<RouteMatch<'p>> {
         match self.router.at(path_only) {
             // Decode at the production site: loaders, clientLoader, L1 param() keys, x-props, native
             // ctx and treaty all consume THIS list, so one decode keeps every consumer consistent.
@@ -369,6 +386,90 @@ pub fn build_request_envelope<'a>(
         cookies,
         search,
     }
+}
+
+/// L24: a byte a browser percent-encodes in a URL path (and so a route literal is stored as): non-ASCII
+/// (UTF-8 bytes), controls, space, and `"` `<` `>` `` ` ``.
+const fn needs_encode(b: u8) -> bool {
+    b >= 0x80 || b <= 0x20 || b == 0x7f || matches!(b, b'"' | b'<' | b'>' | b'`')
+}
+
+/// L24: the one path normalisation every surface shares (router, L1 keys, `invalidate({path})`, the
+/// action-prefix check): bytes a browser would encode become `%XX` (UTF-8, uppercase hex), and the hex digits
+/// of an existing `%xx` are uppercased. NEVER decodes: `%2F` stays a literal-slash escape inside a param
+/// (`decode_path_param` runs after the match). With `braces`, `{param}` / `{*rest}` segments of a ROUTE PATTERN
+/// are copied verbatim. Borrowed when nothing changes (the hot path of an ASCII URL).
+fn normalize(s: &str, braces: bool) -> std::borrow::Cow<'_, str> {
+    let b = s.as_bytes();
+    let dirty = {
+        let mut d = false;
+        let mut i = 0;
+        let mut depth = 0u32;
+        while i < b.len() {
+            let c = b[i];
+            if braces && c == b'{' {
+                depth += 1;
+            } else if braces && c == b'}' {
+                depth = depth.saturating_sub(1);
+            } else if depth == 0 {
+                if needs_encode(c) {
+                    d = true;
+                    break;
+                }
+                if c == b'%'
+                    && i + 2 < b.len()
+                    && b[i + 1].is_ascii_hexdigit()
+                    && b[i + 2].is_ascii_hexdigit()
+                    && (b[i + 1].is_ascii_lowercase() || b[i + 2].is_ascii_lowercase())
+                {
+                    d = true;
+                    break;
+                }
+            }
+            i += 1;
+        }
+        d
+    };
+    if !dirty {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = Vec::with_capacity(b.len() + 16);
+    let mut i = 0;
+    let mut depth = 0u32;
+    while i < b.len() {
+        let c = b[i];
+        if braces && c == b'{' {
+            depth += 1;
+            out.push(c);
+        } else if braces && c == b'}' {
+            depth = depth.saturating_sub(1);
+            out.push(c);
+        } else if depth > 0 {
+            out.push(c);
+        } else if c == b'%' && i + 2 < b.len() && b[i + 1].is_ascii_hexdigit() && b[i + 2].is_ascii_hexdigit() {
+            out.extend_from_slice(&[b'%', b[i + 1].to_ascii_uppercase(), b[i + 2].to_ascii_uppercase()]);
+            i += 3;
+            continue;
+        } else if needs_encode(c) {
+            out.extend_from_slice(&[b'%', HEX[(c >> 4) as usize], HEX[(c & 15) as usize]]);
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    // Only ASCII was added around whole UTF-8 sequences, so this is valid UTF-8 by construction.
+    std::borrow::Cow::Owned(String::from_utf8(out).unwrap_or_default())
+}
+
+/// L24: a request path (no query) in the form route literals are stored in. See [`normalize`].
+pub fn normalize_request_path(path: &str) -> std::borrow::Cow<'_, str> {
+    normalize(path, false)
+}
+
+/// L24: a route pattern with its literal segments percent-encoded the way browsers send them.
+pub fn normalize_route_pattern(pattern: &str) -> std::borrow::Cow<'_, str> {
+    normalize(pattern, true)
 }
 
 /// Percent-decode ONE matched path-param value (spec:
@@ -1112,5 +1213,116 @@ mod tests {
         let env = build_request_envelope("GET", "/x?a=%41&b+c=1&&d", q, &headers, None);
         assert_eq!(decode_search(q), env.search);
         assert!(decode_search("").is_empty());
+    }
+
+    // ---- L24: non-ASCII literal segments ----
+
+    const NEWS: &str = "/ข่าว";
+    const NEWS_ENC: &str = "/%E0%B8%82%E0%B9%88%E0%B8%B2%E0%B8%A7";
+
+    fn table(paths: &[&str]) -> RouteTable {
+        let configs: Vec<RouteConfig> = paths.iter().map(|p| cfg(p, false)).collect();
+        let mut t = RouteTable::new();
+        t.install_with_config(&configs).unwrap();
+        t
+    }
+
+    fn route_of(t: &RouteTable, path: &str) -> Option<(u32, Vec<(String, String)>)> {
+        t.match_route(path).map(|m| {
+            (
+                m.route_id,
+                m.params.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            )
+        })
+    }
+
+    #[test]
+    fn normalize_encodes_what_a_browser_encodes_and_never_decodes() {
+        assert_eq!(normalize_request_path(NEWS), NEWS_ENC);
+        assert_eq!(normalize_request_path("/a b"), "/a%20b");
+        assert_eq!(normalize_request_path("/%e0%b8%82"), "/%E0%B8%82");
+        // mixed: raw UTF-8 beside an existing escape
+        assert_eq!(normalize_request_path("/ข/%e0"), "/%E0%B8%82/%E0");
+        // ASCII and uppercase hex are untouched (and borrowed: no allocation on the hot path)
+        for p in ["/", "/items/42", "/a%2Fb", "/%E0%B8%82", "/a~b-c_d.e"] {
+            assert!(matches!(normalize_request_path(p), std::borrow::Cow::Borrowed(_)), "{p}");
+            assert_eq!(normalize_request_path(p), p);
+        }
+        // %2F stays an escape (never turned into a slash); a lone or malformed % is left alone
+        assert_eq!(normalize_request_path("/a%2fb"), "/a%2Fb");
+        assert_eq!(normalize_request_path("/100%"), "/100%");
+        assert_eq!(normalize_request_path("/%zz/ข"), "/%zz/%E0%B8%82");
+    }
+
+    #[test]
+    fn normalize_route_pattern_keeps_params_verbatim() {
+        assert_eq!(normalize_route_pattern("/ข่าว/{id}"), format!("{NEWS_ENC}/{{id}}"));
+        assert_eq!(normalize_route_pattern("/docs/ภาษาไทย/{*rest}"), "/docs/%E0%B8%A0%E0%B8%B2%E0%B8%A9%E0%B8%B2%E0%B9%84%E0%B8%97%E0%B8%A2/{*rest}");
+        assert_eq!(normalize_route_pattern("/items/{id}"), "/items/{id}");
+    }
+
+    #[test]
+    fn thai_literal_route_matches_encoded_lowercase_hex_and_raw_utf8() {
+        let t = table(&["/", NEWS]);
+        for p in [NEWS_ENC, "/%e0%b8%82%e0%b9%88%e0%b8%b2%e0%b8%a7", NEWS, "/%e0%B8%82%E0%b9%88%E0%B8%b2%E0%B8%A7"] {
+            assert_eq!(route_of(&t, p).map(|r| r.0), Some(1), "{p}");
+        }
+        // a query does not disturb it
+        assert_eq!(route_of(&t, &format!("{NEWS_ENC}?q=1")).map(|r| r.0), Some(1));
+        // and a neighbour does not match
+        assert_eq!(route_of(&t, "/%E0%B8%82").map(|r| r.0), None);
+    }
+
+    #[test]
+    fn thai_pattern_written_already_encoded_still_matches_everything() {
+        let t = table(&[&NEWS_ENC.to_lowercase()]);
+        assert_eq!(route_of(&t, NEWS).map(|r| r.0), Some(0));
+        assert_eq!(route_of(&t, NEWS_ENC).map(|r| r.0), Some(0));
+    }
+
+    #[test]
+    fn mixed_literal_and_param_decode_the_param_only() {
+        let t = table(&["/ข่าว/{id}", "/docs/{name}/ภาษาไทย"]);
+        let (id, params) = route_of(&t, &format!("{NEWS_ENC}/%E0%B8%AA%E0%B8%A7%E0%B8%B1%E0%B8%AA")).unwrap();
+        assert_eq!((id, params), (0, vec![("id".into(), "สวัส".into())]));
+        // raw UTF-8 in the param position decodes to the same value
+        let (_, params) = route_of(&t, "/ข่าว/สวัส").unwrap();
+        assert_eq!(params, vec![("id".to_string(), "สวัส".to_string())]);
+        // %2F inside a param is a literal slash in the VALUE, not a segment boundary
+        let (id, params) = route_of(&t, &format!("{NEWS_ENC}/a%2fb")).unwrap();
+        assert_eq!((id, params), (0, vec![("id".into(), "a/b".into())]));
+        assert_eq!(route_of(&t, &format!("{NEWS_ENC}/a/b")), None);
+        let (id, params) = route_of(&t, "/docs/x%20y/%E0%B8%A0%E0%B8%B2%E0%B8%A9%E0%B8%B2%E0%B9%84%E0%B8%97%E0%B8%A2").unwrap();
+        assert_eq!((id, params), (1, vec![("name".into(), "x y".into())]));
+    }
+
+    #[test]
+    fn catch_all_prefix_in_thai_is_normalised_too() {
+        let configs = vec![
+            cfg("/", false),
+            RouteConfig {
+                path: "*".into(),
+                cache: None,
+                not_found: true,
+                not_found_prefix: "/ข่าว".into(),
+            },
+        ];
+        let mut t = RouteTable::new();
+        t.install_with_config(&configs).unwrap();
+        let m = t.match_route("/%E0%B8%82%E0%B9%88%E0%B8%B2%E0%B8%A7/nope").unwrap();
+        assert!(m.not_found);
+        assert_eq!(m.route_id, 1);
+        assert!(t.match_route("/ข่าว/nope").unwrap().not_found);
+    }
+
+    #[test]
+    fn cache_keys_share_one_entry_per_spelling() {
+        use crate::cache::build_cache_key;
+        let a = build_cache_key("GET", NEWS_ENC, String::new());
+        let b = build_cache_key("GET", &NEWS_ENC.replace("%E0", "%e0"), String::new());
+        let c = build_cache_key("GET", &format!("{NEWS}?b=2&a=1"), String::new());
+        assert_eq!(a, b);
+        assert_eq!(c.path, NEWS_ENC);
+        assert_eq!(c.sorted_query, "a=1&b=2");
     }
 }
