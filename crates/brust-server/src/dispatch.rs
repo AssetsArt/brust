@@ -204,16 +204,58 @@ pub async fn call_worker_planned<Req: Serialize, Resp: DeserializeOwned + Send +
     req: &Req,
     seed: Option<PlanBox>,
 ) -> Result<(Resp, Option<PlanBox>), CallError> {
-    call_worker_decoded(pool, timeout, call_timeout, kind, req, seed, |bytes| {
-        // M3-P P7: validate UTF-8 once and parse from `str` (serde_json's `from_slice` re-checks
-        // every string it reads; ~8% of the D parse).
-        std::str::from_utf8(bytes)
-            .map_err(|e| CallError::BadResponse(format!("response not UTF-8: {e}")))
-            .and_then(|s| {
-                serde_json::from_str::<Resp>(s).map_err(|e| CallError::BadResponse(e.to_string()))
-            })
-    })
+    call_worker_decoded(
+        pool,
+        timeout,
+        call_timeout,
+        kind,
+        req,
+        seed,
+        |bytes, claim| {
+            // L10: a reply too large for the slot is the 5-byte heap marker; the body is the claim's heap reply.
+            let heap;
+            let bytes = match decode_heap_marker(bytes)? {
+                None => bytes,
+                Some(n) => {
+                    heap = claim
+                        .take_heap_reply()
+                        .ok_or_else(|| CallError::BadResponse("heap reply missing".into()))?;
+                    if heap.len() as u64 != u64::from(n) {
+                        return Err(CallError::BadResponse(format!(
+                            "heap reply {} != {n}",
+                            heap.len()
+                        )));
+                    }
+                    &heap[..]
+                }
+            };
+            // M3-P P7: validate UTF-8 once and parse from `str` (serde_json's `from_slice` re-checks
+            // every string it reads; ~8% of the D parse).
+            std::str::from_utf8(bytes)
+                .map_err(|e| CallError::BadResponse(format!("response not UTF-8: {e}")))
+                .and_then(|s| {
+                    serde_json::from_str::<Resp>(s)
+                        .map_err(|e| CallError::BadResponse(e.to_string()))
+                })
+        },
+    )
     .await
+}
+
+/// L10: the heap marker of a loader/jobs reply, `[0x00][u32 LE n]` (exactly 5 bytes): the reply is
+/// the `n` bytes the worker put with `putFetchReply`. JSON never starts with 0x00, so any other
+/// first byte is an inline reply (`None`); a 0x00 first byte of another length is a bad frame.
+pub(crate) fn decode_heap_marker(b: &[u8]) -> Result<Option<u32>, CallError> {
+    if b.first() != Some(&0) {
+        return Ok(None);
+    }
+    match b {
+        [0, a, b, c, d] => Ok(Some(u32::from_le_bytes([*a, *b, *c, *d]))),
+        _ => Err(CallError::BadResponse(format!(
+            "heap marker must be 5 bytes, got {}",
+            b.len()
+        ))),
+    }
 }
 
 /// F82: the per-call cell a `fetch` call seeds into its slot's plan cell. `body` is the heap
@@ -245,7 +287,7 @@ pub async fn call_worker_fetch(
         CallKind::Fetch,
         req,
         Some(Box::new(cell)),
-        move |b| decode_fetch_reply(b, &reply),
+        move |b, _| decode_fetch_reply(b, &reply),
     )
     .await
     .map(|(r, _)| r)
@@ -350,7 +392,7 @@ pub async fn call_worker_cache_get(
         CallKind::Cache,
         &CacheRequest::Get { key },
         Some(Box::new(cell)),
-        move |b| decode_cache_get(b, &reply),
+        move |b, _| decode_cache_get(b, &reply),
     )
     .await
     .map(|(r, _)| r)
@@ -391,7 +433,7 @@ pub async fn call_worker_cache_set(
         CallKind::Cache,
         &req,
         Some(Box::new(cell)),
-        |b| {
+        |b, _| {
             let (m, _) = frame_parts::<CacheReplyMeta>(b)?;
             match (m.ok, m.error) {
                 (_, Some(e)) => Err(CallError::BadResponse(format!("cache set: {e}"))),
@@ -464,7 +506,7 @@ async fn call_worker_decoded<Req: Serialize, R: Send + 'static, D>(
     decode: D,
 ) -> Result<(R, Option<PlanBox>), CallError>
 where
-    D: FnOnce(&[u8]) -> Result<R, CallError> + Send + 'static,
+    D: FnOnce(&[u8], &RenderClaim) -> Result<R, CallError> + Send + 'static,
 {
     let claim = claim_or_wait(pool, timeout, || pool.try_claim_render_lockfree()).await?;
     if let Some(s) = seed {
@@ -497,7 +539,7 @@ where
         // future), JS is done writing this slot's sub-region; `len` is bounds-checked
         // above; `claim` is still held so no other request can write the slot.
         let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-        let parsed = decode(bytes);
+        let parsed = decode(bytes, &claim);
         let plan = claim.take_plan();
         drop(claim);
         parsed.map(|r| (r, plan))
@@ -1249,6 +1291,7 @@ mod tests {
             dist_dir: "dist".into(),
             claim_timeout: Duration::from_secs(1),
             call_timeout: Duration::from_secs(1),
+            max_loader_response_bytes: 1 << 20,
             l2: Some((Duration::from_millis(50), 1 << 20)),
         };
         let n = Arc::new(brust_core::l2::L2Counters::default());
@@ -1460,5 +1503,148 @@ mod tests {
             .await
             .expect("round trip");
         assert_eq!(v, serde_json::json!({"ok": true}));
+    }
+
+    // ---- L10: the heap marker of loader / jobs / planned replies ----
+
+    /// A [`MockDispatch`] that, like the worker's `putFetchReply`, leaves `put` in the claimed
+    /// slot's heap reply before it resolves.
+    struct HeapDispatch {
+        inner: MockDispatch,
+        pool: Arc<std::sync::OnceLock<std::sync::Weak<WorkerPool>>>,
+        put: Option<Vec<u8>>,
+    }
+    impl RenderDispatch for HeapDispatch {
+        fn call(
+            &self,
+            kind: CallKind,
+            request_json: String,
+            slot: u32,
+        ) -> Pin<Box<dyn Future<Output = Result<u32, DispatchError>> + Send>> {
+            if let Some(b) = &self.put {
+                let pool = self.pool.get().and_then(|w| w.upgrade()).expect("pool");
+                let entry = pool.entry(0).expect("worker 0");
+                *entry.slot(slot as usize).heap_reply.lock() = Some(bytes::Bytes::from(b.clone()));
+            }
+            self.inner.call(kind, request_json, slot)
+        }
+        fn buf(&self) -> (*mut u8, usize) {
+            self.inner.buf()
+        }
+    }
+
+    fn marker(n: u32) -> Vec<u8> {
+        let mut m = vec![0u8];
+        m.extend_from_slice(&n.to_le_bytes());
+        m
+    }
+
+    /// One loader call whose slot reply is `slot_reply`, with `put` left in the heap reply.
+    async fn heap_call(
+        slot_reply: &[u8],
+        put: Option<&[u8]>,
+    ) -> (Result<serde_json::Value, CallError>, Arc<WorkerPool>) {
+        let cell = Arc::new(std::sync::OnceLock::new());
+        let pool = Arc::new(WorkerPool::new());
+        pool.register(Box::new(HeapDispatch {
+            inner: MockDispatch::replying(slot_reply),
+            pool: Arc::clone(&cell),
+            put: put.map(<[u8]>::to_vec),
+        }));
+        cell.set(Arc::downgrade(&pool)).unwrap();
+        let r = call_worker::<_, serde_json::Value>(
+            &pool,
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            CallKind::Loader,
+            &serde_json::json!({}),
+        )
+        .await;
+        (r, pool)
+    }
+
+    fn assert_heap_clear(pool: &WorkerPool) {
+        let e = pool.entry(0).expect("worker 0");
+        assert!(
+            e.slot(0).heap_reply.lock().is_none(),
+            "heap reply must not outlive its claim"
+        );
+        assert!(matches!(
+            pool.try_claim_render_lockfree(),
+            ClaimResult::Claimed(_)
+        ));
+    }
+
+    #[test]
+    fn decode_heap_marker_table() {
+        assert!(matches!(decode_heap_marker(b"{}"), Ok(None)));
+        assert!(matches!(decode_heap_marker(b"["), Ok(None)));
+        assert!(matches!(decode_heap_marker(&marker(0)), Ok(Some(0))));
+        assert!(matches!(
+            decode_heap_marker(&marker(300_000)),
+            Ok(Some(300_000))
+        ));
+        assert!(matches!(
+            decode_heap_marker(&marker(u32::MAX)),
+            Ok(Some(u32::MAX))
+        ));
+        for bad in [&[0u8][..], &[0, 1, 0, 0][..], &[0, 1, 0, 0, 0, 0][..]] {
+            match decode_heap_marker(bad) {
+                Err(CallError::BadResponse(m)) => {
+                    assert_eq!(m, format!("heap marker must be 5 bytes, got {}", bad.len()))
+                }
+                other => panic!("{bad:?} -> {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_heap_marker_reads_the_reply_the_worker_put() {
+        let body = br#"{"ok":true,"data":{"x":1}}"#;
+        let (r, pool) = heap_call(&marker(body.len() as u32), Some(body)).await;
+        assert_eq!(
+            r.unwrap(),
+            serde_json::json!({"ok": true, "data": {"x": 1}})
+        );
+        assert_heap_clear(&pool);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_heap_marker_without_a_put_reply_is_a_bad_response() {
+        let (r, pool) = heap_call(&marker(10), None).await;
+        match r {
+            Err(CallError::BadResponse(m)) => assert_eq!(m, "heap reply missing"),
+            other => panic!("{other:?}"),
+        }
+        assert_heap_clear(&pool);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_heap_marker_whose_length_differs_from_the_put_is_a_bad_response() {
+        let (r, pool) = heap_call(&marker(99), Some(br#"{"ok":true}"#.as_slice())).await;
+        match r {
+            Err(CallError::BadResponse(m)) => assert_eq!(m, "heap reply 11 != 99"),
+            other => panic!("{other:?}"),
+        }
+        assert_heap_clear(&pool);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_marker_with_trailing_bytes_is_a_bad_response() {
+        let mut m = marker(11);
+        m.push(b'x');
+        let (r, pool) = heap_call(&m, Some(br#"{"ok":true}"#.as_slice())).await;
+        match r {
+            Err(CallError::BadResponse(m)) => assert_eq!(m, "heap marker must be 5 bytes, got 6"),
+            other => panic!("{other:?}"),
+        }
+        assert_heap_clear(&pool);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_unused_heap_reply_is_cleared_with_the_claim() {
+        let (r, pool) = heap_call(br#"{"ok":true}"#, Some(b"leftover".as_slice())).await;
+        assert_eq!(r.unwrap(), serde_json::json!({"ok": true}));
+        assert_heap_clear(&pool);
     }
 }

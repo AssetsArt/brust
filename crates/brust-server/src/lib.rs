@@ -30,5 +30,5 @@ pub use config::{
     InvalidateResult, MAX_ACTION_BYTES, Server, Stats,
 };
 pub use dispatch::{CallKind, DispatchError, RenderDispatch};
-pub use pipeline::{PLAN_DECLINED, plan_in_call};
+pub use pipeline::{PLAN_DECLINED, plan_in_call, plan_in_call_buf};
 pub use server::{Tuning, start};

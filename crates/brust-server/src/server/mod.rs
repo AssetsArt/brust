@@ -62,7 +62,16 @@ pub struct Tuning {
     /// complete request head within this long is closed (slowloris guard).
     /// Default 10_000 ms.
     pub header_read_timeout_ms: u64,
+    /// L10: the biggest loader/jobs reply the worker may hand over the heap when it does not fit
+    /// its SAB slot (`put_fetch_reply`). Default 8 MiB, `MIN..=MAX_LOADER_RESPONSE_BYTES`
+    /// checked by [`start`].
+    pub max_loader_response_bytes: usize,
 }
+
+/// L10: the default and the bounds of [`Tuning::max_loader_response_bytes`] (the actions limits' 8 MiB / 64 MiB).
+pub const DEFAULT_MAX_LOADER_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+pub const MIN_LOADER_RESPONSE_BYTES: usize = 256 * 1024;
+pub const MAX_LOADER_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 impl Default for Tuning {
     fn default() -> Self {
@@ -73,6 +82,7 @@ impl Default for Tuning {
             claim_timeout_ms: 10_000,
             call_timeout_ms: 30_000,
             header_read_timeout_ms: 10_000,
+            max_loader_response_bytes: DEFAULT_MAX_LOADER_RESPONSE_BYTES,
             worker_threads: std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(2),
@@ -92,6 +102,24 @@ impl Server {
             .map(|e| {
                 (0..e.slot_len())
                     .filter(|&i| e.slot(i).plan.lock().is_some())
+                    .count()
+            })
+            .sum()
+    }
+}
+
+impl Server {
+    /// Slots holding a heap reply (L10; tests: 0 when idle).
+    #[doc(hidden)]
+    pub fn heap_replies_in_use(&self) -> usize {
+        self.core
+            .host
+            .pool
+            .entries()
+            .iter()
+            .map(|e| {
+                (0..e.slot_len())
+                    .filter(|&i| e.slot(i).heap_reply.lock().is_some())
                     .count()
             })
             .sum()
@@ -122,11 +150,20 @@ const _: () = {
 pub fn start(cfg: Config) -> Result<Arc<Server>, String> {
     let loaded = Manifest::load(&cfg.dist_dir).map_err(|e| format!("manifest: {e}"))?;
     let tuning = cfg.tuning;
+    if !(MIN_LOADER_RESPONSE_BYTES..=MAX_LOADER_RESPONSE_BYTES)
+        .contains(&tuning.max_loader_response_bytes)
+    {
+        return Err(format!(
+            "tuning: max_loader_response_bytes must be in {MIN_LOADER_RESPONSE_BYTES}..={MAX_LOADER_RESPONSE_BYTES} (got {})",
+            tuning.max_loader_response_bytes
+        ));
+    }
     let host = NativeHost {
         pool: Arc::new(WorkerPool::new()),
         dist_dir: cfg.dist_dir.clone(),
         claim_timeout: Duration::from_millis(tuning.claim_timeout_ms),
         call_timeout: Duration::from_millis(tuning.call_timeout_ms),
+        max_loader_response_bytes: tuning.max_loader_response_bytes,
         l2: cfg.l2.as_ref().map(|l| (l.get_timeout, l.max_body_bytes)),
     };
     let core = Core::new(

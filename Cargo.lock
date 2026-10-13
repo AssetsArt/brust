@@ -178,6 +178,7 @@ name = "brust-napi"
 version = "0.0.0"
 dependencies = [
  "brust-compiler",
+ "brust-core",
  "brust-server",
  "mimalloc",
  "napi",

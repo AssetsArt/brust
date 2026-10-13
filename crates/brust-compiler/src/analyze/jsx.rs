@@ -367,7 +367,131 @@ fn read_children(r: &mut Reader<'_, '_>, value: &js_ast::Expr, many: bool) -> Ve
 /// Reads the JSX body of a `.map` callback in any position (not only as a
 /// direct child), where a `key` belongs.
 pub fn read_list_body(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Node {
-    read_element(r, e, true)
+    let mut nodes = read_list_arms(r, e);
+    if nodes.len() == 1 {
+        nodes.remove(0)
+    } else {
+        Node::Fragment(nodes)
+    }
+}
+
+/// `.map` callback body: JSX, `c ? A : B` or `c && A`, recursively, every leaf JSX or
+/// `null` / `undefined` / `false`, at least one JSX (L6 / G6).
+pub fn is_list_body(e: &js_ast::Expr) -> bool {
+    fn arms(e: &js_ast::Expr, jsx: &mut bool) -> bool {
+        match &e.data {
+            E::ECall(c) if c.was_jsx_element => {
+                *jsx = true;
+                true
+            }
+            E::ENull(_) | E::EUndefined(_) => true,
+            E::EBoolean(b) => !b.value,
+            E::EIf(i) => arms(&i.yes, jsx) && arms(&i.no, jsx),
+            E::EBinary(b) if b.op == OpCode::BinLogicalAnd => arms(&b.right, jsx),
+            _ => false,
+        }
+    }
+    let mut jsx = false;
+    arms(e, &mut jsx) && jsx
+}
+
+/// The nodes of one `.map` body arm; the callback's `key` belongs to the element arms.
+fn read_list_arms(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Vec<Node> {
+    match &e.data {
+        E::EIf(i) => {
+            let cond = Expr::Raw(r.expr(&i.test));
+            let then = read_list_arms(r, &i.yes);
+            let else_ = read_list_arms(r, &i.no);
+            vec![Node::If { cond, then, else_ }]
+        }
+        E::EBinary(b) if b.op == OpCode::BinLogicalAnd => {
+            let cond = Expr::Raw(r.expr(&b.left));
+            let then = read_list_arms(r, &b.right);
+            vec![Node::If {
+                cond,
+                then,
+                else_: Vec::new(),
+            }]
+        }
+        E::ECall(c) if c.was_jsx_element => vec![read_element(r, e, true)],
+        _ => Vec::new(),
+    }
+}
+
+/// The list key of a body: the same key in both arms is that key, different keys are
+/// `test ? a : b`, a keyed arm beside a null arm is that arm's key (R6.1). An element arm
+/// without a key is a `list-key` error at that arm.
+fn list_arm_key(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Option<RawExpr> {
+    let undefined = |loc| RawExpr {
+        loc,
+        kind: RawKind::Lit(crate::ir::Literal::Undefined),
+    };
+    match &e.data {
+        E::EIf(i) => {
+            let yes = list_arm_key(r, &i.yes);
+            let no = list_arm_key(r, &i.no);
+            let loc = loc_of(&i.test);
+            match (yes, no) {
+                // Compared by the code they print: the two arms sit at different locations.
+                (Some(a), Some(b)) if a.to_js() == b.to_js() => Some(a),
+                (Some(a), Some(b)) => Some(RawExpr {
+                    loc,
+                    kind: RawKind::Cond {
+                        test: Box::new(r.expr(&i.test)),
+                        yes: Box::new(a),
+                        no: Box::new(b),
+                    },
+                }),
+                // The client evaluates the key for every row, so a key that only exists in
+                // one arm is guarded by that arm's condition.
+                (Some(a), None) => Some(RawExpr {
+                    loc,
+                    kind: RawKind::Cond {
+                        test: Box::new(r.expr(&i.test)),
+                        yes: Box::new(a),
+                        no: Box::new(undefined(loc)),
+                    },
+                }),
+                (None, Some(b)) => Some(RawExpr {
+                    loc,
+                    kind: RawKind::Cond {
+                        test: Box::new(r.expr(&i.test)),
+                        yes: Box::new(undefined(loc)),
+                        no: Box::new(b),
+                    },
+                }),
+                (None, None) => None,
+            }
+        }
+        E::EBinary(b) if b.op == OpCode::BinLogicalAnd => {
+            let k = list_arm_key(r, &b.right)?;
+            let loc = loc_of(&b.left);
+            Some(RawExpr {
+                loc,
+                kind: RawKind::Cond {
+                    test: Box::new(r.expr(&b.left)),
+                    yes: Box::new(k),
+                    no: Box::new(undefined(loc)),
+                },
+            })
+        }
+        E::ECall(c) if c.was_jsx_element => match c.args.get(2) {
+            Some(k) => Some(r.expr(k)),
+            None => {
+                r.diagnostics.push(Diagnostic::error(
+                    "list-key",
+                    "list items need a `key`",
+                    loc_of(e),
+                    "add key={item.id} (a stable id) to the element returned by .map",
+                ));
+                Some(RawExpr {
+                    loc: loc_of(e),
+                    kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                })
+            }
+        },
+        _ => None,
+    }
 }
 
 pub fn is_jsx(e: &js_ast::Expr) -> bool {
@@ -397,7 +521,7 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
             read_child(r, &i.no, &mut else_);
             out.push(Node::If { cond, then, else_ });
         }
-        E::ECall(c) => match read_list(r, c) {
+        E::ECall(c) => match read_list(r, e, c) {
             Some(node) => out.push(node),
             None => out.push(Node::Slot(Expr::Raw(r.expr(e)))),
         },
@@ -419,12 +543,38 @@ fn array_source_ok(r: &Reader<'_, '_>, e: &js_ast::Expr) -> bool {
 
 /// `source.map((item, index?) => <jsx key={…}/>)` and `Array.from(source, (item, index?) => <jsx key={…}/>)`
 /// → `For`. `None` when the call is not that shape (it is then read as a plain slot).
-fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
+fn read_list(r: &mut Reader<'_, '_>, e: &js_ast::Expr, call: &js_ast::E::Call) -> Option<Node> {
     let E::EDot(dot) = &call.target.data else {
         return None;
     };
+    let is_map = dot.name.slice() == b"map" && call.args.len() == 1;
+    // A `.map` over data (no JSX in the callback) is an ordinary expression, never a list shape.
+    let has_jsx = |arrow: &js_ast::E::Arrow| {
+        let mut w = crate::analyze::expr::Walk::default();
+        w.stmts(arrow.body.stmts.slice());
+        w.calls
+            .iter()
+            .any(|c| matches!(&c.data, E::ECall(c) if c.was_jsx_element))
+    };
+    let shape = |r: &mut Reader<'_, '_>, why: &str, arrow: &js_ast::E::Arrow| {
+        if !has_jsx(arrow) {
+            return None;
+        }
+        r.diagnostics.push(Diagnostic::fallback(
+            "list-shape",
+            format!("the list is not a supported shape: {why}"),
+            loc_of(e),
+            "return one JSX expression from a `(item, index?) => …` callback over an array path",
+        ));
+        None
+    };
     if dot.optional_chain.is_some() {
-        return None;
+        return match &call.args.first().map(|a| &a.data) {
+            Some(E::EArrow(arrow)) if is_map => {
+                shape(r, "`?.map` over a possibly missing list", arrow)
+            }
+            _ => None,
+        };
     }
     // (the source expression, `Array.from` callee when that form, the callback)
     let (src_expr, from_callee, arrow) = if dot.name.slice() == b"map" && call.args.len() == 1 {
@@ -453,22 +603,35 @@ fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
     for p in params {
         match p.binding.data {
             B::BIdentifier(id) if p.default.is_none() => bindings.push(id.r#ref),
-            _ => return None,
+            _ => {
+                return shape(
+                    r,
+                    "a `.map` callback parameter is a pattern or has a default",
+                    arrow,
+                );
+            }
         }
     }
+    let block = || "a `.map` callback has a block body; return one JSX expression";
     let [only] = arrow.body.stmts.slice() else {
-        return None;
+        return shape(r, block(), arrow);
     };
     let S::SReturn(ret) = &only.data else {
-        return None;
+        return shape(r, block(), arrow);
     };
     let body_expr = ret.value?;
-    let body_call = jsx_call(&body_expr)?;
+    if !is_list_body(&body_expr) {
+        return None;
+    }
 
     // `Array.from` iterates any iterable (Set, string, generator); only a props/local path or a
     // `{ length: n }` range is known to be an array the template can iterate.
     if from_callee.is_some() && !array_source_ok(r, src_expr) {
-        return None;
+        return shape(
+            r,
+            "`Array.from` over a source that is not a props path or a `{ length: n }` range",
+            arrow,
+        );
     }
     let first = r.expr(src_expr);
     let source = Expr::Raw(match (from_callee, &first.kind) {
@@ -490,22 +653,11 @@ fn read_list(r: &mut Reader<'_, '_>, call: &js_ast::E::Call) -> Option<Node> {
     if let Some(i) = &index {
         r.loop_scope.push(i.clone());
     }
-    let key = match body_call.args.get(2) {
-        Some(k) => Expr::Raw(r.expr(k)),
-        None => {
-            r.diagnostics.push(Diagnostic::error(
-                "list-key",
-                "list items need a `key`",
-                loc_of(&body_expr),
-                "add key={item.id} (a stable id) to the element returned by .map",
-            ));
-            Expr::Raw(RawExpr {
-                loc: loc_of(&body_expr),
-                kind: RawKind::Lit(crate::ir::Literal::Undefined),
-            })
-        }
-    };
-    let body = vec![read_element(r, &body_expr, true)];
+    let key = Expr::Raw(list_arm_key(r, &body_expr).unwrap_or(RawExpr {
+        loc: loc_of(&body_expr),
+        kind: RawKind::Lit(crate::ir::Literal::Undefined),
+    }));
+    let body = read_list_arms(r, &body_expr);
     r.loop_scope.truncate(r.loop_scope.len() - bindings.len());
     for b in &bindings {
         r.names.unmark_loop_binding(*b);
