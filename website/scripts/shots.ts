@@ -1,7 +1,9 @@
 // website/scripts/shots.ts — the visual parity harness of L31 docs-tailwind (R32.6). It screenshots every nav route,
-// `/`, `/docs` and the 404, light and dark, 400 px and 1280 px wide, full page, then diffs two such runs.
-//   bun scripts/shots.ts capture <dir> [--base http://127.0.0.1:1337]   # PNGs into <dir>; without --base it builds the
-//                                                                        # site and starts brust (own PID, stopped at the end)
+// `/`, `/docs` and the 404, light and dark, 400 px and 1280 px wide, plus light at the two breakpoints' edges
+// (560/561 and 980/981 px), full page, then diffs two such runs.
+//   bun scripts/shots.ts capture <dir> [--base http://127.0.0.1:1337] [--widths 560,561,980,981]
+//                                      # PNGs into <dir>; without --base it builds the site and starts brust (own PID,
+//                                      # stopped at the end); --widths shoots only the views of those widths
 //   bun scripts/shots.ts compare <baseline> <candidate> [--diff <dir>] [--max <percent>]
 // compare prints one row per shot: route, theme, width and the share of differing pixels (pixelmatch, threshold 0.1).
 // A shot whose page height changed is compared over the larger size (the missing part counts as different). It exits 1
@@ -18,6 +20,9 @@ const bin = join(site, '../packages/brust/bin/brust')
 
 export const THEMES = ['light', 'dark'] as const
 export const WIDTHS = [400, 1280] as const
+/** Both sides of each breakpoint (max-narrow: below 561 px, max-wide: below 981 px). Every route changes layout there
+ * (the header at 560, the footer and the docs grid at 980), so all routes are shot; light only, the layout is the point. */
+export const EDGE_WIDTHS = [560, 561, 980, 981] as const
 export const THRESHOLD = 0.1
 /** A path no route answers: the catch-all renders the 404 page. */
 export const NOT_FOUND = '/no-such-page'
@@ -82,27 +87,31 @@ async function startSite(): Promise<Server> {
   }
 }
 
-/** Shoots every route × theme × width into `dir` (created; existing PNGs are overwritten). Returns the file names. */
-export async function capture(dir: string, base?: string): Promise<string[]> {
+/** Every viewport shot: each theme at each of WIDTHS, then light at each of EDGE_WIDTHS. */
+export function views(): { theme: (typeof THEMES)[number]; width: number }[] {
+  return [...THEMES.flatMap((theme) => WIDTHS.map((width) => ({ theme, width }))), ...EDGE_WIDTHS.map((width) => ({ theme: 'light' as const, width }))]
+}
+
+/** Shoots every route × view into `dir` (created; existing PNGs are overwritten), or only the views whose width is in
+ * `only`. Returns the file names. */
+export async function capture(dir: string, base?: string, only?: number[]): Promise<string[]> {
   mkdirSync(dir, { recursive: true })
   const srv = base ? { base, stop: async () => {} } : await startSite()
   const browser = await chromium.launch()
   const written: string[] = []
   try {
-    for (const theme of THEMES) {
-      for (const width of WIDTHS) {
-        const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce', deviceScaleFactor: 1 })
-        const page = await ctx.newPage()
-        for (const route of routes()) {
-          await page.goto(`${srv.base}${route}`, { waitUntil: 'networkidle' })
-          await page.addStyleTag({ content: FREEZE })
-          await page.evaluate(() => document.fonts.ready.then(() => undefined))
-          const name = shotName(route, theme, width)
-          await page.screenshot({ path: join(dir, name), fullPage: true, animations: 'disabled' })
-          written.push(name)
-        }
-        await ctx.close()
+    for (const { theme, width } of views().filter((v) => !only || only.includes(v.width))) {
+      const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce', deviceScaleFactor: 1 })
+      const page = await ctx.newPage()
+      for (const route of routes()) {
+        await page.goto(`${srv.base}${route}`, { waitUntil: 'networkidle' })
+        await page.addStyleTag({ content: FREEZE })
+        await page.evaluate(() => document.fonts.ready.then(() => undefined))
+        const name = shotName(route, theme, width)
+        await page.screenshot({ path: join(dir, name), fullPage: true, animations: 'disabled' })
+        written.push(name)
       }
+      await ctx.close()
     }
   } finally {
     await browser.close()
@@ -165,10 +174,11 @@ if (import.meta.main) {
   }
   if (cmd === 'capture') {
     const base = flag('--base')
-    if (args.length !== 1) throw new Error('usage: bun scripts/shots.ts capture <dir> [--base <url>]')
+    const widths = flag('--widths')?.split(',').map(Number)
+    if (args.length !== 1) throw new Error('usage: bun scripts/shots.ts capture <dir> [--base <url>] [--widths <px,px,...>]')
     const dir = resolve(args[0]!)
-    const names = await capture(dir, base)
-    console.log(`[shots] ${names.length} shots (${routes().length} routes x ${THEMES.length} themes x ${WIDTHS.length} widths) in ${dir}`)
+    const names = await capture(dir, base, widths)
+    console.log(`[shots] ${names.length} shots (${routes().length} routes x ${names.length / routes().length} views) in ${dir}`)
   } else if (cmd === 'compare') {
     const diffDir = flag('--diff')
     const max = Number(flag('--max') ?? '0')
@@ -182,6 +192,6 @@ if (import.meta.main) {
     console.log(`[shots] ${rows.length} shots compared, ${over.length} over ${max}%`)
     process.exit(over.length > 0 ? 1 : 0)
   } else {
-    throw new Error('usage: bun scripts/shots.ts capture <dir> [--base <url>] | compare <baseline> <candidate> [--diff <dir>] [--max <percent>]')
+    throw new Error('usage: bun scripts/shots.ts capture <dir> [--base <url>] [--widths <px,px,...>] | compare <baseline> <candidate> [--diff <dir>] [--max <percent>]')
   }
 }
