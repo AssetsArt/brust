@@ -1,4 +1,2 @@
 # build output and the test builds (dist-test-*): never committed, never type-checked (tsconfig excludes dist*)
 dist*/
-# the static export (bun run export) and its build dir: never committed
-out*/

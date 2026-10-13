@@ -93,7 +93,7 @@ export default function Caching({ blocks, names }: CachingData) {
 
       <h2 id="probe">Watch it work</h2>
       <p>
-        The button requests <a href="/demo/pokemon/pikachu">/demo/pokemon/{'{name}'}</a> three times with a fresh query string: the same URL twice, then with <code>?nocache=1</code>. This site is static, so the requests go to a simulation of the route's rules in your browser, and each row shows the <code>x-brust-cache</code> header a brust server sends for it.
+        The button requests <a href="/demo/pokemon/pikachu">/demo/pokemon/{'{name}'}</a> three times with a fresh query string: the same URL twice, then with <code>?nocache=1</code>. This site is built to ship as static files, so the requests go to a simulation of the route's rules in your browser, and each row shows the <code>x-brust-cache</code> header a brust server sends for it.
       </p>
       <div className="browser">
         <div className="url">

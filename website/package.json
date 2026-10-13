@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "brust build routes.tsx && brust start",
     "build": "brust build routes.tsx",
-    "export": "bun scripts/export-static.ts",
     "start": "brust start",
     "test": "bun test",
     "typecheck": "bun check"

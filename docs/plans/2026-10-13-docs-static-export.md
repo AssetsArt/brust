@@ -8,6 +8,15 @@ The human (2026-10-13): the docs site ships as a **static build on Cloudflare Pa
 so it costs no Workers credit. Every demo must run in the browser; the Actions page becomes a client demo,
 not real actions. Docs first; the v2 framework work (SAB, `run()` cors, gaps G2–G12) comes after, in one round.
 
+## Amendment 2026-10-13 (human): no exporter now
+
+The human: "ยังไม่ใช่ทำ static export ตอนนี้แค่เขียน docs เพื่อไว้ ตอนเพิ่ม feature SSG เข้ามาจะได้ใช้ได้เลย" — no static
+export yet; write the docs so the site works as soon as brust gets SSG. So **R1, R2, R8's export test and the exporter
+are withdrawn** (`scripts/export-static.ts`, `test/export.test.ts`, `bun run export` removed after merge @12c3693).
+R3–R7 stand: every demo runs in the browser and no page needs a server feature, which is what makes the site
+SSG-ready. SSG is a brust feature in the v2 round (gap G12); the site switches to it there, and that lane brings
+its own export test (the removed one is a reference: git show 4ab7b15:website/test/export.test.ts).
+
 ## Rulings (final)
 
 - **R1. Exporter, not a framework feature.** v2 has no SSG. `website/scripts/export-static.ts` (`bun run export`)

@@ -82,7 +82,7 @@ export default function Store({ blocks, candidates }: StoreData) {
       </p>
       <CodeBlock code={blocks.seed.code} lang={blocks.seed.lang} file={blocks.seed.file} html={blocks.seed.html} />
       <p>
-        This site is a static export, so it has no request to seed from: its pages are painted with an empty team, and the browser fills the store from its own storage when the demo mounts.
+        This site is built to ship as static files, so it has no request to seed from: its pages are painted with an empty team, and the browser fills the store from its own storage when the demo mounts.
       </p>
 
       <h2 id="read">Read it anywhere</h2>
