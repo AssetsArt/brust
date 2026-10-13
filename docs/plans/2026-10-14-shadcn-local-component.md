@@ -1,8 +1,8 @@
 # shadcn S1 — lane `local-component` / `asChild` (draft for the lead's ruling)
 
-owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: TBD (lead assigns) · reviewer: TBD · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F146 (proposed)
+owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Tiësto · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F138f
 
-Author: Tiësto. Status: **DRAFT, awaiting ruling; no lane starts before the lead rules.** Base: origin/main 41029938. Numbers are from `docs/shadcn-coverage.md` at that commit (23 measured rows carry `fallback:local-component`, ranked #4). R-numbers continue after R34.27 (island-children). The lead ruled (island-children §9 Q1) that this is the next S1 lane, before member-tag, because it makes the real shadcn `Button`/`Badge` static and unblocks S1.3's real-Button proof (R34.20 amendment).
+Author: Tiësto. Status: **RULED 2026-10-14 (see §10); lane may start.** Base: origin/main 41029938. Numbers are from `docs/shadcn-coverage.md` at that commit (23 measured rows carry `fallback:local-component`, ranked #4). R-numbers continue after R34.27 (island-children). The lead ruled (island-children §9 Q1) that this is the next S1 lane, before member-tag, because it makes the real shadcn `Button`/`Badge` static and unblocks S1.3's real-Button proof (R34.20 amendment).
 
 ## 1. What the diagnostic is today
 
@@ -87,7 +87,7 @@ By §2: button, button-aschild, badge, badge-aslink, bubble, card, empty, item, 
 
 ## 7. Boundary and gates
 
-Boundary: `crates/brust-compiler/src/analyze/{names,jsx,component}.rs` and `analyze/passes/children.rs` (recognition + the new diagnostics), `lower/template.rs` (the expansion, next to the R34.15 spread expansion), `crates/brust-compiler/tests/**`, `packages/brust/src/build/**` only if the polymorphic element needs a manifest/bundle change (expected not), `scripts/battery/**` + `docs/react-coverage.md` + `docs/plans/m1-exit-report.md`, `docs/shadcn-coverage.md` (regenerated), `docs/plans/m1a-followups.md` (F146). It does **not** touch `crates/brust-core`, `packages/runtime-dom` or `bundle.ts`.
+Boundary: `crates/brust-compiler/src/analyze/{names,jsx,component}.rs` and `analyze/passes/children.rs` (recognition + the new diagnostics), `lower/template.rs` (the expansion, next to the R34.15 spread expansion), `crates/brust-compiler/tests/**`, `packages/brust/src/build/**` only if the polymorphic element needs a manifest/bundle change (expected not), `scripts/battery/**` + `docs/react-coverage.md` + `docs/plans/m1-exit-report.md`, `docs/shadcn-coverage.md` (regenerated), `docs/plans/m1a-followups.md` (F138f). It does **not** touch `crates/brust-core`, `packages/runtime-dom` or `bundle.ts`.
 Gates (targeted): `cargo test -p brust-compiler`, clippy `-D warnings`, fmt; the battery script; `bun test scripts/shadcn` + the generator twice identical; the Chromium DOM comparison for the four rows; the full S0 fixture per-page build before/after table. Heavy runs announced on the task first (load rule).
 
 ## 8. Risks
@@ -104,3 +104,15 @@ Gates (targeted): `cargo test -p brust-compiler`, clippy `-D warnings`, fmt; the
 - **Q3 `cva`/`cn` and zero-slot.** Is "static page, class computed by a server slot" acceptable for the flipped rows in this lane, or must the class be folded to a literal at compile time (a separate lane for `cva`/`cn`, as R34.4 describes)? Recommended: accept the server slot; the byte win is the island removal either way.
 - **Q4 Order with S1.3 (`spread-handlers`).** Real-button click proof (R34.20) needs S1.3 merged. Recommended: this lane starts now (it does not depend on S1.3 for the 9 flips); the click row is added when S1.3 is on main, and `<Button asChild onClick>` is `slot-handler` fail-closed until then.
 - **Q5 Scope of recognised imports.** `radix-ui` and `@radix-ui/react-slot` only. Any other `Slot` (a hand-rolled one, `@base-ui` `render` prop) keeps `local-component`. OK?
+
+## 10. Lead ruling (2026-10-14)
+
+The design in §3 is accepted: recognise the polymorphic tag variable and expand it at the call site, next to the R34.15 known-shape spread; no browser `Slot`. Ledger row is **F138f** (the shadcn lanes share F138), not F146. Rulings on §9:
+
+- **Q1 Component child of `asChild`: host-element children only in v1.** A component child is `slot-child-component` (React). The follow-up (merge into the child component's props when its shape is known) gets an F-row in this lane.
+- **Q2 Same handler on both sides: fail closed (`slot-handler`).** A handler on one side only is allowed once S1.3 is on main; composition is a follow-up F-row.
+- **Q3 `cva`/`cn`: accept the server slot.** A flipped row is static HTML with no component JS; whether its class is a compile-time literal is not part of the flip. `cva`/`cn` folding is a separate lane (F-row in this lane, R34.4 named as the target). The PR states, per flipped row, whether the class was folded or computed by a slot.
+- **Q4 Order with S1.3: start now.** The 9 flips do not depend on S1.3. `<Button onClick>` / `<Button asChild onClick>` stay on whatever S1.3's main state gives; the R34.20 real-Button click row is added only if S1.3 is on main before this PR, else it moves to an F-row. **Merge order is readiness order** across S1.3, island-children and this lane (they share `children.rs` / `lower/template.rs`): the lane that is ready second merges `origin/main` in, resolves, and regenerates the two generated docs; the lead integrates.
+- **Q5 Recognised imports: `radix-ui` and `@radix-ui/react-slot` only.** Any other `Slot` keeps `local-component` with the renamed message.
+
+Additional ruling: §5's table is binding as written: no `knownGap` rows. The dead-import check in §6 (no `Slot` in any client or jobs file of a flipped row) is a gate, not a report.
