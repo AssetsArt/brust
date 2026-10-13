@@ -340,13 +340,53 @@ function memberImport(ext: { source: string; export: string; member: string[] },
   return `${head}\nconst ${local} = ${ns}${read}\nif (${local} === undefined) throw new Error(${JSON.stringify(`brust: ${ext.source} has no export ${path}`)})`
 }
 
+/** The component ids a React island receives inside its lowered JSX children (shadcn S1, R34.21): the union over
+ * every file that passes children to it. `undefined` = no file does, the island has no revive code. */
+export function nestedOf(compiled: Map<string, Compiled>, id: string): string[] | undefined {
+  let out: Set<string> | undefined
+  for (const c of compiled.values()) {
+    for (const ref of c.ir.children ?? []) {
+      if (ref.id === id && ref.nested) for (const n of ref.nested) (out ??= new Set()).add(n)
+      else if (ref.id === id && ref.nested !== undefined) out ??= new Set()
+    }
+  }
+  return out && [...out].sort()
+}
+
+/** Every component some island revives (`nestedOf`), whatever its tier: its module must export it. */
+function revivedIds(compiled: Map<string, Compiled>): Set<string> {
+  const out = new Set<string>()
+  for (const c of compiled.values()) for (const ref of c.ir.children ?? []) for (const n of ref.nested ?? []) out.add(n)
+  return out
+}
+
+/** The code that turns an island's `children` prop (a JSON tree the compiler lowered, `{ $brust: 'el' | 'fr' | 'cmp' }`)
+ * back into React elements. One copy per entry that needs it, shared by the island chunk and the SSR job so both sides
+ * build the same tree. `reg` maps a component id to the component. */
+export const reviveSource = (reg: string): string =>
+  `const __reg: Record<string, any> = Object.assign(Object.create(null), ${reg})\n` +
+  `const __own = Object.prototype.hasOwnProperty\n` +
+  // The tree is compiler output, but props travel in page markup: read it as untrusted. A tag must be a plain element
+  // name, a component must be in this island's registry (own keys only), and the raw-HTML prop is never revived.
+  `const __props = (p: any): any => { const o: any = {}; if (p && typeof p === 'object') for (const k of Object.keys(p)) if (k !== '__proto__' && k !== 'dangerouslySetInnerHTML' && k !== 'children' && k !== 'ref' && k !== 'key') o[k] = p[k]; return o }\n` +
+  `const __rv = (n: any): any => {\n` +
+  `  if (n === null || typeof n !== 'object') return n\n` +
+  `  const kids = Array.isArray(n.c) ? n.c.map(__rv) : []\n` +
+  `  if (n.$brust === 'fr') return createElement(Fragment, null, ...kids)\n` +
+  `  if (n.$brust === 'el') { if (typeof n.t !== 'string' || !/^[a-zA-Z][a-zA-Z0-9-]*$/.test(n.t)) throw new Error('brust: island children hold an invalid element name'); return createElement(n.t, __props(n.p), ...kids) }\n` +
+  `  if (n.$brust === 'cmp') { if (typeof n.id !== 'string' || !__own.call(__reg, n.id)) throw new Error('brust: island children name the component ' + String(n.id) + ', which this island does not import'); return createElement(__reg[n.id], __props(n.p), ...kids) }\n` +
+  `  throw new Error('brust: island children hold an unknown node')\n` +
+  `}\n` +
+  `const __mk = (C: any, props: any) => { const { children, ...rest } = props; return createElement(C, rest, ...(children === undefined ? [] : Array.isArray(children) ? children : [children]).map(__rv)) }\n`
+
 /** A helper component its module does not export (`ir.unexported`: `function SheetOverlay() {…}` rendered by an exported
  * `SheetContent`) that still renders as an island has nothing to import: the module is loaded with `export { Name }`
  * appended, for the island chunks and the SSR jobs alike (one module, one instance, either way). */
 export function exposePlugin(compiled: Map<string, Compiled>): BunPlugin {
   const names = new Map<string, Set<string>>()
+  const revived = revivedIds(compiled)
   for (const c of compiled.values()) {
-    if (!isReact(c) || !c.ir.unexported || c.ir.external || !c.ir.export) continue
+    if (!(isReact(c) || revived.has(c.id)) || !c.ir.unexported || c.ir.external || !c.ir.export) continue
     for (const f of new Set([c.file, realpathSync(c.file)])) names.set(f, (names.get(f) ?? new Set()).add(c.ir.export))
   }
   return {
@@ -365,13 +405,23 @@ export function exposePlugin(compiled: Map<string, Compiled>): BunPlugin {
 /** The island entry of a react-tier component: registers `(host, props) => …` under its id. A
  * `client_only` component was never server-rendered (its host is empty), so it mounts with
  * `createRoot`; hydrating it would fail (React #418). Everything else hydrates the SSR markup. */
-export function islandShim(c: Compiled): string {
+export function islandShim(c: Compiled, compiled?: Map<string, Compiled>): string {
   const clientOnly = c.ir.tier?.React?.client_only === true
+  const nested = compiled && nestedOf(compiled, c.id)
+  const element = nested ? '__mk(Comp, props)' : 'createElement(Comp, props)'
   const [api, mount] = clientOnly
-    ? ['createRoot', `createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }).render(createElement(Comp, props))`]
-    : ['hydrateRoot', `hydrateRoot(host, createElement(Comp, props), { identifierPrefix: ${JSON.stringify(c.id)} })`]
+    ? ['createRoot', `createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }).render(${element})`]
+    : ['hydrateRoot', `hydrateRoot(host, ${element}, { identifierPrefix: ${JSON.stringify(c.id)} })`]
+  let head = ''
+  if (nested && compiled) {
+    const comps = nested.map((id) => compiled.get(id)).filter((n): n is Compiled => n !== undefined)
+    head =
+      `import { Fragment } from 'react'\n` +
+      comps.map((n, i) => `${componentImport(n, `N${i}`)}\n`).join('') +
+      reviveSource(`{ ${comps.map((n, i) => `${JSON.stringify(n.id)}: N${i}`).join(', ')} }`)
+  }
   return (
-    `import { ${api} } from 'react-dom/client'\nimport { createElement } from 'react'\n${componentImport(c, 'Comp')}\n` +
+    `import { ${api} } from 'react-dom/client'\nimport { createElement } from 'react'\n${componentImport(c, 'Comp')}\n${head}` +
     `;((globalThis as any).__brustIslands ||= []).push([${JSON.stringify(c.id)}, (host: Element, props: any) => { ${mount} }])\n` +
     `;(globalThis as any).__brustIslandReady?.()\n`
   )
@@ -380,23 +430,25 @@ export function islandShim(c: Compiled): string {
 /** One island chunk per react-tier component (`react-<id>-<hex>.js`, contract 3), React split
  * into a shared chunk the island chunks import relatively. */
 /** The react-tier components that get an island entry: all of them, except a package export (S1.4: every member of a
- * package import is one) that no static or native component embeds. Inside a React component it is an ordinary
- * element of that component's own tree, not an island, and an entry for it only reshuffles the shared chunks
- * (measured: +11-24 KB gzip on a page that never loads it). */
+ * package import is one) that no static or native template places as an island. Inside a React component, or as a
+ * component an island revives from its lowered children (`nestedOf`, S1 R34.21: those sit in the parent's
+ * `ir.children` too), it is an ordinary element of that tree, not an island, and an entry for it only reshuffles the
+ * shared chunks (measured: +11-24 KB gzip on a page that never loads it). Placed = a `<brust-island data-id>` marker
+ * in the printed template, the one thing the server hydrates. */
 export function islandEntries(compiled: Map<string, Compiled>): Compiled[] {
-  const embedded = new Set<string>()
+  const placed = new Set<string>()
   for (const p of compiled.values()) {
     if (isReact(p)) continue
-    for (const ref of (p.ir.children ?? []) as { id: string | null }[]) if (ref.id) embedded.add(ref.id)
+    for (const m of p.jinja.matchAll(/<brust-island\b[^>]*\bdata-id="([^"]+)"/g)) placed.add(m[1]!)
   }
-  return [...compiled.values()].filter((c) => isReact(c) && (!c.ir.external || embedded.has(c.id)))
+  return [...compiled.values()].filter((c) => isReact(c) && (!c.ir.external || placed.has(c.id)))
 }
 
 export async function buildReactChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   for (const c of islandEntries(compiled)) {
     const file = join(dist, '.stage', 'react', `react-${c.id}.tsx`)
-    write(file, islandShim(c))
+    write(file, islandShim(c, compiled))
     stage(ctx.sourceOf, file, c)
     entrypoints.push(file)
   }
@@ -475,6 +527,15 @@ export async function buildJobs(
     }
     imports.push(`import * as S${i} from ${JSON.stringify(resolve(appRoot, p))}`)
   }
+  // Components an island revives from its lowered children (shadcn S1): one registry for every SSR job.
+  const reviving = [...compiled.values()].filter((c) => nestedOf(compiled, c.id) !== undefined)
+  const revived = [...revivedIds(compiled)].map((id) => compiled.get(id)).filter((x): x is Compiled => x !== undefined)
+  if (reviving.length > 0) {
+    imports.push("import { Fragment } from 'react'")
+    for (const [i, r] of revived.entries()) imports.push(componentImport(r, `N${i}`))
+    imports.push(reviveSource(`{ ${revived.map((r, i) => `${JSON.stringify(r.id)}: N${i}`).join(', ')} }`))
+  }
+  const hosts = new Set(reviving.map((c) => c.id))
   let n = 0
   for (const c of compiled.values()) {
     const fns: string[] = []
@@ -489,7 +550,7 @@ export async function buildJobs(
       imports.push(componentImport(c, `C${n}`))
       // Ruling 2bf3775a (R1): the island's component id prefixes React's useId on BOTH sides
       // (the shim's hydrateRoot passes the same prefix), so ids differ across islands.
-      fns.push(`ssr: (props: any) => renderToString(createElement(C${n}, props), { identifierPrefix: ${JSON.stringify(c.id)} })`)
+      fns.push(`ssr: (props: any) => renderToString(${hosts.has(c.id) ? `__mk(C${n}, props)` : `createElement(C${n}, props)`}, { identifierPrefix: ${JSON.stringify(c.id)} })`)
     }
     if (fns.length > 0) entries.push(`  ${JSON.stringify(c.id)}: { ${fns.join(', ')} },`)
     n++

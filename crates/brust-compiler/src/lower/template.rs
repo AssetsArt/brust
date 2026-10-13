@@ -33,6 +33,9 @@ pub enum PropBinding {
     Expr(String),
     /// JSX children: markup printed in the parent's scope.
     Markup(String),
+    /// An event handler the parent hoisted (shadcn S1.3): the `x-on-*` directive value naming the
+    /// parent's member. Bound where a spread lands it on an element; never a value.
+    Handler(String),
 }
 
 /// One piece of a call site's props, in source order (shadcn S1.2): a named prop, or a spread
@@ -920,6 +923,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             Own(usize),
             Bound(String, PropBinding),
             Runtime(String),
+            /// A forwarded event handler: the React key and the directive value.
+            Handler(String, String),
         }
         // Attributes merge on the HTML attribute they print as (review F1): `className` and
         // `class`, `htmlFor` and `for`, `tabIndex` and `tabindex` are one key, so a later alias wins.
@@ -929,7 +934,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     Attr::Static { name, .. } | Attr::Dynamic { name, .. } => Some(name.clone()),
                     _ => None,
                 },
-                It::Bound(k, _) => Some(k.clone()),
+                It::Bound(k, _) | It::Handler(k, _) => Some(k.clone()),
                 It::Runtime(_) => None,
             }
         };
@@ -950,13 +955,15 @@ impl<'a, 'c> Printer<'a, 'c> {
                     Seg::Named(k, b) => {
                         if k == "children" {
                             children.push(Seg::Named(k, b));
+                        } else if let PropBinding::Handler(d) = b {
+                            items.push(It::Handler(k, d));
                         } else if k == "key"
                             || k == "ref"
                             || (k.starts_with("on")
                                 && k[2..].starts_with(|c: char| c.is_ascii_uppercase()))
                         {
-                            // Not attributes (a function value never reaches here: the parent
-                            // refuses a function into a spread, `passes/children.rs`).
+                            // Not attributes (a function value reaches here only as a handler the
+                            // parent hoisted, above; it refuses any other, `passes/children.rs`).
                         } else if k.to_ascii_lowercase().starts_with("x-") {
                             self.diagnostics.push(Diagnostic::warning(
                                 "reserved-attr",
@@ -989,7 +996,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
-                None => None,
+                Some(PropBinding::Handler(_)) | None => None,
             }
         };
         let last_runtime = items.iter().rposition(|it| matches!(it, It::Runtime(_)));
@@ -1058,6 +1065,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                         segs.push(format!("[{}, {e}]", jinja_string(k)));
                     }
                     It::Bound(..) => {}
+                    // A map known only at render never carries a function (it is data).
+                    It::Handler(k, d) if !overridden(k) => {
+                        self.handler_attr(k, d, tag, attrs, open)
+                    }
+                    It::Handler(..) => {}
                     It::Runtime(d) => segs.push(if tail_names.is_empty() {
                         d.clone()
                     } else {
@@ -1094,10 +1106,25 @@ impl<'a, 'c> Printer<'a, 'c> {
             match &tail[n] {
                 It::Own(i) => self.attr(&attrs[*i], &sattrs[*i], tag, attrs, model, open),
                 It::Bound(k, PropBinding::Expr(e)) => self.bound_attr(k, e, tag, open),
+                It::Handler(k, d) => self.handler_attr(k, d, tag, attrs, open),
                 It::Bound(..) | It::Runtime(_) => {}
             }
         }
         children_body
+    }
+
+    /// The binding of a handler the parent hoisted (shadcn S1.3): `x-on-<event>` naming the parent's
+    /// member, exactly what the hand-written attribute prints in the parent.
+    fn handler_attr(&mut self, k: &str, d: &str, tag: &str, attrs: &[Attr], open: &mut String) {
+        // The analysis hoists valid names only; never print anything else into the tag.
+        if !crate::analyze::passes::children::handler_key_ok(k) {
+            return;
+        }
+        let Some(event) = crate::analyze::jsx::event_name(k) else {
+            return;
+        };
+        let ev = dom_event(&event, tag, attrs);
+        open.push_str(&format!(" x-on-{ev}=\"{d}\""));
     }
 
     /// One attribute a known-shape spread brings (`k` a React name, `v` a jinja expression of the
@@ -1455,6 +1482,7 @@ impl<'a, 'c> Printer<'a, 'c> {
     fn component(&mut self, n: &Node, s: &Node, extra: Option<&str>) {
         let (
             Node::Component {
+                loc,
                 name,
                 props,
                 children,
@@ -1585,6 +1613,16 @@ impl<'a, 'c> Printer<'a, 'c> {
         for (pname, v) in props.iter() {
             if pname == crate::ir::SPREAD_KEY {
                 segs.extend(self.spread_segs(v));
+                continue;
+            }
+            let forwarded = ir.handlers.iter().find(|h| {
+                h.forwarded
+                    .as_ref()
+                    .is_some_and(|f| f.loc == *loc && &f.key == pname)
+            });
+            if let Some(h) = forwarded {
+                let d = directive(&h.name, &h.item_scoped);
+                segs.push(Seg::Named(pname.clone(), PropBinding::Handler(d)));
                 continue;
             }
             if matches!(v, Expr::ClientOnly { .. }) {
@@ -1889,8 +1927,19 @@ fn needs_directives(n: &Node, f: &Facts<'_>) -> bool {
         Node::For { body, source, .. } => {
             expr_reactive(source, f) || body.iter().any(|c| needs_directives(c, f))
         }
-        Node::Component { link, children, .. } => {
-            link.is_some() || children.iter().any(|c| needs_directives(c, f))
+        Node::Component {
+            loc,
+            link,
+            children,
+            ..
+        } => {
+            // A handler the parent hoisted from this instance is bound on the child's element.
+            link.is_some()
+                || f.ir
+                    .handlers
+                    .iter()
+                    .any(|h| h.forwarded.as_ref().is_some_and(|w| w.loc == *loc))
+                || children.iter().any(|c| needs_directives(c, f))
         }
         Node::Fragment(cs) => cs.iter().any(|c| needs_directives(c, f)),
         Node::Text(_) | Node::Outlet => false,

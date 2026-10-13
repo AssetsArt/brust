@@ -283,6 +283,9 @@ jobs:
       - run: bun test --timeout 120000 tests/server/external-island.chromium.test.ts tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-in-inlined.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/named-export-islands.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/island-children.chromium.test.ts
+      # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
+      - run: bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/css.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/tailwind.chromium.test.ts

@@ -45,6 +45,18 @@ pub struct HandlerDecl {
     pub body: RawExpr,
     /// Loop bindings in scope where the handler is attached.
     pub item_scoped: Vec<String>,
+    /// A handler the parent hoisted from a prop of a static child that the child spreads onto an
+    /// element (shadcn S1.3, R34.18): the prop `key` of the component node at `loc`. The inline
+    /// print binds it on that element as if written there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarded: Option<Forwarded>,
+}
+
+/// Where a forwarded handler came from (see [`HandlerDecl::forwarded`]).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct Forwarded {
+    pub loc: u32,
+    pub key: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -124,6 +136,11 @@ pub struct ChildRef {
     /// Source path of the child module, `None` for a package import.
     pub path: Option<String>,
     pub tier: crate::ir::Tier,
+    /// `Some` when this file passes lowered JSX children to this child, a React island (shadcn S1,
+    /// R34.21): the ids of the components inside the tree. The island's chunk and its SSR job import
+    /// them to revive the tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested: Option<Vec<String>>,
 }
 
 /// A component that lives in a package, rendered as a React island: the island's code is the

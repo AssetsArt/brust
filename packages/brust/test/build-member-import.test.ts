@@ -43,17 +43,31 @@ test('a member the package does not have throws the named error when the module 
   await expect(load({ source: 'stubpkg', export: 'Dialog', member: ['Nope'] })).rejects.toThrow('brust: stubpkg has no export Dialog.Nope')
 })
 
-const comp = (id: string, tier: unknown, children: { id: string | null }[] = [], external?: object) =>
-  [id, { id, ir: { tier, children, external } } as unknown as Compiled] as const
+const comp = (id: string, tier: unknown, jinja = '', children: { id: string | null; nested?: string[] }[] = [], external?: object) =>
+  [id, { id, jinja, ir: { tier, children, external } } as unknown as Compiled] as const
 
-test('a package member only gets an island entry when a static or native component embeds it', () => {
-  const react = { React: { reason: 'x', client_only: false } }
+const radix = (member: string) => ({ source: 'radix-ui', export: 'Dialog', member: [member] })
+const island = (id: string) => `<brust-island data-id="${id}" x-props='{}'>{{ _ssr_${id} | safe }}</brust-island>`
+const react = { React: { reason: 'x', client_only: false } }
+
+test('a package member only gets an island entry when a static or native template places it', () => {
   const compiled = new Map<string, Compiled>([
-    comp('page', 'Static', [{ id: 'placed' }]),
-    comp('placed', react, [], { source: 'radix-ui', export: 'Dialog', member: ['Root'] }),
-    comp('wrapper', react, [{ id: 'inside' }]),
-    comp('inside', react, [], { source: 'radix-ui', export: 'Dialog', member: ['Trigger'] }),
+    comp('page', 'Static', `<p>${island('placed')}</p>`, [{ id: 'placed' }]),
+    comp('placed', react, '', [], radix('Root')),
+    comp('wrapper', react, '', [{ id: 'inside' }]),
+    comp('inside', react, '', [], radix('Trigger')),
     comp('local', react),
   ])
   expect(islandEntries(compiled).map((c) => c.id)).toEqual(['placed', 'wrapper', 'local'])
+})
+
+test('components an island revives from its children are in the parent ir.children but are not placed: no entry', () => {
+  // `<Root><Trigger/></Root>` in a static page: the page places one island (Root), and lists Trigger in ir.children
+  // because the island's registry imports it (`nested`); Trigger is revived inside Root, never hydrated on its own.
+  const compiled = new Map<string, Compiled>([
+    comp('page', 'Static', `<p>${island('root')}</p>`, [{ id: 'root', nested: ['trigger'] }, { id: 'trigger' }]),
+    comp('root', react, '', [], radix('Root')),
+    comp('trigger', react, '', [], radix('Trigger')),
+  ])
+  expect(islandEntries(compiled).map((c) => c.id)).toEqual(['root'])
 })

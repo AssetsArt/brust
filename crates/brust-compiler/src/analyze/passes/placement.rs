@@ -946,11 +946,15 @@ impl Placer<'_> {
                 }
             }
             Node::Component {
-                props, children, ..
+                loc,
+                props,
+                children,
+                ..
             } => {
-                for (_, v) in props.iter_mut() {
+                for (k, v) in props.iter_mut() {
                     if let Expr::Raw(r) = v {
                         let r = r.clone();
+                        self.st.prop_raws.insert((*loc, k.clone()), r.clone());
                         *v = self.child_prop(&r);
                     }
                 }

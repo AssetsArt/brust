@@ -102,19 +102,16 @@ fn has(o: &Out, class: DiagClass, rule: &str) -> bool {
 const STATE: &str = "import { useState } from 'react'\n";
 
 #[test]
-fn a_function_or_state_value_into_a_spread_keeps_the_parent_on_react() {
+fn a_state_value_into_a_spread_keeps_the_parent_on_react() {
+    // An event handler is bound by the parent since S1.3 (tests/spread_handlers.rs).
     let f = lower(
         "P.tsx",
         &format!(
             "{STATE}import Card from './Card'\nexport default function P() {{ const [n, setN] = useState(0); return <Card id=\"a\" onClick={{() => setN(n + 1)}} /> }}"
         ),
     );
-    assert!(matches!(f.tier, Tier::React { .. }), "{:?}", f.diags);
-    assert!(
-        has(&f, DiagClass::Fallback, "spread-props"),
-        "{:?}",
-        f.diags
-    );
+    assert_eq!(f.tier, Tier::Native, "{:?}", f.diags);
+    assert!(f.jinja.contains(" x-on-click=\"_h1\""), "{}", f.jinja);
     let s = lower(
         "P.tsx",
         &format!(
