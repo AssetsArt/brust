@@ -16,7 +16,8 @@
     "tests/fixtures/l2-relay",
     "tests/fixtures/l2-redis",
     "tests/fixtures/cf-l2",
-    "tests/fixtures/cf-cache"
+    "tests/fixtures/cf-cache",
+    "tests/fixtures/shadcn"
   ],
   "scripts": {
     "bun-codegen": "bun scripts/bun-codegen.ts",
@@ -25,10 +26,12 @@
     "server-test": "bun test --timeout 120000 tests/server/pokedex.test.ts && bun test --timeout 120000 tests/server/hydrate.chromium.test.ts",
     "bench": "bun bench/run.ts",
     "m2-exit": "bun scripts/m2-exit/run.ts",
+    "shadcn": "bun scripts/shadcn/run.ts",
     "bench:test": "bun check -p bench && bun test bench/lib"
   },
   "devDependencies": {
-    "bun-plugin-tailwind": "0.1.2",
+    "@tailwindcss/node": "4.3.3",
+    "@tailwindcss/oxide": "4.3.3",
     "tailwindcss": "4.3.3"
   }
 }

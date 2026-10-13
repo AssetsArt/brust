@@ -14,6 +14,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import type { BunPlugin } from 'bun'
 import type { FlatRoute } from '../routes'
 import { BuildError } from './errors'
+import { loadTailwind } from './tailwind'
 
 const hex = (b: string | Uint8Array) => createHash('sha256').update(b).digest('hex').slice(0, 10)
 const real = (p: string) => {
@@ -124,7 +125,15 @@ export async function buildCss(
   const tw = tailwindUse(sources)
   const plugins: BunPlugin[] = []
   if (tw.using.length > 0) {
-    plugins.push(await loadTailwind(appRoot, tw.using[0]!))
+    // a stylesheet compiles with Tailwind when it, or a relative @import of it, uses Tailwind
+    const via = new Map<string, boolean>()
+    const uses = (f: string) => {
+      const k = real(f)
+      let hit = via.get(k)
+      if (hit === undefined) via.set(k, (hit = tailwindUse([k]).using.length > 0))
+      return hit
+    }
+    plugins.push(await loadTailwind(appRoot, tw.using[0]!, uses, o.log))
     if (tw.imports.length > 1)
       o.log?.(
         `[brust] warning tailwind @import "tailwindcss" is in ${tw.imports.length} files (${tw.imports.map((f) => relative(appRoot, f)).join(', ')}): each one ships the whole of Tailwind; import it once (e.g. app.css) and use @reference elsewhere`,
@@ -144,7 +153,6 @@ export async function buildCss(
     minify,
     naming: { entry: '[name]-[hash].[ext]', chunk: '[name]-[hash].[ext]', asset: '[name]-[hash].[ext]' },
     external: ['/public/*', '/_brust/*'],
-    // L21: Tailwind's content detection scans the app (bun-plugin-tailwind reads `root`).
     root: appRoot,
     plugins,
   })
@@ -237,25 +245,6 @@ export function tailwindUse(sources: string[]): { using: string[]; imports: stri
   }
   for (const s of sources) visit(s)
   return { using, imports }
-}
-
-/** `bun-plugin-tailwind`, resolved from the app (R21.1: `tailwindcss@4` and the plugin are the app's own dev
- * dependencies). Missing → `tailwind-missing` with the exact install command. */
-export async function loadTailwind(appRoot: string, usedBy: string): Promise<BunPlugin> {
-  const missing = ['tailwindcss', 'bun-plugin-tailwind'].filter((p) => {
-    try {
-      Bun.resolveSync(`${p}/package.json`, appRoot)
-      return false
-    } catch {
-      return true
-    }
-  })
-  if (missing.length > 0)
-    throw new BuildError(
-      'tailwind-missing',
-      `${relative(appRoot, usedBy)} uses Tailwind CSS, but ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not installed in the app: run \`bun add -d tailwindcss@4 bun-plugin-tailwind\``,
-    )
-  return (await import(Bun.resolveSync('bun-plugin-tailwind', appRoot))).default as BunPlugin
 }
 
 /** R19.4: the one CSS plugin of every JS build. A `.module.css` import is its class map

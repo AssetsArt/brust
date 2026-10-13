@@ -37,7 +37,7 @@ const TREE = `my-app/
 
 // The scripts and dev dependencies are read at build time from the template's package.json, so the block is what
 // `bun create @brust/app` writes. source: packages/create-app/templates/blank/package.json.tmpl:7 (dev = brust dev)
-// and :21 (devDependencies: tailwindcss 4 and bun-plugin-tailwind, pinned).
+// and :21 (devDependencies: tailwindcss, @tailwindcss/node and @tailwindcss/oxide, pinned at one version).
 const TEMPLATE_PKG = join(import.meta.dir, '../../../packages/create-app/templates/blank/package.json.tmpl')
 const templatePkg = JSON.parse(readFileSync(TEMPLATE_PKG, 'utf8').replace('__BRUST_DEP__', '""')) as {
   scripts: Record<string, string>
@@ -108,7 +108,7 @@ export default function ProjectStructure({ blocks, files }: ProjectStructureData
       {/* source: packages/brust/src/cli.ts:12 (brust dev: proxy + hot reload) and packages/brust/src/dev/bun.ts:106 (it builds into .brust/dev) */}
       <p>
         <code>dev</code> runs <code>brust dev</code>: it builds into <code>.brust/dev</code>, starts the server and rebuilds when you save, see <a href="/docs/dev-mode">Dev mode</a>. The <code>:cf</code> scripts target Cloudflare Workers, see{' '}
-        <a href="/docs/deployment">Deployment</a>. <code>tailwindcss</code> and <code>bun-plugin-tailwind</code> are pinned dev dependencies: the build uses them, the server does not.
+        <a href="/docs/deployment">Deployment</a>. <code>tailwindcss</code>, <code>@tailwindcss/node</code> and <code>@tailwindcss/oxide</code> are pinned dev dependencies at one version: the build uses them, the server does not.
       </p>
 
       <h2 id="dist">What brust build writes</h2>

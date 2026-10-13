@@ -30,8 +30,9 @@ test('the page has every section, its table-of-contents entry, and the sidebar l
   for (const id of ['global', 'order', 'output', 'head', 'modules', 'fold', 'try', 'tailwind', 'dev', 'same']) expect([id, html.includes(`id="${id}"`)]).toEqual([id, true])
   for (const id of ['global', 'modules', 'fold', 'tailwind', 'dev']) expect([id, html.includes(`href="#${id}"`)]).toEqual([id, true])
   expect(html).toContain('href="/docs/css"')
-  for (const t of ['tailwind-missing', 'css-module-class', 'css-asset-type', 'data-brust-css', 'the blank starter already has both', 'bun-plugin-tailwind', '@reference', '.min.']) expect([t, html.includes(t)]).toEqual([t, true])
+  for (const t of ['tailwind-missing', 'css-module-class', 'css-asset-type', 'data-brust-css', 'the blank starter already has all three', '@tailwindcss/node', '@tailwindcss/oxide', '@reference', '.min.']) expect([t, html.includes(t)]).toEqual([t, true])
   expect(html).not.toContain('--tailwind')
+  expect(html).not.toContain('bun-plugin-tailwind')
 })
 
 test('tiers: the page is static, the fold demo is native with no job', () => {

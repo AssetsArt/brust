@@ -103,7 +103,7 @@ test('blank --tailwind (L21, a no-op since L28 R29.1): accepted, says so, and bu
   expect(out).toContain('Tailwind CSS v4 is the default; the --tailwind flag does nothing')
   expect(out).toContain('(template: blank, @brust/core ')
   const pkg = readPkg(dir)
-  expect([pkg.devDependencies.tailwindcss, pkg.devDependencies['bun-plugin-tailwind']]).toEqual(['4.3.3', '0.1.2'])
+  expect([pkg.devDependencies.tailwindcss, pkg.devDependencies['@tailwindcss/node'], pkg.devDependencies['@tailwindcss/oxide'], pkg.devDependencies['bun-plugin-tailwind']]).toEqual(['4.3.3', '4.3.3', '4.3.3', undefined])
   setOverrides(dir)
   sh(['bun', 'install'], dir)
   sh(['bun', 'run', 'build'], dir)
