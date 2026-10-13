@@ -19,14 +19,17 @@ async function seed(ids: number[]) {
   for (const id of ids) await srv.action('/team', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
 }
 /** A page that records console errors/warnings + pageerrors; `finish()` asserts none happened. */
-async function open(path: string) {
+async function open(path: string, hold?: { islandsMs: number }) {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   await page.route(/raw\.githubusercontent\.com/, (r) => r.fulfill({ status: 200, contentType: 'image/png', body: PNG }))   // offline CI
-  await page.goto(`${srv.base}${path}`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('brust-island[data-hydrated="1"]', { state: 'attached', timeout: 15_000 })
+  // hold: delay every react island chunk (and do not wait for hydration), so native handlers run (and write the store) before islands hydrate.
+  if (hold) await page.route(/\/_brust\/client\/react-/, async (r) => { await Bun.sleep(hold.islandsMs); await r.continue() })
+  await page.goto(`${srv.base}${path}`, { waitUntil: hold ? 'commit' : 'domcontentloaded' })
+  if (hold) await page.waitForSelector('[data-testid="unified-native-inc"]', { state: 'attached' })
+  if (!hold) await page.waitForSelector('brust-island[data-hydrated="1"]', { state: 'attached', timeout: 15_000 })
   await page.evaluate(() => { (window as unknown as { __noReload: number }).__noReload = 1 })
   return { page, finish: async () => { expect(await page.evaluate(() => (window as unknown as { __noReload?: number }).__noReload)).toBe(1); expect(errors).toEqual([]); await page.close() } }
 }
@@ -91,6 +94,18 @@ test('/unified: native, island and node move together', async () => {
   await page.getByTestId('unified-island-inc').click()
   await eventually(page, 'unified-native-count', '7')
   expect(await all()).toEqual(['7', '7', '7'])
+  await finish()
+}, 60_000)
+
+// G13: the native write lands while the island chunk is still in flight; the island must hydrate against the
+// markup the server rendered (5), then catch up to the live value (6), with no #418.
+test('/unified: a native store write before an island hydrates causes no hydration mismatch', async () => {
+  const { page, finish } = await open('/unified?start=5', { islandsMs: 1500 })
+  expect(await page.locator('brust-island[data-hydrated="1"]').count()).toBe(0)
+  await page.getByTestId('unified-native-inc').click()
+  await eventually(page, 'unified-native-count', '6')
+  expect(await page.locator('brust-island[data-hydrated="1"]').count()).toBe(0)
+  await eventually(page, 'unified-island-count', '6')
   await finish()
 }, 60_000)
 

@@ -10,7 +10,9 @@ export function useStore<S extends object>(store: StoreHandle<S> & S): Snapshot<
   // factory-default markup; the client resolves the real registry instance and hydrates.
   const serverSnapshot = (): Snapshot<S> => {
     try {
-      return store.snapshot()
+      // Hydration must see the markup the server rendered, not a value a native mount effect wrote since (#418).
+      const ssr = (store as unknown as Record<symbol, (() => Snapshot<S>) | undefined>)[Symbol.for('brust.ssrSnapshot')]
+      return ssr ? ssr() : store.snapshot()
     } catch {
       return {} as Snapshot<S>
     }
