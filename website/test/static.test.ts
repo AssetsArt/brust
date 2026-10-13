@@ -116,6 +116,36 @@ test('every built page, the 404 included, links the hashed stylesheet exactly on
   expect(readFileSync(join(out, '_headers'), 'utf8')).toMatch(/\/_brust\/client\/\*\n\s+Cache-Control: public, max-age=31536000, immutable/)
 })
 
+test('the stylesheet is Tailwind CSS v4 in one hashed file: its layers, the site rules in components, a utility the markup uses (L31 R32.7)', () => {
+  const css = readdirSync(join(out, '_brust/client')).filter((f) => f.endsWith('.css'))
+  expect(css).toEqual([expect.stringMatching(/^app-[0-9a-f]{10}\.css$/)])
+  const text = readFileSync(join(out, '_brust/client', css[0]!), 'utf8')
+  expect(text).toContain('@layer theme,base,components,utilities')
+  /** Every `@layer <name>{…}` block's body, braces matched, in order (one layer can have several blocks). */
+  const layer = (name: string): string => {
+    const open = `@layer ${name}{`
+    const bodies: string[] = []
+    for (let at = text.indexOf(open); at >= 0; at = text.indexOf(open, at + 1)) {
+      let depth = 1
+      let i = at + open.length
+      for (; depth > 0; i++) depth += text[i] === '{' ? 1 : text[i] === '}' ? -1 : 0
+      bodies.push(text.slice(at + open.length, i - 1))
+    }
+    expect([name, bodies.length > 0]).toEqual([name, true])
+    return bodies.join('\n')
+  }
+  expect(layer('components')).toContain('.wrap{')
+  // Preflight is undone rule by rule in base (R32.1), after Preflight itself
+  const base = layer('base')
+  expect(base.lastIndexOf('h1,h2,h3,h4,h5,h6{font-size:revert;font-weight:revert}')).toBeGreaterThan(base.indexOf('h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}'))
+  expect(base.indexOf('h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}')).toBeGreaterThanOrEqual(0)
+  // Tailwind scanned the markup: some class the built pages use is a utility (tw-shell makes these deliberate)
+  const used = new Set<string>()
+  for (const f of [...ssg.pages.map((p) => p.file), ssg.notFound.file]) for (const m of readFileSync(join(out, f), 'utf8').matchAll(/class="([^"]*)"/g)) for (const c of m[1]!.split(/\s+/)) used.add(c)
+  const utilities = new Set([...layer('utilities').matchAll(/\.([a-z][\w-]*)\{/g)].map((m) => m[1]!))
+  expect([...utilities].filter((u) => used.has(u)).length).toBeGreaterThan(0)
+})
+
 test('sitemap.xml and llms.txt list every route under the production origin', () => {
   const sitemap = readFileSync(join(out, 'public/sitemap.xml'), 'utf8')
   const llms = readFileSync(join(out, 'public/llms.txt'), 'utf8')
