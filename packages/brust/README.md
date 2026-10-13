@@ -18,12 +18,16 @@ export const routes = defineRoutes([
 ])
 ```
 
-Route fields are exactly `path`, `Component`, `loader`, `cache`, `children`; anything else fails the
+Route fields are exactly `path`, `Component`, `loader`, `cache`, `ssg`, `children` (`ssg` only matters
+to `--target static`, see [docs/static.md](../../docs/static.md)); anything else fails the
 build with `<field> is not supported in M2 (M3)`. Loaders run root → leaf, results merge flat
 (later keys win); return `notFound(data)` / `redirect(location, status)` or throw
 `httpError(status, body)` for a verdict. `cache(Comp, opts)` and `cache.invalidate(…)` ship too.
 
 ## `brust build [entry=routes.tsx] [--out-dir dist]`
+
+`--target static [--strict]` also renders every page to `dist/static/` for Cloudflare Pages or Workers
+Static Assets: see [docs/static.md](../../docs/static.md).
 
 Compiles every route component through lowering, then writes (always from scratch):
 
