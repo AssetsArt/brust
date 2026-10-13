@@ -260,7 +260,9 @@ pub enum ManifestError {
         job: String,
         reason: String,
     },
-    #[error("component {component}: needs runtime feature {feature}, which assets.features does not list")]
+    #[error(
+        "component {component}: needs runtime feature {feature}, which assets.features does not list"
+    )]
     MissingFeature { component: String, feature: String },
     #[error("component {component}: bad path {path:?} in {field}: {reason}")]
     BadPath {
@@ -662,7 +664,13 @@ mod tests {
     #[test]
     fn a_component_feature_the_build_did_not_ship_is_refused() {
         let (mut m, files) = parts();
-        let id = m["components"].as_object().unwrap().keys().next().unwrap().clone();
+        let id = m["components"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
         m["components"][&id]["features"] = serde_json::json!(["basics"]);
         let e = Manifest::from_parts(&m.to_string(), &files).unwrap_err();
         let ManifestError::MissingFeature { component, feature } = e else {

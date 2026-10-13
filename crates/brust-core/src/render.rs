@@ -912,7 +912,10 @@ mod tests {
         m.components.get_mut(&id).unwrap().features = vec!["basics".into()];
         let out = inject_assets(String::new(), &chain, &m);
         assert_eq!(out.matches("rt-basics-0123456789.js").count(), 1, "{out}");
-        assert!(!out.contains("rt-for-") && !out.contains("rt-island-"), "{out}");
+        assert!(
+            !out.contains("rt-for-") && !out.contains("rt-island-"),
+            "{out}"
+        );
         let at = |needle: &str| out.find(needle).unwrap();
         assert!(at(&m.assets.runtime) < at("rt-basics-"), "{out}");
         if let Some(chunk) = &m.components[&id].client {
