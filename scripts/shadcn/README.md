@@ -1,6 +1,6 @@
 # shadcn survey (S0)
 
-`bun run shadcn` writes `docs/shadcn-coverage.md`; `bun run shadcn -- --check` fails on a stale doc; `bun test scripts/shadcn` asserts the same plus determinism. Needs the napi addon (`cd packages/brust && bun run build:debug`).
+`bun run shadcn` writes `docs/shadcn-coverage.md` and `docs/shadcn-coverage.json` (the data the docs page `/docs/shadcn` reads); `bun run shadcn -- --check` fails on a stale doc; `bun test scripts/shadcn` asserts the same plus determinism. Needs the napi addon (`cd packages/brust && bun run build:debug`).
 
 ## Refreshing the fixture (a deliberate PR)
 

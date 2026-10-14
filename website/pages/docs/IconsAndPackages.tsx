@@ -114,6 +114,11 @@ export default function IconsAndPackages({ blocks }: PackagesData) {
         A package component takes the same props as any island: plain JSON values, either literals or values from your props. A function or a value that changes with state is refused, and so are JSX children that read state, hold a handler, or are not a constant
         (constant markup between the tags is handed to the island as JSON); render those inside a React component of your own instead.
       </p>
+      {/* source: crates/brust-compiler/src/analyze/jsx.rs (tag_of: a member of an import from a package resolves to the export), analyze/names.rs (module-level const aliases), packages/brust/src/build/bundle.ts (memberImport: the missing-export error); PR #205 */}
+      <p>
+        A member of an imported name works too: with <code>import {'{'} Dialog as DialogPrimitive {'}'} from 'radix-ui'</code>, <code>&lt;DialogPrimitive.Root&gt;</code> is the package&rsquo;s <code>Dialog.Root</code>, one island per member, and so is a <code>const Root = DialogPrimitive.Root</code> alias in your module.
+        If the package has no such member, the island fails with <code>brust: radix-ui has no export Dialog.Root</code> when it loads. A member of one of your own objects (a context provider) is not resolved, and stays <code>member-tag</code>.
+      </p>
       {/* source: packages/brust/test/e2e-external-island.test.ts and tests/server/external-island.chromium.test.ts — a tiny local package in a static parent and in a native parent: built, server-rendered, hydrated in Chromium with no console error */}
       <CodeBlock code={blocks.warn.code} lang={blocks.warn.lang} cwd={blocks.warn.cwd} html={blocks.warn.html} />
 

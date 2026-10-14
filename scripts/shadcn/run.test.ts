@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { analysePage, pageNames } from './app.ts'
-import { REPORT } from './paths.ts'
+import { REPORT, REPORT_JSON } from './paths.ts'
+import { renderJson } from './json.ts'
 import { RANKING_RULE, byRule, rankBlockers, renderReport } from './report.ts'
 import { SIZES, survey } from './run.ts'
 
@@ -9,6 +10,15 @@ const { rows, libs, repro } = survey() // one build per page: shared by the test
 
 test('the committed scoreboard equals a fresh run (CI diffs it too)', () => {
   expect(readFileSync(REPORT, 'utf8')).toBe(renderReport(rows, libs, repro))
+})
+
+test('the committed JSON equals a fresh run and agrees with the markdown', () => {
+  expect(readFileSync(REPORT_JSON, 'utf8')).toBe(renderJson(rows, libs))
+  const j = JSON.parse(renderJson(rows, libs))
+  expect(j.rows.length).toBe(rows.length)
+  expect(j.summary.measured + j.summary.analysisOnly).toBe(j.summary.pages)
+  expect(j.summary.tier.static + j.summary.tier.native + j.summary.tier.react).toBe(j.summary.measured)
+  expect(JSON.stringify(j)).not.toMatch(/\/Users\/|\/tmp\/|shadcn-sizes/)
 })
 
 test('the analysis is deterministic: a second compile of every page gives the same rows', () => {

@@ -1,0 +1,1211 @@
+{
+  "pinned": {
+    "shadcnCli": "shadcn@4.21.4",
+    "registry": "https://ui.shadcn.com/r/styles/new-york-v4",
+    "items": 61,
+    "react": "19.3.0",
+    "radixUi": "1.8.1",
+    "lucideReact": "1.56.0"
+  },
+  "summary": {
+    "pages": 64,
+    "measured": 62,
+    "analysisOnly": 2,
+    "tier": {
+      "static": 55,
+      "native": 1,
+      "react": 6
+    },
+    "islands": 52,
+    "pagesWithNoJs": 17,
+    "jsGzipKb": {
+      "min": 0,
+      "median": 87,
+      "max": 239
+    },
+    "libraries": {
+      "packages": 76,
+      "components": 561,
+      "exported": 334,
+      "static": 1,
+      "native": 0,
+      "react": 274,
+      "unresolved": 0,
+      "error": 59
+    }
+  },
+  "blockers": [
+    {
+      "blocker": "fallback:external-component",
+      "kind": "compiler code",
+      "classification": "survey truth (today's rule; R34.7 removes it)",
+      "measuredRows": 42,
+      "analysisOnlyRows": 0,
+      "appComponents": 144,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:spread-props",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 39,
+      "analysisOnlyRows": 0,
+      "appComponents": 139,
+      "libraryComponents": 10
+    },
+    {
+      "blocker": "fallback:island-children",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 25,
+      "analysisOnlyRows": 0,
+      "appComponents": 35,
+      "libraryComponents": 7
+    },
+    {
+      "blocker": "fallback:hook-unsupported",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 10,
+      "libraryComponents": 22
+    },
+    {
+      "blocker": "fallback:jsx-expression",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 6,
+      "libraryComponents": 2
+    },
+    {
+      "blocker": "fallback:member-tag",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 1
+    },
+    {
+      "blocker": "fallback:instance-list-path",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 3,
+      "analysisOnlyRows": 0,
+      "appComponents": 3,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:slot-dynamic",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 3,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:control-flow",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 7,
+      "libraryComponents": 24
+    },
+    {
+      "blocker": "fallback:body-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 13
+    },
+    {
+      "blocker": "fallback:child-component",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 2
+    },
+    {
+      "blocker": "fallback:hook-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 2
+    },
+    {
+      "blocker": "fallback:local-component",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 2
+    },
+    {
+      "blocker": "fallback:ref-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 1
+    },
+    {
+      "blocker": "fallback:browser-global",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:event-capture",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:linked-prop-precompute",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:slot-child-component",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:use-id-in-render",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "error:island-prop",
+      "kind": "compile error",
+      "classification": "survey truth (compiler refusal)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 2,
+      "appComponents": 0,
+      "libraryComponents": 9
+    },
+    {
+      "blocker": "rest-props spread",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 398
+    },
+    {
+      "blocker": "forwardRef",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 286
+    },
+    {
+      "blocker": "useContext / use*Context",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 187
+    },
+    {
+      "blocker": "Context.Provider / *Provider",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 137
+    },
+    {
+      "blocker": "Primitive.*",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 113
+    },
+    {
+      "blocker": "composeRefs",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 77
+    },
+    {
+      "blocker": "Slot / asChild",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 58
+    },
+    {
+      "blocker": "error:unresolved-import (published .js/.mjs module is not followed)",
+      "kind": "compile error",
+      "classification": "survey truth (compiler refusal)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 50
+    },
+    {
+      "blocker": "DOM globals (document / window)",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 45
+    },
+    {
+      "blocker": "Presence",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 27
+    },
+    {
+      "blocker": "isValidElement",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 22
+    },
+    {
+      "blocker": "createPortal / Portal",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 15
+    },
+    {
+      "blocker": "cloneElement",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 14
+    },
+    {
+      "blocker": "fallback:let-var",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 8
+    },
+    {
+      "blocker": "fallback:prop-pattern",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 5
+    },
+    {
+      "blocker": "useImperativeHandle",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 5
+    },
+    {
+      "blocker": "React.Children",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 2
+    },
+    {
+      "blocker": "useSyncExternalStore",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 2
+    }
+  ],
+  "rows": [
+    {
+      "id": "accordion",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 10,
+      "reactComponents": 9,
+      "jsGzipKb": 94,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "alert",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 4,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "alert-dialog",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 22,
+      "reactComponents": 18,
+      "jsGzipKb": 100,
+      "codes": [
+        "external-component",
+        "island-children",
+        "slot-child-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "aspect-ratio",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 3,
+      "reactComponents": 2,
+      "jsGzipKb": 73,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "attachment",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 7,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "avatar",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 2,
+      "components": 7,
+      "reactComponents": 6,
+      "jsGzipKb": 87,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "badge",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 2,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "badge-aslink",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 2,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "breadcrumb",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 2,
+      "components": 7,
+      "reactComponents": 1,
+      "jsGzipKb": 85,
+      "codes": [
+        "jsx-expression"
+      ]
+    },
+    {
+      "id": "bubble",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 4,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "button",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 2,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "button-alias",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 2,
+      "reactComponents": 1,
+      "jsGzipKb": 85,
+      "codes": [
+        "external-component"
+      ]
+    },
+    {
+      "id": "button-aschild",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 2,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "button-group",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 6,
+      "reactComponents": 3,
+      "jsGzipKb": 86,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "calendar",
+      "basis": "analysis-only",
+      "tier": "error",
+      "codes": [
+        "error:island-prop"
+      ],
+      "refusal": {
+        "rule": "island-prop",
+        "at": "pages/calendar.tsx:31:5",
+        "construct": "prop `components` on <DayPicker>"
+      }
+    },
+    {
+      "id": "card",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 9,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "carousel",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 9,
+      "reactComponents": 6,
+      "jsGzipKb": 96,
+      "codes": [
+        "control-flow",
+        "event-capture",
+        "external-component",
+        "hook-unsupported",
+        "instance-list-path",
+        "island-children",
+        "member-tag",
+        "ref-shape",
+        "slot-dynamic",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "chart",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 8,
+      "reactComponents": 8,
+      "jsGzipKb": 239,
+      "codes": [
+        "external-component",
+        "island-children",
+        "jsx-expression",
+        "local-component",
+        "member-tag",
+        "use-id-in-render"
+      ]
+    },
+    {
+      "id": "checkbox",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 2,
+      "components": 6,
+      "reactComponents": 5,
+      "jsGzipKb": 91,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "collapsible",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 8,
+      "reactComponents": 6,
+      "jsGzipKb": 89,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "combobox",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 20,
+      "reactComponents": 17,
+      "jsGzipKb": 158,
+      "codes": [
+        "external-component",
+        "island-children",
+        "jsx-expression",
+        "slot-dynamic",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "command",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 16,
+      "reactComponents": 14,
+      "jsGzipKb": 104,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "context-menu",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 13,
+      "reactComponents": 11,
+      "jsGzipKb": 116,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "dialog",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 23,
+      "reactComponents": 18,
+      "jsGzipKb": 114,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "direction",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 3,
+      "reactComponents": 2,
+      "jsGzipKb": 69,
+      "codes": [
+        "external-component",
+        "island-children"
+      ]
+    },
+    {
+      "id": "drawer",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 20,
+      "reactComponents": 16,
+      "jsGzipKb": 108,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "dropdown-menu",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 18,
+      "reactComponents": 15,
+      "jsGzipKb": 117,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "empty",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 8,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "field",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 9,
+      "reactComponents": 3,
+      "jsGzipKb": 86,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "form",
+      "basis": "analysis-only",
+      "tier": "error",
+      "codes": [
+        "error:island-prop"
+      ],
+      "refusal": {
+        "rule": "island-prop",
+        "at": "pages/form.tsx:11:9",
+        "construct": "prop `render` on <FormField>"
+      }
+    },
+    {
+      "id": "hover-card",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 9,
+      "reactComponents": 7,
+      "jsGzipKb": 103,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "input",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 2,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "input-group",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 5,
+      "reactComponents": 1,
+      "jsGzipKb": 87,
+      "codes": [
+        "spread-props"
+      ]
+    },
+    {
+      "id": "input-otp",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 6,
+      "reactComponents": 3,
+      "jsGzipKb": 87,
+      "codes": [
+        "body-shape",
+        "external-component",
+        "hook-unsupported",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "item",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 7,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "kbd",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 3,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "label",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 4,
+      "reactComponents": 2,
+      "jsGzipKb": 84,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "marker",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 3,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "menubar",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 16,
+      "reactComponents": 14,
+      "jsGzipKb": 116,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "message",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 2,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "message-scroller",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 13,
+      "reactComponents": 12,
+      "jsGzipKb": 94,
+      "codes": [
+        "external-component",
+        "island-children",
+        "jsx-expression",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "native-select",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 3,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": [
+        "external-component"
+      ]
+    },
+    {
+      "id": "navigation-menu",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 15,
+      "reactComponents": 14,
+      "jsGzipKb": 99,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "pagination",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 2,
+      "components": 8,
+      "reactComponents": 2,
+      "jsGzipKb": 87,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "popover",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 9,
+      "reactComponents": 7,
+      "jsGzipKb": 109,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "progress",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 4,
+      "reactComponents": 3,
+      "jsGzipKb": 85,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "radio-group",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 8,
+      "reactComponents": 7,
+      "jsGzipKb": 96,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "resizable",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 7,
+      "reactComponents": 6,
+      "jsGzipKb": 103,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "scroll-area",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 10,
+      "reactComponents": 10,
+      "jsGzipKb": 92,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "select",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 24,
+      "reactComponents": 23,
+      "jsGzipKb": 118,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "separator",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 2,
+      "components": 3,
+      "reactComponents": 2,
+      "jsGzipKb": 84,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "sheet",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 20,
+      "reactComponents": 16,
+      "jsGzipKb": 101,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "sidebar",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 14,
+      "reactComponents": 7,
+      "jsGzipKb": 116,
+      "codes": [
+        "browser-global",
+        "control-flow",
+        "external-component",
+        "hook-shape",
+        "hook-unsupported",
+        "instance-list-path",
+        "island-children",
+        "linked-prop-precompute",
+        "member-tag",
+        "slot-dynamic",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "skeleton",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 2,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "slider",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 6,
+      "reactComponents": 5,
+      "jsGzipKb": 93,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "sonner",
+      "basis": "measured",
+      "tier": "native",
+      "islands": 1,
+      "components": 3,
+      "reactComponents": 1,
+      "jsGzipKb": 87,
+      "codes": [
+        "child-component"
+      ]
+    },
+    {
+      "id": "spinner",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 3,
+      "reactComponents": 2,
+      "jsGzipKb": 82,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "switch",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 2,
+      "components": 6,
+      "reactComponents": 5,
+      "jsGzipKb": 89,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "table",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 8,
+      "reactComponents": 1,
+      "jsGzipKb": 81,
+      "codes": [
+        "instance-list-path"
+      ]
+    },
+    {
+      "id": "tabs",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 9,
+      "reactComponents": 8,
+      "jsGzipKb": 94,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "textarea",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 0,
+      "components": 2,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
+    },
+    {
+      "id": "toggle",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 2,
+      "components": 3,
+      "reactComponents": 2,
+      "jsGzipKb": 86,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "toggle-group",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 5,
+      "reactComponents": 4,
+      "jsGzipKb": 93,
+      "codes": [
+        "external-component",
+        "hook-unsupported",
+        "island-children",
+        "member-tag",
+        "spread-props"
+      ]
+    },
+    {
+      "id": "tooltip",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 12,
+      "reactComponents": 10,
+      "jsGzipKb": 105,
+      "codes": [
+        "external-component",
+        "island-children",
+        "spread-props"
+      ]
+    }
+  ]
+}
