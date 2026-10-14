@@ -393,6 +393,16 @@ fn read_function(
             "import the module statically or keep the lazy component in a React-tier parent",
         ));
     }
+    // R34.67 (G2): a hand-written call to the JSX runtime builds an element the reader cannot see
+    // through; read as an expression it would print an element object. Fail closed.
+    if let Some(loc) = crate::analyze::jsx::jsx_runtime_call(&w.calls, reader.names) {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "jsx-runtime-call",
+            "a hand-written call to React's JSX runtime (`jsx(…)`) is not read as an element; the component renders as a React island",
+            loc,
+            "write JSX, or keep the module in a React-tier component",
+        ));
+    }
     let body = read_body(
         func,
         &mut reader,

@@ -951,11 +951,13 @@ impl Walker<'_, '_> {
                 .opts
                 .icon_svgs
                 .contains_key(&format!("{}@{loc}", self.ctx.path));
+        // R34.56: a value an island cannot hydrate from makes the HOST React (React renders the
+        // whole subtree, function and all); valid React is never a build error.
         let island_err = |rule: &str, msg: String, loc: u32, fix: &str| {
             if pending_icon {
                 Diagnostic::warning(rule, msg, loc, fix)
             } else {
-                Diagnostic::error(rule, msg, loc, fix)
+                Diagnostic::fallback(rule, msg, loc, fix)
             }
         };
         *tier = child.tier.clone();
@@ -1046,7 +1048,7 @@ impl Walker<'_, '_> {
                             "island-prop",
                             format!("prop `{k}` passed to the React island <{name}> is {why}"),
                             *loc,
-                            "pass JSON values; a React island hydrates from JSON",
+                            "pass JSON values to keep this component native; it renders with React meanwhile",
                         ));
                         continue;
                     }
@@ -1120,7 +1122,7 @@ impl Walker<'_, '_> {
                         "island-prop",
                         format!("the React island <{name}> sits in a list that changes with state"),
                         *loc,
-                        "render the list inside a React component, or key it on props only",
+                        "key the list on props only to keep this component native; it renders with React meanwhile",
                     ));
                 }
                 if ok {
