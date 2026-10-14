@@ -248,6 +248,7 @@ jobs:
       # (build-island-children, build-island-slots and build-props-pattern were not run here before).
       - run: cd packages/brust && bun test --timeout 180000 test/prop-path-children-revive.test.ts test/build-prop-path-children.test.ts test/build-island-children.test.ts test/build-island-slots.test.ts test/build-props-pattern.test.ts
       - run: cd packages/brust && bun test test/cli.test.ts
+      - run: cd packages/brust && bun test test/shadcn-init.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-child-literals.test.ts
       - run: cd packages/brust && bun test test/build-store.test.ts
