@@ -93,6 +93,7 @@ impl<'r, 'a> Reader<'r, 'a> {
                 if let E::EIdentifier(id) = &d.target.data
                     && self.names.is_props_ident(id.ref_)
                 {
+                    self.note_prop_read(&name, loc);
                     RawKind::Ident {
                         name,
                         kind: IdentKind::Prop,
@@ -256,6 +257,18 @@ impl<'r, 'a> Reader<'r, 'a> {
         }
     }
 
+    /// F168: the template prints a prop read as its bare name, so a name the template binds itself (`loop`, `range`,
+    /// ...), a keyword or a non-identifier is shadowed or misread. The first such read is reported once per component
+    /// (`prop-jinja-name` / `prop-quoted-key`, a fallback), whether the prop is destructured or read as a member.
+    fn note_prop_read(&self, name: &str, loc: u32) {
+        if self.names.prop_read_problem.borrow().is_some() {
+            return;
+        }
+        if let Some((code, what)) = crate::analyze::names::template_name_problem(name) {
+            *self.names.prop_read_problem.borrow_mut() = Some((loc, name.to_string(), code, what));
+        }
+    }
+
     /// `rest.k`: prop `k`, or `undefined` when the pattern names `k` (it is not in the rest).
     fn rest_member(&self, target: &js_ast::Expr, key: &str) -> Option<RawKind> {
         let E::EIdentifier(id) = &target.data else {
@@ -267,6 +280,7 @@ impl<'r, 'a> Reader<'r, 'a> {
         Some(if self.names.named_props().iter().any(|n| n == key) {
             RawKind::Lit(Literal::Undefined)
         } else {
+            self.note_prop_read(key, loc_of(target));
             RawKind::Ident {
                 name: key.to_string(),
                 kind: IdentKind::Prop,

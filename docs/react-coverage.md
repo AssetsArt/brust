@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 134 | 73 | 8 | 53 | 0 | 0 | 0 | 0 |
+| B Composition | 141 | 79 | 8 | 54 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 312 | 152 | 43 | 113 | 3 | 1 | 0 | 0 |
+| **Total** | 319 | 158 | 43 | 114 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -146,6 +146,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-union-spread-impure-test | a spread of a conditional whose test calls a function fails closed | react | react | ssr | ok | fallback:spread-props | R34.66 part 3: a test the printer would repeat per key must be pure |
 | b-union-spread-component-handler | a conditional spread into a component with an `onClick` key fails closed | react | react | ssr | ok | fallback:spread-props | review F1: the hoisted handler would call undefined when the test is false; React attaches none |
 | b-union-spread-component-html | a conditional spread into a component with `dangerouslySetInnerHTML` fails closed (not an error) | react | react | ssr | ok | fallback:spread-props | review F1: valid React must stay a fallback, as before the union lane |
+| b-prop-default-module-const | a props default naming module constants (`o = DEFAULT_ORIENTATION`, `DEFAULT = Orientation.Horizontal`) is folded | static | static | 0 | ok | — | F153b (a): the server template prints the folded value; a written or non-literal constant keeps prop-default-shape |
+| b-prop-default-module-const-call | a props default that is a module constant computed by a call stays prop-default-shape | react | react | ssr | ok | fallback:prop-default-shape |  |
 | b-forwardref | forwardRef component (default export); `ref={ref}` on a host is dropped | static | static | 0 | ok | — | S3 R34.63: HTML has no ref, so the render is the same as React's for a caller that passes none |
 | b-forwardref-const | `const X = forwardRef(function (props, ref) {…})` exported by name, used by a parent | static | static | 0 | ok | — |  |
 | b-forwardref-arrow | forwardRef with an arrow callback and rest props | static | static | 0 | ok | — |  |
@@ -157,11 +159,16 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get) |
 | b-props-quoted-key | a quoted hyphen key bound to a local in the props pattern | static | static | ssr | ok | — | F161 prop-quoted-key: the template read `data-x` as a subtraction and every render failed (500); the component is a React island now (the page stays static). Native support is a later F-row |
+| b-props-jinja-own-name | a prop named loop (a name the server template binds itself) | static | static | ssr | ok | — | props-pattern N2, prop-jinja-name: loop, range, namespace, caller and self shadow template names; the component is a React island now |
+| b-props-jinja-keyword | a prop whose key is a template keyword, renamed to a local | static | static | ssr | ok | — | props-pattern N1, prop-jinja-name: the message names a keyword (not "a plain identifier"); the component is a React island now |
+| b-props-body-tdz | a body-pattern name used before the pattern statement | static | static | ssr | ok | — | F162 prop-pattern-tdz: React throws (TDZ); brust rendered a defined prop. The component is a React island now (so it fails like React) |
+| b-props-jinja-member-loop | props.loop read as a member inside a .map | static | static | ssr | ok | — | F168 prop-jinja-name on a member read: the template printed `loop`, which is jinja's own loop object inside the for; the component is a React island now |
+| b-props-jinja-member-range | props.range read as a member | static | static | ssr | ok | — | F168 prop-jinja-name on a member read: `range` printed as the built-in function; the component is a React island now |
 | b-props-body-quoted-key | a quoted hyphen key in a body pattern const { ... } = props | static | static | ssr | ok | — | F161 prop-quoted-key, body pattern (R34.66 reads it like the parameter pattern): the component is a React island now |
 | b-props-body-iife | an immediately-invoked default in a body pattern | static | static | ssr | ok | — | F161 prop-default-iife, body pattern: the component is a React island now |
 | b-props-default-iife | a destructuring default that is an immediately-invoked function | static | static | ssr, ssr | ok | — | F161 prop-default-iife: the default printed as none, so the page rendered without it; the component is a React island now |
 | b-props-default-call | a destructuring default that calls a local function | static | static | ssr | ok | — | F161 prop-default-shape: a call outside the template subset printed as none; now React |
-| b-props-default-const | a destructuring default that reads a module constant | static | static | ssr | ok | — | F161 prop-default-shape: the constant printed as an unbound template variable (empty); now React |
+| b-props-default-const | a destructuring default that reads a module constant | static | static | 0 | ok | — | F161 prop-default-shape: the constant printed as an unbound template variable (empty); F153b (a): the constant is folded to its value, so the child is static |
 | b-props-default-jsx | a destructuring default that is a JSX element | static | static | ssr | ok | — | F161 prop-default-shape: JSX in a default printed as none; now React |
 | b-props-default-earlier | a destructuring default that reads an earlier prop which has its own default | static | static | ssr | ok | — | F161 prop-default-shape: the template read `a` without its default (X undefined! instead of x!); the component is a React island now |
 | b-props-default-printable | defaults the template prints exactly: literals, an earlier prop without a default, a supported call, a rename | static | static | 0 | ok | — | F161 control: the fail-closed rule does not touch a default the template can evaluate |

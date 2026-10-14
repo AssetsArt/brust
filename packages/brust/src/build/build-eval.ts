@@ -15,6 +15,7 @@ import type { BunPlugin } from 'bun'
 import { type SourceOf, PRODUCTION, sourceDirPlugin, stage, write } from './bundle'
 import type { Compiled } from './compile'
 import { BuildError } from './errors'
+import { serverOnlyEmptyPlugin } from './server-only'
 
 const V1 = { timeoutMs: 2_000, capBytes: 64 * 1024 }
 const BUILD_TIME = { timeoutMs: 10_000, capBytes: 256 * 1024 }
@@ -199,7 +200,7 @@ async function evaluateSlots(
     target: 'bun',
     format: 'esm',
     define: PRODUCTION,
-    plugins: [corePlugin(appRoot), sourceDirPlugin(sourceOf, appRoot)],
+    plugins: [serverOnlyEmptyPlugin(), corePlugin(appRoot), sourceDirPlugin(sourceOf, appRoot)],
   })
   if (!res.success) throw new BuildError('build-eval', `cannot bundle the build-time evaluation: ${res.logs.map(String).join('\n')}`)
   const bundle = join(dist, '.stage', 'eval.js')

@@ -78,6 +78,10 @@ pub struct NameTable<'a> {
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
     /// the bare object as a value, or inside code printed as written (R34.14: fail closed).
     pub rest_escape: std::cell::Cell<Option<u32>>,
+    /// F162: where a body pattern's name is used by a statement BEFORE the pattern (a TDZ error in React).
+    pub use_before_pattern: std::cell::Cell<Option<u32>>,
+    /// A prop READ as a member (`props.loop`, `rest.range`) whose name the template cannot carry (first one: location, name, code, what).
+    pub prop_read_problem: std::cell::RefCell<Option<(u32, String, &'static str, &'static str)>>,
     /// Binding locations of the body statements `const { a, b = 1, ...rest } = props` that are read as the props
     /// pattern (R34.66): the same reads as a parameter pattern, so the statement itself is skipped.
     absorbed: HashSet<i32>,
@@ -90,6 +94,9 @@ pub struct NameTable<'a> {
     /// `const x = c ? {…} : {…}` at module level or at the top of the component body: the initialiser, for
     /// a union spread `{...x}` (R34.66). Only a conditional is kept; a `const` is never reassigned.
     cond_consts: HashMap<u32, js_ast::Expr>,
+    /// Module-level `const NAME = <literal-shaped initialiser>` with no use that could write it, by name: the
+    /// folder reads them for a prop default (`orientation = DEFAULT_ORIENTATION`, F153b).
+    module_inits: HashMap<String, js_ast::Expr>,
     /// The component's polymorphic tag local (`Comp` of `const Comp = asChild ? Slot.Root : "a"`, R34.28).
     poly: HashMap<u32, PolyTag>,
     state: HashSet<u32>,
@@ -196,7 +203,7 @@ impl<'a> NameTable<'a> {
         body.stmts(component.body.stmts.slice());
         let declared: HashSet<u32> = body.declared.iter().map(|r| self.key(*r)).collect();
         let mut candidates = Vec::new();
-        for stmt in component.body.stmts.slice() {
+        for (at, stmt) in component.body.stmts.slice().iter().enumerate() {
             let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
                 continue;
             };
@@ -225,6 +232,30 @@ impl<'a> NameTable<'a> {
                     !w.used.iter().any(|u| declared.contains(&self.key(*u)))
                 })
             });
+            // F162: a name of the pattern read by an EARLIER statement is a TDZ error in React (the pattern is not read
+            // yet); brust would render it (a bound, defined prop). A closure declared before counts too: fail closed.
+            let bound: HashSet<u32> = obj
+                .properties()
+                .iter()
+                .filter_map(|p| match p.value.data {
+                    B::BIdentifier(b) => Some(self.key(b.r#ref)),
+                    _ => None,
+                })
+                .collect();
+            let early = component.body.stmts.slice()[..at].iter().find_map(|s| {
+                let mut w = crate::analyze::expr::Walk::default();
+                w.stmts(std::slice::from_ref(s));
+                w.used_at
+                    .iter()
+                    .find(|(u, _)| bound.contains(&self.key(*u)))
+                    .map(|(_, loc)| (*loc).max(0) as u32)
+            });
+            if let Some(loc) = early {
+                if self.use_before_pattern.get().is_none() {
+                    self.use_before_pattern.set(Some(loc));
+                }
+                continue;
+            }
             if plain && defaults_ok {
                 candidates.push((d.binding.loc.start, obj));
             }
@@ -279,11 +310,14 @@ impl<'a> NameTable<'a> {
             rest: None,
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
+            use_before_pattern: std::cell::Cell::new(None),
+            prop_read_problem: std::cell::RefCell::new(None),
             absorbed: HashSet::new(),
             forwarded_ref: None,
             forwarded_ref_dropped: std::cell::RefCell::new(HashSet::new()),
             member_aliases: HashMap::new(),
             cond_consts: HashMap::new(),
+            module_inits: HashMap::new(),
             poly: HashMap::new(),
             state: HashSet::new(),
             setters: HashSet::new(),
@@ -298,7 +332,45 @@ impl<'a> NameTable<'a> {
         for part in ast.parts.iter() {
             table.add_cond_consts(part.stmts.slice());
         }
+        table.collect_module_inits(ast);
         table
+    }
+
+    /// The module-level `const`s whose initialiser has a literal shape (see `module_inits`).
+    fn collect_module_inits(&mut self, ast: &js_ast::Ast<'_>) {
+        let mut found = Vec::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
+                    continue;
+                };
+                if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                    continue;
+                }
+                for d in l.decls.iter() {
+                    if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                        && literal_shape(&v, 0)
+                    {
+                        found.push((id.r#ref, v));
+                    }
+                }
+            }
+        }
+        if found.is_empty() {
+            return;
+        }
+        let bad = crate::analyze::use_scan::unsafe_to_fold(ast, self);
+        for (r, v) in found {
+            if !bad.contains(&self.key(r)) {
+                let name = self.name(r);
+                self.module_inits.insert(name, v);
+            }
+        }
+    }
+
+    /// See `module_inits`.
+    pub fn module_inits(&self) -> &HashMap<String, js_ast::Expr> {
+        &self.module_inits
     }
 
     /// Records the `const x = <conditional>` statements of `stmts` (a module's or a component body's).
@@ -641,5 +713,65 @@ pub fn binding_refs(b: &js_ast::Binding, out: &mut Vec<js_ast::Ref>) {
             }
         }
         B::BMissing(_) => {}
+    }
+}
+
+/// An initialiser built of literals, plain-keyed object and array literals, other names and member reads: what
+/// the folder can read (it checks every name itself, so this only keeps calls and functions out of the map).
+fn literal_shape(e: &js_ast::Expr, depth: u32) -> bool {
+    use js_ast::expr::Data as E;
+    if depth > 8 {
+        return false;
+    }
+    match &e.data {
+        E::ENumber(_) | E::EString(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_) => true,
+        E::EIdentifier(_) => true,
+        E::EDot(d) => literal_shape(&d.target, depth + 1),
+        E::EArray(a) => a.items.iter().all(|i| literal_shape(i, depth + 1)),
+        E::EObject(o) => o.properties.iter().all(|p| {
+            !p.flags.contains(js_ast::flags::Property::IsSpread)
+                && p.key
+                    .as_ref()
+                    .is_some_and(|k| matches!(&k.data, E::EString(_)))
+                && p.value
+                    .as_ref()
+                    .is_some_and(|v| literal_shape(v, depth + 1))
+        }),
+        _ => false,
+    }
+}
+
+/// Why a prop named `name` cannot be a plain template variable, as `(code, what)`; `None` = it can. A key that is not
+/// an identifier prints as an expression (`data-x` reads as a subtraction); a jinja keyword is a syntax error or the
+/// wrong value; `loop`, `range`, `namespace`, `caller` and `self` are names the template itself binds or calls (a loop
+/// variable, `Array.from` lowers to `range(...)`), so a prop of that name would shadow them.
+pub fn template_name_problem(name: &str) -> Option<(&'static str, &'static str)> {
+    const KEYWORDS: &[&str] = &[
+        "true", "false", "none", "True", "False", "None", "and", "or", "not", "in", "is", "if",
+        "else",
+    ];
+    const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
+    let mut cs = name.chars();
+    let ident = cs
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !ident {
+        Some((
+            "prop-quoted-key",
+            "is not a plain identifier, so it cannot name a template variable",
+        ))
+    } else if KEYWORDS.contains(&name) {
+        Some((
+            "prop-jinja-name",
+            "is a keyword of the server template language, so it cannot name a template variable",
+        ))
+    } else if TEMPLATE_OWN.contains(&name) {
+        Some((
+            "prop-jinja-name",
+            "is a name the server template uses itself (a loop variable or a built-in), so a prop of that name would shadow it",
+        ))
+    } else {
+        None
     }
 }
