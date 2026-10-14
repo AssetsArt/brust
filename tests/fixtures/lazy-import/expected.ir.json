@@ -187,11 +187,11 @@
     {
       "class": "Fallback",
       "rule": "island-children",
-      "message": "JSX children passed to the React island <Suspense>",
+      "message": "JSX children passed to the React island <Suspense> cannot be lowered: a condition",
       "loc": 151,
       "line": 4,
       "col": 10,
-      "remediation": "render the children inside the island component"
+      "remediation": "render the children inside the island component, or pass constant markup"
     },
     {
       "class": "Fallback",

@@ -89,6 +89,23 @@ test('an island whose component its module does not export builds for Cloudflare
   expect(readFileSync(join(out, 'cf', 'worker', 'brust-app.js'), 'utf8')).toContain('helper')
 })
 
+test('an island that revives lowered children, one of them an unexported static helper, builds for Cloudflare (R34.22)', () => {
+  const dir = join(FIX, 'cf-app-children')
+  cleanup.push(dir)
+  cpSync(APP, dir, { recursive: true })
+  // `Box` is an island (useReducer) given a tree that names `Inner`, a static helper nothing exports: jobs.ts imports it
+  // by its binding to revive the tree, so the Worker bundle (which re-bundles jobs.ts) must expose it as well.
+  writeFileSync(
+    join(dir, 'Home.tsx'),
+    "import { useReducer } from 'react'\n\nfunction Inner({ n }: { n: number }) {\n  return <i>{n}</i>\n}\n\nfunction Box({ children }: { children?: React.ReactNode }) {\n  const [n, hit] = useReducer((x: number) => x + 1, 0)\n  return <div><button type=\"button\" onClick={() => hit()}>{n}</button>{children}</div>\n}\n\nexport default function Home() {\n  return <main><Box><Inner n={7} /></Box></main>\n}\n",
+  )
+  const out = join(outDir(), 'dist')
+  const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])
+  expect(r.err).not.toContain('No matching export')
+  expect(r.code).toBe(0)
+  expect(readFileSync(join(out, 'cf', 'worker', 'brust-app.js'), 'utf8')).toContain('$brust')
+})
+
 test('--target nope is a usage error; without --target there is no dist/cf', () => {
   expect(brust(APP, ['build', 'routes.tsx', '--target', 'nope']).code).toBe(2)
   const out = join(outDir(), 'dist')

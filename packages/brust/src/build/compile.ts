@@ -36,6 +36,8 @@ export type ComponentIR = Record<string, any> & {
   external?: { source: string; export: string }
   /** The binding a React island imports this component by from `source` (absent: the default export). */
   export?: string
+  /** Child components; `nested` is set when this file passes lowered JSX children to that child, an island (shadcn S1). */
+  children?: { id: string | null; nested?: string[]; [field: string]: unknown }[]
 }
 
 export interface Compiled {

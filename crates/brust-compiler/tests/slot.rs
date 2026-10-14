@@ -187,7 +187,8 @@ fn a_slot_that_is_not_radixs_keeps_local_component() {
     );
     assert!(react_with(&own, "local-component"), "{:?}", own.diags);
     let o = lower("P.tsx", &page("<Own>x</Own>"));
-    assert!(matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+    // Own is a React island; its constant children travel with it (island-children), so the page stays static.
+    assert_eq!(o.tier, Tier::Static, "{:?}", o.diags);
 }
 
 #[test]

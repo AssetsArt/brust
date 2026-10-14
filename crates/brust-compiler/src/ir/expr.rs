@@ -173,6 +173,15 @@ pub enum JsCtx {
     Client,
 }
 
+/// A number as JSON: an integer when it is one, `None` when it is not finite.
+fn num_json(n: f64) -> Option<serde_json::Value> {
+    if n.fract() == 0.0 && n.abs() < 9e15 {
+        Some(serde_json::Value::from(n as i64))
+    } else {
+        serde_json::Number::from_f64(n).map(serde_json::Value::Number)
+    }
+}
+
 impl RawExpr {
     /// The JSON value of a pure literal expression (string, number, boolean, `null`, a
     /// template without substitutions, or an array/object of literals); `None` for anything
@@ -181,13 +190,35 @@ impl RawExpr {
         use serde_json::Value;
         match &self.kind {
             RawKind::Lit(Literal::Str(s)) => Some(Value::String(s.clone())),
-            RawKind::Lit(Literal::Num(n)) => {
-                if n.fract() == 0.0 && n.abs() < 9e15 {
-                    Some(Value::from(*n as i64))
-                } else {
-                    serde_json::Number::from_f64(*n).map(Value::Number)
-                }
+            RawKind::Lit(Literal::Num(n)) => num_json(*n),
+            // Arithmetic on number literals folds (`ratio={16 / 9}`), with JS's own results.
+            RawKind::Binary { op, left, right }
+                if matches!(
+                    op,
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem
+                ) =>
+            {
+                let (Some(Value::Number(l)), Some(Value::Number(r))) =
+                    (left.json_literal(), right.json_literal())
+                else {
+                    return None;
+                };
+                let (l, r) = (l.as_f64()?, r.as_f64()?);
+                num_json(match op {
+                    BinOp::Add => l + r,
+                    BinOp::Sub => l - r,
+                    BinOp::Mul => l * r,
+                    BinOp::Div => l / r,
+                    _ => l % r,
+                })
             }
+            RawKind::Unary {
+                op: UnOp::Neg,
+                value,
+            } => match value.json_literal() {
+                Some(Value::Number(n)) => num_json(-n.as_f64()?),
+                _ => None,
+            },
             RawKind::Lit(Literal::Bool(b)) => Some(Value::Bool(*b)),
             RawKind::Lit(Literal::Null) => Some(Value::Null),
             RawKind::Template { head, parts } if parts.is_empty() => {

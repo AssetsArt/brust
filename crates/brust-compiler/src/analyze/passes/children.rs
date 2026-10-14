@@ -322,6 +322,61 @@ fn linked_prop_precompute(name: &str, loc: u32) -> Diagnostic {
 }
 
 /// `lucide-react` + `Heart` → `heart_1a2b3c4d`: the export's name and a hash of where it is from.
+/// The marker key of a lowered element in an island's `children` prop (read by `reviveSource`).
+const MARK: &str = "$brust";
+
+/// Shadcn S1 (R34.23): the most JSON one island instance's lowered children may take.
+const MAX_CHILDREN_JSON: usize = 64 * 1024;
+
+/// Attributes React reads a bare `<x disabled />` of as `true`; any other bare or empty attribute is
+/// ambiguous in the IR (`aria-hidden` is `"true"`, `alt=""` is empty) and does not lower.
+const BOOLEAN_ATTRS: &[&str] = &[
+    "disabled",
+    "checked",
+    "selected",
+    "readOnly",
+    "required",
+    "hidden",
+    "multiple",
+    "autoFocus",
+    "autoPlay",
+    "controls",
+    "loop",
+    "muted",
+    "open",
+    "reversed",
+    "defaultChecked",
+    "defaultSelected",
+    "noValidate",
+    "formNoValidate",
+    "async",
+    "defer",
+    "inert",
+    "playsInline",
+    "allowFullScreen",
+    "itemScope",
+    "default",
+    "noModule",
+];
+
+/// A JSON value as the literal expression the template and the SSR job print.
+fn raw_json(v: &serde_json::Value, loc: u32) -> crate::ir::RawKind {
+    use crate::ir::{Literal, RawKind};
+    use serde_json::Value;
+    let sub = |v: &Value| RawExpr {
+        loc,
+        kind: raw_json(v, loc),
+    };
+    match v {
+        Value::Null => RawKind::Lit(Literal::Null),
+        Value::Bool(b) => RawKind::Lit(Literal::Bool(*b)),
+        Value::Number(n) => RawKind::Lit(Literal::Num(n.as_f64().unwrap_or(0.0))),
+        Value::String(s) => RawKind::Lit(Literal::Str(s.clone())),
+        Value::Array(a) => RawKind::Array(a.iter().map(sub).collect()),
+        Value::Object(o) => RawKind::Object(o.iter().map(|(k, v)| (k.clone(), sub(v))).collect()),
+    }
+}
+
 fn external_component_id(source: &str, export: &str) -> String {
     let base = if export == "default" {
         source.rsplit('/').next().unwrap_or(source)
@@ -814,6 +869,7 @@ impl Walker<'_, '_> {
                 id: child.id.clone(),
                 path: child.path.clone(),
                 tier: child.tier.clone(),
+                nested: None,
             });
         }
         let child_id = child.id.clone().unwrap_or_else(|| name.clone());
@@ -865,12 +921,31 @@ impl Walker<'_, '_> {
                     }
                 }
                 if !children.is_empty() {
-                    self.diagnostics.push(Diagnostic::fallback(
-                        "island-children",
-                        format!("JSX children passed to the React island <{name}>"),
-                        *loc,
-                        "render the children inside the island component",
-                    ));
+                    match self.lower_children(children) {
+                        Ok((tree, nested)) => {
+                            let raw = RawExpr {
+                                loc: *loc,
+                                kind: raw_json(&tree, *loc),
+                            };
+                            literals.insert("children".to_string(), tree);
+                            props.push(("children".into(), Expr::Server(ServerExpr(raw))));
+                            children.clear();
+                            if let Some(r) = self.refs.iter_mut().find(|r| r.name == *name) {
+                                let all = r.nested.get_or_insert_with(Vec::new);
+                                for id in nested {
+                                    if !all.contains(&id) {
+                                        all.push(id);
+                                    }
+                                }
+                            }
+                        }
+                        Err(why) => self.diagnostics.push(Diagnostic::fallback(
+                            "island-children",
+                            format!("JSX children passed to the React island <{name}> cannot be lowered: {why}"),
+                            *loc,
+                            "render the children inside the island component, or pass constant markup",
+                        )),
+                    }
                 }
                 if ok && self.lists.iter().any(|(_, stateful)| *stateful) {
                     ok = false;
@@ -1190,6 +1265,155 @@ impl Walker<'_, '_> {
                 "give the child plain attributes, or keep the page on React",
             ));
         }
+    }
+
+    /// Shadcn S1 (R34.21): the JSX children of a React island as a JSON tree, so they travel in its
+    /// props (the island and its SSR job revive them with React). Only a constant tree lowers; the
+    /// `Err` names what stopped it (R34.23). Also returns the ids of the components inside the tree.
+    fn lower_children(
+        &mut self,
+        nodes: &[Node],
+    ) -> Result<(serde_json::Value, Vec<String>), String> {
+        let mut nested = Vec::new();
+        let mut items = self.lower_nodes(nodes, &mut nested)?;
+        let tree = if items.len() == 1 {
+            items.remove(0)
+        } else {
+            serde_json::Value::Array(items)
+        };
+        let size = tree.to_string().len();
+        if size > MAX_CHILDREN_JSON {
+            return Err(format!(
+                "the lowered tree is {size} bytes, over the {MAX_CHILDREN_JSON} byte cap"
+            ));
+        }
+        nested.sort();
+        nested.dedup();
+        Ok((tree, nested))
+    }
+
+    fn lower_nodes(
+        &mut self,
+        nodes: &[Node],
+        nested: &mut Vec<String>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        use serde_json::{Map, Value, json};
+        let constant = |e: &Expr| match e {
+            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
+            _ => None,
+        };
+        let mut out = Vec::new();
+        for n in nodes {
+            match n {
+                Node::Text(t) => out.push(Value::String(t.clone())),
+                Node::Slot(e) => match constant(e) {
+                    Some(v @ (Value::String(_) | Value::Number(_))) => out.push(v),
+                    Some(Value::Null | Value::Bool(_)) => {}
+                    _ => return Err("an expression that is not a constant".into()),
+                },
+                Node::Fragment(c) => {
+                    out.push(json!({ MARK: "fr", "c": self.lower_nodes(c, nested)? }))
+                }
+                Node::Element {
+                    tag,
+                    attrs,
+                    children,
+                    ..
+                } => {
+                    if !tag.starts_with(|c: char| c.is_ascii_alphabetic())
+                        || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                    {
+                        return Err(format!("`<{tag}>` is not a plain element name"));
+                    }
+                    let mut p = Map::new();
+                    for a in attrs {
+                        match a {
+                            Attr::Static { name, value } if value.is_empty() => {
+                                if !BOOLEAN_ATTRS.contains(&name.as_str()) {
+                                    return Err(format!(
+                                        "`{name}` is a bare or empty attribute (React reads it as `true` or \"\" by name)"
+                                    ));
+                                }
+                                p.insert(name.clone(), Value::Bool(true));
+                            }
+                            Attr::Static { name, value } => {
+                                p.insert(name.clone(), Value::String(value.clone()));
+                            }
+                            Attr::Dynamic { name, value } => match constant(value) {
+                                Some(Value::Null) => {}
+                                Some(v) => {
+                                    p.insert(name.clone(), v);
+                                }
+                                None => {
+                                    return Err(format!("attribute `{name}` is not a constant"));
+                                }
+                            },
+                            Attr::Event { event, .. } => {
+                                return Err(format!("an event handler (`{event}`)"));
+                            }
+                            Attr::Ref { .. } => return Err("a ref".into()),
+                            Attr::Spread(_) => return Err("a spread".into()),
+                            Attr::InnerHtml { .. } => {
+                                return Err("dangerouslySetInnerHTML".into());
+                            }
+                        }
+                    }
+                    out.push(
+                        json!({ MARK: "el", "t": tag, "p": p, "c": self.lower_nodes(children, nested)? }),
+                    );
+                }
+                Node::Component {
+                    loc,
+                    name,
+                    source,
+                    imported,
+                    props,
+                    children,
+                    ..
+                } => {
+                    if name == "<member>" {
+                        return Err("a member tag such as <A.B>".into());
+                    }
+                    let mut p = Map::new();
+                    for (k, v) in props {
+                        if k == crate::ir::SPREAD_KEY {
+                            return Err(format!("a spread into <{name}>"));
+                        }
+                        match constant(v) {
+                            Some(Value::Null) => {}
+                            Some(v) => {
+                                p.insert(k.clone(), v);
+                            }
+                            None => {
+                                return Err(format!("prop `{k}` of <{name}> is not a constant"));
+                            }
+                        }
+                    }
+                    let child =
+                        self.resolve_child(name, source.as_deref(), imported.as_deref(), *loc);
+                    let Some(id) = child.id.clone() else {
+                        return Err(format!("<{name}> could not be resolved"));
+                    };
+                    if !self.refs.iter().any(|r| r.name == *name) {
+                        self.refs.push(ChildRef {
+                            name: name.clone(),
+                            id: child.id.clone(),
+                            path: child.path.clone(),
+                            tier: child.tier.clone(),
+                            nested: None,
+                        });
+                    }
+                    nested.push(id.clone());
+                    out.push(
+                        json!({ MARK: "cmp", "id": id, "p": p, "c": self.lower_nodes(children, nested)? }),
+                    );
+                }
+                Node::If { .. } => return Err("a condition".into()),
+                Node::For { .. } => return Err("a list".into()),
+                Node::Outlet => return Err("<Outlet/>".into()),
+            }
+        }
+        Ok(out)
     }
 
     /// Event handlers the parent binds itself (shadcn S1.3, R34.18): an `on*` prop that lands in
