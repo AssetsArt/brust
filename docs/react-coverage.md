@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 161 | 89 | 9 | 63 | 0 | 0 | 0 | 0 |
+| B Composition | 191 | 103 | 9 | 79 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 339 | 167 | 44 | 124 | 3 | 1 | 0 | 0 |
+| **Total** | 369 | 181 | 44 | 140 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -169,6 +169,36 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-forwardref-ref-destructured | the second parameter is destructured | react | react | ssr | ok | fallback:forwardref-ref |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get) |
+| b-context-react-provider | createContext: a Provider component and a consumer under it | static | static | 0 | ok | — | S2 R34.100-R34.103: the value is resolved at the call site; no hidden prop reaches the page, no job, no client JS |
+| b-context-nested | two Providers of one context: the nearest wins | static | static | 0 | ok | — | S2 R34.102: frames are a stack (1, 2, then 1 again) |
+| b-context-wrapper | a consumer inside a wrapper component, under a Provider | static | static | 0 | ok | — | S2 R34.104: the need bubbles up through the wrapper and is filled where the Provider is |
+| b-context-rest-wrapper | a shadcn-style wrapper forwarding its ...rest into a Provider component | static | static | ssr | ok | — | S2: frame values must be literals (lead ruling on 84a4650a): this wrapper's Provider reads props, so it stays a React island (context-value; F174 narrows it); the page stays static |
+| b-context-helper | a Provider value computed by helpers of its own module, used from another module | react | react | ssr | ok | fallback:context-no-provider, fallback:context-value | S2: a frame value that calls a helper is not a literal (lead ruling on 84a4650a), so the page renders with React (context-value; F174 narrows it to helpers proven to return primitives) |
+| b-context-radix-scope | Radix createContextScope: Provider props, a default, a consumer | static | static | 0 | ok | — | S2 R34.100/101: the second structural recogniser (Radix createContextScope); a scope that is a pass-through is ignored |
+| b-context-no-provider | a consumer with no Provider above it, at the route | react | react | ssr | ok | fallback:context-no-provider | S2 context-no-provider: fail closed (the default of a createContext is not read in v1) |
+| b-context-escape | a context value used as a whole | react | react | ssr | ok | fallback:context-island | S2 context-escape: the consumer reads the whole object, so it is a React island; under a lowered Provider that keeps the page React (F3 context-island) |
+| b-context-scalar-value | a Provider whose value is not an object literal | static | static | ssr | ok | — | S2 context-value: the Provider is a React island (the page stays static) |
+| b-context-same-name | two modules each declare their own Ctx; a consumer of B under A's Provider | react | react | ssr | ok | fallback:context-no-provider | Mellow F2: a context is (declaring module, name); B reads its own default in React, never A's value (context-no-provider, fail closed) |
+| b-context-field-quoted | a context field that is not a plain identifier ('x-y') | static | static | ssr | ok | — | Mellow F1 context-shape: the field is part of an identifier (__ctx_Ctx_x-y was a syntax error / a subtraction); the components are React islands now (the page stays static) |
+| b-context-island-under | an interactive consumer (useTransition) under a Provider component | react | react | ssr | ok | fallback:context-island | Mellow F3 context-island: a lowered Provider no longer shares a React tree with an island under it (it would read the createContext default); the page is React, as on main. Served and compared with React in scripts/shadcn/context-parity.test.ts |
+| b-context-island-beside | an island BESIDE (not under) a Provider component | static | static | ssr | ok | — | Mellow F3 control: an island that is not under the Provider changes nothing; the Provider still lowers (static page + one island) |
+| b-jsx-const-child | a module-level JSX const used as a child of a wrapper | react | react | ssr | ok | fallback:jsx-const-child | Mellow jsx-const-child (pre-existing on main: the child printed nothing): fail closed at the printed slot; served and compared with React in scripts/shadcn/context-parity.test.ts |
+| b-jsx-const-child-provider | a module-level JSX const used as a child of a Provider component | react | react | ssr | ok | fallback:jsx-const-child | Mellow jsx-const-child: the same drop point, widened by Providers (an empty section) |
+| b-jsx-const-child-imported | an imported JSX const used as a child of a wrapper | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: an imported binding in child position is printed only when it provably is not JSX (jsx-const-child) |
+| b-jsx-const-child-imported-provider | an imported JSX const used as a child of a Provider component | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: the same, widened by Providers (on main the Provider was an island and React rendered el) |
+| b-jsx-const-child-allowlist | a child under a Provider that reads an element holder through a member, index, ?:, && and a template | react | react | ssr | ok | fallback:jsx-const-child | lead ruling (allowlist): every identifier a child reads, anywhere in the expression, must be a prop, a printed local or a primitive; the guard is exhaustive over the expression grammar |
+| b-jsx-const-child-provider-own | an imported JSX const read directly under a Provider element in the Provider component's own template | static | static | ssr | ok | — | Mellow: the Provider tag lowers to a Fragment, so its own template is judged by the same predicate (the Panel is a React island now; the page stays static) |
+| b-child-reads-plain-wrapper | ordinary child reads (a data lookup, .length, an imported helper call) under a PLAIN wrapper | static | static | precompute | ok | — | lead ruling c: the total allowlist is scoped to Provider frames; a plain wrapper keeps lowering these (pinned, no regression) |
+| b-child-reads-provider | the same child reads under a Provider component | react | react | ssr | ok | fallback:jsx-const-child | lead ruling c: under a lowered Provider the allowlist applies (a helper result and a data lookup are not provable yet: F174); the page is React (it is the whole island, as on main) |
+| b-context-prop-under-provider | a component prop holding an element holder under a Provider frame | react | react | ssr | ok | fallback:jsx-const-child | Mellow scoping: the predicate runs at Placer::painted, the single print point (a prop is printed too) |
+| b-context-provider-field-element | a Provider value field holding an element holder | static | static | ssr | ok | — | Mellow: a Provider value field that holds an element would reach the consumer as a hidden prop and print as nothing; the Provider stays an island (context-state), the page stays static |
+| b-context-frame-prop | a Provider whose value reads a prop fed an element holder at the call site | react | react | ssr | ok | fallback:context-no-provider, fallback:context-value | Mellow: a frame value must be a literal (no prop read, no call); the page renders with React |
+| b-context-reserved-prefix | a user prop named __ctx_* | react | react | ssr | ok | fallback:context-island | lead ruling: the __ctx_ prefix is the lowering's own; a user prop of that name fails closed with its own code (context-shape) |
+| b-context-reserved-exact | a call-site prop with the exact hidden context name | react | react | ssr | ok | fallback:context-shape | Mellow reservation: any author prop starting __ctx_ fails closed (context-shape), including the exact hidden name; the page renders with React (value lit) |
+| b-jsx-const-child-unreadable | a child that is an import the compiler cannot resolve | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: an import it cannot read or resolve fails closed |
+| b-jsx-const-child-imported-plain | an imported plain value used as a child (control) | static | static | 0 | ok | — | control: a folded primitive import still lowers |
+| b-jsx-const-child-shadowed | a prop that shadows an imported JSX const name (control) | static | static | 0 | ok | — | control: the child is the prop, not the import; it lowers |
+| b-context-console-if | an if whose branches only call console.* | static | static | 0 | ok | — | S2 R34.104: a diagnostic-only statement is not part of the render (Radix Progress validates its props this way) |
 | b-props-quoted-key | a quoted hyphen key bound to a local in the props pattern | static | static | ssr | ok | — | F161 prop-quoted-key: the template read `data-x` as a subtraction and every render failed (500); the component is a React island now (the page stays static). Native support is a later F-row |
 | b-props-jinja-own-name | a prop named loop (a name the server template binds itself) | static | static | ssr | ok | — | props-pattern N2, prop-jinja-name: loop, range, namespace, caller and self shadow template names; the component is a React island now |
 | b-props-jinja-keyword | a prop whose key is a template keyword, renamed to a local | static | static | ssr | ok | — | props-pattern N1, prop-jinja-name: the message names a keyword (not "a plain identifier"); the component is a React island now |
@@ -258,7 +288,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid | useId read in render | static | static | 0 | ok | — | spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static |
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | — | spec §4.3 useLayoutEffect |
 | c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |
-| c-usecontext | useContext | react | react | ssr | ok | fallback:hook-unsupported |  |
+| c-usecontext | useContext | react | react | ssr | ok | fallback:context-escape |  |
 | c-custom-hook | custom hook | native | native | 0 | ok | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
 | c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
@@ -286,7 +316,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 |---|---|---|---|---|---|---|---|
 | d-cache | cache() around a server helper | static | static | precompute | ok | — | spec §3.4 cache() |
 | d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
-| d-createcontext | createContext provider | react | react | ssr | ok | fallback:member-tag |  |
+| d-createcontext | createContext provider | react | react | ssr | ok | fallback:context-value |  |
 | d-clone-element | cloneElement | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-expression |  |
 | d-suspense-static | <Suspense> around static content | static | static | ssr | ok | fallback:external-component | spec §3 react tier: Suspense is a React island; since R34.52 its constant `fallback` element travels as an element prop, so the page is static (shadcn S1, constant-slots) |

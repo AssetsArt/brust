@@ -244,10 +244,14 @@ jobs:
       - run: cd packages/brust && bun test test/napi-server.test.ts
       - run: cd packages/brust && bun test test/build-manifest.test.ts
       - run: cd packages/brust && bun test --timeout 180000 test/build-cn-fold.test.ts
+      # F155 (R37): one React and one react-dom per target (Bun, Cloudflare client + Worker, static), staged-import
+      # resolution, and the symlinked-root cases. Was not wired into CI when it landed.
+      - run: cd packages/brust && bun test --timeout 180000 test/esm-resolve.test.ts
       # F148a (R34.124): the hostile-input set for the island revive, with the build tests of the lowered children it guards
       # (build-island-children, build-island-slots and build-props-pattern were not run here before).
       - run: cd packages/brust && bun test --timeout 180000 test/prop-path-children-revive.test.ts test/build-prop-path-children.test.ts test/build-island-children.test.ts test/build-island-slots.test.ts test/build-props-pattern.test.ts
       - run: cd packages/brust && bun test test/cli.test.ts
+      - run: cd packages/brust && bun test test/shadcn-init.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-child-literals.test.ts
       - run: cd packages/brust && bun test test/build-store.test.ts
@@ -266,7 +270,7 @@ jobs:
       - run: cd examples/pokedex && bun test
       - run: cd examples/pokedex && bun run typecheck
       # m3f-create-app: unit + pack, then the scaffold run (packs core/runtime-dom, bun install from npm, build, start) on its own.
-      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/sync-template.test.ts test/pack.test.ts test/tailwind.test.ts
+      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/shadcn.test.ts test/sync-template.test.ts test/pack.test.ts test/tailwind.test.ts
       - run: cd packages/create-app && bun test --timeout 600000 test/scaffold.test.ts
       - run: bunx playwright install --with-deps chromium
       # website/: the docs site (TSX pages on the workspace @brust/core); several files drive Chromium, so it runs after

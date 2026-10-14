@@ -8,6 +8,7 @@ const CHILD_ONLY: &[&str] = &["external-component", "child-component"];
 
 pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     check_refs(ir);
+    check_default_shapes(ir);
 
     // Ruling 1 (M1b-2 plan): JSX built outside the template.
     let mut jsx = st.jsx_code.clone();
@@ -221,4 +222,40 @@ fn check_refs(ir: &mut ComponentIR) {
             "pass a ref created with useRef in this component",
         ));
     }
+}
+
+/// F161 (R39.1): the server template prints a destructuring default with `lower::server_expr`, which turns anything
+/// outside its subset into `none`. That matters only for a prop the TEMPLATE reads: a prop read only inside a job
+/// (`props.p ?? default` in JS) keeps its default exactly. So the fallback is decided here, after placement, from the
+/// reads the template really prints.
+fn check_default_shapes(ir: &mut ComponentIR) {
+    let mut read: std::collections::BTreeSet<String> = Default::default();
+    super::placement::template_server_raws(ir, &mut |r| {
+        crate::lower::common::visit_idents(r, &mut |name, kind| {
+            if *kind == crate::ir::IdentKind::Prop {
+                read.insert(name.to_string());
+            }
+        });
+    });
+    let mut defaulted: std::collections::HashSet<String> = Default::default();
+    let mut found: Vec<Diagnostic> = Vec::new();
+    for p in &ir.props {
+        let Some(d) = &p.default else { continue };
+        if read.contains(&p.name)
+            && let Some((code, why)) = crate::analyze::hooks::default_unprintable(d, &defaulted)
+        {
+            found.push(Diagnostic::fallback(
+                code,
+                format!(
+                    "the default of the prop `{}` is {why}, which the server template cannot evaluate",
+                    p.name
+                ),
+                d.loc,
+                "use a literal, an earlier prop, or a plain expression as the default",
+            ));
+        }
+        defaulted.insert(p.name.clone());
+        defaulted.insert(p.local.clone());
+    }
+    ir.diagnostics.extend(found);
 }

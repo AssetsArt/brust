@@ -373,6 +373,8 @@ function linkNativeChunks(routes: RouteRecord[], compiled: Map<string, Compiled>
   const chainIds = new Set(routes.flatMap((r) => r.chain))
   for (const root of chainIds) {
     const rec = components[root]!
+    // A React root renders its whole subtree itself: whatever native chunks its IR lists are not served.
+    if (rec.tier === 'react') continue
     const linked = new Set(rec.children.map((ch) => ch.id))
     const seen = new Set([root])
     const walk = (id: string) => {

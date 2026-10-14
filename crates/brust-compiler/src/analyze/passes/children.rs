@@ -17,7 +17,8 @@ use crate::ir::{
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
-pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
+/// The walker over `ir`'s template (shared by the context frames pass and the children pass).
+fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>) -> Walker<'s, 'c> {
     // Module consts the folder may read (R34.49): never a name the component body declares, and
     // never one with a use that is not a proven read (an array or object another use could change).
     let shadowed = |n: &str| {
@@ -35,7 +36,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             .map(|c| (c.name.clone(), c.value.clone()))
             .collect(),
     );
-    let mut w = Walker {
+    Walker {
         module_consts,
         st,
         ctx,
@@ -78,7 +79,133 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         guard_depth: 0,
         fused: Vec::new(),
         fused_counts: HashMap::new(),
-    };
+        holds_island: false,
+        provider_locs: Default::default(),
+        bubbled_pkg: false,
+        foreign: Default::default(),
+    }
+}
+
+/// The Provider modules whose helpers a substituted context value calls: alias → (the module's component, names).
+type ForeignModules = std::collections::BTreeMap<String, (Rc<ComponentIR>, BTreeSet<String>)>;
+
+/// Cut scope (lead ruling on 84a4650a): a frame VALUE, as it reads at the call site, must be a literal (or operators,
+/// templates, arrays and objects over literals and globals). NO prop or state read (it may carry an element), no call (a
+/// helper may return one), no import, no module name, no element. Everything that crosses a frame is then primitive.
+fn plain_frame_value(r: &RawExpr) -> Result<(), String> {
+    match &r.kind {
+        RawKind::Lit(_) => Ok(()),
+        RawKind::Ident { name, kind } => match kind {
+            IdentKind::Global => Ok(()),
+            IdentKind::Prop
+            | IdentKind::State
+            | IdentKind::LoopBinding
+            | IdentKind::Local
+            | IdentKind::Setter
+            | IdentKind::Import { .. }
+            | IdentKind::Store { .. }
+            | IdentKind::Unknown => Err(format!("a read of `{name}`, which is not plain data")),
+        },
+        RawKind::Member { target, .. } => plain_frame_value(target),
+        RawKind::Index { target, index } => {
+            plain_frame_value(target).and_then(|()| plain_frame_value(index))
+        }
+        RawKind::Call { .. } => Err("a call (its result may be an element)".into()),
+        RawKind::Binary { left, right, .. } => {
+            plain_frame_value(left).and_then(|()| plain_frame_value(right))
+        }
+        RawKind::Unary { value, .. } => plain_frame_value(value),
+        RawKind::Cond { test, yes, no } => plain_frame_value(test)
+            .and_then(|()| plain_frame_value(yes))
+            .and_then(|()| plain_frame_value(no)),
+        RawKind::Template { parts, .. } => parts.iter().try_for_each(|(p, _)| plain_frame_value(p)),
+        RawKind::Array(xs) => xs.iter().try_for_each(plain_frame_value),
+        RawKind::Object(ps) => ps.iter().try_for_each(|(_, v)| plain_frame_value(v)),
+        RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
+            Err("a function or an element".into())
+        }
+    }
+}
+
+/// What a context Provider hands to the consumers under it (S2, R34.102): each field an expression of the scope that
+/// renders the Provider component (its call site), not of the Provider's own body.
+struct Frame {
+    context: String,
+    fields: Vec<(String, RawExpr)>,
+}
+
+/// S2 context lowering, BEFORE placement (R34.102-R34.104): a Provider component's value fields become hidden props
+/// (`ir::ctx_prop`) of every consumer instance under it, so the inlined consumer, its jobs and its template read
+/// them like any prop. A consumer with no Provider in this template bubbles its need up: the component declares the
+/// hidden prop itself and its own call site fills it (a wrapper around a consumer stays a plain component); only a
+/// route component with an unfilled need falls back (`context-no-provider`).
+pub fn contexts(
+    ir: &mut ComponentIR,
+    st: &mut PassState,
+    ctx: &PassCtx<'_>,
+) -> std::collections::BTreeSet<u32> {
+    let mut w = walker(ir, st, ctx);
+    let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
+    let mut frames: Vec<Frame> = Vec::new();
+    let mut bubbled: Vec<(String, String)> = Vec::new();
+    let mut diags: Vec<Diagnostic> = Vec::new();
+    w.frames_node(&mut template, &mut frames, &mut bubbled, &mut diags);
+    ir.template = template;
+    // The Provider module's helpers the substituted values call, as module declarations of this component (S2).
+    for (alias, (cir, names)) in std::mem::take(&mut *w.foreign.borrow_mut()) {
+        let mut imports = BTreeSet::new();
+        let code = crate::lower::common::module_code(&cir, &names, &mut imports);
+        let exports = names.iter().cloned().collect::<Vec<_>>().join(", ");
+        ir.module_decls.push(crate::ir::ModuleDecl {
+            names: vec![alias.clone()],
+            source: format!("const {alias} = (() => {{\n{code}return {{ {exports} }}\n}})()"),
+            consts: Vec::new(),
+        });
+        ir.module_scope.push((
+            alias,
+            imports
+                .into_iter()
+                .map(|(local, source, imported)| (local, IdentKind::Import { source, imported }))
+                .collect(),
+        ));
+    }
+    ir.ctx_pkg |= w.bubbled_pkg;
+    for (c, f) in &bubbled {
+        let name = crate::ir::ctx_prop(c, f);
+        if !ir.props.iter().any(|p| p.name == name) {
+            ir.props.push(crate::ir::PropDecl {
+                name: name.clone(),
+                local: name,
+                ts_type: None,
+                default: None,
+            });
+        }
+        match ir.ctx_uses.iter_mut().find(|u| &u.context == c) {
+            Some(u) if !u.fields.contains(f) => u.fields.push(f.clone()),
+            Some(_) => {}
+            None => ir.ctx_uses.push(crate::ir::CtxUse {
+                context: c.clone(),
+                fields: vec![f.clone()],
+            }),
+        }
+    }
+    if ctx.is_root && !bubbled.is_empty() {
+        diags.push(Diagnostic::fallback(
+            "context-no-provider",
+            format!(
+                "`{}` reads a context that no Provider above it provides",
+                bubbled[0].0
+            ),
+            0,
+            "render it inside the Provider component, or keep this component in React",
+        ));
+    }
+    ir.diagnostics.extend(diags);
+    w.provider_locs
+}
+
+pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
+    let mut w = walker(ir, st, ctx);
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
     ir.repeats_children = w.passes_to_repeater || template_has_for(&template);
@@ -133,6 +260,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.instances.extend(w.instances);
     ir.build_eval_instances.extend(w.eval_instances);
     ir.folded_instances.extend(w.folded_instances);
+    ir.holds_island |= w.holds_island;
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.unwritten_props = w.unwritten.iter().cloned().collect();
@@ -182,6 +310,15 @@ struct Walker<'s, 'c> {
     own_named: BTreeSet<String>,
     /// Keys this component's own call sites must not pass (`ComponentIR::absent_props`, F153c).
     absent: BTreeSet<String>,
+    /// S2 F3: a child of this template is a React island, or holds one.
+    holds_island: bool,
+    /// S2: component instances that push a Provider frame.
+    provider_locs: std::collections::BTreeSet<u32>,
+    /// A need bubbled out of a package-source consumer ([`ComponentIR::ctx_pkg`]).
+    bubbled_pkg: bool,
+    /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
+    /// of its module scope in this component's jobs, the component, the names).
+    foreign: std::cell::RefCell<ForeignModules>,
     /// F148a: while the children or element props of a React island lower, the props the tree reads from this
     /// component's own props (R34.116): the hole's island prop name (`$p<N>`, `$c<N>`) and the expression it takes.
     holes: Option<Vec<(String, Expr)>>,
@@ -247,6 +384,8 @@ struct Child {
     has_for: bool,
     /// Keys the call site must not pass (`ComponentIR::absent_props`).
     absent: Vec<String>,
+    /// The compiled child (S2 context frames read its `provides` / `ctx_uses` / props / derived).
+    ir: Option<Rc<ComponentIR>>,
     /// Whether the build may run the child's precompute job for a constant-input instance (F149,
     /// `build_eval::instance_job`); `None` when the child is not fed.
     job_eval: Option<Result<Vec<crate::ir::EvalStub>, String>>,
@@ -811,6 +950,465 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// The first component in `nodes` (at any depth) that reads a context (`ctx_uses` non-empty), is not itself a
+    /// React island, and carries a job, a `useId` or fed child instances (a wrapper around one), or reads a context declared in a package
+    /// source (`ctx_pkg`; revived from the map source it would not share the Provider island's dist `createContext`): those need the
+    /// hidden inputs a frame fills. A plain one is revived by the island from its source and reads the island's own
+    /// React context.
+    fn consumer_in(&mut self, nodes: &[Node]) -> Option<String> {
+        for n in nodes {
+            match n {
+                Node::Component {
+                    loc,
+                    name,
+                    source,
+                    imported,
+                    member,
+                    children,
+                    ..
+                } => {
+                    if name != "<member>" {
+                        let mark = self.diagnostics.len();
+                        let child = self.resolve_child(
+                            name,
+                            source.as_deref(),
+                            imported.as_deref(),
+                            member,
+                            *loc,
+                        );
+                        self.diagnostics.truncate(mark);
+                        if child.ir.as_ref().is_some_and(|c| {
+                            matches!(c.tier, Tier::Static | Tier::Native)
+                                && !c.ctx_uses.is_empty()
+                                && (c.ctx_pkg
+                                    || !c.jobs.is_empty()
+                                    || c.use_id_slots > 0
+                                    || !c.instances.is_empty())
+                        }) {
+                            return Some(name.clone());
+                        }
+                    }
+                    if let Some(w) = self.consumer_in(children) {
+                        return Some(w);
+                    }
+                }
+                Node::Element { children, .. } | Node::Fragment(children) => {
+                    if let Some(w) = self.consumer_in(children) {
+                        return Some(w);
+                    }
+                }
+                Node::If { then, else_, .. } => {
+                    if let Some(w) = self.consumer_in(then).or_else(|| self.consumer_in(else_)) {
+                        return Some(w);
+                    }
+                }
+                Node::For { body, .. } => {
+                    if let Some(w) = self.consumer_in(body) {
+                        return Some(w);
+                    }
+                }
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            }
+        }
+        None
+    }
+
+    /// The frames walk of [`contexts`].
+    fn frames_node(
+        &mut self,
+        n: &mut Node,
+        frames: &mut Vec<Frame>,
+        bubbled: &mut Vec<(String, String)>,
+        diags: &mut Vec<Diagnostic>,
+    ) {
+        match n {
+            Node::Element { children, .. } | Node::Fragment(children) => children
+                .iter_mut()
+                .for_each(|c| self.frames_node(c, frames, bubbled, diags)),
+            Node::If { then, else_, .. } => {
+                then.iter_mut()
+                    .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                else_
+                    .iter_mut()
+                    .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+            }
+            Node::For { body, .. } => body
+                .iter_mut()
+                .for_each(|c| self.frames_node(c, frames, bubbled, diags)),
+            Node::Component {
+                loc,
+                name,
+                source,
+                imported,
+                member,
+                props,
+                children,
+                ..
+            } => {
+                if name == "<member>" {
+                    children
+                        .iter_mut()
+                        .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                    return;
+                }
+                let mark = self.diagnostics.len();
+                let child =
+                    self.resolve_child(name, source.as_deref(), imported.as_deref(), member, *loc);
+                // The children pass resolves it again and reports; these diagnostics are not repeated.
+                self.diagnostics.truncate(mark);
+                let Some(cir) = child.ir.clone() else {
+                    children
+                        .iter_mut()
+                        .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                    return;
+                };
+                // A React island (and what it receives as children or element props) renders with React's own
+                // context at run time: nothing in its subtree is read here, and it provides nothing at compile time.
+                let island = !matches!(cir.tier, Tier::Static | Tier::Native);
+                // F3 (fail closed): a Provider that is lowered away no longer shares a React tree with an island
+                // under it, which would hydrate standalone and read the context DEFAULT. Any island (or a static
+                // child holding one) under an active frame, or inside a Provider's own tree, keeps the page React.
+                if ((island || cir.holds_island) && !frames.is_empty())
+                    || (!island && cir.holds_island && !cir.provides.is_empty())
+                {
+                    diags.push(Diagnostic::fallback(
+                        "context-island",
+                        format!(
+                            "<{name}> is, or holds, a React island under a context Provider that is rendered natively; an island would not see the Provider's value"
+                        ),
+                        *loc,
+                        "keep the island outside the Provider, or render the page with React",
+                    ));
+                }
+                // A context consumer passed as the children of a React island is revived by the island from its source: it
+                // reads the island's own (real React) context, which brust did not lower, so it must not be compiled as a
+                // native consumer waiting for a frame. Fail closed (the page renders with React) instead of leaving a
+                // consumer with a job and no instance record (R34.97: valid React is never a build error).
+                if island && let Some(who) = self.consumer_in(children) {
+                    diags.push(Diagnostic::fallback(
+                        "context-island",
+                        format!("<{who}> reads a context and is passed as the children of the React island <{name}>; the island supplies that context at run time"),
+                        *loc,
+                        "render the page with React, or keep the consumer inside the Provider component",
+                    ));
+                }
+                if island {
+                    return;
+                }
+                // The `__ctx_` prefix is the lowering's own. This pass runs before the lowering adds any hidden prop, so
+                // every prop met here with that prefix was written by the author: it would override a frame value.
+                if let Some((k, _)) = props.iter().find(|(k, _)| k.starts_with("__ctx_")) {
+                    diags.push(Diagnostic::fallback(
+                        "context-shape",
+                        format!("the prop `{k}` uses the `__ctx_` prefix, which brust reserves for context values"),
+                        *loc,
+                        "rename the prop",
+                    ));
+                }
+                // Consumer: each field it reads comes from the nearest frame of its context, else bubbles up.
+                for u in &cir.ctx_uses {
+                    for f in &u.fields {
+                        let hidden = crate::ir::ctx_prop(&u.context, f);
+                        if props.iter().any(|(k, _)| k == &hidden) {
+                            continue;
+                        }
+                        let value = match frames.iter().rev().find(|fr| fr.context == u.context) {
+                            Some(fr) => Expr::Raw(
+                                fr.fields
+                                    .iter()
+                                    .find(|(k, _)| k == f)
+                                    .map(|(_, v)| v.clone())
+                                    .unwrap_or_else(|| RawExpr {
+                                        loc: *loc,
+                                        kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                                    }),
+                            ),
+                            None => {
+                                self.bubbled_pkg |= cir.ctx_pkg;
+                                if !bubbled.iter().any(|(c, g)| c == &u.context && g == f) {
+                                    bubbled.push((u.context.clone(), f.clone()));
+                                }
+                                Expr::Raw(RawExpr {
+                                    loc: *loc,
+                                    kind: RawKind::Ident {
+                                        name: hidden.clone(),
+                                        kind: IdentKind::Prop,
+                                    },
+                                })
+                            }
+                        };
+                        props.push((hidden, value));
+                    }
+                }
+                // Provider: its values, in this scope, for the children passed to it.
+                let mut pushed = 0;
+                for pd in &cir.provides {
+                    let mut fields = Vec::new();
+                    let mut failed = None;
+                    for (k, raw) in &pd.fields {
+                        match self.subst(raw, &cir, props, 0).and_then(|v| {
+                            plain_frame_value(&v)
+                                .map(|()| v)
+                                .map_err(|w| format!("`{k}` is {w}"))
+                        }) {
+                            Ok(v) => fields.push((k.clone(), v)),
+                            Err(why) => {
+                                failed = Some(why);
+                                break;
+                            }
+                        }
+                    }
+                    match failed {
+                        None => {
+                            frames.push(Frame {
+                                context: pd.context.clone(),
+                                fields,
+                            });
+                            pushed += 1;
+                        }
+                        Some(why) => diags.push(Diagnostic::fallback(
+                            "context-value",
+                            format!(
+                                "<{name}> provides a value brust cannot express where it is used: {why}"
+                            ),
+                            *loc,
+                            "keep this component in React, or provide plain props-derived values",
+                        )),
+                    }
+                }
+                if pushed > 0 {
+                    self.provider_locs.insert(*loc);
+                }
+                children
+                    .iter_mut()
+                    .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                frames.truncate(frames.len() - pushed);
+            }
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+
+    /// `raw`, an expression of the Provider component `cir`'s body, as an expression of the scope that renders it
+    /// (`props` are the call site's): its props become the call site's values (a default when absent), its derived
+    /// locals are expanded, the rest is copied. `Err(why)` for anything this cannot express.
+    fn subst(
+        &self,
+        raw: &RawExpr,
+        cir: &Rc<ComponentIR>,
+        props: &[(String, Expr)],
+        depth: u8,
+    ) -> Result<RawExpr, String> {
+        if depth > 8 {
+            return Err("a chain of derived values deeper than 8".into());
+        }
+        let go = |r: &RawExpr| self.subst(r, cir, props, depth);
+        let b = |r: &RawExpr| -> Result<Box<RawExpr>, String> { Ok(Box::new(go(r)?)) };
+        let kind = match &raw.kind {
+            RawKind::Lit(_) => raw.kind.clone(),
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Prop if name != "*" => {
+                    // Spreads at the call site: the caller's own props object or its `...rest` carries every prop it
+                    // does not name (R34.14: `rest.k` is prop `k`); any other spread is not read here.
+                    let mut carried = false;
+                    for (k, e) in props {
+                        if k != crate::ir::SPREAD_KEY {
+                            continue;
+                        }
+                        match e {
+                            Expr::Raw(RawExpr {
+                                kind:
+                                    RawKind::Ident {
+                                        name: src,
+                                        kind: IdentKind::Prop,
+                                    },
+                                ..
+                            }) if src == "*" || src == crate::ir::REST_PROPS => {
+                                carried |= !self.own_named.iter().any(|n| n == name);
+                            }
+                            _ => {
+                                return Err(format!(
+                                    "the prop `{name}` may come from a spread of unknown keys"
+                                ));
+                            }
+                        }
+                    }
+                    let explicit = props.iter().rev().find(|(k, _)| k == name).map(|(_, e)| e);
+                    let default = match cir
+                        .props
+                        .iter()
+                        .find(|p| &p.name == name)
+                        .and_then(|p| p.default.as_ref())
+                    {
+                        Some(d) => self.subst(d, cir, props, depth + 1)?,
+                        None => RawExpr {
+                            loc: raw.loc,
+                            kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                        },
+                    };
+                    if carried {
+                        if explicit.is_some() {
+                            return Err(format!(
+                                "the prop `{name}` is given and a spread after it may carry it too"
+                            ));
+                        }
+                        // The caller's own prop `name`; the Provider's default applies when it is undefined.
+                        let read = RawExpr {
+                            loc: raw.loc,
+                            kind: RawKind::Ident {
+                                name: name.clone(),
+                                kind: IdentKind::Prop,
+                            },
+                        };
+                        let undefined = RawExpr {
+                            loc: raw.loc,
+                            kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                        };
+                        if matches!(default.kind, RawKind::Lit(crate::ir::Literal::Undefined)) {
+                            return Ok(read);
+                        }
+                        return Ok(RawExpr {
+                            loc: raw.loc,
+                            kind: RawKind::Cond {
+                                test: Box::new(RawExpr {
+                                    loc: raw.loc,
+                                    kind: RawKind::Binary {
+                                        op: crate::ir::BinOp::StrictEq,
+                                        left: Box::new(read.clone()),
+                                        right: Box::new(undefined),
+                                    },
+                                }),
+                                yes: Box::new(default),
+                                no: Box::new(read),
+                            },
+                        });
+                    }
+                    match explicit {
+                        Some(Expr::Raw(r)) => return Ok(r.clone()),
+                        Some(_) => {
+                            return Err(format!("the prop `{name}` is not a plain expression"));
+                        }
+                        None => return Ok(default),
+                    }
+                }
+                IdentKind::Local => {
+                    let derived = cir
+                        .structural
+                        .as_ref()
+                        .map(|s| s.derived.as_slice())
+                        .unwrap_or(&[])
+                        .iter()
+                        .find(|d| &d.name == name);
+                    if let Some(Expr::Raw(r)) = derived.map(|d| &d.expr) {
+                        return self.subst(r, cir, props, depth + 1);
+                    }
+                    // A module-level `const` of a primitive literal is that literal.
+                    if let Some(c) = cir
+                        .module_decls
+                        .iter()
+                        .flat_map(|d| &d.consts)
+                        .find(|c| &c.name == name && !c.mutated)
+                        && matches!(c.value.kind, RawKind::Lit(_))
+                    {
+                        return Ok(RawExpr {
+                            loc: raw.loc,
+                            kind: c.value.kind.clone(),
+                        });
+                    }
+                    if !cir.module_scope.iter().any(|(n, _)| n == name) {
+                        return Err(format!(
+                            "`{name}` is not a name the Provider's module declares"
+                        ));
+                    }
+                    if cir.source == self.ctx.path {
+                        // The same module: its declarations are this component's own.
+                        return Ok(raw.clone());
+                    }
+                    // Another module (a package's source): the helper runs in this component's jobs through a copy of the
+                    // module's declarations, kept apart in a function scope (no export, no rename).
+                    let mut imports = BTreeSet::new();
+                    let names: BTreeSet<String> = [name.clone()].into();
+                    crate::lower::common::module_code(cir, &names, &mut imports);
+                    if let Some((_, s, _)) = imports.iter().find(|(_, s, _)| s.starts_with('.')) {
+                        return Err(format!(
+                            "the Provider's module reads a relative import ({s})"
+                        ));
+                    }
+                    let alias = format!("__ctxm_{}", cir.id);
+                    self.foreign
+                        .borrow_mut()
+                        .entry(alias.clone())
+                        .or_insert_with(|| (cir.clone(), BTreeSet::new()))
+                        .1
+                        .insert(name.clone());
+                    return Ok(RawExpr {
+                        loc: raw.loc,
+                        kind: RawKind::Member {
+                            target: Box::new(RawExpr {
+                                loc: raw.loc,
+                                kind: RawKind::Ident {
+                                    name: alias,
+                                    kind: IdentKind::Local,
+                                },
+                            }),
+                            name: name.clone(),
+                            optional: false,
+                        },
+                    });
+                }
+                IdentKind::Global | IdentKind::Import { .. } => raw.kind.clone(),
+                _ => return Err(format!("`{name}` is state, a handler or a loop value")),
+            },
+            RawKind::Member {
+                target,
+                name,
+                optional,
+            } => RawKind::Member {
+                target: b(target)?,
+                name: name.clone(),
+                optional: *optional,
+            },
+            RawKind::Index { target, index } => RawKind::Index {
+                target: b(target)?,
+                index: b(index)?,
+            },
+            RawKind::Call { callee, args } => RawKind::Call {
+                callee: b(callee)?,
+                args: args.iter().map(go).collect::<Result<_, _>>()?,
+            },
+            RawKind::Binary { op, left, right } => RawKind::Binary {
+                op: *op,
+                left: b(left)?,
+                right: b(right)?,
+            },
+            RawKind::Unary { op, value } => RawKind::Unary {
+                op: *op,
+                value: b(value)?,
+            },
+            RawKind::Cond { test, yes, no } => RawKind::Cond {
+                test: b(test)?,
+                yes: b(yes)?,
+                no: b(no)?,
+            },
+            RawKind::Template { head, parts } => RawKind::Template {
+                head: head.clone(),
+                parts: parts
+                    .iter()
+                    .map(|(p, t)| Ok((go(p)?, t.clone())))
+                    .collect::<Result<_, String>>()?,
+            },
+            RawKind::Array(xs) => RawKind::Array(xs.iter().map(go).collect::<Result<_, _>>()?),
+            RawKind::Object(ps) => RawKind::Object(
+                ps.iter()
+                    .map(|(k, v)| Ok((k.clone(), go(v)?)))
+                    .collect::<Result<_, String>>()?,
+            ),
+            RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
+                return Err("an expression outside the subset".into());
+            }
+        };
+        Ok(RawExpr { loc: raw.loc, kind })
+    }
+
     fn deps_of(&self, e: &Expr) -> Deps {
         match e {
             Expr::Precomputed { slot, per_item, .. } => {
@@ -929,6 +1527,7 @@ impl Walker<'_, '_> {
             has_for: false,
             inner: None,
             absent: Vec::new(),
+            ir: None,
             job_eval: None,
             job_outputs: Vec::new(),
             job_fused: Vec::new(),
@@ -976,6 +1575,7 @@ impl Walker<'_, '_> {
                     has_for: false,
                     inner: None,
                     absent: Vec::new(),
+                    ir: None,
                     job_eval: None,
                     job_outputs: Vec::new(),
                     job_fused: Vec::new(),
@@ -1139,6 +1739,7 @@ impl Walker<'_, '_> {
                         has_for: false,
                         inner: None,
                         absent: Vec::new(),
+                        ir: None,
                         job_eval: None,
                         job_outputs: Vec::new(),
                         job_fused: Vec::new(),
@@ -1192,12 +1793,14 @@ impl Walker<'_, '_> {
         let mut icon_spread = false;
         let mut reads_children_value = false;
         let mut absent = Vec::new();
+        let mut child_ir = None;
         let mut job_eval = None;
         let mut job_outputs = Vec::new();
         let mut job_fused = Vec::new();
         let mut unwritten = Vec::new();
         let tier = match lookup {
             Lookup::Compiled(ir) => {
+                child_ir = Some(ir.clone());
                 forwards_ref = ir.forwards_ref;
                 icon_spread = ir.icon_spread;
                 absent = ir.absent_props.clone();
@@ -1309,6 +1912,7 @@ impl Walker<'_, '_> {
             inner,
             has_for,
             absent,
+            ir: child_ir,
             job_eval,
             job_outputs,
             job_fused,
@@ -1798,6 +2402,11 @@ impl Walker<'_, '_> {
             }
         };
         *tier = child.tier.clone();
+        if !matches!(child.tier, Tier::Static | Tier::Native)
+            || child.ir.as_ref().is_some_and(|c| c.holds_island)
+        {
+            self.holds_island = true;
+        }
         // R34.64: a `ref` at the call site of a `forwardRef` component reaches an element React attaches it to; a
         // static or native render has none to give it.
         // F153c: passing this component's own forwarded ref on is React's `ref` chain; it ends on a host element

@@ -102,3 +102,10 @@ test('monorepo mode without --brust-dep re-syncs pokedex then writes file: + ove
   expect(existsSync(join(w, 'app/data/pokedex.json'))).toBe(true)
   expect(existsSync(join(w, 'app/data/team.sqlite'))).toBe(false)
 })
+test('--shadcn with a hostile component name exits 1 and scaffolds nothing (F181)', () => {
+  const w = work()
+  const r = run(['demo', '--yes', '--brust-dep', 'file:/x', '--shadcn=a;rm'], w)
+  expect(r.code).toBe(1)
+  expect(r.err).toMatch(/--shadcn component/)
+  expect(readdirSync(w)).toEqual([])
+})

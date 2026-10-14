@@ -417,6 +417,7 @@ fn read_function_as(
 ) {
     crate::analyze::expr::take_printer_panic(); // a flag left by an earlier component is not ours
     let mut names = NameTable::new(ast, func);
+    names.tag_contexts(&ir.source);
     if forwards_ref {
         ir.forwards_ref = true;
         if let Some(a) = func.args.slice().get(1) {
@@ -498,10 +499,37 @@ fn read_function_as(
         ));
     }
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
+    ir.plain_fns = crate::analyze::plain_fn::plain_fns(ast, &*reader.names);
     check_printer_panic(ir);
     ir.props = body.props;
     ir.props_rest = body.props_rest;
     ir.poly = body.poly;
+    // S2: the context fields this component reads are hidden props the call site fills from the Provider frame.
+    ir.ctx_uses = reader.names.ctx_uses();
+    ir.ctx_pkg =
+        !ir.ctx_uses.is_empty() && ir.source.starts_with(crate::analyze::modules::PKG_SRC_DIR);
+    ir.provides = std::mem::take(&mut reader.provides);
+    for u in &ir.ctx_uses {
+        for f in &u.fields {
+            let name = crate::ir::ctx_prop(&u.context, f);
+            if !ir.props.iter().any(|p| p.name == name) {
+                ir.props.push(crate::ir::PropDecl {
+                    name: name.clone(),
+                    local: name,
+                    ts_type: None,
+                    default: None,
+                });
+            }
+        }
+    }
+    if let Some(loc) = reader.names.ctx_escape.get() {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "context-escape",
+            "a context value is used as a whole (not `context.field`); brust reads the fields one by one",
+            loc,
+            "read context.field, or keep this component in React",
+        ));
+    }
     if let Some((loc, name, code, what)) = reader.names.prop_read_problem.borrow().clone() {
         ir.diagnostics.push(Diagnostic::fallback(
             code,
@@ -537,6 +565,16 @@ fn read_function_as(
     ir.id_bindings = body.id_bindings;
     ir.stores = body.stores;
     ir.diagnostics.extend(body.diagnostics);
+    // S2: a Provider whose values cannot be expressed at the call site (state, a handler, a loop value) is not
+    // compiled yet (a native provider is a later step): the component stays a React island, as before.
+    if let Some((loc, why)) = crate::analyze::context::provider_problem(ir) {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "context-state",
+            format!("a context Provider hands out {why}, which needs a native provider; the component renders with React"),
+            loc,
+            "provide props-derived values, or keep this component in React",
+        ));
+    }
     let root_loc = match &body.return_expr {
         Some(Expr::Raw(r)) => r.loc,
         _ => 0,

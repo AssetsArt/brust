@@ -1,6 +1,7 @@
 pub mod aliases;
 pub mod component;
 pub mod const_fold;
+pub mod context;
 pub mod exports;
 pub mod expr;
 pub mod hir;
@@ -9,6 +10,7 @@ pub mod jsx;
 pub mod modules;
 pub mod names;
 pub mod passes;
+pub mod plain_fn;
 pub mod primitive;
 pub mod stores;
 pub mod use_scan;
