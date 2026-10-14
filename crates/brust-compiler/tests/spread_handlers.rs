@@ -228,14 +228,26 @@ fn limits_stay_fail_closed_with_their_own_codes() {
         ),
         "event-capture",
     );
-    // Props of unknown keys spread at the same call site may replace the handler.
+    // Props of unknown keys spread AFTER the handler at the same call site may replace it (React: later wins).
+    let o = lower(
+        "Q.tsx",
+        &format!(
+            "{STATE}import Btn from './Btn'\nexport default function Q(props: any) {{ {inc} return <Btn onClick={{() => setN(n + 1)}} {{...props}} /> }}"
+        ),
+    );
+    refused(&o, "spread-handler");
+    // Spread before it, they cannot (F153c: Radix Label's `{...props} onMouseDown={…}`).
     let o = lower(
         "Q.tsx",
         &format!(
             "{STATE}import Btn from './Btn'\nexport default function Q(props: any) {{ {inc} return <Btn {{...props}} onClick={{() => setN(n + 1)}} /> }}"
         ),
     );
-    refused(&o, "spread-handler");
+    assert!(
+        !has(&o, DiagClass::Fallback, "spread-handler"),
+        "{:?}",
+        o.diags
+    );
 }
 
 #[test]

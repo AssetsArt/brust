@@ -664,6 +664,11 @@ impl Placer<'_> {
         per_item: bool,
     ) {
         use super::build_eval::{Verdict, classify};
+        // F153c review N1: a component compiled from a package's source never has a slot evaluated at build, so the
+        // authored source (as opposed to the published JS the app already imports) never runs there.
+        if crate::analyze::modules::is_package_source(&self.path) {
+            return;
+        }
         let placed = inputs.is_empty() && !state_dependent && !per_item && self.guards.is_empty();
         let (line, col) = crate::ir::line_col(self.text, r.loc);
         let candidate = |build_time: bool| crate::ir::BuildEvalSlot {

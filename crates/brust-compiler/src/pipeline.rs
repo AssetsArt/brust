@@ -50,8 +50,16 @@ pub fn compile_tree(
         artifacts: locate(lower(&root_rc, &ctx)?, &root_rc, opts, root_text.as_deref()),
         ir: root_rc.clone(),
     }];
+    // F153c: a package component compiled from source whose import fell back to the published export's island
+    // (or an island only such a component asked for) is not part of the tree: never lowered, never bundled.
+    let reachable = reachable_from(&root_rc, &by_id);
     for (_, ir) in done {
         if ir.id == root_rc.id {
+            continue;
+        }
+        if (crate::analyze::modules::is_package_source(&ir.source) || ir.external.is_some())
+            && !reachable.contains(&ir.id)
+        {
             continue;
         }
         out.push(Lowered {
@@ -60,6 +68,28 @@ pub fn compile_tree(
         });
     }
     Ok(out)
+}
+
+/// The ids of every component the tree under `root` renders: its children, the components lowered into an
+/// island's children, and linked children.
+fn reachable_from(
+    root: &Rc<ComponentIR>,
+    by_id: &HashMap<String, Rc<ComponentIR>>,
+) -> std::collections::HashSet<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![root.id.clone()];
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let Some(ir) = by_id.get(&id) else { continue };
+        for c in &ir.children {
+            stack.extend(c.id.iter().cloned());
+            stack.extend(c.nested.iter().flatten().cloned());
+        }
+        stack.extend(ir.child_links.iter().map(|l| l.child.clone()));
+    }
+    seen
 }
 
 /// Lowering diagnostics carry only a byte offset; resolve line and column from the component's source
