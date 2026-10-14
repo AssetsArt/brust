@@ -16,6 +16,7 @@ fn repo() -> PathBuf {
 struct Comp {
     id: String,
     tier: Tier,
+    unwritten: Vec<String>,
     fallbacks: Vec<String>,
 }
 
@@ -42,6 +43,7 @@ fn compile(file: &str, src: Option<&str>) -> Vec<Comp> {
             .map(|l| Comp {
                 id: l.ir.id.clone(),
                 tier: l.ir.tier.clone(),
+                unwritten: l.ir.unwritten_props.clone(),
                 fallbacks: l
                     .ir
                     .diagnostics
@@ -53,6 +55,29 @@ fn compile(file: &str, src: Option<&str>) -> Vec<Comp> {
             })
             .collect()
     })
+}
+
+/// As [`lower`], plus the route component's instance records and its template.
+fn lower_full(src: &str) -> (Vec<Comp>, Vec<brust_compiler::ir::InstanceRecord>, String) {
+    let s = src.as_bytes().to_vec();
+    let path = "crates/brust-compiler/tests/fixtures/nested-fed/P.tsx".to_string();
+    let (recs, jinja) = run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            &path,
+            Some(s),
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .expect("compiles");
+        (
+            tree[0].ir.instances.clone(),
+            tree[0].artifacts.jinja.clone(),
+        )
+    });
+    (lower(src), recs, jinja)
 }
 
 fn named<'a>(t: &'a [Comp], prefix: &str) -> &'a Comp {
@@ -71,19 +96,46 @@ fn is_react(c: &Comp) -> bool {
 }
 
 #[test]
-fn a_fed_child_inside_an_inlined_wrapper_makes_the_wrapper_an_island() {
-    let t = lower(
-        "import Wrapper from './Wrapper'\nexport default function P() { return <div><Wrapper tone=\"a\" /></div> }",
-    );
-    let w = named(&t, "wrapper_");
-    assert!(is_react(w), "{:?}", w.tier);
-    assert!(
-        w.fallbacks.contains(&"nested-instance".to_string()),
-        "{:?}",
-        w.fallbacks
+fn a_fed_child_inside_a_static_wrapper_is_rebased_onto_the_caller() {
+    // R34.96 (static-wrapper case): the wrapper has no job of its own, so the caller feeds its child: the record is
+    // the caller's, bound to what the call site passes, and the page keeps its tier.
+    let (t, recs, jinja) = lower_full(
+        "import Wrapper from './Wrapper'\nexport default function P() { return <div><Wrapper tone=\"a\" /><Wrapper /></div> }",
     );
     let p = named(&t, "p_");
-    assert!(matches!(p.tier, Tier::Static), "{:?}", p.tier);
+    assert!(!is_react(p), "{:?} {:?}", p.tier, p.fallbacks);
+    assert_eq!(recs.len(), 2, "{recs:?}");
+    assert_eq!(recs[0].k, 1);
+    assert_eq!(recs[1].k, 2);
+    assert_eq!(recs[0].literals["tone"], serde_json::json!("a"));
+    assert_eq!(recs[1].exprs["tone"], "__undefined");
+    assert!(
+        jinja.contains("__") && jinja.contains("_1[\"_s1\"]") && jinja.contains("_2[\"_s1\"]"),
+        "{jinja}"
+    );
+}
+
+#[test]
+fn a_static_wrapper_with_a_fed_child_in_a_list_makes_the_caller_an_island() {
+    let t = lower(
+        "import Wrapper from './Wrapper'\nexport default function P(props: { xs: string[] }) { return <div>{props.xs.map((x) => <Wrapper key={x} tone={x} />)}</div> }",
+    );
+    let p = named(&t, "p_");
+    assert!(is_react(p), "{:?}", p.tier);
+    assert!(
+        p.fallbacks.contains(&"nested-instance".to_string()),
+        "{:?}",
+        p.fallbacks
+    );
+}
+
+#[test]
+fn a_prop_path_is_rebased_through_the_wrapper() {
+    let (t, recs, _) = lower_full(
+        "import Wrapper from './Wrapper'\nexport default function P(props: { t: string }) { return <div><Wrapper tone={props.t} /></div> }",
+    );
+    assert!(!is_react(named(&t, "p_")), "{:?}", named(&t, "p_").tier);
+    assert_eq!(recs[0].props["tone"], Some("t".to_string()), "{recs:?}");
 }
 
 #[test]
@@ -181,4 +233,59 @@ fn the_neighbouring_valid_shapes_still_compile_as_before() {
         "{:?}",
         named(&t, "p_").tier
     );
+}
+
+// R34.83: a spread of the component's own props into a fed child records the job roots it may carry.
+
+#[test]
+fn a_spread_into_a_fed_child_records_the_roots_it_may_carry() {
+    let t = lower(
+        "import S from './SpreadWrapper'\nexport default function P() { return <div><S /></div> }",
+    );
+    let s = named(&t, "spreadWrapper_");
+    // `tone` is a job input of Cell and not a named prop of the wrapper: the spread may carry it.
+    assert_eq!(s.unwritten, vec!["tone".to_string()]);
+    assert!(
+        !s.fallbacks.contains(&"spread-props".to_string()),
+        "{:?}",
+        s.fallbacks
+    );
+}
+
+#[test]
+fn a_route_component_spreading_its_request_props_into_a_fed_child_is_refused() {
+    // As the route component its props are the request: no call site can satisfy `unwritten_props`.
+    let t = compile("RootSpread.tsx", None);
+    let r = named(&t, "rootSpread_");
+    assert!(is_react(r), "{:?}", r.tier);
+    assert!(
+        r.fallbacks.contains(&"spread-props".to_string()),
+        "{:?}",
+        r.fallbacks
+    );
+}
+
+// F169: the repeat check is transitive. A child with `useId` (or a job) handed through one more component that
+// passes `{children}` on to a repeater would print the same id in every row.
+
+#[test]
+fn a_useid_child_through_a_component_that_passes_children_to_a_repeater_falls_back() {
+    let t = lower(
+        "import Outer from './Outer'\nimport Ided from '../per-instance-jobs/Ided'\nexport default function P() { return <Outer><Ided text=\"x\" /></Outer> }",
+    );
+    let p = named(&t, "p_");
+    assert!(is_react(p), "{:?}", p.tier);
+    assert!(
+        p.fallbacks.contains(&"nested-instance".to_string()),
+        "{:?}",
+        p.fallbacks
+    );
+}
+
+#[test]
+fn plain_children_through_the_same_chain_stay_compiled() {
+    let t = lower(
+        "import Outer from './Outer'\nexport default function P() { return <Outer><b>x</b></Outer> }",
+    );
+    assert!(!is_react(named(&t, "p_")), "{:?}", named(&t, "p_").tier);
 }

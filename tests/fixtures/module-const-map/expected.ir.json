@@ -3,6 +3,7 @@
   "source": "tests/fixtures/module-const-map/input.tsx",
   "tier": "Static",
   "props": [],
+  "repeats_children": true,
   "state": [],
   "derived": [],
   "effects": [],

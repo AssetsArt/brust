@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 147 | 81 | 8 | 58 | 0 | 0 | 0 | 0 |
+| B Composition | 149 | 82 | 8 | 59 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 325 | 160 | 43 | 118 | 3 | 1 | 0 | 0 |
+| **Total** | 327 | 161 | 43 | 119 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -174,12 +174,14 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-props-default-printable | defaults the template prints exactly: literals, an earlier prop without a default, a supported call, a rename | static | static | 0 | ok | — | F161 control: the fail-closed rule does not touch a default the template can evaluate |
 | b-spread-known-shape | data-*, aria-*, boolean and style props through a child's rest spread | static | static | 0 | ok | — | shadcn S1.2 R34.15 (a): keys known at the call site expand at compile time; children from the spread are the element children |
 | b-spread-alias-known | HTML aliases at the call site into a child that writes React names after its spread | static | static | 0 | ok | — | shadcn S1.2 review F1: compile-time expansion merges on the HTML attribute too (class="x", for="a", once each) |
-| b-fed-child-in-wrapper | a wrapper component rendering a child with a job of its own (shadcn PaginationNext over PaginationLink) | static | static | ssr | ok | — | F164 R34.97: the grandchild's job has no slot key inside an inlined wrapper (F53), so the wrapper is the React island (nested-instance fallback); it was the nested-instance build error of the lowering |
+| b-fed-child-in-wrapper | a wrapper component rendering a child with a job of its own (shadcn PaginationNext over PaginationLink) | static | static | 0 | ok | — | F164 R34.97: the grandchild's job has no slot key inside an inlined wrapper (F53), so PR 1 made the wrapper the React island (nested-instance fallback); PR 2a re-bases the wrapper's child onto the caller (R34.96 static-wrapper case) and the page is static |
 | b-fed-child-nested-lists | a child with a job of its own inside two nested lists over props | react | react | ssr | ok | fallback:nested-instance | F164 R34.97: the server feeds one list level per instance; nested lists were the nested-instance build error of the manifest, now a fallback |
 | b-fed-child-prop-is-a-job-output | a prop of a child with a job of its own is computed by a call (className={cn(…)}) | react | react | ssr | ok | fallback:instance-prop-path | F164 R34.97: the value is another job's output, which the single-phase planner cannot bind; it was the instance-prop-path build error of the manifest, now a fallback |
 | b-fed-children-repeated-by-list | children with a job of their own passed to a component that repeats them in a list | react | react | ssr | ok | fallback:nested-instance | F164 R34.97 (review r1 D): slot content is printed once and pasted per row, so a job inside it would repeat; it was the lowering nested-instance error |
 | b-island-per-row-in-two-lists | a React island with a per-row prop inside two lists | react | react | ssr | ok | fallback:nested-instance | F164 R34.97 (review r1 E): the server hands an island job one array indexed by ONE list; it was the lowering nested-instance error |
 | b-island-per-row-in-inlined-component | a static wrapper mapping a React island over its own rows | static | static | ssr | ok | — | F164 R34.97 (review r1 F): a row of an inlined component has no slot key for the island job, so the wrapper is the island; it was the lowering nested-instance error |
+| b-fed-child-in-static-wrapper | a static wrapper (no job of its own) around a child with a job, used twice with a prop and without | static | static | 0 | ok | — | F164 R34.96 (static-wrapper case): the caller feeds the wrapper's child (records re-based onto it, numbered in template order); the second use passes no tone, which the server feeds as undefined like React |
+| b-fed-child-through-repeater-chain | a useId child passed through a component that hands its children to a repeater | react | react | ssr | ok | fallback:nested-instance, info:build-eval-instance | F169: the repeat check is transitive, so the same id is not printed in every row |
 | b-fed-child-local-list | a child with a job of its own in a list over a local array | static | static | 0 | ok | — | F142 R34.43: Row reads the row of a module const, so the manifest carries the rows (per-row-literal) and the server feeds one instance per row (was the instance-list-path fallback, challenge 4dc45c45) |
 | b-fed-child-row-invariant-const | a child with a job of its own, the same in every row, in a list over a module const (shadcn table) | static | static | 0 | ok | — | F142 R34.42: no prop reads the row, so the instance is fed once (static record) and its slot is read without a row index |
 | b-fed-child-row-invariant-inline | a child with a job of its own, the same in every row, in a list over an inline array (shadcn carousel) | static | static | 0 | ok | — | F142 R34.42: an inline array literal is the same case |

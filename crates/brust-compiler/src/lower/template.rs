@@ -184,6 +184,9 @@ pub struct Printer<'a, 'c> {
     prop_seen: std::cell::RefCell<BTreeSet<String>>,
     /// Host attributes of an inlined instance (`x-data`, `x-props-bind`).
     inline_host: Option<(String, Option<String>)>,
+    /// The component whose `instances` records feed the slots this printer reads: the route-level component, also
+    /// for the printers of the components inlined into it (F164, R34.96 re-base).
+    inst_ir: &'c ComponentIR,
     /// Instances inlined so far, by child id.
     instances: HashMap<String, u32>,
     /// SSR outputs used so far, by child id.
@@ -209,6 +212,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         Some(Printer {
             ctx,
             f: Facts::new(ir, structural),
+            inst_ir: ir,
             native: !matches!(ir.tier, Tier::Static) || (ctx.linked)(&ir.id),
             inline,
             loop_var,
@@ -1664,7 +1668,16 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
             return;
         };
-        if self.inline.is_some() && is_fed(child_ir) {
+        // A static wrapper's fed child was re-based onto the component the instance records belong to (analysis,
+        // `children.rs` rebase): its record is there, numbered with the shared counter.
+        let rebased = {
+            let next = self.instances.get(&id).copied().unwrap_or(0) + 1;
+            self.inst_ir
+                .instances
+                .iter()
+                .any(|r| r.child_id == id && r.k == next)
+        };
+        if self.inline.is_some() && is_fed(child_ir) && !rebased {
             // The slot key is built from this printer's own counters and frames, which restart
             // inside an inlined child: instances of such a grandchild would collide.
             self.diagnostics.push(Diagnostic::error(
@@ -1758,7 +1771,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             });
         // A row-invariant instance (F142, R34.42) is fed once: its record has no loops, and its
         // slot is read without the row index.
-        let invariant = ir
+        let invariant = self
+            .inst_ir
             .instances
             .iter()
             .any(|r| r.child_id == id && r.k == k && r.loops.is_empty());
@@ -1770,7 +1784,8 @@ impl<'a, 'c> Printer<'a, 'c> {
         // The server numbers an instance by its record's position among this child's records
         // (brust-core `pipeline.rs` ordinal); an instance the build evaluated has no record (F149),
         // so the ones after it move up.
-        let ordinal = ir
+        let ordinal = self
+            .inst_ir
             .instances
             .iter()
             .filter(|r| r.child_id == id && r.k <= k)
@@ -1782,7 +1797,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             slot_loops,
             suffix: format!("_{}{k}", short(&id)),
             as_child,
-            folded: ir
+            folded: self
+                .inst_ir
                 .folded_instances
                 .iter()
                 .find(|f| f.child_id == id && f.k == k)
@@ -1792,6 +1808,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             return;
         };
         p.blank = self.blank;
+        // The inlined component numbers its fed children with this printer's counters (F164 re-base).
+        p.inst_ir = self.inst_ir;
+        p.instances = std::mem::take(&mut self.instances);
         p.native = !matches!(child_ir.tier, Tier::Static) || bind.is_some();
         p.inline_host = Some((child_ir.id.clone(), bind));
         p.preamble();
@@ -1802,6 +1821,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.out.push_str(&p.out);
         self.diagnostics.append(&mut p.diagnostics);
+        self.instances = std::mem::take(&mut p.instances);
     }
 
     /// The child element of a call with a literal `asChild` (R34.29 b), printed in this scope. The
