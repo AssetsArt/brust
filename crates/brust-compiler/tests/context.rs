@@ -552,3 +552,42 @@ fn a_call_site_prop_with_the_exact_hidden_name_fails_closed() {
         );
     }
 }
+
+/// F174 (PR 1c): a module function the compiler PROVES returns a primitive (a literal, a template, an operator or a
+/// conversion over plain values, other proven helpers) may be called under a Provider; one that can return an element,
+/// an object, a function or a member of its argument cannot, nor can one that calls such a helper.
+#[test]
+fn a_helper_proven_to_return_a_primitive_may_be_read_under_a_provider() {
+    let (ir, _) = page("ph-plain.tsx");
+    assert!(!is_react(&ir), "{:?} {:?}", ir.tier, ir.diagnostics);
+    let all = compile_all("ph-plain.tsx");
+    let panel = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("panel_"))
+        .expect("panel");
+    assert!(
+        !rules(&panel.1).contains(&"jsx-const-child"),
+        "{:?}",
+        panel.1.diagnostics
+    );
+    assert!(!is_react(&panel.1), "{:?}", panel.1.tier);
+    for f in [
+        "ph-jsx.tsx",
+        "ph-obj.tsx",
+        "ph-member.tsx",
+        "ph-closure.tsx",
+        "ph-chain.tsx",
+    ] {
+        let all = compile_all(f);
+        let panel = all
+            .iter()
+            .find(|(id, ..)| id.starts_with("panel_"))
+            .expect("panel");
+        assert!(
+            rules(&panel.1).contains(&"jsx-const-child"),
+            "{f}: {:?}",
+            panel.1.diagnostics
+        );
+        assert!(is_react(&panel.1), "{f}: {:?}", panel.1.tier);
+    }
+}
