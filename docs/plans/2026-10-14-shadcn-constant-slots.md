@@ -2,7 +2,7 @@
 
 owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Guetta · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F152 (next free)
 
-Author: Guetta. Status: **DRAFT, awaiting the lead's ruling.** Base: origin/main fc7e2f91. Numbers are from `docs/shadcn-coverage.md` at that commit (62 of 64 pages built: 55 static, 1 native, 6 react; 2 refused). R-numbers continue after R34.48 (per-instance-jobs).
+Author: Guetta. Status: **RULED 2026-10-14 (see §10); lane may start.** Base: origin/main fc7e2f91. Numbers are from `docs/shadcn-coverage.md` at that commit (62 of 64 pages built: 55 static, 1 native, 6 react; 2 refused). R-numbers continue after R34.48 (per-instance-jobs).
 
 What is **confirmed** (read from the generated doc, the fixture sources, or measured on the island-children lane build) and what is **inferred** (read from source, not built on current main) is marked in every claim. The lane's first step turns each inferred row into a measured one; the PR reports any row that does not move.
 
@@ -135,3 +135,16 @@ Gates (targeted): `cargo test -p brust-compiler`; `packages/brust` typecheck + i
 - **Q4 Refusals (calendar, form).** Make `island-prop` demote the host to React instead of failing the build, as a separate small lane (candidate 4)? Recommended: yes, separately, after this lane; it is a semantics change on a hard error and deserves its own ruling and battery rows.
 - **Q5 Element-valued props on host elements.** Not supported (React does not render them). Confirm that stays out.
 - **Q6 F149 (`cn`/`cva` fold).** Keep it as candidate 3 after this lane? It reuses the folder (`cn(<literals>)` is a call the folder could learn), so doing it after R34.49 avoids a second evaluator.
+
+## 10. Lead ruling (2026-10-14)
+
+The design in §3 is accepted: one closed-subset folder that interprets the IR and never runs user code, used for lists, constant conditions and element-valued props inside lowered children; `json_literal` becomes `fold` with an empty `Env`. Rulings on §9:
+
+- **Q1 Order: this lane first, and the package-leaf spike runs NOW in parallel**, not after. The human's standing order is to compile external libraries rather than port them (shadcn plan, amendment "compile external libraries"), and candidate 2 is the largest byte lever, so its evidence must not wait. The spike is read-only (no product change), time-boxed to one working session, owned by **knock2** (who built the package-export path in member-tag), and answers on a task note: can the compiler analyse a published Radix leaf (`@radix-ui/react-label`, `react-separator`, `react-aspect-ratio`) from (a) source-map `sourcesContent`, (b) the published ESM `jsx()` output, or both; which packages in the fixture publish (a); and what the analyser needs for `Primitive.*` + `forwardRef`. The package-leaf plan is drafted from that answer.
+- **Q2 Folder scope: as written.** Every fail-closed message names the construct, so widening is data-driven. Module consts resolve within the same module only in v1.
+- **Q3 Unroll at compile time.** No runtime `map` marker.
+- **Q4 island-prop demotion: yes, as its own small lane**, drafted now by **Tiësto** for a separate ruling (semantics change on a hard error: demote the host to React, as every other unsupported shape does, so calendar and form build).
+- **Q5 Element-valued props on host elements: out**, confirmed.
+- **Q6 F149 (`cn`/`cva` fold): after this lane**, reusing the folder; no second evaluator.
+
+Additional ruling: the `x` list is the ONLY revive switch for element props; the hostile-input tests in §5 (forged `x`, `$brust` in data props) are gates, not reports.
