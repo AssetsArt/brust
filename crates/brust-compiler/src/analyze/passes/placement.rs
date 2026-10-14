@@ -341,7 +341,7 @@ fn lazy_init(p: &Placer<'_>, r: &RawExpr, module_decls: &[crate::ir::ModuleDecl]
 }
 
 /// Every `Precomputed` in the IR: (slot, inputs, state_dependent).
-fn collect_slots(ir: &ComponentIR, f: &mut impl FnMut(&str, &[String], bool)) {
+pub(super) fn collect_slots(ir: &ComponentIR, f: &mut impl FnMut(&str, &[String], bool)) {
     fn expr(e: &Expr, f: &mut impl FnMut(&str, &[String], bool)) {
         if let Expr::Precomputed {
             slot,
@@ -789,6 +789,11 @@ impl Placer<'_> {
 
     /// A prop passed to a child: functions are client-only, values are painted.
     fn child_prop(&mut self, r: &RawExpr) -> Expr {
+        // An element as a prop (`content={<Badge/>}`): kept as written. `children` lowers it for a
+        // React island and flags `jsx-expression` for any other child (shadcn S1, R34.52).
+        if matches!(r.kind, RawKind::Jsx(_)) {
+            return Expr::Raw(r.clone());
+        }
         if self.is_function(r, 0) {
             self.reactive += 1;
             if contains_jsx(r) {

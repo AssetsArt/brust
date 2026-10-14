@@ -1,10 +1,10 @@
 import { Card } from './ui'
 
-export default function Page() {
+export default function Page({ xs }: { xs: string[] }) {
   return (
     <Card title="a">
       <ul>
-        {['a', 'b'].map((x) => (
+        {xs.map((x) => (
           <li key={x}>{x}</li>
         ))}
       </ul>
