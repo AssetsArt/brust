@@ -668,6 +668,10 @@ fn an_allowlisted_method_on_a_user_defined_receiver_falls_back() {
         "plain-method-via-from-entries-local.tsx",
         // A proven helper returning a method of its argument: the argument must be an accepted receiver too.
         "plain-method-via-helper.tsx",
+        // Mellow F2: a list item is a receiver only when its list is (a local, an inline and a module const list).
+        "plain-method-loop-local.tsx",
+        "plain-method-loop-inline.tsx",
+        "plain-method-loop-module.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(

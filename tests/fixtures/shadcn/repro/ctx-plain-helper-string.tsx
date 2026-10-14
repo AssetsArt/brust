@@ -12,12 +12,10 @@ function Wrap({ children }: { children?: React.ReactNode }) {
   return <section>{children}</section>
 }
 
-const ROWS: Entry[] = [{ name: 'a', note: 'spec §1: plain a' }]
-
-export default function Page() {
+export default function Page({ rows = [{ name: 'a', note: 'spec §1: plain a' }] }: { rows?: Entry[] }) {
   return (
     <Wrap>
-      {ROWS.map((e) => (
+      {rows.map((e) => (
         <p key={e.name}>
           {plainNote(e)}
           {pretty('fallback:x')}

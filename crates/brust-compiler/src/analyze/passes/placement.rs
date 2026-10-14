@@ -49,6 +49,10 @@ struct List {
     paths: Vec<String>,
     /// The source reads state or a store, so the list changes on the client.
     stateful: bool,
+    /// F173 (Mellow F2): the source as written and the index binding: an item is an accepted method receiver only when
+    /// its list is (`Placer::receiver_problem`), an index always is (a number).
+    source: Option<RawExpr>,
+    index: Option<String>,
 }
 
 /// `why` of an `Opaque` the reader made from a function.
@@ -754,10 +758,20 @@ impl Placer<'_> {
             },
             RawKind::Cond { test, yes, no } => judged(test).or_else(|| go(yes)).or_else(|| go(no)),
             RawKind::Ident { name, kind } => match kind {
-                IdentKind::Prop
-                | IdentKind::State
-                | IdentKind::Store { .. }
-                | IdentKind::LoopBinding => None,
+                IdentKind::Prop | IdentKind::State | IdentKind::Store { .. } => None,
+                // Mellow F2: a list item carries what its list holds (`[{ toString: fmt }].map((r) => r.toString())`).
+                IdentKind::LoopBinding => match self
+                    .lists
+                    .iter()
+                    .rev()
+                    .find(|l| &l.item == name || l.index.as_ref() == Some(name))
+                {
+                    Some(l) if l.index.as_ref() == Some(name) => None,
+                    Some(List {
+                        source: Some(src), ..
+                    }) => go(src).map(|_| name.clone()),
+                    _ => Some(name.clone()),
+                },
                 IdentKind::Local => match self.derived_raw.get(name) {
                     Some(d) => {
                         let key = format!("receiver {name}");
@@ -1389,6 +1403,8 @@ impl Placer<'_> {
                     item: item.clone(),
                     paths: minimal_paths(src_deps.props.iter().chain(&src_deps.stores).cloned()),
                     stateful: src_deps.reactive() || self.lists.last().is_some_and(|l| l.stateful),
+                    source: src_raw.clone(),
+                    index: index.clone(),
                 });
                 self.expr(key);
                 body.iter_mut().for_each(|c| self.node(c));
