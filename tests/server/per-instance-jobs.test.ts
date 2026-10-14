@@ -1,4 +1,4 @@
-// F142 (plan 2026-10-14-shadcn-per-instance-jobs, R34.42/R34.47): shadcn's table page maps a module const into
+// F142 (plan 2026-10-14-shadcn-per-instance-jobs, R34.42/R34.43/R34.47): shadcn's table page maps a module const into
 // TableRow/TableCell, components with a job of their own (`cn`) whose props never read the row. Each instance is fed
 // once (a static record) instead of falling back to React. The page is built AND started (brust start validates
 // the manifest the generator never loads) and its HTML equals React's renderToStaticMarkup of the same page. Run
@@ -9,7 +9,7 @@ import { join } from 'node:path'
 
 const app = join(import.meta.dir, '../fixtures/shadcn')
 const dist = '.rows/dist-started-table'
-const entry = 'started/table-routes.tsx'
+const entry = 'started/routes.tsx'
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
 let proc: ReturnType<typeof Bun.spawn>
 let base = ''
@@ -37,9 +37,17 @@ afterAll(async () => {
   rmSync(join(app, dist), { recursive: true, force: true })
 })
 
+/** React's server render of a fixture page, from the fixture (its own react / react-dom). */
+function react(file: string): string {
+  const code = `import { renderToStaticMarkup } from 'react-dom/server'; import { createElement } from 'react'; import Page from './${file}'; process.stdout.write(renderToStaticMarkup(createElement(Page)))`
+  const r = Bun.spawnSync([process.execPath, '-e', code], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  if (r.exitCode !== 0) throw new Error(r.stderr.toString())
+  return r.stdout.toString()
+}
+
 test('the table page is static, fed once per instance, and starts', () => {
   const m = JSON.parse(readFileSync(join(app, dist, 'manifest.json'), 'utf8'))
-  const comps = Object.values(m.components) as any[]
+  const comps = (Object.entries(m.components) as [string, any][]).filter(([id]) => !id.startsWith('badge')).map(([, c]) => c)
   // Every component static, no client chunk: the page loads no JS.
   expect(comps.map((c) => c.tier).every((t) => t === 'static')).toBe(true)
   expect(comps.every((c) => c.client === null)).toBe(true)
@@ -56,11 +64,26 @@ test("the served HTML equals React's for the same page", async () => {
   const end = html.indexOf('</table></div>', start) + '</table></div>'.length
   expect(start).toBeGreaterThan(-1)
   const ours = html.slice(start, end)
-  const code = `import { renderToStaticMarkup } from 'react-dom/server'; import { createElement } from 'react'; import Page from './pages/table.tsx'; process.stdout.write(renderToStaticMarkup(createElement(Page)))`
-  const r = Bun.spawnSync([process.execPath, '-e', code], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
-  if (r.exitCode !== 0) throw new Error(r.stderr.toString())
-  expect(ours).toBe(r.stdout.toString())
+  expect(ours).toBe(react('pages/table.tsx'))
   // Both rows are there, each cell with its own class.
   expect(ours.match(/<tr data-slot="table-row"/g)?.length).toBe(3)
   expect(ours).toContain('INV002')
+})
+
+test("a constant list's rows feed a row-reading child per row (per-row-literal), HTML equal to React's", async () => {
+  const m = JSON.parse(readFileSync(join(app, dist, 'manifest.json'), 'utf8'))
+  const page = (Object.entries(m.components) as [string, any][]).find(([id]) => id.startsWith('badges_'))![1]
+  expect(page.tier).toBe('static')
+  const rec = page.children.find((c: any) => c.id.startsWith('badge_'))
+  expect(rec.instances).toBe('per-row-literal')
+  expect(rec.rows.map((r: any) => r.variant)).toEqual(['default', 'secondary', 'destructive'])
+  const html = await (await fetch(`${base}/badges`)).text()
+  const start = html.indexOf('<div class="flex gap-2">')
+  const end = html.indexOf('</div>', start) + '</div>'.length
+  expect(start).toBeGreaterThan(-1)
+  const ours = html.slice(start, end)
+  expect(ours).toBe(react('started/badges.tsx'))
+  // Each row got its own variant's class.
+  expect(ours.match(/data-slot="badge"/g)?.length).toBe(3)
+  expect(ours).toContain('bg-destructive')
 })
