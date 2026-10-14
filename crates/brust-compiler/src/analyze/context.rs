@@ -168,3 +168,9 @@ pub fn provider_problem(ir: &crate::ir::ComponentIR) -> Option<(u32, String)> {
     }
     None
 }
+
+/// F1 (Mellow): a context field becomes part of an identifier (`__ctx_<ctx>_<field>`) in the job module and the
+/// template, so a key that is not a plain identifier (`'x-y'`) would print as an expression. Same rule as props.
+pub fn field_problem(field: &str) -> Option<&'static str> {
+    crate::analyze::names::template_name_problem(field).map(|(_, what)| what)
+}

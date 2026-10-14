@@ -242,3 +242,57 @@ fn a_provider_that_hands_out_state_stays_an_island_and_the_page_stays_static() {
     let page = tier("stateProvider_");
     assert!(!is_react(&page), "{:?} {:?}", page.tier, page.diagnostics);
 }
+
+/// Mellow F1: a context field is part of an identifier, so a key that is not a plain identifier (`'x-y'`) is refused by
+/// a named fallback on whichever side writes it, never printed (`const { __ctx_Ctx_x-y } = props`).
+#[test]
+fn a_context_field_that_is_not_a_plain_identifier_is_refused_by_name() {
+    let all = compile_all("field-job.tsx");
+    let shapes = all
+        .iter()
+        .filter(|(_, ir, ..)| rules(ir).contains(&"context-shape"))
+        .count();
+    assert!(
+        shapes >= 1,
+        "{:?}",
+        all.iter()
+            .map(|(i, ir, ..)| (i, rules(ir)))
+            .collect::<Vec<_>>()
+    );
+    for (id, _, jinja, ts) in &all {
+        assert!(
+            !jinja.contains("x-y") || jinja.contains("brust-island"),
+            "{id}: {jinja}"
+        );
+        assert!(
+            ts.as_deref()
+                .is_none_or(|t| !t.contains("__ctx_") || !t.contains("x-y")),
+            "{id}"
+        );
+    }
+    // The control with a plain key compiles.
+    let (ir, _) = page("field-ok.tsx");
+    assert!(
+        !is_react(&ir) && ir.diagnostics.is_empty(),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
+}
+
+/// Mellow F2: a context is the declaring module AND its name. Two modules each declare `Ctx`: a consumer of B's never
+/// reads A's Provider (React reads B's default).
+#[test]
+fn a_context_with_the_same_local_name_in_another_module_is_another_context() {
+    let (ir, jinja) = page("same-name.tsx");
+    assert!(
+        !jinja.contains("from-A"),
+        "A's value must not reach B's consumer: {jinja}"
+    );
+    assert!(
+        rules(&ir).contains(&"context-no-provider"),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(is_react(&ir), "{:?}", ir.tier);
+}

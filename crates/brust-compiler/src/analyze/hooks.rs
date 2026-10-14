@@ -785,6 +785,15 @@ fn read_context_use(
                     return;
                 };
                 let field = crate::analyze::expr::estring(key);
+                if let Some(what) = crate::analyze::context::field_problem(&field) {
+                    out.fallback(
+                        "context-shape",
+                        format!("the context field `{field}` {what}"),
+                        vloc,
+                        "rename the field to a plain identifier, or keep this component in React",
+                    );
+                    return;
+                }
                 r.names.note_ctx_field(ctx, &field);
                 r.names
                     .bind_prop_local(id.r#ref, &crate::ir::ctx_prop(ctx, &field));

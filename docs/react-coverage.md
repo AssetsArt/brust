@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 151 | 88 | 8 | 55 | 0 | 0 | 0 | 0 |
+| B Composition | 153 | 89 | 8 | 56 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 329 | 167 | 43 | 115 | 3 | 1 | 0 | 0 |
+| **Total** | 331 | 168 | 43 | 116 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -167,6 +167,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-no-provider | a consumer with no Provider above it, at the route | react | react | ssr | ok | fallback:context-no-provider | S2 context-no-provider: fail closed (the default of a createContext is not read in v1) |
 | b-context-escape | a context value used as a whole | static | static | ssr | ok | — | S2 context-escape: the consumer reads the whole object, so it is a React island (the page stays static) |
 | b-context-scalar-value | a Provider whose value is not an object literal | static | static | ssr | ok | — | S2 context-value: the Provider is a React island (the page stays static) |
+| b-context-same-name | two modules each declare their own Ctx; a consumer of B under A's Provider | react | react | ssr | ok | fallback:context-no-provider | Mellow F2: a context is (declaring module, name); B reads its own default in React, never A's value (context-no-provider, fail closed) |
+| b-context-field-quoted | a context field that is not a plain identifier ('x-y') | static | static | ssr | ok | — | Mellow F1 context-shape: the field is part of an identifier (__ctx_Ctx_x-y was a syntax error / a subtraction); the components are React islands now (the page stays static) |
 | b-context-console-if | an if whose branches only call console.* | static | static | 0 | ok | — | S2 R34.104: a diagnostic-only statement is not part of the render (Radix Progress validates its props this way) |
 | b-props-quoted-key | a quoted hyphen key bound to a local in the props pattern | static | static | ssr | ok | — | F161 prop-quoted-key: the template read `data-x` as a subtraction and every render failed (500); the component is a React island now (the page stays static). Native support is a later F-row |
 | b-props-jinja-own-name | a prop named loop (a name the server template binds itself) | static | static | ssr | ok | — | props-pattern N2, prop-jinja-name: loop, range, namespace, caller and self shadow template names; the component is a React island now |

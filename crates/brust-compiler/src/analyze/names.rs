@@ -568,6 +568,27 @@ impl<'a> NameTable<'a> {
         self.contexts.react.get(&self.key(r)).map(String::as_str)
     }
 
+    /// F2 (Mellow): a context is identified by the module that declares it AND its local name, never the name alone
+    /// (`Ctx` recurs across modules and packages). The tag is a hash of the module path only (no package-controlled
+    /// text in it), appended to every context name of this module, so `__ctx_<name>_<tag>_<field>` cannot collide.
+    pub fn tag_contexts(&mut self, module_path: &str) {
+        let mut h: u32 = 0x811c9dc5;
+        for b in module_path.bytes() {
+            h ^= u32::from(b);
+            h = h.wrapping_mul(0x0100_0193);
+        }
+        let tag = format!("m{h:08x}");
+        for m in [
+            &mut self.contexts.providers,
+            &mut self.contexts.hooks,
+            &mut self.contexts.react,
+        ] {
+            for v in m.values_mut() {
+                *v = format!("{v}_{tag}");
+            }
+        }
+    }
+
     /// A destructured context field (`const { value } = useXContext(…)`): the local reads the hidden prop.
     pub fn bind_prop_local(&mut self, r: js_ast::Ref, prop: &str) {
         let k = self.key(r);

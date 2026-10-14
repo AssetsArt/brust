@@ -577,6 +577,18 @@ fn read_provider(
     loc: u32,
 ) {
     let mut fields: Vec<(String, RawExpr)> = Vec::new();
+    let check = |r: &mut Reader<'_, '_>, k: &str| match crate::analyze::context::field_problem(k) {
+        Some(what) => {
+            r.diagnostics.push(Diagnostic::fallback(
+                "context-shape",
+                format!("the context field `{k}` {what}"),
+                loc,
+                "rename the field to a plain identifier, or keep this component in React",
+            ));
+            false
+        }
+        None => true,
+    };
     if react {
         let value = props
             .into_iter()
@@ -589,7 +601,13 @@ fn read_provider(
             Some(RawExpr {
                 kind: RawKind::Object(entries),
                 ..
-            }) => fields = entries,
+            }) => {
+                for (k, v) in entries {
+                    if check(r, &k) {
+                        fields.push((k, v));
+                    }
+                }
+            }
             _ => r.diagnostics.push(Diagnostic::fallback(
                 "context-value",
                 "a context Provider's `value` is not an object literal with plain keys",
@@ -602,7 +620,9 @@ fn read_provider(
             if k == "scope" || k == crate::ir::SPREAD_KEY {
                 continue;
             }
-            if let Expr::Raw(raw) = e {
+            if let Expr::Raw(raw) = e
+                && check(r, &k)
+            {
                 fields.push((k, raw));
             }
         }

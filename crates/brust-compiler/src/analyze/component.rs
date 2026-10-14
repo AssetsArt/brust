@@ -417,6 +417,7 @@ fn read_function_as(
 ) {
     crate::analyze::expr::take_printer_panic(); // a flag left by an earlier component is not ours
     let mut names = NameTable::new(ast, func);
+    names.tag_contexts(&ir.source);
     if forwards_ref {
         ir.forwards_ref = true;
         if let Some(a) = func.args.slice().get(1) {

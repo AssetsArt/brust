@@ -97,6 +97,14 @@ impl<'r, 'a> Reader<'r, 'a> {
                     && let Some(ctx) = self.names.ctx_local(t.ref_).map(str::to_string) =>
             {
                 let field = String::from_utf8_lossy(d.name.slice()).into_owned();
+                if let Some(what) = crate::analyze::context::field_problem(&field) {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "context-shape",
+                        format!("the context field `{field}` {what}"),
+                        loc,
+                        "rename the field to a plain identifier, or keep this component in React",
+                    ));
+                }
                 self.names.note_ctx_field(&ctx, &field);
                 RawKind::Ident {
                     name: crate::ir::ctx_prop(&ctx, &field),
