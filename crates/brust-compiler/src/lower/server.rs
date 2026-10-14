@@ -228,9 +228,9 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
             .join(", ")
     ));
     out.push_str("export function precompute(props: any) {\n");
-    // Props by local name (a renamed prop: `title: heading`). The server hands a prop the call site
-    // left out as `null` (JSON has no `undefined`), so a default applies to `null` too (`??`);
-    // props without a default are destructured as they are.
+    // Props by local name (a renamed prop: `title: heading`). A prop the call site left out is absent
+    // (brust-core leaves a missing input out, F149/F151), so a default is the JS destructuring default:
+    // it applies to `undefined` only, and an explicit `null` stays `null`, as in React.
     let mut run: Vec<String> = Vec::new();
     let flush = |out: &mut String, run: &mut Vec<String>| {
         if !run.is_empty() {
@@ -252,8 +252,13 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
         match f.prop_defaults.get(p) {
             Some(d) => {
                 flush(&mut out, &mut run);
+                let binding = if local == *p {
+                    p.clone()
+                } else {
+                    format!("{p}: {local}")
+                };
                 out.push_str(&format!(
-                    "  const {local} = props.{p} ?? ({})\n",
+                    "  const {{ {binding} = ({}) }} = props\n",
                     server_js(d, &f)
                 ));
             }

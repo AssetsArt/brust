@@ -136,11 +136,11 @@ fn prop_defaults_apply_everywhere() {
         "{}",
         a.jinja
     );
-    // The server hands an omitted prop as null (JSON has no undefined): the default applies to null too.
+    // F151: an omitted prop reaches the job absent, so the default is JS's (undefined only), as on the client.
     assert!(
         a.server_ts
             .unwrap()
-            .contains("const size = props.size ?? (3)")
+            .contains("const { size = (3) } = props")
     );
     assert!(
         a.client_js

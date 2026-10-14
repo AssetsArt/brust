@@ -144,9 +144,11 @@ fn the_recompile_prints_the_values_and_drops_the_record() {
         jinja.contains("inline-flex rounded-full bg-secondary"),
         "{jinja}"
     );
+    // The server numbers the remaining records by position (brust-core ordinal): the second call site's
+    // record is now the first, so its slots are `__<child>_1`.
     let child = &root.folded_instances[0].child_id;
-    assert!(!jinja.contains(&format!("__{child}_1")), "{jinja}");
-    assert!(jinja.contains(&format!("__{child}_2")), "{jinja}");
+    assert!(jinja.contains(&format!("__{child}_1")), "{jinja}");
+    assert!(!jinja.contains(&format!("__{child}_2")), "{jinja}");
     let out = render(jinja);
     assert!(
         out.contains(r#"class="inline-flex rounded-full bg-secondary""#),

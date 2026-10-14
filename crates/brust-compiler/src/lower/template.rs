@@ -1767,10 +1767,18 @@ impl<'a, 'c> Printer<'a, 'c> {
         } else {
             (loops, slot_loops)
         };
+        // The server numbers an instance by its record's position among this child's records
+        // (brust-core `pipeline.rs` ordinal); an instance the build evaluated has no record (F149),
+        // so the ones after it move up.
+        let ordinal = ir
+            .instances
+            .iter()
+            .filter(|r| r.child_id == id && r.k <= k)
+            .count();
         let inline = Inline {
             segs,
             bind: bind.clone(),
-            slots: format!("__{id}_{k}{loops}"),
+            slots: format!("__{id}_{ordinal}{loops}"),
             slot_loops,
             suffix: format!("_{}{k}", short(&id)),
             as_child,

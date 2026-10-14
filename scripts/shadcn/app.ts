@@ -63,6 +63,10 @@ export interface Measured {
   files: { name: string; raw: number; gzip: number }[]
   /** files of the dist (client chunks and jobs.js) that carry Radix's Slot: an `asChild` page that was resolved at its call site ships none (S1.4 R34.33) */
   slotFiles: string[]
+  /** F149 (R34.94): the worker job calls one request of the page plans: the page's own jobs (an island's SSR included)
+   * plus one per instance record of a child with a job or `useId` values (a per-row record counted once). 0 = the page
+   * is answered without the worker. */
+  workerCalls: number
 }
 
 /** The build error of a refused page: `error <rule> <file>:<line>:<col> <message>` split into its parts. */
@@ -156,7 +160,7 @@ export function buildPage(id: string): AppRow['build'] {
 
 type Manifest = {
   routes: { chain: string[] }[]
-  components: Record<string, { tier: 'static' | 'native' | 'react'; template: string; client: string | null; children: { id: string }[]; features?: string[] }>
+  components: Record<string, { tier: 'static' | 'native' | 'react'; template: string; client: string | null; children: { id: string }[]; features?: string[]; jobs: unknown[]; use_id_slots?: number }>
   assets: { runtime: string; features?: Record<string, string> }
 }
 
@@ -177,6 +181,10 @@ export function measureDist(out: string): Measured {
   const features = new Set<string>()
   let islands = 0
   let nativeChunks = 0
+  // The core plans the chain component's own jobs, and one job set per record of its children whose component has jobs
+  // or ids (an inlined child's own records are not planned: the page's records are flat).
+  const fed = (id: string) => (m.components[id]?.jobs.length ?? 0) > 0 || (m.components[id]?.use_id_slots ?? 0) > 0
+  const workerCalls = m.components[root]!.jobs.length + m.components[root]!.children.filter((ch) => fed(ch.id)).length
   // An island instance is a `<brust-island data-id=…>` in a template; static and native components are walked through
   // their templates and their child records.
   const walk = (id: string): void => {
@@ -230,6 +238,7 @@ export function measureDist(out: string): Measured {
     jsGzip: files.reduce((n, f) => n + f.gzip, 0),
     files,
     slotFiles,
+    workerCalls,
   }
 }
 

@@ -96,6 +96,19 @@ impl Path {
         cur
     }
 
+    /// The value at this path, `None` when a segment is absent (JS `undefined`), or for `[idx]` without a row.
+    pub fn find<'v>(&self, ctx: &'v Node, idx: Option<usize>) -> Option<&'v Node> {
+        let mut cur = ctx;
+        for seg in &self.0 {
+            cur = match seg {
+                Seg::Key(k) => cur.get(k)?,
+                Seg::Index(i) => cur.index(*i)?,
+                Seg::Idx => cur.index(idx?)?,
+            };
+        }
+        Some(cur)
+    }
+
     fn has_idx(&self) -> bool {
         self.0.contains(&Seg::Idx)
     }
@@ -173,6 +186,11 @@ impl Projection {
         }
         let mut out = MapInner::new();
         for (p, keys) in &self.kept {
+            // F149: an input the props do not have stays absent (JS `undefined`, as React passes an omitted prop),
+            // never `null`: `cva` reads an explicit `null` as "no variant" and skips its default.
+            let Some(value) = p.find(ctx, idx) else {
+                continue;
+            };
             let (last, prefix) = keys.split_last().expect("parsed path is non-empty");
             let mut node = &mut out;
             for k in prefix {
@@ -184,7 +202,7 @@ impl Projection {
                 node = slot.map_mut().expect("projection prefix is an object");
             }
             // An Arc bump for a map/array/string: the context's value is shared.
-            node.insert(Arc::from(last.as_str()), p.get(ctx, idx).clone());
+            node.insert(Arc::from(last.as_str()), value.clone());
         }
         Ok(Node::map(out))
     }
@@ -298,7 +316,12 @@ impl PropsMap {
                             "child prop {name:?} = {src:?}: [idx] outside a per-row instance"
                         ));
                     }
-                    p.get(parent_ctx, idx).clone()
+                    // F149/F151: a parent path the context lacks is a prop the child does not get (JS
+                    // `undefined`, as React passes it), never `null`.
+                    match p.find(parent_ctx, idx) {
+                        Some(v) => v.clone(),
+                        None => continue,
+                    }
                 }
                 Bound::Lit(n) => n.clone(),
                 Bound::Expr(e, src) => {
@@ -531,6 +554,26 @@ mod tests {
             .collect();
         assert!(child_props(&c, &props, None).is_err());
         assert_eq!(child_props(&c, &props, Some(0)).unwrap(), n(json!({"x":1})));
+    }
+
+    #[test]
+    fn a_missing_input_stays_absent_and_an_explicit_null_stays_null() {
+        // F149: an omitted prop reaches the job as `undefined` (React's value), not `null`.
+        let ctx = n(json!({"a": 1, "n": null, "o": {}}));
+        let inputs: Vec<String> = ["a", "n", "gone", "o.x", "deep.y"].map(String::from).into();
+        assert_eq!(
+            project(&ctx, &inputs, None).unwrap(),
+            n(json!({"a": 1, "n": null}))
+        );
+        // A child prop bound to a parent path the context lacks is not passed either.
+        let props = [("x", "a"), ("y", "gone"), ("z", "n")]
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .into_iter()
+            .collect();
+        assert_eq!(
+            child_props(&ctx, &props, None).unwrap(),
+            n(json!({"x": 1, "z": null}))
+        );
     }
 
     #[test]
