@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-10', title: '2.0.0-alpha.10' },
       { id: 'alpha-9', title: '2.0.0-alpha.9' },
       { id: 'alpha-8', title: '2.0.0-alpha.8' },
       { id: 'alpha-7', title: '2.0.0-alpha.7' },
@@ -32,6 +33,46 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-10">2.0.0-alpha.10 · 14 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.9: #222–#226 (F153b parts 3–4, hardening batch, F149, F164 PR 1) */}
+      <p>Mostly fixes: pages that rendered the wrong classes or text, builds that failed on valid React, and one security hardening. Upgrading is recommended.</p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #225 (F149 + challenge 9b2a99a9): brust-core projected a missing job input as null; cva treats null as "no variant" */}
+        <li>
+          <strong>A component built with <code>cva</code> gets its default classes when you omit a variant.</strong> A shadcn-style <code>&lt;Alert&gt;</code> or <code>&lt;Badge&gt;</code> without a <code>variant</code> prop was rendered by the server without its <code>defaultVariants</code> classes, because a missing prop reached the class function as <code>null</code> instead of <code>undefined</code>. It now matches React, including nested props, explicit <code>null</code>, default parameters and <code>??</code>.
+        </li>
+        {/* source: PR #223 (F168, found by Afrojack in review) */}
+        <li>
+          <strong>A prop named <code>loop</code>, <code>range</code>, <code>namespace</code>, <code>caller</code> or <code>self</code> renders its value.</strong> Read as <code>props.loop</code> (or <code>rest.self</code>), it printed the server template&rsquo;s own object, such as <code>&lt;loop 0/2&gt;</code>. Those reads now render with React.
+        </li>
+        {/* source: PR #226 (F164 PR 1, R34.97) */}
+        <li>
+          <strong>Valid React no longer stops the build with <code>nested-instance</code> or <code>instance-prop-path</code>.</strong> Shapes such as <code>&lt;Button className={'{'}cn('a', props.x){'}'} /&gt;</code> in a page, a component with server-computed props inside another inlined component, or an island with per-row props in nested lists now render with React instead of failing <code>brust build</code>.
+        </li>
+      </ul>
+
+      <h3>Security</h3>
+      <ul>
+        {/* source: PR #223 (hardening batch item 1, F163), signed off by Mellow */}
+        <li>
+          <strong><code>server-only</code> modules stay on the server.</strong> A module that imports <code>server-only</code> and is reached from code that runs in the browser is refused with brust&rsquo;s own error, including through re-exports and dynamic imports. The build also checks that <code>.brust</code> and <code>.brust/pkg-src</code> stay inside your app before deleting anything there.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #225 (F149, R34.88–R34.95): evaluated once at build with the real packages, no port */}
+        <li>
+          <strong>Class names built from constants are computed at build time.</strong> <code>cn(…)</code>, <code>cva(…)</code>, <code>clsx</code> and <code>tailwind-merge</code> calls whose inputs are constants run once during <code>brust build</code> (with the real packages) and the page carries the resulting class string, so the server does less work per request. <code>brust dev</code> keeps computing them per request; the output is the same.
+        </li>
+        {/* source: PR #224 (F153b part 4) and PR #222 (F153b part 3) */}
+        <li>
+          <strong>More prop shapes compile.</strong> A prop default that reads a module constant (<code>orientation = DEFAULT_ORIENTATION</code>), and a spread onto an HTML element of a constant whose value is chosen by a condition (<code>const attrs = vertical ? a : b</code>, then <code>{'{'}...attrs{'}'}</code>).
+        </li>
+      </ul>
 
       <h2 id="alpha-9">2.0.0-alpha.9 · 14 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.8: #216–#220 (F153b part 2, L35, F153c, F161, F159); docs/shadcn-coverage.json */}
