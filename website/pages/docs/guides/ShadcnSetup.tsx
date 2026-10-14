@@ -34,7 +34,7 @@ installed class-variance-authority@0.7.1
 installed tw-animate-css@1.4.0
 
 78 packages installed [375.00ms]
-✓ dependencies: done (radix-ui lucide-react class-variance-authority tw-animate-css)
+✓ dependencies: done (radix-ui@1.8.1 lucide-react@1.57.0 class-variance-authority@0.7.1 tw-animate-css@1.4.0)
 ✔ Checking registry.
 ✔ Installing dependencies.
 ✔ Created 1 file:
@@ -194,12 +194,15 @@ export default function ShadcnSetup({ blocks }: ShadcnSetupData) {
       <ul>
         <li>wrote <code>components.json</code>, the file the shadcn CLI reads, pointing at <code>app.css</code>, the CSS file brust&rsquo;s Tailwind reads;</li>
         <li>added <code>&quot;@/*&quot;: [&quot;./*&quot;]</code> to <code>compilerOptions.paths</code> in <code>tsconfig.json</code>, keeping its comments and layout;</li>
-        <li>installed <code>radix-ui</code>, <code>lucide-react</code>, <code>class-variance-authority</code> and <code>tw-animate-css</code>;</li>
+        <li>installed <code>radix-ui</code>, <code>lucide-react</code>, <code>class-variance-authority</code> and <code>tw-animate-css</code>, each at the exact version the guide was tested with (a package you already have is left as it is);</li>
         <li>ran the shadcn CLI&rsquo;s <code>add index</code> (the theme in <code>app.css</code>, and <code>lib/utils.ts</code>) and then <code>add button card dialog</code>.</li>
       </ul>
       <p>
         It pins the shadcn CLI to one tested version instead of <code>@latest</code>, never runs a shell, and does nothing on a second run: every step says <code>skipped</code>. To add another component later, run it again with the new name. <code>--css</code>, <code>--base-color</code>, <code>--force</code> and <code>--shadcn-version</code> are described by <code>bunx brust --help</code>.
       </p>
+      <Note>
+        A component can also be an <code>https://</code> registry URL. That installs <strong>third-party code</strong> from that host into your project, and it runs in your build and in the browser, so read it first. The command prints a warning for each URL, skips a URL whose item is already in <code>components/</code> on a second run, and will not write through a symbolic <code>tsconfig.json</code> or <code>components.json</code> (it stops and says so).
+      </Note>
       <Note>
         <code>brust shadcn init</code> needs <code>@brust/core</code> 2.0.0-alpha.11 or later. On an older project, update <code>@brust/core</code>, or follow <a href="#manual">Doing it by hand</a>.
       </Note>

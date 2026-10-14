@@ -5,6 +5,7 @@ import { copyTemplate } from './copy.ts'
 import { parseArgs, USAGE } from './args.ts'
 import { applyOverrides, monorepoRoot, resolveBrustDep } from './dep.ts'
 import { TAILWIND_DEFAULT_NOTE } from './tailwind.ts'
+import { runShadcn, spawnRunner } from './shadcn.ts'
 import { selectTemplate } from './templates.ts'
 
 // F131: read at run time from the package.json that `bun publish` ships, so release-bump.ts stays the only place versions change.
@@ -55,15 +56,21 @@ export async function main(argv: string[]): Promise<void> {
     if (!targetExisted) await rm(targetDir, { recursive: true, force: true }).catch(() => {})
     return fail(`create-app: failed to scaffold (${msg(e)})`)
   }
+  if (parsed.shadcn) {
+    const code = await runShadcn({ targetDir, components: parsed.shadcn, workspace: dep.kind === 'workspace', run: spawnRunner, out: (l) => console.log(l) })
+    if (code !== 0) process.exit(code)
+    printNextSteps(projectName, targetDir, tmpl.name, dep.spec, dep.kind === 'workspace', true)
+    return
+  }
   printNextSteps(projectName, targetDir, tmpl.name, dep.spec, dep.kind === 'workspace')
 }
 
-function printNextSteps(name: string, targetDir: string, template: string, spec: string, workspace: boolean): void {
+function printNextSteps(name: string, targetDir: string, template: string, spec: string, workspace: boolean, installed = false): void {
   const cwd = process.cwd()
   const displayPath = targetDir.startsWith(`${cwd}/`) ? `./${targetDir.slice(cwd.length + 1)}` : targetDir
   console.log(`Created ${name} at ${targetDir} (template: ${template}, @brust/core ${spec})\n`)
   console.log('Next:')
   console.log(`  cd ${displayPath}`)
-  console.log(workspace ? '  bun install   # run it at the brust repo root: this app is a workspace member' : '  bun install')
+  if (!installed) console.log(workspace ? '  bun install   # run it at the brust repo root: this app is a workspace member' : '  bun install')
   console.log('  bun run dev')
 }

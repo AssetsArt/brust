@@ -266,7 +266,7 @@ jobs:
       - run: cd examples/pokedex && bun test
       - run: cd examples/pokedex && bun run typecheck
       # m3f-create-app: unit + pack, then the scaffold run (packs core/runtime-dom, bun install from npm, build, start) on its own.
-      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/sync-template.test.ts test/pack.test.ts test/tailwind.test.ts
+      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/shadcn.test.ts test/sync-template.test.ts test/pack.test.ts test/tailwind.test.ts
       - run: cd packages/create-app && bun test --timeout 600000 test/scaffold.test.ts
       - run: bunx playwright install --with-deps chromium
       # website/: the docs site (TSX pages on the workspace @brust/core); several files drive Chromium, so it runs after
