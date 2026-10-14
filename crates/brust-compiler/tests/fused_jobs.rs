@@ -186,6 +186,12 @@ fn the_parent_job_runs_the_child_job_and_the_template_reads_its_renamed_slots() 
         ts.contains(&format!("from \"brust-job:{}\"", t.link.id)),
         "{ts}"
     );
+    // F187: every fused output lives under the reserved `_fj_` prefix, which brust-core drops from loader data.
+    for f in &t.next.fused {
+        for name in f.outputs.values() {
+            assert!(name.starts_with("_fj_"), "{name}");
+        }
+    }
     let out = run_job(
         &t.dir,
         &ts,

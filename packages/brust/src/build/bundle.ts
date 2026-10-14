@@ -603,12 +603,14 @@ export async function buildCacheAdapter(dist: string, entry: string, cssMaps: Ma
 }
 
 /** R34.96: a parent's job calls the job of each child fused into it through `brust-job:<component id>`, resolved here to
- * that child's staged job module (`fileOf`). Only a compiled component's id resolves: anything else fails the bundle. */
-export function jobImportPlugin(fileOf: (id: string) => string | undefined): BunPlugin {
+ * that child's staged job module (`fileOf`). Only a compiled component's id resolves, and only for a staged job file
+ * (`isJobFile`, F186): any other importer (app or package source) fails the bundle, as does an unknown id. */
+export function jobImportPlugin(fileOf: (id: string) => string | undefined, isJobFile: (importer: string) => boolean): BunPlugin {
   return {
     name: 'brust-job-import',
     setup(b) {
       b.onResolve({ filter: /^brust-job:/ }, (a) => {
+        if (!isJobFile(a.importer)) throw new BuildError('bundle', `${a.importer}: brust-job: is for generated job modules only`)
         const id = a.path.slice('brust-job:'.length)
         const file = /^[A-Za-z0-9_$-]+$/.test(id) ? fileOf(id) : undefined
         if (file === undefined) throw new BuildError('bundle', `${a.importer}: no job module for ${JSON.stringify(id)}`)
@@ -649,6 +651,7 @@ export async function buildJobs(
     imports.push(reviveSource(`{ ${revived.map((r, i) => `${JSON.stringify(r.id)}: N${i}`).join(', ')} }`))
   }
   const hosts = new Set(reviving.map((c) => c.id))
+  const jobFiles = new Set<string>() // the staged job modules: the only importers of `brust-job:` (F186)
   let n = 0
   for (const c of compiled.values()) {
     const fns: string[] = []
@@ -657,6 +660,7 @@ export async function buildJobs(
       const file = join(dist, 'jobs', `${c.id}.server.ts`)
       write(file, c.serverTs)
       stage(sourceOf, file, c)
+      jobFiles.add(file).add(realpathSync(file))
       if (reached === undefined || reached.planned.has(c.id)) {
         imports.push(`import * as j${n} from ${JSON.stringify(file)}`)
         fns.push(`precompute: j${n}.precompute`)
@@ -680,7 +684,10 @@ export async function buildJobs(
     define: PRODUCTION,
     external: JOBS_EXTERNALS,
     plugins: [
-      jobImportPlugin((id) => (compiled.get(id)?.serverTs !== undefined ? join(dist, 'jobs', `${id}.server.ts`) : undefined)),
+      jobImportPlugin(
+        (id) => (compiled.get(id)?.serverTs !== undefined ? join(dist, 'jobs', `${id}.server.ts`) : undefined),
+        (importer) => jobFiles.has(importer),
+      ),
       serverOnlyEmptyPlugin(),
       cssPlugin(cssMaps),
       workerStorePlugin,

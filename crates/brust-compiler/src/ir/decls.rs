@@ -291,7 +291,7 @@ pub struct FusedInstance {
     pub ordinal: u32,
     /// Every input root of the child's job (`jobs[0].inputs`) -> where its value comes from.
     pub inputs: std::collections::BTreeMap<String, FusedInput>,
-    /// The child's slot -> this component's job output that carries it (`_f<child>_<ordinal>_<slot>`).
+    /// The child's slot -> this component's job output that carries it (`_fj_<child>_<ordinal>_<slot>`; `_fj_` is reserved: brust-core drops a loader key with it, F187).
     pub outputs: std::collections::BTreeMap<String, String>,
     /// Why the child's job may not run at build (`build_eval::instance_job` on the child, A1); `None` when
     /// it may, and then this component's job may too only if every fused child's may.

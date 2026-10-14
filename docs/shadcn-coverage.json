@@ -142,7 +142,7 @@
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 5
+      "libraryComponents": 4
     },
     {
       "blocker": "fallback:slot-dynamic",
