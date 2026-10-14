@@ -9,14 +9,14 @@
   },
   "summary": {
     "pages": 64,
-    "measured": 62,
-    "analysisOnly": 2,
+    "measured": 64,
+    "analysisOnly": 0,
     "tier": {
-      "static": 56,
+      "static": 57,
       "native": 1,
-      "react": 5
+      "react": 6
     },
-    "islands": 51,
+    "islands": 53,
     "pagesWithNoJs": 18,
     "jsGzipKb": {
       "min": 0,
@@ -29,9 +29,9 @@
       "exported": 334,
       "static": 1,
       "native": 0,
-      "react": 274,
+      "react": 283,
       "unresolved": 0,
-      "error": 59
+      "error": 50
     }
   },
   "blockers": [
@@ -39,46 +39,37 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 42,
+      "measuredRows": 43,
       "analysisOnlyRows": 0,
-      "appComponents": 144,
-      "libraryComponents": 0
+      "appComponents": 145,
+      "libraryComponents": 1
     },
     {
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 39,
+      "measuredRows": 41,
       "analysisOnlyRows": 0,
-      "appComponents": 139,
-      "libraryComponents": 10
+      "appComponents": 141,
+      "libraryComponents": 18
     },
     {
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 25,
+      "measuredRows": 26,
       "analysisOnlyRows": 0,
-      "appComponents": 35,
-      "libraryComponents": 7
+      "appComponents": 36,
+      "libraryComponents": 15
     },
     {
       "blocker": "fallback:hook-unsupported",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
+      "measuredRows": 5,
       "analysisOnlyRows": 0,
-      "appComponents": 10,
-      "libraryComponents": 22
-    },
-    {
-      "blocker": "fallback:jsx-expression",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
-      "analysisOnlyRows": 0,
-      "appComponents": 6,
-      "libraryComponents": 2
+      "appComponents": 11,
+      "libraryComponents": 28
     },
     {
       "blocker": "fallback:member-tag",
@@ -87,7 +78,16 @@
       "measuredRows": 4,
       "analysisOnlyRows": 0,
       "appComponents": 4,
-      "libraryComponents": 1
+      "libraryComponents": 5
+    },
+    {
+      "blocker": "fallback:jsx-expression",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 6,
+      "libraryComponents": 3
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -108,34 +108,52 @@
       "libraryComponents": 24
     },
     {
+      "blocker": "fallback:island-prop",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 9
+    },
+    {
+      "blocker": "fallback:child-component",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 4
+    },
+    {
       "blocker": "fallback:body-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 13
-    },
-    {
-      "blocker": "fallback:child-component",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 2
-    },
-    {
-      "blocker": "fallback:hook-shape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 2
+      "libraryComponents": 21
     },
     {
       "blocker": "fallback:local-component",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 7
+    },
+    {
+      "blocker": "fallback:prop-pattern",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 6
+    },
+    {
+      "blocker": "fallback:hook-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -150,7 +168,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 1
+      "libraryComponents": 2
     },
     {
       "blocker": "fallback:browser-global",
@@ -196,15 +214,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 0
-    },
-    {
-      "blocker": "error:island-prop",
-      "kind": "compile error",
-      "classification": "survey truth (compiler refusal)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 2,
-      "appComponents": 0,
-      "libraryComponents": 9
     },
     {
       "blocker": "rest-props spread",
@@ -331,15 +340,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 8
-    },
-    {
-      "blocker": "fallback:prop-pattern",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 5
     },
     {
       "blocker": "useImperativeHandle",
@@ -534,16 +534,18 @@
     },
     {
       "id": "calendar",
-      "basis": "analysis-only",
-      "tier": "error",
+      "basis": "measured",
+      "tier": "static",
+      "islands": 1,
+      "components": 3,
+      "reactComponents": 2,
+      "jsGzipKb": 107,
       "codes": [
-        "error:island-prop"
-      ],
-      "refusal": {
-        "rule": "island-prop",
-        "at": "pages/calendar.tsx:31:5",
-        "construct": "prop `components` on <DayPicker>"
-      }
+        "external-component",
+        "island-prop",
+        "prop-pattern",
+        "spread-props"
+      ]
     },
     {
       "id": "card",
@@ -741,16 +743,19 @@
     },
     {
       "id": "form",
-      "basis": "analysis-only",
-      "tier": "error",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 4,
+      "reactComponents": 3,
+      "jsGzipKb": 101,
       "codes": [
-        "error:island-prop"
-      ],
-      "refusal": {
-        "rule": "island-prop",
-        "at": "pages/form.tsx:11:9",
-        "construct": "prop `render` on <FormField>"
-      }
+        "child-component",
+        "hook-unsupported",
+        "island-children",
+        "island-prop",
+        "spread-props"
+      ]
     },
     {
       "id": "hover-card",

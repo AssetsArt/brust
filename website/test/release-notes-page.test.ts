@@ -25,16 +25,22 @@ afterAll(async () => {
 test('the page is in the Guide right after Installation, and answers 200 with its anchors', () => {
   const guide = NAV.find((g) => g.group === 'Guide')!.items.map((i) => i.slug)
   expect(guide[guide.indexOf('installation') + 1]).toBe('release-notes')
-  for (const id of ['alpha-6', 'earlier']) expect([id, html.includes(`id="${id}"`), html.includes(`href="#${id}"`)]).toEqual([id, true, true])
+  for (const id of ['alpha-7', 'alpha-6', 'earlier']) expect([id, html.includes(`id="${id}"`), html.includes(`href="#${id}"`)]).toEqual([id, true, true])
   expect(html).toContain('href="/docs/release-notes"')
 })
 
 test('every published version has an entry and 2.0.0-alpha.6 comes first', () => {
   const at = (v: string) => html.indexOf(`2.0.0-alpha.${v}`)
-  for (const v of ['1', '2', '3', '4', '5', '6']) expect([v, at(v) > 0]).toEqual([v, true])
+  for (const v of ['1', '2', '3', '4', '5', '6', '7']) expect([v, at(v) > 0]).toEqual([v, true])
+  expect(at('7')).toBeLessThan(at('6'))
   expect(at('6')).toBeLessThan(at('5'))
   expect(at('5')).toBeLessThan(at('4'))
   for (const claim of ['Rest props and JSX spread', 'asChild', 'Pkg.Member', 'Constant children inside an island', 'Components exported by name', 'only the browser runtime it uses', 'Your Tailwind compiles your CSS']) expect([claim, html.includes(claim)]).toEqual([claim, true])
+})
+
+test('the upgrade note carries the exact refusal text', () => {
+  expect(html).toContain('Rebuild your app after you upgrade')
+  expect(html).toContain('[brust] manifest: manifest version 2 unsupported (want 3): rebuild the app with this brust version')
 })
 
 test('the page states no internal spec references, is static, and every cited path exists', () => {

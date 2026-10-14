@@ -59,7 +59,8 @@ const MEANING: Record<string, string> = {
   'fallback:child-component': 'A child component brust cannot resolve, such as a `forwardRef` constant.',
   'fallback:control-flow': 'Control flow in the component body that is not a single return.',
   'fallback:body-shape': 'A statement in the component body that brust does not read.',
-  'error:island-prop': 'A function or a state value passed as a prop to a React island (a build error today).',
+  'fallback:island-prop': 'A function or a state value passed as a prop to a React island: the component that passes it renders with React, since it cannot be handed over as JSON.',
+  'fallback:instance-list-path': 'A component with its own server computation inside a list whose rows depend on the row.',
 }
 
 const pretty = (k: string): string => k.replace(/^(fallback|error):/, '')
@@ -113,7 +114,7 @@ export default function Shadcn({ summary, pinned, blockers, rows, blocks }: Shad
       {/* source: docs/shadcn-coverage.json blockers (external-component, island-children, hook-unsupported, island-prop), docs/plans/2026-10-13-shadcn.md R34.5 */}
       <p>
         The Radix primitives themselves (dialogs, menus, tabs, selects) use React context, refs, portals and focus management, which brust does not lower yet, so each one is a React island of the package&rsquo;s own export. Components that wrap a React library
-        (a chart, a calendar, a carousel, a command palette) are islands too. A function or a value that changes with state passed to an island is refused today and reported by the build.
+        (a chart, a calendar, a carousel, a command palette) are islands too. A function or a value that changes with state passed to an island makes the component that passes it render with React, and the build reports it as <code>island-prop</code>.
       </p>
       <Note>
         An island is not an error. The component works as it does in React; the page keeps its tier for everything around it.
@@ -127,9 +128,11 @@ export default function Shadcn({ summary, pinned, blockers, rows, blocks }: Shad
         {s.analysisOnly > 0 ? (
           <>
             {' '}
-            <strong data-testid="count-refused">{s.analysisOnly}</strong> are refused by the build today.
+            <strong data-testid="count-refused">{s.analysisOnly}</strong> are refused by the build.
           </>
-        ) : null}{' '}
+        ) : (
+          <> Every page builds.</>
+        )}{' '}
         Together they hold <strong data-testid="count-islands">{s.islands}</strong> React islands; <strong data-testid="count-nojs">{s.pagesWithNoJs}</strong> pages load no JavaScript at all. The JavaScript a page loads, gzipped, is {s.jsGzipKb.min} KB at the
         least, {s.jsGzipKb.median} KB in the middle and {s.jsGzipKb.max} KB at the most.
       </p>

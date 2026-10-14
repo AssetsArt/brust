@@ -1,27 +1,61 @@
 // Release notes — what each published version changed, newest first. One section per version; adding a release is one new section.
 // Every entry names its source (a PR or a file) in a comment beside it. Versions before alpha.6 are one line each, taken from the tag
 // annotations and the merged pull requests between the tags, nothing more.
+import CodeBlock from '../../components/CodeBlock'
 import Lead from '../../components/docs/Lead'
+import { type CodeBlockData, codeBlock } from '../../lib/highlight'
 import type { TocItem } from '../../lib/nav'
 
 export interface ReleaseNotesData {
   toc: TocItem[]
+  blocks: Record<'refusal', CodeBlockData>
 }
+
+// observed: the refusal printed when brust starts a build with manifest version 2 (Dew, task per-instance-jobs)
+const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebuild the app with this brust version'
 
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-7', title: '2.0.0-alpha.7' },
       { id: 'alpha-6', title: '2.0.0-alpha.6' },
       { id: 'earlier', title: 'Earlier versions' },
     ],
+    blocks: { refusal: codeBlock({ lang: 'text', cwd: 'brust start', code: REFUSAL }) },
   }
 }
 
-export default function ReleaseNotes(_props: ReleaseNotesData) {
+export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
   return (
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-7">2.0.0-alpha.7</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.6: #206 (per-instance-jobs PR1, F142) and #207 (island-prop-demotion, F138h); docs/shadcn-coverage.json (64 of 64 pages build) */}
+      <p>
+        Every page of the shadcn/ui fixture now builds, and a table of rows no longer needs React. See <a href="/docs/shadcn">shadcn/ui and React libraries</a> for the current numbers.
+      </p>
+
+      <h3>Upgrade note</h3>
+      {/* source: per-instance-jobs PR 2 (lane/per-instance-jobs @40a8db65, reviewed, not yet on main when this was written): the manifest format moves from version 2 to 3; the refusal text was produced by starting a version 2 manifest with that build (Dew, task per-instance-jobs). Check this line against crates/brust-core/src/manifest.rs once PR 2 is on main. */}
+      <p>
+        <strong>Rebuild your app after you upgrade.</strong> The build output (<code>dist/manifest.json</code>) changed format, from version 2 to 3. A build made with an earlier brust is refused when it starts:
+      </p>
+      <CodeBlock code={blocks.refusal.code} lang={blocks.refusal.lang} cwd={blocks.refusal.cwd} html={blocks.refusal.html} />
+      <p>Run <code>brust build</code> again with the new version; nothing else changes in your project.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #207 lane/island-prop-demotion (F138h, R34.56–R34.60): island-prop is a fallback, not a build error */}
+        <li>
+          <strong>A function or a changing value passed to a React island no longer fails the build.</strong> The component that passes it renders with React, like every other shape brust does not lower, and the build prints <code>island-prop</code> as a fallback. Before, such a page stopped with <code>error island-prop</code>.
+        </li>
+        {/* source: PR #206 lane/per-instance-jobs PR 1 (F142, R34.42): a fed instance whose job inputs are the same in every row of a list over a module constant or an inline array */}
+        <li>
+          <strong>Lists over a constant.</strong> A component rendered in a <code>.map</code> over a module constant or an inline array, whose props do not depend on the row, is rendered once per page instead of making the page a React island (<code>instance-list-path</code>). A table of rows built from a constant array is static.
+        </li>
+      </ul>
 
       <h2 id="alpha-6">2.0.0-alpha.6 · 14 October 2026</h2>
       {/* source: tag v2.0.0-alpha.6 (22675c21), the pull requests merged since v2.0.0-alpha.5: #196–#205 */}

@@ -28,6 +28,7 @@ test('the summary counts equal the generated JSON', () => {
     s.pages, s.measured, s.tier.static, s.tier.native, s.tier.react, s.islands, s.pagesWithNoJs,
   ])
   if (s.analysisOnly > 0) expect(count('count-refused')).toBe(s.analysisOnly)
+  else expect(html).toContain('Every page builds.')
   expect(html).toContain(`${s.jsGzipKb.median} KB in the middle`)
 })
 
