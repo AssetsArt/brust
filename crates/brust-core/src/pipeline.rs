@@ -1041,7 +1041,8 @@ const PROPS_KEY: &str = "_props";
 /// Context names the server owns: templates print them with `| safe`
 /// (`__outlet`, `_ssr_*`), read per-component maps through them
 /// (`__children`, `__own`, `_props`), read the store snapshot (`__store`), or read job/useId slots (`_s<digits>`,
-/// `_id<digits>`, exactly) or fused job outputs (`_fj_…`, a reserved prefix: F187). Any other name — `_id`, `_session`,
+/// `_id<digits>`, exactly), fused job outputs (`_fj_…`, a reserved prefix: F187) or a child instance's slot dict
+/// (`__<component id>_<digits>`, F204). Any other name — `_id`, `_session`,
 /// `__typename` — is the loader's. Overlays already beat the base context;
 /// this is defence in depth.
 fn is_server_slot(k: &str) -> bool {
@@ -1056,6 +1057,26 @@ fn is_server_slot(k: &str) -> bool {
         || numbered("_s")
         || numbered("_id")
         || k.starts_with("_fj_")
+        || is_instance_dict(k)
+}
+
+/// `__<name>_<8 hex>_<digits>`: the key of a child instance's slot dict (`__` + the child's component id + its
+/// ordinal). The id's hash part is what tells it from a loader key such as `__typename` or `__a_1`.
+fn is_instance_dict(k: &str) -> bool {
+    let Some(rest) = k.strip_prefix("__") else {
+        return false;
+    };
+    let Some((id, ordinal)) = rest.rsplit_once('_') else {
+        return false;
+    };
+    let Some((name, hash)) = id.rsplit_once('_') else {
+        return false;
+    };
+    !name.is_empty()
+        && !ordinal.is_empty()
+        && ordinal.bytes().all(|b| b.is_ascii_digit())
+        && hash.len() == 8
+        && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// A redirect target as a `Location` value: non-ASCII characters are
@@ -2936,7 +2957,7 @@ mod tests {
     #[test]
     fn loader_data_cannot_fill_server_slots() {
         // Server-owned names drop: `__outlet`, `__children`, `__own`, `_props`,
-        // `_ssr_*`, `_fj_*`, and exactly `_s<digits>` / `_id<digits>`. Any other name
+        // `_ssr_*`, `_fj_*`, `__<id>_<hash>_<n>`, and exactly `_s<digits>` / `_id<digits>`. Any other name
         // (`_id`, `_session`, `_s`, `__typename`, `__a_1`) is loader data.
         // Child slots live under `__children` and win over a same-named
         // top-level key in the overlay.
@@ -2948,6 +2969,8 @@ mod tests {
                    "_props": {}, "__store": {"x": {}}, "__typename": "Pokemon", "_id": 7, "_s1": "x", "_s12": "x",
                    "_id0": "x", "_id3": "x", "_session": "s", "_s": 1, "_s1a": 2, "_idx": 3,
                    "_fj_Card_ab12_1__s1": "x", "_fj_": "x", "_f": 1, "_fjx": 2, "_foo_1__s1": 3,
+                   "__field_603ad356_1": [], "__a_603ad356_12": {}, "__field_603ad356_": 1, "__field_603AD356_1": 2,
+                   "__field_603ad35_1": 3, "___603ad356_1": 4, "__field_603ad356_1x": 5, "__field_603ad356": 6,
                    "who": "w"}),
             ),
             "r1",
@@ -2955,7 +2978,9 @@ mod tests {
         assert_eq!(
             j(&Node::map(ctx)),
             json!({"__a_1": {}, "__typename": "Pokemon", "_id": 7, "_session": "s", "_s": 1,
-                   "_s1a": 2, "_idx": 3, "_f": 1, "_fjx": 2, "_foo_1__s1": 3, "who": "w"})
+                   "_s1a": 2, "_idx": 3, "_f": 1, "_fjx": 2, "_foo_1__s1": 3,
+                   "__field_603ad356_": 1, "__field_603AD356_1": 2, "__field_603ad35_1": 3, "___603ad356_1": 4,
+                   "__field_603ad356_1x": 5, "__field_603ad356": 6, "who": "w"})
         );
     }
 
