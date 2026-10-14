@@ -183,7 +183,20 @@ fn a_dev_block_is_left_out_only_when_all_it_does_is_log() {
     // An `else` branch is code too.
     let with_else = "if (DEV) { const seen = React.useRef(1); React.useEffect(() => { seen.current = 2 }, [prop]) } else { console.log(1) }";
     let ir = run(&hook(PARAM, HELPER, with_else, ALIAS), USE);
-    assert!(fallbacks(&ir).is_empty() || !reasons(&ir).is_empty());
+    // Not dropped: it is read like any statement of the hook, and a branch before the return is `control-flow`.
+    assert!(
+        fallbacks(&ir)
+            .iter()
+            .any(|d| d.message.contains("control flow before return")),
+        "{:?} {}",
+        ir.tier,
+        reasons(&ir)
+    );
+    // The same block without the `else` IS dropped (the positive case: no fallback, native).
+    let no_else = "if (DEV) { const seen = React.useRef(1); React.useEffect(() => { seen.current = 2 }, [prop]) }";
+    let ir = run(&hook(PARAM, HELPER, no_else, ALIAS), USE);
+    assert!(fallbacks(&ir).is_empty(), "{}", reasons(&ir));
+    assert_eq!(ir.tier, Tier::Native);
 }
 
 #[test]
