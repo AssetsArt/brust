@@ -1,6 +1,6 @@
 {
   "name": "@brust/runtime-dom",
-  "version": "2.0.0-alpha.11",
+  "version": "2.0.0-alpha.12",
   "type": "module",
   "exports": {
     ".": {

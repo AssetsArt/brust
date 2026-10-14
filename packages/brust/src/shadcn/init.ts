@@ -2,15 +2,25 @@
 // shadcn's own `init` does not detect brust, so this writes what `add` needs (components.json, the `@/*` path),
 // installs the four packages the components import, and runs ONE pinned shadcn CLI for the theme and the components.
 // Every child process is spawned from an argv array, never through a shell; the runner is injected for tests.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { type ObjectNode, raw, readObject } from './jsonc'
 
 /** The shadcn CLI version this command runs (R41.6). A release that moves it re-runs the transcript. */
 export const SHADCN_VERSION = '4.21.4'
 
-/** The packages the components import (R41.5). */
-export const SHADCN_DEPS = ['radix-ui', 'lucide-react', 'class-variance-authority', 'tw-animate-css'] as const
+/**
+ * The packages the components import (R41.5), each pinned to the exact version the transcript ran
+ * (`docs/transcripts/shadcn-init-guide.md`, F181). They move together with `SHADCN_VERSION`: a release that moves one
+ * re-runs the transcript. A package the project already depends on, at any version, is left alone.
+ */
+export const SHADCN_DEP_PINS = {
+  'radix-ui': '1.8.1',
+  'lucide-react': '1.57.0',
+  'class-variance-authority': '0.7.1',
+  'tw-animate-css': '1.4.0',
+} as const
+export const SHADCN_DEPS = Object.keys(SHADCN_DEP_PINS) as (keyof typeof SHADCN_DEP_PINS)[]
 
 /** Runs `argv` in `cwd` with the terminal attached; resolves to the exit code. Never a shell string. */
 export type Runner = (argv: string[], cwd: string) => Promise<number>
@@ -31,6 +41,25 @@ const COMPONENT = /^[a-z0-9][a-z0-9-]*$/
 const REGISTRY_URL = /^https:\/\/[^\s]+$/
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 const COLOR = /^[a-z]+$/
+
+/** True for a symlink, also a dangling one (`existsSync` follows links and says false for those). */
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/** The name a registry URL installs: its last path segment without `.json`; undefined when it is not a plain name. */
+function urlItemName(url: string): string | undefined {
+  try {
+    const seg = new URL(url).pathname.split('/').filter(Boolean).pop()?.replace(/\.json$/, '')
+    return seg !== undefined && COMPONENT.test(seg) ? seg : undefined
+  } catch {
+    return undefined
+  }
+}
 
 /** The `components.json` of the tested fixture (`tests/fixtures/shadcn/components.json`), for `css` and `baseColor` (R41.2). */
 export function componentsJson(css: string, baseColor: string): string {
@@ -142,6 +171,12 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   if (!COLOR.test(baseColor)) return fail2(`--base-color ${JSON.stringify(baseColor)} must be a lowercase colour name`)
   const entry = tailwindEntry(root, o.css)
   if ('error' in entry) return fail2(entry.error)
+  // F181: never write through a symlink (the target may be outside the project, e.g. a shared tsconfig). Fail-safe:
+  // refuse before the first write, even with --force; the reader edits the real file by hand.
+  const cj = join(root, 'components.json')
+  const tsPath = join(root, 'tsconfig.json')
+  if (isLink(tsPath)) return fail2('tsconfig.json is a symbolic link; refusing to write through it. Add "@/*": ["./*"] to compilerOptions.paths of the real file yourself, then run again')
+  if (isLink(cj) && (!existsSync(cj) || o.force)) return fail2('components.json is a symbolic link; refusing to write through it. Replace it with a real file or remove the link, then run again')
 
   const report = (name: string, step: Step, why = ''): void => out(`${step === 'done' ? '✓' : step === 'skipped' ? '-' : '✗'} ${name}: ${step}${why ? ` (${why})` : ''}`)
   const stop = (name: string, code: number): number => {
@@ -151,14 +186,12 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   }
 
   // R41.2: components.json.
-  const cj = join(root, 'components.json')
   if (!existsSync(cj) || o.force) {
     writeFileSync(cj, componentsJson(entry.css, baseColor))
     report('components.json', 'done', entry.css)
   } else report('components.json', 'skipped', 'exists; --force replaces it')
 
   // R41.4: the `@/*` path.
-  const tsPath = join(root, 'tsconfig.json')
   if (!existsSync(tsPath)) {
     report('tsconfig.json', 'skipped', `no tsconfig.json; add ${JSON.stringify({ compilerOptions: { paths: { '@/*': ['./*'] } } })}`)
   } else {
@@ -176,9 +209,10 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   const missing = SHADCN_DEPS.filter((d) => !have[d])
   if (missing.length === 0) report('dependencies', 'skipped', 'all four are installed')
   else {
-    const code = await o.run(['bun', 'add', ...missing], root)
+    const specs = missing.map((d) => `${d}@${SHADCN_DEP_PINS[d]}`)
+    const code = await o.run(['bun', 'add', ...specs], root)
     if (code !== 0) return stop('bun add', code)
-    report('dependencies', 'done', missing.join(' '))
+    report('dependencies', 'done', specs.join(' '))
   }
 
   // R41.6 / R41.7: the pinned shadcn CLI. `bun x` is `bunx`; argv only.
@@ -190,9 +224,16 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
     if (code !== 0) return stop('shadcn add index', code)
     report('theme', 'done', `shadcn@${version} add index`)
   }
-  // A component whose file is already in components/ui is not added again (idempotent); a URL always is.
-  const todo = o.components.filter((c) => o.force || REGISTRY_URL.test(c) || !existsSync(join(root, 'components/ui', `${c}.tsx`)))
-  for (const c of o.components) if (!todo.includes(c)) report(c, 'skipped', 'components/ui already has it')
+  // A component whose file is already in components/ui is not added again (idempotent). A registry URL is judged by
+  // the item name in its path (`.../acme-card.json` → `acme-card`), looked up in components/ui and components.
+  const present = (c: string): boolean => {
+    const name = REGISTRY_URL.test(c) ? urlItemName(c) : c
+    if (name === undefined) return false
+    return existsSync(join(root, 'components/ui', `${name}.tsx`)) || (name !== c && existsSync(join(root, 'components', `${name}.tsx`)))
+  }
+  const todo = o.components.filter((c) => o.force || !present(c))
+  for (const c of o.components) if (!todo.includes(c)) report(c, 'skipped', REGISTRY_URL.test(c) ? 'its item is already in components; --force adds it again' : 'components/ui already has it')
+  for (const c of todo) if (REGISTRY_URL.test(c)) out(`warning shadcn-init ${c} is third-party code: it is written into your project and runs in your build and in the browser. Read it before you ship`)
   if (todo.length > 0) {
     const code = await o.run(shadcn('add', ...todo, '-y'), root)
     if (code !== 0) return stop(`shadcn add ${todo.join(' ')}`, code)

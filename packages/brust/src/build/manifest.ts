@@ -95,9 +95,26 @@ export interface ManifestJson {
 
 /** F165 (R40.1): whether any request can call a worker. Workers answer four kinds of call
  * (worker.ts): `loader`, `jobs` (precompute and SSR), `fetch` (the local actions app) and `cache`
- * (the adapter). Every component's jobs count, reached by a route or not (F166 prunes those later). */
+ * (the adapter). Only the jobs a request can plan count (`reachedJobs`, F183). */
 export function needsWorkers(m: Pick<ManifestJson, 'routes' | 'components' | 'actions' | 'cache'>): boolean {
-  return Object.values(m.components).some((c) => c.jobs.length > 0) || m.routes.some((r) => r.loaders.length > 0) || m.actions !== null || m.cache !== undefined
+  const planned = [...reachedJobs(m).planned].some((id) => (m.components[id]?.jobs.length ?? 0) > 0)
+  return planned || m.routes.some((r) => r.loaders.length > 0) || m.actions !== null || m.cache !== undefined
+}
+
+/** F183: the jobs a request can call, as brust-core plans them (`collect_jobs`, pipeline.rs): every job of each
+ * route chain component and of each of its direct `children[]` records (`planned`; nothing deeper has a job,
+ * `linkNativeChunks`), and the `ssr` of each component one of those jobs targets (`ssr`; the worker runs the
+ * target's, handlers.ts). `jobs.js` leaves out every other entry: no request reaches it. */
+export function reachedJobs(m: Pick<ManifestJson, 'routes' | 'components'>): { planned: Set<string>; ssr: Set<string> } {
+  const planned = new Set<string>()
+  for (const r of m.routes)
+    for (const id of r.chain) {
+      planned.add(id)
+      for (const ch of m.components[id]?.children ?? []) planned.add(ch.id)
+    }
+  const ssr = new Set<string>()
+  for (const id of planned) for (const j of m.components[id]?.jobs ?? []) if (j.kind === 'ssr' && j.target !== undefined) ssr.add(j.target)
+  return { planned, ssr }
 }
 
 /** `manifest.cache` / `CONFIG.cache`: the adapter the runtime loads (`cache-adapter/load.ts`). */
