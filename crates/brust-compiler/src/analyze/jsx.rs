@@ -206,6 +206,8 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     let mut props_out = Vec::new();
     let mut children = Vec::new();
     let mut ref_name = None;
+    // The names a union spread has joined into one attribute or prop each (a later own one replaces it).
+    let mut union_names: Vec<String> = Vec::new();
     let mut children_prop = false;
     let mut forwarded_ref = false;
     for p in obj.properties.iter() {
@@ -251,6 +253,135 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                         }
                     }
                 }
+                Spread::Union(u) => {
+                    let mut keys = Vec::new();
+                    u.keys(&mut keys);
+                    if keys.len() > UNION_MAX_KEYS {
+                        r.diagnostics
+                            .push(union_refused(value, "has too many keys"));
+                        let raw = r.opaque(value, "spread props");
+                        match tag {
+                            Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
+                            _ => {
+                                props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw)))
+                            }
+                        }
+                        continue;
+                    }
+                    for name in keys {
+                        let host = matches!(tag, Tag::Host(_));
+                        // As for an object literal: `key` is React's, `children` is not read, and a key that is not
+                        // an attribute name is not rendered (R34.17).
+                        if name == "key" {
+                            continue;
+                        }
+                        if name == "children" {
+                            r.diagnostics.push(Diagnostic::fallback(
+                                "children-prop",
+                                "`children` passed in a spread object is not supported natively",
+                                loc_of(value),
+                                "pass children between the tags",
+                            ));
+                            continue;
+                        }
+                        if host && !brust_jinja::spread::attr_name_ok(&name) {
+                            r.diagnostics.push(Diagnostic::warning(
+                                "unsafe-attr",
+                                format!("`{name}` in a spread is not a valid attribute name; it is not rendered"),
+                                loc_of(value),
+                                "use attribute names only",
+                            ));
+                            continue;
+                        }
+                        // An earlier attribute (or prop) of this name is what a branch without the key leaves in
+                        // place, and the joined value takes its position (a later key wins, the first keeps its place).
+                        let earlier = if host {
+                            attrs.iter().position(|a| match a {
+                                Attr::Static { name: n, .. } => *n == name,
+                                Attr::Dynamic {
+                                    name: n,
+                                    value: Expr::Raw(_),
+                                } => *n == name,
+                                _ => false,
+                            })
+                        } else {
+                            props_out
+                                .iter()
+                                .position(|(n, v)| *n == name && matches!(v, Expr::Raw(_)))
+                        };
+                        let absent = match earlier {
+                            Some(i) if host => match &attrs[i] {
+                                Attr::Static { value, .. } => RawExpr {
+                                    loc: 0,
+                                    kind: RawKind::Lit(crate::ir::Literal::Str(value.clone())),
+                                },
+                                Attr::Dynamic {
+                                    value: Expr::Raw(raw),
+                                    ..
+                                } => raw.clone(),
+                                _ => unreachable!(),
+                            },
+                            Some(i) => match &props_out[i].1 {
+                                Expr::Raw(raw) => raw.clone(),
+                                _ => unreachable!(),
+                            },
+                            None => RawExpr {
+                                loc: 0,
+                                kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                            },
+                        };
+                        let mut failed = false;
+                        let joined = u.value(&name, &absent, &mut |v| {
+                            let raw = if host {
+                                read_union_attr(r, &name, v, &mut ref_name)
+                            } else if union_key_refused(&name) {
+                                // The child may spread these onto an element, where they are not a plain value
+                                // (a handler that may be undefined, raw HTML, a ref, a style object): same refusal.
+                                None
+                            } else {
+                                Some(r.expr(v))
+                            };
+                            if raw.is_none() {
+                                failed = true;
+                            }
+                            raw
+                        });
+                        match joined {
+                            Some(raw) if !failed => {
+                                union_names.push(name.clone());
+                                match (host, earlier) {
+                                    (true, Some(i)) => {
+                                        attrs[i] = Attr::Dynamic {
+                                            name,
+                                            value: Expr::Raw(raw),
+                                        }
+                                    }
+                                    (true, None) => attrs.push(Attr::Dynamic {
+                                        name,
+                                        value: Expr::Raw(raw),
+                                    }),
+                                    (false, Some(i)) => props_out[i].1 = Expr::Raw(raw),
+                                    (false, None) => props_out.push((name, Expr::Raw(raw))),
+                                }
+                            }
+                            _ => {
+                                r.diagnostics.push(union_refused(
+                                    value,
+                                    &format!(
+                                        "gives `{name}` a value that is not a plain attribute value"
+                                    ),
+                                ));
+                                let raw = r.opaque(value, "spread props");
+                                match tag {
+                                    Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
+                                    _ => props_out
+                                        .push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
                 Spread::Props(raw) => match tag {
                     Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
                     _ => props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
@@ -292,7 +423,16 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
         match tag {
             Tag::Host(_) => {
                 if let Some(attr) = read_attr(r, &name, value, &mut ref_name) {
-                    attrs.push(attr);
+                    // An own attribute after a union spread replaces the joined one (it keeps the first place).
+                    let at = union_names.contains(&name).then(|| {
+                        attrs
+                            .iter()
+                            .position(|a| matches!(a, Attr::Dynamic { name: n, .. } if *n == name))
+                    });
+                    match at.flatten() {
+                        Some(i) => attrs[i] = attr,
+                        None => attrs.push(attr),
+                    }
                 }
             }
             _ => {
@@ -307,7 +447,14 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                     continue;
                 }
                 let v = r.expr(value);
-                props_out.push((name, Expr::Raw(v)));
+                match union_names
+                    .contains(&name)
+                    .then(|| props_out.iter().position(|(n, _)| *n == name))
+                    .flatten()
+                {
+                    Some(i) => props_out[i].1 = Expr::Raw(v),
+                    None => props_out.push((name, Expr::Raw(v))),
+                }
             }
         }
     }
@@ -397,8 +544,142 @@ enum Spread<'e> {
     /// The whole props object, its `...rest`, or a props path: keys known only per call site
     /// (an inlined instance) or at render (`spread_attrs`).
     Props(RawExpr),
+    /// `{...(c ? {a: 1} : {b: 2})}`, or a `const` holding one: a tree of tests over object literals with
+    /// literal keys (R34.66). Each key becomes one attribute (or prop) that reads as `c ? 1 : undefined`.
+    Union(Union),
     /// Anything else (a local object, a call, state): not expanded.
     Other,
+}
+
+/// The most conditional nodes and distinct keys one union spread may have (a compile-time bound).
+const UNION_MAX_NODES: usize = 16;
+const UNION_MAX_KEYS: usize = 64;
+
+/// A spread value built of conditionals over object literals (R34.66).
+enum Union {
+    /// An object literal (or `null`/`undefined`/`false`: nothing is spread): the entries, in order.
+    Obj(Vec<(String, js_ast::Expr)>),
+    Cond(Box<RawExpr>, Box<Union>, Box<Union>),
+}
+
+/// `e` as a [`Union`] whose root is a conditional, `None` for anything else. A test is evaluated once per key, so
+/// it must be a pure expression of reads.
+fn union_of(r: &mut Reader<'_, '_>, e: &js_ast::Expr, nodes: &mut usize) -> Option<Union> {
+    *nodes += 1;
+    if *nodes > UNION_MAX_NODES {
+        return None;
+    }
+    match &e.data {
+        E::EIdentifier(id) => {
+            let init = r.names.cond_const(id.ref_)?;
+            union_of(r, &init, nodes)
+        }
+        E::EIf(i) => {
+            let test = r.expr(&i.test);
+            if !pure_test(&test) {
+                return None;
+            }
+            let yes = union_branch(r, &i.yes, nodes)?;
+            let no = union_branch(r, &i.no, nodes)?;
+            Some(Union::Cond(Box::new(test), Box::new(yes), Box::new(no)))
+        }
+        // `c && {…}`: a falsy `c` spreads nothing.
+        E::EBinary(b) if matches!(b.op, OpCode::BinLogicalAnd) => {
+            let test = r.expr(&b.left);
+            if !pure_test(&test) {
+                return None;
+            }
+            let yes = union_branch(r, &b.right, nodes)?;
+            Some(Union::Cond(
+                Box::new(test),
+                Box::new(yes),
+                Box::new(Union::Obj(Vec::new())),
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn union_branch(r: &mut Reader<'_, '_>, e: &js_ast::Expr, nodes: &mut usize) -> Option<Union> {
+    match &e.data {
+        E::ENull(_) | E::EUndefined(_) => Some(Union::Obj(Vec::new())),
+        E::EBoolean(b) if !b.value => Some(Union::Obj(Vec::new())),
+        E::EObject(obj) => {
+            let mut entries = Vec::new();
+            for p in obj.properties.iter() {
+                let (Some(k), Some(v)) = (&p.key, &p.value) else {
+                    return None;
+                };
+                let E::EString(k) = &k.data else {
+                    return None;
+                };
+                if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
+                    || p.flags.contains(js_ast::flags::Property::IsComputed)
+                {
+                    return None;
+                }
+                entries.push((estring(k), *v));
+            }
+            Some(Union::Obj(entries))
+        }
+        _ => union_of(r, e, nodes),
+    }
+}
+
+/// A test the union repeats per key: reads only (no call, no function, nothing the printer could not repeat).
+fn pure_test(e: &RawExpr) -> bool {
+    match &e.kind {
+        RawKind::Lit(_) | RawKind::Ident { .. } => true,
+        RawKind::Member { target, .. } => pure_test(target),
+        RawKind::Index { target, index } => pure_test(target) && pure_test(index),
+        RawKind::Binary { left, right, .. } => pure_test(left) && pure_test(right),
+        RawKind::Unary { value, .. } => pure_test(value),
+        RawKind::Cond { test, yes, no } => pure_test(test) && pure_test(yes) && pure_test(no),
+        _ => false,
+    }
+}
+
+impl Union {
+    /// Every key, first occurrence first.
+    fn keys(&self, out: &mut Vec<String>) {
+        match self {
+            Union::Obj(entries) => {
+                for (k, _) in entries {
+                    if !out.contains(k) {
+                        out.push(k.clone());
+                    }
+                }
+            }
+            Union::Cond(_, y, n) => {
+                y.keys(out);
+                n.keys(out);
+            }
+        }
+    }
+
+    /// The value of `key` along each branch, joined by the tests; a branch without the key is `undefined`.
+    /// `leaf` reads one entry (`None`: not expressible, the whole union fails closed).
+    fn value(
+        &self,
+        key: &str,
+        absent: &RawExpr,
+        leaf: &mut dyn FnMut(&js_ast::Expr) -> Option<RawExpr>,
+    ) -> Option<RawExpr> {
+        match self {
+            Union::Obj(entries) => match entries.iter().rev().find(|(k, _)| k == key) {
+                Some((_, v)) => leaf(v),
+                None => Some(absent.clone()),
+            },
+            Union::Cond(t, y, n) => Some(RawExpr {
+                loc: t.loc,
+                kind: RawKind::Cond {
+                    test: t.clone(),
+                    yes: Box::new(y.value(key, absent, leaf)?),
+                    no: Box::new(n.value(key, absent, leaf)?),
+                },
+            }),
+        }
+    }
 }
 
 fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<'e> {
@@ -428,6 +709,13 @@ fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<
             }
             Spread::Literal(entries)
         }
+        E::EIdentifier(_) | E::EIf(_) | E::EBinary(_) if union_root(r, value) => {
+            let mut nodes = 0;
+            match union_of(r, value, &mut nodes) {
+                Some(u) => Spread::Union(u),
+                None => Spread::Other,
+            }
+        }
         _ => {
             let raw = r.expr(value);
             if crate::analyze::passes::deps::prop_path(&raw).is_some() {
@@ -436,6 +724,63 @@ fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<
                 Spread::Other
             }
         }
+    }
+}
+
+fn union_refused(value: &js_ast::Expr, why: &str) -> Diagnostic {
+    Diagnostic::fallback(
+        "spread-props",
+        format!("a spread of conditional objects {why}, so it is not expanded natively"),
+        loc_of(value),
+        "list the attributes explicitly, or spread props",
+    )
+}
+
+/// A key a union spread never carries, on a host element or a component: an `on[A-Z]*` handler, `style`, `ref` and
+/// `dangerouslySetInnerHTML` are not a plain conditional value, so they refuse the whole union (a fallback).
+fn union_key_refused(name: &str) -> bool {
+    matches!(name, "style" | "ref" | "dangerouslySetInnerHTML")
+        || name
+            .strip_prefix("on")
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_uppercase()))
+}
+
+/// One entry of a union spread on a host element, as the expression the joined attribute evaluates. Only a plain
+/// attribute value qualifies (a string, a boolean, an expression): handlers, refs, `style`, `class` merging and
+/// `dangerouslySetInnerHTML` are not expressible as a conditional value, so they refuse the whole union.
+fn read_union_attr(
+    r: &mut Reader<'_, '_>,
+    name: &str,
+    v: &js_ast::Expr,
+    ref_name: &mut Option<String>,
+) -> Option<RawExpr> {
+    if union_key_refused(name) {
+        return None;
+    }
+    let lit = |l| RawExpr {
+        loc: loc_of(v),
+        kind: RawKind::Lit(l),
+    };
+    match read_attr(r, name, v, ref_name)? {
+        Attr::Static { value, .. } if matches!(v.data, E::EBoolean(_)) && value.is_empty() => {
+            Some(lit(crate::ir::Literal::Bool(true)))
+        }
+        Attr::Static { value, .. } => Some(lit(crate::ir::Literal::Str(value))),
+        Attr::Dynamic {
+            value: Expr::Raw(raw),
+            ..
+        } => Some(raw),
+        _ => None,
+    }
+}
+
+/// `value` could be the root of a union spread: a conditional, `c && {…}`, or a `const` holding a conditional.
+fn union_root(r: &Reader<'_, '_>, value: &js_ast::Expr) -> bool {
+    match &value.data {
+        E::EIdentifier(id) => r.names.cond_const(id.ref_).is_some(),
+        E::EIf(_) => true,
+        E::EBinary(b) => matches!(b.op, OpCode::BinLogicalAnd),
+        _ => false,
     }
 }
 
