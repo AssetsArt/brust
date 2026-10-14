@@ -96,6 +96,12 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     stores::resolve(ir, ctx);
     // Before placement: a refused render read never becomes a placed value.
     stores::check_render(ir, ctx);
+    // S2: context Providers hand their values to the consumers under them as hidden props, before the structural
+    // snapshot and placement so every later pass reads them like any prop.
+    {
+        let mut tmp = PassState::new(ir);
+        children::contexts(ir, &mut tmp, ctx);
+    }
     ir.structural = Some(Box::new(crate::ir::Structural {
         template: ir.template.clone(),
         state: ir.state.clone(),

@@ -17,7 +17,8 @@ use crate::ir::{
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
-pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
+/// The walker over `ir`'s template (shared by the context frames pass and the children pass).
+fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>) -> Walker<'s, 'c> {
     // Module consts the folder may read (R34.49): never a name the component body declares, and
     // never one with a use that is not a proven read (an array or object another use could change).
     let shadowed = |n: &str| {
@@ -35,7 +36,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             .map(|c| (c.name.clone(), c.value.clone()))
             .collect(),
     );
-    let mut w = Walker {
+    Walker {
         module_consts,
         st,
         ctx,
@@ -65,7 +66,64 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         handlers: Vec::new(),
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
         absent: BTreeSet::new(),
-    };
+    }
+}
+
+/// What a context Provider hands to the consumers under it (S2, R34.102): each field an expression of the scope that
+/// renders the Provider component (its call site), not of the Provider's own body.
+struct Frame {
+    context: String,
+    fields: Vec<(String, RawExpr)>,
+}
+
+/// S2 context lowering, BEFORE placement (R34.102-R34.104): a Provider component's value fields become hidden props
+/// (`ir::ctx_prop`) of every consumer instance under it, so the inlined consumer, its jobs and its template read
+/// them like any prop. A consumer with no Provider in this template bubbles its need up: the component declares the
+/// hidden prop itself and its own call site fills it (a wrapper around a consumer stays a plain component); only a
+/// route component with an unfilled need falls back (`context-no-provider`).
+pub fn contexts(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
+    let mut w = walker(ir, st, ctx);
+    let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
+    let mut frames: Vec<Frame> = Vec::new();
+    let mut bubbled: Vec<(String, String)> = Vec::new();
+    let mut diags: Vec<Diagnostic> = Vec::new();
+    w.frames_node(&mut template, &mut frames, &mut bubbled, &mut diags);
+    ir.template = template;
+    for (c, f) in &bubbled {
+        let name = crate::ir::ctx_prop(c, f);
+        if !ir.props.iter().any(|p| p.name == name) {
+            ir.props.push(crate::ir::PropDecl {
+                name: name.clone(),
+                local: name,
+                ts_type: None,
+                default: None,
+            });
+        }
+        match ir.ctx_uses.iter_mut().find(|u| &u.context == c) {
+            Some(u) if !u.fields.contains(f) => u.fields.push(f.clone()),
+            Some(_) => {}
+            None => ir.ctx_uses.push(crate::ir::CtxUse {
+                context: c.clone(),
+                fields: vec![f.clone()],
+            }),
+        }
+    }
+    if ctx.is_root && !bubbled.is_empty() {
+        diags.push(Diagnostic::fallback(
+            "context-no-provider",
+            format!(
+                "`{}` reads a context that no Provider above it provides",
+                bubbled[0].0
+            ),
+            0,
+            "render it inside the Provider component, or keep this component in React",
+        ));
+    }
+    ir.diagnostics.extend(diags);
+}
+
+pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
+    let mut w = walker(ir, st, ctx);
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
     w.resolve_row_only(std::slice::from_mut(&mut template), false);
@@ -178,6 +236,8 @@ struct Child {
     use_id: bool,
     /// Keys the call site must not pass (`ComponentIR::absent_props`).
     absent: Vec<String>,
+    /// The compiled child (S2 context frames read its `provides` / `ctx_uses` / props / derived).
+    ir: Option<Rc<ComponentIR>>,
 }
 
 /// Facts that decide whether a handler landing in a static child's spread can be bound by the
@@ -664,6 +724,251 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// The frames walk of [`contexts`].
+    fn frames_node(
+        &mut self,
+        n: &mut Node,
+        frames: &mut Vec<Frame>,
+        bubbled: &mut Vec<(String, String)>,
+        diags: &mut Vec<Diagnostic>,
+    ) {
+        match n {
+            Node::Element { children, .. } | Node::Fragment(children) => children
+                .iter_mut()
+                .for_each(|c| self.frames_node(c, frames, bubbled, diags)),
+            Node::If { then, else_, .. } => {
+                then.iter_mut()
+                    .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                else_
+                    .iter_mut()
+                    .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+            }
+            Node::For { body, .. } => body
+                .iter_mut()
+                .for_each(|c| self.frames_node(c, frames, bubbled, diags)),
+            Node::Component {
+                loc,
+                name,
+                source,
+                imported,
+                member,
+                props,
+                children,
+                ..
+            } => {
+                if name == "<member>" {
+                    children
+                        .iter_mut()
+                        .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                    return;
+                }
+                let mark = self.diagnostics.len();
+                let child =
+                    self.resolve_child(name, source.as_deref(), imported.as_deref(), member, *loc);
+                // The children pass resolves it again and reports; these diagnostics are not repeated.
+                self.diagnostics.truncate(mark);
+                let Some(cir) = child.ir.clone() else {
+                    children
+                        .iter_mut()
+                        .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                    return;
+                };
+                // Consumer: each field it reads comes from the nearest frame of its context, else bubbles up.
+                for u in &cir.ctx_uses {
+                    for f in &u.fields {
+                        let hidden = crate::ir::ctx_prop(&u.context, f);
+                        if props.iter().any(|(k, _)| k == &hidden) {
+                            continue;
+                        }
+                        let value = match frames.iter().rev().find(|fr| fr.context == u.context) {
+                            Some(fr) => Expr::Raw(
+                                fr.fields
+                                    .iter()
+                                    .find(|(k, _)| k == f)
+                                    .map(|(_, v)| v.clone())
+                                    .unwrap_or_else(|| RawExpr {
+                                        loc: *loc,
+                                        kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                                    }),
+                            ),
+                            None => {
+                                if !bubbled.iter().any(|(c, g)| c == &u.context && g == f) {
+                                    bubbled.push((u.context.clone(), f.clone()));
+                                }
+                                Expr::Raw(RawExpr {
+                                    loc: *loc,
+                                    kind: RawKind::Ident {
+                                        name: hidden.clone(),
+                                        kind: IdentKind::Prop,
+                                    },
+                                })
+                            }
+                        };
+                        props.push((hidden, value));
+                    }
+                }
+                // Provider: its values, in this scope, for the children passed to it.
+                let mut pushed = 0;
+                for pd in &cir.provides {
+                    let mut fields = Vec::new();
+                    let mut failed = None;
+                    for (k, raw) in &pd.fields {
+                        match self.subst(raw, &cir, props, 0) {
+                            Ok(v) => fields.push((k.clone(), v)),
+                            Err(why) => {
+                                failed = Some(why);
+                                break;
+                            }
+                        }
+                    }
+                    match failed {
+                        None => {
+                            frames.push(Frame {
+                                context: pd.context.clone(),
+                                fields,
+                            });
+                            pushed += 1;
+                        }
+                        Some(why) => diags.push(Diagnostic::fallback(
+                            "context-value",
+                            format!(
+                                "<{name}> provides a value brust cannot express where it is used: {why}"
+                            ),
+                            *loc,
+                            "keep this component in React, or provide plain props-derived values",
+                        )),
+                    }
+                }
+                children
+                    .iter_mut()
+                    .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                frames.truncate(frames.len() - pushed);
+            }
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+
+    /// `raw`, an expression of the Provider component `cir`'s body, as an expression of the scope that renders it
+    /// (`props` are the call site's): its props become the call site's values (a default when absent), its derived
+    /// locals are expanded, the rest is copied. `Err(why)` for anything this cannot express.
+    fn subst(
+        &self,
+        raw: &RawExpr,
+        cir: &ComponentIR,
+        props: &[(String, Expr)],
+        depth: u8,
+    ) -> Result<RawExpr, String> {
+        if depth > 8 {
+            return Err("a chain of derived values deeper than 8".into());
+        }
+        let go = |r: &RawExpr| self.subst(r, cir, props, depth);
+        let b = |r: &RawExpr| -> Result<Box<RawExpr>, String> { Ok(Box::new(go(r)?)) };
+        let kind = match &raw.kind {
+            RawKind::Lit(_) => raw.kind.clone(),
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Prop if name != "*" => {
+                    if let Some((_, e)) = props.iter().rev().find(|(k, _)| k == name) {
+                        match e {
+                            Expr::Raw(r) => return Ok(r.clone()),
+                            _ => {
+                                return Err(format!("the prop `{name}` is not a plain expression"));
+                            }
+                        }
+                    }
+                    if props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY) {
+                        return Err(format!(
+                            "the prop `{name}` may come from a spread of unknown keys"
+                        ));
+                    }
+                    match cir
+                        .props
+                        .iter()
+                        .find(|p| &p.name == name)
+                        .and_then(|p| p.default.as_ref())
+                    {
+                        Some(d) => return self.subst(d, cir, props, depth + 1),
+                        None => RawKind::Lit(crate::ir::Literal::Undefined),
+                    }
+                }
+                IdentKind::Local => {
+                    let derived = cir
+                        .structural
+                        .as_ref()
+                        .map(|s| s.derived.as_slice())
+                        .unwrap_or(&[])
+                        .iter()
+                        .find(|d| &d.name == name);
+                    match derived.map(|d| &d.expr) {
+                        Some(Expr::Raw(r)) => return self.subst(r, cir, props, depth + 1),
+                        _ => return Err(format!("`{name}` is a name of the Provider's module")),
+                    }
+                }
+                IdentKind::Global | IdentKind::Import { .. } => raw.kind.clone(),
+                _ => return Err(format!("`{name}` is state, a handler or a loop value")),
+            },
+            RawKind::Member {
+                target,
+                name,
+                optional,
+            } => RawKind::Member {
+                target: b(target)?,
+                name: name.clone(),
+                optional: *optional,
+            },
+            RawKind::Index { target, index } => RawKind::Index {
+                target: b(target)?,
+                index: b(index)?,
+            },
+            RawKind::Call { callee, args } => {
+                // A helper of the Provider's module is not in scope here (the next step exposes it).
+                if matches!(
+                    &callee.kind,
+                    RawKind::Ident {
+                        kind: IdentKind::Local,
+                        ..
+                    }
+                ) {
+                    return Err("a call of a function of the Provider's module".into());
+                }
+                RawKind::Call {
+                    callee: b(callee)?,
+                    args: args.iter().map(go).collect::<Result<_, _>>()?,
+                }
+            }
+            RawKind::Binary { op, left, right } => RawKind::Binary {
+                op: *op,
+                left: b(left)?,
+                right: b(right)?,
+            },
+            RawKind::Unary { op, value } => RawKind::Unary {
+                op: *op,
+                value: b(value)?,
+            },
+            RawKind::Cond { test, yes, no } => RawKind::Cond {
+                test: b(test)?,
+                yes: b(yes)?,
+                no: b(no)?,
+            },
+            RawKind::Template { head, parts } => RawKind::Template {
+                head: head.clone(),
+                parts: parts
+                    .iter()
+                    .map(|(p, t)| Ok((go(p)?, t.clone())))
+                    .collect::<Result<_, String>>()?,
+            },
+            RawKind::Array(xs) => RawKind::Array(xs.iter().map(go).collect::<Result<_, _>>()?),
+            RawKind::Object(ps) => RawKind::Object(
+                ps.iter()
+                    .map(|(k, v)| Ok((k.clone(), go(v)?)))
+                    .collect::<Result<_, String>>()?,
+            ),
+            RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
+                return Err("an expression outside the subset".into());
+            }
+        };
+        Ok(RawExpr { loc: raw.loc, kind })
+    }
+
     fn deps_of(&self, e: &Expr) -> Deps {
         match e {
             Expr::Precomputed { slot, per_item, .. } => {
@@ -779,6 +1084,7 @@ impl Walker<'_, '_> {
             reads_children_value: false,
             use_id: false,
             absent: Vec::new(),
+            ir: None,
         }
     }
 
@@ -819,6 +1125,7 @@ impl Walker<'_, '_> {
                     reads_children_value: false,
                     use_id: false,
                     absent: Vec::new(),
+                    ir: None,
                 };
             }
             // A package export (a member of one included): its source when the build wrote it (F153c), else
@@ -975,6 +1282,7 @@ impl Walker<'_, '_> {
                         reads_children_value: false,
                         use_id: false,
                         absent: Vec::new(),
+                        ir: None,
                     };
                 };
                 ctx.modules
@@ -1021,8 +1329,10 @@ impl Walker<'_, '_> {
         let mut icon_spread = false;
         let mut reads_children_value = false;
         let mut absent = Vec::new();
+        let mut child_ir = None;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
+                child_ir = Some(ir.clone());
                 forwards_ref = ir.forwards_ref;
                 icon_spread = ir.icon_spread;
                 absent = ir.absent_props.clone();
@@ -1115,6 +1425,7 @@ impl Walker<'_, '_> {
             reads_children_value,
             use_id,
             absent,
+            ir: child_ir,
         }
     }
 
