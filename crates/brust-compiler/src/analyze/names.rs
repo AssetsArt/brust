@@ -87,6 +87,9 @@ pub struct NameTable<'a> {
     forwarded_ref_dropped: std::cell::RefCell<HashSet<i32>>,
     /// Module-level `const X = BASE.MEMBER` (never reassigned) with `BASE` imported from a package.
     member_aliases: HashMap<u32, MemberRef>,
+    /// `const x = c ? {…} : {…}` at module level or at the top of the component body: the initialiser, for
+    /// a union spread `{...x}` (R34.66). Only a conditional is kept; a `const` is never reassigned.
+    cond_consts: HashMap<u32, js_ast::Expr>,
     /// The component's polymorphic tag local (`Comp` of `const Comp = asChild ? Slot.Root : "a"`, R34.28).
     poly: HashMap<u32, PolyTag>,
     state: HashSet<u32>,
@@ -280,6 +283,7 @@ impl<'a> NameTable<'a> {
             forwarded_ref: None,
             forwarded_ref_dropped: std::cell::RefCell::new(HashSet::new()),
             member_aliases: HashMap::new(),
+            cond_consts: HashMap::new(),
             poly: HashMap::new(),
             state: HashSet::new(),
             setters: HashSet::new(),
@@ -291,7 +295,35 @@ impl<'a> NameTable<'a> {
         };
         table.jsx_runtime = table.collect_jsx_runtime(ast);
         table.member_aliases = table.collect_member_aliases(ast);
+        for part in ast.parts.iter() {
+            table.add_cond_consts(part.stmts.slice());
+        }
         table
+    }
+
+    /// Records the `const x = <conditional>` statements of `stmts` (a module's or a component body's).
+    pub fn add_cond_consts(&mut self, stmts: &[js_ast::Stmt]) {
+        for stmt in stmts {
+            let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
+                continue;
+            };
+            if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                continue;
+            }
+            for d in l.decls.iter() {
+                if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                    && matches!(v.data, js_ast::expr::Data::EIf(_))
+                {
+                    let k = self.key(id.r#ref);
+                    self.cond_consts.insert(k, v);
+                }
+            }
+        }
+    }
+
+    /// The conditional a `const` was initialised with (see `cond_consts`).
+    pub fn cond_const(&self, r: js_ast::Ref) -> Option<js_ast::Expr> {
+        self.cond_consts.get(&self.key(r)).copied()
     }
 
     fn collect_member_aliases(&self, ast: &js_ast::Ast<'_>) -> HashMap<u32, MemberRef> {
