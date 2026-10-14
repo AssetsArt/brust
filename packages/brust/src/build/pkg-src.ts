@@ -209,17 +209,91 @@ const transpile = (code: string, loader: 'tsx' | 'ts' | 'js') =>
 
 /** What of `sources` is not in `published`; empty = the sources are what the published file was built from. */
 export function integrityGaps(sources: { path: string; text: string }[], published: string): string[] {
-  const pub = skeleton(transpile(published, 'js'))
+  const pubJs = transpile(published, 'js')
+  const pub = skeleton(pubJs)
+  const pubPairs = exportPairs(pubJs)
   const gaps: string[] = []
   for (const s of sources) {
     const loader = s.path.endsWith('.tsx') ? 'tsx' : 'ts'
-    const sk = skeleton(transpile(s.text, loader))
+    const sk = skeleton(withoutUnstableAliases(transpile(s.text, loader), pub.names, pubPairs))
     // Import specifiers are module names, which bundling replaces; they are checked as imports instead.
     for (const im of new Bun.Transpiler({ loader }).scanImports(s.text)) sk.strings.delete(im.path)
     for (const v of sk.strings) if (!pub.strings.has(v)) gaps.push(`${s.path}: literal ${JSON.stringify(v.startsWith('#') ? v.slice(1) : v).slice(0, 60)}`)
     for (const v of sk.names) if (!JSX_NAMES.has(v) && !JSX_RUNTIME.test(v) && !KEYWORDS.has(v) && !pub.names.has(v)) gaps.push(`${s.path}: name \`${v}\``)
   }
   return gaps
+}
+
+
+/** The `local as exported` pairs of the `export { … }` clauses of transpiled JS (`x` alone is `x as x`). */
+function exportPairs(js: string): Set<string> {
+  const out = new Set<string>()
+  for (const m of js.matchAll(/\bexport\s*\{([^}]*)\}/g)) {
+    for (const item of m[1]!.split(',')) {
+      const parts = item.trim().split(/\s+as\s+/)
+      if (parts[0] && /^[A-Za-z_$][\w$]*$/.test(parts[0])) out.add(`${parts[0]} as ${parts[1] ?? parts[0]}`)
+    }
+  }
+  return out
+}
+
+/** P2 (wave A step 0): a source export clause `export { Local as Alias }` whose alias the published file spells
+ * `unstable_Alias` (the Radix convention) names the same binding under another export name; an export name carries no
+ * behaviour. The alias is dropped from the source text before the name check ONLY when the published file exports the
+ * IDENTICAL local binding as EXACTLY `unstable_` + the alias. Any other alias that the published file does not have stays
+ * a name difference (a refusal). */
+function withoutUnstableAliases(js: string, pubNames: Set<string>, pubPairs: Set<string>): string {
+  return js.replace(/\bexport\s*\{([^}]*)\}/g, (all, body: string) => {
+    const items = body.split(',').map((item) => {
+      const parts = item.trim().split(/\s+as\s+/)
+      const [local, alias] = [parts[0] ?? '', parts[1]]
+      if (alias === undefined || pubNames.has(alias)) return item.trim()
+      return pubPairs.has(`${local} as unstable_${alias}`) ? local : item.trim()
+    })
+    return `export { ${items.join(', ')} }`
+  })
+}
+
+/** P1 (wave A step 0): a published file bundled from SEVERAL sources, none of which is the entry (the `index.ts` is not in
+ * the ESM map). Provable only when the published file's one `export { a, b }` clause lists plain names (no alias, no
+ * `export *`, no default) and EACH of them is declared by `export function|const|let|class` in exactly one source and
+ * EVERY source declares at least one of them: the entry is then a barrel the build writes from those names (identifiers
+ * only), never one of the sources chosen by eye. Every source still goes through the integrity check. */
+function barrelOf(files: { path: string; text: string }[], published: string): { path: string; text: string } | undefined {
+  let js: string
+  try {
+    js = transpile(published, 'js')
+  } catch {
+    return undefined
+  }
+  if (/\bexport\s+(?:(?:default|function|const|let|var|class)\b|\*)/.test(js)) return undefined
+  const clauses = [...js.matchAll(/\bexport\s*\{([^}]*)\}/g)]
+  if (clauses.length !== 1) return undefined
+  const names: string[] = []
+  for (const item of clauses[0]![1]!.split(',')) {
+    const n = item.trim()
+    if (n === '') continue
+    if (!/^[A-Za-z_$][\w$]*$/.test(n)) return undefined // an alias (`a as b`) or anything else
+    names.push(n)
+  }
+  if (names.length === 0 || new Set(names).size !== names.length) return undefined
+  const owner = new Map<string, string>()
+  const used = new Set<string>()
+  for (const name of names) {
+    const owners = files.filter((f) => new RegExp(`^export\\s+(?:async\\s+)?(?:function\\*?|const|let|class)\\s+${name.replace(/\$/g, '\\$')}\\b`, 'm').test(f.text))
+    if (owners.length !== 1) return undefined
+    owner.set(name, owners[0]!.path)
+    used.add(owners[0]!.path)
+  }
+  if (files.some((f) => !used.has(f.path))) return undefined
+  const dir = posix.dirname(files[0]!.path)
+  const path = posix.join(dir, 'index.ts')
+  if (files.some((f) => f.path === path)) return undefined
+  const lines = [...used].map((src) => {
+    const rel = posix.relative(dir, src).replace(/\.tsx?$/, '')
+    return `export { ${names.filter((n) => owner.get(n) === src).join(', ')} } from '${rel.startsWith('.') ? rel : `./${rel}`}'`
+  })
+  return { path, text: `${lines.join('\n')}\n` }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -284,7 +358,8 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
   const declared = typeof pj.source === 'string' ? posix.normalize(pj.source.replace(/^\.\//, '')) : null
   const roots = files.filter((f) => !imported.has(f.path))
   const entrySrc = files.find((f) => f.path === declared) ?? (roots.length === 1 ? roots[0] : undefined)
-  if (!entrySrc) return { ok: false, reason: `the source map has ${files.length} sources and none is the entry (no \`source\` field, ${roots.length} unimported)` }
+  const barrel = entrySrc ? undefined : barrelOf(files, readFileSync(entry, 'utf8'))
+  if (!entrySrc && !barrel) return { ok: false, reason: `the source map has ${files.length} sources and none is the entry (no \`source\` field, ${roots.length} unimported)` }
   // R34.62: the published file must be what these sources were built into.
   let gaps: string[]
   try {
@@ -300,7 +375,8 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
   const hash = createHash('sha256').update(relative(appRoot, dir).split(sep).join('/')).digest('hex').slice(0, 16)
   const outRel = posix.join(PKG_SRC_DIR, `p-${hash}`)
   const own = resolve(appRoot, PKG_SRC_DIR) + sep
-  const targets = files.map((f) => ({ f, target: resolve(appRoot, outRel, f.path) }))
+  const written = barrel ? [...files, barrel] : files
+  const targets = written.map((f) => ({ f, target: resolve(appRoot, outRel, f.path) }))
   const escaped = targets.find((t) => !t.target.startsWith(own))
   if (escaped) return { ok: false, reason: `the source ${escaped.f.path} would be written outside ${PKG_SRC_DIR}` }
   for (const { f, target } of targets) {
@@ -311,7 +387,7 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
     writeFileSync(target, f.text)
   }
   budget.bytes += bytes
-  return { ok: true, dir: outRel, entry: posix.join(outRel, entrySrc.path), imports: [...bare].sort() }
+  return { ok: true, dir: outRel, entry: posix.join(outRel, (entrySrc ?? barrel)!.path), imports: [...bare].sort() }
 }
 
 /**
