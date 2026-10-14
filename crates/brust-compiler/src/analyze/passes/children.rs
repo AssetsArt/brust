@@ -158,6 +158,8 @@ struct Child {
     onward: HandlerSink,
     /// The props roots the compiled child's jobs read (the server feeds each instance these).
     job_roots: BTreeSet<String>,
+    /// The compiled child is a `forwardRef` component (R34.63): a call site that passes `ref` needs React.
+    forwards_ref: bool,
     /// The compiled child has `useId` values (the server seeds them per instance, per row).
     use_id: bool,
 }
@@ -622,6 +624,7 @@ impl Walker<'_, '_> {
             poly_runtime_spread: false,
             onward: HandlerSink::default(),
             job_roots: BTreeSet::new(),
+            forwards_ref: false,
             use_id: false,
         }
     }
@@ -658,6 +661,7 @@ impl Walker<'_, '_> {
                     poly_runtime_spread: false,
                     onward: HandlerSink::default(),
                     job_roots: BTreeSet::new(),
+                    forwards_ref: false,
                     use_id: false,
                 };
             }
@@ -712,6 +716,7 @@ impl Walker<'_, '_> {
                         poly_runtime_spread: false,
                         onward: HandlerSink::default(),
                         job_roots: BTreeSet::new(),
+                        forwards_ref: false,
                         use_id: false,
                     };
                 };
@@ -755,8 +760,10 @@ impl Walker<'_, '_> {
         let mut onward = HandlerSink::default();
         let mut job_roots = BTreeSet::new();
         let mut use_id = false;
+        let mut forwards_ref = false;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
+                forwards_ref = ir.forwards_ref;
                 job_roots = ir
                     .jobs
                     .iter()
@@ -839,6 +846,7 @@ impl Walker<'_, '_> {
             poly_runtime_spread,
             onward,
             job_roots,
+            forwards_ref,
             use_id,
         }
     }
@@ -976,6 +984,16 @@ impl Walker<'_, '_> {
             }
         };
         *tier = child.tier.clone();
+        // R34.64: a `ref` at the call site of a `forwardRef` component reaches an element React attaches it to; a
+        // static or native render has none to give it.
+        if child.forwards_ref && props.iter().any(|(k, _)| k == "ref") {
+            self.diagnostics.push(Diagnostic::fallback(
+                "forwardref-ref",
+                format!("`ref` is passed to the forwardRef component <{name}>; brust renders it without a ref"),
+                *loc,
+                "drop the ref, or keep this component in React",
+            ));
+        }
         let (hoisted, unbound) = self.forward_handlers(name, *loc, props, &child);
         self.check_spread(name, props, &child, *loc, &hoisted, &unbound);
         // A hoisted handler is the parent's own member: not a prop of the instance.

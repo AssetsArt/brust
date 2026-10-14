@@ -216,6 +216,10 @@ pub struct ComponentIR {
     /// The polymorphic tag `const Comp = flag ? Slot.Root : "host"` of this component (R34.28).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poly: Option<PolyTag>,
+    /// The component is `forwardRef(…)` (shadcn S3, R34.63): its second parameter is the forwarded ref, which a
+    /// static or native render drops; a call site that passes `ref` makes the caller React (`forwardref-ref`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forwards_ref: bool,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -318,6 +322,7 @@ impl ComponentIR {
             props: vec![],
             props_rest: None,
             poly: None,
+            forwards_ref: false,
             state: vec![],
             derived: vec![],
             effects: vec![],

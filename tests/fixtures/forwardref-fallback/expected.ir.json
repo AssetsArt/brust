@@ -1,0 +1,199 @@
+{
+  "id": "input_16206eff",
+  "source": "tests/fixtures/forwardref-fallback/input.tsx",
+  "tier": {
+    "React": {
+      "reason": "a ref is read during render",
+      "client_only": false
+    }
+  },
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [
+    {
+      "name": "r",
+      "init": {
+        "ClientOnly": {
+          "js": "null"
+        }
+      }
+    }
+  ],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 723,
+      "tag": "section",
+      "attrs": [],
+      "children": [
+        {
+          "Component": {
+            "loc": 739,
+            "name": "Reads",
+            "source": null,
+            "imported": null,
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "the forwarded ref is read other than as `ref={ref}` on an element; the component renders as a React island",
+                "client_only": false
+              }
+            }
+          }
+        },
+        {
+          "Component": {
+            "loc": 755,
+            "name": "Passes",
+            "source": null,
+            "imported": null,
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "the forwarded ref is read other than as `ref={ref}` on an element; the component renders as a React island",
+                "client_only": false
+              }
+            }
+          }
+        },
+        {
+          "Component": {
+            "loc": 772,
+            "name": "Destructured",
+            "source": null,
+            "imported": null,
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "the forwarded ref is destructured; brust reads it only as a plain `ref` parameter",
+                "client_only": false
+              }
+            }
+          }
+        },
+        {
+          "Component": {
+            "loc": 795,
+            "name": "Plain",
+            "source": null,
+            "imported": null,
+            "props": [
+              [
+                "ref",
+                {
+                  "Raw": {
+                    "loc": 807,
+                    "kind": {
+                      "Ident": {
+                        "name": "r",
+                        "kind": "Local"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": null,
+            "tier": "Static"
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*",
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_input_16206eff"
+      ],
+      "per_item": null
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [
+    {
+      "name": "Reads",
+      "id": "reads_8fcf1e65",
+      "path": "tests/fixtures/forwardref-fallback/input.tsx",
+      "tier": {
+        "React": {
+          "reason": "the forwarded ref is read other than as `ref={ref}` on an element; the component renders as a React island",
+          "client_only": false
+        }
+      }
+    },
+    {
+      "name": "Passes",
+      "id": "passes_5076b92f",
+      "path": "tests/fixtures/forwardref-fallback/input.tsx",
+      "tier": {
+        "React": {
+          "reason": "the forwarded ref is read other than as `ref={ref}` on an element; the component renders as a React island",
+          "client_only": false
+        }
+      }
+    },
+    {
+      "name": "Destructured",
+      "id": "destructured_965c7fb5",
+      "path": "tests/fixtures/forwardref-fallback/input.tsx",
+      "tier": {
+        "React": {
+          "reason": "the forwarded ref is destructured; brust reads it only as a plain `ref` parameter",
+          "client_only": false
+        }
+      }
+    },
+    {
+      "name": "Plain",
+      "id": "plain_12fbc978",
+      "path": "tests/fixtures/forwardref-fallback/input.tsx",
+      "tier": "Static"
+    }
+  ],
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "forwardref-ref",
+      "message": "`ref` is passed to the forwardRef component <Plain>; brust renders it without a ref",
+      "loc": 795,
+      "line": 25,
+      "col": 7,
+      "remediation": "drop the ref, or keep this component in React"
+    },
+    {
+      "class": "Fallback",
+      "rule": "ref-in-render",
+      "message": "a ref is read during render",
+      "loc": 807,
+      "line": 25,
+      "col": 19,
+      "remediation": "read refs in effects and handlers"
+    }
+  ]
+}

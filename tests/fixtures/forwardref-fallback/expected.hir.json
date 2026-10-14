@@ -1,0 +1,22 @@
+{
+  "function": "Page",
+  "params": 0,
+  "scopes": [
+    {
+      "id": 0,
+      "pruned": true,
+      "deps": [],
+      "decls": [
+        "#21"
+      ]
+    },
+    {
+      "id": 1,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t0"
+      ]
+    }
+  ]
+}
