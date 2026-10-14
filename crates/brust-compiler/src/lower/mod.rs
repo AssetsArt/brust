@@ -44,11 +44,17 @@ pub struct Artifacts {
 pub enum Paint {
     /// `x-text`: booleans paint as empty, arrays concatenate (React).
     Text,
-    /// `x-bind-<attr>`: `false` removes the attribute, like `null`.
+    /// `x-bind-<attr>`: a boolean removes the attribute, like `null` (React omits it on an attribute that is not a boolean one).
     Attr,
+    /// `x-bind-<attr>` of `aria-*`, `data-*` and the other "booleanish string" attributes: `true`/`false` are the strings.
+    AttrStr,
+    /// `x-bind-download` / `capture`: `true` is `""`, `false` removes it.
+    AttrOver,
     /// `x-bind-style` of a style object: the CSS text (`__css`).
     Style,
-    /// Conditions, boolean attributes: the value as is.
+    /// A boolean attribute (`disabled`, `loop`, ...): the runtime sets it when truthy, so the chunk hands it `!!v`.
+    Bool,
+    /// Conditions: the value as is.
     Raw,
 }
 

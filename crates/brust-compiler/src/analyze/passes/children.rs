@@ -2165,7 +2165,7 @@ impl Walker<'_, '_> {
         let outputs = child
             .job_outputs
             .iter()
-            .map(|slot| (slot.clone(), format!("_f{child_id}_{ordinal}_{slot}")))
+            .map(|slot| (slot.clone(), format!("_fj_{child_id}_{ordinal}_{slot}")))
             .collect();
         let (eval_refused, stubs) = match &child.job_eval {
             Some(Ok(stubs)) => (None, stubs.clone()),

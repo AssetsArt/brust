@@ -956,16 +956,25 @@ fn read_attr(
             name: name.into(),
             value: estring(s),
         },
-        // React writes `true` on an `aria-*` / `data-*` attribute as the string "true" (`aria-hidden`
-        // alone is `aria-hidden="true"`); on any other attribute it is the boolean form.
-        E::EBoolean(b) if b.value => Attr::Static {
-            name: name.into(),
-            value: if name.starts_with("aria-") || name.starts_with("data-") {
-                "true".into()
-            } else {
-                String::new()
-            },
-        },
+        // React writes a literal `true` by the kind of the attribute (`brust_jinja::attr_kind`): `aria-*`, `data-*` and the
+        // other booleanish-string attributes as "true" (`aria-hidden` alone is `aria-hidden="true"`), a boolean attribute
+        // and `download`/`capture` as the empty value. On any other attribute it prints nothing: that is the dynamic path.
+        E::EBoolean(b)
+            if b.value
+                && brust_jinja::attr_kind(&brust_jinja::attr_name(name))
+                    != brust_jinja::AttrKind::Plain =>
+        {
+            Attr::Static {
+                name: name.into(),
+                value: if brust_jinja::attr_kind(&brust_jinja::attr_name(name))
+                    == brust_jinja::AttrKind::Stringify
+                {
+                    "true".into()
+                } else {
+                    String::new()
+                },
+            }
+        }
         _ => Attr::Dynamic {
             name: name.into(),
             value: Expr::Raw(r.expr(value)),

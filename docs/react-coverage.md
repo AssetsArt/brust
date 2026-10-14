@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 191 | 103 | 9 | 79 | 0 | 0 | 0 | 0 |
-| C Hooks | 35 | 2 | 13 | 20 | 0 | 0 | 0 | 0 |
+| B Composition | 194 | 105 | 10 | 79 | 0 | 0 | 0 | 0 |
+| C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 374 | 181 | 45 | 144 | 3 | 1 | 0 | 0 |
+| **Total** | 372 | 183 | 45 | 140 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -115,6 +115,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-holes-attr-cond | attributes and a condition read from props inside island children | static | static | ssr | ok | — | F148a (R34.118): attribute holes are primitives; a javascript: URL keeps React 19.3's guard (packages/brust/test/prop-path-children-revive.test.ts) |
 | b-island-prop-expr | an island prop that is an expression over props | react | react | ssr | ok | fallback:island-prop | F148a: the server hands an island a props path or a JSON value; anything else is fallback:island-prop, not the ssr-prop-not-a-path build error (the direction page hit it once its wrapper stopped being React) |
 | b-local-object-const-handler | a local object-literal const read by a handler and the template | native | native | 0 | ok | — | F178: the chunk printed `computed(() => { up: 2, down: -1 })`, a block with labels, and `brust build` failed on valid React; an arrow body that starts with `{` is parenthesised (served in tests/server/object-literal-arrow.chromium.test.ts) |
+| b-attr-boolean-as-string | aria-*, data-*, draggable and spellCheck given a boolean prop | static | static | 0 | ok | — | F196: React writes true/false on these as the strings "true"/"false"; the template used to drop false (an aria-checked switch lost its attribute). Matrix: crates/brust-compiler/tests/attr_boolean_parity.rs against tests/fixtures/attr-parity/react.json |
+| b-attr-boolean-omitted-or-empty | a boolean attribute, download and a plain attribute given a boolean prop | static | static | 0 | ok | — | F196: false omits hidden/download, true prints ""; a plain attribute (title) prints nothing for either boolean, as React does |
+| b-synthetic-event-methods | a handler that calls isPropagationStopped, isDefaultPrevented and persist | native | native | 0 | ok | — | F195: a DOM event has none of these; the runtime adds them to the event a handler receives (packages/runtime-dom/src/directives/on.ts). Served in tests/server/event-aria.chromium.test.ts |
 | b-island-holes-style | a style read from props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.118, F170): an object-valued attribute is never a hole; fallback:island-children |
 | b-island-holes-list | a list over props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.122, F171): a list over request data needs structure from data; fallback:island-children |
 | b-island-holes-route-children | {children} of a route component inside an island | react | react | ssr | ok | fallback:island-children | F148a (R34.121): a route component has no call site to bind a tree; its children are request data; fallback:island-children |
@@ -291,11 +294,6 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-usecontext | useContext | react | react | ssr | ok | fallback:context-escape |  |
 | c-custom-hook | custom hook | native | native | 0 | ok | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
 | c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
-| c-hook-relax-all | custom hook with an object-pattern parameter, a plain module function, a dev-only log block and a React hook alias | native | native | 0 | ok | — | R34.105: the shapes of a published controllable-state hook, each general |
-| c-hook-relax-param-not-literal | custom hook with an object-pattern parameter called with a non-literal | react | react | ssr | ok | fallback:hook-shape | R34.105: destructuring needs an object literal of plain keys at the call site |
-| c-hook-relax-helper-reads-const | custom hook calling a module function that reads a module const | react | react | ssr | ok | fallback:hook-shape | R34.105: only a plain, self-contained module function travels with the hook |
-| c-hook-relax-dev-block-visible | custom hook whose flagged block writes the document | react | react | ssr | ok | fallback:hook-shape | R34.105: a flagged block is left out only when all it does is log |
-| c-hook-relax-alias-unknown-key | custom hook calling a module const read off React by an unknown key | react | react | ssr | ok | fallback:hook-unsupported | R34.105: the key must fold to a hook React exports |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
 | c-usetransition | useTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usesyncexternalstore | useSyncExternalStore | react | react | ssr | ok | fallback:hook-unsupported |  |

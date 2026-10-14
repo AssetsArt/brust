@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-13', title: '2.0.0-alpha.13' },
       { id: 'alpha-12', title: '2.0.0-alpha.12' },
       { id: 'alpha-11', title: '2.0.0-alpha.11' },
       { id: 'alpha-10', title: '2.0.0-alpha.10' },
@@ -35,6 +36,38 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-13">2.0.0-alpha.13 · 15 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.12: #242–#245 (R42.2–R42.3, wave A PR 2a, F195–F196, F186–F187) */}
+      <p>Fixes for attributes and event handlers that did not behave like React, plus internal hardening.</p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #244 (F196, found by knock2 in the bubble-input spike); one classifier from React 19's table, checked against react-dom */}
+        <li>
+          <strong><code>aria-*</code> and <code>data-*</code> attributes set to <code>false</code> render like React.</strong> A dynamic <code>aria-pressed={'{'}false{'}'}</code>, <code>data-state</code> or another attribute that React prints as text was dropped from the HTML. It is now printed as <code>&quot;false&quot;</code>, on the server and when the value changes in the browser.
+        </li>
+        {/* source: PR #244 (F195) */}
+        <li>
+          <strong>Event handlers can call <code>isPropagationStopped()</code>.</strong> Compiled handlers receive the browser&rsquo;s event, which lacked the methods React adds. <code>event.isPropagationStopped()</code> threw a <code>TypeError</code>. The event now has React&rsquo;s <code>isPropagationStopped</code>, <code>isDefaultPrevented</code>, <code>persist</code>, <code>nativeEvent</code> and <code>isPersistent</code>.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #243 (wave A PR 2a): ctx_pkg fail-closed rule */}
+        <li>
+          <strong>The shadcn <code>select</code> page renders as a React page with one island</strong> (117 KB, was 118 KB), because more Radix package sources are now read for compilation (switch, checkbox, controllable state), and a context consumer from a package source inside an island keeps its caller in React.
+        </li>
+        {/* source: PR #242 (R42.3; R42.1 measured, not shipped) */}
+        <li>
+          <strong>The docs explain when islands become interactive.</strong> The time between the first paint and hydration equals a React server-rendered page, and islands keep loading right away by default. Preloading the React chunks was measured and not shipped: it made hydration slightly earlier but the first paint later on slow connections.
+        </li>
+        {/* source: PR #245 (F186, F187), reviewed by Mellow */}
+        <li>
+          <strong>Internal hardening.</strong> Server job modules can only be imported by the build&rsquo;s own job files, and job results live under a reserved prefix that loader data cannot overwrite.
+        </li>
+      </ul>
 
       <h2 id="alpha-12">2.0.0-alpha.12 · 15 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.11: #236–#240 (context lowering 1a and 1c, F181, F155 tests, F183) */}

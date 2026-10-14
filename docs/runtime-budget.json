@@ -1,8 +1,8 @@
 {
-  "reason": "L33 first budget (2026-10-14): measured gzip size of each module + 10%. Raise a number only in the PR that grows that module, and say why in this line.",
+  "reason": "L33 first budget (2026-10-14): measured gzip size of each module + 10%. Raise a number only in the PR that grows that module, and say why in this line. 2026-10-15 F195/F196: basics 1022 -> 1190 (measured 1080 gzip + 10%): the five React SyntheticEvent members a DOM event lacks (isPropagationStopped, isDefaultPrevented, persist, isPersistent, nativeEvent) and no empty src/href.",
   "core": 3432,
   "features": {
-    "basics": 1022,
+    "basics": 1190,
     "if": 403,
     "for": 1159,
     "model": 648,
