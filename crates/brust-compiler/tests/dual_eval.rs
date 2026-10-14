@@ -29,6 +29,7 @@ const NO_SAMPLES: &[&str] = &[
     "client-only",
     "fragment-root",
     "import-cycle",
+    "jsx-runtime-call",
     "jsx-shapes",
     "lazy-import",
     // shadcn S1.4: package members render as islands, nothing to evaluate on the server.

@@ -1,0 +1,19 @@
+{
+  "function": "Hand",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 0,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "cls",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1"
+      ]
+    }
+  ]
+}

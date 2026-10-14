@@ -591,22 +591,22 @@
         "d-profiler-bare"
       ],
       "tiers": [
-        "error",
+        "react",
         "static"
       ],
       "diagnostics": [
-        "error:island-prop",
-        "fallback:external-component"
+        "fallback:external-component",
+        "fallback:island-prop"
       ],
       "shapes": [
         {
           "row": "d-profiler",
           "authoring": "<Profiler onRender>",
-          "expected": "error",
-          "observed": "error",
+          "expected": "react",
+          "observed": "react",
           "diagnostics": [
-            "error:island-prop",
-            "fallback:external-component"
+            "fallback:external-component",
+            "fallback:island-prop"
           ]
         },
         {
@@ -619,7 +619,7 @@
           ]
         }
       ],
-      "note": "native/static: d-profiler-bare; refused: d-profiler"
+      "note": "native/static: d-profiler-bare; island: d-profiler"
     },
     {
       "name": "<StrictMode>",
