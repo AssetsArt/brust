@@ -527,37 +527,40 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 }
 
 impl Placer<'_> {
-    /// A child expression that is a bare imported binding, or `ns.name` of a namespace import, whose export cannot be
-    /// resolved to a value that is provably not JSX (a folded primitive const). `Some(name)` = fail closed.
+    /// An imported binding whose VALUE can become the child: the expression itself, a branch of a conditional
+    /// (`on ? el : null`), the value side of `&&` / `||` / `??` (`on && el`), or an array element; or `ns.name` of a
+    /// namespace import. Not a callee, a member target, a test or a call argument: those never flow out as the printed
+    /// value (a helper's return value is the helper's business). `Some(name)` = the export cannot be resolved to a
+    /// folded primitive, so the child fails closed.
     fn import_child_problem(&self, r: &RawExpr) -> Option<String> {
-        let (name, source, imported) = match &r.kind {
+        let proven = |source: &str, name: &str| {
+            crate::analyze::const_fold::imported_const(&self.path, source, name, self.opts, 0)
+                .is_some()
+        };
+        let sub = |x: &RawExpr| self.import_child_problem(x);
+        match &r.kind {
             RawKind::Ident {
                 name,
                 kind: IdentKind::Import { source, imported },
-            } if imported != "*" => (name.as_str(), source.as_str(), imported.as_str()),
-            RawKind::Member {
-                target,
-                name: member,
-                ..
-            } => match &target.kind {
+            } => (imported != "*" && !proven(source, imported)).then(|| name.clone()),
+            RawKind::Member { target, name, .. } => match &target.kind {
                 RawKind::Ident {
                     name: ns,
                     kind: IdentKind::Import { source, imported },
-                } if imported == "*" => {
-                    let proven = crate::analyze::const_fold::imported_const(
-                        &self.path, source, member, self.opts, 0,
-                    )
-                    .is_some();
-                    return (!proven).then(|| format!("{ns}.{member}"));
-                }
-                _ => return None,
+                } if imported == "*" => (!proven(source, name)).then(|| format!("{ns}.{name}")),
+                _ => None,
             },
-            _ => return None,
-        };
-        let proven =
-            crate::analyze::const_fold::imported_const(&self.path, source, imported, self.opts, 0)
-                .is_some();
-        (!proven).then(|| name.to_string())
+            RawKind::Binary { op, left, right } => match op {
+                crate::ir::BinOp::And => sub(right),
+                crate::ir::BinOp::Or | crate::ir::BinOp::Nullish => {
+                    sub(left).or_else(|| sub(right))
+                }
+                _ => None,
+            },
+            RawKind::Cond { yes, no, .. } => sub(yes).or_else(|| sub(no)),
+            RawKind::Array(xs) => xs.iter().find_map(sub),
+            _ => None,
+        }
     }
 
     /// The first module const `r` reads (through other module consts) whose value is, or builds, JSX.

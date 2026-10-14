@@ -8,7 +8,7 @@ import { FIXTURE, repo } from './paths.ts'
 
 const PAGES = ['ctx-progress-basic', 'ctx-progress-max', 'ctx-progress-indeterminate', 'ctx-progress-invalid']
 // F3: islands under a Provider keep the page React (the island hydrates, so scripts are expected and markup is React's own).
-const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns']
+const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns', 'ctx-imp-cond-and', 'ctx-imp-cond-tern']
 // Imported plain value: stays a static page (no script), and renders like React.
 const PLAIN_PAGES = ['ctx-imp-plain']
 const ROWS = join(FIXTURE, '.rows')
