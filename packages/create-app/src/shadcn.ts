@@ -15,13 +15,16 @@ export const spawnRunner: Runner = async (argv, cwd) => {
   }
 }
 
+/** POSIX single-quoting: nothing inside expands when the printed command is pasted into a shell. */
+export const shq = (s: string): string => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`)
+
 /** Returns 0 when done, else the failing step's exit code (the project is left in place; `lines` says what to run). */
 export async function runShadcn(o: { targetDir: string; components: string[]; workspace: boolean; run: Runner; out: (line: string) => void }): Promise<number> {
   const { targetDir, components, out } = o
-  const by = `cd ${JSON.stringify(targetDir)} && bun install && node_modules/.bin/brust shadcn init${components.map((c) => ` ${c}`).join('')}`
+  const by = `cd ${shq(targetDir)} && bun install && node_modules/.bin/brust shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`
   if (o.workspace) {
     out('--shadcn: this app is a workspace member of a brust checkout; run `bun install` at the repo root, then in the app:')
-    out(`  node_modules/.bin/brust shadcn init${components.map((c) => ` ${c}`).join('')}`)
+    out(`  node_modules/.bin/brust shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`)
     return 0
   }
   out('\n--shadcn: installing, then running `brust shadcn init` (needs @brust/core 2.0.0-alpha.11 or later)')
@@ -32,7 +35,7 @@ export async function runShadcn(o: { targetDir: string; components: string[]; wo
   }
   const init = await o.run([join(targetDir, 'node_modules/.bin/brust'), 'shadcn', 'init', ...components], targetDir)
   if (init !== 0) {
-    out(`create-app: brust shadcn init failed (exit ${init}); the project is created. Run again: cd ${JSON.stringify(targetDir)} && node_modules/.bin/brust shadcn init${components.map((c) => ` ${c}`).join('')}`)
+    out(`create-app: brust shadcn init failed (exit ${init}); the project is created. Run again: cd ${shq(targetDir)} && node_modules/.bin/brust shadcn init${components.map((c) => ` ${shq(c)}`).join('')}`)
   }
   return init
 }

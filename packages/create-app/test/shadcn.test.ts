@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { runShadcn } from '../src/shadcn.ts'
+import { runShadcn, shq } from '../src/shadcn.ts'
 
 function go(failOn?: string, workspace = false) {
   const calls: string[][] = []
@@ -25,4 +25,12 @@ test('a workspace member runs nothing and prints the two commands', async () => 
   const r = await go(undefined, true)
   expect([r.code, r.calls]).toEqual([0, []])
   expect(r.lines.join('\n')).toContain('brust shadcn init button card')
+})
+
+test('shq: a shell reads back the exact string for hostile directories and components; plain words stay bare', () => {
+  expect([shq('button'), shq('/p/app')]).toEqual(['button', '/p/app'])
+  for (const x of ["/tmp/x$(echo PWNED)`id`'q", 'https://u.dev/a.json;rm', 'a b', '$HOME', '']) {
+    const r = Bun.spawnSync(['sh', '-c', `printf '%s' ${shq(x)}`], { stdout: 'pipe' })
+    expect(r.stdout.toString()).toBe(x)
+  }
 })
