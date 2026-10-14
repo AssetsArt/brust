@@ -31,7 +31,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
-      <h2 id="alpha-7">2.0.0-alpha.7</h2>
+      <h2 id="alpha-7">2.0.0-alpha.7 · 14 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.6: #206–#212 (F142 PR1 and PR2, F138h, F153a, F157, F155, F153b part 1); docs/shadcn-coverage.json (64 of 64 pages build) */}
       <p>
         Every page of the shadcn/ui fixture now builds, lists and conditions made of constants no longer force a React island, and the largest page is smaller. See <a href="/docs/shadcn">shadcn/ui and React libraries</a> for the current numbers.
@@ -65,7 +65,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         </li>
         {/* source: PR #211 lane/esm-resolve (F155, R37.1–R37.4): staged bare imports resolve natively; one React copy across chunks is a test */}
         <li>
-          <strong>Smaller island bundles.</strong> A package imported by a staged island is now resolved the way your own source is, so it is tree-shaken: the chart page goes from 324 to 240 KB gzip and the dialog page from 114 to 102 KB. One copy of React is bundled across island, runtime and job chunks, for the Bun build, the Cloudflare build and <code>--target static</code>.
+          <strong>Smaller island bundles.</strong> A package imported by a staged island is now resolved the way your own source is, so it is tree-shaken: the dialog page goes from 114 to 102 KB gzip, and the chart page stays at 240 KB now that it is a static page (without this change it would have grown to 324 KB). One copy of React is bundled across island, runtime and job chunks, for the Bun build, the Cloudflare build and <code>--target static</code>.
         </li>
         {/* source: PR #212 lane/forwardref-components (F153b part 1, R34.63, R34.64): forwardRef components compile; refs drop on hosts */}
         <li>
