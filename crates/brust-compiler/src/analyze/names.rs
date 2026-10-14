@@ -157,6 +157,47 @@ pub fn module_imports(ast: &js_ast::Ast<'_>) -> HashMap<u32, (String, String)> {
     imports
 }
 
+/// The hooks React 19 exports from `react`: functions, so truthy, and hooks by their name.
+const REACT_HOOKS: &[&str] = &[
+    "useActionState",
+    "useCallback",
+    "useContext",
+    "useDebugValue",
+    "useDeferredValue",
+    "useEffect",
+    "useId",
+    "useImperativeHandle",
+    "useInsertionEffect",
+    "useLayoutEffect",
+    "useMemo",
+    "useOptimistic",
+    "useReducer",
+    "useRef",
+    "useState",
+    "useSyncExternalStore",
+    "useTransition",
+];
+
+/// A string a key expression always evaluates to: a literal, or `.trim()` / `.toString()` of one (the same pure
+/// string methods the constant folder knows).
+fn const_string(e: &js_ast::Expr) -> Option<String> {
+    match &e.data {
+        E::EString(s) => Some(crate::analyze::expr::estring(s)),
+        E::ECall(c) if c.args.is_empty() => {
+            let E::EDot(d) = &c.target.data else {
+                return None;
+            };
+            let inner = const_string(&d.target)?;
+            match d.name.slice() {
+                b"trim" => Some(inner.trim_matches(crate::ir::is_js_space).to_string()),
+                b"toString" => Some(inner),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 impl<'a> NameTable<'a> {
     pub fn new(ast: &'a js_ast::Ast<'_>, component: &js_ast::G::Fn) -> Self {
         let mut table = Self::for_hook(ast);
@@ -347,7 +388,58 @@ impl<'a> NameTable<'a> {
             table.add_cond_consts(part.stmts.slice());
         }
         table.collect_module_inits(ast);
+        table.collect_react_hook_aliases(ast);
         table
+    }
+
+    /// R34.105: a module-level `const useX = React[' useX '.trim().toString()] || other` (Radix spells the name so a
+    /// bundler cannot read it) or `const useX = React.useX` is React's own `useX` when the key folds to a constant
+    /// string that names a hook React 19 exports: React's exported hooks are functions, so `hook || other` is the
+    /// hook. Recorded as an import of `react`, so every reader of a hook call sees React's hook, by symbol.
+    fn collect_react_hook_aliases(&mut self, ast: &js_ast::Ast<'_>) {
+        let mut found = Vec::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
+                    continue;
+                };
+                if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                    continue;
+                }
+                for d in l.decls.iter() {
+                    if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                        && let Some(hook) = self.react_member_hook(&v)
+                    {
+                        found.push((id.r#ref, hook));
+                    }
+                }
+            }
+        }
+        for (r, hook) in found {
+            let k = self.key(r);
+            self.imports.insert(k, ("react".into(), hook.into()));
+        }
+    }
+
+    /// The React hook `e` reads off the React namespace by a constant key (`hook || other` is `hook`).
+    fn react_member_hook(&self, e: &js_ast::Expr) -> Option<&'static str> {
+        let on_react = |t: &js_ast::Expr| {
+            ident_ref(t).is_some_and(|r| {
+                matches!(self.imports.get(&self.key(r)),
+                    Some((s, n)) if s == "react" && (n == "*" || n == "default"))
+            })
+        };
+        let key = match &e.data {
+            E::EBinary(b) if matches!(b.op, js_ast::OpCode::BinLogicalOr) => {
+                return self.react_member_hook(&b.left);
+            }
+            E::EDot(d) if on_react(&d.target) => {
+                String::from_utf8_lossy(d.name.slice()).into_owned()
+            }
+            E::EIndex(i) if on_react(&i.target) => const_string(&i.index)?,
+            _ => return None,
+        };
+        REACT_HOOKS.iter().find(|h| **h == key).copied()
     }
 
     /// The module-level `const`s whose initialiser has a literal shape (see `module_inits`).
