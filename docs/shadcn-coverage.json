@@ -12,9 +12,9 @@
     "measured": 64,
     "analysisOnly": 0,
     "tier": {
-      "static": 58,
+      "static": 57,
       "native": 1,
-      "react": 5
+      "react": 6
     },
     "islands": 38,
     "pagesWithNoJs": 25,
@@ -42,7 +42,7 @@
       "classification": "survey truth (today's rule; R34.7 removes it)",
       "measuredRows": 38,
       "analysisOnlyRows": 0,
-      "appComponents": 137,
+      "appComponents": 136,
       "libraryComponents": 151
     },
     {
@@ -51,7 +51,7 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 33,
       "analysisOnlyRows": 0,
-      "appComponents": 125,
+      "appComponents": 124,
       "libraryComponents": 180
     },
     {
@@ -60,7 +60,7 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 32,
       "analysisOnlyRows": 0,
-      "appComponents": 89,
+      "appComponents": 88,
       "libraryComponents": 176
     },
     {
@@ -80,6 +80,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 5,
       "libraryComponents": 25
+    },
+    {
+      "blocker": "fallback:context-island",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 6,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:nested-instance",
@@ -107,15 +116,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 8,
       "libraryComponents": 36
-    },
-    {
-      "blocker": "fallback:context-island",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 3,
-      "analysisOnlyRows": 0,
-      "appComponents": 5,
-      "libraryComponents": 0
     },
     {
       "blocker": "fallback:child-component",
@@ -1194,13 +1194,14 @@
     {
       "id": "select",
       "basis": "measured",
-      "tier": "static",
+      "tier": "react",
       "islands": 1,
-      "components": 24,
-      "reactComponents": 23,
-      "jsGzipKb": 118,
+      "components": 26,
+      "reactComponents": 20,
+      "jsGzipKb": 117,
       "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "island-children",
         "island-prop",
@@ -1272,8 +1273,8 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 6,
-      "reactComponents": 5,
+      "components": 7,
+      "reactComponents": 4,
       "jsGzipKb": 93,
       "workerCalls": 1,
       "codes": [
@@ -1316,8 +1317,8 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 7,
-      "reactComponents": 3,
+      "components": 8,
+      "reactComponents": 2,
       "jsGzipKb": 89,
       "workerCalls": 1,
       "codes": [

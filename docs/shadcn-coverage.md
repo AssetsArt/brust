@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | pages with no worker call | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|---|
-| 64 | 58 | 1 | 5 | 38 | 25 | 20 | 0 / 87 / 240 KB |
+| 64 | 57 | 1 | 6 | 38 | 25 | 20 | 0 / 87 / 240 KB |
 
 ### Analysis-only (0 of 64 pages refused)
 
@@ -36,15 +36,15 @@ One line per thing that keeps a row or a library component off the static/native
 
 | # | Blocker | Kind | Classification | Measured rows | Analysis-only rows | App components | Library components | Why |
 |---|---|---|---|---|---|---|---|---|
-| 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 38 | 0 | 137 | 151 | `external-component` diagnostic (docs/react-coverage.md) |
-| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 33 | 0 | 125 | 180 | `spread-props` diagnostic (docs/react-coverage.md) |
-| 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 89 | 176 | `island-prop` diagnostic (docs/react-coverage.md) |
+| 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 38 | 0 | 136 | 151 | `external-component` diagnostic (docs/react-coverage.md) |
+| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 33 | 0 | 124 | 180 | `spread-props` diagnostic (docs/react-coverage.md) |
+| 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 88 | 176 | `island-prop` diagnostic (docs/react-coverage.md) |
 | 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 19 | 0 | 20 | 55 | `island-children` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 5 | 0 | 5 | 25 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
-| 6 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 0 | `nested-instance` diagnostic (docs/react-coverage.md) |
-| 7 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 154 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
-| 8 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 36 | `control-flow` diagnostic (docs/react-coverage.md) |
-| 9 | fallback:context-island | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 5 | 0 | `context-island` diagnostic (docs/react-coverage.md) |
+| 6 | fallback:context-island | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 6 | 0 | `context-island` diagnostic (docs/react-coverage.md) |
+| 7 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 0 | `nested-instance` diagnostic (docs/react-coverage.md) |
+| 8 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 154 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
+| 9 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 36 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 10 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `child-component` diagnostic (docs/react-coverage.md) |
 | 11 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `jsx-expression` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 5 | `hook-shape` diagnostic (docs/react-coverage.md) |
@@ -158,15 +158,15 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | radio-group | measured | static | 1 | 9 (5) | 97 | 1 | external-component, island-prop, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
 | scroll-area | measured | static | 1 | 11 (7) | 92 | 1 | external-component, island-prop, spread-props | built |
-| select | measured | static | 1 | 24 (23) | 118 | 1 | external-component, island-children, island-prop, spread-props | built |
+| select | measured | react | 1 | 26 (20) | 117 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | separator | measured | static | 0 | 4 (0) | 0 | 2 | — | built |
 | sheet | measured | react | 1 | 21 (15) | 101 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | sidebar | measured | static | 1 | 14 (6) | 117 | 1 | context-value, control-flow, external-component, hook-shape, island-children, jsx-const-child, linked-prop-precompute, spread-handler, spread-props | built |
 | skeleton | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
-| slider | measured | static | 1 | 6 (5) | 93 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
+| slider | measured | static | 1 | 7 (4) | 93 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
 | sonner | measured | native | 1 | 3 (1) | 87 | 1 | child-component | built |
 | spinner | measured | static | 0 | 2 (0) | 0 | 1 | external-component, spread-props | built |
-| switch | measured | static | 1 | 7 (3) | 89 | 1 | external-component, island-children, island-prop, spread-props | built |
+| switch | measured | static | 1 | 8 (2) | 89 | 1 | external-component, island-children, island-prop, spread-props | built |
 | table | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
 | tabs | measured | static | 1 | 9 (8) | 94 | 1 | external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
@@ -296,7 +296,6 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/select.tsx#selectContent | external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/select.tsx#selectGroup | external-component, spread-props | 1 |
 | components/ui/select.tsx#selectItem | external-component, island-prop, spread-props | 1 |
-| components/ui/select.tsx#selectLabel | external-component, island-prop, spread-props | 1 |
 | components/ui/select.tsx#selectScrollDownButton | external-component, island-prop, spread-props | 1 |
 | components/ui/select.tsx#selectScrollUpButton | external-component, island-prop, spread-props | 1 |
 | components/ui/select.tsx#selectTrigger | external-component, island-prop, spread-props | 1 |
@@ -330,6 +329,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | pages/combobox.tsx#combobox | external-component, island-children, jsx-const-child, jsx-expression | 1 |
 | pages/dialog.tsx#dialog | context-island | 1 |
 | pages/form.tsx#form | child-component, hook-unsupported, island-children, island-prop, spread-props | 1 |
+| pages/select.tsx#select | context-island | 1 |
 | pages/sheet.tsx#sheet | context-island | 1 |
 | pages/sonner.tsx#sonner | child-component | 1 |
 
