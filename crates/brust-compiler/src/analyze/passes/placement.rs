@@ -49,6 +49,10 @@ struct List {
     paths: Vec<String>,
     /// The source reads state or a store, so the list changes on the client.
     stateful: bool,
+    /// F173 (Mellow F2): the source as written and the index binding: an item is an accepted method receiver only when
+    /// its list is (`Placer::receiver_problem`), an index always is (a number).
+    source: Option<RawExpr>,
+    index: Option<String>,
 }
 
 /// `why` of an `Opaque` the reader made from a function.
@@ -99,6 +103,10 @@ struct Placer<'s> {
     component_children: u32,
     /// > 0 under a lowered Provider frame (or in a Provider component's own template): judged by the allowlist.
     provider_children: u32,
+    /// F173: set while placing a `{child}` slot (content the template prints as text or markup). Under a plain wrapper
+    /// only those are judged: an element read there prints nothing, while an attribute or a component prop prints it the
+    /// way React does (`String(value)`) or hands it to the child, as on main.
+    slot_content: bool,
     /// Set while placing a frame value the compiler itself injected (`__ctx_*` hidden props): its expression comes from
     /// the Provider's own value fields, already judged by `provider_problem`.
     frame_value: bool,
@@ -110,6 +118,8 @@ struct Placer<'s> {
     module_decls: Vec<crate::ir::ModuleDecl>,
     /// F174: module functions proven to return a primitive (`ir.plain_fns`).
     plain_fns: Vec<String>,
+    /// F173 (Mellow F3): each state's initial value as written; a state is a method receiver only when it starts primitive.
+    state_inits: HashMap<String, RawExpr>,
     /// F174: the verdict on each derived value / module const already judged (a chain of derived values is deep and shared).
     read_memo: std::cell::RefCell<std::collections::HashMap<String, Option<String>>>,
     slot_values: &'s std::collections::HashMap<String, serde_json::Value>,
@@ -240,6 +250,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         // so every Slot of it is judged by the allowlist too.
         provider_children: u32::from(!ir.provides.is_empty()),
         frame_value: false,
+        slot_content: false,
         list_shape_locs: ir
             .diagnostics
             .iter()
@@ -250,6 +261,14 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         text: ctx.text,
         module_decls: ir.module_decls.clone(),
         plain_fns: ir.plain_fns.clone(),
+        state_inits: ir
+            .state
+            .iter()
+            .filter_map(|s| match &s.init {
+                Expr::Raw(r) => Some((s.name.clone(), r.clone())),
+                _ => None,
+            })
+            .collect(),
         read_memo: Default::default(),
         slot_values: &ctx.opts.slot_values,
         opts: ctx.opts,
@@ -551,42 +570,6 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 }
 
 impl Placer<'_> {
-    /// An imported binding whose VALUE can become the child: the expression itself, a branch of a conditional
-    /// (`on ? el : null`), the value side of `&&` / `||` / `??` (`on && el`), or an array element; or `ns.name` of a
-    /// namespace import. Not a callee, a member target, a test or a call argument: those never flow out as the printed
-    /// value (a helper's return value is the helper's business). `Some(name)` = the export cannot be resolved to a
-    /// folded primitive, so the child fails closed.
-    fn import_child_problem(&self, r: &RawExpr) -> Option<String> {
-        let proven = |source: &str, name: &str| {
-            crate::analyze::const_fold::imported_const(&self.path, source, name, self.opts, 0)
-                .is_some()
-        };
-        let sub = |x: &RawExpr| self.import_child_problem(x);
-        match &r.kind {
-            RawKind::Ident {
-                name,
-                kind: IdentKind::Import { source, imported },
-            } => (imported != "*" && !proven(source, imported)).then(|| name.clone()),
-            RawKind::Member { target, name, .. } => match &target.kind {
-                RawKind::Ident {
-                    name: ns,
-                    kind: IdentKind::Import { source, imported },
-                } if imported == "*" => (!proven(source, name)).then(|| format!("{ns}.{name}")),
-                _ => None,
-            },
-            RawKind::Binary { op, left, right } => match op {
-                crate::ir::BinOp::And => sub(right),
-                crate::ir::BinOp::Or | crate::ir::BinOp::Nullish => {
-                    sub(left).or_else(|| sub(right))
-                }
-                _ => None,
-            },
-            RawKind::Cond { yes, no, .. } => sub(yes).or_else(|| sub(no)),
-            RawKind::Array(xs) => xs.iter().find_map(sub),
-            _ => None,
-        }
-    }
-
     /// The allowlist predicate over a child expression (already folded): `None` when EVERY identifier read anywhere in
     /// it is (1) a prop, (2) a component-local binding the lowering prints (a derived value, state, a loop binding) or
     /// (3) already folded to a primitive literal, or a global; otherwise `Some(name)` of the first read that is not.
@@ -676,14 +659,38 @@ impl Placer<'_> {
                         name,
                         kind: IdentKind::Local,
                     } => self.plain_fns.contains(name) && !self.derived_raw.contains_key(name),
-                    RawKind::Member { target, name, .. } => {
+                    // F173: a function a relative module exports and proves plain by the same rules (`formatPrice(x)`).
+                    RawKind::Ident {
+                        kind: IdentKind::Import { source, imported },
+                        ..
+                    } if imported != "*" && imported != "default" => {
+                        // Memoised beside the derived values (a key no identifier can spell): one module read per import.
+                        let key = format!("import {source} {imported}");
+                        let known = self.read_memo.borrow().get(&key).map(Option::is_none);
+                        known.unwrap_or_else(|| {
+                            let ok = crate::analyze::plain_fn::imported_plain_fn(
+                                &self.path, source, imported, self.opts,
+                            );
+                            self.read_memo
+                                .borrow_mut()
+                                .insert(key, (!ok).then(|| imported.clone()));
+                            ok
+                        })
+                    }
+                    RawKind::Member {
+                        target,
+                        name,
+                        optional,
+                    } => {
                         matches!(
                             &target.kind,
                             RawKind::Ident {
                                 kind: IdentKind::Global,
                                 ..
                             }
-                        ) || (go(target).is_none() && plain_method(name))
+                        ) || (!*optional
+                            && plain_method(name)
+                            && self.receiver_problem(target, depth + 1).is_none())
                     }
                     RawKind::Lit(_)
                     | RawKind::Ident { .. }
@@ -705,7 +712,23 @@ impl Placer<'_> {
                         _ => "a call".to_string(),
                     });
                 }
-                args.iter().find_map(go)
+                // F173: a regular expression literal is an object, so it is allowed only as the argument of a method
+                // (`s.replace(/x/, '')`); a helper could return it.
+                let method = matches!(callee.kind, RawKind::Member { .. });
+                let helper = matches!(
+                    callee.kind,
+                    RawKind::Ident {
+                        kind: IdentKind::Local | IdentKind::Import { .. },
+                        ..
+                    }
+                );
+                args.iter().find_map(|a| match &a.kind {
+                    RawKind::Opaque { why, .. } if method && why == "ERegExp" => None,
+                    // A helper may call a method of its argument and return the result: the argument must be a receiver
+                    // the allowlist accepts (Mellow F1). A global's argument is coerced (`String(x)`, `Math.round(x)`).
+                    _ if helper => self.receiver_problem(a, depth + 1),
+                    _ => go(a),
+                })
             }
             RawKind::Binary { left, right, .. } => go(left).or_else(|| go(right)),
             RawKind::Unary { value, .. } => go(value),
@@ -716,6 +739,175 @@ impl Placer<'_> {
             RawKind::Arrow { .. } => Some("a function".into()),
             RawKind::Jsx(_) => Some("an element".into()),
             RawKind::Opaque { source, .. } => Some(source.clone()),
+        }
+    }
+
+    /// F173 (lead ruling on @57714ece, Mellow F1): why the value an allowlisted method is called on may not be a
+    /// built-in string, number, array or `Date`. A POSITIVE allowlist, so no object literal can sit anywhere in the chain
+    /// and bring its own method of that name: a literal or untagged template; a prop, state, store or loop binding; a
+    /// derived local judged by this same rule; a primitive module const; member / index chains on those roots; a call of
+    /// an allowlisted method on such a receiver (`n.toFixed(2).padStart(6)`), of `String` / `Number` / `Math.*`; and
+    /// `new Date(…)` of the unbound global `Date` whose every read is accepted. Anything else refuses.
+    fn receiver_problem(&self, r: &RawExpr, depth: u8) -> Option<String> {
+        if depth > 8 {
+            return Some("an expression nested deeper than 8".into());
+        }
+        let go = |x: &RawExpr| self.receiver_problem(x, depth + 1);
+        let judged = |x: &RawExpr| self.child_read_problem(x, depth + 1);
+        let not = || Some("a value that may carry its own methods".to_string());
+        match &r.kind {
+            RawKind::Lit(_) => None,
+            RawKind::Template { .. } | RawKind::Unary { .. } => judged(r),
+            RawKind::Binary { op, left, right } => match op {
+                // These return one of their operands.
+                crate::ir::BinOp::And | crate::ir::BinOp::Or | crate::ir::BinOp::Nullish => {
+                    go(left).or_else(|| go(right))
+                }
+                // The rest return a number, a string or a boolean.
+                _ => judged(r),
+            },
+            RawKind::Cond { test, yes, no } => judged(test).or_else(|| go(yes)).or_else(|| go(no)),
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Prop | IdentKind::Store { .. } => None,
+                // Mellow F3: a state value is a receiver only when its `useState` initial value is primitive (a literal, a
+                // template, an operator over judged reads). An object, a prop, a lazy initializer, refuse; what a setter
+                // writes later is out of model (ledger N2).
+                IdentKind::State => match self.state_inits.get(name).map(|i| &i.kind) {
+                    Some(RawKind::Lit(_)) => None,
+                    Some(RawKind::Template { .. } | RawKind::Unary { .. }) => {
+                        judged(&self.state_inits[name]).map(|_| name.clone())
+                    }
+                    // `&&` / `||` / `??` return an operand; the other operators return a primitive.
+                    Some(RawKind::Binary { op, .. })
+                        if !matches!(
+                            op,
+                            crate::ir::BinOp::And
+                                | crate::ir::BinOp::Or
+                                | crate::ir::BinOp::Nullish
+                        ) =>
+                    {
+                        judged(&self.state_inits[name]).map(|_| name.clone())
+                    }
+                    _ => Some(name.clone()),
+                },
+                // Mellow F2: a list item carries what its list holds (`[{ toString: fmt }].map((r) => r.toString())`).
+                IdentKind::LoopBinding => match self
+                    .lists
+                    .iter()
+                    .rev()
+                    .find(|l| &l.item == name || l.index.as_ref() == Some(name))
+                {
+                    Some(l) if l.index.as_ref() == Some(name) => None,
+                    Some(List {
+                        source: Some(src), ..
+                    }) => go(src).map(|_| name.clone()),
+                    _ => Some(name.clone()),
+                },
+                IdentKind::Local => match self.derived_raw.get(name) {
+                    Some(d) => {
+                        let key = format!("receiver {name}");
+                        if let Some(v) = self.read_memo.borrow().get(&key) {
+                            return v.clone();
+                        }
+                        // Fail closed while it is being judged (a name that reads itself).
+                        self.read_memo
+                            .borrow_mut()
+                            .insert(key.clone(), Some(name.clone()));
+                        let v = self.receiver_problem(d, 0).map(|_| name.clone());
+                        self.read_memo.borrow_mut().insert(key, v.clone());
+                        v
+                    }
+                    None => match self
+                        .module_decls
+                        .iter()
+                        .flat_map(|d| &d.consts)
+                        .find(|c| &c.name == name)
+                    {
+                        Some(c)
+                            if !c.mutated
+                                && !contains_jsx(&c.value)
+                                && matches!(
+                                    c.value.kind,
+                                    RawKind::Lit(_)
+                                        | RawKind::Template { .. }
+                                        | RawKind::Binary { .. }
+                                        | RawKind::Unary { .. }
+                                        | RawKind::Cond { .. }
+                                ) =>
+                        {
+                            self.receiver_problem(&c.value, depth + 1)
+                                .map(|_| name.clone())
+                        }
+                        _ => Some(name.clone()),
+                    },
+                },
+                IdentKind::Setter
+                | IdentKind::Global
+                | IdentKind::Import { .. }
+                | IdentKind::Unknown => Some(name.clone()),
+            },
+            RawKind::Member {
+                target, optional, ..
+            } => {
+                if *optional {
+                    return not();
+                }
+                go(target)
+            }
+            RawKind::Index { target, index } => go(target).or_else(|| judged(index)),
+            RawKind::Call { callee, args } => {
+                let ok = match &callee.kind {
+                    // `String(x)` / `Number(x)`: the unbound globals.
+                    RawKind::Ident {
+                        name,
+                        kind: IdentKind::Global,
+                    } => matches!(name.as_str(), "String" | "Number"),
+                    RawKind::Member {
+                        target,
+                        name,
+                        optional: false,
+                    } => match &target.kind {
+                        // `Math.*` only: never `Object.*`, `Array.*` or another global's member.
+                        RawKind::Ident {
+                            name: g,
+                            kind: IdentKind::Global,
+                        } => g == "Math",
+                        _ => plain_method(name) && go(target).is_none(),
+                    },
+                    _ => false,
+                };
+                if !ok {
+                    return not();
+                }
+                args.iter().find_map(|a| match &a.kind {
+                    RawKind::Opaque { why, .. } if why == "ERegExp" => None,
+                    _ => judged(a),
+                })
+            }
+            RawKind::Opaque {
+                source,
+                why,
+                captures,
+            } if why == "ENew" && source.starts_with("new Date(") => {
+                captures.iter().find_map(|(name, kind)| {
+                    if name == "Date" {
+                        (*kind != IdentKind::Global).then(|| name.clone())
+                    } else {
+                        judged(&RawExpr {
+                            loc: r.loc,
+                            kind: RawKind::Ident {
+                                name: name.clone(),
+                                kind: kind.clone(),
+                            },
+                        })
+                    }
+                })
+            }
+            RawKind::Object(_)
+            | RawKind::Array(_)
+            | RawKind::Arrow { .. }
+            | RawKind::Jsx(_)
+            | RawKind::Opaque { .. } => not(),
         }
     }
 
@@ -983,14 +1175,20 @@ impl Placer<'_> {
     fn painted(&mut self, r: &RawExpr) -> Expr {
         // Lead ruling (c), the single print point: EVERY expression printed under a lowered Provider frame or in a
         // Provider component's own template (a child, an own slot, a component prop, an attribute, a condition or a
-        // loop body) goes through the total allowlist, so no print path can skip it.
-        if self.provider_children > 0
+        // loop body) goes through the total allowlist, so no print path can skip it. F173: under a plain wrapper, every
+        // `{child}` slot printed in the children passed to it (at any depth) goes through the same predicate.
+        if (self.provider_children > 0 || (self.component_children > 0 && self.slot_content))
             && !self.frame_value
             && let Some(name) = self.child_read_problem(&self.fold(r), 0)
         {
+            let under = if self.provider_children > 0 {
+                "under a context Provider"
+            } else {
+                "as a child of a component"
+            };
             self.diagnostics.push(Diagnostic::fallback(
                 "jsx-const-child",
-                format!("`{name}` is read under a context Provider and brust cannot prove it is a plain value (a prop, a printed local or a primitive constant); the server template could print nothing for it"),
+                format!("`{name}` is read {under} and brust cannot prove it is a plain value (a prop, a printed local, a primitive constant or a helper proven to return one); the server template could print nothing for it"),
                 r.loc,
                 "render the element inline, pass a prop, or keep this component in React",
             ));
@@ -1186,28 +1384,9 @@ impl Placer<'_> {
             }
             Node::Text(_) => {}
             Node::Slot(e) => {
-                // Lead ruling (c): under a lowered Provider frame (those were whole islands on main, so a fallback is no
-                // regression) a child is printed only when every identifier it reads, anywhere, is a prop, a printed local
-                // or a primitive (the total allowlist). A plain wrapper keeps main's behaviour plus the reviewed guards:
-                // an element holder at the root of the child or in its conditional / array / namespace value positions.
-                if let Expr::Raw(r) = &*e {
-                    let found = if self.provider_children > 0 {
-                        None // judged in `painted`, the single print point
-                    } else if self.component_children > 0 {
-                        self.import_child_problem(r)
-                    } else {
-                        None
-                    };
-                    if let Some(name) = found {
-                        self.diagnostics.push(Diagnostic::fallback(
-                            "jsx-const-child",
-                            format!("`{name}` is read as a child and brust cannot prove it is a plain value (a prop, a printed local or a primitive constant); the server template could print nothing for it"),
-                            r.loc,
-                            "render the element inline, pass a prop, or keep this component in React",
-                        ));
-                    }
-                }
-                self.expr(e)
+                self.slot_content = true;
+                self.expr(e);
+                self.slot_content = false;
             }
             Node::If {
                 cond, then, else_, ..
@@ -1255,6 +1434,8 @@ impl Placer<'_> {
                     item: item.clone(),
                     paths: minimal_paths(src_deps.props.iter().chain(&src_deps.stores).cloned()),
                     stateful: src_deps.reactive() || self.lists.last().is_some_and(|l| l.stateful),
+                    source: src_raw.clone(),
+                    index: index.clone(),
                 });
                 self.expr(key);
                 body.iter_mut().for_each(|c| self.node(c));
@@ -1344,17 +1525,8 @@ fn collect_raw(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
     }
 }
 
-/// The string / array methods the server template prints (`lower::server_expr::call`): their result is a plain value.
+/// The built-in methods whose result is a plain value on a built-in receiver (`Placer::receiver_problem`): main's string
+/// / array set (`slice` included) and the F173 allowlist (`plain_fn::PRIMITIVE_METHODS`).
 fn plain_method(name: &str) -> bool {
-    matches!(
-        name,
-        "toUpperCase"
-            | "toLowerCase"
-            | "trim"
-            | "slice"
-            | "startsWith"
-            | "endsWith"
-            | "includes"
-            | "join"
-    )
+    name == "slice" || crate::analyze::plain_fn::PRIMITIVE_METHODS.contains(&name)
 }
