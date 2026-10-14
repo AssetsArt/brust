@@ -76,3 +76,22 @@ test('the exact sizes go to the git-ignored JSON, not the doc', () => {
   expect(j.pages.filter((p) => p.built).every((p) => typeof p.gzip === 'number' && typeof p.raw === 'number')).toBe(true)
   expect(renderReport(rows, libs, repro)).not.toMatch(/"gzip"/)
 })
+
+// S1.4 (R34.34, a gate, no knownGap): `asChild ? Slot.Root : "host"` is resolved at its call site, so these pages are static
+// HTML: no island, no JS, and no Radix Slot in any client chunk or in jobs.js.
+const SLOT_FLIPPED = ['badge', 'badge-aslink', 'bubble', 'button', 'button-aschild', 'card', 'empty', 'item', 'marker']
+
+test('the local-component rows are static pages with 0 islands, 0 JS and no Radix Slot in the dist (S1.4)', () => {
+  for (const id of SLOT_FLIPPED) {
+    const r = rows.find((x) => x.id === id)
+    expect(r?.build.ok, id).toBe(true)
+    if (!r?.build.ok) continue
+    const m = r.build.measured
+    expect({ id, tier: m.tier, islands: m.islands, gzip: m.jsGzip, slot: m.slotFiles }).toEqual({ id, tier: 'static', islands: 0, gzip: 0, slot: [] })
+  }
+})
+
+test('the Slot check can fire: a page whose Radix island bundles the Slot lists its files (control)', () => {
+  const dialog = rows.find((x) => x.id === 'dialog')
+  expect(dialog?.build.ok && dialog.build.measured.slotFiles.length).toBeGreaterThan(0)
+})

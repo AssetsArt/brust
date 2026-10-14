@@ -22,6 +22,11 @@ pub enum Node {
         /// component prints only its children; an interactive one keeps the `<brust-host>` element.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         synthetic: bool,
+        /// The element of the component's polymorphic tag (`<Comp>` of `const Comp = asChild ?
+        /// Slot.Root : "button"`, `ComponentIR::poly`): `tag` is the host it prints as without
+        /// `asChild`; a call site with a literal `asChild` prints its child element instead.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        poly: bool,
     },
     Text(String),
     Slot(Expr),

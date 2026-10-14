@@ -42,6 +42,14 @@ enum Tag {
     Outlet,
 }
 
+fn tag_ref(tag: &js_ast::Expr) -> Option<js_ast::Ref> {
+    match &tag.data {
+        E::EIdentifier(js_ast::E::Identifier { ref_ })
+        | E::EImportIdentifier(js_ast::E::ImportIdentifier { ref_ }) => Some(*ref_),
+        _ => None,
+    }
+}
+
 fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
     match &tag.data {
         E::EString(s) => Tag::Host(estring(s)),
@@ -131,7 +139,16 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             "remove the key",
         ));
     }
-    let tag = tag_of(r, tag);
+    let mut tag = tag_of(r, tag);
+    // R34.28: `<Comp>` of `const Comp = asChild ? Slot.Root : "button"` is the host element; the
+    // call site of the component resolves `asChild`.
+    let mut poly = false;
+    if let Some(ref_) = tag_ref(&call.args[0])
+        && let Some(p) = r.names.poly_of(ref_)
+    {
+        tag = Tag::Host(p.host.clone());
+        poly = true;
+    }
     if matches!(tag, Tag::Outlet) {
         return Node::Outlet;
     }
@@ -277,6 +294,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             host: false,
             ref_name,
             synthetic: false,
+            poly,
         },
         Tag::Fragment => Node::Fragment(children),
         Tag::Outlet => Node::Outlet,

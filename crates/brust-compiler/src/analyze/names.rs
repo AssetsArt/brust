@@ -1,6 +1,6 @@
 //! What each identifier in a component refers to, decided from Bun's symbol
 //! table and import records, never from the spelling (plan Review Focus 4).
-use crate::ir::IdentKind;
+use crate::ir::{IdentKind, PolyTag};
 use bun_ast as js_ast;
 use js_ast::b::B;
 use std::collections::{HashMap, HashSet};
@@ -80,6 +80,8 @@ pub struct NameTable<'a> {
     pub rest_escape: std::cell::Cell<Option<u32>>,
     /// Module-level `const X = BASE.MEMBER` (never reassigned) with `BASE` imported from a package.
     member_aliases: HashMap<u32, MemberRef>,
+    /// The component's polymorphic tag local (`Comp` of `const Comp = asChild ? Slot.Root : "a"`, R34.28).
+    poly: HashMap<u32, PolyTag>,
     state: HashSet<u32>,
     setters: HashSet<u32>,
     loop_bindings: HashSet<u32>,
@@ -179,6 +181,7 @@ impl<'a> NameTable<'a> {
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
             member_aliases: HashMap::new(),
+            poly: HashMap::new(),
             state: HashSet::new(),
             setters: HashSet::new(),
             loop_bindings: HashSet::new(),
@@ -357,6 +360,17 @@ impl<'a> NameTable<'a> {
         self.imports
             .get(&self.key(r))
             .map(|(s, i)| (s.as_str(), i.as_str()))
+    }
+
+    /// `r` is the polymorphic tag local of the component (R34.28).
+    pub fn set_poly(&mut self, r: js_ast::Ref, tag: PolyTag) {
+        let k = self.key(r);
+        self.poly.insert(k, tag);
+    }
+
+    /// The polymorphic tag `r` names, if it is the component's `Comp`.
+    pub fn poly_of(&self, r: js_ast::Ref) -> Option<&PolyTag> {
+        self.poly.get(&self.key(r))
     }
 
     pub fn mark_state(&mut self, r: js_ast::Ref) {

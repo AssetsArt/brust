@@ -9,8 +9,8 @@ use crate::analyze::exports::{declared_in, package_member};
 use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
 use crate::ir::{
     Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind,
-    InstanceRecord, JobDecl, JobKind, JsCtx, Node, RawExpr, RawKind, ServerExpr, Tier, UnOp,
-    component_id, named_component_id,
+    InstanceRecord, JobDecl, JobKind, JsCtx, Node, PolyTag, RawExpr, RawKind, ServerExpr, Tier,
+    UnOp, component_id, named_component_id,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
@@ -106,6 +106,12 @@ struct Child {
     prop_precompute: bool,
     /// Where the child spreads its props (shadcn S1.2): the call-site keys that land in a spread.
     spread: SpreadSink,
+    /// The child's polymorphic tag (`asChild`, R34.28): the call site must resolve it.
+    poly: Option<PolyTag>,
+    /// The polymorphic element spreads an object of keys known only at render (a props path, not the
+    /// props or their rest): a class or style the `asChild` child brings cannot be merged with it at
+    /// compile time.
+    poly_runtime_spread: bool,
     /// What else the child does with those keys, for a handler the parent may bind (shadcn S1.3).
     onward: HandlerSink,
     /// The props roots the compiled child's jobs read (the server feeds each instance these).
@@ -139,6 +145,36 @@ impl HandlerSink {
             components: SpreadSink::of_where(ir, false),
             reads: (!roots.contains("*")).then_some(roots),
         }
+    }
+}
+
+/// The polymorphic element of `n` carries a spread that is neither the props nor their rest (a
+/// props path such as `{...attrs}`): its keys are known only at render.
+fn poly_has_runtime_spread(n: &Node) -> bool {
+    match n {
+        Node::Element {
+            poly,
+            attrs,
+            children,
+            ..
+        } => {
+            (*poly
+                && attrs.iter().any(|a| match a {
+                    Attr::Spread(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => !matches!(
+                        &r.kind,
+                        RawKind::Ident { name, kind: IdentKind::Prop }
+                            if name == "*" || name == crate::ir::REST_PROPS
+                    ),
+                    Attr::Spread(_) => true,
+                    _ => false,
+                }))
+                || children.iter().any(poly_has_runtime_spread)
+        }
+        Node::Fragment(cs) => cs.iter().any(poly_has_runtime_spread),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(poly_has_runtime_spread),
+        Node::For { body, .. } => body.iter().any(poly_has_runtime_spread),
+        Node::Component { children, .. } => children.iter().any(poly_has_runtime_spread),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
     }
 }
 
@@ -518,6 +554,8 @@ impl Walker<'_, '_> {
             stores: false,
             prop_precompute: false,
             spread: SpreadSink::None,
+            poly: None,
+            poly_runtime_spread: false,
             onward: HandlerSink::default(),
             job_roots: BTreeSet::new(),
         }
@@ -551,6 +589,8 @@ impl Walker<'_, '_> {
                     stores: false,
                     prop_precompute: false,
                     spread: SpreadSink::None,
+                    poly: None,
+                    poly_runtime_spread: false,
                     onward: HandlerSink::default(),
                     job_roots: BTreeSet::new(),
                 };
@@ -602,6 +642,8 @@ impl Walker<'_, '_> {
                         stores: false,
                         prop_precompute: false,
                         spread: SpreadSink::None,
+                        poly: None,
+                        poly_runtime_spread: false,
                         onward: HandlerSink::default(),
                         job_roots: BTreeSet::new(),
                     };
@@ -641,6 +683,8 @@ impl Walker<'_, '_> {
         let mut stores = false;
         let mut prop_precompute = false;
         let mut spread = SpreadSink::None;
+        let mut poly = None;
+        let mut poly_runtime_spread = false;
         let mut onward = HandlerSink::default();
         let mut job_roots = BTreeSet::new();
         let tier = match lookup {
@@ -656,6 +700,8 @@ impl Walker<'_, '_> {
                     })
                     .collect();
                 spread = SpreadSink::of(&ir);
+                poly = ir.poly.clone();
+                poly_runtime_spread = poly.is_some() && poly_has_runtime_spread(&ir.template);
                 if matches!(ir.tier, Tier::Static) {
                     onward = HandlerSink::of(&ir);
                 }
@@ -720,6 +766,8 @@ impl Walker<'_, '_> {
             stores,
             prop_precompute,
             spread,
+            poly,
+            poly_runtime_spread,
             onward,
             job_roots,
         }
@@ -864,6 +912,7 @@ impl Walker<'_, '_> {
             .filter(|(k, _)| !hoisted.contains(k))
             .cloned()
             .collect();
+        self.check_poly(name, props, children, &child, *loc);
         if !self.refs.iter().any(|r| r.name == *name) {
             self.refs.push(ChildRef {
                 name: name.clone(),
@@ -1108,6 +1157,164 @@ impl Walker<'_, '_> {
         }
         // After this node's own link id: `_pN` follow document order.
         children.iter_mut().for_each(|c| self.node(c));
+    }
+
+    /// Fail closed (shadcn S1.4, R34.29/R34.31): a child with a polymorphic tag (`asChild`) is
+    /// resolved here, at its call site. No `asChild`, or a literal `false`, prints the host
+    /// element. A literal `asChild` with exactly one host-element child whose attributes are
+    /// plain values prints that child with the component's attributes merged in. Anything else
+    /// (a value the call site cannot see, a component or text child, a handler, a ref, a
+    /// stateful component) keeps the caller on React.
+    fn check_poly(
+        &mut self,
+        name: &str,
+        props: &[(String, Expr)],
+        children: &[Node],
+        child: &Child,
+        loc: u32,
+    ) {
+        let Some(poly) = &child.poly else { return };
+        if matches!(child.tier, Tier::React { .. }) {
+            return;
+        }
+        let refuse = |rule: &str, why: String, fix: &str| Diagnostic::fallback(rule, why, loc, fix);
+        let flag = props
+            .iter()
+            .rev()
+            .find(|(k, _)| k == &poly.flag)
+            .map(|(_, v)| v);
+        let value = match flag {
+            None => Some(false),
+            Some(Expr::Raw(r)) | Some(Expr::Server(ServerExpr(r))) => match r.json_literal() {
+                Some(serde_json::Value::Bool(b)) => Some(b),
+                _ => None,
+            },
+            Some(_) => None,
+        };
+        let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
+        let Some(value) = value.filter(|_| !spreads_in) else {
+            self.diagnostics.push(refuse(
+                "slot-dynamic",
+                format!(
+                    "`{}` of <{name}> is not a literal (or props are spread in), so brust cannot tell which element it renders",
+                    poly.flag
+                ),
+                "write the prop as a literal (`asChild` or `asChild={false}`), or keep the page on React",
+            ));
+            return;
+        };
+        if value == poly.negate {
+            return; // the host element
+        }
+        if !matches!(child.tier, Tier::Static) {
+            self.diagnostics.push(refuse(
+                "slot-native",
+                format!(
+                    "<{name}> has state of its own and is rendered with `{}`",
+                    poly.flag
+                ),
+                "use `asChild` on a component without state, or keep the page on React",
+            ));
+            return;
+        }
+        if props
+            .iter()
+            .any(|(_, v)| matches!(v, Expr::ClientOnly { .. }))
+        {
+            self.diagnostics.push(refuse(
+                "slot-handler",
+                format!("a function is passed to <{name}> with `{}`", poly.flag),
+                "put the handler on the child element after the component is static, or keep the page on React",
+            ));
+            return;
+        }
+        let [only] = children else {
+            self.diagnostics.push(refuse(
+                "slot-child-shape",
+                format!(
+                    "`{}` on <{name}> needs exactly one element between the tags, found {}",
+                    poly.flag,
+                    children.len()
+                ),
+                "wrap the content in one element such as <a>",
+            ));
+            return;
+        };
+        let Node::Element {
+            tag: child_tag,
+            attrs,
+            poly: nested,
+            ..
+        } = only
+        else {
+            let (rule, what) = match only {
+                Node::Component { .. } => ("slot-child-component", "a component"),
+                _ => ("slot-child-shape", "text or an expression"),
+            };
+            self.diagnostics.push(refuse(
+                rule,
+                format!(
+                    "`{}` on <{name}> has {what} as its child; only one host element is supported",
+                    poly.flag
+                ),
+                "pass a host element such as <a href=\"…\">",
+            ));
+            return;
+        };
+        // A raw-text body (`<style>`, `<script>`) is printed as text, not as markup.
+        if matches!(child_tag.as_str(), "style" | "script") {
+            self.diagnostics.push(refuse(
+                "slot-child-shape",
+                format!(
+                    "the child of <{name}> with `{}` is a <{child_tag}> element",
+                    poly.flag
+                ),
+                "pass an element such as <a>, or keep the page on React",
+            ));
+            return;
+        }
+        // The component spreads keys known only at render and the child brings a class or style: the
+        // merge needs both sides at compile time (valid React never becomes a build error).
+        let brings_merge_key = attrs.iter().any(|a| match a {
+            Attr::Static { name, .. } | Attr::Dynamic { name, .. } => {
+                matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "class" | "classname" | "style"
+                )
+            }
+            _ => false,
+        });
+        if child.poly_runtime_spread && brings_merge_key {
+            self.diagnostics.push(refuse(
+                "slot-merge",
+                format!(
+                    "<{name}> spreads an object of keys known only at render, and the child under `{}` has a class or style that would merge with it",
+                    poly.flag
+                ),
+                "move the class or style to the component call, or keep the page on React",
+            ));
+            return;
+        }
+        let bad = attrs.iter().find_map(|a| match a {
+            Attr::Static { .. } => None,
+            Attr::Dynamic { value, .. } => self
+                .reads_state(value)
+                .then_some(("slot-child-attr", "an attribute that changes on the client")),
+            Attr::Event { .. } => Some(("slot-handler", "an event handler")),
+            Attr::Ref { .. } => Some(("slot-ref", "a ref")),
+            Attr::Spread(_) | Attr::InnerHtml { .. } => {
+                Some(("slot-child-shape", "a spread or dangerouslySetInnerHTML"))
+            }
+        });
+        if let Some((rule, what)) =
+            bad.or((*nested).then_some(("slot-child-shape", "a polymorphic element")))
+        {
+            self.diagnostics.push(refuse(
+                rule,
+                format!("the child of <{name}> with `{}` has {what}", poly.flag),
+                "give the child plain attributes, or keep the page on React",
+            ));
+        }
     }
 
     /// Shadcn S1 (R34.21): the JSX children of a React island as a JSON tree, so they travel in its

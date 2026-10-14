@@ -407,6 +407,7 @@ fn read_function(
     check_printer_panic(ir);
     ir.props = body.props;
     ir.props_rest = body.props_rest;
+    ir.poly = body.poly;
     if let Some(loc) = reader.names.rest_escape.get() {
         // R34.14 fail closed: brust reads `rest.k` and spreads `{...rest}`; any other read of the
         // rest object (a value, or code printed as written) would see the named keys too.
@@ -586,6 +587,7 @@ fn host_root(node: Node, loc: u32) -> Node {
         host: true,
         ref_name: None,
         synthetic: true,
+        poly: false,
     }
 }
 
@@ -661,6 +663,7 @@ fn mark_host(node: Node) -> Node {
             children,
             ref_name,
             synthetic,
+            poly,
             ..
         } => Node::Element {
             loc,
@@ -670,6 +673,7 @@ fn mark_host(node: Node) -> Node {
             host: true,
             ref_name,
             synthetic,
+            poly,
         },
         other => other,
     }

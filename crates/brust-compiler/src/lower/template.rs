@@ -59,6 +59,21 @@ pub struct Inline {
     pub slot_loops: Vec<Rc<Cell<bool>>>,
     /// Suffix for this instance's seed and derived variables.
     pub suffix: String,
+    /// The call site has a literal `asChild` (R34.29 b): its single child element is what this
+    /// component's polymorphic element prints as.
+    pub as_child: Option<AsChild>,
+}
+
+/// The child element of a Radix-`Slot`-style call (`<Button asChild><a href="/x">Go</a></Button>`),
+/// printed in the call site's scope: the component's polymorphic element becomes this element,
+/// the component's attributes merged under its own (R34.30).
+#[derive(Clone, Debug)]
+pub struct AsChild {
+    pub tag: String,
+    /// The child's attributes: React name and a jinja expression of the call site.
+    pub attrs: Vec<(String, String)>,
+    /// The child's children, printed in the call site's scope.
+    pub body: String,
 }
 
 impl Inline {
@@ -595,6 +610,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 children,
                 host,
                 synthetic,
+                poly,
                 loc,
                 ..
             },
@@ -607,6 +623,14 @@ impl<'a, 'c> Printer<'a, 'c> {
         else {
             return;
         };
+        // R34.29 (b): the polymorphic element of a call with a literal `asChild` prints as the
+        // call's child element.
+        let as_child = if *poly {
+            self.inline.as_ref().and_then(|i| i.as_child.clone())
+        } else {
+            None
+        };
+        let tag: &String = as_child.as_ref().map_or(tag, |a| &a.tag);
         if *synthetic && *host && root && !self.native && extra.is_none() {
             // A static root that was not one element: no wrapper, so child combinators and content
             // models (`<tr>` in `<tbody>`, `<li>`, `<option>`) see the real elements.
@@ -628,8 +652,9 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         let model = model_pair(attrs, &self.f);
         let mut spread_body = None;
-        if attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
-            spread_body = self.spread_open(tag, attrs, sattrs, model.as_deref(), &mut open);
+        if as_child.is_some() || attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
+            let extra: &[(String, String)] = as_child.as_ref().map_or(&[], |a| &a.attrs);
+            spread_body = self.spread_open(tag, attrs, sattrs, model.as_deref(), extra, &mut open);
         } else {
             for (a, sa) in attrs.iter().zip(sattrs) {
                 self.attr(a, sa, tag, attrs, model.as_deref(), &mut open);
@@ -655,7 +680,9 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.raw_text = raw_before;
         std::mem::swap(&mut body, &mut self.out);
-        if let Some(h) = inner_html {
+        if let Some(a) = &as_child {
+            body = a.body.clone();
+        } else if let Some(h) = inner_html {
             body = h;
         } else if children.is_empty()
             && let Some(b) = spread_body
@@ -917,6 +944,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         attrs: &[Attr],
         sattrs: &[Attr],
         model: Option<&str>,
+        extra: &[(String, String)],
         open: &mut String,
     ) -> Option<String> {
         enum It {
@@ -985,6 +1013,43 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
             }
         }
+        // R34.30: the child's attributes of an `asChild` call come last, so they win; `className`
+        // joins the component's (slot first) and `style` objects merge, as Radix's `Slot` does.
+        for (k, e) in extra {
+            let key = brust_jinja::spread::attr_key(k);
+            let merge = match key.as_str() {
+                "class" => Some("class_join"),
+                "style" => Some("spread_merge"),
+                _ => None,
+            };
+            let mut value = e.clone();
+            if let Some(f) = merge {
+                let earlier = items
+                    .iter()
+                    .rev()
+                    .find(|it| key_of(it).as_deref() == Some(key.as_str()));
+                let prior = earlier.and_then(|it| match it {
+                    It::Own(i) => match &attrs[*i] {
+                        Attr::Static { value, .. } => Some(jinja_string(value)),
+                        Attr::Dynamic { value, .. } => Some(self.value(value)),
+                        _ => None,
+                    },
+                    It::Bound(_, PropBinding::Expr(p)) => Some(p.clone()),
+                    _ => None,
+                });
+                if let Some(p) = prior {
+                    value = format!("{f}({p}, {e})");
+                } else if earlier.is_some() || items.iter().any(|it| matches!(it, It::Runtime(_))) {
+                    self.diagnostics.push(Diagnostic::error(
+                        "slot-merge",
+                        format!("`{k}` of the <{tag}> element cannot be merged with the child's at compile time"),
+                        0,
+                        "report this compiler bug (check_poly keeps this case on React)",
+                    ));
+                }
+            }
+            items.push(It::Bound(k.clone(), PropBinding::Expr(value)));
+        }
         let children_body = {
             let probe = Inline {
                 segs: children,
@@ -992,6 +1057,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 slots: String::new(),
                 slot_loops: Vec::new(),
                 suffix: String::new(),
+                as_child: None,
             };
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
@@ -1609,6 +1675,10 @@ impl<'a, 'c> Printer<'a, 'c> {
             *k += 1;
             *k
         };
+        let as_child = match &child_ir.poly {
+            Some(poly) if slot_selected(poly, props) => self.as_child_of(name, children, schildren),
+            _ => None,
+        };
         let mut segs = Vec::new();
         for (pname, v) in props.iter() {
             if pname == crate::ir::SPREAD_KEY {
@@ -1630,7 +1700,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             segs.push(Seg::Named(pname.clone(), PropBinding::Expr(self.value(v))));
         }
-        if !children.is_empty() {
+        if as_child.is_none() && !children.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
             self.nodes(children, schildren);
@@ -1664,6 +1734,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             slots: format!("__{id}_{k}{loops}"),
             slot_loops,
             suffix: format!("_{}{k}", short(&id)),
+            as_child,
         };
         let Some(mut p) = Printer::new(child_ir, self.ctx, Some(inline), self.loop_var) else {
             return;
@@ -1679,6 +1750,65 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.out.push_str(&p.out);
         self.diagnostics.append(&mut p.diagnostics);
+    }
+
+    /// The child element of a call with a literal `asChild` (R34.29 b), printed in this scope. The
+    /// analysis (`passes/children.rs` `check_poly`) keeps every other shape on React, so a
+    /// mismatch here is a compiler bug.
+    fn as_child_of(
+        &mut self,
+        name: &str,
+        children: &[Node],
+        schildren: &[Node],
+    ) -> Option<AsChild> {
+        let (
+            [
+                Node::Element {
+                    tag,
+                    attrs,
+                    children: kids,
+                    ..
+                },
+            ],
+            [
+                Node::Element {
+                    children: skids, ..
+                },
+            ],
+        ) = (children, schildren)
+        else {
+            self.diagnostics.push(Diagnostic::error(
+                "lower-shape",
+                format!("<{name}> with `asChild` does not have one element child"),
+                0,
+                "report this compiler bug",
+            ));
+            return None;
+        };
+        let attrs = attrs
+            .iter()
+            .filter_map(|a| match a {
+                Attr::Static { name, value } => {
+                    let v = if value.is_empty() && is_boolean_attr(&attr_name(name)) {
+                        "true".to_string()
+                    } else {
+                        jinja_string(value)
+                    };
+                    Some((name.clone(), v))
+                }
+                Attr::Dynamic { name, value } => Some((name.clone(), self.value(value))),
+                _ => None,
+            })
+            .collect();
+        let mut body = String::new();
+        std::mem::swap(&mut body, &mut self.out);
+        self.nodes(kids, skids);
+        std::mem::swap(&mut body, &mut self.out);
+        Some(AsChild {
+            tag: tag.clone(),
+            attrs,
+            body,
+        })
     }
 
     /// The props a spread `{...v}` passes (R34.15): this component's own props object (or its
@@ -1728,6 +1858,24 @@ impl<'a, 'c> Printer<'a, 'c> {
             .collect();
         format!("{{{}}}", items.join(", "))
     }
+}
+
+/// Whether the call's props select the Slot of a polymorphic tag: a literal `asChild` (compared
+/// with `negate`). Anything else is the host element; the analysis refuses a non-literal.
+fn slot_selected(poly: &crate::ir::PolyTag, props: &[(String, Expr)]) -> bool {
+    let flag = props
+        .iter()
+        .rev()
+        .find(|(k, _)| k == &poly.flag)
+        .and_then(|(_, v)| match v {
+            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => match r.json_literal() {
+                Some(serde_json::Value::Bool(b)) => Some(b),
+                _ => None,
+            },
+            _ => None,
+        })
+        .unwrap_or(false);
+    flag != poly.negate
 }
 
 /// Sorted paths with any path covered by a shorter one removed.
