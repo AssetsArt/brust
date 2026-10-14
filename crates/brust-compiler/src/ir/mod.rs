@@ -233,6 +233,10 @@ pub struct ComponentIR {
     /// A literal `false` is fine; a call site that spreads its own props on passes the requirement up.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub absent_props: Vec<String>,
+    /// Keys a call site must not write at all, not even as a literal `false` (F164, R34.83): this component spreads
+    /// its props into a fed child whose job reads them, and a spread cannot feed a job input.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unwritten_props: Vec<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -346,6 +350,7 @@ impl ComponentIR {
             icon_spread: false,
             alias_imports: vec![],
             absent_props: Vec::new(),
+            unwritten_props: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],

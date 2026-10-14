@@ -67,6 +67,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         handlers: Vec::new(),
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
         absent: BTreeSet::new(),
+        unwritten: BTreeSet::new(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
@@ -97,6 +98,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.folded_instances.extend(w.folded_instances);
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
+    ir.unwritten_props = w.unwritten.iter().cloned().collect();
     ir.jobs.extend(w.jobs);
     ir.diagnostics.extend(w.diagnostics);
     ir.handlers.extend(w.handlers);
@@ -143,6 +145,8 @@ struct Walker<'s, 'c> {
     own_named: BTreeSet<String>,
     /// Keys this component's own call sites must not pass (`ComponentIR::absent_props`, F153c).
     absent: BTreeSet<String>,
+    /// Keys this component's own call sites must not write (`ComponentIR::unwritten_props`, F164).
+    unwritten: BTreeSet<String>,
 }
 
 /// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
@@ -175,6 +179,8 @@ struct Child {
     onward: HandlerSink,
     /// The props roots the compiled child's jobs read (the server feeds each instance these).
     job_roots: BTreeSet<String>,
+    /// A job of the child reads the whole props object (`*`).
+    job_all: bool,
     /// The compiled child is a `forwardRef` component (R34.63): a call site that passes `ref` needs React.
     forwards_ref: bool,
     /// The compiled child spreads its props onto an inlined lucide icon (R34.77).
@@ -193,6 +199,8 @@ struct Child {
     job_eval: Option<Result<Vec<crate::ir::EvalStub>, String>>,
     /// The child's job outputs (`_sN`), all of which an evaluated instance must get.
     job_outputs: Vec<String>,
+    /// Keys the call site must not write at all (`ComponentIR::unwritten_props`).
+    unwritten: Vec<String>,
 }
 
 /// Facts that decide whether a handler landing in a static child's spread can be bound by the
@@ -801,6 +809,7 @@ impl Walker<'_, '_> {
             poly_runtime_spread: false,
             onward: HandlerSink::default(),
             job_roots: BTreeSet::new(),
+            job_all: false,
             forwards_ref: false,
             icon_spread: false,
             reads_children_value: false,
@@ -809,6 +818,7 @@ impl Walker<'_, '_> {
             absent: Vec::new(),
             job_eval: None,
             job_outputs: Vec::new(),
+            unwritten: Vec::new(),
         }
     }
 
@@ -844,6 +854,7 @@ impl Walker<'_, '_> {
                     poly_runtime_spread: false,
                     onward: HandlerSink::default(),
                     job_roots: BTreeSet::new(),
+                    job_all: false,
                     forwards_ref: false,
                     icon_spread: false,
                     reads_children_value: false,
@@ -852,6 +863,7 @@ impl Walker<'_, '_> {
                     absent: Vec::new(),
                     job_eval: None,
                     job_outputs: Vec::new(),
+                    unwritten: Vec::new(),
                 };
             }
             // A package export (a member of one included): its source when the build wrote it (F153c), else
@@ -1003,6 +1015,7 @@ impl Walker<'_, '_> {
                         poly_runtime_spread: false,
                         onward: HandlerSink::default(),
                         job_roots: BTreeSet::new(),
+                        job_all: false,
                         forwards_ref: false,
                         icon_spread: false,
                         reads_children_value: false,
@@ -1011,6 +1024,7 @@ impl Walker<'_, '_> {
                         absent: Vec::new(),
                         job_eval: None,
                         job_outputs: Vec::new(),
+                        unwritten: Vec::new(),
                     };
                 };
                 ctx.modules
@@ -1052,6 +1066,7 @@ impl Walker<'_, '_> {
         let mut poly_runtime_spread = false;
         let mut onward = HandlerSink::default();
         let mut job_roots = BTreeSet::new();
+        let mut job_all = false;
         let mut use_id = false;
         let mut has_for = false;
         let mut forwards_ref = false;
@@ -1060,6 +1075,7 @@ impl Walker<'_, '_> {
         let mut absent = Vec::new();
         let mut job_eval = None;
         let mut job_outputs = Vec::new();
+        let mut unwritten = Vec::new();
         let tier = match lookup {
             Lookup::Compiled(ir) => {
                 forwards_ref = ir.forwards_ref;
@@ -1068,6 +1084,8 @@ impl Walker<'_, '_> {
                 has_for = template_has_for(&ir.template);
                 reads_children_value =
                     matches!(ir.tier, Tier::Static | Tier::Native) && reads_children_as_value(&ir);
+                unwritten = ir.unwritten_props.clone();
+                job_all = ir.jobs.iter().any(|j| j.inputs.iter().any(|i| i == "*"));
                 job_roots = ir
                     .jobs
                     .iter()
@@ -1154,6 +1172,7 @@ impl Walker<'_, '_> {
             poly_runtime_spread,
             onward,
             job_roots,
+            job_all,
             forwards_ref,
             icon_spread,
             reads_children_value,
@@ -1162,7 +1181,79 @@ impl Walker<'_, '_> {
             absent,
             job_eval,
             job_outputs,
+            unwritten,
         }
+    }
+
+    /// A spread of this component's own props into a fed child (F164, R34.83): fine when no input root of the child's
+    /// jobs can ride it. The roots it could carry that this call does not write after it become this component's
+    /// `unwritten_props`, which its call sites check (`require_unwritten`); any spread whose keys are not known to be
+    /// this component's own props, a job that reads the whole props object or `children`, and a route root (whose
+    /// props are the request) keep the refusal.
+    fn spread_feeds_no_job_input(
+        &mut self,
+        name: &str,
+        props: &[(String, Expr)],
+        child: &Child,
+    ) -> Result<(), String> {
+        let refused = || {
+            format!(
+                "props are spread into <{name}>, which the server feeds per instance (a job or useId)"
+            )
+        };
+        if child.job_all || child.job_roots.contains("children") {
+            return Err(refused());
+        }
+        let last = props
+            .iter()
+            .rposition(|(k, _)| k == crate::ir::SPREAD_KEY)
+            .unwrap_or(0);
+        let mut carried = Vec::new();
+        for root in child.job_roots.iter().filter(|r| r.as_str() != "__store") {
+            if props[last + 1..].iter().any(|(k, _)| k == root) {
+                continue; // written after the spread: it wins, and is bound as written
+            }
+            match self.spread_carries(root, props) {
+                Ok(false) => {}
+                Ok(true) if !self.ctx.is_root => carried.push(root.clone()),
+                _ => return Err(refused()),
+            }
+        }
+        self.unwritten.extend(carried);
+        Ok(())
+    }
+
+    /// The call site of a component that spreads its props into a fed child (`unwritten_props`): `key` is written
+    /// nowhere in it, not even as a literal `false`, because the spread would carry it into a job input the server
+    /// does not bind. A spread of this component's own props passes the requirement up; anything else falls back.
+    fn require_unwritten(
+        &mut self,
+        name: &str,
+        key: &str,
+        props: &[(String, Expr)],
+        loc: u32,
+    ) -> bool {
+        let carried = self.spread_carries(key, props);
+        let ok = !props.iter().any(|(k, _)| k == key)
+            && match carried {
+                Ok(false) => true,
+                Ok(true) if !self.ctx.is_root => {
+                    self.unwritten.insert(key.to_string());
+                    true
+                }
+                _ => false,
+            };
+        if !ok {
+            self.diagnostics.push(Diagnostic::fallback(
+                "spread-props",
+                format!(
+                    "the prop `{key}` of <{name}> reaches a per-instance job of a child <{name}> spreads its props into, through a spread the server cannot feed (or props of unknown keys are spread in)"
+                ),
+                loc,
+                "leave the prop out (pass it to the inner component directly), or keep the component interactive with React",
+            ));
+        }
+        ok
     }
 
     /// Whether the props spread into a child at this call site may carry `key` (F153c): `Ok(true)` when one of them is
@@ -1405,6 +1496,11 @@ impl Walker<'_, '_> {
         if !matches!(child.tier, Tier::React { .. }) {
             for key in child.absent.clone() {
                 if !self.require_absent(name, &key, props, *loc) {
+                    break;
+                }
+            }
+            for key in child.unwritten.clone() {
+                if !self.require_unwritten(name, &key, props, *loc) {
                     break;
                 }
             }
@@ -1734,7 +1830,8 @@ impl Walker<'_, '_> {
                     };
                     let child_name = name.clone();
                     for (name, v) in kept.iter() {
-                        if matches!(v, Expr::ClientOnly { .. }) {
+                        // F164: a spread is not an input; `spread_feeds_no_job_input` proved it carries none.
+                        if matches!(v, Expr::ClientOnly { .. }) || name == crate::ir::SPREAD_KEY {
                             continue;
                         }
                         // F149 R34.88: folded with this module's consts (`const v = "outline"`).
@@ -2595,10 +2692,11 @@ impl Walker<'_, '_> {
             )));
             return;
         }
-        if spreads_in && child.fed {
-            self.diagnostics.push(refuse(format!(
-                "props are spread into <{name}>, which the server feeds per instance (a job or useId)"
-            )));
+        if spreads_in
+            && child.fed
+            && let Err(why) = self.spread_feeds_no_job_input(name, props, child)
+        {
+            self.diagnostics.push(refuse(why));
             return;
         }
         if child.icon_spread {
