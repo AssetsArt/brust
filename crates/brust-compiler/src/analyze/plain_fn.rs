@@ -46,6 +46,11 @@ struct Ctx<'a, 'n> {
 }
 
 impl Ctx<'_, '_> {
+    /// The name is the language's own (`String`, `Math`, `NaN`): no declaration, parameter or import of the module binds it.
+    fn is_global(&self, r: js_ast::Ref) -> bool {
+        matches!(self.names.kind_of(r).1, crate::ir::IdentKind::Global)
+    }
+
     fn expr(&self, e: &js_ast::Expr) -> bool {
         match &e.data {
             E::EString(_)
@@ -58,7 +63,7 @@ impl Ctx<'_, '_> {
                 let n = self.names.name(id.ref_);
                 self.locals.contains(&n)
                     || self.consts.contains(&n)
-                    || GLOBAL_VALUES.contains(&n.as_str())
+                    || (GLOBAL_VALUES.contains(&n.as_str()) && self.is_global(id.ref_))
             }
             E::EUnary(u) => {
                 !matches!(
@@ -93,11 +98,14 @@ impl Ctx<'_, '_> {
             E::EIdentifier(id) => {
                 let n = self.names.name(id.ref_);
                 !self.locals.contains(&n)
-                    && (GLOBAL_CALLS.contains(&n.as_str()) || self.fns.contains(&n))
+                    && ((GLOBAL_CALLS.contains(&n.as_str()) && self.is_global(id.ref_))
+                        || self.fns.contains(&n))
             }
             E::EDot(d) => {
                 matches!(&d.target.data, E::EIdentifier(id)
-                    if self.names.name(id.ref_) == "Math" && !self.locals.contains("Math"))
+                    if self.names.name(id.ref_) == "Math"
+                        && !self.locals.contains("Math")
+                        && self.is_global(id.ref_))
                     && MATH_CALLS.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
             }
             _ => false,
@@ -132,6 +140,12 @@ impl Ctx<'_, '_> {
 
 /// Names of the module's functions proven to return a primitive (see the module docs).
 pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
+    // A function name that is assigned anywhere (`f = …`) is not the declaration the proof read.
+    let mut walk = crate::analyze::expr::Walk::default();
+    for part in ast.parts.iter() {
+        walk.stmts(part.stmts.slice());
+    }
+    let assigned: HashSet<String> = walk.assigned.iter().map(|r| names.name(*r)).collect();
     let mut funcs: Vec<(String, &js_ast::G::Fn)> = Vec::new();
     let mut const_inits: Vec<(String, js_ast::Expr)> = Vec::new();
     let mut module_names: HashSet<String> = HashSet::new();
@@ -142,7 +156,8 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                     if let Some(n) = &f.func.name {
                         let name = names.name(n.ref_);
                         module_names.insert(name.clone());
-                        let simple = !f.func.flags.contains(js_ast::flags::Function::IsAsync)
+                        let simple = !assigned.contains(&name)
+                            && !f.func.flags.contains(js_ast::flags::Function::IsAsync)
                             && !f.func.flags.contains(js_ast::flags::Function::IsGenerator);
                         if simple {
                             funcs.push((name, &f.func));

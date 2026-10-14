@@ -577,6 +577,16 @@ fn a_helper_proven_to_return_a_primitive_may_be_read_under_a_provider() {
         "ph-member.tsx",
         "ph-closure.tsx",
         "ph-chain.tsx",
+        "ph-reassign.tsx",
+        // Mellow F1: a global is the language's own only when nothing in the module binds the name.
+        "ph-g-string.tsx",
+        "ph-g-number.tsx",
+        "ph-g-parseint.tsx",
+        "ph-g-math-ns.tsx",
+        "ph-g-import-string.tsx",
+        "ph-g-const-math.tsx",
+        "ph-g-param.tsx",
+        "ph-g-nan.tsx",
     ] {
         let all = compile_all(f);
         let panel = all
