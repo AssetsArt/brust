@@ -211,7 +211,7 @@ describe('offline', () => {
       expect(Date.now() - g0).toBeLessThan(100)
       await expect(a.store!.set('k', html('x'), meta())).rejects.toThrow()
       const off = await a.broadcast!.subscribe!(() => {}, () => {})
-      await Bun.sleep(400)
+      await until('a reconnect attempt', () => a.__test.state().reconnects > 0, 15_000)
       expect(a.__test.state().reconnects).toBeGreaterThan(0)
       await off()
       await a.close!()

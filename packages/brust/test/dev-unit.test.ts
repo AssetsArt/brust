@@ -112,8 +112,12 @@ test('watchLoop: an edit that arrives while a run is in flight triggers another 
         if (runs.length === 1) await new Promise<void>((r) => (release = r))
       },
     })
-    writeFileSync(join(dir, 'a.txt'), '1')
-    while (runs.length < 1) await Bun.sleep(10)
+    // The watcher arms asynchronously (FSEvents): a single write right after `watchLoop` can fall before it, and the
+    // test then waits for a run that never starts. Re-write until the first run is seen (F200 family).
+    for (let i = 0; runs.length < 1; i++) {
+      writeFileSync(join(dir, 'a.txt'), String(i))
+      await Bun.sleep(50)
+    }
     writeFileSync(join(dir, 'b.txt'), '2') // during the first run
     await Bun.sleep(120)
     expect(runs.length).toBe(1) // still the first run: single-flight
@@ -161,7 +165,8 @@ test('watchLoop: reading a directory (atime) is not a change; a file written in 
     await Bun.sleep(300)
     expect(runs).toBe(0)
     writeFileSync(join(dir, 'public', 'a.css'), 'b')
-    await Bun.sleep(300)
+    // Wait for the write to be seen (FSEvents latency varies under load), then for the run to finish.
+    for (const t0 = Date.now(); runs < 1 && Date.now() - t0 < 30_000; ) await Bun.sleep(10)
     await loop.idle()
     expect(runs).toBe(1)
     loop.close()

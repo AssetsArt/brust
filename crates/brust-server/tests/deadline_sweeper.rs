@@ -27,8 +27,16 @@ fn a_parked_call_is_504_on_time_and_its_slot_stays_held_until_the_late_settle() 
     assert_eq!((status, body.as_str()), (503, "all workers busy"));
 
     gate.settle_all();
-    std::thread::sleep(Duration::from_millis(50));
-    let (status, _, body) = get(&s, "/pokemon/c", &[]);
+    // The sweeper releases the slot once the late settle lands: retry while the pool still answers "busy" instead of
+    // sleeping a fixed 50 ms (the bound only ends a hang).
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let (status, _, body) = loop {
+        let r = get(&s, "/pokemon/c", &[]);
+        if r.0 != 503 || Instant::now() > deadline {
+            break r;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
     assert_eq!(status, 200, "slot released after the late settle: {body}");
     let st = stats(&s);
     assert_eq!(st["timed_out_calls"], 1, "{st}");
