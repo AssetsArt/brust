@@ -169,8 +169,13 @@ fn constant_conditions_choose_their_branch() {
 }
 
 #[test]
-fn a_condition_that_reads_a_prop_stays_a_fallback() {
-    fails("cond-prop.tsx", "a condition that is not a constant");
+fn a_condition_that_reads_a_prop_is_a_conditional_node() {
+    // F148a (R34.122): was a fallback (R34.53); the revive takes the branch by the truthiness of a primitive.
+    let tree = lowered("cond-prop.tsx");
+    assert_eq!(tree["$brust"], "if", "{tree}");
+    assert_eq!(tree["k"], "$p0");
+    assert_eq!(tree["c"][0]["t"], "b");
+    assert_eq!(tree["e"], serde_json::json!([]));
 }
 
 #[test]
