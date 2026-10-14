@@ -76,10 +76,10 @@
       "blocker": "fallback:jsx-const-child",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
+      "measuredRows": 5,
       "analysisOnlyRows": 0,
-      "appComponents": 4,
-      "libraryComponents": 13
+      "appComponents": 5,
+      "libraryComponents": 25
     },
     {
       "blocker": "fallback:context-island",
@@ -142,7 +142,7 @@
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 5
+      "libraryComponents": 4
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -788,6 +788,7 @@
         "external-component",
         "island-children",
         "island-prop",
+        "jsx-const-child",
         "jsx-expression",
         "nested-instance",
         "slot-dynamic",
