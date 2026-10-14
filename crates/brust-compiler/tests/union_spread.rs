@@ -61,7 +61,6 @@ fn render(jinja: &str, props: serde_json::Value) -> String {
         .to_string()
 }
 
-
 fn comp(body: &str) -> String {
     format!("export default function T(props: any) {{ {body} }}")
 }
@@ -70,10 +69,16 @@ fn comp(body: &str) -> String {
 fn an_inline_union_spread_renders_the_matching_branch() {
     let o = lower(
         "A.tsx",
-        &comp("return <button {...(props.primary ? { type: 'submit', 'data-p': '1' } : { disabled: true })}>x</button>"),
+        &comp(
+            "return <button {...(props.primary ? { type: 'submit', 'data-p': '1' } : { disabled: true })}>x</button>",
+        ),
     );
     assert_eq!(o.tier, Tier::Static, "{:?}", o.diags);
-    assert!(o.diags.iter().all(|(_, r)| r != "spread-props"), "{:?}", o.diags);
+    assert!(
+        o.diags.iter().all(|(_, r)| r != "spread-props"),
+        "{:?}",
+        o.diags
+    );
     assert_eq!(
         render(&o.jinja, serde_json::json!({ "primary": true })),
         "<button type=\"submit\" data-p=\"1\">x</button>"
@@ -104,8 +109,15 @@ fn a_body_const_and_a_module_const_hold_the_union() {
         "C.tsx",
         "const V = true ? { a: '1' } : { b: '2' }\nexport default function T(props: any) { return <p {...(props.k ? { a: 'y' } : null)}>x</p> }",
     );
-    assert!(o.diags.iter().all(|(_, r)| r != "spread-props"), "{:?}", o.diags);
-    assert_eq!(render(&o.jinja, serde_json::json!({ "k": 1 })), "<p a=\"y\">x</p>");
+    assert!(
+        o.diags.iter().all(|(_, r)| r != "spread-props"),
+        "{:?}",
+        o.diags
+    );
+    assert_eq!(
+        render(&o.jinja, serde_json::json!({ "k": 1 })),
+        "<p a=\"y\">x</p>"
+    );
     assert_eq!(render(&o.jinja, serde_json::json!({ "k": 0 })), "<p>x</p>");
 }
 
@@ -113,16 +125,25 @@ fn a_body_const_and_a_module_const_hold_the_union() {
 fn and_and_nested_conditionals_work_and_later_attributes_win() {
     let o = lower(
         "D.tsx",
-        &comp("return <i title=\"own\" {...(props.a && { 'data-a': props.v })} {...(props.b ? { title: 'b' } : props.c ? { title: 'c' } : {})}>x</i>"),
+        &comp(
+            "return <i title=\"own\" {...(props.a && { 'data-a': props.v })} {...(props.b ? { title: 'b' } : props.c ? { title: 'c' } : {})}>x</i>",
+        ),
     );
-    assert!(o.diags.iter().all(|(_, r)| r != "spread-props"), "{:?}", o.diags);
+    assert!(
+        o.diags.iter().all(|(_, r)| r != "spread-props"),
+        "{:?}",
+        o.diags
+    );
     let r = |v: serde_json::Value| render(&o.jinja, v);
     assert_eq!(r(serde_json::json!({})), "<i title=\"own\">x</i>");
     assert_eq!(
         r(serde_json::json!({ "a": 1, "v": "<&>", "c": 1 })),
         "<i title=\"c\" data-a=\"&lt;&amp;&gt;\">x</i>"
     );
-    assert_eq!(r(serde_json::json!({ "b": 1, "c": 1 })), "<i title=\"b\">x</i>");
+    assert_eq!(
+        r(serde_json::json!({ "b": 1, "c": 1 })),
+        "<i title=\"b\">x</i>"
+    );
 }
 
 #[test]
@@ -157,5 +178,47 @@ fn a_key_that_is_not_an_attribute_name_is_not_rendered() {
     );
     let html = render(&o.jinja, serde_json::json!({ "a": 1 }));
     assert_eq!(html, "<b ok=\"2\">x</b>", "{:?}", o.diags);
-    assert!(o.diags.iter().any(|(_, r)| r == "unsafe-attr"), "{:?}", o.diags);
+    assert!(
+        o.diags.iter().any(|(_, r)| r == "unsafe-attr"),
+        "{:?}",
+        o.diags
+    );
+}
+
+#[test]
+fn an_own_attribute_after_a_union_spread_wins_and_a_component_prop_follows_the_same_rule() {
+    let o = lower(
+        "E.tsx",
+        &comp("return <i {...(props.a ? { title: 'u', id: 'x' } : {})} title=\"own\">x</i>"),
+    );
+    assert!(
+        o.diags.iter().all(|(_, r)| r != "spread-props"),
+        "{:?}",
+        o.diags
+    );
+    assert_eq!(
+        render(&o.jinja, serde_json::json!({ "a": 1 })),
+        "<i title=\"own\" id=\"x\">x</i>"
+    );
+    assert_eq!(
+        render(&o.jinja, serde_json::json!({})),
+        "<i title=\"own\">x</i>"
+    );
+    let o = lower(
+        "F.tsx",
+        "function Child(props: any) { return <b title={props.title}>{props.n}</b> }\nexport default function T(props: any) { return <Child n=\"1\" title=\"own\" {...(props.a ? { title: 'u' } : {})} /> }",
+    );
+    assert!(
+        o.diags.iter().all(|(_, r)| r != "spread-props"),
+        "{:?}",
+        o.diags
+    );
+    assert_eq!(
+        render(&o.jinja, serde_json::json!({ "a": 1 })),
+        "<b title=\"u\">1</b>"
+    );
+    assert_eq!(
+        render(&o.jinja, serde_json::json!({})),
+        "<b title=\"own\">1</b>"
+    );
 }

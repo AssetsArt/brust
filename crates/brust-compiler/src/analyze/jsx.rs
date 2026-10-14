@@ -206,6 +206,8 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     let mut props_out = Vec::new();
     let mut children = Vec::new();
     let mut ref_name = None;
+    // The names a union spread has joined into one attribute or prop each (a later own one replaces it).
+    let mut union_names: Vec<String> = Vec::new();
     let mut children_prop = false;
     let mut forwarded_ref = false;
     for p in obj.properties.iter() {
@@ -255,11 +257,14 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                     let mut keys = Vec::new();
                     u.keys(&mut keys);
                     if keys.len() > UNION_MAX_KEYS {
-                        r.diagnostics.push(union_refused(value, "has too many keys"));
+                        r.diagnostics
+                            .push(union_refused(value, "has too many keys"));
                         let raw = r.opaque(value, "spread props");
                         match tag {
                             Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
-                            _ => props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
+                            _ => {
+                                props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw)))
+                            }
                         }
                         continue;
                     }
@@ -288,8 +293,45 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                             ));
                             continue;
                         }
+                        // An earlier attribute (or prop) of this name is what a branch without the key leaves in
+                        // place, and the joined value takes its position (a later key wins, the first keeps its place).
+                        let earlier = if host {
+                            attrs.iter().position(|a| match a {
+                                Attr::Static { name: n, .. } => *n == name,
+                                Attr::Dynamic {
+                                    name: n,
+                                    value: Expr::Raw(_),
+                                } => *n == name,
+                                _ => false,
+                            })
+                        } else {
+                            props_out
+                                .iter()
+                                .position(|(n, v)| *n == name && matches!(v, Expr::Raw(_)))
+                        };
+                        let absent = match earlier {
+                            Some(i) if host => match &attrs[i] {
+                                Attr::Static { value, .. } => RawExpr {
+                                    loc: 0,
+                                    kind: RawKind::Lit(crate::ir::Literal::Str(value.clone())),
+                                },
+                                Attr::Dynamic {
+                                    value: Expr::Raw(raw),
+                                    ..
+                                } => raw.clone(),
+                                _ => unreachable!(),
+                            },
+                            Some(i) => match &props_out[i].1 {
+                                Expr::Raw(raw) => raw.clone(),
+                                _ => unreachable!(),
+                            },
+                            None => RawExpr {
+                                loc: 0,
+                                kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                            },
+                        };
                         let mut failed = false;
-                        let joined = u.value(&name, &mut |v| {
+                        let joined = u.value(&name, &absent, &mut |v| {
                             let raw = if host {
                                 read_union_attr(r, &name, v, &mut ref_name)
                             } else {
@@ -302,19 +344,28 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                         });
                         match joined {
                             Some(raw) if !failed => {
-                                if host {
-                                    attrs.push(Attr::Dynamic {
+                                union_names.push(name.clone());
+                                match (host, earlier) {
+                                    (true, Some(i)) => {
+                                        attrs[i] = Attr::Dynamic {
+                                            name,
+                                            value: Expr::Raw(raw),
+                                        }
+                                    }
+                                    (true, None) => attrs.push(Attr::Dynamic {
                                         name,
                                         value: Expr::Raw(raw),
-                                    });
-                                } else {
-                                    props_out.push((name, Expr::Raw(raw)));
+                                    }),
+                                    (false, Some(i)) => props_out[i].1 = Expr::Raw(raw),
+                                    (false, None) => props_out.push((name, Expr::Raw(raw))),
                                 }
                             }
                             _ => {
                                 r.diagnostics.push(union_refused(
                                     value,
-                                    &format!("gives `{name}` a value that is not a plain attribute value"),
+                                    &format!(
+                                        "gives `{name}` a value that is not a plain attribute value"
+                                    ),
                                 ));
                                 let raw = r.opaque(value, "spread props");
                                 match tag {
@@ -368,7 +419,16 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
         match tag {
             Tag::Host(_) => {
                 if let Some(attr) = read_attr(r, &name, value, &mut ref_name) {
-                    attrs.push(attr);
+                    // An own attribute after a union spread replaces the joined one (it keeps the first place).
+                    let at = union_names.contains(&name).then(|| {
+                        attrs
+                            .iter()
+                            .position(|a| matches!(a, Attr::Dynamic { name: n, .. } if *n == name))
+                    });
+                    match at.flatten() {
+                        Some(i) => attrs[i] = attr,
+                        None => attrs.push(attr),
+                    }
                 }
             }
             _ => {
@@ -383,7 +443,14 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                     continue;
                 }
                 let v = r.expr(value);
-                props_out.push((name, Expr::Raw(v)));
+                match union_names
+                    .contains(&name)
+                    .then(|| props_out.iter().position(|(n, _)| *n == name))
+                    .flatten()
+                {
+                    Some(i) => props_out[i].1 = Expr::Raw(v),
+                    None => props_out.push((name, Expr::Raw(v))),
+                }
             }
         }
     }
@@ -591,22 +658,20 @@ impl Union {
     fn value(
         &self,
         key: &str,
+        absent: &RawExpr,
         leaf: &mut dyn FnMut(&js_ast::Expr) -> Option<RawExpr>,
     ) -> Option<RawExpr> {
         match self {
             Union::Obj(entries) => match entries.iter().rev().find(|(k, _)| k == key) {
                 Some((_, v)) => leaf(v),
-                None => Some(RawExpr {
-                    loc: 0,
-                    kind: RawKind::Lit(crate::ir::Literal::Undefined),
-                }),
+                None => Some(absent.clone()),
             },
             Union::Cond(t, y, n) => Some(RawExpr {
                 loc: t.loc,
                 kind: RawKind::Cond {
                     test: t.clone(),
-                    yes: Box::new(y.value(key, leaf)?),
-                    no: Box::new(n.value(key, leaf)?),
+                    yes: Box::new(y.value(key, absent, leaf)?),
+                    no: Box::new(n.value(key, absent, leaf)?),
                 },
             }),
         }

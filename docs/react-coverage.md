@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 128 | 71 | 8 | 49 | 0 | 0 | 0 | 0 |
+| B Composition | 130 | 72 | 8 | 50 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 52 | 17 | 10 | 21 | 3 | 1 | 0 | 0 |
-| **Total** | 288 | 134 | 43 | 107 | 3 | 1 | 0 | 0 |
+| **Total** | 290 | 135 | 43 | 108 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -137,6 +137,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-body-destructure-other | destructuring something that is not the props object | react | react | ssr | ok | fallback:body-shape |  |
 | b-body-destructure-let | `let { a } = props` is not read as a props pattern | react | react | ssr | ok | fallback:let-var |  |
 | b-body-destructure-default-local | a body-destructuring default that reads a body local stays body-shape | react | react | ssr | ok | fallback:body-shape | review F1: the template binds no local for an absorbed default |
+| b-union-spread-body-const | a spread of a conditional object literal held in a body const (`decorative ? { role } : { aria-orientation, role }`) | static | static | 0 | ok | — | R34.66 part 3: one conditional attribute per key; a later own attribute or key wins |
+| b-union-spread-impure-test | a spread of a conditional whose test calls a function fails closed | react | react | ssr | ok | fallback:spread-props | R34.66 part 3: a test the printer would repeat per key must be pure |
 | b-forwardref | forwardRef component (default export); `ref={ref}` on a host is dropped | static | static | 0 | ok | — | S3 R34.63: HTML has no ref, so the render is the same as React's for a caller that passes none |
 | b-forwardref-const | `const X = forwardRef(function (props, ref) {…})` exported by name, used by a parent | static | static | 0 | ok | — |  |
 | b-forwardref-arrow | forwardRef with an arrow callback and rest props | static | static | 0 | ok | — |  |
