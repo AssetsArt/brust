@@ -6,7 +6,7 @@ Run 2026-10-14 on macOS, Bun 1.4.3, published `@brust/*` 2.0.0-alpha.7, real `sh
 
 1. **`shadcn init` fails on a brust project** ("We could not detect a supported framework"; exit 1). Workaround: write `components.json` by hand (it is read by `add`).
 2. **`shadcn add` needs the alias in `tsconfig.json`**: `"paths": { "@/*": ["./*"] }` is enough (no `baseUrl`). The CLI writes `@/components/ui/button` imports into the files it adds, and brust 2.0.0-alpha.7 builds them.
-3. **`cn` is no longer a hand-written helper.** The current registry (new-york-v4) imports `cn` from the npm package `cn`; `shadcn add` installs it. `shadcn add index` also creates `lib/utils.ts` (`clsx` + `tailwind-merge`) for code that imports `@/lib/utils`.
+3. **`cn` is no longer a hand-written helper.** The current registry (new-york-v4) imports `cn` from the npm package `cn`; `shadcn add` installs it. `shadcn add index` also creates `lib/utils.ts`, which is one line, `export { cn } from "cn"`, for code that imports `@/lib/utils`.
 4. **The theme comes from `shadcn add index`**: it adds `@import "tw-animate-css"`, `@import "shadcn/tailwind.css"`, `@custom-variant dark`, the light/dark CSS variables and `@theme inline` to `app.css`, and installs `shadcn` + `tw-animate-css`. Without it the classes (`bg-card`, `text-primary`) have no values.
 5. **Result.** `/ui` with Card + Button builds and serves as static HTML with no page JavaScript; adding a Dialog makes one React island per Radix part (build warnings `external-component`, `spread-props`, `island-children` are the documented fallbacks); the dialog opens in a real browser (Playwright: click "Open" shows the dialog heading and text). Largest client chunk (shared React) 96.7 KB gzip.
 

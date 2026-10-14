@@ -22,6 +22,7 @@ import ReleaseNotes, { releaseNotesLoader } from '../pages/docs/ReleaseNotes'
 import RenderingTiers, { renderingTiersLoader } from '../pages/docs/RenderingTiers'
 import Routing, { routingLoader } from '../pages/docs/Routing'
 import Shadcn, { shadcnLoader } from '../pages/docs/Shadcn'
+import ShadcnSetup, { shadcnSetupLoader } from '../pages/docs/guides/ShadcnSetup'
 import Store, { storeLoader } from '../pages/docs/Store'
 import CloudflareAdapter, { cloudflareAdapterLoader } from '../pages/docs/cache-adapters/Cloudflare'
 import CacheAdaptersOverview, { overviewLoader } from '../pages/docs/cache-adapters/Overview'
@@ -69,6 +70,7 @@ export const NAV: NavGroup[] = [
       { slug: 'css', title: 'CSS', file: 'pages/docs/Css.tsx', Component: Css, loader: cssLoader },
       { slug: 'packages', title: 'Icons and packages', file: 'pages/docs/IconsAndPackages.tsx', Component: IconsAndPackages, loader: packagesLoader },
       { slug: 'shadcn', title: 'shadcn/ui and libraries', file: 'pages/docs/Shadcn.tsx', Component: Shadcn, loader: shadcnLoader },
+      { slug: 'guides/shadcn-setup', title: 'Set up shadcn/ui', file: 'pages/docs/guides/ShadcnSetup.tsx', Component: ShadcnSetup, loader: shadcnSetupLoader },
       { slug: 'react-coverage', title: 'React coverage', file: 'pages/docs/ReactCoverage.tsx', Component: ReactCoverage, loader: reactCoverageLoader },
       { slug: 'configuration', title: 'Configuration', file: 'pages/docs/Configuration.tsx', Component: Configuration, loader: configurationLoader },
       { slug: 'cli', title: 'CLI', file: 'pages/docs/Cli.tsx', Component: Cli, loader: cliLoader },

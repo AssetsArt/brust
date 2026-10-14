@@ -97,6 +97,10 @@ export default function Shadcn({ summary, pinned, blockers, rows, blocks }: Shad
       <Lead>
         shadcn/ui copies its components into your project, so brust compiles them like your own code. Most of the markup becomes static or native; what needs Radix&rsquo;s behaviour stays a React island, and the build says which.
       </Lead>
+      {/* source: docs/transcripts/shadcn-setup-guide.md (L35, R38.1) */}
+      <p>
+        New to it? <a href="/docs/guides/shadcn-setup">Set up shadcn/ui</a> takes a fresh project to a page with a card, a button and a dialog.
+      </p>
 
       <h2 id="compiles">What compiles</h2>
       {/* source: docs/plans/2026-10-13-shadcn.md R34.14–R34.19 (rest props, spread), R34.21–R34.27 (constant children), R34.28–R34.34 (asChild), R34.35–R34.41 (member tags), R34.49–R34.55 (constant lists and conditions), R34.63–R34.64 (forwardRef); the release notes list the pull requests */}
