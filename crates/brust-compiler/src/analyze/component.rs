@@ -115,6 +115,10 @@ pub struct AnalyzeOptions {
     /// L20: the class map of every `*.module.css` file, keyed by its path relative to `root` (`/`-separated).
     /// `styles.x` from such an import folds to the literal class; empty = nothing folds.
     pub css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    /// F158 (R34.69): the source files (relative to `root`, `/`-separated) whose default export is a route component,
+    /// a page or layout, whose props are request data. A component from one of them never receives lowered JSX: its caller
+    /// falls back to React (`revive-host-route-root`).
+    pub route_roots: std::collections::HashSet<String>,
 }
 
 /// Parses `source` as the module at `path` and runs the full analysis,

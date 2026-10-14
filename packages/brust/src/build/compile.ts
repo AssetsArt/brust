@@ -39,7 +39,7 @@ export type ComponentIR = Record<string, any> & {
   /** The binding a React island imports this component by from `source` (absent: the default export). */
   export?: string
   /** Child components; `nested` is set when this file passes lowered JSX children to that child, an island (shadcn S1). */
-  children?: { id: string | null; nested?: string[]; [field: string]: unknown }[]
+  children?: { id: string | null; nested?: string[]; x?: string[]; [field: string]: unknown }[]
 }
 
 export interface Compiled {
@@ -124,6 +124,11 @@ export function compileApp(opts: {
   const nodes = new Map<string, Route>()
   for (const l of leaves) l.chain.forEach((r, i) => r.Component && nodes.set(l.chainIds[i]!, r))
 
+  // F158 (R34.69): the route components (pages and layouts) take request data as props, so the compiler never hands
+  // them lowered JSX from a caller. Keyed like an import resolves: relative to the app root, `/`-separated.
+  const rootRel = (f: string) => relative(appRoot, f).split(sep).join('/')
+  const routeRoots = [...new Set([...nodes.values()].flatMap((r) => componentFile.get(r.Component!) ?? []).flatMap((f) => [rootRel(f), relative(realpathSync(appRoot), realpathSync(f)).split(sep).join('/')]))]
+
   for (const [routeId, route] of nodes) {
     const file = componentFile.get(route.Component!)
     if (!file)
@@ -134,7 +139,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).
