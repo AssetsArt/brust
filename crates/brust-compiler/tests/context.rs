@@ -193,3 +193,19 @@ fn a_provider_value_that_calls_a_helper_of_another_module_is_computed_by_a_job()
         assert!(c.1.jobs.is_empty(), "{id}: {:?}", c.1.jobs);
     }
 }
+
+/// R34.104: an `if` whose branches only call `console.*` is a diagnostic, not part of the render; any other effect
+/// in a branch keeps the control-flow fallback.
+#[test]
+fn a_console_only_if_is_left_out_and_any_other_if_still_falls_back() {
+    let (ir, jinja) = page("console-if.tsx");
+    assert!(
+        !is_react(&ir) && ir.diagnostics.is_empty(),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
+    assert!(jinja.contains("<p>"), "{jinja}");
+    let (ir, _) = page("real-if.tsx");
+    assert!(is_react(&ir), "{:?}", ir.tier);
+}

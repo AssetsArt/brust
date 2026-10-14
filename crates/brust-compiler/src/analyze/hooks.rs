@@ -613,6 +613,9 @@ fn read_stmts(
             S::SReturn(ret) => {
                 returned = Some(ret.value.map(|v| r.expr(&v)));
             }
+            // S2 (R34.104): `if (cond) { console.error(…) }` only logs (Radix's dev validation of its props): it is not
+            // part of the render, so it is left out; any other effect of a branch keeps the control-flow fallback.
+            S::SIf(i) if console_only_if(i, r.names) => {}
             S::SIf(_)
             | S::SFor(_)
             | S::SForIn(_)
@@ -757,6 +760,28 @@ fn read_context_use(
             "write const context = useXContext(…)",
         ),
     }
+}
+
+/// A statement that only calls `console.*` (a diagnostic, no value and no render effect).
+fn console_only(stmt: &js_ast::Stmt, names: &NameTable<'_>) -> bool {
+    match &stmt.data {
+        S::SExpr(x) => matches!(
+            &x.value.data,
+            E::ECall(c) if matches!(
+                &c.target.data,
+                E::EDot(d) if matches!(&d.target.data, E::EIdentifier(id) if names.name(id.ref_) == "console")
+            )
+        ),
+        S::SBlock(b) => b.stmts.slice().iter().all(|s| console_only(s, names)),
+        S::SIf(i) => console_only_if(i, names),
+        S::SEmpty(_) => true,
+        _ => false,
+    }
+}
+
+/// `if (test) A else B` where every branch only logs.
+fn console_only_if(i: &js_ast::S::If, names: &NameTable<'_>) -> bool {
+    console_only(&i.yes, names) && i.no.as_ref().is_none_or(|n| console_only(n, names))
 }
 
 fn read_decl(
