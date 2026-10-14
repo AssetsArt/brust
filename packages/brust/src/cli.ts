@@ -6,12 +6,14 @@ import { BuildError, runBuild } from './build'
 import { runBunDev } from './dev/bun'
 import { runDev } from './dev'
 import { run } from './run'
+import { shadcnInit, spawnRunner } from './shadcn/init'
 
 const USAGE = `usage:
   brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare|static] [--actions-only] [--strict] [--wasm-from-source] [--dev]
   brust dev [entry=routes.tsx] [--port N] [--workers N]    (Bun target: proxy + hot reload + inline TUI)
   brust dev [entry=routes.tsx] --target cloudflare [--out-dir dist] [--port N] [--wasm-from-source] [-- <wrangler args>]
   brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
+  brust shadcn init [component ...] [--force] [--css <file>] [--base-color <name>] [--shadcn-version <x.y.z>]
 
 Config precedence for start: env (BRUST_ADDR, BRUST_PORT, BRUST_WORKERS, BRUST_RENDER_SLOTS,
 BRUST_DRAIN_TIMEOUT_MS, BRUST_BOOT_TIMEOUT_MS, BRUST_DIST_DIR, BRUST_APP_ENTRY) > flags
@@ -53,6 +55,9 @@ export async function main(argv: string[]): Promise<void> {
         port: { type: 'string' },
         workers: { type: 'string' },
         force: { type: 'boolean' },
+        css: { type: 'string' },
+        'base-color': { type: 'string' },
+        'shadcn-version': { type: 'string' },
         strict: { type: 'boolean' },
         target: { type: 'string' },
         'wasm-from-source': { type: 'boolean' },
@@ -126,6 +131,21 @@ export async function main(argv: string[]): Promise<void> {
       else console.error(`error dev ${(e as Error).stack ?? String(e)}`)
       process.exit(1)
     }
+  }
+  if (cmd === 'shadcn') {
+    const [sub, ...components] = positionals
+    if (sub !== 'init') usage(`shadcn takes a subcommand: init (got ${sub === undefined ? 'none' : JSON.stringify(sub)})`)
+    const code = await shadcnInit({
+      root: process.cwd(),
+      components,
+      force: values.force === true,
+      ...(str('css') !== undefined && { css: str('css') }),
+      ...(str('base-color') !== undefined && { baseColor: str('base-color') }),
+      ...(str('shadcn-version') !== undefined && { shadcnVersion: str('shadcn-version') }),
+      run: spawnRunner,
+      out: (s) => console.log(s),
+    })
+    process.exit(code)
   }
   if (cmd === 'start') {
     if (positionals.length > 0) usage(`start takes no positional arguments (got ${positionals.join(' ')})`)
