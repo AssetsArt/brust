@@ -143,3 +143,62 @@ Accepted. The design (a context is an implicit prop threaded lexically from the 
 - **Q3 Controlled state: uncontrolled + a constant controlled prop only** in v1; a page-owned dynamic controlled prop stays an island (`controlled-state`).
 - **Q4 Stop rule accepted:** stop and report if the first flipped page is above ~10 KB gzip.
 - **Q5 Order accepted, and shipped incrementally: one PR per step** so bytes land early and reviews stay small: PR 1 = recognisers + frames + progress (compile-time context, 0 JS); PR 2 = toggle + collapsible; PR 3 = switch + checkbox (effects, bubble input, Presence feature); PR 4 = avatar. Each PR has its served check and its measured scoreboard rows; Mellow reviews each (security: the frame decides which values reach which DOM bindings).
+
+## Amendment 2026-10-15 — R34.18 extension: a static child's spread takes live values too (lane `context-lowering-2b-handlers`, DESIGN NOTE, no code)
+
+**Status: PROPOSED.** Mellow reviews the print paths below, Detoro rules, then code as PR 2b-handlers. Written after the six hook items landed as 2b-hooks (`useControllableState` now inlines with general machinery).
+
+### 1. What stops the toggle page now (measured)
+
+Radix `Toggle` writes `<Primitive.button aria-pressed={pressed} data-state={…} {...buttonProps} onClick={composeEventHandlers(props.onClick, () => setPressed(!pressed))}/>`. The first refusal is `spread-handler`: `<Primitive.button> is linked (another prop of it changes on the client)`. It is the first of three that stack. A hand-written analog (`Btn = ({children, ...rest}) => <button type="button" {...rest}>…</button>`, a native parent with state) shows each in isolation, built with the shipped compiler:
+
+| Parent writes | Result today |
+|---|---|
+| `<Btn onClick={…}/>` (+ any `{...rest}` before it) | **native**: S1.3 hoists the handler, `Btn` stays static |
+| `<Btn aria-pressed={on}/>` (state value, no handler) | React, `spread-props`: "a value that changes on the client … reaches an element through a spread, which brust expands into HTML only" |
+| `<Btn aria-pressed={on} {...rest}/>` | React, `spread-props` (same, and a later unknown spread may replace the attribute) |
+| `<Btn aria-pressed={on} onClick={…}/>` | React, `spread-handler`: the child is linked |
+
+So the cause is one thing, not three: **a child's spread is expanded into HTML on the server only, so anything live that lands through it has no client binding.** S1.3 solved it for handlers (the parent binds `x-on-*` on the child's element in the parent's scope, R34.18). It did not solve it for live values, and it gave up as soon as a live value forced a link. The same shape is written by Radix `Toggle`, `Switch`, `Checkbox` and the `Collapsible` trigger (`<Primitive.button state-driven aria/data {...rest} onClick={composeEventHandlers(…)}/>`), so this is the leverage point of PR 3, not a toggle detail.
+
+### 2. Three shapes considered
+
+- **A. Keep the link, bind the handler in the parent's scope on the linked child's host.** The linked child's root element IS its host (it carries `x-data`), so `x-on-click="_h1"` resolves in the child's scope, not the parent's. It would need a scope-up reference in the runtime (a new directive syntax). Rejected: runtime change, and the child keeps a chunk and a link for nothing.
+- **B. The host carries the handler.** Pass the function through `x-props-bind` (functions already pass through) and let the child chunk apply it. The chunk is one per component and its spread is HTML-only, so the client would need a runtime spread that binds event names it does not know at compile time. Rejected: a new client attribute sink (attribute-name and `on*` injection, F94 class), sized for every page that loads it.
+- **C. Extend R34.18 to live values; the child never links (recommended).** Whatever the parent passes that lands in a *static* child's spread, and that the child reads nowhere else, is bound by the parent on the child's element **in the parent's scope**, exactly as hand-written markup would: a handler as `x-on-<event>` to a parent member `_hN` (shipped), a live value as `x-bind-<attr>` to a parent member `_dN` (new; the same `x-bind-*` directive hand-written attributes use). With nothing live left on the instance, `instance_needs_link` returns `None`: the child stays static and unlinked (no chunk, no `x-props-bind`), the output equals hand-written `<button …>` in the parent. Smaller than A and B and no runtime change.
+
+### 3. Shape C: rules
+
+Reuse the S1.3 gate (`forward_handlers`' `why` chain) unchanged and add the live-value arm:
+
+1. **Eligible key.** `child.spread.lands(k)` (the child's spread lands on exactly one element), the child reads `k` nowhere else (`onward.reads` does not contain it), does not pass it to another component (`onward.components`), the child is `Tier::Static`. Anything else keeps today's refusal, with its code.
+2. **Attribute name.** Compile-time constant from the parent's source key, validated like `handler_key_ok` (plain attribute-name grammar; no runtime-computed names). A key that fails is dropped with the existing `unsafe-attr` warning, never bound.
+3. **Later spread.** Order is React's: the last occurrence wins. An unknown spread AFTER the live key (`aria-pressed={pressed} {...buttonProps}`, Radix Toggle) may replace it, so the parent cannot know the final value. Two outcomes only: (a) the later spread is the component's own `...rest` (`props_rest`) → the bound value is `key in rest ? rest[key] : value`, which is what React computes (a present key, even `undefined`, wins); (b) any other later spread → refuse with `spread-props` naming "may replace it" (fail closed, as S1.3 does for handlers). Decision requested on (a), see Q1.
+4. **Member.** The value becomes a derived member `_dN` of the parent (no new IR kind: a `DerivedDecl` over the parent's state), printed on the child's element as `x-bind-<attr>="_dN"` inline-printed beside the server value the child's `spread_attrs(...)` already printed. The first paint equals today's.
+5. **Booleans.** `x-bind-aria-pressed` with `false` must print `"false"`, as React does for `aria-*`/`data-*` (F196, `event-aria-correctness`). **2b-handlers depends on F196**; without it the toggle page is wrong when off. A served test equal to React is the proof.
+
+### 4. How the handler reads the CURRENT state, and `composeEventHandlers`
+
+The hoisted member is a member of the parent, i.e. the same closure `<button onClick={…}>` written in the parent would have: it reads signals at call time, so it always sees the current state; nothing is copied into the child. The prop expression `composeEventHandlers(props.onClick, () => setPressed(!pressed))` is the handler's body evaluated **per event** (`(e) => (<expr>)(e)`), so `props().onClick` is read at event time too. Order and `defaultPrevented` are then not re-implemented but are the library's own function running on the native event: the caller's handler first, then ours unless `event.defaultPrevented`. A native event's `defaultPrevented` is what React's SyntheticEvent mirrors, so the result is equal. (SyntheticEvent-only members inside a handler are F195, `event-aria-correctness`, not this lane.) The proof is a Chromium test: the caller's `onClick` runs first; one that calls `preventDefault` stops ours and the state does not change; one that does not, flips `aria-pressed`/`data-state`.
+
+### 5. Print paths Mellow must check
+
+1. **Server HTML**: the child's `spread_attrs(...)` print plus the parent's `x-bind-<attr>` directive on the same element: no duplicate attribute, key order and later-wins as React, boolean/`undefined`/`null` values per React (`undefined` omits).
+2. **Client `x-bind-*` sink**: set through `setAttribute` (text), never as markup; URL attributes (`href`, `src`, …) get the same guard a hand-written `href={x}` gets; `style`/`class` keep their own paths (a live `className`/`style` landing in a spread stays refused in v1).
+3. **Names**: only compile-time keys reach `x-bind-`/`x-on-`; the `unsafe-attr` drop path is covered by a test with a hostile key.
+4. **The `in` test of rule 3(a)** over the rest object: a key spelled `__proto__` or `constructor` must not read the prototype (own keys only).
+5. **No link means no chunk**: assert that the child has no `x-data`/`x-props-bind` in the output and no JS chunk (zero JS when the parent is otherwise static is NOT claimed; the parent has a state).
+
+### 6. Tests (a plan, not code)
+
+Fixtures are the hand-written analog above plus Radix `Toggle`'s shape: positive (live value only; handler only; both; both with `...rest` before; the Radix order with `...rest` between, rule 3a), negative (unknown spread after, a different spread after, the child reads the key by name, the child forwards it to another component, hostile key, a live `className`, a non-event function), one battery row each; served-vs-React parity for the toggle page; a Chromium click test (§4). Bytes: the toggle page is measured against R34.115 before it is called done.
+
+### 7. Order, files, coordination
+
+PR 2b-handlers: `analyze/passes/children.rs` (`check_spread`, `forward_handlers`, `instance_needs_link` callers), `lower/template.rs` (the inline print), tests, battery, regenerated `docs/shadcn-coverage.*`. Not `placement.rs`. `children.rs` is shared with Dew's `element-drop-fixes`: whoever lands second merges main first, and each posts on the other's task before touching it. F196 lands first (it is a prerequisite of the toggle parity test).
+
+### Questions for the lead
+
+- **Q1.** Accept shape C (extend R34.18 to live values; the child stays unlinked), and rule 3(a) (`key in rest ? rest[key] : value` when the later spread is the component's own rest), or fail closed on ANY later unknown spread? Fail-closed keeps Radix `Toggle`/`Switch`/`Checkbox` as islands, because they all write `{...buttonProps}` after the state attributes.
+- **Q2.** Live `className`/`style` landing in a spread stay refused in v1 (they merge, they do not replace). OK?
+- **Q3.** F196 first, then 2b-handlers (the parity test needs `aria-pressed="false"`). OK?
