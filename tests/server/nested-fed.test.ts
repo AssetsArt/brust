@@ -59,6 +59,7 @@ test('the page keeps its tier and the wrapper is not an island', () => {
   expect(tiers.page).toBe('static')
   expect(tiers.wrapper).toBe('static')
   expect(tiers.chain).toBe('react')
+  expect(tiers.kids).toBe('static')
 })
 
 test('the served HTML equals the React render (wrapper with a prop, without, direct, with an undefined prop)', async () => {
@@ -75,4 +76,12 @@ test('a useId child through a component that passes its children to a repeater h
   const ids = [...html.matchAll(/<label[^>]*for="([^"]+)"/g)].map((m) => m[1])
   expect(ids.length).toBe(2)
   expect(new Set(ids).size).toBe(2)
+})
+
+test('a wrapper with a fed child before and after its slot content (which itself holds fed children) maps every instance to its own data', async () => {
+  const served = normalize(await (await fetch(`${base}/order`)).text())
+  expect(served).toBe(await react('Order.tsx'))
+  // Document order: w1 first, slot1, last, then the second wrapper: each label is its own instance's.
+  const order = [...served.matchAll(/tone-(\w+)/g)].map((m) => m[1])
+  expect(order).toEqual(['W1', 'SLOT1', 'LAST', 'W2', 'SLOT2', 'LAST'])
 })
