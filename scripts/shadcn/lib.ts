@@ -84,6 +84,8 @@ const bareImports = (dirs: string[]): string[] => {
   for (const f of files)
     for (const m of readFileSync(f, 'utf8').matchAll(/from\s+"([^"./][^"]*)"/g)) {
       const spec = m[1]!
+      // `@/…` is the fixture's own tsconfig alias (what the CLI writes), not a package.
+      if (spec.startsWith('@/')) continue
       const parts = spec.split('/')
       found.add(spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!)
     }

@@ -181,6 +181,7 @@ fn compile_uncached(
     };
     run_passes(&mut ir, &ctx);
     finish_diagnostics(&mut ir, parsed.text());
+    ir.alias_imports = parsed.alias_imports();
     Ok(ir)
 }
 

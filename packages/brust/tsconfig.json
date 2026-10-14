@@ -5,5 +5,5 @@
     "noEmit": true, "types": ["bun"], "skipLibCheck": true, "jsx": "react-jsx"
   },
   "include": ["src", "test", "bin"],
-  "exclude": ["**/dist"]
+  "exclude": ["**/dist", "test/fixtures/icon-shapes"]
 }

@@ -220,6 +220,14 @@ pub struct ComponentIR {
     /// static or native render drops; a call site that passes `ref` makes the caller React (`forwardref-ref`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forwards_ref: bool,
+    /// An inlined lucide icon of this component carries a runtime spread of its props (shadcn S1, R34.77): a call
+    /// site may not pass a key the icon component reads itself (`size`, `color`, `className`, …).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub icon_spread: bool,
+    /// The `tsconfig` `paths` imports this module wrote and the files they name (R34.76): the build checks each against
+    /// the bundler's own resolution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alias_imports: Vec<crate::analyze::aliases::AliasImport>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -323,6 +331,8 @@ impl ComponentIR {
             props_rest: None,
             poly: None,
             forwards_ref: false,
+            icon_spread: false,
+            alias_imports: vec![],
             state: vec![],
             derived: vec![],
             effects: vec![],

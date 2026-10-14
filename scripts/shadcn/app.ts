@@ -7,7 +7,11 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import { compileTree } from '../../packages/brust/native/index.js'
+import { readPathAliases } from '../../packages/brust/src/build/tsconfig-paths'
 import { FIXTURE, repo } from './paths.ts'
+
+/** The fixture's `tsconfig` `paths` (the CLI writes `@/` imports), as the build hands them to the compiler. */
+const ALIASES = JSON.stringify(readPathAliases(FIXTURE).aliases)
 
 export type Tier = 'static' | 'native' | 'react' | 'error'
 
@@ -67,7 +71,7 @@ export function analysePage(id: string): Omit<AppRow, 'build'> {
   const base = { id, tier: 'error' as Tier, reason: null, codes: [], islands: 0, components: 0, reactComponents: 0, clientBytes: 0, blocked: [], error: null }
   let tree: ReturnType<typeof compileTree>
   try {
-    tree = compileTree(`pages/${id}.tsx`, FIXTURE, '/_brust/runtime.js', [])
+    tree = compileTree(`pages/${id}.tsx`, FIXTURE, '/_brust/runtime.js', [], null, null, null, ALIASES)
   } catch (e) {
     return { ...base, codes: ['error:compile-throw'], error: String(e instanceof Error ? e.message : e).split('\n')[0]!.replaceAll(FIXTURE, '.') }
   }
@@ -123,7 +127,7 @@ export function surveyRepro(): Repro[] {
     { id: 'static', what: '`export function Box({ className })` (no rest props: static, inlined)' },
   ]
   return cases.map((c) => {
-    const tree = compileTree(`repro/page-${c.id}.tsx`, FIXTURE, '/_brust/runtime.js', [])
+    const tree = compileTree(`repro/page-${c.id}.tsx`, FIXTURE, '/_brust/runtime.js', [], null, null, null, ALIASES)
     const codes = [...new Set(tree.components.flatMap((x) => x.diagnostics.filter((d) => d.class === 'fallback').map((d) => d.rule)))].sort()
     return { ...c, codes, build: buildEntry(`repro/r-${c.id}.tsx`, `repro-${c.id}`) }
   })

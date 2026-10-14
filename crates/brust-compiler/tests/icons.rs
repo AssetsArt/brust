@@ -206,3 +206,37 @@ fn deep_imports_and_other_packages_are_recognised_by_source() {
     );
     assert!(other.icon_requests.is_empty());
 }
+
+/// R34.77: `{...props}` on an icon lands on the inlined `<svg>`, after the icon's own attributes.
+#[test]
+fn a_rest_spread_on_an_icon_lands_on_the_svg_root() {
+    let src = "import { Heart } from 'lucide-react'\nexport default function C({ n, ...rest }: any) { return <p><Heart role=\"status\" {...rest} /></p> }";
+    let key = analyze(src, HashMap::new(), false).icon_requests[0]
+        .key
+        .clone();
+    let ir = analyze(src, HashMap::from([(key, markup())]), true);
+    assert!(ir.icon_requests.is_empty(), "{:?}", ir.diagnostics);
+    assert!(ir.icon_spread);
+    let mut els = Vec::new();
+    elements(&ir.template, &mut els);
+    let svg = els.iter().find(|(t, _)| t == "svg").expect("inlined svg");
+    let last = svg.1.last().expect("attrs");
+    assert!(
+        matches!(last, Attr::Spread(_)),
+        "spread must come last: {:?}",
+        svg.1
+    );
+}
+
+/// R34.77: a spread of anything but the component's own props keeps the island.
+#[test]
+fn a_spread_of_an_unknown_value_on_an_icon_keeps_the_island() {
+    let src = "import { Heart } from 'lucide-react'\nconst x = { id: 'a' }\nexport default function C() { return <p><Heart {...x} /></p> }";
+    let ir = analyze(src, HashMap::new(), true);
+    assert!(!ir.icon_spread);
+    assert!(
+        ir.diagnostics.iter().any(|d| d.rule == "icon-dynamic-prop"),
+        "{:?}",
+        ir.diagnostics
+    );
+}

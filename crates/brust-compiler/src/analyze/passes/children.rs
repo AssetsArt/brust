@@ -160,6 +160,11 @@ struct Child {
     job_roots: BTreeSet<String>,
     /// The compiled child is a `forwardRef` component (R34.63): a call site that passes `ref` needs React.
     forwards_ref: bool,
+    /// The compiled child spreads its props onto an inlined lucide icon (R34.77).
+    icon_spread: bool,
+    /// The compiled child reads `children` as a value (`children ?? <X/>`, `children ? a : b`), not only as `{children}`:
+    /// an inlined instance has the markup, not a value to test.
+    reads_children_value: bool,
     /// The compiled child has `useId` values (the server seeds them per instance, per row).
     use_id: bool,
 }
@@ -376,6 +381,50 @@ const X_KEY: &str = "$x";
 
 /// Shadcn S1 (R34.23): the most JSON one island instance's lowered children may take.
 const MAX_CHILDREN_JSON: usize = 64 * 1024;
+
+/// The component reads `children` somewhere other than as the child `{children}` itself (a condition, an attribute, a
+/// `??`): the only reads an inlined instance can answer is the markup, never a value to test.
+fn reads_children_as_value(ir: &ComponentIR) -> bool {
+    fn strip(n: &mut Node) {
+        match n {
+            Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children") =>
+            {
+                *n = Node::Text(String::new());
+            }
+            Node::Element { children, .. }
+            | Node::Fragment(children)
+            | Node::Component { children, .. } => children.iter_mut().for_each(strip),
+            Node::If { then, else_, .. } => then.iter_mut().chain(else_).for_each(strip),
+            Node::For { body, .. } => body.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    let mut t = ir
+        .structural
+        .as_ref()
+        .map_or_else(|| ir.template.clone(), |s| s.template.clone());
+    strip(&mut t);
+    let d = super::deps::DepsCx::new(ir).deps_node(&t, &[]);
+    d.props
+        .iter()
+        .any(|p| p == "children" || p.starts_with("children."))
+}
+
+/// Props a lucide icon component reads itself; none may reach one through a runtime spread (R34.77).
+const ICON_OWN_PROPS: &[&str] = &[
+    "size",
+    "color",
+    "strokeWidth",
+    "absoluteStrokeWidth",
+    "width",
+    "height",
+    "className",
+    "class",
+    "children",
+    "ref",
+    "key",
+    "style",
+];
 
 /// A prop name an element may travel under (R34.52): never one the revive strips or reads itself.
 fn slot_prop_ok(k: &str) -> bool {
@@ -625,6 +674,8 @@ impl Walker<'_, '_> {
             onward: HandlerSink::default(),
             job_roots: BTreeSet::new(),
             forwards_ref: false,
+            icon_spread: false,
+            reads_children_value: false,
             use_id: false,
         }
     }
@@ -662,6 +713,8 @@ impl Walker<'_, '_> {
                     onward: HandlerSink::default(),
                     job_roots: BTreeSet::new(),
                     forwards_ref: false,
+                    icon_spread: false,
+                    reads_children_value: false,
                     use_id: false,
                 };
             }
@@ -717,6 +770,8 @@ impl Walker<'_, '_> {
                         onward: HandlerSink::default(),
                         job_roots: BTreeSet::new(),
                         forwards_ref: false,
+                        icon_spread: false,
+                        reads_children_value: false,
                         use_id: false,
                     };
                 };
@@ -761,9 +816,14 @@ impl Walker<'_, '_> {
         let mut job_roots = BTreeSet::new();
         let mut use_id = false;
         let mut forwards_ref = false;
+        let mut icon_spread = false;
+        let mut reads_children_value = false;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
                 forwards_ref = ir.forwards_ref;
+                icon_spread = ir.icon_spread;
+                reads_children_value =
+                    matches!(ir.tier, Tier::Static | Tier::Native) && reads_children_as_value(&ir);
                 job_roots = ir
                     .jobs
                     .iter()
@@ -847,6 +907,8 @@ impl Walker<'_, '_> {
             onward,
             job_roots,
             forwards_ref,
+            icon_spread,
+            reads_children_value,
             use_id,
         }
     }
@@ -995,7 +1057,7 @@ impl Walker<'_, '_> {
             ));
         }
         let (hoisted, unbound) = self.forward_handlers(name, *loc, props, &child);
-        self.check_spread(name, props, &child, *loc, &hoisted, &unbound);
+        self.check_spread(name, children, props, &child, *loc, &hoisted, &unbound);
         // A hoisted handler is the parent's own member: not a prop of the instance.
         let kept: Vec<(String, Expr)> = props
             .iter()
@@ -1962,6 +2024,7 @@ impl Walker<'_, '_> {
     fn check_spread(
         &mut self,
         name: &str,
+        children_given: &[Node],
         props: &[(String, Expr)],
         child: &Child,
         loc: u32,
@@ -1988,6 +2051,34 @@ impl Walker<'_, '_> {
                 "props are spread into <{name}>, which the server feeds per instance (a job or useId)"
             )));
             return;
+        }
+        if child.reads_children_value && !children_given.is_empty() {
+            self.diagnostics.push(Diagnostic::fallback(
+                "children-read",
+                format!("<{name}> reads `children` as a value, which an inlined instance with children cannot answer"),
+                loc,
+                "render `{children}` only, or keep the component interactive with React",
+            ));
+            return;
+        }
+        if child.icon_spread {
+            // R34.77: the icon inside reads these keys itself (`size` sets width and height, `className`
+            // merges with its own class): a runtime spread would print them as plain attributes instead.
+            if spreads_in {
+                self.diagnostics.push(refuse(format!(
+                    "props of unknown keys are spread into <{name}>, which spreads them onto an icon that reads some of them itself"
+                )));
+                return;
+            }
+            if let Some((k, _)) = props
+                .iter()
+                .find(|(k, _)| ICON_OWN_PROPS.contains(&k.as_str()) && child.spread.lands(k))
+            {
+                self.diagnostics.push(refuse(format!(
+                    "the prop `{k}` of <{name}> reaches an icon through a spread, and the icon reads `{k}` itself"
+                )));
+                return;
+            }
         }
         if let Some((k, why)) = unbound.first() {
             let rule = if k.ends_with("Capture") {

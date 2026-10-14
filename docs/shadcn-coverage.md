@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|
-| 64 | 61 | 1 | 2 | 53 | 18 | 0 / 87 / 240 KB |
+| 64 | 61 | 1 | 2 | 49 | 21 | 0 / 87 / 240 KB |
 
 ### Analysis-only (0 of 64 pages refused)
 
@@ -42,10 +42,10 @@ One line per thing that keeps a row or a library component off the static/native
 | 4 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 12 | 187 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 19 | `member-tag` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 36 | `control-flow` diagnostic (docs/react-coverage.md) |
-| 7 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 6 | `jsx-expression` diagnostic (docs/react-coverage.md) |
-| 8 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 4 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
-| 9 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 35 | `island-prop` diagnostic (docs/react-coverage.md) |
-| 10 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `child-component` diagnostic (docs/react-coverage.md) |
+| 7 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 4 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
+| 8 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 35 | `island-prop` diagnostic (docs/react-coverage.md) |
+| 9 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `child-component` diagnostic (docs/react-coverage.md) |
+| 10 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `jsx-expression` diagnostic (docs/react-coverage.md) |
 | 11 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 5 | `hook-shape` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 184 | `body-shape` diagnostic (docs/react-coverage.md) |
 | 13 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 20 | `local-component` diagnostic (docs/react-coverage.md) |
@@ -79,7 +79,7 @@ One line per thing that keeps a row or a library component off the static/native
 
 ## Classification
 
-Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (25 survey truth, 15 census). The fixture deviates from the CLI output in one place only (the sibling imports rewritten from `@/` to relative, which changes resolution, never the exports), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
+Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (25 survey truth, 15 census). The fixture is the CLI output unedited (the `@/` imports resolve through its `tsconfig.json` `paths`), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
 
 ### History: the named-export build rule (S0 → S1.1, PR #198)
 
@@ -105,10 +105,10 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | avatar | measured | static | 2 | 7 (6) | 87 | external-component, spread-props | built |
 | badge | measured | static | 0 | 2 (0) | 0 | — | built |
 | badge-aslink | measured | static | 0 | 2 (0) | 0 | — | built |
-| breadcrumb | measured | static | 2 | 7 (1) | 85 | jsx-expression | built |
+| breadcrumb | measured | static | 0 | 7 (0) | 0 | external-component | built |
 | bubble | measured | static | 0 | 4 (0) | 0 | — | built |
 | button | measured | static | 0 | 2 (0) | 0 | — | built |
-| button-alias | measured | static | 1 | 2 (1) | 85 | external-component | built |
+| button-alias | measured | static | 0 | 2 (0) | 0 | — | built |
 | button-aschild | measured | static | 0 | 2 (0) | 0 | — | built |
 | button-group | measured | static | 1 | 6 (3) | 86 | external-component, spread-props | built |
 | calendar | measured | static | 1 | 3 (2) | 107 | external-component, island-prop, prop-pattern, spread-props | built |
@@ -153,7 +153,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | skeleton | measured | static | 0 | 2 (0) | 0 | — | built |
 | slider | measured | static | 1 | 6 (5) | 93 | external-component, island-children, spread-props | built |
 | sonner | measured | native | 1 | 3 (1) | 87 | child-component | built |
-| spinner | measured | static | 1 | 3 (2) | 82 | external-component, spread-props | built |
+| spinner | measured | static | 0 | 2 (0) | 0 | external-component, spread-props | built |
 | switch | measured | static | 2 | 6 (5) | 89 | external-component, island-children, spread-props | built |
 | table | measured | static | 0 | 8 (0) | 0 | — | built |
 | tabs | measured | static | 1 | 9 (8) | 94 | external-component, spread-props | built |
@@ -188,7 +188,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/avatar.tsx#avatar | external-component, spread-props | 1 |
 | components/ui/avatar.tsx#avatarFallback | external-component, spread-props | 1 |
 | components/ui/avatar.tsx#avatarImage | external-component, spread-props | 1 |
-| components/ui/breadcrumb.tsx#breadcrumbSeparator | jsx-expression | 1 |
+| components/ui/breadcrumb.tsx#breadcrumbSeparator | external-component | 1 |
 | components/ui/button-group.tsx#buttonGroupSeparator | spread-props | 1 |
 | components/ui/calendar.tsx#calendar | external-component, island-prop, prop-pattern, spread-props | 1 |
 | components/ui/carousel.tsx#carousel | event-capture, hook-unsupported, member-tag | 1 |
@@ -323,7 +323,6 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/tooltip.tsx#tooltip | external-component, spread-props | 1 |
 | components/ui/tooltip.tsx#tooltipContent | external-component, island-children, spread-props | 1 |
 | components/ui/tooltip.tsx#tooltipTrigger | external-component, spread-props | 1 |
-| pages/button-alias.tsx#buttonAlias | external-component | 1 |
 | pages/chart.tsx#chart | external-component | 1 |
 | pages/combobox.tsx#combobox | external-component, island-children, jsx-expression | 1 |
 | pages/form.tsx#form | child-component, hook-unsupported, island-children, island-prop, spread-props | 1 |
@@ -1220,7 +1219,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 
 ## Method and limits
 
-- **Fixture.** `tests/fixtures/shadcn`: `components/ui/*` and `hooks/` are exactly what `shadcn add` wrote at the pinned version, with ONE edit: the CLI imports siblings as `@/components/ui/x` (a tsconfig `paths` alias) and the compiler reads that as a package, so the 26 sibling/hook imports were rewritten to relative paths. The unedited form is measured by the row `button-alias`. This registry version imports `cn` from the npm package `cn`, so the CLI writes no `lib/utils.ts`.
+- **Fixture.** `tests/fixtures/shadcn`: `components/ui/*` and `hooks/` are exactly what `shadcn add` wrote at the pinned version, imports included: the CLI imports siblings as `@/components/ui/x` (a tsconfig `paths` alias) and the compiler resolves it from the fixture's `tsconfig.json` (R34.76; until then the 26 sibling/hook imports had to be rewritten to relative paths). This registry version imports `cn` from the npm package `cn`, so the CLI writes no `lib/utils.ts`.
 - **Rows.** `pages/<name>.tsx` is one page per component, written the way shadcn's own examples use it, plus `badge-aslink`, `button-aschild` (`asChild` + Slot) and `button-alias`. Each page is also built alone (`brust build`, entry generated under `.rows/`), because one failing page would otherwise fail the build of all.
 - **Islands.** Walk down from the page root through static and native components; every React component met is one island.
 - **Library source.** Compiler results on package code are an analysis, not a build: nothing about how the product treats `node_modules` changes (today any import from a package is `fallback:external-component`). Minified published code cannot be split into components; those packages get the whole-package construct census only.

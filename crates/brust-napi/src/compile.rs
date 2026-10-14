@@ -55,7 +55,12 @@ pub(crate) fn compile_tree_impl(
     slot_values: Option<String>,
     css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     icon_svgs: Option<String>,
+    path_aliases: Option<String>,
 ) -> CompiledTree {
+    // `[{ "pattern": "@/*", "targets": ["./*"] }]`: `tsconfig` `paths` (R34.76).
+    let path_aliases: Vec<brust_compiler::analyze::aliases::PathAlias> = path_aliases
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     // `{ "final": bool, "svgs": { "<key>": "<svg markup>" } }`: lucide icons the build rendered (L23).
     let (icon_svgs, icons_final): (
         std::collections::HashMap<String, brust_compiler::analyze::component::IconMarkup>,
@@ -84,6 +89,7 @@ pub(crate) fn compile_tree_impl(
         css_modules,
         icon_svgs,
         icons_final,
+        path_aliases,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -131,6 +137,7 @@ pub fn compile_tree(
         std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     >,
     icon_svgs: Option<String>,
+    path_aliases: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
     compile_tree_impl(
@@ -141,6 +148,7 @@ pub fn compile_tree(
         slot_values,
         css_modules.unwrap_or_default(),
         icon_svgs,
+        path_aliases,
     )
 }
 
@@ -156,6 +164,7 @@ mod tests {
             vec![],
             None,
             Default::default(),
+            None,
             None,
         );
         assert!(t.error.is_none(), "{:?}", t.error);
@@ -176,6 +185,7 @@ mod tests {
             vec![],
             None,
             Default::default(),
+            None,
             None,
         );
         assert_eq!(t.error.as_ref().map(|d| d.class.as_str()), Some("error"));

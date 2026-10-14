@@ -3,13 +3,13 @@ import { Combobox as ComboboxPrimitive } from "@base-ui/react"
 import { cn } from "cn"
 import { CheckIcon, ChevronDownIcon, XIcon } from "lucide-react"
 
-import { Button } from "./button"
+import { Button } from "@/components/ui/button"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "./input-group"
+} from "@/components/ui/input-group"
 
 const Combobox = ComboboxPrimitive.Root
 

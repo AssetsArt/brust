@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 97 | 49 | 8 | 40 | 0 | 0 | 0 | 0 |
+| A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
+| B Composition | 99 | 50 | 8 | 41 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 52 | 17 | 10 | 21 | 3 | 1 | 0 | 0 |
-| **Total** | 257 | 112 | 43 | 98 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 55 | 19 | 10 | 22 | 3 | 1 | 0 | 0 |
+| **Total** | 265 | 117 | 43 | 101 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -64,6 +64,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-spread-props-path | spread of an object of unknown keys (a props path) | static | static | 0 | ok | — | shadcn S1.2 R34.15 (b): the runtime path (spread_attrs) |
 | a-spread-hostile-names | object keys that are not attribute names, in a spread | static | static | 0 | ok | warning:unsafe-attr | shadcn S1.2 R34.17: dropped and warned (unsafe-attr); spread_attrs drops the same names at render |
 | a-spread-reserved-x | x-* attributes inside a spread (F94) | static | static | 0 | ok | warning:reserved-attr | F94 + shadcn S1.2: never printed, reserved-attr warning |
+| a-nullish-element | `prop ?? <X/>` as a child | static | static | 0 | ok | — | R34.78: a plain read ?? an element is a condition (a missing prop and null both fall back, 0 and "" are kept); parity in tests/server/icon-shapes.test.ts |
+| a-or-element | `prop \|\| <X/>` as a child | static | static | 0 | ok | — | R34.78: JS truthiness: "" and 0 fall back |
+| a-nullish-element-call | `f() ?? <X/>` (not a plain read) | react | react | ssr | ok | fallback:jsx-expression | R34.78: fail closed — a call would be evaluated twice; stays jsx-expression |
 | a-form-onsubmit | <form onSubmit> | native | native | 0 | ok | — |  |
 | a-form-action | <form action={fn}> | react | static | precompute | ok | — | known gap: F115: a function action becomes a precompute value that the url_ok guard drops, so the form renders without an action and submits nowhere; it should fall back to react |
 | a-input-controlled | controlled <input> | native | native | 0 | ok | — |  |
@@ -124,6 +127,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-slots-elprop-state | an element prop that reads parent state | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — state inside the element |
 | b-island-slots-elprop-handler | an element prop with an event handler | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — a handler cannot travel as JSON |
 | b-island-slots-elprop-static-child | an element prop on a static component | react | react | ssr | ok | fallback:jsx-expression | R34.52: element props travel to React islands only; any other child keeps fallback:jsx-expression |
+| b-children-value-with-children | a static child that tests `children`, given children | react | react | ssr | ok | fallback:children-read | R34.78 (found by the parity test): an inlined instance has the markup, not a value to test; it printed the none branch. Now fallback:children-read |
+| b-children-value-without-children | the same child given no children | static | static | 0 | ok | — | R34.78: no children is `undefined`, which the inlined test answers exactly |
 | b-island-in-inlined | react island inside an inlined native component (G11) | static | static | 0 | ok | — | S6 amendment L4 (F108): the island render is the inlined Tiers instance job, so the page has no job of its own |
 | b-island-in-inlined-row | react island inside an inlined per-row component | static | static | 0 | ok | — | S6 amendment L4 (F108): one island render per row of the Row instance (per-row child record) |
 | b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component |  |
@@ -251,6 +256,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
+| e-lucide-icon-rest-spread | a lucide icon spread with the component's rest props | static | static | ssr | ok | — | R34.77: the rest lands on the inlined svg, after the icon's own attributes; parity in tests/server/icon-shapes.test.ts |
+| e-lucide-icon-rest-spread-size | a call site hands the spread icon a key the icon reads (size) | static | static | ssr | ok | — | R34.77: brustc alone leaves the icon an island; after `brust build` renders it the call site is refused (spread-props, page React): crates/brust-compiler/tests/icon_shapes.rs pins size, className, color |
+| e-lucide-icon-unknown-spread | a lucide icon spread with a computed object | react | react | ssr | ok | fallback:external-component, fallback:spread-props, warning:icon-dynamic-prop | R34.77: only the component's own props or rest spread onto an icon; any other spread keeps the island (icon-dynamic-prop) |
 | e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
 | e-member-named-alias | member of a renamed named import (`<D.Root>`) in a static parent | static | static | ssr | ok | fallback:external-component | S1.4 R34.35: resolved to the package member, an island (external-component), no member-tag |
 | e-member-namespace | member of a namespace import (`<P.Group>`) | static | static | ssr | ok | fallback:external-component |  |
