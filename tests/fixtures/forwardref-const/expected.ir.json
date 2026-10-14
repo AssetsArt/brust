@@ -1,0 +1,142 @@
+{
+  "id": "input_ee59abba",
+  "source": "tests/fixtures/forwardref-const/input.tsx",
+  "tier": "Static",
+  "props": [
+    {
+      "name": "id",
+      "local": "id",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 173,
+      "tag": "form",
+      "attrs": [],
+      "children": [
+        {
+          "Component": {
+            "loc": 186,
+            "name": "Label",
+            "source": "./parts",
+            "imported": "Label",
+            "props": [
+              [
+                "htmlFor",
+                {
+                  "Server": {
+                    "loc": 202,
+                    "kind": {
+                      "Ident": {
+                        "name": "id",
+                        "kind": "Prop"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [
+              {
+                "Text": "Name"
+              }
+            ],
+            "link": null,
+            "tier": "Static"
+          }
+        },
+        {
+          "Component": {
+            "loc": 225,
+            "name": "Input",
+            "source": "./parts",
+            "imported": "Input",
+            "props": [
+              [
+                "id",
+                {
+                  "Server": {
+                    "loc": 236,
+                    "kind": {
+                      "Ident": {
+                        "name": "id",
+                        "kind": "Prop"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": null,
+            "tier": "Static"
+          }
+        },
+        {
+          "Component": {
+            "loc": 249,
+            "name": "Wrapped",
+            "source": "./Wrapped",
+            "imported": "default",
+            "props": [
+              [
+                "title",
+                {
+                  "Server": {
+                    "loc": 264,
+                    "kind": {
+                      "Lit": {
+                        "Str": "x"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": null,
+            "tier": "Static"
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": false,
+  "cache": null,
+  "children": [
+    {
+      "name": "Label",
+      "id": "label_86a053bf",
+      "path": "tests/fixtures/forwardref-const/parts.tsx",
+      "tier": "Static"
+    },
+    {
+      "name": "Input",
+      "id": "input_c94d1a05",
+      "path": "tests/fixtures/forwardref-const/parts.tsx",
+      "tier": "Static"
+    },
+    {
+      "name": "Wrapped",
+      "id": "wrapped_765c39ff",
+      "path": "tests/fixtures/forwardref-const/Wrapped.tsx",
+      "tier": "Static"
+    }
+  ],
+  "diagnostics": []
+}

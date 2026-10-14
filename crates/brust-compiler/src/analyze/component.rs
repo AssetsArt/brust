@@ -54,6 +54,9 @@ pub fn analyze_component_in(
             if let Some(done) = read_memo_export(parsed, ast, opts, &mut ir) {
                 return done;
             }
+            if let Some(done) = read_forward_ref_export(parsed, ast, opts, &mut ir) {
+                return done;
+            }
             if has_default_export(ast) {
                 ir.diagnostics.push(Diagnostic::fallback(
                     "default-export-shape",
@@ -331,6 +334,25 @@ fn read_memo_export(
     Some(Ok(()))
 }
 
+/// `export default forwardRef(function (props, ref) {…})` and `export default X` with `X` a module-level
+/// `const X = forwardRef(…)` (R34.63); `None` for any other default export.
+fn read_forward_ref_export(
+    parsed: &Parsed,
+    ast: &js_ast::Ast<'_>,
+    opts: Option<&AnalyzeOptions>,
+    ir: &mut ComponentIR,
+) -> Option<Result<(), Diagnostic>> {
+    let e = default_export_expr(ast)?;
+    let m = crate::analyze::stores::Module::new(ast);
+    let func = match &e.data {
+        E::EIdentifier(id) => forward_ref_fn(ast, &m.name(id.ref_)),
+        E::EImportIdentifier(id) => forward_ref_fn(ast, &m.name(id.ref_)),
+        _ => forward_ref_callback(&m, e),
+    }?;
+    read_function_as(parsed, ast, opts, &func, true, ir);
+    Some(Ok(()))
+}
+
 /// `export default memo(…)` (by the callee's name, for the diagnostic wording only).
 fn default_export_is_memo(ast: &js_ast::Ast<'_>) -> bool {
     let Some(e) = default_export_expr(ast) else {
@@ -358,8 +380,35 @@ fn read_function(
     func: &js_ast::G::Fn,
     ir: &mut ComponentIR,
 ) {
+    read_function_as(parsed, ast, opts, func, false, ir)
+}
+
+/// [`read_function`]; `forwards_ref`: the function is the argument of `forwardRef(…)`, so its second parameter is
+/// the forwarded ref (R34.63).
+fn read_function_as(
+    parsed: &Parsed,
+    ast: &js_ast::Ast<'_>,
+    opts: Option<&AnalyzeOptions>,
+    func: &js_ast::G::Fn,
+    forwards_ref: bool,
+    ir: &mut ComponentIR,
+) {
     crate::analyze::expr::take_printer_panic(); // a flag left by an earlier component is not ours
     let mut names = NameTable::new(ast, func);
+    if forwards_ref {
+        ir.forwards_ref = true;
+        if let Some(a) = func.args.slice().get(1) {
+            match a.binding.data {
+                js_ast::b::B::BIdentifier(id) => names.set_forwarded_ref(id.r#ref),
+                _ => ir.diagnostics.push(Diagnostic::fallback(
+                    "forwardref-ref",
+                    "the forwarded ref is destructured; brust reads it only as a plain `ref` parameter",
+                    func.open_parens_loc.start.max(0) as u32,
+                    "name the second parameter `ref`",
+                )),
+            }
+        }
+    }
     mark_state_bindings(func, &mut names);
     let print = |js: Js<'_>, a: &Aliases| print_js_with(parsed, ast, a, js);
     let mut reader = Reader::new(&mut names, &print);
@@ -413,6 +462,18 @@ fn read_function(
             foreign: false,
         },
     );
+    // R34.64: the forwarded ref is only ever `ref={ref}` on a host element (dropped: HTML has no ref); any other
+    // read (`ref.current`, passed on, `useImperativeHandle`) needs React.
+    let mut body_walk = crate::analyze::expr::Walk::default();
+    body_walk.stmts(func.body.stmts.slice());
+    if reader.names.forwarded_ref_escapes(&body_walk.used) > 0 {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "forwardref-ref",
+            "the forwarded ref is read other than as `ref={ref}` on an element; the component renders as a React island",
+            func.open_parens_loc.start.max(0) as u32,
+            "pass the ref to an element, or keep the component in React",
+        ));
+    }
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
     check_printer_panic(ir);
     ir.props = body.props;
@@ -495,6 +556,99 @@ pub(crate) fn module_fn<'x>(ast: &'x js_ast::Ast<'_>, name: &str) -> Option<&'x 
     None
 }
 
+/// A component function of a module: a function declaration (borrowed) or the callback of a module-level
+/// `const X = forwardRef(…)` (an owned view of it: same params and body).
+pub(crate) enum FoundFn<'x> {
+    Decl(&'x js_ast::G::Fn),
+    ForwardRef(js_ast::G::Fn),
+}
+
+impl FoundFn<'_> {
+    pub(crate) fn func(&self) -> &js_ast::G::Fn {
+        match self {
+            FoundFn::Decl(f) => f,
+            FoundFn::ForwardRef(f) => f,
+        }
+    }
+    pub(crate) fn forwards_ref(&self) -> bool {
+        matches!(self, FoundFn::ForwardRef(_))
+    }
+}
+
+/// `module_fn`, or the callback of a module-level `const name = forwardRef(function (props, ref) {…})` /
+/// `React.forwardRef(…)` with `forwardRef` imported from `react`; the callback may be an arrow function.
+pub(crate) fn module_component<'x>(ast: &'x js_ast::Ast<'_>, name: &str) -> Option<FoundFn<'x>> {
+    module_fn(ast, name)
+        .map(FoundFn::Decl)
+        .or_else(|| forward_ref_fn(ast, name).map(FoundFn::ForwardRef))
+}
+
+/// The function a call `forwardRef(fn)` wraps, when `e` is such a call (`forwardRef` / `React.forwardRef` from react).
+pub(crate) fn forward_ref_callback(
+    m: &crate::analyze::stores::Module<'_>,
+    e: &js_ast::Expr,
+) -> Option<js_ast::G::Fn> {
+    let E::ECall(call) = &e.data else { return None };
+    let ident = |x: &js_ast::Expr| match &x.data {
+        E::EIdentifier(id) => Some(id.ref_),
+        E::EImportIdentifier(id) => Some(id.ref_),
+        _ => None,
+    };
+    let is_fwd = match &call.target.data {
+        E::EDot(d) => {
+            d.optional_chain.is_none()
+                && d.name.slice() == b"forwardRef"
+                && ident(&d.target)
+                    .and_then(|r| m.import_of(r))
+                    .is_some_and(|(s, i)| s == "react" && (i == "*" || i == "default"))
+        }
+        _ => ident(&call.target).and_then(|r| m.import_of(r)) == Some(("react", "forwardRef")),
+    };
+    if !is_fwd || call.args.len() != 1 {
+        return None;
+    }
+    match &call.args[0].data {
+        E::EFunction(f) => Some(js_ast::G::Fn {
+            args: f.func.args,
+            body: js_ast::G::FnBody {
+                loc: f.func.body.loc,
+                stmts: f.func.body.stmts,
+            },
+            open_parens_loc: f.func.open_parens_loc,
+            ..Default::default()
+        }),
+        E::EArrow(a) if !a.is_async => Some(js_ast::G::Fn {
+            args: a.args,
+            body: js_ast::G::FnBody {
+                loc: a.body.loc,
+                stmts: a.body.stmts,
+            },
+            ..Default::default()
+        }),
+        _ => None,
+    }
+}
+
+fn forward_ref_fn(ast: &js_ast::Ast<'_>, name: &str) -> Option<js_ast::G::Fn> {
+    let m = crate::analyze::stores::Module::new(ast);
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            let S::SLocal(l) = &stmt.data else { continue };
+            if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                continue;
+            }
+            for d in l.decls.iter() {
+                if let (js_ast::b::B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                    && m.name(id.r#ref) == name
+                {
+                    return forward_ref_callback(&m, &v);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Reads the module-level function `name` (a named export or a component local
 /// to the module) into a structural `ComponentIR`; `None` when there is no
 /// function declaration of that name.
@@ -511,8 +665,15 @@ pub fn analyze_named_component_in(
     let path = parsed.path();
     let mut ir = ComponentIR::new(named_component_id(&path, name), path);
     let found = parsed.with_ast(|ast| {
-        let func = module_fn(ast, name)?;
-        read_function(parsed, ast, opts, func, &mut ir);
+        let found = module_component(ast, name)?;
+        read_function_as(
+            parsed,
+            ast,
+            opts,
+            found.func(),
+            found.forwards_ref(),
+            &mut ir,
+        );
         ir.unexported = matches!(
             crate::analyze::exports::find(ast, name),
             crate::analyze::exports::Binding::Local(_)

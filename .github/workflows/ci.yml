@@ -288,6 +288,7 @@ jobs:
       - run: bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts
       # F142 PR 1: shadcn's table page built AND started, its HTML equal to React's.
       - run: bun test --timeout 120000 tests/server/per-instance-jobs.test.ts
+      - run: bun test --timeout 120000 tests/server/forwardref.test.ts
       - run: bun test --timeout 120000 tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/css.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/tailwind.chromium.test.ts

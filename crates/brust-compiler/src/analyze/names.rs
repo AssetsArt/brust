@@ -78,6 +78,10 @@ pub struct NameTable<'a> {
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
     /// the bare object as a value, or inside code printed as written (R34.14: fail closed).
     pub rest_escape: std::cell::Cell<Option<u32>>,
+    /// The forwarded ref of a `forwardRef(function (props, ref) {…})` component (R34.63): the symbol of `ref`.
+    forwarded_ref: Option<u32>,
+    /// How many reads of it were dropped as `ref={ref}` on a host element (any other read fails closed).
+    forwarded_ref_dropped: std::cell::Cell<u32>,
     /// Module-level `const X = BASE.MEMBER` (never reassigned) with `BASE` imported from a package.
     member_aliases: HashMap<u32, MemberRef>,
     /// The component's polymorphic tag local (`Comp` of `const Comp = asChild ? Slot.Root : "a"`, R34.28).
@@ -180,6 +184,8 @@ impl<'a> NameTable<'a> {
             rest: None,
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
+            forwarded_ref: None,
+            forwarded_ref_dropped: std::cell::Cell::new(0),
             member_aliases: HashMap::new(),
             poly: HashMap::new(),
             state: HashSet::new(),
@@ -219,6 +225,30 @@ impl<'a> NameTable<'a> {
             }
         }
         out
+    }
+
+    /// Declares `r` (the second parameter) the forwarded ref of a `forwardRef` component.
+    pub fn set_forwarded_ref(&mut self, r: js_ast::Ref) {
+        self.forwarded_ref = Some(self.key(r));
+    }
+
+    pub fn is_forwarded_ref(&self, r: js_ast::Ref) -> bool {
+        self.forwarded_ref.is_some() && self.forwarded_ref == Some(self.key(r))
+    }
+
+    /// `ref={ref}` on a host element was dropped (the one allowed read of the forwarded ref).
+    pub fn note_forwarded_ref_dropped(&self) {
+        self.forwarded_ref_dropped
+            .set(self.forwarded_ref_dropped.get() + 1);
+    }
+
+    /// Reads of the forwarded ref among `used` that were not dropped as `ref={ref}` (R34.64: fail closed).
+    pub fn forwarded_ref_escapes(&self, used: &[js_ast::Ref]) -> usize {
+        let Some(k) = self.forwarded_ref else {
+            return 0;
+        };
+        let n = used.iter().filter(|r| self.key(**r) == k).count();
+        n.saturating_sub(self.forwarded_ref_dropped.get() as usize)
     }
 
     /// `r` is a module-level `const` that aliases a member of a package import.
