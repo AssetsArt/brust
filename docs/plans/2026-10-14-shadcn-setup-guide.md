@@ -15,3 +15,5 @@ Human order, 2026-10-14: "ขอ setup Guide ของ shadcn ลงใน brust
 - **R38.5 Release.** Ships in the next alpha's release notes ("Guide: set up shadcn/ui").
 
 Gates: website typecheck + tests + `build:static`; the R38.1 transcript reviewed by Afrojack.
+
+**Amendment 2026-10-14 (human order: "React & libraries ทำ"):** this lane also adds a docs nav group **"React & libraries"** right after "Guide", in this order: React coverage (`react-coverage`), Icons and packages (`packages`), shadcn/ui and libraries (`shadcn`), Set up shadcn/ui (`guides/shadcn-setup`). The three existing pages move out of "Guide"; **their slugs do not change** (shared links, search results and the sitemap keep working); only the nav position and the pager order change. Rendering tiers stays in "Guide" (it is a core concept). Website tests that assert the nav order are updated, and a test pins that every old slug still resolves. The guide's `@/` imports are written as the CLI generates them (confirmed by the lead from the verification transcript).

@@ -209,7 +209,10 @@
           "client_only": false
         }
       },
-      "nested": []
+      "nested": [],
+      "x": [
+        "fallback"
+      ]
     },
     {
       "name": "Panel",
