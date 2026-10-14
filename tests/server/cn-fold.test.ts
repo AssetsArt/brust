@@ -15,8 +15,9 @@ const TOKEN = 'cn-fold-proof'
 
 /** Every page of `cn-fold/routes.tsx`. */
 const PAGES = ['alert', 'attachment', 'badge', 'badge-aslink', 'breadcrumb', 'bubble', 'button', 'button-aschild', 'button-group', 'card', 'checkbox', 'empty', 'field', 'input', 'input-group', 'item', 'kbd', 'label', 'marker', 'message', 'native-select', 'pagination', 'skeleton', 'sonner', 'switch', 'table', 'textarea']
-/** The pages whose only jobs were class jobs (docs/plans/2026-10-14-shadcn-cn-fold.md §2). */
-const NO_WORKER = ['alert', 'attachment', 'badge', 'badge-aslink', 'bubble', 'button', 'button-aschild', 'card', 'empty', 'input', 'item', 'kbd', 'label', 'marker', 'message', 'skeleton', 'table', 'textarea']
+/** The pages whose only jobs were class jobs (docs/plans/2026-10-14-shadcn-cn-fold.md §2), and `field`, whose fed Label
+ * is fused into its parent's class job since R34.96 (PR 2b), so the build evaluates that one job too. */
+const NO_WORKER = ['alert', 'attachment', 'badge', 'badge-aslink', 'bubble', 'button', 'button-aschild', 'card', 'empty', 'field', 'input', 'item', 'kbd', 'label', 'marker', 'message', 'skeleton', 'table', 'textarea']
 
 type Server = { base: string; proc: ReturnType<typeof Bun.spawn> }
 const servers: Server[] = []
@@ -77,11 +78,10 @@ test('R34.93: every page is served byte-identically with the fold on and off', a
   }
 })
 
-test('R34.95: the 18 class-only pages plan no job: Rust answers them without a worker call', async () => {
-  for (const page of PAGES) {
-    const { jobs } = await get(folded, page)
-    expect({ page, workerJobs: jobs === 0 }).toEqual({ page, workerJobs: NO_WORKER.includes(page) })
-  }
+test('R34.95: the 18 class-only pages and field plan no job: Rust answers them without a worker call', async () => {
+  const none: string[] = []
+  for (const page of PAGES) if ((await get(folded, page)).jobs === 0) none.push(page)
+  expect(none).toEqual(NO_WORKER)
 })
 
 /** React's server render of a fixture page, from the fixture (its own react, cn and class-variance-authority). */

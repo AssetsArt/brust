@@ -40,6 +40,12 @@ enum Tag {
     Member(&'static str),
     /// `Outlet` imported from `@brust/core/routes` (S8).
     Outlet,
+    /// A context Provider (`<XProvider>` of Radix's `createContextScope`, or React's `<C.Provider>`): transparent, it
+    /// hands its value fields to the consumers under it (S2, R34.102).
+    Provider {
+        ctx: String,
+        react: bool,
+    },
 }
 
 fn tag_ref(tag: &js_ast::Expr) -> Option<js_ast::Ref> {
@@ -105,6 +111,14 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
             if r.names.import_of(*ref_) == Some(("@brust/core/routes", "Outlet")) {
                 return Tag::Outlet;
             }
+            if r.names.react_context(*ref_).is_none()
+                && let Some(ctx) = r.names.context_of_provider(*ref_)
+            {
+                return Tag::Provider {
+                    ctx: ctx.to_string(),
+                    react: false,
+                };
+            }
             let (name, kind) = r.names.kind_of(*ref_);
             let (source, imported) = match kind {
                 IdentKind::Import { source, imported } => (Some(source), Some(imported)),
@@ -114,6 +128,17 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
                 name,
                 source,
                 imported,
+            }
+        }
+        // `<C.Provider>` of a React context declared in this module.
+        E::EDot(d)
+            if d.name.slice() == b"Provider"
+                && let Some(x) = crate::analyze::names::ident_ref(&d.target)
+                && let Some(ctx) = r.names.react_context(x) =>
+        {
+            Tag::Provider {
+                ctx: ctx.to_string(),
+                react: true,
             }
         }
         E::EDot(d) => {
@@ -494,6 +519,10 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
         },
         Tag::Fragment => Node::Fragment(children),
         Tag::Outlet => Node::Outlet,
+        Tag::Provider { ctx, react } => {
+            read_provider(r, &ctx, react, props_out, loc);
+            Node::Fragment(children)
+        }
         Tag::Component {
             name,
             source,
@@ -535,6 +564,73 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             forwarded_ref,
         },
     }
+}
+
+/// A Provider element (S2): its value fields are what the consumers under it read. Radix's Provider takes them as
+/// props (`scope` is the nesting disambiguation: a pass-through is ignored, R34.101); React's takes one `value`, an
+/// object literal (a value that is not one is read whole by consumers, which brust refuses: `context-value`).
+fn read_provider(
+    r: &mut Reader<'_, '_>,
+    ctx: &str,
+    react: bool,
+    props: Vec<(String, Expr)>,
+    loc: u32,
+) {
+    let mut fields: Vec<(String, RawExpr)> = Vec::new();
+    let check = |r: &mut Reader<'_, '_>, k: &str| match crate::analyze::context::field_problem(k) {
+        Some(what) => {
+            r.diagnostics.push(Diagnostic::fallback(
+                "context-shape",
+                format!("the context field `{k}` {what}"),
+                loc,
+                "rename the field to a plain identifier, or keep this component in React",
+            ));
+            false
+        }
+        None => true,
+    };
+    if react {
+        let value = props
+            .into_iter()
+            .find(|(k, _)| k == "value")
+            .and_then(|(_, e)| match e {
+                Expr::Raw(raw) => Some(raw),
+                _ => None,
+            });
+        match value {
+            Some(RawExpr {
+                kind: RawKind::Object(entries),
+                ..
+            }) => {
+                for (k, v) in entries {
+                    if check(r, &k) {
+                        fields.push((k, v));
+                    }
+                }
+            }
+            _ => r.diagnostics.push(Diagnostic::fallback(
+                "context-value",
+                "a context Provider's `value` is not an object literal with plain keys",
+                loc,
+                "write value={{ a, b }}, or keep this component in React",
+            )),
+        }
+    } else {
+        for (k, e) in props {
+            if k == "scope" || k == crate::ir::SPREAD_KEY {
+                continue;
+            }
+            if let Expr::Raw(raw) = e
+                && check(r, &k)
+            {
+                fields.push((k, raw));
+            }
+        }
+    }
+    r.provides.push(crate::ir::ProvideDecl {
+        context: ctx.to_string(),
+        fields,
+    });
 }
 
 /// What a JSX spread spreads (shadcn S1.2, R34.15).
@@ -762,7 +858,7 @@ fn read_union_attr(
         kind: RawKind::Lit(l),
     };
     match read_attr(r, name, v, ref_name)? {
-        Attr::Static { value, .. } if matches!(v.data, E::EBoolean(_)) && value.is_empty() => {
+        Attr::Static { .. } if matches!(v.data, E::EBoolean(_)) => {
             Some(lit(crate::ir::Literal::Bool(true)))
         }
         Attr::Static { value, .. } => Some(lit(crate::ir::Literal::Str(value))),
@@ -860,9 +956,15 @@ fn read_attr(
             name: name.into(),
             value: estring(s),
         },
+        // React writes `true` on an `aria-*` / `data-*` attribute as the string "true" (`aria-hidden`
+        // alone is `aria-hidden="true"`); on any other attribute it is the boolean form.
         E::EBoolean(b) if b.value => Attr::Static {
             name: name.into(),
-            value: String::new(),
+            value: if name.starts_with("aria-") || name.starts_with("data-") {
+                "true".into()
+            } else {
+                String::new()
+            },
         },
         _ => Attr::Dynamic {
             name: name.into(),

@@ -305,6 +305,8 @@ jobs:
       # F153c: shadcn's Label compiled from @radix-ui/react-label's source map (no island), HTML and behaviour as React's.
       - run: bun test --timeout 180000 tests/server/package-source.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/cn-fold.test.ts
+      # R34.96 PR 2b: the shadcn pages a fused child moved off React, served == React, folded and per request.
+      - run: bun test --timeout 300000 tests/server/fused-jobs.test.ts
       - run: bun test --timeout 120000 tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/css.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/tailwind.chromium.test.ts

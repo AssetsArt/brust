@@ -64,6 +64,10 @@ pub struct Inline {
     pub as_child: Option<AsChild>,
     /// The build ran this instance's job (F149, R34.90): slot -> value, printed as literals.
     pub folded: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+    /// A child fused into its parent's job (R34.96): its slot -> the parent job's output that holds it.
+    /// Its slots are read from the parent's slot dict (`slots`, empty when the parent is the route
+    /// component and its slots are top-level variables) and the parent's `folded` values.
+    pub rename: std::collections::BTreeMap<String, String>,
 }
 
 /// The child element of a Radix-`Slot`-style call (`<Button asChild><a href="/x">Go</a></Button>`),
@@ -411,6 +415,12 @@ impl<'a, 'c> Printer<'a, 'c> {
     }
 
     fn slot_ref(&self, slot: &str, per_item: bool) -> String {
+        // R34.96: a fused child's slot is its parent's job output of another name.
+        let slot = self
+            .inline
+            .as_ref()
+            .and_then(|i| i.rename.get(slot))
+            .map_or(slot, String::as_str);
         // F149 (R34.91): a slot the build computed prints as its value, through the same escaping.
         if let Some(v) = self
             .inline
@@ -423,6 +433,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         let base = match &self.inline {
             None => slot.to_string(),
+            Some(i) if i.slots.is_empty() => slot.to_string(),
             Some(i) => {
                 for m in &i.slot_loops {
                     m.set(true);
@@ -1090,6 +1101,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 suffix: String::new(),
                 as_child: None,
                 folded: None,
+                rename: Default::default(),
             };
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
@@ -1680,7 +1692,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                 .iter()
                 .any(|r| r.child_id == id && r.k == next)
         };
-        if self.inline.is_some() && is_fed(child_ir) && !rebased {
+        // R34.96: a fed child whose job runs inside this component's own job (analysis `ir.fused`).
+        let fused = ir.fused.iter().find(|f| f.child_id == id && f.loc == *loc);
+        if self.inline.is_some() && is_fed(child_ir) && !rebased && fused.is_none() {
             // The slot key is built from this printer's own counters and frames, which restart
             // inside an inlined child: instances of such a grandchild would collide.
             self.diagnostics.push(Diagnostic::error(
@@ -1714,10 +1728,14 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
             return;
         }
-        let k = {
-            let k = self.instances.entry(id.clone()).or_insert(0);
-            *k += 1;
-            *k
+        // A fused instance has no record, so it takes no record number (k).
+        let k = match fused {
+            Some(_) => 0,
+            None => {
+                let k = self.instances.entry(id.clone()).or_insert(0);
+                *k += 1;
+                *k
+            }
         };
         let as_child = match &child_ir.poly {
             Some(poly) if slot_selected(poly, props) => self.as_child_of(name, children, schildren),
@@ -1793,19 +1811,50 @@ impl<'a, 'c> Printer<'a, 'c> {
             .iter()
             .filter(|r| r.child_id == id && r.k <= k)
             .count();
-        let inline = Inline {
-            segs,
-            bind: bind.clone(),
-            slots: format!("__{id}_{ordinal}{loops}"),
-            slot_loops,
-            suffix: format!("_{}{k}", short(&id)),
-            as_child,
-            folded: self
-                .inst_ir
-                .folded_instances
-                .iter()
-                .find(|f| f.child_id == id && f.k == k)
-                .map(|f| f.values.clone()),
+        let inline = match fused {
+            // Read through this component's own slot dict and folded values (A2).
+            Some(f) => {
+                let (slots, slot_loops, folded) = match &self.inline {
+                    Some(i) => (i.slots.clone(), i.slot_loops.clone(), i.folded.clone()),
+                    None => (String::new(), Vec::new(), None),
+                };
+                // This component may itself be fused into its own parent: its output names are then
+                // renamed once more there, so the child's names go through this frame's rename too.
+                let outer = self.inline.as_ref().map(|i| &i.rename);
+                let rename = f
+                    .outputs
+                    .iter()
+                    .map(|(slot, out)| {
+                        let out = outer.and_then(|r| r.get(out)).unwrap_or(out);
+                        (slot.clone(), out.clone())
+                    })
+                    .collect();
+                Inline {
+                    segs,
+                    bind: bind.clone(),
+                    slots,
+                    slot_loops,
+                    suffix: format!("_f{}{}", short(&id), f.ordinal),
+                    as_child,
+                    folded,
+                    rename,
+                }
+            }
+            None => Inline {
+                segs,
+                bind: bind.clone(),
+                slots: format!("__{id}_{ordinal}{loops}"),
+                slot_loops,
+                suffix: format!("_{}{k}", short(&id)),
+                as_child,
+                folded: self
+                    .inst_ir
+                    .folded_instances
+                    .iter()
+                    .find(|f| f.child_id == id && f.k == k)
+                    .map(|f| f.values.clone()),
+                rename: Default::default(),
+            },
         };
         let Some(mut p) = Printer::new(child_ir, self.ctx, Some(inline), self.loop_var) else {
             return;

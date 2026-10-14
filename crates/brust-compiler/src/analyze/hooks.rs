@@ -400,25 +400,6 @@ fn read_object_pattern(
         {
             default = Some(folded);
         }
-        if let Some(d) = &default {
-            // Props whose destructuring default is in effect (this pattern and any before it): a default reading
-            // one would see the raw prop, without its default.
-            let defaulted: HashSet<String> = out
-                .props
-                .iter()
-                .filter(|q| q.default.is_some())
-                .flat_map(|q| [q.name.clone(), q.local.clone()])
-                .collect();
-            if let Some((code, why)) = default_unprintable(d, &defaulted) {
-                out.fallback(
-                    code,
-                    format!("the default of the prop `{name}` is {why}, which the server template cannot evaluate"),
-                    ploc,
-                    "use a literal, an earlier prop, or a plain expression as the default",
-                );
-                continue;
-            }
-        }
         out.props.push(PropDecl {
             name,
             local: r.names.name(id.r#ref),
@@ -477,7 +458,7 @@ fn value_expr(v: &crate::ir::V, loc: u32) -> Option<RawExpr> {
 /// constant it does not fold). The page then renders without the default and no diagnostic says so. `Some((code,
 /// what))` names the first part that would be lost; an arrow stays (it is only ever a client value, and a
 /// function renders as nothing in React as well).
-fn default_unprintable(
+pub(crate) fn default_unprintable(
     e: &RawExpr,
     defaulted: &HashSet<String>,
 ) -> Option<(&'static str, &'static str)> {
@@ -670,6 +651,9 @@ fn read_stmts(
             S::SReturn(ret) => {
                 returned = Some(ret.value.map(|v| r.expr(&v)));
             }
+            // S2 (R34.104): `if (cond) { console.error(…) }` only logs (Radix's dev validation of its props): it is not
+            // part of the render, so it is left out; any other effect of a branch keeps the control-flow fallback.
+            S::SIf(i) if console_only_if(i, r.names) => {}
             S::SIf(_)
             | S::SFor(_)
             | S::SForIn(_)
@@ -731,6 +715,121 @@ fn nested_hooks(func: &js_ast::G::Fn, names: &NameTable<'_>, out: &mut BodyDecls
     }
 }
 
+/// S2: `useXContext(NAME, scope)` (a Radix hook) or `useContext(C)` (React's) of a context declared in this module:
+/// the context's name.
+fn context_read(value: &js_ast::Expr, names: &NameTable<'_>) -> Option<String> {
+    let E::ECall(call) = &value.data else {
+        return None;
+    };
+    if let Some(r) = crate::analyze::names::ident_ref(&call.target)
+        && let Some(c) = names.context_of_hook(r)
+    {
+        return Some(c.to_string());
+    }
+    if (names.is_import_call(&call.target, "react", "useContext")
+        || names.is_react_call(&call.target, "useContext"))
+        && let Some(r) = call.args.first().and_then(crate::analyze::names::ident_ref)
+    {
+        return names.react_context(r).map(str::to_string);
+    }
+    None
+}
+
+/// `const context = useXContext(…)` binds the local to the context (`context.field` reads a hidden prop);
+/// `const { a, b } = useXContext(…)` binds each plain key; any other shape falls back.
+fn read_context_use(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    decl: &js_ast::G::Decl,
+    value: &js_ast::Expr,
+    ctx: &str,
+    vloc: u32,
+) {
+    if let E::ECall(call) = &value.data {
+        out.classified_hooks.insert(call_addr(call));
+        // R34.101: the scope argument is the component's own pass-through (a prop local), or absent.
+        if call.args.len() > 2
+            || call.args.get(1).is_some_and(|a| {
+                !matches!(
+                    &a.data,
+                    E::EIdentifier(_) | E::EImportIdentifier(_) | E::EUndefined(_)
+                )
+            })
+        {
+            out.fallback(
+                "context-scope",
+                "a context hook is called with a scope other than the component's own scope prop"
+                    .into(),
+                vloc,
+                "pass the scope prop through unchanged, or keep this component in React",
+            );
+            return;
+        }
+    }
+    match decl.binding.data {
+        B::BIdentifier(id) => r.names.bind_ctx_local(id.r#ref, ctx),
+        B::BObject(obj) => {
+            for p in obj.properties() {
+                let plain = !p.flags.contains(js_ast::flags::Property::IsSpread)
+                    && !p.flags.contains(js_ast::flags::Property::IsComputed)
+                    && p.default_value.is_none();
+                let (true, E::EString(key), B::BIdentifier(id)) =
+                    (plain, &p.key.data, p.value.data)
+                else {
+                    out.fallback(
+                        "context-shape",
+                        "a context is destructured with a rest, a default, a computed or nested key".into(),
+                        vloc,
+                        "write const { a, b } = useXContext(…), or read context.a",
+                    );
+                    return;
+                };
+                let field = crate::analyze::expr::estring(key);
+                if let Some(what) = crate::analyze::context::field_problem(&field) {
+                    out.fallback(
+                        "context-shape",
+                        format!("the context field `{field}` {what}"),
+                        vloc,
+                        "rename the field to a plain identifier, or keep this component in React",
+                    );
+                    return;
+                }
+                r.names.note_ctx_field(ctx, &field);
+                r.names
+                    .bind_prop_local(id.r#ref, &crate::ir::ctx_prop(ctx, &field));
+            }
+        }
+        _ => out.fallback(
+            "context-shape",
+            "a context hook result is destructured as an array".into(),
+            vloc,
+            "write const context = useXContext(…)",
+        ),
+    }
+}
+
+/// A statement that only calls `console.*` (a diagnostic, no value and no render effect).
+fn console_only(stmt: &js_ast::Stmt, names: &NameTable<'_>) -> bool {
+    match &stmt.data {
+        S::SExpr(x) => matches!(
+            &x.value.data,
+            E::ECall(c) if matches!(
+                &c.target.data,
+                E::EDot(d) if matches!(&d.target.data, E::EIdentifier(id) if names.name(id.ref_) == "console")
+            )
+        ),
+        S::SBlock(b) => b.stmts.slice().iter().all(|s| console_only(s, names)),
+        S::SIf(i) => console_only_if(i, names),
+        S::SEmpty(_) => true,
+        _ => false,
+    }
+}
+
+/// `if (test) A else B` where every branch only logs.
+fn console_only_if(i: &js_ast::S::If, names: &NameTable<'_>) -> bool {
+    console_only(&i.yes, names) && i.no.as_ref().is_none_or(|n| console_only(n, names))
+}
+
 fn read_decl(
     r: &mut Reader<'_, '_>,
     out: &mut BodyDecls,
@@ -753,6 +852,9 @@ fn read_decl(
         B::BIdentifier(id) => Some(r.names.name(id.r#ref)),
         _ => None,
     };
+    if let Some(ctx) = context_read(value, r.names) {
+        return read_context_use(r, out, decl, value, &ctx, vloc);
+    }
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
         out.classified_hooks.insert(call_addr(call));
         let args: Vec<js_ast::Expr> = call.args.to_vec();
