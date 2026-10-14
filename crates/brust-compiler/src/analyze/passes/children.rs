@@ -151,6 +151,8 @@ struct Child {
     onward: HandlerSink,
     /// The props roots the compiled child's jobs read (the server feeds each instance these).
     job_roots: BTreeSet<String>,
+    /// The compiled child has `useId` values (the server seeds them per instance, per row).
+    use_id: bool,
 }
 
 /// Facts that decide whether a handler landing in a static child's spread can be bound by the
@@ -605,6 +607,7 @@ impl Walker<'_, '_> {
             poly_runtime_spread: false,
             onward: HandlerSink::default(),
             job_roots: BTreeSet::new(),
+            use_id: false,
         }
     }
 
@@ -640,6 +643,7 @@ impl Walker<'_, '_> {
                     poly_runtime_spread: false,
                     onward: HandlerSink::default(),
                     job_roots: BTreeSet::new(),
+                    use_id: false,
                 };
             }
             // A package export (a member of one included): the island is the export itself.
@@ -693,6 +697,7 @@ impl Walker<'_, '_> {
                         poly_runtime_spread: false,
                         onward: HandlerSink::default(),
                         job_roots: BTreeSet::new(),
+                        use_id: false,
                     };
                 };
                 ctx.modules
@@ -734,6 +739,7 @@ impl Walker<'_, '_> {
         let mut poly_runtime_spread = false;
         let mut onward = HandlerSink::default();
         let mut job_roots = BTreeSet::new();
+        let mut use_id = false;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
                 job_roots = ir
@@ -771,6 +777,7 @@ impl Walker<'_, '_> {
                         .iter()
                         .any(|j| j.inputs.iter().any(|i| i == "__store"));
                 fed = crate::ir::is_fed(&ir);
+                use_id = ir.use_id_slots > 0;
                 // An island's ssr render over the wrapper's props is computed once too (L4).
                 prop_precompute = ir.jobs.iter().any(|j| {
                     crate::ir::feeds_instances(j) && j.inputs.iter().any(|i| i != "__store")
@@ -817,6 +824,7 @@ impl Walker<'_, '_> {
             poly_runtime_spread,
             onward,
             job_roots,
+            use_id,
         }
     }
 
@@ -1162,7 +1170,8 @@ impl Walker<'_, '_> {
                 let k = self.instance_counts.entry(child_id.clone()).or_insert(0);
                 *k += 1;
                 let k = *k;
-                if child.fed && self.loop_sources.iter().any(Option::is_none) {
+                let row_invariant = child.fed && self.row_invariant(&kept, &child);
+                if child.fed && !row_invariant && self.loop_sources.iter().any(Option::is_none) {
                     // Fail closed softly (ruling on challenge 4dc45c45, F142): the server feeds a
                     // per-instance job by indexing the list's props path; over a local or store list
                     // there is none, and the build would refuse the page (`manifest.ts`
@@ -1180,7 +1189,12 @@ impl Walker<'_, '_> {
                     let mut record = InstanceRecord {
                         child_id: child_id.clone(),
                         k,
-                        loops: self.loop_sources.clone(),
+                        // F142 R34.42: the same inputs in every row, so one job call feeds them all.
+                        loops: if row_invariant {
+                            Vec::new()
+                        } else {
+                            self.loop_sources.clone()
+                        },
                         props: Default::default(),
                         literals: Default::default(),
                         exprs: Default::default(),
@@ -1742,6 +1756,28 @@ impl Walker<'_, '_> {
             }
         }
         Ok(out)
+    }
+
+    /// A fed instance inside lists whose job inputs are the same in every row (F142, R34.42): no
+    /// prop reads a loop binding, the child has no `useId` values (ids differ per row) and its
+    /// jobs do not read `children`, and every list that is not a props path cannot change on the
+    /// client (rows the client re-creates would get no job output). A precompute job is a function
+    /// of its inputs (the job cache's contract: its key is the inputs), so one call feeds every row.
+    fn row_invariant(&self, props: &[(String, Expr)], child: &Child) -> bool {
+        if self.loop_sources.is_empty() || child.use_id || child.job_roots.contains("children") {
+            return false;
+        }
+        let row_free = props.iter().all(|(_, v)| {
+            !matches!(v, Expr::ClientOnly { .. }) && self.deps_of(v).loop_bindings.is_empty()
+        });
+        let lists_fixed =
+            self.loop_sources
+                .iter()
+                .zip(&self.lists)
+                .all(|(path, (paths, reactive))| {
+                    path.is_some() || !(*reactive || (!paths.is_empty() && self.props_reactive))
+                });
+        row_free && lists_fixed
     }
 
     /// Event handlers the parent binds itself (shadcn S1.3, R34.18): an `on*` prop that lands in

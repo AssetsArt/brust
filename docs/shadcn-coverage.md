@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|
-| 62 | 59 | 1 | 2 | 52 | 17 | 0 / 87 / 324 KB |
+| 62 | 56 | 1 | 5 | 51 | 18 | 0 / 87 / 239 KB |
 
 ### Analysis-only (2 of 64 pages refused)
 
@@ -40,46 +40,45 @@ One line per thing that keeps a row or a library component off the static/native
 |---|---|---|---|---|---|---|---|---|
 | 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 42 | 0 | 144 | 0 | `external-component` diagnostic (docs/react-coverage.md) |
 | 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 39 | 0 | 139 | 10 | `spread-props` diagnostic (docs/react-coverage.md) |
-| 3 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 24 | 0 | 32 | 7 | `island-children` diagnostic (docs/react-coverage.md) |
-| 4 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 5 | 0 | 11 | 22 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
-| 5 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 1 | `member-tag` diagnostic (docs/react-coverage.md) |
-| 6 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 24 | `control-flow` diagnostic (docs/react-coverage.md) |
-| 7 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 2 | `jsx-expression` diagnostic (docs/react-coverage.md) |
-| 8 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 4 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
-| 9 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 2 | `hook-shape` diagnostic (docs/react-coverage.md) |
-| 10 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 13 | `body-shape` diagnostic (docs/react-coverage.md) |
-| 11 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `child-component` diagnostic (docs/react-coverage.md) |
+| 3 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 25 | 0 | 35 | 7 | `island-children` diagnostic (docs/react-coverage.md) |
+| 4 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 10 | 22 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
+| 5 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 6 | 2 | `jsx-expression` diagnostic (docs/react-coverage.md) |
+| 6 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 1 | `member-tag` diagnostic (docs/react-coverage.md) |
+| 7 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 4 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
+| 8 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 7 | 24 | `control-flow` diagnostic (docs/react-coverage.md) |
+| 9 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 13 | `body-shape` diagnostic (docs/react-coverage.md) |
+| 10 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `child-component` diagnostic (docs/react-coverage.md) |
+| 11 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `hook-shape` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `local-component` diagnostic (docs/react-coverage.md) |
 | 13 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `ref-shape` diagnostic (docs/react-coverage.md) |
 | 14 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `browser-global` diagnostic (docs/react-coverage.md) |
 | 15 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
-| 16 | fallback:instance-list-path | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `instance-list-path` diagnostic (docs/react-coverage.md) |
-| 17 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
-| 18 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
-| 19 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
-| 20 | error:island-prop | compile error | survey truth (compiler refusal) | 0 | 2 | 0 | 9 | `error:island-prop` diagnostic (docs/react-coverage.md) |
-| 21 | rest-props spread | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 398 | b-spread-child / a-spread-host: fallback:spread-props |
-| 22 | forwardRef | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 286 | b-forwardref: fallback:default-export-shape |
-| 23 | useContext / use*Context | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 187 | c-usecontext: fallback:hook-unsupported |
-| 24 | Context.Provider / *Provider | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 137 | fallback:member-tag |
-| 25 | Primitive.* | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 113 | fallback:member-tag |
-| 26 | composeRefs | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 77 | ref shapes other than ref={x}: fallback:ref-shape |
-| 27 | Slot / asChild | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 58 | no battery row: cloneElement-based |
-| 28 | error:unresolved-import (published .js/.mjs module is not followed) | compile error | survey truth (compiler refusal) | 0 | 0 | 0 | 50 | the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy) |
-| 29 | DOM globals (document / window) | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 45 | fallback:browser-global in render |
-| 30 | Presence | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 27 | external component |
-| 31 | isValidElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 22 | no battery row: not analysable |
-| 32 | createPortal / Portal | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 15 | d-createportal: fallback:browser-global |
-| 33 | cloneElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 14 | d-clone-element: fallback:hook-unsupported |
-| 34 | fallback:let-var | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 8 | `let-var` diagnostic (docs/react-coverage.md) |
-| 35 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 5 | `prop-pattern` diagnostic (docs/react-coverage.md) |
-| 36 | useImperativeHandle | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 5 | c-useimperativehandle: fallback:hook-unsupported |
-| 37 | React.Children | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | d-children-map: fallback:jsx-expression |
-| 38 | useSyncExternalStore | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | c-usesyncexternalstore: fallback:hook-unsupported |
+| 16 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
+| 17 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
+| 18 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
+| 19 | error:island-prop | compile error | survey truth (compiler refusal) | 0 | 2 | 0 | 9 | `error:island-prop` diagnostic (docs/react-coverage.md) |
+| 20 | rest-props spread | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 398 | b-spread-child / a-spread-host: fallback:spread-props |
+| 21 | forwardRef | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 286 | b-forwardref: fallback:default-export-shape |
+| 22 | useContext / use*Context | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 187 | c-usecontext: fallback:hook-unsupported |
+| 23 | Context.Provider / *Provider | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 137 | fallback:member-tag |
+| 24 | Primitive.* | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 113 | fallback:member-tag |
+| 25 | composeRefs | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 77 | ref shapes other than ref={x}: fallback:ref-shape |
+| 26 | Slot / asChild | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 58 | no battery row: cloneElement-based |
+| 27 | error:unresolved-import (published .js/.mjs module is not followed) | compile error | survey truth (compiler refusal) | 0 | 0 | 0 | 50 | the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy) |
+| 28 | DOM globals (document / window) | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 45 | fallback:browser-global in render |
+| 29 | Presence | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 27 | external component |
+| 30 | isValidElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 22 | no battery row: not analysable |
+| 31 | createPortal / Portal | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 15 | d-createportal: fallback:browser-global |
+| 32 | cloneElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 14 | d-clone-element: fallback:hook-unsupported |
+| 33 | fallback:let-var | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 8 | `let-var` diagnostic (docs/react-coverage.md) |
+| 34 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 5 | `prop-pattern` diagnostic (docs/react-coverage.md) |
+| 35 | useImperativeHandle | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 5 | c-useimperativehandle: fallback:hook-unsupported |
+| 36 | React.Children | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | d-children-map: fallback:jsx-expression |
+| 37 | useSyncExternalStore | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | c-usesyncexternalstore: fallback:hook-unsupported |
 
 ## Classification
 
-Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (23 survey truth, 15 census). The fixture deviates from the CLI output in one place only (the sibling imports rewritten from `@/` to relative, which changes resolution, never the exports), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
+Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (22 survey truth, 15 census). The fixture deviates from the CLI output in one place only (the sibling imports rewritten from `@/` to relative, which changes resolution, never the exports), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
 
 ### History: the named-export build rule (S0 → S1.1, PR #198)
 
@@ -113,8 +112,8 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | button-group | measured | static | 1 | 6 (3) | 86 | external-component, spread-props | built |
 | calendar | analysis-only | error | — | — | — | error:island-prop | refused: island-prop at pages/calendar.tsx:31:5, prop `components` on <DayPicker> |
 | card | measured | static | 0 | 9 (0) | 0 | — | built |
-| carousel | measured | static | 1 | 9 (5) | 96 | control-flow, event-capture, external-component, hook-unsupported, member-tag, ref-shape, slot-dynamic, spread-props | built |
-| chart | measured | static | 1 | 9 (8) | 324 | control-flow, external-component, hook-shape, hook-unsupported, island-children, local-component, member-tag, use-id-in-render | built |
+| carousel | measured | react | 1 | 9 (6) | 96 | control-flow, event-capture, external-component, hook-unsupported, island-children, member-tag, ref-shape, slot-dynamic, spread-props | built |
+| chart | measured | react | 1 | 8 (8) | 239 | external-component, island-children, jsx-expression, local-component, member-tag, use-id-in-render | built |
 | checkbox | measured | static | 2 | 6 (5) | 91 | external-component, spread-props | built |
 | collapsible | measured | static | 1 | 8 (6) | 89 | external-component, spread-props | built |
 | combobox | measured | react | 1 | 20 (17) | 158 | external-component, island-children, jsx-expression, slot-dynamic, spread-props | built |
@@ -145,17 +144,17 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | progress | measured | static | 1 | 4 (3) | 85 | external-component, island-children, spread-props | built |
 | radio-group | measured | static | 1 | 8 (7) | 96 | external-component, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 103 | external-component, island-children, spread-props | built |
-| scroll-area | measured | static | 1 | 10 (9) | 92 | external-component, island-children, spread-props | built |
+| scroll-area | measured | react | 1 | 10 (10) | 92 | external-component, island-children, spread-props | built |
 | select | measured | static | 1 | 24 (23) | 118 | external-component, island-children, spread-props | built |
 | separator | measured | static | 2 | 3 (2) | 84 | external-component, spread-props | built |
 | sheet | measured | static | 1 | 20 (16) | 101 | external-component, island-children, spread-props | built |
-| sidebar | measured | static | 1 | 14 (6) | 116 | browser-global, control-flow, external-component, hook-shape, hook-unsupported, island-children, linked-prop-precompute, member-tag, slot-dynamic, spread-props | built |
+| sidebar | measured | react | 1 | 14 (7) | 116 | browser-global, control-flow, external-component, hook-shape, hook-unsupported, island-children, linked-prop-precompute, member-tag, slot-dynamic, spread-props | built |
 | skeleton | measured | static | 0 | 2 (0) | 0 | — | built |
 | slider | measured | static | 1 | 6 (5) | 93 | external-component, island-children, spread-props | built |
 | sonner | measured | native | 1 | 3 (1) | 87 | child-component | built |
 | spinner | measured | static | 1 | 3 (2) | 82 | external-component, spread-props | built |
 | switch | measured | static | 2 | 6 (5) | 89 | external-component, island-children, spread-props | built |
-| table | measured | react | 1 | 8 (1) | 81 | instance-list-path | built |
+| table | measured | static | 0 | 8 (0) | 0 | — | built |
 | tabs | measured | static | 1 | 9 (8) | 94 | external-component, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | — | built |
 | toggle | measured | static | 2 | 3 (2) | 86 | external-component, spread-props | built |
@@ -196,15 +195,14 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/carousel.tsx#carouselNext | control-flow, external-component, hook-unsupported, slot-dynamic, spread-props | 1 |
 | components/ui/carousel.tsx#carouselPrevious | control-flow, external-component, hook-unsupported, slot-dynamic, spread-props | 1 |
 | components/ui/chart.tsx#chartContainer | external-component, island-children, local-component, member-tag, use-id-in-render | 1 |
-| components/ui/chart.tsx#chartTooltipContent | control-flow, hook-shape, hook-unsupported | 1 |
 | components/ui/checkbox.tsx#checkbox | external-component, spread-props | 1 |
 | components/ui/collapsible.tsx#collapsible | external-component, spread-props | 1 |
 | components/ui/collapsible.tsx#collapsibleContent | external-component, spread-props | 1 |
 | components/ui/collapsible.tsx#collapsibleTrigger | external-component, spread-props | 1 |
-| components/ui/combobox.tsx#comboboxClear | external-component, spread-props | 1 |
+| components/ui/combobox.tsx#comboboxClear | external-component, jsx-expression, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxContent | external-component, island-children, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxEmpty | external-component, spread-props | 1 |
-| components/ui/combobox.tsx#comboboxInput | external-component, island-children, spread-props | 1 |
+| components/ui/combobox.tsx#comboboxInput | external-component, jsx-expression, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxList | external-component, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxTrigger | external-component, island-children, spread-props | 1 |
 | components/ui/command.tsx#command | external-component, spread-props | 1 |
@@ -323,10 +321,12 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/tooltip.tsx#tooltipContent | external-component, island-children, spread-props | 1 |
 | components/ui/tooltip.tsx#tooltipTrigger | external-component, spread-props | 1 |
 | pages/button-alias.tsx#buttonAlias | external-component | 1 |
-| pages/chart.tsx#chart | external-component | 1 |
+| pages/carousel.tsx#carousel | island-children | 1 |
+| pages/chart.tsx#chart | external-component, island-children, jsx-expression | 1 |
 | pages/combobox.tsx#combobox | external-component, island-children, jsx-expression | 1 |
+| pages/scroll-area.tsx#scrollArea | island-children | 1 |
+| pages/sidebar.tsx#sidebar | island-children | 1 |
 | pages/sonner.tsx#sonner | child-component | 1 |
-| pages/table.tsx#table | instance-list-path | 1 |
 
 ## Libraries
 
