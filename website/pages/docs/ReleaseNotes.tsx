@@ -36,7 +36,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-11">2.0.0-alpha.11 · 15 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.10: #228–#233 (F165, F164 PR 2a + F169, F148a, F175, F182, F178) */}
+      {/* source: the pull requests merged after v2.0.0-alpha.10: #228–#234 (F165, F164 PR 2a + F169, F148a, F175, F182, F178, F164 PR 2b) */}
       <p>A one-command shadcn/ui setup, fewer worker processes for static apps, more components that compile, and fixes for builds that failed on valid React.</p>
 
       <h3>New</h3>
@@ -72,6 +72,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #229 (F164 PR 2a, R34.83 + static-wrapper re-base) */}
         <li>
           <strong>Props spread into a component that does server work now compile.</strong> A wrapper that spreads its props into such a child (<code>{'{'}...props{'}'}</code>) used to keep the page in React. It now compiles, and the shadcn <code>aspect-ratio</code> page goes from 74 KB of JavaScript to none.
+        </li>
+        {/* source: PR #234 (F164 PR 2b, R34.96 job fusion), served parity with React folded and per request */}
+        <li>
+          <strong>Components whose children need their own server work run as one job.</strong> When a component computes something on the server and so does a child it renders (shadcn&rsquo;s pagination link inside a button, an input group&rsquo;s addon), the child now runs inside the parent&rsquo;s job instead of keeping the page in React. Client JavaScript on the shadcn pages: pagination 87 → 0 KB, button-group 86 → 0 KB, separator 84 → 0 KB, input-group 87 → 4 KB, field 86 → 4 KB.
         </li>
         {/* source: PR #230 (F148a, R34.116–R34.125), reviewed for the data path (Afrojack) and security (Mellow) */}
         <li>
