@@ -1,20 +1,24 @@
 // Package sources (shadcn S3 step 1, F153c, R34.61/R34.62): the compiler analyses a package component from the
-// AUTHORED source its source map carries (`sourcesContent`), never from the published JS (G1, G2), and no package
-// code runs here (G3: sources are read, transpiled for the integrity check, and written; never imported).
+// AUTHORED source its source map carries (`sourcesContent`), never from the published JS (G1, G2). This module runs
+// no package code: sources are read, transpiled for the integrity check, and written, never imported; the compiler
+// only parses them, and the build never evaluates a slot of a component compiled from them (L2). (The route scan
+// imports the app graph, and with it the packages' published JS, as it always has: that is not new here.)
 //
 // For every bare import the app reaches (and, transitively, every bare import of a package source written here),
 // the package's ESM entry is resolved, its `.map` read, and the `.ts`/`.tsx` sources written under
-// `<app>/.brust/pkg-src/<name>@<version>-<hash>/` (keyed on the package's real path: bun's store installs one copy
-// per dependant). The compiler gets the resolution map (`PackageSources`), so it reads only what this build wrote:
+// `<app>/.brust/pkg-src/p-<hash>/` (the hash of the package's path: bun's store installs one copy per dependant; no
+// text the package controls is ever part of a path). The compiler gets the resolution map (`PackageSources`), so it reads only what this build wrote:
 // the directory is removed first, and a stale one is never consulted.
 //
 // Fail closed: a package with no ESM entry, no map, no source for its entry, a source outside the package, a
 // relative import the map does not carry, a dynamic `import()` or `eval`, or a source whose literals and names are
-// not all in the published JS (R34.62: the React build runs the dist, not the map) is REFUSED, with the reason;
+// not all in the published JS (R34.62: the React build runs the dist, not the map; a containment check of literals and
+// names, i.e. fidelity, not a security boundary: the author controls both files) is REFUSED, with the reason;
 // the compiler then renders its components as React islands of the package export, exactly as before.
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, posix, relative, sep } from 'node:path'
+import { dirname, join, posix, relative, resolve, sep } from 'node:path'
+import { BuildError } from './errors'
 
 /** What the compiler reads (`AnalyzeOptions.packages`): per importing scope (`""` = the app, else the root-relative
  * directory of a written package), each bare specifier → the root-relative path of its written entry source, or the
@@ -215,8 +219,6 @@ export function integrityGaps(sources: { path: string; text: string }[], publish
 /** Reads one package (real directory `dir`), checks it, and writes its sources under `outRoot`. */
 function writePackage(appRoot: string, dir: string, budget: { bytes: number }): Outcome {
   const pj = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
-  const name = String(pj.name ?? '')
-  const version = String(pj.version ?? '0.0.0')
   const entryRel = esmEntry(pj)
   if (!entryRel) return { ok: false, reason: 'no ESM entry (exports `import` or `module`)' }
   const entry = join(dir, entryRel)
@@ -284,11 +286,20 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
   }
   if (gaps.length > 0) return { ok: false, reason: `the sources do not match the published ${entryRel} (${gaps.length} differences, first: ${gaps[0]})` }
   // Keyed on where the package sits relative to the app (stable across machines), not its absolute path.
-  const hash = createHash('sha256').update(relative(appRoot, dir).split(sep).join('/')).digest('hex').slice(0, 8)
-  const outRel = posix.join(PKG_SRC_DIR, `${name.replace('/', '+')}@${version}-${hash}`)
-  for (const f of files) {
-    const target = join(appRoot, outRel, f.path)
+  // Review F1 (security): no package-controlled text in the path. The directory is named by a hash of where the package
+  // sits relative to the app (stable across machines), and every target must resolve inside the directory this build
+  // owns before anything is created; a `name`/`version` of `../..` cannot move a write.
+  const hash = createHash('sha256').update(relative(appRoot, dir).split(sep).join('/')).digest('hex').slice(0, 16)
+  const outRel = posix.join(PKG_SRC_DIR, `p-${hash}`)
+  const own = resolve(appRoot, PKG_SRC_DIR) + sep
+  const targets = files.map((f) => ({ f, target: resolve(appRoot, outRel, f.path) }))
+  const escaped = targets.find((t) => !t.target.startsWith(own))
+  if (escaped) return { ok: false, reason: `the source ${escaped.f.path} would be written outside ${PKG_SRC_DIR}` }
+  for (const { f, target } of targets) {
     mkdirSync(dirname(target), { recursive: true })
+    // The directories just made are this build's: a real path elsewhere means a link was planted in between.
+    if (!`${realpathSync(dirname(target))}${sep}`.startsWith(realpathSync(resolve(appRoot, PKG_SRC_DIR)) + sep))
+      return { ok: false, reason: `the source ${f.path} would be written outside ${PKG_SRC_DIR}` }
     writeFileSync(target, f.text)
   }
   budget.bytes += bytes
@@ -302,6 +313,9 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
 export function preparePackageSources(appRoot: string, specs: Iterable<string>): PackageSources {
   const root = realpathSync(appRoot)
   rmSync(join(root, PKG_SRC_DIR), { recursive: true, force: true })
+  mkdirSync(join(root, PKG_SRC_DIR), { recursive: true })
+  // The directory this build owns must itself be inside the app (`.brust` is not a link out of it).
+  if (!realpathSync(join(root, PKG_SRC_DIR)).startsWith(root + sep)) throw new BuildError('package-source', `${PKG_SRC_DIR} resolves outside the app root (a link?); remove it and build again`)
   const out: PackageSources = { scopes: {}, refused: {}, dirs: {} }
   writtenDirs.clear()
   const byDir = new Map<string, Outcome>()

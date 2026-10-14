@@ -243,6 +243,17 @@ pub fn resolve_package(
     let scope = package_scope(parent);
     let p = &opts.packages;
     if let Some(entry) = p.scopes.get(scope).and_then(|m| m.get(spec)) {
+        // Review F1: only a file the build wrote under its own directory is package source; anything else (a path
+        // that leaves it) is refused, never read as app code.
+        if !is_package_source(entry)
+            || entry
+                .split('/')
+                .any(|s| s == ".." || s == "." || s.is_empty())
+        {
+            return Err(Some(format!(
+                "the package source path {entry} is not inside {PKG_SRC_DIR}"
+            )));
+        }
         return Ok(entry.clone());
     }
     Err(p.refused.get(scope).and_then(|m| m.get(spec)).cloned())

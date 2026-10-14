@@ -56,7 +56,7 @@ test('a package with its source in the map is written and resolved from the app'
   pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
   const r = preparePackageSources(root, ['leafy'])
   const entry = r.scopes['']?.leafy
-  expect(entry).toMatch(/^\.brust\/pkg-src\/leafy@1\.0\.0-[0-9a-f]{8}\/src\/leaf\.tsx$/)
+  expect(entry).toMatch(/^\.brust\/pkg-src\/p-[0-9a-f]{16}\/src\/leaf\.tsx$/)
   expect(readFileSync(join(root, entry!), 'utf8')).toBe(LEAF)
   expect(r.refused).toEqual({})
   expect(JSON.parse(readFileSync(join(root, PKG_SRC_DIR, 'index.json'), 'utf8'))).toEqual(r)
@@ -68,7 +68,7 @@ test('bare imports of a written package are followed in that package scope', () 
   pkg(root, 'leafy', { 'src/leaf.tsx': LEAF })
   const r = preparePackageSources(root, ['outer'])
   const scope = r.scopes['']!.outer!.split('/src/')[0]!
-  expect(r.scopes[scope]?.leafy).toMatch(/leafy@1\.0\.0-/)
+  expect(r.scopes[scope]?.leafy).toMatch(/^\.brust\/pkg-src\/p-[0-9a-f]{16}\//)
   expect(r.dirs[scope]).toBe(join(root, 'node_modules/outer'))
 })
 
@@ -128,4 +128,22 @@ test('integrity reads literals and names, not syntax: esbuild artefacts pass, a 
   expect(integrityGaps(src, dist.replace('"data-x": "1"', '"data-x": "2"')).join()).toContain('literal "1"')
   expect(integrityGaps(src, dist.replaceAll('p.n', 'p.m')).join()).toContain('name `n`')
   expect(skeleton('a = `x${b}y` + 0x10').strings).toEqual(new Set(['x', 'y', '#16']))
+})
+
+test('review F1: a hostile package.json name or version never moves a write out of .brust/pkg-src', () => {
+  const root = app()
+  const outside = join(root, '..', `escape-${Date.now()}`)
+  cleanup.push(outside)
+  for (const [spec, pj] of [
+    ['evil-ver', { version: `1/../../../../${outside.split('/').pop()}` }],
+    ['evil-name', { name: `a/../../../../../${outside.split('/').pop()}/b` }],
+    ['evil-abs', { name: outside, version: outside }],
+  ] as const) {
+    pkg(root, spec, { 'src/leaf.tsx': LEAF }, { pj })
+    const r = preparePackageSources(root, [spec])
+    const entry = r.scopes['']?.[spec]
+    expect(entry).toMatch(/^\.brust\/pkg-src\/p-[0-9a-f]{16}\/src\/leaf\.tsx$/)
+    expect(realpathSync(join(root, entry!)).startsWith(join(root, PKG_SRC_DIR) + '/')).toBe(true)
+  }
+  expect(existsSync(outside)).toBe(false)
 })

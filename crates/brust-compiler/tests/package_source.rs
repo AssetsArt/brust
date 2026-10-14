@@ -439,3 +439,58 @@ fn hostile_package_source_goes_through_the_app_sinks() {
     assert!(!jinja.contains("onclick=\"evil"), "{jinja}");
     assert!(!jinja.contains("</script><b>"), "{jinja}");
 }
+
+/// Review F1: a map entry that leaves `.brust/pkg-src` is refused (the island), never compiled as app code.
+#[test]
+fn a_package_entry_outside_the_build_directory_is_refused() {
+    for entry in [
+        "Leaf.tsx",
+        "../Leaf.tsx",
+        ".brust/pkg-src/../Leaf.tsx",
+        ".brust/pkg-src/x/../../Leaf.tsx",
+    ] {
+        let mut app = App::new();
+        app.file("Leaf.tsx", LEAF).map("", "leafy", entry);
+        let tree = app.compile("import { Leaf } from 'leafy'\nexport default function App() { return <div><Leaf /></div> }");
+        let d = root_of(&tree)
+            .1
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "external-component")
+            .unwrap_or_else(|| panic!("{entry}: compiled"));
+        assert!(
+            d.message.contains("is not inside .brust/pkg-src"),
+            "{entry}: {}",
+            d.message
+        );
+    }
+}
+
+/// Review N1: the build never evaluates a slot of a component compiled from package source (L2).
+#[test]
+fn no_build_evaluation_for_package_source() {
+    let mut app = App::new();
+    app.file(
+        &format!("{LEAF_DIR}/src/leaf.tsx"),
+        "import { label } from './label'\nexport function Leaf() { return <b>{label('x')}</b> }\n",
+    )
+    .file(
+        &format!("{LEAF_DIR}/src/label.ts"),
+        "export function label(s: string) { return s.toUpperCase() }\n",
+    )
+    .map("", "leafy", &format!("{LEAF_DIR}/src/leaf.tsx"));
+    let tree = app.compile("import { Leaf } from 'leafy'\nexport default function App() { return <div><Leaf /></div> }");
+    let leaf = tree
+        .iter()
+        .find(|(s, ..)| s.ends_with("leaf.tsx"))
+        .expect("compiled");
+    assert!(leaf.1.build_eval.is_empty(), "{:?}", leaf.1.build_eval);
+    // The same module as app code is a build-evaluation candidate.
+    let mut local = App::new();
+    local
+        .file("Leaf.tsx", "import { label } from './label'\nexport function Leaf() { return <b>{label('x')}</b> }\n")
+        .file("label.ts", "export function label(s: string) { return s.toUpperCase() }\n");
+    let tree = local.compile("import { Leaf } from './Leaf'\nexport default function App() { return <div><Leaf /></div> }");
+    let leaf = tree.iter().find(|(s, ..)| s == "Leaf.tsx").unwrap();
+    assert!(!leaf.1.build_eval.is_empty());
+}
