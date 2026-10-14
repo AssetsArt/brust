@@ -692,7 +692,13 @@ impl Placer<'_> {
                         _ => "a call".to_string(),
                     });
                 }
-                args.iter().find_map(go)
+                // F173: a regular expression literal is an object, so it is allowed only as the argument of a method
+                // (`s.replace(/x/, '')`); a helper could return it.
+                let method = matches!(callee.kind, RawKind::Member { .. });
+                args.iter().find_map(|a| match &a.kind {
+                    RawKind::Opaque { why, .. } if method && why == "ERegExp" => None,
+                    _ => go(a),
+                })
             }
             RawKind::Binary { left, right, .. } => go(left).or_else(|| go(right)),
             RawKind::Unary { value, .. } => go(value),
@@ -1330,5 +1336,9 @@ fn plain_method(name: &str) -> bool {
             | "endsWith"
             | "includes"
             | "join"
+            // F173: string results, as in `plain_fn::PRIMITIVE_METHODS`.
+            | "toFixed"
+            | "replace"
+            | "replaceAll"
     )
 }

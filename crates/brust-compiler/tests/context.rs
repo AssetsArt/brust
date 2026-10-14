@@ -472,6 +472,9 @@ fn plain_wrappers_are_judged_by_the_total_predicate_and_ordinary_reads_keep_lowe
         // Only `{child}` slots are judged under a plain wrapper: an unproven helper in an attribute or a component prop
         // (`className={cn(...)}`) prints as React prints it and keeps lowering, as on main.
         "plain-attr-helper.tsx",
+        // Local string helpers (a const arrow, `.replace(/re/, …)` on a parameter's field, a comparison or a template
+        // over its fields) are proven plain: the docs site's own pages keep lowering.
+        "plain-helper-string.tsx",
     ] {
         let (ir, jinja) = page(f);
         assert!(
@@ -496,6 +499,8 @@ fn an_imported_helper_is_plain_only_when_its_module_proves_it() {
         "plain-helper-ns.tsx",
         "plain-helper-unresolved.tsx",
         "plain-helper-arg.tsx",
+        // A regular expression is plain only as a method's argument: a helper returning its argument would print it.
+        "plain-helper-regex.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(

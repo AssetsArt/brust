@@ -40,6 +40,8 @@ const PRIMITIVE_METHODS: &[&str] = &[
     "endsWith",
     "includes",
     "join",
+    "replace",
+    "replaceAll",
 ];
 const MATH_CALLS: &[&str] = &[
     "abs", "ceil", "floor", "round", "trunc", "sign", "min", "max", "pow", "sqrt", "cbrt", "log",
@@ -87,20 +89,54 @@ impl Ctx<'_, '_> {
                 ) && self.expr(&u.value)
             }
             E::EBinary(b) => {
+                // F173: a comparison is a boolean whatever its operands are, so a member read of a parameter may be one.
+                let operand = |x: &js_ast::Expr| {
+                    self.expr(x)
+                        || (matches!(
+                            b.op,
+                            OpCode::BinStrictEq
+                                | OpCode::BinStrictNe
+                                | OpCode::BinLooseEq
+                                | OpCode::BinLooseNe
+                                | OpCode::BinLt
+                                | OpCode::BinLe
+                                | OpCode::BinGt
+                                | OpCode::BinGe
+                        ) && self.receiver(x))
+                };
                 matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None)
-                    && self.expr(&b.left)
-                    && self.expr(&b.right)
+                    && operand(&b.left)
+                    && operand(&b.right)
             }
             E::EIf(i) => self.expr(&i.test) && self.expr(&i.yes) && self.expr(&i.no),
+            // An untagged template is a string whatever its parts are: a member read of a parameter may be one (F173).
             E::ETemplate(t) => {
-                t.tag.is_none() && t.parts.slice().iter().all(|p| self.expr(&p.value))
+                t.tag.is_none()
+                    && t.parts
+                        .slice()
+                        .iter()
+                        .all(|p| self.expr(&p.value) || self.receiver(&p.value))
             }
             E::ECall(c) => {
+                // A regular expression is an object, so it is plain only as the argument of a method (`s.replace(/x/, '')`): a
+                // helper could return it.
                 c.optional_chain.is_none()
                     && self.callee(&c.target)
-                    && c.args.iter().all(|a| self.expr(a))
+                    && c.args.iter().all(|a| {
+                        (matches!(a.data, E::ERegExp(_)) && matches!(c.target.data, E::EDot(_)))
+                            || self.expr(a)
+                    })
             }
             _ => false,
+        }
+    }
+
+    /// F173: the value a primitive-returning method is called on: a plain value, or a member read (`e.note`) of a
+    /// parameter or local of the function. The method's result is what the function returns, never the member itself.
+    fn receiver(&self, t: &js_ast::Expr) -> bool {
+        match &t.data {
+            E::EDot(d) => d.optional_chain.is_none() && self.receiver(&d.target),
+            _ => self.expr(t),
         }
     }
 
@@ -122,7 +158,7 @@ impl Ctx<'_, '_> {
                     // F173: a primitive-returning method of a plain value (`n.toFixed(2)`, `s.trim()`, `xs.join(', ')`).
                     || (d.optional_chain.is_none()
                         && PRIMITIVE_METHODS.contains(&method.as_ref())
-                        && self.expr(&d.target))
+                        && self.receiver(&d.target))
             }
             _ => false,
         }
@@ -162,7 +198,8 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
         walk.stmts(part.stmts.slice());
     }
     let assigned: HashSet<String> = walk.assigned.iter().map(|r| names.name(*r)).collect();
-    let mut funcs: Vec<(String, &js_ast::G::Fn)> = Vec::new();
+    // (name, parameters, body, has a rest parameter): `function f(…) {…}` and, since F173, `const f = (…) => …`.
+    let mut funcs: Vec<(String, &[js_ast::G::Arg], &[js_ast::Stmt], bool)> = Vec::new();
     let mut const_inits: Vec<(String, js_ast::Expr)> = Vec::new();
     let mut module_names: HashSet<String> = HashSet::new();
     for part in ast.parts.iter() {
@@ -176,7 +213,12 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                             && !f.func.flags.contains(js_ast::flags::Function::IsAsync)
                             && !f.func.flags.contains(js_ast::flags::Function::IsGenerator);
                         if simple {
-                            funcs.push((name, &f.func));
+                            funcs.push((
+                                name,
+                                f.func.args.slice(),
+                                f.func.body.stmts.slice(),
+                                f.func.flags.contains(js_ast::flags::Function::HasRestArg),
+                            ));
                         }
                     }
                 }
@@ -188,6 +230,17 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                             if matches!(l.kind, js_ast::S::Kind::KConst)
                                 && let Some(v) = &d.value
                             {
+                                // F173: a const arrow is a function the module cannot rebind (`const pretty = (k) => …`).
+                                if let E::EArrow(a) = &v.data
+                                    && !a.is_async
+                                {
+                                    funcs.push((
+                                        name.clone(),
+                                        a.args.slice(),
+                                        a.body.stmts.slice(),
+                                        a.has_rest_arg,
+                                    ));
+                                }
                                 const_inits.push((name, *v));
                             }
                         }
@@ -220,21 +273,18 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
         }
     }
     // The functions: start from all of them and drop any whose body is not plain given the survivors.
-    let mut alive: HashSet<String> = funcs.iter().map(|(n, _)| n.clone()).collect();
+    let mut alive: HashSet<String> = funcs.iter().map(|(n, ..)| n.clone()).collect();
     loop {
         let mut dropped = false;
-        for (name, f) in &funcs {
+        for (name, args, body, rest) in &funcs {
             if !alive.contains(name) {
                 continue;
             }
             let ok = (|| {
                 let mut locals = HashSet::new();
-                for a in f.args.slice() {
+                for a in args.iter() {
                     match a.binding.data {
-                        B::BIdentifier(id)
-                            if a.default.is_none()
-                                && !f.flags.contains(js_ast::flags::Function::HasRestArg) =>
-                        {
+                        B::BIdentifier(id) if a.default.is_none() && !*rest => {
                             let p = names.name(id.r#ref);
                             // A parameter named like a module binding would hide it from the proof.
                             if module_names.contains(&p)
@@ -254,7 +304,7 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                     consts: &consts,
                     locals,
                 };
-                c.stmts(f.body.stmts.slice()) && !c.locals.iter().any(|l| module_names.contains(l))
+                c.stmts(body) && !c.locals.iter().any(|l| module_names.contains(l))
             })();
             if !ok {
                 alive.remove(name);

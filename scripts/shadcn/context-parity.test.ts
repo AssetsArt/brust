@@ -21,7 +21,7 @@ const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix',
 // Imported plain value: stays a static page (no script), and renders like React.
 // F173: the ordinary reads (a const map, .length, an imported helper proven plain in its module) lower under a wrapper AND
 // under a Provider (ctx-trio-prov was React until F173 proved formatPrice).
-const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper']
+const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper', 'ctx-plain-helper-string']
 const ROWS = join(FIXTURE, '.rows')
 const ENTRY = '.rows/ctx-parity-routes.tsx'
 const bin = join(repo, 'packages/brust/bin/brust')
