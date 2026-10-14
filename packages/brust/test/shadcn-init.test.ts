@@ -1,10 +1,10 @@
 // F175 (R41.1-R41.10): `brust shadcn init`. The process runner is injected, so no network: every branch of the plan is
 // covered with real files in a temp project and a recording runner.
 import { afterAll, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { addAliasPath, componentsJson, SHADCN_DEPS, SHADCN_VERSION, shadcnInit } from '../src/shadcn/init'
+import { addAliasPath, componentsJson, SHADCN_DEP_PINS, SHADCN_DEPS, SHADCN_VERSION, shadcnInit } from '../src/shadcn/init'
 import { readObject } from '../src/shadcn/jsonc'
 
 const dirs: string[] = []
@@ -77,7 +77,7 @@ test('a fresh project gets components.json, the path, the deps, the theme and th
   expect(JSON.parse(readFileSync(join(d, 'components.json'), 'utf8'))).toEqual(JSON.parse(readFileSync(join(import.meta.dir, '../../../tests/fixtures/shadcn/components.json'), 'utf8')))
   expect(readFileSync(join(d, 'tsconfig.json'), 'utf8')).toContain('"paths": { "@/*": ["./*"] },')
   expect(r.calls).toEqual([
-    ['bun', 'add', ...SHADCN_DEPS],
+    ['bun', 'add', ...SHADCN_DEPS.map((d) => `${d}@${SHADCN_DEP_PINS[d]}`)],
     ['bun', 'x', `shadcn@${SHADCN_VERSION}`, 'add', 'index', '-y'],
     ['bun', 'x', `shadcn@${SHADCN_VERSION}`, 'add', 'button', 'card', '-y'],
   ])
@@ -144,7 +144,7 @@ test('an existing "@/*" with another target is left alone with a warning (R41.4)
 test('dependencies already installed are skipped; only the missing ones are added (R41.5)', async () => {
   const d = project({ pkg: { name: 'a', dependencies: { '@brust/core': '1', 'lucide-react': '1' }, devDependencies: { 'tw-animate-css': '1' } } })
   const r = await init(d)
-  expect(r.calls[0]).toEqual(['bun', 'add', 'radix-ui', 'class-variance-authority'])
+  expect(r.calls[0]).toEqual(['bun', 'add', `radix-ui@${SHADCN_DEP_PINS['radix-ui']}`, `class-variance-authority@${SHADCN_DEP_PINS['class-variance-authority']}`])
 })
 
 test('components.json is written only when absent; --force replaces it (R41.2)', async () => {
@@ -240,4 +240,57 @@ test('a second run changes nothing and says skipped (R41.9)', async () => {
   expect(['components.json', 'tsconfig.json', 'app.css', 'package.json'].map((f) => readFileSync(join(d, f), 'utf8'))).toEqual(before)
   const text = r.lines.join('\n')
   for (const s of ['components.json: skipped', 'tsconfig.json: skipped', 'dependencies: skipped', 'theme: skipped', 'button: skipped']) expect(text).toContain(s)
+})
+
+test('the four packages are pinned to exact versions (F181)', () => {
+  for (const v of Object.values(SHADCN_DEP_PINS)) expect(v).toMatch(/^\d+\.\d+\.\d+$/)
+  expect(SHADCN_DEPS).toHaveLength(4)
+})
+
+test('a symlinked tsconfig.json is refused before any write, even with --force (F181)', async () => {
+  const d = project({ tsconfig: null })
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'brust-shadcn-outside-')))
+  dirs.push(outside)
+  writeFileSync(join(outside, 'tsconfig.json'), TSCONFIG)
+  symlinkSync(join(outside, 'tsconfig.json'), join(d, 'tsconfig.json'))
+  for (const force of [false, true]) {
+    const r = await init(d, { force })
+    expect(r.code).toBe(2)
+    expect(r.lines.join('\n')).toContain('symbolic link')
+    expect(r.calls).toEqual([])
+    expect(existsSync(join(d, 'components.json'))).toBe(false)
+    expect(readFileSync(join(outside, 'tsconfig.json'), 'utf8')).toBe(TSCONFIG)
+  }
+})
+
+test('a symlinked or dangling components.json that would be written is refused; the target is untouched (F181)', async () => {
+  const d = project()
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'brust-shadcn-outside-')))
+  dirs.push(outside)
+  symlinkSync(join(outside, 'components.json'), join(d, 'components.json')) // dangling
+  const r = await init(d)
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(existsSync(join(outside, 'components.json'))).toBe(false)
+  // a live link to an existing file: skipped without --force (nothing written), refused with it
+  rmSync(join(d, 'components.json'))
+  writeFileSync(join(outside, 'components.json'), '{}')
+  symlinkSync(join(outside, 'components.json'), join(d, 'components.json'))
+  expect((await init(d)).code).toBe(0)
+  expect((await init(d, { force: true })).code).toBe(2)
+  expect(readFileSync(join(outside, 'components.json'), 'utf8')).toBe('{}')
+})
+
+test('a registry URL whose item is already installed is skipped on a second run; --force adds it again (F181, R41.9)', async () => {
+  const d = project()
+  const url = 'https://ui.example.dev/r/acme-card.json'
+  const first = await init(d, { components: [url] })
+  expect(first.calls.at(-1)).toContain(url)
+  expect(first.lines.join('\n')).toContain('third-party code')
+  mkdirSync(join(d, 'components/ui'), { recursive: true })
+  writeFileSync(join(d, 'components/ui/acme-card.tsx'), 'export {}')
+  const second = await init(d, { components: [url] })
+  expect(second.calls.some((c) => c.includes(url))).toBe(false)
+  expect(second.lines.join('\n')).toContain('already in components')
+  expect((await init(d, { components: [url], force: true })).calls.at(-1)).toContain(url)
 })
