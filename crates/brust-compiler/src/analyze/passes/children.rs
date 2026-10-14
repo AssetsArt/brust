@@ -70,6 +70,9 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
     }
 }
 
+/// The Provider modules whose helpers a substituted context value calls: alias → (the module's component, names).
+type ForeignModules = std::collections::BTreeMap<String, (Rc<ComponentIR>, BTreeSet<String>)>;
+
 /// What a context Provider hands to the consumers under it (S2, R34.102): each field an expression of the scope that
 /// renders the Provider component (its call site), not of the Provider's own body.
 struct Frame {
@@ -214,8 +217,7 @@ struct Walker<'s, 'c> {
     absent: BTreeSet<String>,
     /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
     /// of its module scope in this component's jobs, the component, the names).
-    foreign:
-        std::cell::RefCell<std::collections::BTreeMap<String, (Rc<ComponentIR>, BTreeSet<String>)>>,
+    foreign: std::cell::RefCell<ForeignModules>,
 }
 
 /// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
@@ -796,6 +798,11 @@ impl Walker<'_, '_> {
                         .for_each(|c| self.frames_node(c, frames, bubbled, diags));
                     return;
                 };
+                // A React island (and what it receives as children or element props) renders with React's own
+                // context at run time: nothing in its subtree is read here, and it provides nothing at compile time.
+                if !matches!(cir.tier, Tier::Static | Tier::Native) {
+                    return;
+                }
                 // Consumer: each field it reads comes from the nearest frame of its context, else bubbles up.
                 for u in &cir.ctx_uses {
                     for f in &u.fields {

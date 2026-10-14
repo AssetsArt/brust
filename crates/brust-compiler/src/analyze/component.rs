@@ -561,6 +561,16 @@ fn read_function_as(
     ir.id_bindings = body.id_bindings;
     ir.stores = body.stores;
     ir.diagnostics.extend(body.diagnostics);
+    // S2: a Provider whose values cannot be expressed at the call site (state, a handler, a loop value) is not
+    // compiled yet (a native provider is a later step): the component stays a React island, as before.
+    if let Some((loc, why)) = crate::analyze::context::provider_problem(ir) {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "context-state",
+            format!("a context Provider hands out {why}, which needs a native provider; the component renders with React"),
+            loc,
+            "provide props-derived values, or keep this component in React",
+        ));
+    }
     let root_loc = match &body.return_expr {
         Some(Expr::Raw(r)) => r.loc,
         _ => 0,

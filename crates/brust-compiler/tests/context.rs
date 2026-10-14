@@ -220,3 +220,25 @@ fn a_rest_spread_into_the_provider_carries_the_props_the_wrapper_does_not_name()
     assert!(jinja.contains("(5)") && jinja.contains("(0)"), "{jinja}");
     assert!(!jinja.contains("__ctx_"), "{jinja}");
 }
+
+/// A Provider that hands out state (a native provider is a later step) stays a React island, as before; the page that
+/// renders it stays static and never becomes React because of it.
+#[test]
+fn a_provider_that_hands_out_state_stays_an_island_and_the_page_stays_static() {
+    let all = compile_all("state-provider.tsx");
+    let tier = |prefix: &str| {
+        all.iter()
+            .find(|(id, ..)| id.starts_with(prefix))
+            .map(|(_, ir, ..)| ir.clone())
+            .expect(prefix)
+    };
+    let provider = tier("disclosure_");
+    assert!(is_react(&provider), "{:?}", provider.tier);
+    assert!(
+        rules(&provider).contains(&"context-state"),
+        "{:?}",
+        provider.diagnostics
+    );
+    let page = tier("stateProvider_");
+    assert!(!is_react(&page), "{:?} {:?}", page.tier, page.diagnostics);
+}

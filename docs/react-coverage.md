@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 139 | 78 | 8 | 53 | 0 | 0 | 0 | 0 |
+| B Composition | 149 | 87 | 8 | 54 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 55 | 19 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 305 | 145 | 43 | 113 | 3 | 1 | 0 | 0 |
+| **Total** | 315 | 154 | 43 | 114 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -156,6 +156,16 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-forwardref-ref-destructured | the second parameter is destructured | react | react | ssr | ok | fallback:forwardref-ref |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get) |
+| b-context-react-provider | createContext: a Provider component and a consumer under it | static | static | 0 | ok | — | S2 R34.100-R34.103: the value is resolved at the call site; no hidden prop reaches the page, no job, no client JS |
+| b-context-nested | two Providers of one context: the nearest wins | static | static | 0 | ok | — | S2 R34.102: frames are a stack (1, 2, then 1 again) |
+| b-context-wrapper | a consumer inside a wrapper component, under a Provider | static | static | 0 | ok | — | S2 R34.104: the need bubbles up through the wrapper and is filled where the Provider is |
+| b-context-rest-wrapper | a shadcn-style wrapper forwarding its ...rest into a Provider component | static | static | 0 | ok | — | S2: the rest carries max (not named by the wrapper); value is named and not forwarded, so it is the Provider default |
+| b-context-helper | a Provider value computed by helpers of its own module, used from another module | static | static | precompute | ok | — | S2: the helper runs in the page job through a scoped copy of the Provider module declarations; the const default MAX is the literal 100 |
+| b-context-radix-scope | Radix createContextScope: Provider props, a default, a consumer | static | static | 0 | ok | — | S2 R34.100/101: the second structural recogniser (Radix createContextScope); a scope that is a pass-through is ignored |
+| b-context-no-provider | a consumer with no Provider above it, at the route | react | react | ssr | ok | fallback:context-no-provider | S2 context-no-provider: fail closed (the default of a createContext is not read in v1) |
+| b-context-escape | a context value used as a whole | static | static | ssr | ok | — | S2 context-escape: the consumer reads the whole object, so it is a React island (the page stays static) |
+| b-context-scalar-value | a Provider whose value is not an object literal | static | static | ssr | ok | — | S2 context-value: the Provider is a React island (the page stays static) |
+| b-context-console-if | an if whose branches only call console.* | static | static | 0 | ok | — | S2 R34.104: a diagnostic-only statement is not part of the render (Radix Progress validates its props this way) |
 | b-props-quoted-key | a quoted hyphen key bound to a local in the props pattern | static | static | ssr | ok | — | F161 prop-quoted-key: the template read `data-x` as a subtraction and every render failed (500); the component is a React island now (the page stays static). Native support is a later F-row |
 | b-props-jinja-own-name | a prop named loop (a name the server template binds itself) | static | static | ssr | ok | — | props-pattern N2, prop-jinja-name: loop, range, namespace, caller and self shadow template names; the component is a React island now |
 | b-props-jinja-keyword | a prop whose key is a template keyword, renamed to a local | static | static | ssr | ok | — | props-pattern N1, prop-jinja-name: the message names a keyword (not "a plain identifier"); the component is a React island now |
@@ -236,7 +246,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid | useId read in render | static | static | 0 | ok | — | spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static |
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | — | spec §4.3 useLayoutEffect |
 | c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |
-| c-usecontext | useContext | react | react | ssr | ok | fallback:hook-unsupported |  |
+| c-usecontext | useContext | react | react | ssr | ok | fallback:context-escape |  |
 | c-custom-hook | custom hook | native | native | 0 | ok | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
 | c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
@@ -264,7 +274,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 |---|---|---|---|---|---|---|---|
 | d-cache | cache() around a server helper | static | static | precompute | ok | — | spec §3.4 cache() |
 | d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
-| d-createcontext | createContext provider | react | react | ssr | ok | fallback:member-tag |  |
+| d-createcontext | createContext provider | react | react | ssr | ok | fallback:context-value |  |
 | d-clone-element | cloneElement | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-expression |  |
 | d-suspense-static | <Suspense> around static content | static | static | ssr | ok | fallback:external-component | spec §3 react tier: Suspense is a React island; since R34.52 its constant `fallback` element travels as an element prop, so the page is static (shadcn S1, constant-slots) |

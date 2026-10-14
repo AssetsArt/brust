@@ -675,12 +675,11 @@ fn context_read(value: &js_ast::Expr, names: &NameTable<'_>) -> Option<String> {
     {
         return Some(c.to_string());
     }
-    if names.is_import_call(&call.target, "react", "useContext")
-        || names.is_react_call(&call.target, "useContext")
+    if (names.is_import_call(&call.target, "react", "useContext")
+        || names.is_react_call(&call.target, "useContext"))
+        && let Some(r) = call.args.first().and_then(crate::analyze::names::ident_ref)
     {
-        if let Some(r) = call.args.first().and_then(crate::analyze::names::ident_ref) {
-            return names.react_context(r).map(str::to_string);
-        }
+        return names.react_context(r).map(str::to_string);
     }
     None
 }

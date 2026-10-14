@@ -88,12 +88,10 @@ pub fn scan(table: &NameTable<'_>, ast: &js_ast::Ast<'_>) -> Contexts {
                         }
                     }
                     // `const C = createContext(default)`
-                    B::BIdentifier(id) => {
-                        if table.is_react_call(&call.target, "createContext") {
-                            let name = table.local_name(id.r#ref);
-                            out.providers.insert(table.key_of(id.r#ref), name.clone());
-                            out.react.insert(table.key_of(id.r#ref), name);
-                        }
+                    B::BIdentifier(id) if table.is_react_call(&call.target, "createContext") => {
+                        let name = table.local_name(id.r#ref);
+                        out.providers.insert(table.key_of(id.r#ref), name.clone());
+                        out.react.insert(table.key_of(id.r#ref), name);
                     }
                     _ => {}
                 }
@@ -101,4 +99,72 @@ pub fn scan(table: &NameTable<'_>, ast: &js_ast::Ast<'_>) -> Contexts {
         }
     }
     out
+}
+
+/// Why one of this component's Provider values cannot be expressed in the scope that renders it (state, a setter, a
+/// handler or arrow, JSX, a loop value, a store, a name of the body that is not a derived value or a module name).
+pub fn provider_problem(ir: &crate::ir::ComponentIR) -> Option<(u32, String)> {
+    use crate::ir::{Expr, IdentKind, RawExpr, RawKind};
+    fn bad(ir: &crate::ir::ComponentIR, r: &RawExpr, depth: u8) -> Option<String> {
+        if depth > 8 {
+            return Some("a chain of derived values deeper than 8".into());
+        }
+        fn first<'a>(
+            ir: &crate::ir::ComponentIR,
+            xs: impl Iterator<Item = &'a RawExpr>,
+            depth: u8,
+        ) -> Option<String> {
+            xs.into_iter().find_map(|x| bad(ir, x, depth))
+        }
+        match &r.kind {
+            RawKind::Lit(_) => None,
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Prop | IdentKind::Global | IdentKind::Import { .. } => None,
+                IdentKind::Local => {
+                    if let Some(d) = ir.derived.iter().find(|d| &d.name == name) {
+                        return match &d.expr {
+                            Expr::Raw(e) => bad(ir, e, depth + 1),
+                            _ => Some(format!("`{name}`, which is not a plain expression")),
+                        };
+                    }
+                    if ir.module_scope.iter().any(|(n, _)| n == name) {
+                        None
+                    } else {
+                        Some(format!("`{name}`, a local of the component"))
+                    }
+                }
+                _ => Some(format!(
+                    "`{name}`, which is state, a handler or a loop value"
+                )),
+            },
+            RawKind::Member { target, .. } => bad(ir, target, depth),
+            RawKind::Index { target, index } => {
+                bad(ir, target, depth).or_else(|| bad(ir, index, depth))
+            }
+            RawKind::Call { callee, args } => {
+                bad(ir, callee, depth).or_else(|| first(ir, args.iter(), depth))
+            }
+            RawKind::Binary { left, right, .. } => {
+                bad(ir, left, depth).or_else(|| bad(ir, right, depth))
+            }
+            RawKind::Unary { value, .. } => bad(ir, value, depth),
+            RawKind::Cond { test, yes, no } => bad(ir, test, depth)
+                .or_else(|| bad(ir, yes, depth))
+                .or_else(|| bad(ir, no, depth)),
+            RawKind::Template { parts, .. } => first(ir, parts.iter().map(|(p, _)| p), depth),
+            RawKind::Array(xs) => first(ir, xs.iter(), depth),
+            RawKind::Object(ps) => first(ir, ps.iter().map(|(_, v)| v), depth),
+            RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
+                Some("a function or an expression outside the subset".into())
+            }
+        }
+    }
+    for p in &ir.provides {
+        for (k, v) in &p.fields {
+            if let Some(why) = bad(ir, v, 0) {
+                return Some((v.loc, format!("`{k}` reading {why}")));
+            }
+        }
+    }
+    None
 }
