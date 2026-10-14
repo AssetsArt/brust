@@ -36,6 +36,7 @@ export function coverageJson(rows: AppRow[], libs: LibPackage[]) {
       tier: tiers,
       islands: built.reduce((n, r) => n + (r.build.ok ? r.build.measured.islands : 0), 0),
       pagesWithNoJs: sorted.filter((n) => n === 0).length,
+      pagesWithNoWorker: built.filter((r) => r.build.ok && r.build.measured.workerCalls === 0).length,
       jsGzipKb: { min: kb(sorted[0] ?? 0), median: kb(sorted[Math.floor(sorted.length / 2)] ?? 0), max: kb(sorted.at(-1) ?? 0) },
       libraries: {
         packages: libs.length,
@@ -59,7 +60,7 @@ export function coverageJson(rows: AppRow[], libs: LibPackage[]) {
     })),
     rows: rows.map((r) =>
       r.build.ok
-        ? { id: r.id, basis: 'measured', tier: r.build.measured.tier, islands: r.build.measured.islands, components: r.build.measured.components, reactComponents: r.build.measured.reactComponents, jsGzipKb: kb(r.build.measured.jsGzip), codes: r.codes }
+        ? { id: r.id, basis: 'measured', tier: r.build.measured.tier, islands: r.build.measured.islands, components: r.build.measured.components, reactComponents: r.build.measured.reactComponents, jsGzipKb: kb(r.build.measured.jsGzip), workerCalls: r.build.measured.workerCalls, codes: r.codes }
         : { id: r.id, basis: 'analysis-only', tier: r.error ? 'error' : r.tier, codes: r.codes, refusal: r.build.refusal ? { rule: r.build.refusal.rule, at: r.build.refusal.at, construct: r.build.refusal.construct } : null },
     ),
   }

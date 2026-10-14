@@ -103,6 +103,7 @@ pub fn react_jobs(ir: &mut ComponentIR) {
     if let Tier::React { client_only, .. } = &ir.tier {
         // A React island renders its own tree: no precompute slot is used, nothing to evaluate.
         ir.build_eval.clear();
+        ir.build_eval_instances.clear();
         ir.jobs = vec![crate::ir::JobDecl {
             kind: crate::ir::JobKind::Ssr {
                 client_only: *client_only,

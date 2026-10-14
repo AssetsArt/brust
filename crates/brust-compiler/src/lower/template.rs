@@ -62,6 +62,8 @@ pub struct Inline {
     /// The call site has a literal `asChild` (R34.29 b): its single child element is what this
     /// component's polymorphic element prints as.
     pub as_child: Option<AsChild>,
+    /// The build ran this instance's job (F149, R34.90): slot -> value, printed as literals.
+    pub folded: Option<std::collections::BTreeMap<String, serde_json::Value>>,
 }
 
 /// The child element of a Radix-`Slot`-style call (`<Button asChild><a href="/x">Go</a></Button>`),
@@ -405,6 +407,16 @@ impl<'a, 'c> Printer<'a, 'c> {
     }
 
     fn slot_ref(&self, slot: &str, per_item: bool) -> String {
+        // F149 (R34.91): a slot the build computed prints as its value, through the same escaping.
+        if let Some(v) = self
+            .inline
+            .as_ref()
+            .and_then(|i| i.folded.as_ref())
+            .and_then(|f| f.get(slot))
+            && let Some(raw) = crate::analyze::const_fold::json_to_raw(v, 0)
+        {
+            return self.jinja(&raw);
+        }
         let base = match &self.inline {
             None => slot.to_string(),
             Some(i) => {
@@ -1073,6 +1085,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 slot_loops: Vec::new(),
                 suffix: String::new(),
                 as_child: None,
+                folded: None,
             };
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
@@ -1754,13 +1767,26 @@ impl<'a, 'c> Printer<'a, 'c> {
         } else {
             (loops, slot_loops)
         };
+        // The server numbers an instance by its record's position among this child's records
+        // (brust-core `pipeline.rs` ordinal); an instance the build evaluated has no record (F149),
+        // so the ones after it move up.
+        let ordinal = ir
+            .instances
+            .iter()
+            .filter(|r| r.child_id == id && r.k <= k)
+            .count();
         let inline = Inline {
             segs,
             bind: bind.clone(),
-            slots: format!("__{id}_{k}{loops}"),
+            slots: format!("__{id}_{ordinal}{loops}"),
             slot_loops,
             suffix: format!("_{}{k}", short(&id)),
             as_child,
+            folded: ir
+                .folded_instances
+                .iter()
+                .find(|f| f.child_id == id && f.k == k)
+                .map(|f| f.values.clone()),
         };
         let Some(mut p) = Printer::new(child_ir, self.ctx, Some(inline), self.loop_var) else {
             return;

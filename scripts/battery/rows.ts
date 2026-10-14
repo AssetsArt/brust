@@ -25,6 +25,10 @@ interface RowBase {
   api?: string[]
   /** A documented gap: an observed/expected disagreement that is accepted. */
   knownGap?: string
+  /** F149 (R34.94): how many inlined instances of the root are build-evaluation candidates. */
+  buildEval?: number
+  /** F149: a part of the `build-eval-instance` reason a constant-input instance keeps its job for. */
+  evalWhy?: string
 }
 
 export interface StubPackage {
@@ -43,6 +47,11 @@ const RADIX_LABEL = readFileSync(join(import.meta.dir, '../../tests/fixtures/pac
 const PKG_PRIMITIVE: StubPackage = { files: { 'src/primitive.tsx': RADIX_PRIMITIVE } }
 const PKG_LEAF = `import * as React from 'react'\nimport { Primitive } from '@radix-ui/react-primitive'\nexport const Root = React.forwardRef(function Root(props: any, forwardedRef: any) { return <Primitive.div {...props} ref={forwardedRef} /> })`
 const SLOT_BTN = `import { Slot } from 'radix-ui'\nexport default function Btn({ asChild = false, variant = 'default', className, ...props }: any) { const Comp = asChild ? Slot.Root : 'button'; return <Comp data-slot="btn" data-variant={variant} className={'base ' + (className ?? '')} {...props} /> }`
+// F149: shadcn's Badge (cva + cn).
+const CN_BADGE = `import { cva } from 'class-variance-authority'
+import { cn } from 'cn'
+const badgeVariants = cva('inline-flex rounded-full', { variants: { variant: { default: 'bg-primary', secondary: 'bg-secondary', outline: 'border' } }, defaultVariants: { variant: 'default' } })
+export function Badge({ className, variant, ...props }: any) { return <span className={cn(badgeVariants({ variant }), className)} {...props} /> }`
 const child = (body: string) => `export default function Child(props: any) { ${body} }`
 const ICARD = `import { useReducer } from 'react'\nexport function Card(props: any) { const [n, bump] = useReducer((x: number) => x + 1, 0); return <section><button onClick={() => bump()}>{n}</button>{props.children}</section> }\nexport function Badge(props: any) { return <span>{props.n}</span> }\nexport function Trigger(props: any) { const [n, bump] = useReducer((x: number) => x + 1, 0); return props.asChild ? <span onClick={() => bump()}>{props.children}{n}</span> : <button onClick={() => bump()}>{props.children}</button> }`
 const TIP = `\nexport function Tip(props: any) { const [n, bump] = useReducer((x: number) => x + 1, 0); return <div onClick={() => bump()}>{props.content}{props.children}{n}</div> }`
@@ -425,6 +434,23 @@ export const rows: Row[] = [
   { id: 'b-body-destructure-default-local', category: 'B', authoring: 'a body-destructuring default that reads a body local stays body-shape', expect: 'react',
     snippet: `export default function C(props: any) {\n  const d = props.k + '!'\n  const { a = d } = props\n  return <p>{a}</p>\n}`,
     note: 'review F1: the template binds no local for an absorbed default' },
+  { id: 'b-union-spread-body-const', category: 'B', authoring: 'a spread of a conditional object literal held in a body const (`decorative ? { role } : { aria-orientation, role }`)', expect: 'static', jobs: 0,
+    snippet: `export default function C(props: any) {\n  const sem = props.d ? { role: 'none' } : { 'aria-orientation': props.o, role: 'separator' }\n  return <div data-x="1" {...sem} {...props.rest} />\n}`,
+    note: 'R34.66 part 3: one conditional attribute per key; a later own attribute or key wins' },
+  { id: 'b-union-spread-impure-test', category: 'B', authoring: 'a spread of a conditional whose test calls a function fails closed', expect: 'react',
+    snippet: `export default function C(props: any) {\n  return <div {...(props.f() ? { id: 'a' } : { id: 'b' })} />\n}`,
+    note: 'R34.66 part 3: a test the printer would repeat per key must be pure' },
+  { id: 'b-union-spread-component-handler', category: 'B', authoring: 'a conditional spread into a component with an `onClick` key fails closed', expect: 'react',
+    snippet: `function Box({ ...rest }: any) { return <div {...rest} /> }\nexport default function C(props: any) {\n  return <Box {...(props.c ? { onClick: props.f } : {})} />\n}`,
+    note: 'review F1: the hoisted handler would call undefined when the test is false; React attaches none' },
+  { id: 'b-union-spread-component-html', category: 'B', authoring: 'a conditional spread into a component with `dangerouslySetInnerHTML` fails closed (not an error)', expect: 'react',
+    snippet: `function Box({ ...rest }: any) { return <div {...rest} /> }\nexport default function C(props: any) {\n  return <Box {...(props.c ? { dangerouslySetInnerHTML: { __html: props.h } } : {})} />\n}`,
+    note: 'review F1: valid React must stay a fallback, as before the union lane' },
+  { id: 'b-prop-default-module-const', category: 'B', authoring: 'a props default naming module constants (`o = DEFAULT_ORIENTATION`, `DEFAULT = Orientation.Horizontal`) is folded', expect: 'static', jobs: 0,
+    snippet: `const Orientation = { Horizontal: 'horizontal', Vertical: 'vertical' } as const\nconst DEFAULT_ORIENTATION = Orientation.Horizontal\nexport default function C({ o = DEFAULT_ORIENTATION }: any) {\n  return <i data-o={o} />\n}`,
+    note: 'F153b (a): the server template prints the folded value; a written or non-literal constant keeps prop-default-shape' },
+  { id: 'b-prop-default-module-const-call', category: 'B', authoring: 'a props default that is a module constant computed by a call stays prop-default-shape', expect: 'react',
+    snippet: `const F = Math.random()\nexport default function C({ o = F }: any) {\n  return <i data-o={o} />\n}` },
   { id: 'b-forwardref', category: 'B', authoring: 'forwardRef component (default export); `ref={ref}` on a host is dropped', expect: 'static', jobs: 0,
     snippet: `import { forwardRef } from 'react'\nexport default forwardRef<HTMLInputElement, any>(function F(props, ref) { return <input ref={ref} /> })`,
     note: 'S3 R34.63: HTML has no ref, so the render is the same as React\'s for a caller that passes none' },
@@ -459,6 +485,26 @@ export const rows: Row[] = [
     snippet: `import Card from './Card'\nexport default function C() { return <Card data-x="1" id="a" /> }`,
     files: { 'Card.tsx': `export default function Card({ 'data-x': dx, ...rest }: any) { return <div data-y={dx} {...rest} /> }` },
     note: 'F161 prop-quoted-key: the template read `data-x` as a subtraction and every render failed (500); the component is a React island now (the page stays static). Native support is a later F-row' },
+  { id: 'b-props-jinja-own-name', category: 'B', authoring: 'a prop named loop (a name the server template binds itself)', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card loop="x" /> }`,
+    files: { 'Card.tsx': `export default function Card({ loop }: any) { return <p>{loop}</p> }` },
+    note: 'props-pattern N2, prop-jinja-name: loop, range, namespace, caller and self shadow template names; the component is a React island now' },
+  { id: 'b-props-jinja-keyword', category: 'B', authoring: 'a prop whose key is a template keyword, renamed to a local', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card none="x" /> }`,
+    files: { 'Card.tsx': `export default function Card({ none: n }: any) { return <p>{n}</p> }` },
+    note: 'props-pattern N1, prop-jinja-name: the message names a keyword (not "a plain identifier"); the component is a React island now' },
+  { id: 'b-props-body-tdz', category: 'B', authoring: 'a body-pattern name used before the pattern statement', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card a={1} /> }`,
+    files: { 'Card.tsx': `export default function Card(props: any) { const x = a + 1; const { a = 1 } = props; return <p>{x}</p> }` },
+    note: 'F162 prop-pattern-tdz: React throws (TDZ); brust rendered a defined prop. The component is a React island now (so it fails like React)' },
+  { id: 'b-props-jinja-member-loop', category: 'B', authoring: 'props.loop read as a member inside a .map', expect: 'static', jobs: 1,
+    snippet: `import List from './List'\nexport default function C() { return <List items={['a', 'b']} loop="L" /> }`,
+    files: { 'List.tsx': `export default function List(props: any) { return <ul>{props.items.map((i: string) => <li key={i}>{i}:{props.loop}</li>)}</ul> }` },
+    note: 'F168 prop-jinja-name on a member read: the template printed `loop`, which is jinja\'s own loop object inside the for; the component is a React island now' },
+  { id: 'b-props-jinja-member-range', category: 'B', authoring: 'props.range read as a member', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card range="R" /> }`,
+    files: { 'Card.tsx': `export default function Card(props: any) { return <p>{props.range}</p> }` },
+    note: 'F168 prop-jinja-name on a member read: `range` printed as the built-in function; the component is a React island now' },
   { id: 'b-props-body-quoted-key', category: 'B', authoring: 'a quoted hyphen key in a body pattern const { ... } = props', expect: 'static', jobs: 1,
     snippet: `import Card from './Card'\nexport default function C() { return <Card data-x="1" id="a" /> }`,
     files: { 'Card.tsx': `export default function Card(props: any) { const { 'data-x': dx, ...rest } = props; return <div data-y={dx} {...rest} /> }` },
@@ -475,10 +521,10 @@ export const rows: Row[] = [
     snippet: `import Card from './Card'\nexport default function C() { return <Card /> }`,
     files: { 'Card.tsx': `const make = () => 'x'\nexport default function Card({ a = make() }: any) { return <p>{a}</p> }` },
     note: 'F161 prop-default-shape: a call outside the template subset printed as none; now React' },
-  { id: 'b-props-default-const', category: 'B', authoring: 'a destructuring default that reads a module constant', expect: 'static', jobs: 1,
+  { id: 'b-props-default-const', category: 'B', authoring: 'a destructuring default that reads a module constant', expect: 'static', jobs: 0,
     snippet: `import Card from './Card'\nexport default function C() { return <Card /> }`,
     files: { 'Card.tsx': `const D = 'dd'\nexport default function Card({ a = D }: any) { return <p>{a}</p> }` },
-    note: 'F161 prop-default-shape: the constant printed as an unbound template variable (empty); now React' },
+    note: 'F161 prop-default-shape: the constant printed as an unbound template variable (empty); F153b (a): the constant is folded to its value, so the child is static' },
   { id: 'b-props-default-jsx', category: 'B', authoring: 'a destructuring default that is a JSX element', expect: 'static', jobs: 1,
     snippet: `import Card from './Card'\nexport default function C() { return <Card /> }`,
     files: { 'Card.tsx': `export default function Card({ icon = <b>i</b> }: any) { return <p>{icon}</p> }` },
@@ -673,6 +719,56 @@ export const rows: Row[] = [
     snippet: `import Own from './Own'\nexport default function C() { return <Own>x</Own> }`,
     files: { 'Own.tsx': `import { Slot } from './mine'\nexport default function Own({ asChild, ...props }: any) { const Comp = asChild ? Slot.Root : 'span'; return <Comp {...props} /> }`, 'mine.ts': `export const Slot = { Root: 'div' }` },
     note: 'shadcn S1.4 R34.28 (Q5): only radix-ui and @radix-ui/react-slot are recognised; fallback local-component (Own is a React island; the page is static since island-children #203)' },
+
+  // ---- shadcn S1 cn-fold (F149, R34.88-R34.94): constant-input instances whose child job may run once at build ----
+  { id: 'b-cn-fold-literal', category: 'E', authoring: 'a literal variant on a cva + cn component (shadcn Badge)', expect: 'static', jobs: 0, buildEval: 1,
+    snippet: `import { Badge } from './badge'\nexport default function C() { return <div><Badge variant="secondary">New</Badge></div> }`,
+    files: { 'badge.tsx': CN_BADGE },
+    note: 'F149 R34.88/R34.89: a candidate; `brust build` runs the job once and prints the class (R34.90)' },
+  { id: 'b-cn-fold-omitted', category: 'E', authoring: 'a cva + cn component with no props', expect: 'static', jobs: 0, buildEval: 1,
+    snippet: `import { Badge } from './badge'\nexport default function C() { return <div><Badge>New</Badge></div> }`,
+    files: { 'badge.tsx': CN_BADGE },
+    note: 'F149 R34.88: an omitted prop is an absent input' },
+  { id: 'b-cn-fold-module-const', category: 'E', authoring: 'a variant from a module const', expect: 'static', jobs: 0, buildEval: 1,
+    snippet: `import { Badge } from './badge'\nconst v = 'outline'\nexport default function C() { return <div><Badge variant={v}>New</Badge></div> }`,
+    files: { 'badge.tsx': CN_BADGE },
+    note: 'F149 R34.88: the call-site literal folds with the module consts (the constant folder)' },
+  { id: 'b-cn-fold-imported-cva', category: 'E', authoring: 'buttonVariants imported from a sibling that also imports radix-ui', expect: 'static', jobs: 0, buildEval: 1,
+    snippet: `import { PageLink } from './link'\nexport default function C() { return <nav><PageLink href="/2">2</PageLink></nav> }`,
+    files: { 'button.tsx': `import { Slot } from 'radix-ui'\nimport { cva } from 'class-variance-authority'\nexport const buttonVariants = cva('inline-flex', { variants: { size: { icon: 'size-9' } } })\nexport function Button(props: any) { return <Slot.Root {...props} /> }`, 'link.tsx': `import { cn } from 'cn'\nimport { buttonVariants } from './button'\nexport function PageLink({ className, size = 'icon', ...props }: any) { return <a className={cn(buttonVariants({ size }), className)} {...props} /> }` },
+    note: 'F149 R34.89 rule 3: the cva config is re-emitted folded for the evaluation, so radix-ui never loads at build' },
+  { id: 'b-cn-fold-lib-utils', category: 'E', authoring: 'the classic shadcn lib/utils cn (clsx + tailwind-merge)', expect: 'static', jobs: 0, buildEval: 1,
+    snippet: `import { Note } from './note'\nexport default function C() { return <div><Note>x</Note></div> }`,
+    files: { 'lib/utils.ts': `import { clsx, type ClassValue } from 'clsx'\nimport { twMerge } from 'tailwind-merge'\nexport function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }`, 'note.tsx': `import { cn } from './lib/utils'\nexport function Note({ className, ...props }: any) { return <p className={cn('text-sm', className)} {...props} /> }` },
+    note: 'F149 R34.89 rule 4: a pure relative module whose imports are allowlisted is bundled whole' },
+  { id: 'b-cn-fold-pure-helper', category: 'E', authoring: 'a pure helper label(tone) from a relative module', expect: 'static', jobs: 0, buildEval: 1,
+    snippet: `import { Note } from './note'\nexport default function C() { return <div><Note tone="warn" /></div> }`,
+    files: { 'tone.ts': `export function label(tone: string) { return tone === 'warn' ? 'text-amber-600' : 'text-slate-600' }`, 'note.tsx': `import { label } from './tone'\nexport function Note({ tone }: any) { return <p className={label(tone)}>n</p> }` },
+    note: 'F149 ruling Q3: any constant-input instance job with allowed code, not only class composition' },
+  { id: 'b-cn-fold-prop-input', category: 'E', authoring: 'a variant from the page props', expect: 'static', jobs: 0, buildEval: 0,
+    snippet: `import { Badge } from './badge'\nexport default function C({ v }: any) { return <div><Badge variant={v}>New</Badge></div> }`,
+    files: { 'badge.tsx': CN_BADGE },
+    note: 'F149 R34.92: the value differs per request, the job stays' },
+  { id: 'b-cn-fold-other-package', category: 'E', authoring: 'a child job that calls a package off the allowlist', expect: 'static', jobs: 0, buildEval: 0, evalWhy: '`tones`',
+    snippet: `import { Chip } from './chip'\nexport default function C() { return <div><Chip /></div> }`,
+    files: { 'chip.tsx': `import { tone } from 'tones'\nimport { cn } from 'cn'\nexport function Chip({ className }: any) { return <i className={cn(tone, className)} /> }` },
+    note: 'F149 R34.92 / ruling Q2: only cn, clsx, tailwind-merge and class-variance-authority run at build' },
+  { id: 'b-cn-fold-alias-import', category: 'E', authoring: 'cn imported through a tsconfig alias (@/lib/utils)', expect: 'static', jobs: 0, buildEval: 0, evalWhy: '`@/lib/utils`',
+    snippet: `import { Chip } from './chip'\nexport default function C() { return <div><Chip /></div> }`,
+    files: { 'chip.tsx': `import { cn } from '@/lib/utils'\nexport function Chip({ className }: any) { return <i className={cn('chip', className)} /> }` },
+    note: 'F149 ruling Q5: with no tsconfig paths (brustc alone) the alias reads as a package; `brust build` resolves it once F159 lands' },
+  { id: 'b-cn-fold-useid', category: 'E', authoring: 'a child with useId and a cn class', expect: 'static', jobs: 0, buildEval: 0, evalWhy: 'useId',
+    snippet: `import { Field } from './field'\nexport default function C() { return <div><Field /></div> }`,
+    files: { 'field.tsx': `import { useId } from 'react'\nimport { cn } from 'cn'\nexport function Field({ className }: any) { const id = useId(); return <input id={id} className={cn('f', className)} /> }` },
+    note: 'F149 R34.92: ids are per request' },
+  { id: 'b-cn-fold-row-reading', category: 'E', authoring: 'a cva component reading each row of a constant list', expect: 'static', jobs: 0, buildEval: 0,
+    snippet: `import { Badge } from './badge'\nconst ROWS = [{ v: 'secondary' }, { v: 'outline' }]\nexport default function C() { return <div>{ROWS.map((r) => <Badge key={r.v} variant={r.v}>x</Badge>)}</div> }`,
+    files: { 'badge.tsx': CN_BADGE },
+    note: 'F149 ruling Q4: per-row instances (per-row-literal) keep their job in v1' },
+  { id: 'b-cn-fold-denied-global', category: 'E', authoring: 'a class computed from Date in the child module', expect: 'static', jobs: 0, buildEval: 0, evalWhy: '`Date`',
+    snippet: `import { Chip } from './chip'\nexport default function C() { return <div><Chip /></div> }`,
+    files: { 'chip.tsx': `import { cn } from 'cn'\nconst stamp = Date.now() > 0 ? 'a' : 'b'\nexport function Chip({ className }: any) { return <i className={cn(stamp, className)} /> }` },
+    note: 'F149 R34.92: time differs between runs; the L2 denylist applies' },
 
   // ---- shadcn S3 package source (F153c, R34.61/R34.62/R34.65): stub packages compiled from their source map ----
   { id: 'b-pkg-leaf-pure', category: 'B', authoring: 'a package forwardRef component over Radix Primitive.div, compiled from its source', expect: 'static', jobs: 0,

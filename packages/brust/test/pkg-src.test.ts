@@ -2,7 +2,7 @@
 // written under `.brust/pkg-src`; every package that cannot be proven is refused with its reason (the compiler then keeps
 // its React island). Stub packages, so the rules do not depend on a release.
 import { afterAll, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { integrityGaps, PKG_SRC_DIR, preparePackageSources, skeleton } from '../src/build/pkg-src'
@@ -146,4 +146,30 @@ test('review F1: a hostile package.json name or version never moves a write out 
     expect(realpathSync(join(root, entry!)).startsWith(join(root, PKG_SRC_DIR) + '/')).toBe(true)
   }
   expect(existsSync(outside)).toBe(false)
+})
+
+test('a .brust or .brust/pkg-src that links out of the app is refused before anything is removed (F163)', () => {
+  for (const linked of ['pkg-src', 'brust']) {
+    const root = app()
+    const outside = app()
+    put(join(outside, 'sentinel.txt'), 'keep me')
+    put(join(outside, 'pkg-src', 'sentinel.txt'), 'keep me too')
+    if (linked === 'brust') {
+      symlinkSync(outside, join(root, '.brust'))
+    } else {
+      mkdirSync(join(root, '.brust'), { recursive: true })
+      symlinkSync(join(outside, 'pkg-src'), join(root, PKG_SRC_DIR))
+    }
+    expect(() => preparePackageSources(root, [])).toThrow('resolves outside the app root')
+    expect(readFileSync(join(outside, 'sentinel.txt'), 'utf8')).toBe('keep me')
+    expect(readFileSync(join(outside, 'pkg-src', 'sentinel.txt'), 'utf8')).toBe('keep me too')
+  }
+  // A dangling link is refused as well, and a plain directory still rebuilds.
+  const root = app()
+  mkdirSync(join(root, '.brust'), { recursive: true })
+  symlinkSync(join(root, 'nowhere'), join(root, PKG_SRC_DIR))
+  expect(() => preparePackageSources(root, [])).toThrow('resolves outside the app root')
+  rmSync(join(root, PKG_SRC_DIR), { force: true })
+  mkdirSync(join(root, PKG_SRC_DIR), { recursive: true })
+  expect(() => preparePackageSources(root, [])).not.toThrow()
 })

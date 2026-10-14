@@ -16,7 +16,7 @@
 // names, i.e. fidelity, not a security boundary: the author controls both files) is REFUSED, with the reason;
 // the compiler then renders its components as React islands of the package export, exactly as before.
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { BuildError } from './errors'
 
@@ -42,6 +42,14 @@ export function packageDirOf(file: string): string | undefined {
 
 /** Where the sources go, relative to the app root. */
 export const PKG_SRC_DIR = '.brust/pkg-src'
+
+const lstatSyncOrNull = (p: string) => {
+  try {
+    return lstatSync(p)
+  } catch {
+    return null
+  }
+}
 
 /** Never followed: the React runtime itself, brust, and platform modules. */
 const NEVER = (spec: string) =>
@@ -312,9 +320,18 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
  */
 export function preparePackageSources(appRoot: string, specs: Iterable<string>): PackageSources {
   const root = realpathSync(appRoot)
+  // BEFORE anything is removed (Mellow N1, F163): neither `.brust` nor `.brust/pkg-src` may be a link out of the app, or
+  // the recursive remove below would delete whatever the link points at.
+  for (const p of [dirname(PKG_SRC_DIR), PKG_SRC_DIR].map((d) => join(root, d))) {
+    if (!lstatSyncOrNull(p)) continue
+    let real = '' // a dangling link resolves to nothing: refused as well
+    try {
+      real = realpathSync(p)
+    } catch {}
+    if (!`${real}${sep}`.startsWith(root + sep)) throw new BuildError('package-source', `${relative(root, p)} resolves outside the app root (a link?); remove it and build again`)
+  }
   rmSync(join(root, PKG_SRC_DIR), { recursive: true, force: true })
   mkdirSync(join(root, PKG_SRC_DIR), { recursive: true })
-  // The directory this build owns must itself be inside the app (`.brust` is not a link out of it).
   if (!realpathSync(join(root, PKG_SRC_DIR)).startsWith(root + sep)) throw new BuildError('package-source', `${PKG_SRC_DIR} resolves outside the app root (a link?); remove it and build again`)
   const out: PackageSources = { scopes: {}, refused: {}, dirs: {} }
   writtenDirs.clear()

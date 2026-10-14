@@ -4,11 +4,18 @@
 // values, a size cap) and the results go back to the compiler as slot -> literal overrides: the
 // slot, and a job left with no slots, disappear. A pure helper that fails keeps its job with a
 // `build-eval` warning; a failing `buildTime(…)` is a build error (the user asked for it).
+//
+// F149 (R34.90): an inlined instance whose child job reads only constants and allowed code
+// (`ir.build_eval_instances`) runs that child's job module, the file the worker loads, once per distinct
+// input in the same sandbox; its relative imports the compiler re-emitted folded (`stubs`) are served from
+// that code. The outputs go back as `<instance key>#<slot>` values: the instance and its record disappear.
+import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BunPlugin } from 'bun'
 import { type SourceOf, PRODUCTION, sourceDirPlugin, stage, write } from './bundle'
 import type { Compiled } from './compile'
 import { BuildError } from './errors'
+import { serverOnlyEmptyPlugin } from './server-only'
 
 const V1 = { timeoutMs: 2_000, capBytes: 64 * 1024 }
 const BUILD_TIME = { timeoutMs: 10_000, capBytes: 256 * 1024 }
@@ -143,9 +150,9 @@ function corePlugin(appRoot: string): BunPlugin {
   }
 }
 
-/** Evaluates every build-time slot of `compiled`; returns `key -> encoded JSON value` for those that
- * succeeded. Throws a `BuildError` for a failing `buildTime(…)`; logs `warning build-eval` for a
- * pure helper that fails (its job stays). */
+/** Evaluates every build-time slot and every build-evaluated instance of `compiled`; returns `key -> encoded
+ * JSON value` for those that succeeded. Throws a `BuildError` for a failing `buildTime(…)`; logs
+ * `warning build-eval` for a pure helper or an instance that fails (its job stays). */
 export async function evaluateBuildSlots(
   dist: string,
   compiled: Map<string, Compiled>,
@@ -153,8 +160,21 @@ export async function evaluateBuildSlots(
   appRoot: string,
   log: (s: string) => void,
 ): Promise<Record<string, unknown>> {
-  // `BRUST_BUILD_EVAL=0` turns evaluation off (every slot stays a job): the reference for dual runs.
+  // `BRUST_BUILD_EVAL=0` turns evaluation off (every slot and instance stays a job): the reference for dual runs.
   if (process.env.BRUST_BUILD_EVAL === '0') return {}
+  const slots = await evaluateSlots(dist, compiled, sourceOf, appRoot, log)
+  const instances = await evaluateInstances(dist, compiled, sourceOf, appRoot, log)
+  return { ...slots, ...instances }
+}
+
+/** L2: the slots of `ir.build_eval`. */
+async function evaluateSlots(
+  dist: string,
+  compiled: Map<string, Compiled>,
+  sourceOf: SourceOf,
+  appRoot: string,
+  log: (s: string) => void,
+): Promise<Record<string, unknown>> {
   const cands: Candidate[] = []
   const imports: string[] = []
   const entries: string[] = []
@@ -180,7 +200,7 @@ export async function evaluateBuildSlots(
     target: 'bun',
     format: 'esm',
     define: PRODUCTION,
-    plugins: [corePlugin(appRoot), sourceDirPlugin(sourceOf, appRoot)],
+    plugins: [serverOnlyEmptyPlugin(), corePlugin(appRoot), sourceDirPlugin(sourceOf, appRoot)],
   })
   if (!res.success) throw new BuildError('build-eval', `cannot bundle the build-time evaluation: ${res.logs.map(String).join('\n')}`)
   const bundle = join(dist, '.stage', 'eval.js')
@@ -196,4 +216,104 @@ export async function evaluateBuildSlots(
     else log(`warning build-eval ${c.where} not evaluated at build, the job stays: ${r.reason}`)
   })
   return values
+}
+
+type EvalInstance = NonNullable<Compiled['ir']['build_eval_instances']>[number]
+
+/** Serves a relative import of a staged job module from the stub the compiler printed for it (rule 3). */
+function stubPlugin(stubs: Map<string, Map<string, string>>): BunPlugin {
+  return {
+    name: 'brust-eval-stub',
+    setup(b) {
+      b.onResolve({ filter: /^\.\.?\// }, (a) => {
+        const file = stubs.get(a.importer)?.get(a.path)
+        return file === undefined ? undefined : { path: file }
+      })
+    },
+  }
+}
+
+/** F149 (R34.90): runs each distinct `(child, inputs)` of `ir.build_eval_instances` through the child's own job
+ * module (`serverTs`, what the worker loads) once; returns `<key>#<slot> -> encoded value` for every instance
+ * whose evaluation succeeded with all of its outputs. A failure is a warning and the instance keeps its job. */
+async function evaluateInstances(
+  dist: string,
+  compiled: Map<string, Compiled>,
+  sourceOf: SourceOf,
+  appRoot: string,
+  log: (s: string) => void,
+): Promise<Record<string, unknown>> {
+  const groups = new Map<string, { inst: EvalInstance; where: string; keys: string[] }>()
+  const modules = new Map<string, string>()
+  const stubs = new Map<string, Map<string, string>>()
+  const imports: string[] = []
+  for (const c of compiled.values()) {
+    for (const inst of c.ir.build_eval_instances ?? []) {
+      const child = compiled.get(inst.child_id)
+      if (child?.serverTs === undefined) continue
+      if (!modules.has(child.id)) {
+        const file = join(dist, '.stage', 'eval', `${child.id}.job.ts`)
+        write(file, child.serverTs)
+        stage(sourceOf, file, child)
+        const served = new Map<string, string>()
+        for (const [i, st] of (inst.stubs ?? []).entries()) {
+          const stub = join(dist, '.stage', 'eval', 'stubs', child.id, `${i}.ts`)
+          write(stub, st.code)
+          stage(sourceOf, stub, child)
+          served.set(st.source, stub)
+        }
+        if (served.size > 0) {
+          stubs.set(file, served)
+          stubs.set(realpathSync(file), served)
+        }
+        modules.set(child.id, `j${modules.size}`)
+        imports.push(`import { precompute as ${modules.get(child.id)} } from ${JSON.stringify(file)}`)
+      }
+      const id = `${inst.child_id}\0${JSON.stringify(inst.inputs)}`
+      const where = `${c.file.slice(appRoot.length + 1)}:${inst.line}:${inst.col}`
+      const g = groups.get(id)
+      if (g) g.keys.push(inst.key)
+      else groups.set(id, { inst, where, keys: [inst.key] })
+    }
+  }
+  if (groups.size === 0) return {}
+  const list = [...groups.values()]
+  const entry = join(dist, '.stage', 'eval-instances-entry.ts')
+  write(entry, `${imports.join('\n')}\nexport default [\n${list.map((g) => `  { fn: () => ${modules.get(g.inst.child_id)}(${JSON.stringify(g.inst.inputs)}) },`).join('\n')}\n]\n`)
+  const res = await Bun.build({
+    entrypoints: [entry],
+    target: 'bun',
+    format: 'esm',
+    define: PRODUCTION,
+    plugins: [stubPlugin(stubs), sourceDirPlugin(sourceOf, appRoot)],
+  })
+  if (!res.success) {
+    log(`warning build-eval the instance jobs could not be bundled for build evaluation, they stay per-request jobs: ${res.logs.map(String).join(' | ').split('\n')[0]}`)
+    return {}
+  }
+  const bundle = join(dist, '.stage', 'eval-instances.js')
+  write(bundle, await res.outputs[0]!.text())
+  const runner = join(dist, '.stage', 'eval-run.js')
+  write(runner, RUNNER)
+  const results = await runAll(bundle, runner, list.map((g) => ({ key: g.inst.key, bt: false, where: g.where })), appRoot)
+  const values: Record<string, unknown> = {}
+  results.forEach((r, i) => {
+    const g = list[i]!
+    const pairs = r.ok ? outputsOf(r.value) : undefined
+    const missing = pairs && g.inst.outputs.find((o) => !pairs.has(o))
+    if (!r.ok || !pairs || missing !== undefined) {
+      const reason = !r.ok ? r.reason : !pairs ? 'the job did not return an object' : `the job did not return \`${missing}\``
+      log(`warning build-eval ${g.where} <${g.inst.child_id}> not evaluated at build, its job stays: ${reason}`)
+      return
+    }
+    for (const key of g.keys) for (const o of g.inst.outputs) values[`${key}#${o}`] = pairs.get(o)
+  })
+  return values
+}
+
+/** The slots of an encoded job result (`{ $: [[slot, value], …] }`, see the runner's `enc`). */
+function outputsOf(v: unknown): Map<string, unknown> | undefined {
+  const pairs = (v as { $?: unknown } | null)?.$
+  if (!Array.isArray(pairs)) return undefined
+  return new Map(pairs.map((p) => [String((p as unknown[])[0]), (p as unknown[])[1]]))
 }

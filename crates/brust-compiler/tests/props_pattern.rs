@@ -49,17 +49,10 @@ fn the_two_broken_shapes_fall_back_with_named_codes() {
     }
 }
 
-/// The same loss of meaning in neighbouring shapes: a call of a local function, a module constant, JSX and `typeof`.
+/// The same loss of meaning in neighbouring shapes: a call of a local function, JSX and `typeof`. (A module constant is folded, F153b: see `a_module_constant_default_is_folded`.)
 #[test]
 fn a_default_the_template_cannot_evaluate_falls_back() {
-    for f in [
-        "call-default.tsx",
-        "p1.tsx",
-        "p2.tsx",
-        "p4.tsx",
-        "p6.tsx",
-        "p7.tsx",
-    ] {
+    for f in ["call-default.tsx", "p2.tsx", "p4.tsx", "p6.tsx", "p7.tsx"] {
         let (ir, jinja) = compile(f);
         assert!(
             rules(&ir).contains(&"prop-default-shape"),
@@ -69,6 +62,19 @@ fn a_default_the_template_cannot_evaluate_falls_back() {
         assert!(is_react(&ir), "{f}: {:?}", ir.tier);
         assert!(!jinja.contains("else none"), "{f}: {jinja}");
     }
+}
+
+/// F153b: `const D = 'dd'` as a default is the value `dd` in the template (it printed as an unbound name before).
+#[test]
+fn a_module_constant_default_is_folded() {
+    let (ir, jinja) = compile("p1.tsx");
+    assert!(
+        !is_react(&ir) && rules(&ir).is_empty(),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
+    assert!(jinja.contains("\"dd\""), "{jinja}");
 }
 
 /// Defaults the template prints correctly keep their tier: literals, an earlier prop, supported calls, an arrow, a rename.
@@ -83,4 +89,95 @@ fn printable_defaults_and_renames_still_compile() {
             ir.diagnostics
         );
     }
+}
+
+/// F161 follow-up (props-pattern N1, N2): a prop named like a template keyword or like a name the template binds itself
+/// falls back with `prop-jinja-name`, and the message says which of the two it is (not "not a plain identifier").
+#[test]
+fn a_prop_named_like_a_template_name_falls_back_with_its_own_code() {
+    for (f, key, words) in [
+        ("jn-loop.tsx", "loop", "uses itself"),
+        ("jn-range.tsx", "range", "uses itself"),
+        ("jn-namespace.tsx", "namespace", "uses itself"),
+        ("jn-caller.tsx", "caller", "uses itself"),
+        ("jn-self.tsx", "self", "uses itself"),
+        ("jn-none.tsx", "none", "keyword"),
+    ] {
+        let (ir, _) = compile(f);
+        let d = ir
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "prop-jinja-name")
+            .unwrap_or_else(|| panic!("{f}: {:?}", ir.diagnostics));
+        assert!(
+            d.message.contains(&format!("`{key}`")) && d.message.contains(words),
+            "{f}: {}",
+            d.message
+        );
+        assert!(
+            !d.message.contains("plain identifier"),
+            "{f}: {}",
+            d.message
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+    // The quoted key keeps its own code and wording.
+    let (ir, _) = compile("quoted-key.tsx");
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "prop-quoted-key")
+        .expect("quoted");
+    assert!(d.message.contains("plain identifier"), "{}", d.message);
+}
+
+/// F162: a name of a body pattern used before the pattern statement is a TDZ error in React; it falls back instead of
+/// rendering a defined prop. The same pattern in order (`bp-ok.tsx`) still compiles.
+#[test]
+fn a_body_pattern_name_used_before_the_pattern_falls_back() {
+    for f in ["tdz.tsx", "tdz-closure.tsx"] {
+        let (ir, _) = compile(f);
+        assert!(
+            rules(&ir).contains(&"prop-pattern-tdz"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+}
+
+/// F168 (hardening-batch, option b): the same names READ as a member (`props.loop`, also inside a `.map`, or `rest.loop`)
+/// fall back with `prop-jinja-name`: the template printed the bare name, which jinja's own loop object / function shadows.
+#[test]
+fn a_template_name_read_as_a_member_falls_back() {
+    for (f, key) in [
+        ("mem-loop.tsx", "loop"),
+        ("mem-range.tsx", "range"),
+        ("mem-namespace.tsx", "namespace"),
+        ("mem-caller.tsx", "caller"),
+        ("mem-self.tsx", "self"),
+        ("mem-rest.tsx", "loop"),
+    ] {
+        let (ir, _) = compile(f);
+        let d = ir
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "prop-jinja-name")
+            .unwrap_or_else(|| panic!("{f}: {:?}", ir.diagnostics));
+        assert!(
+            d.message.contains(&format!("`{key}`")),
+            "{f}: {}",
+            d.message
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+    // A member read of an ordinary name inside the same `.map` is untouched.
+    let (ir, jinja) = compile("mem-ok.tsx");
+    assert!(
+        !is_react(&ir) && rules(&ir).is_empty(),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
+    assert!(jinja.contains("label"), "{jinja}");
 }

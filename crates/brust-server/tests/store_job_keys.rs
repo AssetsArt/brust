@@ -52,13 +52,12 @@ fn coarse_input_hashes_the_whole_snapshot() {
 }
 
 #[test]
-fn absent_snapshot_projects_null() {
+fn absent_snapshot_projects_absent() {
+    // F149/F151 (cn-fold review F1): a store the snapshot lacks is absent, never `null`; a job reads it through
+    // `props.__store?.[name] ?? {}` (lower/common.rs `store_server_js`), so its value is `undefined` as on the client.
     let p = Projection::new(&["__store.cart.count".to_string(), "unit".to_string()]).unwrap();
     let v = p.eval(&Node::from(json!({"unit": "kg"})), None).unwrap();
-    assert_eq!(
-        v,
-        Node::from(json!({"unit": "kg", "__store": {"cart": {"count": null}}}))
-    );
+    assert_eq!(v, Node::from(json!({"unit": "kg"})));
     let absent = key(FINE, json!({"unit": "kg"}));
     let zero = key(
         FINE,
