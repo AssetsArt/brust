@@ -124,3 +124,18 @@ fn a_prop_named_like_a_template_name_falls_back_with_its_own_code() {
         .expect("quoted");
     assert!(d.message.contains("plain identifier"), "{}", d.message);
 }
+
+/// F162: a name of a body pattern used before the pattern statement is a TDZ error in React; it falls back instead of
+/// rendering a defined prop. The same pattern in order (`bp-ok.tsx`) still compiles.
+#[test]
+fn a_body_pattern_name_used_before_the_pattern_falls_back() {
+    for f in ["tdz.tsx", "tdz-closure.tsx"] {
+        let (ir, _) = compile(f);
+        assert!(
+            rules(&ir).contains(&"prop-pattern-tdz"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+}
