@@ -4,6 +4,7 @@ Scaffold a [brust](https://github.com/AssetsArt/brust) v2 app.
 
 ```bash
 bun create @brust/app my-app      # --template blank (default) | pokedex
+bun create @brust/app my-app --shadcn=button,card,dialog   # also installs and runs `brust shadcn init` (needs @brust/core 2.0.0-alpha.11+)
 cd my-app && bun install
 bun run dev                       # http://127.0.0.1:1337
 ```

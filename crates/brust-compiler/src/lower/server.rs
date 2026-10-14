@@ -89,6 +89,7 @@ fn plan(ir: &ComponentIR) -> Option<Plan<'_>> {
         roots.extend(s.guards.iter().map(|g| &g.1));
     }
     roots.extend(inits.iter().flatten());
+    roots.extend(fused_defaults(ir, &f));
     let mut reached = f.reach(&roots);
     for (_, name) in &slot_of_const {
         if f.derived.contains_key(name) {
@@ -168,6 +169,7 @@ pub fn job_reads(ir: &ComponentIR) -> Option<JobReads> {
     }
     roots.extend(p.inits.iter().flatten());
     roots.extend(p.derived.iter().map(|d| d.1));
+    roots.extend(fused_defaults(ir, &p.f));
     for r in &roots {
         super::common::visit_idents(r, &mut |name, kind| {
             if matches!(kind, IdentKind::Global | IdentKind::Unknown) {
@@ -226,6 +228,20 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
         ir.id
     );
     out.push_str(&import_lines(&imports));
+    // R34.96: the job modules of the fused children, one import per child id (the bundler resolves
+    // `brust-job:<id>` to that component's own job module).
+    let fused_mods: Vec<&str> = ir.fused.iter().fold(Vec::new(), |mut v, f| {
+        if !v.contains(&f.child_id.as_str()) {
+            v.push(f.child_id.as_str());
+        }
+        v
+    });
+    for (i, id) in fused_mods.iter().enumerate() {
+        out.push_str(&format!(
+            "import {{ precompute as __fj{i} }} from {}\n",
+            js_string(&format!("brust-job:{id}"))
+        ));
+    }
     out.push_str(&module);
     out.push_str(&format!(
         "export const inputs = [{}] as const\n",
@@ -318,7 +334,11 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
                 None => item.clone(),
             };
             js = guard(
-                format!("({}).map(({params}) => {js})", server_js(src, &f)),
+                format!(
+                    "({}).map(({params}) => {})",
+                    server_js(src, &f),
+                    super::common::arrow_body(&js)
+                ),
                 level,
             );
         }
@@ -328,15 +348,117 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
         entries.push((slot_num(slot), format!("{slot}: {name}")));
     }
     entries.sort_by_key(|e| e.0);
+    let own = entries
+        .into_iter()
+        .map(|e| e.1)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if ir.fused.is_empty() {
+        out.push_str(&format!("  return {{ {own} }}\n}}\n"));
+        return Some(out);
+    }
+    // R34.96: each fused child's job runs after this component's own slots, with the inputs the
+    // analysis bound; its slots come back under this job's output names.
+    out.push_str(&format!("  const __own = {{ {own} }}\n"));
+    // A prop the call site reads through this component's own destructuring default (`orientation =
+    // "vertical"`) gets that default when absent, as the local the JSX read does.
+    let p_default = |root: &str| f.prop_defaults.get(root).map(|d| server_js(d, &f));
+    let mut fused_out: Vec<String> = Vec::new();
+    for (n, f) in ir.fused.iter().enumerate() {
+        let m = fused_mods.iter().position(|id| *id == f.child_id)?;
+        out.push_str(&format!(
+            "  const __f{n} = __fj{m}({{ {} }})\n",
+            fused_args(&f.inputs, &|root| p_default(root))
+        ));
+        for (slot, name) in &f.outputs {
+            fused_out.push(format!("{}: __f{n}[{}]", js_string(name), js_string(slot)));
+        }
+    }
     out.push_str(&format!(
-        "  return {{ {} }}\n}}\n",
-        entries
-            .into_iter()
-            .map(|e| e.1)
-            .collect::<Vec<_>>()
-            .join(", ")
+        "  return {{ ...__own, {} }}\n}}\n",
+        fused_out.join(", ")
     ));
     Some(out)
+}
+
+/// The destructuring defaults of this component's props that a fused child's `Prop` input reads
+/// (R34.96): the job prints them, so they are roots too (their imports, module names, globals).
+fn fused_defaults<'a>(ir: &ComponentIR, f: &'a Facts<'_>) -> Vec<&'a RawExpr> {
+    let mut out = Vec::new();
+    for fi in &ir.fused {
+        for v in fi.inputs.values() {
+            if let crate::ir::FusedInput::Prop { path } = v {
+                let root = path.split(['.', '[']).next().unwrap_or(path);
+                if let Some(d) = f.prop_defaults.get(root) {
+                    out.push(d);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The props object a fused child's job is called with (R34.96): an `Undefined` input is left out, so
+/// the child's destructuring default applies (A3); a literal keeps `null`; a prop reads this
+/// component's props as the call site's JSX did; a slot is this component's own result.
+fn fused_args(
+    inputs: &std::collections::BTreeMap<String, crate::ir::FusedInput>,
+    default: &dyn Fn(&str) -> Option<String>,
+) -> String {
+    use crate::ir::FusedInput;
+    inputs
+        .iter()
+        .filter_map(|(k, v)| {
+            let js = match v {
+                FusedInput::Undefined => return None,
+                FusedInput::Literal { value } => {
+                    serde_json::to_string(value).unwrap_or_else(|_| "undefined".into())
+                }
+                FusedInput::Slot { name } => format!("__own[{}]", js_string(name)),
+                FusedInput::Prop { path } => props_path_js(path, default),
+            };
+            Some(format!("{}: {js}", js_string(k)))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `config.size` / `items[0].id` as a read of the job's `props` (`props["config"]["size"]`): every
+/// segment is printed as a string or number index, never as code.
+fn props_path_js(path: &str, default: &dyn Fn(&str) -> Option<String>) -> String {
+    let mut js = String::from("props");
+    for (i, part) in path.split('.').enumerate() {
+        // The root: `props["p"]`, or with a destructuring default `(props["p"] === undefined ? (d) : props["p"])`.
+        if i == 0 {
+            let (name, rest) = part.split_once('[').map_or((part, ""), |(n, r)| (n, r));
+            let read = format!("props[{}]", js_string(name));
+            js = match default(name) {
+                Some(d) => format!("({read} === undefined ? ({d}) : {read})"),
+                None => read,
+            };
+            index_js(&mut js, rest);
+            continue;
+        }
+        let (name, rest) = part.split_once('[').map_or((part, ""), |(n, r)| (n, r));
+        if !name.is_empty() {
+            js.push_str(&format!("[{}]", js_string(name)));
+        }
+        index_js(&mut js, rest);
+    }
+    js
+}
+
+/// The `[0][1]` tail of a path segment (`rest` is what follows its first `[`).
+fn index_js(js: &mut String, rest: &str) {
+    for idx in rest.split('[') {
+        let idx = idx.trim_end_matches(']');
+        if !idx.is_empty() {
+            match idx.parse::<u64>() {
+                Ok(i) => js.push_str(&format!("[{i}]")),
+                Err(_) => js.push_str(&format!("[{}]", js_string(idx))),
+            }
+        }
+    }
 }
 
 /// The build-time evaluation module (L2): one thunk per `ir.build_eval` slot, keyed by

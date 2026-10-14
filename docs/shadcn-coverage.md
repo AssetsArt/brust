@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | pages with no worker call | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|---|
-| 64 | 58 | 1 | 5 | 45 | 22 | 19 | 0 / 87 / 240 KB |
+| 64 | 58 | 1 | 5 | 38 | 25 | 20 | 0 / 87 / 240 KB |
 
 ### Analysis-only (0 of 64 pages refused)
 
@@ -37,29 +37,29 @@ One line per thing that keeps a row or a library component off the static/native
 | # | Blocker | Kind | Classification | Measured rows | Analysis-only rows | App components | Library components | Why |
 |---|---|---|---|---|---|---|---|---|
 | 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 38 | 0 | 137 | 151 | `external-component` diagnostic (docs/react-coverage.md) |
-| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 34 | 0 | 126 | 180 | `spread-props` diagnostic (docs/react-coverage.md) |
-| 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 33 | 0 | 90 | 176 | `island-prop` diagnostic (docs/react-coverage.md) |
+| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 33 | 0 | 125 | 180 | `spread-props` diagnostic (docs/react-coverage.md) |
+| 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 89 | 176 | `island-prop` diagnostic (docs/react-coverage.md) |
 | 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 19 | 0 | 20 | 55 | `island-children` diagnostic (docs/react-coverage.md) |
-| 5 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 10 | 0 | 11 | 0 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
-| 6 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 13 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
+| 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 13 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
+| 6 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 0 | `nested-instance` diagnostic (docs/react-coverage.md) |
 | 7 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 154 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 8 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 36 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 9 | fallback:context-island | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 5 | 0 | `context-island` diagnostic (docs/react-coverage.md) |
 | 10 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `child-component` diagnostic (docs/react-coverage.md) |
 | 11 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `jsx-expression` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 5 | `hook-shape` diagnostic (docs/react-coverage.md) |
-| 13 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
-| 14 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 36 | `body-shape` diagnostic (docs/react-coverage.md) |
-| 15 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 23 | `prop-pattern` diagnostic (docs/react-coverage.md) |
-| 16 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 10 | `context-state` diagnostic (docs/react-coverage.md) |
-| 17 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `local-component` diagnostic (docs/react-coverage.md) |
-| 18 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `ref-shape` diagnostic (docs/react-coverage.md) |
-| 19 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
-| 20 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
-| 21 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
-| 22 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `nested-instance` diagnostic (docs/react-coverage.md) |
-| 23 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
-| 24 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
+| 13 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
+| 14 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
+| 15 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 36 | `body-shape` diagnostic (docs/react-coverage.md) |
+| 16 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 23 | `prop-pattern` diagnostic (docs/react-coverage.md) |
+| 17 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 10 | `context-state` diagnostic (docs/react-coverage.md) |
+| 18 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `local-component` diagnostic (docs/react-coverage.md) |
+| 19 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `ref-shape` diagnostic (docs/react-coverage.md) |
+| 20 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
+| 21 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
+| 22 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
+| 23 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
+| 24 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
 | 25 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
 | 26 | rest-props spread | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 398 | b-spread-child / a-spread-host: fallback:spread-props |
 | 27 | forwardRef | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 286 | b-forwardref: fallback:default-export-shape |
@@ -114,7 +114,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | alert-dialog | measured | static | 1 | 22 (18) | 100 | 1 | external-component, island-children, island-prop, slot-child-component, spread-props | built |
 | aspect-ratio | measured | static | 0 | 4 (0) | 0 | 1 | — | built |
 | attachment | measured | static | 0 | 7 (0) | 0 | 0 | — | built |
-| avatar | measured | static | 2 | 8 (5) | 87 | 2 | external-component, instance-prop-path, island-prop, spread-props | built |
+| avatar | measured | static | 2 | 8 (5) | 87 | 2 | external-component, instance-prop-path, island-prop, nested-instance, spread-props | built |
 | badge | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | badge-aslink | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | breadcrumb | measured | static | 0 | 7 (0) | 0 | 2 | external-component | built |
@@ -122,26 +122,26 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | button | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | button-alias | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | button-aschild | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
-| button-group | measured | static | 1 | 7 (2) | 86 | 1 | instance-prop-path, island-prop, spread-props | built |
+| button-group | measured | static | 0 | 7 (0) | 0 | 1 | — | built |
 | calendar | measured | static | 1 | 3 (2) | 107 | 1 | external-component, island-prop, prop-pattern, spread-props | built |
 | card | measured | static | 0 | 9 (0) | 0 | 0 | — | built |
-| carousel | measured | static | 1 | 9 (5) | 97 | 1 | context-state, control-flow, event-capture, external-component, hook-unsupported, instance-prop-path, jsx-const-child, ref-shape, spread-handler | built |
+| carousel | measured | static | 1 | 9 (5) | 97 | 1 | context-state, control-flow, event-capture, external-component, hook-unsupported, jsx-const-child, ref-shape, spread-handler | built |
 | chart | measured | static | 1 | 9 (8) | 240 | 1 | control-flow, external-component, hook-shape, island-prop, jsx-const-child, local-component, use-id-in-render | built |
 | checkbox | measured | static | 1 | 7 (3) | 91 | 1 | external-component, island-prop, spread-props | built |
 | collapsible | measured | react | 1 | 9 (5) | 89 | 1 | context-island, external-component, spread-props | built |
-| combobox | measured | react | 1 | 22 (18) | 159 | 1 | external-component, instance-prop-path, island-children, island-prop, jsx-expression, spread-props | built |
+| combobox | measured | react | 1 | 22 (16) | 157 | 1 | external-component, island-children, island-prop, jsx-expression, nested-instance, slot-dynamic, spread-props | built |
 | command | measured | static | 1 | 16 (14) | 104 | 1 | external-component, island-prop, spread-props | built |
 | context-menu | measured | static | 1 | 13 (11) | 116 | 1 | external-component, island-children, island-prop, spread-props | built |
-| dialog | measured | react | 1 | 25 (16) | 101 | 1 | context-island, external-component, island-children, island-prop, slot-dynamic, spread-props | built |
+| dialog | measured | react | 1 | 25 (16) | 101 | 1 | context-island, external-component, island-children, island-prop, nested-instance, slot-dynamic, spread-props | built |
 | direction | measured | static | 1 | 3 (2) | 70 | 1 | external-component, island-prop | built |
 | drawer | measured | static | 1 | 20 (16) | 108 | 1 | external-component, island-children, island-prop, spread-props | built |
 | dropdown-menu | measured | static | 1 | 18 (15) | 118 | 1 | external-component, island-children, island-prop, spread-props | built |
 | empty | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
-| field | measured | static | 1 | 10 (1) | 86 | 1 | instance-prop-path | built |
+| field | measured | static | 0 | 10 (0) | 4 | 0 | — | built |
 | form | measured | react | 1 | 4 (3) | 101 | 1 | child-component, hook-unsupported, island-children, island-prop, spread-props | built |
 | hover-card | measured | static | 1 | 9 (7) | 103 | 1 | external-component, island-children, island-prop, spread-props | built |
 | input | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
-| input-group | measured | static | 1 | 5 (1) | 87 | 2 | instance-prop-path | built |
+| input-group | measured | static | 0 | 5 (0) | 4 | 1 | — | built |
 | input-otp | measured | static | 1 | 6 (3) | 87 | 1 | body-shape, external-component, hook-unsupported, island-prop, spread-props | built |
 | item | measured | static | 0 | 7 (0) | 0 | 0 | — | built |
 | kbd | measured | static | 0 | 3 (0) | 0 | 0 | — | built |
@@ -152,16 +152,16 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | message-scroller | measured | static | 1 | 13 (12) | 94 | 1 | external-component, island-children, island-prop, jsx-expression, spread-props | built |
 | native-select | measured | static | 0 | 3 (0) | 0 | 1 | external-component | built |
 | navigation-menu | measured | static | 1 | 15 (14) | 99 | 1 | external-component, island-prop, spread-props | built |
-| pagination | measured | static | 2 | 8 (2) | 87 | 3 | external-component, instance-prop-path | built |
+| pagination | measured | static | 0 | 8 (0) | 0 | 3 | external-component | built |
 | popover | measured | static | 1 | 9 (7) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
 | progress | measured | static | 1 | 5 (2) | 85 | 1 | external-component, island-children, island-prop, spread-props | built |
 | radio-group | measured | static | 1 | 9 (5) | 97 | 1 | external-component, island-prop, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
-| scroll-area | measured | static | 1 | 11 (8) | 92 | 1 | external-component, instance-prop-path, island-prop, spread-props | built |
+| scroll-area | measured | static | 1 | 11 (7) | 92 | 1 | external-component, island-prop, spread-props | built |
 | select | measured | static | 1 | 24 (23) | 118 | 1 | external-component, island-children, island-prop, spread-props | built |
-| separator | measured | static | 2 | 4 (1) | 84 | 2 | instance-prop-path | built |
+| separator | measured | static | 0 | 4 (0) | 0 | 2 | — | built |
 | sheet | measured | react | 1 | 21 (15) | 101 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
-| sidebar | measured | static | 1 | 14 (6) | 117 | 1 | context-value, control-flow, external-component, hook-shape, instance-prop-path, island-children, jsx-const-child, linked-prop-precompute, spread-handler, spread-props | built |
+| sidebar | measured | static | 1 | 14 (6) | 117 | 1 | context-value, control-flow, external-component, hook-shape, island-children, jsx-const-child, linked-prop-precompute, spread-handler, spread-props | built |
 | skeleton | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | slider | measured | static | 1 | 6 (5) | 93 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
 | sonner | measured | native | 1 | 3 (1) | 87 | 1 | child-component | built |
@@ -180,8 +180,6 @@ Each shadcn component declaration that falls back, with its codes and the number
 
 | Component | Fallback codes | Rows |
 |---|---|---|
-| components/ui/separator.tsx#separator | instance-prop-path | 3 |
-| components/ui/input-group.tsx#inputGroupInput | instance-prop-path | 2 |
 | components/ui/tooltip.tsx#tooltipProvider | external-component, spread-props | 2 |
 | components/ui/accordion.tsx#accordion | external-component, spread-props | 1 |
 | components/ui/accordion.tsx#accordionContent | external-component, island-children, spread-props | 1 |
@@ -197,16 +195,15 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/alert-dialog.tsx#alertDialogTitle | external-component, island-prop, spread-props | 1 |
 | components/ui/alert-dialog.tsx#alertDialogTrigger | external-component, spread-props | 1 |
 | components/ui/avatar.tsx#avatar | external-component, island-prop, spread-props | 1 |
-| components/ui/avatar.tsx#avatarFallback | instance-prop-path | 1 |
+| components/ui/avatar.tsx#avatarFallback | instance-prop-path, nested-instance | 1 |
 | components/ui/avatar.tsx#avatarImage | external-component, island-prop, spread-props | 1 |
 | components/ui/breadcrumb.tsx#breadcrumbSeparator | external-component | 1 |
-| components/ui/button-group.tsx#buttonGroupSeparator | island-prop, spread-props | 1 |
 | components/ui/calendar.tsx#calendar | external-component, island-prop, prop-pattern, spread-props | 1 |
 | components/ui/carousel.tsx#carousel | context-state, event-capture, hook-unsupported, jsx-const-child | 1 |
 | components/ui/carousel.tsx#carouselContent | control-flow, ref-shape | 1 |
 | components/ui/carousel.tsx#carouselItem | control-flow | 1 |
-| components/ui/carousel.tsx#carouselNext | control-flow, external-component, instance-prop-path, spread-handler | 1 |
-| components/ui/carousel.tsx#carouselPrevious | control-flow, external-component, instance-prop-path, spread-handler | 1 |
+| components/ui/carousel.tsx#carouselNext | control-flow, external-component, spread-handler | 1 |
+| components/ui/carousel.tsx#carouselPrevious | control-flow, external-component, spread-handler | 1 |
 | components/ui/chart.tsx#chartContainer | external-component, island-prop, jsx-const-child, local-component, use-id-in-render | 1 |
 | components/ui/chart.tsx#chartTooltipContent | control-flow, hook-shape | 1 |
 | components/ui/checkbox.tsx#checkbox | external-component, island-prop, spread-props | 1 |
@@ -215,7 +212,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/combobox.tsx#comboboxClear | external-component, island-prop, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxContent | external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxEmpty | external-component, island-prop, spread-props | 1 |
-| components/ui/combobox.tsx#comboboxInput | external-component, instance-prop-path, spread-props | 1 |
+| components/ui/combobox.tsx#comboboxInput | external-component, nested-instance, slot-dynamic, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxList | external-component, island-prop, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxTrigger | external-component, island-prop, spread-props | 1 |
 | components/ui/command.tsx#command | external-component, island-prop, spread-props | 1 |
@@ -233,7 +230,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/dialog.tsx#dialog | external-component, spread-props | 1 |
 | components/ui/dialog.tsx#dialogContent | context-island, external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/dialog.tsx#dialogDescription | external-component, island-prop, spread-props | 1 |
-| components/ui/dialog.tsx#dialogFooter | slot-dynamic | 1 |
+| components/ui/dialog.tsx#dialogFooter | nested-instance, slot-dynamic | 1 |
 | components/ui/dialog.tsx#dialogOverlay | external-component, island-prop, spread-props | 1 |
 | components/ui/dialog.tsx#dialogPortal | external-component, spread-props | 1 |
 | components/ui/dialog.tsx#dialogTitle | external-component, island-prop, spread-props | 1 |
@@ -254,11 +251,9 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/dropdown-menu.tsx#dropdownMenuLabel | external-component, island-prop, spread-props | 1 |
 | components/ui/dropdown-menu.tsx#dropdownMenuSeparator | external-component, island-prop, spread-props | 1 |
 | components/ui/dropdown-menu.tsx#dropdownMenuTrigger | external-component, spread-props | 1 |
-| components/ui/field.tsx#fieldLabel | instance-prop-path | 1 |
 | components/ui/hover-card.tsx#hoverCard | external-component, spread-props | 1 |
 | components/ui/hover-card.tsx#hoverCardContent | external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/hover-card.tsx#hoverCardTrigger | external-component, spread-props | 1 |
-| components/ui/input-group.tsx#inputGroupButton | instance-prop-path | 1 |
 | components/ui/input-otp.tsx#inputOTP | external-component, island-prop, spread-props | 1 |
 | components/ui/input-otp.tsx#inputOTPSeparator | external-component | 1 |
 | components/ui/input-otp.tsx#inputOTPSlot | body-shape, hook-unsupported | 1 |
@@ -284,8 +279,8 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/navigation-menu.tsx#navigationMenuTrigger | external-component, island-prop, spread-props | 1 |
 | components/ui/navigation-menu.tsx#navigationMenuViewport | external-component, island-prop, spread-props | 1 |
 | components/ui/pagination.tsx#paginationEllipsis | external-component | 1 |
-| components/ui/pagination.tsx#paginationNext | external-component, instance-prop-path | 1 |
-| components/ui/pagination.tsx#paginationPrevious | external-component, instance-prop-path | 1 |
+| components/ui/pagination.tsx#paginationNext | external-component | 1 |
+| components/ui/pagination.tsx#paginationPrevious | external-component | 1 |
 | components/ui/popover.tsx#popover | external-component, spread-props | 1 |
 | components/ui/popover.tsx#popoverContent | external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/popover.tsx#popoverTrigger | external-component, spread-props | 1 |
@@ -316,7 +311,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/sidebar.tsx#sidebar | control-flow | 1 |
 | components/ui/sidebar.tsx#sidebarMenuButton | control-flow | 1 |
 | components/ui/sidebar.tsx#sidebarProvider | context-value, hook-shape, island-children, jsx-const-child | 1 |
-| components/ui/sidebar.tsx#sidebarTrigger | control-flow, external-component, instance-prop-path, linked-prop-precompute, spread-handler | 1 |
+| components/ui/sidebar.tsx#sidebarTrigger | control-flow, external-component, linked-prop-precompute, spread-handler | 1 |
 | components/ui/slider.tsx#slider | external-component, island-children, island-prop, nested-instance, spread-props | 1 |
 | components/ui/spinner.tsx#spinner | external-component, spread-props | 1 |
 | components/ui/switch.tsx#switch | external-component, island-children, island-prop, spread-props | 1 |

@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 190 | 102 | 8 | 80 | 0 | 0 | 0 | 0 |
+| B Composition | 191 | 103 | 9 | 79 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 368 | 180 | 43 | 141 | 3 | 1 | 0 | 0 |
+| **Total** | 369 | 181 | 44 | 140 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -114,6 +114,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-holes-wrapper-children | a static wrapper that renders {children} inside its island | static | static | 0 | ok | — | F148a (R34.121): the caller's constant tree is bound at the call site (the reserved prop __ch); a call without children binds none |
 | b-island-holes-attr-cond | attributes and a condition read from props inside island children | static | static | ssr | ok | — | F148a (R34.118): attribute holes are primitives; a javascript: URL keeps React 19.3's guard (packages/brust/test/prop-path-children-revive.test.ts) |
 | b-island-prop-expr | an island prop that is an expression over props | react | react | ssr | ok | fallback:island-prop | F148a: the server hands an island a props path or a JSON value; anything else is fallback:island-prop, not the ssr-prop-not-a-path build error (the direction page hit it once its wrapper stopped being React) |
+| b-local-object-const-handler | a local object-literal const read by a handler and the template | native | native | 0 | ok | — | F178: the chunk printed `computed(() => { up: 2, down: -1 })`, a block with labels, and `brust build` failed on valid React; an arrow body that starts with `{` is parenthesised (served in tests/server/object-literal-arrow.chromium.test.ts) |
 | b-island-holes-style | a style read from props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.118, F170): an object-valued attribute is never a hole; fallback:island-children |
 | b-island-holes-list | a list over props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.122, F171): a list over request data needs structure from data; fallback:island-children |
 | b-island-holes-route-children | {children} of a route component inside an island | react | react | ssr | ok | fallback:island-children | F148a (R34.121): a route component has no call site to bind a tree; its children are request data; fallback:island-children |
@@ -216,7 +217,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-spread-alias-known | HTML aliases at the call site into a child that writes React names after its spread | static | static | 0 | ok | — | shadcn S1.2 review F1: compile-time expansion merges on the HTML attribute too (class="x", for="a", once each) |
 | b-fed-child-in-wrapper | a wrapper component rendering a child with a job of its own (shadcn PaginationNext over PaginationLink) | static | static | 0 | ok | — | F164 R34.97: the grandchild's job has no slot key inside an inlined wrapper (F53), so PR 1 made the wrapper the React island (nested-instance fallback); PR 2a re-bases the wrapper's child onto the caller (R34.96 static-wrapper case) and the page is static |
 | b-fed-child-nested-lists | a child with a job of its own inside two nested lists over props | react | react | ssr | ok | fallback:nested-instance | F164 R34.97: the server feeds one list level per instance; nested lists were the nested-instance build error of the manifest, now a fallback |
-| b-fed-child-prop-is-a-job-output | a prop of a child with a job of its own is computed by a call (className={cn(…)}) | react | react | ssr | ok | fallback:instance-prop-path | F164 R34.97: the value is another job's output, which the single-phase planner cannot bind; it was the instance-prop-path build error of the manifest, now a fallback |
+| b-fed-child-prop-is-a-job-output | a prop of a child with a job of its own is computed by a call (className={cn(…)}) | static | static | precompute | ok | — | F164 R34.96 (PR 2b): the value is another job's output, which the single-phase planner cannot bind (was the instance-prop-path build error, then the PR 1 fallback); the child's job now runs INSIDE the page's own job (fused) |
 | b-fed-children-repeated-by-list | children with a job of their own passed to a component that repeats them in a list | react | react | ssr | ok | fallback:nested-instance | F164 R34.97 (review r1 D): slot content is printed once and pasted per row, so a job inside it would repeat; it was the lowering nested-instance error |
 | b-island-per-row-in-two-lists | a React island with a per-row prop inside two lists | react | react | ssr | ok | fallback:nested-instance | F164 R34.97 (review r1 E): the server hands an island job one array indexed by ONE list; it was the lowering nested-instance error |
 | b-island-per-row-in-inlined-component | a static wrapper mapping a React island over its own rows | static | static | ssr | ok | — | F164 R34.97 (review r1 F): a row of an inlined component has no slot key for the island job, so the wrapper is the island; it was the lowering nested-instance error |

@@ -248,6 +248,7 @@ jobs:
       # (build-island-children, build-island-slots and build-props-pattern were not run here before).
       - run: cd packages/brust && bun test --timeout 180000 test/prop-path-children-revive.test.ts test/build-prop-path-children.test.ts test/build-island-children.test.ts test/build-island-slots.test.ts test/build-props-pattern.test.ts
       - run: cd packages/brust && bun test test/cli.test.ts
+      - run: cd packages/brust && bun test test/shadcn-init.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-child-literals.test.ts
       - run: cd packages/brust && bun test test/build-store.test.ts
@@ -266,7 +267,7 @@ jobs:
       - run: cd examples/pokedex && bun test
       - run: cd examples/pokedex && bun run typecheck
       # m3f-create-app: unit + pack, then the scaffold run (packs core/runtime-dom, bun install from npm, build, start) on its own.
-      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/sync-template.test.ts test/pack.test.ts test/tailwind.test.ts
+      - run: cd packages/create-app && bun run typecheck && bun test test/args.test.ts test/copy.test.ts test/dep.test.ts test/templates.test.ts test/cli.test.ts test/shadcn.test.ts test/sync-template.test.ts test/pack.test.ts test/tailwind.test.ts
       - run: cd packages/create-app && bun test --timeout 600000 test/scaffold.test.ts
       - run: bunx playwright install --with-deps chromium
       # website/: the docs site (TSX pages on the workspace @brust/core); several files drive Chromium, so it runs after
@@ -290,6 +291,7 @@ jobs:
       - run: bun test --timeout 120000 tests/server/island-children.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-slots.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/prop-path-children.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/object-literal-arrow.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/icon-shapes.test.ts
       - run: bun test --timeout 120000 tests/server/nested-fed.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
@@ -303,6 +305,8 @@ jobs:
       # F153c: shadcn's Label compiled from @radix-ui/react-label's source map (no island), HTML and behaviour as React's.
       - run: bun test --timeout 180000 tests/server/package-source.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/cn-fold.test.ts
+      # R34.96 PR 2b: the shadcn pages a fused child moved off React, served == React, folded and per request.
+      - run: bun test --timeout 300000 tests/server/fused-jobs.test.ts
       - run: bun test --timeout 120000 tests/server/static.chromium.test.ts tests/server/list-cond.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/css.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/tailwind.chromium.test.ts

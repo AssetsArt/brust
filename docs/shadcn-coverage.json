@@ -16,9 +16,9 @@
       "native": 1,
       "react": 5
     },
-    "islands": 45,
-    "pagesWithNoJs": 22,
-    "pagesWithNoWorker": 19,
+    "islands": 38,
+    "pagesWithNoJs": 25,
+    "pagesWithNoWorker": 20,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -49,18 +49,18 @@
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 34,
+      "measuredRows": 33,
       "analysisOnlyRows": 0,
-      "appComponents": 126,
+      "appComponents": 125,
       "libraryComponents": 180
     },
     {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 33,
+      "measuredRows": 32,
       "analysisOnlyRows": 0,
-      "appComponents": 90,
+      "appComponents": 89,
       "libraryComponents": 176
     },
     {
@@ -73,15 +73,6 @@
       "libraryComponents": 55
     },
     {
-      "blocker": "fallback:instance-prop-path",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 10,
-      "analysisOnlyRows": 0,
-      "appComponents": 11,
-      "libraryComponents": 0
-    },
-    {
       "blocker": "fallback:jsx-const-child",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -89,6 +80,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 4,
       "libraryComponents": 13
+    },
+    {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:hook-unsupported",
@@ -143,6 +143,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 2,
       "libraryComponents": 5
+    },
+    {
+      "blocker": "fallback:slot-dynamic",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:spread-handler",
@@ -217,7 +226,7 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:linked-prop-precompute",
+      "blocker": "fallback:instance-prop-path",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -226,7 +235,7 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:nested-instance",
+      "blocker": "fallback:linked-prop-precompute",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -241,15 +250,6 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 0
-    },
-    {
-      "blocker": "fallback:slot-dynamic",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
       "libraryComponents": 0
     },
     {
@@ -585,6 +585,7 @@
         "external-component",
         "instance-prop-path",
         "island-prop",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -671,16 +672,12 @@
       "id": "button-group",
       "basis": "measured",
       "tier": "static",
-      "islands": 1,
+      "islands": 0,
       "components": 7,
-      "reactComponents": 2,
-      "jsGzipKb": 86,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
       "workerCalls": 1,
-      "codes": [
-        "instance-prop-path",
-        "island-prop",
-        "spread-props"
-      ]
+      "codes": []
     },
     {
       "id": "calendar",
@@ -724,7 +721,6 @@
         "event-capture",
         "external-component",
         "hook-unsupported",
-        "instance-prop-path",
         "jsx-const-child",
         "ref-shape",
         "spread-handler"
@@ -785,15 +781,16 @@
       "tier": "react",
       "islands": 1,
       "components": 22,
-      "reactComponents": 18,
-      "jsGzipKb": 159,
+      "reactComponents": 16,
+      "jsGzipKb": 157,
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "instance-prop-path",
         "island-children",
         "island-prop",
         "jsx-expression",
+        "nested-instance",
+        "slot-dynamic",
         "spread-props"
       ]
     },
@@ -842,6 +839,7 @@
         "external-component",
         "island-children",
         "island-prop",
+        "nested-instance",
         "slot-dynamic",
         "spread-props"
       ]
@@ -907,14 +905,12 @@
       "id": "field",
       "basis": "measured",
       "tier": "static",
-      "islands": 1,
+      "islands": 0,
       "components": 10,
-      "reactComponents": 1,
-      "jsGzipKb": 86,
-      "workerCalls": 1,
-      "codes": [
-        "instance-prop-path"
-      ]
+      "reactComponents": 0,
+      "jsGzipKb": 4,
+      "workerCalls": 0,
+      "codes": []
     },
     {
       "id": "form",
@@ -964,14 +960,12 @@
       "id": "input-group",
       "basis": "measured",
       "tier": "static",
-      "islands": 1,
+      "islands": 0,
       "components": 5,
-      "reactComponents": 1,
-      "jsGzipKb": 87,
-      "workerCalls": 2,
-      "codes": [
-        "instance-prop-path"
-      ]
+      "reactComponents": 0,
+      "jsGzipKb": 4,
+      "workerCalls": 1,
+      "codes": []
     },
     {
       "id": "input-otp",
@@ -1110,14 +1104,13 @@
       "id": "pagination",
       "basis": "measured",
       "tier": "static",
-      "islands": 2,
+      "islands": 0,
       "components": 8,
-      "reactComponents": 2,
-      "jsGzipKb": 87,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
       "workerCalls": 3,
       "codes": [
-        "external-component",
-        "instance-prop-path"
+        "external-component"
       ]
     },
     {
@@ -1188,12 +1181,11 @@
       "tier": "static",
       "islands": 1,
       "components": 11,
-      "reactComponents": 8,
+      "reactComponents": 7,
       "jsGzipKb": 92,
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "instance-prop-path",
         "island-prop",
         "spread-props"
       ]
@@ -1218,14 +1210,12 @@
       "id": "separator",
       "basis": "measured",
       "tier": "static",
-      "islands": 2,
+      "islands": 0,
       "components": 4,
-      "reactComponents": 1,
-      "jsGzipKb": 84,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
       "workerCalls": 2,
-      "codes": [
-        "instance-prop-path"
-      ]
+      "codes": []
     },
     {
       "id": "sheet",
@@ -1258,7 +1248,6 @@
         "control-flow",
         "external-component",
         "hook-shape",
-        "instance-prop-path",
         "island-children",
         "jsx-const-child",
         "linked-prop-precompute",
