@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-12', title: '2.0.0-alpha.12' },
       { id: 'alpha-11', title: '2.0.0-alpha.11' },
       { id: 'alpha-10', title: '2.0.0-alpha.10' },
       { id: 'alpha-9', title: '2.0.0-alpha.9' },
@@ -34,6 +35,54 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-12">2.0.0-alpha.12 · 15 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.11: #236–#240 (context lowering 1a and 1c, F181, F155 tests, F183) */}
+      <p>Context Providers that brust can lower, shadcn setup in <code>bun create</code>, no idle workers for static shadcn apps, and fixes for children that disappeared.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #237 (F181 + the F175 later row) */}
+        <li>
+          <strong><code>bun create @brust/app my-app --shadcn button card</code></strong> creates the project and runs <code>brust shadcn init</code> in it, in one command.
+        </li>
+        {/* source: PR #236 and #239 (S2 wave A PR 1a and 1c, plan 2026-10-14-shadcn-context-lowering) */}
+        <li>
+          <strong>Context Providers compile.</strong> A component that provides a value with <code>createContext</code> (or Radix&rsquo;s <code>createContextScope</code>) and the components that read it now compile without React when the Provider&rsquo;s value is literal data and the children under it read only props, locals, constants, or module helpers that brust can prove return a string, number or boolean. Anything else keeps the Provider as a React island, with a named reason in the build output. The Radix Progress pages still render as islands.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #236 (jsx-const-child guard, found in review by Mellow) */}
+        <li>
+          <strong>A JSX constant used as children no longer disappears.</strong> <code>const icon = &lt;Star /&gt;</code> (in the same file or imported), passed as <code>{'{'}icon{'}'}</code> to a component that brust compiles, could render as an empty element on the server. It now renders, using React where brust cannot prove what the value is.
+        </li>
+        {/* source: PR #236 (integration with #229) */}
+        <li>
+          <strong>A context consumer with server work inside a React island no longer fails the build.</strong> The component that renders it stays React. The shadcn collapsible, dialog and sheet pages are affected: each now renders as a React page with one island, at about the same size as before (89, 101 and 101 KB).
+        </li>
+      </ul>
+
+      <h3>Security</h3>
+      <ul>
+        {/* source: PR #237, reviewed by Mellow */}
+        <li>
+          <strong><code>brust shadcn init</code> is safer to run and to copy from.</strong> It no longer writes through a symlinked <code>tsconfig.json</code> or <code>components.json</code>. It installs the exact package versions it was tested with, and it warns that a component given as a registry URL installs third-party code. Every command it prints for you to run quotes the folder and component names, so pasting them into a shell cannot run anything else.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #240 (F183) */}
+        <li>
+          <strong>Static shadcn apps start with no worker processes.</strong> Server code that no page uses is no longer written to <code>jobs.js</code>, and it no longer counts when <code>brust start</code> decides whether it needs workers. The pages are served the same.
+        </li>
+        {/* source: PR #236 (lead ruling on Provider frame values) */}
+        <li>
+          <strong>A context Provider whose value comes from props, state or a function call stays a React island.</strong> brust lowers a Provider only when its value is literal data; any other value keeps the React behaviour exactly.
+        </li>
+      </ul>
 
       <h2 id="alpha-11">2.0.0-alpha.11 · 15 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.10: #228–#234 (F165, F164 PR 2a + F169, F148a, F175, F182, F178, F164 PR 2b) */}

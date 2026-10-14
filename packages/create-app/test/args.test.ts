@@ -43,3 +43,10 @@ test('parseArgs: --help / -h set help and skip name validation', () => {
   expect(parseArgs(['--help']).help).toBe(true)
   expect(parseArgs(['-h']).help).toBe(true)
 })
+test('parseArgs: --shadcn alone = set up only; --shadcn=a,b lists components; hostile names throw before anything is made (F181)', () => {
+  expect(parseArgs(['x']).shadcn).toBeUndefined()
+  expect(parseArgs(['x', '--shadcn']).shadcn).toEqual([])
+  expect(parseArgs(['x', '--shadcn=button,card,dialog']).shadcn).toEqual(['button', 'card', 'dialog'])
+  expect(parseArgs(['x', '--shadcn=https://ui.example.dev/r/a.json,button']).shadcn).toEqual(['https://ui.example.dev/r/a.json', 'button'])
+  for (const bad of ['Button', '-y', 'a;rm', 'a b', 'http://x.dev/a.json', '../x']) expect(() => parseArgs(['x', `--shadcn=${bad}`])).toThrow(/--shadcn component/)
+})

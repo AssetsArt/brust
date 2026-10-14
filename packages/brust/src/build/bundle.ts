@@ -76,6 +76,9 @@ export function sourceDirPlugin(sourceOf: SourceOf, appRoot: string, external: s
         return src === undefined ? undefined : { path: Bun.resolveSync(a.path, dirname(src)) }
       })
       b.onResolve({ filter: /^[^./]/ }, (a) => {
+        // A package source imported as itself (a React component revived from it): its bare imports are the package's.
+        const own = sourceOf.has(a.importer) ? undefined : packageDirOf(a.importer)
+        if (own !== undefined && !matchesExternal(a.path, external)) return { path: Bun.resolveSync(a.path, own) }
         if (!sourceOf.has(a.importer) || matchesExternal(a.path, external)) return undefined
         // F153c: an artifact compiled from a package's source imports what that package sees.
         const pkg = packageDirOf(sourceOf.get(a.importer)!)
@@ -625,6 +628,8 @@ export async function buildJobs(
   stores: string[] = [],
   cssMaps: Map<string, Record<string, string>> = new Map(),
   routeRoots?: ReadonlySet<string>,
+  /** F183 (`reachedJobs`): only these entries are written; every one when absent. */
+  reached?: { planned: ReadonlySet<string>; ssr: ReadonlySet<string> },
 ): Promise<void> {
   const imports: string[] = ["import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"]
   const entries: string[] = []
@@ -648,13 +653,16 @@ export async function buildJobs(
   for (const c of compiled.values()) {
     const fns: string[] = []
     if (c.serverTs !== undefined) {
+      // Staged even when unreached: a parent's fused job imports it (`brust-job:<id>`, R34.96).
       const file = join(dist, 'jobs', `${c.id}.server.ts`)
       write(file, c.serverTs)
       stage(sourceOf, file, c)
-      imports.push(`import * as j${n} from ${JSON.stringify(file)}`)
-      fns.push(`precompute: j${n}.precompute`)
+      if (reached === undefined || reached.planned.has(c.id)) {
+        imports.push(`import * as j${n} from ${JSON.stringify(file)}`)
+        fns.push(`precompute: j${n}.precompute`)
+      }
     }
-    if (isReact(c) && !c.ir.tier.React.client_only) {
+    if (isReact(c) && !c.ir.tier.React.client_only && (reached === undefined || reached.ssr.has(c.id))) {
       imports.push(componentImport(c, `C${n}`))
       // Ruling 2bf3775a (R1): the island's component id prefixes React's useId on BOTH sides
       // (the shim's hydrateRoot passes the same prefix), so ids differ across islands.

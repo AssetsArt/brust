@@ -1,8 +1,8 @@
-import { createContext } from 'react'
 import { Dialog } from 'radix-ui'
 import * as UI from './ui'
 
-const Ctx = createContext(1)
+// A local object, not a React context (those are compiled, S2): its member tag stays a fallback.
+const Ctx = { Provider: 'div' }
 let Reassigned = Dialog.Root
 
 export default function Fallback({ Tag }: any) {
