@@ -18,8 +18,8 @@ use minijinja::value::{Rest, Value, ValueKind};
 use std::collections::BTreeMap;
 
 use crate::{
-    attr_name, attr_string, escape_attr, escape_text, is_boolean_attr, is_refused_attr, js_number,
-    present, safe_url, style_obj_to_css, truthy,
+    AttrKind, attr_kind, attr_name, attr_string, escape_attr, escape_text, is_refused_attr,
+    js_number, present, present_plain, present_str, safe_url, style_obj_to_css, truthy,
 };
 
 /// React prop names a spread never turns into attributes.
@@ -136,17 +136,31 @@ pub fn render_attr(react_name: &str, v: &Value) -> String {
             escape_text(&style_obj_to_css(&map_pairs(v)))
         );
     }
-    if is_boolean_attr(&html) {
-        return if truthy(v) {
-            format!(" {html}")
-        } else {
-            String::new()
-        };
-    }
-    if !present(v) {
-        return String::new();
+    match attr_kind(&html) {
+        AttrKind::Boolean => {
+            return if truthy(v) {
+                format!(" {html}")
+            } else {
+                String::new()
+            };
+        }
+        AttrKind::Overloaded if v.kind() == ValueKind::Bool => {
+            return if v.is_true() {
+                format!(" {html}=\"\"")
+            } else {
+                String::new()
+            };
+        }
+        AttrKind::Stringify if !present_str(v) => return String::new(),
+        AttrKind::Stringify => {}
+        _ if !present_plain(v) => return String::new(),
+        _ => {}
     }
     let s = attr_string(v);
+    // React writes no `src=""`. A spread does not know its tag, so `href=""` (kept on an anchor) is kept.
+    if html == "src" && s.is_empty() {
+        return String::new();
+    }
     if crate::is_url_attr(&html) && !safe_url(&s) {
         return String::new();
     }
@@ -235,6 +249,54 @@ mod tests {
         let mut env = Environment::new();
         crate::register(&mut env);
         env.render_str(src, crate::value_of(ctx)).unwrap()
+    }
+
+    /// F196: the spread path prints every attribute and value as React does (`tests/fixtures/attr-parity/react.json`).
+    /// A spread has no tag, so `href=""` (React drops it on every element but `<a>`) is the one row that differs.
+    #[test]
+    fn spread_prints_every_value_as_react_does() {
+        use minijinja::value::Value;
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/attr-parity/react.json"
+        );
+        let react: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>> =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut bad = Vec::new();
+        for (name, row) in &react {
+            for (v, want) in row {
+                if name == "href" && v == "''" {
+                    continue;
+                }
+                let val = match v.as_str() {
+                    "true" => Value::from(true),
+                    "false" => Value::from(false),
+                    "0" => Value::from(0),
+                    "1" => Value::from(1),
+                    "''" => Value::from(""),
+                    "null" => Value::from(()),
+                    "undefined" => Value::UNDEFINED,
+                    "'x'" => Value::from("x"),
+                    other => panic!("{other}"),
+                };
+                let got = super::render_attr(name, &val).trim().to_ascii_lowercase();
+                // a boolean attribute is the bare name here and `name=""` in React's output
+                let got = if got.contains('=') || got.is_empty() {
+                    got
+                } else {
+                    format!("{got}=\"\"")
+                };
+                if got != *want {
+                    bad.push(format!("{name}={v}: React `{want}`, spread `{got}`"));
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "{} mismatches:\n{}",
+            bad.len(),
+            bad.join("\n")
+        );
     }
 
     #[test]

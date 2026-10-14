@@ -178,6 +178,10 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
       <p>
         The build works out the set for each component and the server links the modules of a route, preloaded in the page head. A static page with no island loads none of it. If a template uses a directive that no feature binds, the build stops with <code>runtime-feature-missing</code> instead of shipping a page that does nothing. Before, every page with a native component loaded the whole runtime (about 6 KB gzipped, <code>docs/plans/2026-10-14-runtime-split.md</code>).
       </p>
+      {/* source: packages/runtime-dom/src/island.ts (idle hydrate, IDLE_TIMEOUT_MS), docs/plans/2026-10-15-hydration-timing.md §2.2 and ruling Q3, tests/server/hydration-timing.chromium.test.ts (R42.2, R42.3) */}
+      <Note>
+        Before an island hydrates, its server HTML is visible but not interactive. The island hydrates once its chunk has loaded and the browser is idle (waiting at most 250 ms for an idle moment). A click on an island&apos;s server HTML in that window is dropped, not replayed; the same control works on the next click. A React server-rendered page behaves the same way, because React attaches no listeners before <code>hydrateRoot</code>. On a slow connection the window is longer: in our measurements (slow 4G, a 4x slower CPU) it was about half a second, and with no throttling about 20 ms.
+      </Note>
 
             <h2 id="see">See what you got</h2>
       <p>Every fallback is printed once per component by the build, with the rule and the line. This is the pokedex example's build:</p>
