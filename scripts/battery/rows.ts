@@ -3,6 +3,9 @@
 // §8.1 diagnostic classes), never from what the compiler happens to do.
 // Rule: every native/static row cites its spec row in `note` (e.g. 'spec §3 memo()');
 // documentation discipline only — the pinned sets in exit.ts are the test.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 export type Expect = 'static' | 'native' | 'react' | 'error' | 'compile-error'
 
 interface RowBase {
@@ -13,6 +16,10 @@ interface RowBase {
   snippet: string
   /** Sibling modules the snippet imports, by file name. */
   files?: Record<string, string>
+  /** Stub npm packages (F153c), by name: their source files, written under `node_modules/<name>/` with a published
+   * `dist/index.mjs` transpiled from them and a source map carrying them (`sourcesContent`), unless `publish` says
+   * otherwise. The runner writes the package sources the way `brust build` does and passes them to `brustc`. */
+  packages?: Record<string, StubPackage>
   note?: string
   /** react.dev reference entries (`react-api.ts` names) this row is evidence for. Every entry needs at least one row. */
   api?: string[]
@@ -20,10 +27,21 @@ interface RowBase {
   knownGap?: string
 }
 
+export interface StubPackage {
+  files: Record<string, string>
+  /** `map`: as built (default); `no-map`: dist only; `drift`: the dist was built from other sources. */
+  publish?: 'map' | 'no-map' | 'drift'
+}
+
 /** Native/static rows must pin their job count (precompute or ssr); the other tiers cannot. */
 export type Row = RowBase & ({ expect: 'native' | 'static'; jobs: number } | { expect: 'react' | 'error' | 'compile-error'; jobs?: never })
 
 const R = `import { useState } from 'react'\n`
+// F153c: the Radix sources as `@radix-ui/react-primitive` 2.2.0 and `@radix-ui/react-label` 2.1.17 publish them.
+const RADIX_PRIMITIVE = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/primitive.tsx'), 'utf8')
+const RADIX_LABEL = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/label.tsx'), 'utf8')
+const PKG_PRIMITIVE: StubPackage = { files: { 'src/primitive.tsx': RADIX_PRIMITIVE } }
+const PKG_LEAF = `import * as React from 'react'\nimport { Primitive } from '@radix-ui/react-primitive'\nexport const Root = React.forwardRef(function Root(props: any, forwardedRef: any) { return <Primitive.div {...props} ref={forwardedRef} /> })`
 const SLOT_BTN = `import { Slot } from 'radix-ui'\nexport default function Btn({ asChild = false, variant = 'default', className, ...props }: any) { const Comp = asChild ? Slot.Root : 'button'; return <Comp data-slot="btn" data-variant={variant} className={'base ' + (className ?? '')} {...props} /> }`
 const child = (body: string) => `export default function Child(props: any) { ${body} }`
 const ICARD = `import { useReducer } from 'react'\nexport function Card(props: any) { const [n, bump] = useReducer((x: number) => x + 1, 0); return <section><button onClick={() => bump()}>{n}</button>{props.children}</section> }\nexport function Badge(props: any) { return <span>{props.n}</span> }\nexport function Trigger(props: any) { const [n, bump] = useReducer((x: number) => x + 1, 0); return props.asChild ? <span onClick={() => bump()}>{props.children}{n}</span> : <button onClick={() => bump()}>{props.children}</button> }`
@@ -357,6 +375,27 @@ export const rows: Row[] = [
   { id: 'b-memo', category: 'B', authoring: 'memo() wrapper around a plain component', api: ['memo'], expect: 'native', jobs: 0,
     snippet: `import { memo, useState } from 'react'\nfunction Inner() { const [n, setN] = useState(0); return <button onClick={() => setN(n + 1)}>{n}</button> }\nexport default memo(Inner)`,
     note: 'spec §3 memo()' },
+  { id: 'b-body-destructure', category: 'B', authoring: '`const { a, b = 1, ...rest } = props` in the body reads like a parameter pattern', expect: 'static', jobs: 0,
+    snippet: `export default function C(props: any) {\n  const { label, size = 'm', ...rest } = props\n  return <button data-size={size} {...rest}>{label}</button>\n}`,
+    note: 'S3 R34.66' },
+  { id: 'b-body-destructure-two', category: 'B', authoring: 'two body destructurings of props (no rest)', expect: 'static', jobs: 0,
+    snippet: `export default function C(props: any) {\n  const { a } = props\n  const { b = 2 } = props\n  return <p title={a}>{b}</p>\n}` },
+  { id: 'b-body-destructure-rest-and-another', category: 'B', authoring: 'a rest pattern next to another props pattern stays body-shape', expect: 'react',
+    snippet: `export default function C(props: any) {\n  const { a } = props\n  const { b, ...rest } = props\n  return <p {...rest}>{a}{b}</p>\n}`,
+    note: 'JS: the rest carries `a`; brust keeps one list of declared props, so it declines' },
+  { id: 'b-body-destructure-mixed', category: 'B', authoring: 'a body destructuring next to a `props.x` read', expect: 'static', jobs: 0,
+    snippet: `export default function C(props: any) {\n  const { a } = props\n  return <p title={a}>{props.b}</p>\n}` },
+  { id: 'b-body-destructure-nested', category: 'B', authoring: 'a nested pattern in the body destructuring stays body-shape', expect: 'react',
+    snippet: `export default function C(props: any) {\n  const { a: { b } } = props\n  return <p>{b}</p>\n}` },
+  { id: 'b-body-destructure-two-rests', category: 'B', authoring: 'a second `...rest` in the body stays body-shape', expect: 'react',
+    snippet: `export default function C(props: any) {\n  const { a, ...r1 } = props\n  const { b, ...r2 } = props\n  return <p {...r1} {...r2}>{a}{b}</p>\n}` },
+  { id: 'b-body-destructure-other', category: 'B', authoring: 'destructuring something that is not the props object', expect: 'react',
+    snippet: `export default function C(props: any) {\n  const { a } = props.inner\n  return <p>{a}</p>\n}` },
+  { id: 'b-body-destructure-let', category: 'B', authoring: '`let { a } = props` is not read as a props pattern', expect: 'react',
+    snippet: `export default function C(props: any) {\n  let { a } = props\n  return <p>{a}</p>\n}` },
+  { id: 'b-body-destructure-default-local', category: 'B', authoring: 'a body-destructuring default that reads a body local stays body-shape', expect: 'react',
+    snippet: `export default function C(props: any) {\n  const d = props.k + '!'\n  const { a = d } = props\n  return <p>{a}</p>\n}`,
+    note: 'review F1: the template binds no local for an absorbed default' },
   { id: 'b-forwardref', category: 'B', authoring: 'forwardRef component (default export); `ref={ref}` on a host is dropped', expect: 'static', jobs: 0,
     snippet: `import { forwardRef } from 'react'\nexport default forwardRef<HTMLInputElement, any>(function F(props, ref) { return <input ref={ref} /> })`,
     note: 'S3 R34.63: HTML has no ref, so the render is the same as React\'s for a caller that passes none' },
@@ -386,6 +425,43 @@ export const rows: Row[] = [
     snippet: `import Child from './Child'\nexport default function C(props: any) { return <Child {...props} /> }`,
     files: { 'Child.tsx': child(`return <b>{props.a}</b>`) },
     note: 'shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get)' },
+  // ---- F161 (R39.1): props patterns that broke every render or silently lost a default now fall back to React ----
+  { id: 'b-props-quoted-key', category: 'B', authoring: 'a quoted hyphen key bound to a local in the props pattern', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card data-x="1" id="a" /> }`,
+    files: { 'Card.tsx': `export default function Card({ 'data-x': dx, ...rest }: any) { return <div data-y={dx} {...rest} /> }` },
+    note: 'F161 prop-quoted-key: the template read `data-x` as a subtraction and every render failed (500); the component is a React island now (the page stays static). Native support is a later F-row' },
+  { id: 'b-props-body-quoted-key', category: 'B', authoring: 'a quoted hyphen key in a body pattern const { ... } = props', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card data-x="1" id="a" /> }`,
+    files: { 'Card.tsx': `export default function Card(props: any) { const { 'data-x': dx, ...rest } = props; return <div data-y={dx} {...rest} /> }` },
+    note: 'F161 prop-quoted-key, body pattern (R34.66 reads it like the parameter pattern): the component is a React island now' },
+  { id: 'b-props-body-iife', category: 'B', authoring: 'an immediately-invoked default in a body pattern', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card /> }`,
+    files: { 'Card.tsx': `export default function Card(props: any) { const { a = (() => '<i>')() } = props; return <p>{a}</p> }` },
+    note: 'F161 prop-default-iife, body pattern: the component is a React island now' },
+  { id: 'b-props-default-iife', category: 'B', authoring: 'a destructuring default that is an immediately-invoked function', expect: 'static', jobs: 2,
+    snippet: `import Card from './Card'\nexport default function C() { return <main><Card /><Card a="z" /></main> }`,
+    files: { 'Card.tsx': `export default function Card({ a = (() => '<i>')() }: any) { return <p>{a}</p> }` },
+    note: 'F161 prop-default-iife: the default printed as none, so the page rendered without it; the component is a React island now' },
+  { id: 'b-props-default-call', category: 'B', authoring: 'a destructuring default that calls a local function', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card /> }`,
+    files: { 'Card.tsx': `const make = () => 'x'\nexport default function Card({ a = make() }: any) { return <p>{a}</p> }` },
+    note: 'F161 prop-default-shape: a call outside the template subset printed as none; now React' },
+  { id: 'b-props-default-const', category: 'B', authoring: 'a destructuring default that reads a module constant', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card /> }`,
+    files: { 'Card.tsx': `const D = 'dd'\nexport default function Card({ a = D }: any) { return <p>{a}</p> }` },
+    note: 'F161 prop-default-shape: the constant printed as an unbound template variable (empty); now React' },
+  { id: 'b-props-default-jsx', category: 'B', authoring: 'a destructuring default that is a JSX element', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card /> }`,
+    files: { 'Card.tsx': `export default function Card({ icon = <b>i</b> }: any) { return <p>{icon}</p> }` },
+    note: 'F161 prop-default-shape: JSX in a default printed as none; now React' },
+  { id: 'b-props-default-earlier', category: 'B', authoring: 'a destructuring default that reads an earlier prop which has its own default', expect: 'static', jobs: 1,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card /> }`,
+    files: { 'Card.tsx': `export default function Card({ a = 'x', c = a + '!' }: any) { return <p>{a}{c}</p> }` },
+    note: 'F161 prop-default-shape: the template read `a` without its default (X undefined! instead of x!); the component is a React island now' },
+  { id: 'b-props-default-printable', category: 'B', authoring: 'defaults the template prints exactly: literals, an earlier prop without a default, a supported call, a rename', expect: 'static', jobs: 0,
+    snippet: `import Card from './Card'\nexport default function C() { return <Card /> }`,
+    files: { 'Card.tsx': `export default function Card({ b, a = 'x'.toUpperCase(), c = b + '!', n: renamed = 2 }: any) { return <p>{a}{c}{renamed}</p> }` },
+    note: 'F161 control: the fail-closed rule does not touch a default the template can evaluate' },
   { id: 'b-spread-known-shape', category: 'B', authoring: 'data-*, aria-*, boolean and style props through a child\'s rest spread', expect: 'static', jobs: 0,
     snippet: `import Card from './Card'\nexport default function C() { return <Card className="c" data-k="1" aria-label="L" hidden style={{ color: 'red' }}>kids</Card> }`,
     files: { 'Card.tsx': `export default function Card({ className, ...props }: any) { return <div data-slot="card" className={className} {...props} /> }` },
@@ -544,6 +620,60 @@ export const rows: Row[] = [
     snippet: `import Own from './Own'\nexport default function C() { return <Own>x</Own> }`,
     files: { 'Own.tsx': `import { Slot } from './mine'\nexport default function Own({ asChild, ...props }: any) { const Comp = asChild ? Slot.Root : 'span'; return <Comp {...props} /> }`, 'mine.ts': `export const Slot = { Root: 'div' }` },
     note: 'shadcn S1.4 R34.28 (Q5): only radix-ui and @radix-ui/react-slot are recognised; fallback local-component (Own is a React island; the page is static since island-children #203)' },
+
+  // ---- shadcn S3 package source (F153c, R34.61/R34.62/R34.65): stub packages compiled from their source map ----
+  { id: 'b-pkg-leaf-pure', category: 'B', authoring: 'a package forwardRef component over Radix Primitive.div, compiled from its source', expect: 'static', jobs: 0,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root title="t">x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c R34.61 + R34.65: the source map carries the authored TSX; Primitive.div is the host <div>, the forwarded ref is dropped' },
+  { id: 'b-pkg-leaf-handler', category: 'B', authoring: 'the Radix Label source (a handler on Primitive.label)', expect: 'static', jobs: 0,
+    snippet: `import { Root } from '@radix-ui/react-label'\nexport default function C() { return <div><Root htmlFor="x">Name</Root></div> }`,
+    packages: { '@radix-ui/react-label': { files: { 'src/label.tsx': RADIX_LABEL } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c: the page stays static; the Label is a native child (its double-click selection guard binds as x-on on the <label>)' },
+  { id: 'b-pkg-aschild-false', category: 'B', authoring: 'a package Primitive leaf with asChild={false}', expect: 'static', jobs: 0,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root asChild={false}>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c: a literal false is the host element (the leaf spreads its props into Primitive.div, so it requires `asChild` absent or false)' },
+  { id: 'b-pkg-primitive-aschild', category: 'B', authoring: 'Primitive.button asChild with one host child, written in the app', expect: 'static', jobs: 0,
+    snippet: `import { Primitive } from '@radix-ui/react-primitive'\nexport default function C() { return <div><Primitive.button asChild className="b"><a href="/y">y</a></Primitive.button></div> }`,
+    packages: { '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c R34.65: asChild on a Primitive tag merges into the one host child (the R34.28 Button rule)' },
+  { id: 'b-pkg-aschild-through-spread', category: 'B', authoring: 'asChild passed to a package leaf that spreads it into Primitive', expect: 'react',
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root asChild><a href="/y">y</a></Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles' },
+  { id: 'b-pkg-aschild-dynamic', category: 'B', authoring: 'a dynamic asChild on a package leaf', expect: 'react',
+    snippet: `import { Root } from 'leafy'\nexport default function C({ on }: any) { return <section><Root asChild={on}><a href="/y">y</a></Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c fail closed: slot-dynamic' },
+  { id: 'b-pkg-callsite-ref', category: 'B', authoring: 'a ref passed to a package forwardRef leaf', expect: 'react',
+    snippet: `import { useRef } from 'react'\nimport { Root } from 'leafy'\nexport default function C() { const r = useRef(null); return <section><Root ref={r}>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none)' },
+  { id: 'b-pkg-ref-read', category: 'B', authoring: 'a package leaf that reads its forwarded ref', expect: 'static', jobs: 1,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF.replace('ref={forwardedRef}', 'ref={forwardedRef} data-r={String(forwardedRef)}') } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c fail closed: the leaf needs React (forwardref-ref), so the app keeps the island of the published export' },
+  { id: 'b-pkg-no-map', category: 'B', authoring: 'a package that publishes no source map', expect: 'static', jobs: 1,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF }, publish: 'no-map' }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c G1: no sourcesContent, no analysis: the island of the published export (external-component, reason named)' },
+  { id: 'b-pkg-drift', category: 'B', authoring: 'a package whose published JS was not built from its map', expect: 'static', jobs: 1,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF }, publish: 'drift' }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c R34.62: the integrity check fails: the island of the published export' },
+  { id: 'b-pkg-primitive-changed', category: 'B', authoring: 'a Primitive factory of another shape', expect: 'static', jobs: 1,
+    snippet: `import { Primitive } from '@radix-ui/react-primitive'\nexport default function C() { return <div><Primitive.span>x</Primitive.span></div> }`,
+    packages: { '@radix-ui/react-primitive': { files: { 'src/primitive.tsx': RADIX_PRIMITIVE.replace('const Comp: any = asChild ? Slot : node;', 'const Comp: any = asChild ? node : Slot;') } } },
+    note: 'F153c R34.65 ruling Q1: no structural match, no host: the island of the published export' },
+  { id: 'b-pkg-dynamic-spread', category: 'B', authoring: 'a package leaf spreading an object computed by a call', expect: 'static', jobs: 1,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': `import * as React from 'react'\nfunction attrs(): any { return { role: 'note' } }\nexport const Root = React.forwardRef(function Root(props: any, ref: any) { return <div {...attrs()} {...props} ref={ref} /> })` } } },
+    note: 'F153c fail closed: spread-props in the source, so the island of the published export' },
+  { id: 'b-pkg-namespace-barrel', category: 'B', authoring: 'a component reached through a package barrel (`export * as X from`)', expect: 'static', jobs: 0,
+    snippet: `import { Leafy } from 'barrel'\nexport default function C() { return <section><Leafy.Root>x</Leafy.Root></section> }`,
+    packages: { barrel: { files: { 'src/index.ts': `export * as Leafy from 'leafy'` } }, leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c: the `radix-ui` barrel shape (`export * as Label from \'@radix-ui/react-label\'`) is followed to the member' },
 
   // ---- C. Hooks -------------------------------------------------------------
   { id: 'c-usestate', category: 'C', authoring: 'useState', api: ['useState'], expect: 'native', jobs: 0,

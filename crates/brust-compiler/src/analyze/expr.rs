@@ -638,6 +638,8 @@ fn data_name(d: &E) -> &'static str {
 pub struct Walk {
     pub declared: Vec<js_ast::Ref>,
     pub used: Vec<js_ast::Ref>,
+    /// The same reads with the start of the identifier expression (a read is told apart by where it is, not counted).
+    pub used_at: Vec<(js_ast::Ref, i32)>,
     /// Every call expression reached, outermost first.
     pub calls: Vec<js_ast::Expr>,
     /// Location of the first dynamic `import()` reached (F38): the printer
@@ -827,8 +829,14 @@ impl Walk {
 
     pub fn expr(&mut self, e: &js_ast::Expr) {
         match &e.data {
-            E::EIdentifier(id) => self.used.push(id.ref_),
-            E::EImportIdentifier(id) => self.used.push(id.ref_),
+            E::EIdentifier(id) => {
+                self.used.push(id.ref_);
+                self.used_at.push((id.ref_, e.loc.start));
+            }
+            E::EImportIdentifier(id) => {
+                self.used.push(id.ref_);
+                self.used_at.push((id.ref_, e.loc.start));
+            }
             E::EArray(a) => a.items.iter().for_each(|x| self.expr(x)),
             E::EUnary(u) => {
                 if !matches!(

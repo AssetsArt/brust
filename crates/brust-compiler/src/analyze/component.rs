@@ -115,6 +115,24 @@ pub struct AnalyzeOptions {
     /// L20: the class map of every `*.module.css` file, keyed by its path relative to `root` (`/`-separated).
     /// `styles.x` from such an import folds to the literal class; empty = nothing folds.
     pub css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    /// F158 (R34.69): the source files (relative to `root`, `/`-separated) whose default export is a route component,
+    /// a page or layout, whose props are request data. A component from one of them never receives lowered JSX: its caller
+    /// falls back to React (`revive-host-route-root`).
+    pub route_roots: std::collections::HashSet<String>,
+    /// F153c (R34.61): the package sources the build wrote (`packages/brust/src/build/pkg-src.ts`); empty = a
+    /// package import is the React island of its export, as before.
+    pub packages: PackageSources,
+}
+
+/// Where a bare import resolves to package SOURCE (F153c, R34.61): per importing scope (`""` = the app, else
+/// the root-relative directory of a written package), the specifier → the root-relative path of its entry
+/// source, or why the build refused it (no source map, integrity, …).
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct PackageSources {
+    #[serde(default)]
+    pub scopes: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub refused: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
 }
 
 /// Parses `source` as the module at `path` and runs the full analysis,
@@ -467,7 +485,7 @@ fn read_function_as(
     // read (`ref.current`, passed on, `useImperativeHandle`) needs React.
     let mut body_walk = crate::analyze::expr::Walk::default();
     body_walk.stmts(func.body.stmts.slice());
-    if reader.names.forwarded_ref_escapes(&body_walk.used) > 0 {
+    if reader.names.forwarded_ref_escapes(&body_walk.used_at) > 0 {
         ir.diagnostics.push(Diagnostic::fallback(
             "forwardref-ref",
             "the forwarded ref is read other than as `ref={ref}` on an element; the component renders as a React island",

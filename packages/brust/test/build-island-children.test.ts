@@ -39,7 +39,7 @@ test('the island entry and the SSR job use one revive', () => {
   expect(nestedOf(compiled, 'part_1')).toBeUndefined()
   const shim = islandShim(host, compiled)
   expect(shim).toContain('import { Part as N0 } from "/app/p.tsx"')
-  expect(shim).toContain('__mk(Comp, props)')
+  expect(shim).toContain('__mk(Comp, props, [])')
   // An island nothing passes children to keeps the plain entry.
   expect(islandShim(host)).toContain('createElement(Comp, props)')
 })

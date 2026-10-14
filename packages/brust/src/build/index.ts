@@ -8,11 +8,12 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync,
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 import { BrustRouteError, type FlatRoute, validateRoutes } from '../routes'
-import { type BrowserCtx, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, storeModules } from './bundle'
+import { type BrowserCtx, setDevBuild, buildActions, buildCacheAdapter, buildClientChunks, buildJobs, buildReactChunks, buildRuntime, nestedOf, storeModules } from './bundle'
 import { runActionsOnly } from './actions-only'
 import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflare'
 import { renderIcons } from './build-icons'
 import { evaluateBuildSlots } from './build-eval'
+import { preparePackageSources } from './pkg-src'
 import { type Compiled, compileApp } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
@@ -248,6 +249,14 @@ async function buildInto(
   }
   const firstLog: string[] = []
   let { compiled, routeComponent } = compileApp({ ...compileOpts, log: (l) => firstLog.push(l) })
+  // F153c: the packages the app imports components from are compiled from their source when they publish it (and
+  // it matches what they publish); the app is compiled again with those sources. A refused package stays the island.
+  const external = [...new Set([...compiled.values()].flatMap((c) => (c.ir.external ? [c.ir.external.source] : [])))]
+  const packages = preparePackageSources(appRoot, external)
+  if (Object.keys(packages.scopes).length > 0) {
+    firstLog.length = 0
+    ;({ compiled, routeComponent } = compileApp({ ...compileOpts, packages, log: (l) => firstLog.push(l) }))
+  }
   // L23: lucide icons the compiler could inline are rendered here (react-dom/server); L2: slots that read
   // nothing request- or time-dependent are computed once, here. The app is compiled again with both (an icon with
   // no markup stays the L22 island; a slot with a value is a literal: no job, no worker). The first compile's
@@ -258,13 +267,20 @@ async function buildInto(
   const hasSlots = Object.keys(slotValues).length > 0
   if (hasIcons || hasSlots) {
     if (!hasIcons) firstLog.forEach((l) => o.log(l))
-    ;({ compiled, routeComponent } = compileApp({ ...compileOpts, iconSvgs, iconsFinal: hasIcons, slotValues, log: hasIcons ? o.log : () => {} }))
+    ;({ compiled, routeComponent } = compileApp({ ...compileOpts, packages, iconSvgs, iconsFinal: hasIcons, slotValues, log: hasIcons ? o.log : () => {} }))
   } else firstLog.forEach((l) => o.log(l))
+
+  // F158 (R34.69/70): the compiler makes a caller of a route component fall back to React, so none is a revive host;
+  // if one is, the compiler missed it, and the build stops rather than let request data near the revive.
+  const routeRoots: ReadonlySet<string> = new Set(routeComponent.values())
+  for (const id of routeRoots) {
+    if (nestedOf(compiled, id) !== undefined) throw new BuildError('revive-host-route-root', `${id} is a page or layout and also receives lowered JSX children from a caller; this is a compiler bug (F158), please report it`)
+  }
 
   mkdirSync(join(out, 'jinja'), { recursive: true })
   for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
 
-  const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrls)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrls))])
+  const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrls)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime: { core: runtime.core, features: { ...runtime.features, store: runtime.store } }, chunks })
   // L33: a component whose chunk imports the store module (directly or through a shared chunk) has the page preload it.
   const readClient = (rel: string) => (existsSync(join(out, rel)) ? readFileSync(join(out, rel), 'utf8') : undefined)
@@ -273,7 +289,7 @@ async function buildInto(
     const files = [...new Set((routeCss.get(r.id) ?? []).flatMap((s) => (css.file.has(s) ? [css.file.get(s)!] : [])))]
     if (files.length > 0) r.css = files
   }
-  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps)
+  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps, routeRoots)
   manifest.actions =
     o.actions && o.actionsEntry
       ? { entry: await buildActions(out, o.actionsEntry, css.maps), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite }

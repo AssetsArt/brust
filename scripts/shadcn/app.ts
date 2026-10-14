@@ -7,7 +7,19 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import { compileTree } from '../../packages/brust/native/index.js'
+import { preparePackageSources } from '../../packages/brust/src/build/pkg-src.ts'
 import { FIXTURE, repo } from './paths.ts'
+
+/** `compileTree` as `brust build` runs it (F153c): once, then again with the sources of the packages the tree
+ * imports components from, so the analysis sees what the build compiles. */
+export function compileAsBuild(rel: string): ReturnType<typeof compileTree> {
+  const first = compileTree(rel, FIXTURE, '/_brust/runtime.js', [])
+  if (first.error) return first
+  const external = [...new Set(first.components.flatMap((c) => { const ir = JSON.parse(c.ir) as { external?: { source: string } }; return ir.external ? [ir.external.source] : [] }))]
+  const packages = preparePackageSources(FIXTURE, external)
+  if (Object.keys(packages.scopes).length === 0) return first
+  return compileTree(rel, FIXTURE, '/_brust/runtime.js', [], undefined, undefined, undefined, undefined, JSON.stringify(packages))
+}
 
 export type Tier = 'static' | 'native' | 'react' | 'error'
 
@@ -67,7 +79,7 @@ export function analysePage(id: string): Omit<AppRow, 'build'> {
   const base = { id, tier: 'error' as Tier, reason: null, codes: [], islands: 0, components: 0, reactComponents: 0, clientBytes: 0, blocked: [], error: null }
   let tree: ReturnType<typeof compileTree>
   try {
-    tree = compileTree(`pages/${id}.tsx`, FIXTURE, '/_brust/runtime.js', [])
+    tree = compileAsBuild(`pages/${id}.tsx`)
   } catch (e) {
     return { ...base, codes: ['error:compile-throw'], error: String(e instanceof Error ? e.message : e).split('\n')[0]!.replaceAll(FIXTURE, '.') }
   }
@@ -123,7 +135,7 @@ export function surveyRepro(): Repro[] {
     { id: 'static', what: '`export function Box({ className })` (no rest props: static, inlined)' },
   ]
   return cases.map((c) => {
-    const tree = compileTree(`repro/page-${c.id}.tsx`, FIXTURE, '/_brust/runtime.js', [])
+    const tree = compileAsBuild(`repro/page-${c.id}.tsx`)
     const codes = [...new Set(tree.components.flatMap((x) => x.diagnostics.filter((d) => d.class === 'fallback').map((d) => d.rule)))].sort()
     return { ...c, codes, build: buildEntry(`repro/r-${c.id}.tsx`, `repro-${c.id}`) }
   })

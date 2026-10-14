@@ -6,7 +6,8 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { CATEGORIES, rows, type Expect, type Row } from './rows.ts'
+import { CATEGORIES, rows, type Expect, type Row, type StubPackage } from './rows.ts'
+import { preparePackageSources } from '../../packages/brust/src/build/pkg-src.ts'
 import { renderExitReport } from './exit.ts'
 import { coverageJson, renderApiSection } from './api-coverage.ts'
 
@@ -60,7 +61,13 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
       mkdirSync(dirname(join(dir, name)), { recursive: true })
       writeFileSync(join(dir, name), text + '\n')
     }
-    const p = spawnSync(brustc, ['input.tsx', '--emit', 'ir'], { cwd: dir, encoding: 'utf8' })
+    const extra: string[] = []
+    if (row.packages) {
+      for (const [name, pkg] of Object.entries(row.packages)) writeStubPackage(join(dir, 'node_modules', name), name, pkg)
+      preparePackageSources(dir, Object.keys(row.packages))
+      extra.push('--packages', join(dir, '.brust/pkg-src/index.json'))
+    }
+    const p = spawnSync(brustc, ['input.tsx', '--emit', 'ir', ...extra], { cwd: dir, encoding: 'utf8' })
     if (p.status !== 0 || !p.stdout.trim().startsWith('{')) {
       // A snippet that does not parse is a result, not a crash.
       const lines = (p.stderr || p.stdout).split('\n').filter((l) => l.trim())
@@ -75,7 +82,7 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
     const hasError = ir.diagnostics.some((d) => d.class === 'Error')
     const tier = typeof ir.tier === 'string' ? (ir.tier.toLowerCase() as Expect) : 'react'
     const jobs = ir.jobs.map((j) => (typeof j.kind === 'string' ? j.kind : Object.keys(j.kind)[0]!).toLowerCase())
-    const b = spawnSync(brustc, ['input.tsx', '--emit', 'all', '--out', join(dir, 'out')], { cwd: dir, encoding: 'utf8' })
+    const b = spawnSync(brustc, ['input.tsx', '--emit', 'all', '--out', join(dir, 'out'), ...extra], { cwd: dir, encoding: 'utf8' })
     const build = classifyBuild(b.status, b.stderr ?? '', hasError)
     const buildMessage = build === 'failed'
       ? ((b.stderr ?? '').split('\n').find((l) => l.trim()) ?? `exit ${b.status}`).replace(/^error:\s*/, '').replaceAll(dir, '.')
@@ -84,6 +91,25 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+}
+
+/** A stub package: `package.json`, the sources, `dist/index.mjs` transpiled from them (the entry source last) and,
+ * unless `publish` says otherwise, the source map carrying them. */
+function writeStubPackage(dir: string, name: string, pkg: StubPackage): void {
+  const put = (rel: string, text: string) => {
+    mkdirSync(dirname(join(dir, rel)), { recursive: true })
+    writeFileSync(join(dir, rel), text)
+  }
+  const paths = Object.keys(pkg.files)
+  const t = new Bun.Transpiler({ loader: 'tsx' })
+  const built = (files: Record<string, string>) => paths.map((p) => t.transformSync(files[p]!)).join('\n')
+  put('package.json', JSON.stringify({ name, version: '1.0.0', exports: { '.': { import: './dist/index.mjs' } }, source: `./${paths[0]}` }))
+  for (const p of paths) put(p, pkg.files[p]!)
+  // `drift`: the published file was built from a source whose `props` was renamed: a name the map has, the dist lacks.
+  const drifted = Object.fromEntries(paths.map((p) => [p, pkg.files[p]!.replaceAll(/\bprops\b/g, 'drifted')]))
+  put('dist/index.mjs', built(pkg.publish === 'drift' ? drifted : pkg.files))
+  if (pkg.publish !== 'no-map')
+    put('dist/index.mjs.map', JSON.stringify({ version: 3, sources: paths.map((p) => `../${p}`), sourcesContent: paths.map((p) => pkg.files[p]), mappings: '' }))
 }
 
 /** Every `html_raw` in the `.jinja` files `--emit all` wrote (none when the build was refused). */

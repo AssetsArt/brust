@@ -78,10 +78,13 @@ pub struct NameTable<'a> {
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
     /// the bare object as a value, or inside code printed as written (R34.14: fail closed).
     pub rest_escape: std::cell::Cell<Option<u32>>,
+    /// Binding locations of the body statements `const { a, b = 1, ...rest } = props` that are read as the props
+    /// pattern (R34.66): the same reads as a parameter pattern, so the statement itself is skipped.
+    absorbed: HashSet<i32>,
     /// The forwarded ref of a `forwardRef(function (props, ref) {…})` component (R34.63): the symbol of `ref`.
     forwarded_ref: Option<u32>,
-    /// How many reads of it were dropped as `ref={ref}` on a host element (any other read fails closed).
-    forwarded_ref_dropped: std::cell::Cell<u32>,
+    /// Where the reads of it that were dropped as `ref={ref}` on a host element are (any other read fails closed).
+    forwarded_ref_dropped: std::cell::RefCell<HashSet<i32>>,
     /// Module-level `const X = BASE.MEMBER` (never reassigned) with `BASE` imported from a package.
     member_aliases: HashMap<u32, MemberRef>,
     /// `const x = c ? {…} : {…}` at module level or at the top of the component body: the initialiser, for
@@ -143,7 +146,10 @@ impl<'a> NameTable<'a> {
         let mut table = Self::for_hook(ast);
         if let Some(arg) = component.args.slice().first() {
             match arg.binding.data {
-                B::BIdentifier(id) => table.props_ident = Some(table.key(id.r#ref)),
+                B::BIdentifier(id) => {
+                    table.props_ident = Some(table.key(id.r#ref));
+                    table.absorb_body_patterns(component);
+                }
                 // Only plain `key` / `key: local` / `key = default` bind a prop, and a
                 // trailing `...rest` (R34.14); nested patterns are a `prop-pattern`
                 // fallback (read_props) and their bindings stay Local.
@@ -175,6 +181,92 @@ impl<'a> NameTable<'a> {
         table
     }
 
+    /// `const { a, b = 1, ...rest } = props` at the top level of the body (with `props` the plain first parameter)
+    /// binds props exactly like the parameter pattern (R34.66). Only the plain shapes the parameter pattern reads
+    /// (`key`, `key: local`, `key = default`, a trailing `...rest`, one `...rest` per component) are absorbed; any
+    /// other destructuring stays the `body-shape` fallback.
+    fn absorb_body_patterns(&mut self, component: &js_ast::G::Fn) {
+        let Some(props) = self.props_ident else {
+            return;
+        };
+        // A default is read before the body's own bindings exist (the statement is skipped, the template binds no
+        // local for it): one that reads a binding declared in the body would print a bare, unbound name. Such a
+        // pattern stays `body-shape` (review F1).
+        let mut body = crate::analyze::expr::Walk::default();
+        body.stmts(component.body.stmts.slice());
+        let declared: HashSet<u32> = body.declared.iter().map(|r| self.key(*r)).collect();
+        let mut candidates = Vec::new();
+        for stmt in component.body.stmts.slice() {
+            let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
+                continue;
+            };
+            if !matches!(l.kind, js_ast::S::Kind::KConst) || l.decls.len() != 1 {
+                continue;
+            }
+            let d = &l.decls[0];
+            let (B::BObject(obj), Some(v)) = (d.binding.data, d.value) else {
+                continue;
+            };
+            let js_ast::expr::Data::EIdentifier(id) = &v.data else {
+                continue;
+            };
+            if self.key(id.ref_) != props {
+                continue;
+            }
+            let plain = obj.properties().iter().all(|p| {
+                matches!(p.value.data, B::BIdentifier(_))
+                    && (p.flags.contains(js_ast::flags::Property::IsSpread)
+                        || matches!(&p.key.data, js_ast::expr::Data::EString(_)))
+            });
+            let defaults_ok = obj.properties().iter().all(|p| {
+                p.default_value.as_ref().is_none_or(|dv| {
+                    let mut w = crate::analyze::expr::Walk::default();
+                    w.expr(dv);
+                    !w.used.iter().any(|u| declared.contains(&self.key(*u)))
+                })
+            });
+            if plain && defaults_ok {
+                candidates.push((d.binding.loc.start, obj));
+            }
+        }
+        let is_rest = |p: &js_ast::b::Property| p.flags.contains(js_ast::flags::Property::IsSpread);
+        let with_rest = candidates
+            .iter()
+            .filter(|(_, o)| o.properties().iter().any(is_rest))
+            .count();
+        // `...rest` leaves out the keys of its own pattern only (JS), while a component's declared props are one
+        // list: a rest is read only when its pattern is the only one (anything else stays `body-shape`).
+        if with_rest > 1
+            || (with_rest == 1 && candidates.len() > 1)
+            || self.rest.is_some() && with_rest > 0
+        {
+            return;
+        }
+        for (loc, obj) in candidates {
+            for p in obj.properties() {
+                let B::BIdentifier(b) = p.value.data else {
+                    continue;
+                };
+                let k = self.key(b.r#ref);
+                if is_rest(p) {
+                    self.rest = Some(k);
+                } else if let js_ast::expr::Data::EString(key) = &p.key.data {
+                    let name = crate::analyze::expr::estring(key);
+                    if with_rest == 1 {
+                        self.named_props.push(name.clone());
+                    }
+                    self.props.insert(k, name);
+                }
+            }
+            self.absorbed.insert(loc);
+        }
+    }
+
+    /// The body statement whose binding starts at `loc` was absorbed into the props pattern.
+    pub fn is_absorbed(&self, loc: i32) -> bool {
+        self.absorbed.contains(&loc)
+    }
+
     /// The table for a custom hook's body (G3): the same module facts, and no props (a
     /// hook's first parameter is an ordinary argument).
     pub fn for_hook(ast: &'a js_ast::Ast<'_>) -> Self {
@@ -187,8 +279,9 @@ impl<'a> NameTable<'a> {
             rest: None,
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
+            absorbed: HashSet::new(),
             forwarded_ref: None,
-            forwarded_ref_dropped: std::cell::Cell::new(0),
+            forwarded_ref_dropped: std::cell::RefCell::new(HashSet::new()),
             member_aliases: HashMap::new(),
             cond_consts: HashMap::new(),
             poly: HashMap::new(),
@@ -268,19 +361,21 @@ impl<'a> NameTable<'a> {
         self.forwarded_ref.is_some() && self.forwarded_ref == Some(self.key(r))
     }
 
-    /// `ref={ref}` on a host element was dropped (the one allowed read of the forwarded ref).
-    pub fn note_forwarded_ref_dropped(&self) {
-        self.forwarded_ref_dropped
-            .set(self.forwarded_ref_dropped.get() + 1);
+    /// `ref={ref}` on a host element was dropped (the one allowed read of the forwarded ref), at `loc`.
+    pub fn note_forwarded_ref_dropped(&self, loc: i32) {
+        self.forwarded_ref_dropped.borrow_mut().insert(loc);
     }
 
-    /// Reads of the forwarded ref among `used` that were not dropped as `ref={ref}` (R34.64: fail closed).
-    pub fn forwarded_ref_escapes(&self, used: &[js_ast::Ref]) -> usize {
+    /// Reads of the forwarded ref among `used` (identifier, location) that were not dropped as `ref={ref}`
+    /// (R34.64: fail closed). Judged by location: two reads cannot cancel each other out.
+    pub fn forwarded_ref_escapes(&self, used: &[(js_ast::Ref, i32)]) -> usize {
         let Some(k) = self.forwarded_ref else {
             return 0;
         };
-        let n = used.iter().filter(|r| self.key(**r) == k).count();
-        n.saturating_sub(self.forwarded_ref_dropped.get() as usize)
+        let dropped = self.forwarded_ref_dropped.borrow();
+        used.iter()
+            .filter(|(r, at)| self.key(*r) == k && !dropped.contains(at))
+            .count()
     }
 
     /// `r` is a module-level `const` that aliases a member of a package import.

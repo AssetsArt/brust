@@ -7,6 +7,7 @@ import { relative, sep } from 'node:path'
 import { type CompiledComponent, type CompiledTree, compileTree } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
+import type { PackageSources } from './pkg-src'
 
 /** `ComponentIR` as the compiler serialises it (snake_case), with the fields that are absent
  * when default (`ir/mod.rs`) normalised. The build reads it; it never rewrites it. */
@@ -39,7 +40,7 @@ export type ComponentIR = Record<string, any> & {
   /** The binding a React island imports this component by from `source` (absent: the default export). */
   export?: string
   /** Child components; `nested` is set when this file passes lowered JSX children to that child, an island (shadcn S1). */
-  children?: { id: string | null; nested?: string[]; [field: string]: unknown }[]
+  children?: { id: string | null; nested?: string[]; x?: string[]; [field: string]: unknown }[]
 }
 
 export interface Compiled {
@@ -111,10 +112,13 @@ export function compileApp(opts: {
   iconsFinal?: boolean
   /** Values the build computed for `ir.build_eval` slots, by key (L2): the slots become literals. */
   slotValues?: Record<string, unknown>
+  /** F153c: the package sources this build wrote (`pkg-src.ts`); absent = package imports are islands. */
+  packages?: PackageSources
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
   const iconSvgsJson = opts.iconsFinal ? JSON.stringify({ final: true, svgs: opts.iconSvgs ?? {} }) : undefined
   const slotValuesJson = opts.slotValues && Object.keys(opts.slotValues).length > 0 ? JSON.stringify(opts.slotValues) : undefined
+  const packagesJson = opts.packages ? JSON.stringify(opts.packages) : undefined
   // The Rust side keys each map by its path relative to the app root (`/`-separated), like an import resolves.
   const cssModules = Object.fromEntries([...(opts.cssMaps ?? [])].map(([abs, map]) => [relative(realpathSync(appRoot), abs).split(sep).join('/'), map]))
   const seen = new Map<string, Seen>()
@@ -123,6 +127,11 @@ export function compileApp(opts: {
   // Route nodes with a Component, by id (a layout appears in several chains: once is enough).
   const nodes = new Map<string, Route>()
   for (const l of leaves) l.chain.forEach((r, i) => r.Component && nodes.set(l.chainIds[i]!, r))
+
+  // F158 (R34.69): the route components (pages and layouts) take request data as props, so the compiler never hands
+  // them lowered JSX from a caller. Keyed like an import resolves: relative to the app root, `/`-separated.
+  const rootRel = (f: string) => relative(appRoot, f).split(sep).join('/')
+  const routeRoots = [...new Set([...nodes.values()].flatMap((r) => componentFile.get(r.Component!) ?? []).flatMap((f) => [rootRel(f), relative(realpathSync(appRoot), realpathSync(f)).split(sep).join('/')]))]
 
   for (const [routeId, route] of nodes) {
     const file = componentFile.get(route.Component!)
@@ -134,7 +143,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, packagesJson)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).
