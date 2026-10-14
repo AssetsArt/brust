@@ -578,6 +578,9 @@ fn a_helper_proven_to_return_a_primitive_may_be_read_under_a_provider() {
         "ph-closure.tsx",
         "ph-chain.tsx",
         "ph-reassign.tsx",
+        // Afrojack F1/F2: a rest parameter returns an array; a body local that shadows a helper is not the helper.
+        "ph-rest.tsx",
+        "ph-shadow.tsx",
         // Mellow F1: a global is the language's own only when nothing in the module binds the name.
         "ph-g-string.tsx",
         "ph-g-number.tsx",

@@ -675,7 +675,7 @@ impl Placer<'_> {
                     RawKind::Ident {
                         name,
                         kind: IdentKind::Local,
-                    } => self.plain_fns.contains(name),
+                    } => self.plain_fns.contains(name) && !self.derived_raw.contains_key(name),
                     RawKind::Member { target, name, .. } => {
                         matches!(
                             &target.kind,

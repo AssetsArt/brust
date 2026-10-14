@@ -215,7 +215,10 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                 let mut locals = HashSet::new();
                 for a in f.args.slice() {
                     match a.binding.data {
-                        B::BIdentifier(id) if a.default.is_none() => {
+                        B::BIdentifier(id)
+                            if a.default.is_none()
+                                && !f.flags.contains(js_ast::flags::Function::HasRestArg) =>
+                        {
                             let p = names.name(id.r#ref);
                             // A parameter named like a module binding would hide it from the proof.
                             if module_names.contains(&p)
