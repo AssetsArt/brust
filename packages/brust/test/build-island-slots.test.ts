@@ -2,7 +2,7 @@
 // are folded by the compiler; the page stays static and the island chunk and the SSR job revive the trees. Hydration is
 // `tests/server/island-slots.chromium.test.ts`.
 import { afterAll, expect, test } from 'bun:test'
-import { readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createElement } from 'react'
 import { runBuild } from '../src/build'
@@ -60,30 +60,18 @@ test('only the names the compiler lists are revived; data is never a marker (R34
   }
 })
 
-test('a package a staged file can see resolves to its ESM entry, so the bundler tree-shakes it (chart page, +85 KB gzip)', async () => {
-  const { mkdirSync, mkdtempSync } = await import('node:fs')
-  const { tmpdir } = await import('node:os')
-  const { sourceDirPlugin } = await import('../src/build/bundle')
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'brust-esm-')))
+test('a call-site $x on an island is refused, so request data can never be revived (review F1)', async () => {
+  const forged = join(import.meta.dir, 'fixtures/island-slots-forged')
+  const out = join(forged, 'dist')
+  const logs: string[] = []
   try {
-    const pkg = join(root, 'node_modules/duo')
-    mkdirSync(pkg, { recursive: true })
-    // The recharts layout: `main` is a CJS build, `module` the ES build.
-    mkdirSync(join(pkg, 'lib'), { recursive: true })
-    mkdirSync(join(pkg, 'es6'), { recursive: true })
-    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'duo', main: 'lib/index.js', module: 'es6/index.js', sideEffects: false }))
-    writeFileSync(join(pkg, 'lib/index.js'), 'exports.used = "FROM_CJS"; exports.unused = "UNUSED_CJS"\n')
-    writeFileSync(join(pkg, 'es6/index.js'), 'export const used = "FROM_ESM"\nexport const unused = "UNUSED_ESM"\n')
-    mkdirSync(join(root, '.stage'), { recursive: true })
-    const staged = join(root, '.stage/entry.ts')
-    writeFileSync(staged, `import { used } from 'duo'\nconsole.log(used)\n`)
-    const sourceOf = new Map([[staged, join(root, 'src.tsx')]])
-    const out = await Bun.build({ entrypoints: [staged], target: 'browser', plugins: [sourceDirPlugin(sourceOf, root)] })
-    const code = await out.outputs[0]!.text()
-    expect(code).toContain('FROM_ESM')
-    expect(code).not.toContain('FROM_CJS')
-    expect(code).not.toContain('UNUSED_ESM')
+    await runBuild({ appRoot: forged, entry: 'routes.tsx', outDir: out, log: (m: string) => logs.push(m), force: true })
+    const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'))
+    const tiers = Object.fromEntries(Object.entries<{ tier: string }>(manifest.components).map(([id, c]) => [id.replace(/_[0-9a-f]{8}$/, ''), c.tier]))
+    expect(tiers.page).toBe('react')
+    // The island is the whole page: it renders `data` as data, with no revive code that reads a `$x`.
+    for (const f of readdirSync(join(out, 'client'))) expect(readFileSync(join(out, 'client', f), 'utf8')).not.toContain('__xs')
   } finally {
-    rmSync(root, { recursive: true, force: true })
+    rmSync(out, { recursive: true, force: true })
   }
 })

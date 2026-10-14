@@ -978,6 +978,17 @@ impl Walker<'_, '_> {
                 let mut ok = true;
                 let mut element_props: Vec<(String, serde_json::Value)> = Vec::new();
                 for (k, v) in props.iter() {
+                    // `$`-prefixed props are the compiler's own (`$x`, the revive switch): a call-site prop of
+                    // that name, written or inlined from a literal spread, could make data revive as elements.
+                    if k.starts_with('$') {
+                        self.diagnostics.push(Diagnostic::fallback(
+                            "island-prop",
+                            format!("the prop `{k}` of the React island <{name}> starts with `$`, which brust reserves for its own island props"),
+                            *loc,
+                            "rename the prop",
+                        ));
+                        continue;
+                    }
                     // An element as a prop of the island (R34.52): lowered like children, revived
                     // from the names in the instance's `$x` literal.
                     if let Expr::Raw(RawExpr {
@@ -1601,6 +1612,11 @@ impl Walker<'_, '_> {
                     for (k, v) in props {
                         if k == crate::ir::SPREAD_KEY {
                             return Err(format!("a spread into <{name}>"));
+                        }
+                        if k.starts_with('$') {
+                            return Err(format!(
+                                "the prop `{k}` of <{name}> starts with `$`, which brust reserves"
+                            ));
                         }
                         // An element as a prop (R34.52): lowered to a marker tree and named in `x`,
                         // the only list of props the revive turns back into elements.

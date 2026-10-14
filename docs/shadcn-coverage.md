@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|
-| 62 | 59 | 1 | 2 | 52 | 17 | 0 / 87 / 240 KB |
+| 62 | 59 | 1 | 2 | 52 | 17 | 0 / 87 / 324 KB |
 
 ### Analysis-only (2 of 64 pages refused)
 
@@ -114,13 +114,13 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | calendar | analysis-only | error | — | — | — | error:island-prop | refused: island-prop at pages/calendar.tsx:31:5, prop `components` on <DayPicker> |
 | card | measured | static | 0 | 9 (0) | 0 | — | built |
 | carousel | measured | static | 1 | 9 (5) | 96 | control-flow, event-capture, external-component, hook-unsupported, member-tag, ref-shape, slot-dynamic, spread-props | built |
-| chart | measured | static | 1 | 9 (8) | 240 | control-flow, external-component, hook-shape, hook-unsupported, island-children, local-component, member-tag, use-id-in-render | built |
+| chart | measured | static | 1 | 9 (8) | 324 | control-flow, external-component, hook-shape, hook-unsupported, island-children, local-component, member-tag, use-id-in-render | built |
 | checkbox | measured | static | 2 | 6 (5) | 91 | external-component, spread-props | built |
 | collapsible | measured | static | 1 | 8 (6) | 89 | external-component, spread-props | built |
 | combobox | measured | react | 1 | 20 (17) | 158 | external-component, island-children, jsx-expression, slot-dynamic, spread-props | built |
 | command | measured | static | 1 | 16 (14) | 104 | external-component, spread-props | built |
 | context-menu | measured | static | 1 | 13 (11) | 116 | external-component, island-children, spread-props | built |
-| dialog | measured | static | 1 | 23 (18) | 102 | external-component, island-children, spread-props | built |
+| dialog | measured | static | 1 | 23 (18) | 114 | external-component, island-children, spread-props | built |
 | direction | measured | static | 1 | 3 (2) | 69 | external-component, island-children | built |
 | drawer | measured | static | 1 | 20 (16) | 108 | external-component, island-children, spread-props | built |
 | dropdown-menu | measured | static | 1 | 18 (15) | 117 | external-component, island-children, spread-props | built |

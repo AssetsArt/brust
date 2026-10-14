@@ -9,7 +9,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
@@ -47,19 +47,6 @@ export interface BrowserCtx {
   cssMaps?: Map<string, Record<string, string>>
 }
 
-/** `file` sits under `root`. */
-const inside = (root: string, file: string): boolean => file === root || file.startsWith(root.endsWith(sep) ? root : root + sep)
-
-/** The package a bare specifier names is installed in a `node_modules` above `from` (node's own lookup). */
-function visibleFrom(spec: string, from: string): boolean {
-  const parts = spec.split('/')
-  const name = spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!
-  for (let d = from; ; d = dirname(d)) {
-    if (existsSync(join(d, 'node_modules', name, 'package.json'))) return true
-    if (dirname(d) === d) return false
-  }
-}
-
 /** Resolution for staged artifacts (`importer` = a staged file registered in `sourceOf`): relative
  * imports mean the component's SOURCE directory; bare imports (`react`, `react-dom/client`, npm
  * packages) resolve from `appRoot`, never from wherever `dist/` sits (an `--out-dir` outside the
@@ -75,10 +62,6 @@ export function sourceDirPlugin(sourceOf: SourceOf, appRoot: string, external: s
       })
       b.onResolve({ filter: /^[^./]/ }, (a) => {
         if (!sourceOf.has(a.importer) || matchesExternal(a.path, external)) return undefined
-        // A package the staged file can see from where it sits resolves natively: the bundler then picks the package's ESM
-        // entry (`module` / `exports.import`) and tree-shakes it. `Bun.resolveSync` answers with the CJS `main`, which
-        // bundles the whole package (recharts: +85 KB gzip on the chart page).
-        if (inside(appRoot, a.importer) && visibleFrom(a.path, dirname(a.importer))) return undefined
         return { path: Bun.resolveSync(a.path, appRoot) }
       })
     },

@@ -268,12 +268,33 @@ fn an_element_prop_on_a_static_child_keeps_jsx_expression() {
 }
 
 #[test]
-fn a_prop_name_the_revive_reserves_is_not_lowered() {
+fn an_element_prop_named_dollar_x_is_refused_as_a_reserved_prop() {
     let ir = page("elprop-reserved.tsx");
-    assert!(
-        rule(&ir, "island-children").is_some(),
-        "{:?}",
-        ir.diagnostics
-    );
+    assert!(rule(&ir, "island-prop").is_some(), "{:?}", ir.diagnostics);
     assert!(is_react(&ir));
+}
+
+/// Review F1: a call-site `$x` (written, or inlined from a literal spread) would let data revive as elements.
+#[test]
+fn a_user_written_dollar_x_prop_on_an_island_fails_closed() {
+    for f in ["x-written.tsx", "x-spread.tsx"] {
+        let ir = page(f);
+        let d = rule(&ir, "island-prop").unwrap_or_else(|| panic!("{f}: {:?}", ir.diagnostics));
+        assert!(
+            d.message.contains("`$x`") && d.message.contains("reserves"),
+            "{f}: {}",
+            d.message
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+        // No `$x` literal reaches an instance job from the call site.
+        assert!(literal(&ir, "$x").is_empty(), "{f}");
+    }
+}
+
+#[test]
+fn a_dollar_prop_on_a_nested_component_does_not_lower() {
+    // A nested component node cannot carry a `$`-named prop in its tree either.
+    let ir = page("x-nested.tsx");
+    let d = rule(&ir, "island-children").unwrap_or_else(|| panic!("{:?}", ir.diagnostics));
+    assert!(d.message.contains("reserves"), "{}", d.message);
 }
