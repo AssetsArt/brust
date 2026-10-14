@@ -67,7 +67,8 @@ test('measured and analysis-only rows add up, and the doc rounds client JS to KB
   const doc = renderReport(rows, libs, repro)
   expect(doc).toContain(`### Measured (${built.length} of ${rows.length} pages built)`)
   expect(doc).toContain(`### Analysis-only (${refused.length} of ${rows.length} pages refused)`)
-  for (const r of refused) expect(r.build.ok ? null : r.build.refusal?.rule).toBe('island-prop')
+  // R34.58: island-prop demotes the host to React, so no fixture page is refused (the section stays, empty).
+  expect(refused.map((r) => r.id)).toEqual([])
 })
 
 test('a page that ships an island counts the runtime core and the rt-* modules it preloads (L33)', () => {

@@ -161,7 +161,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         In a native component, effect dependency arrays are not needed: signals track what an effect reads. A missing dependency still prints <code>effect-deps</code> as a warning, and the tier stays native.
       </p>
       <Note>
-        Falling back to React is never a build failure. Some things are: passing a function prop to a React child (<code>island-prop</code>), server-only code reachable from the browser (<code>server-only-in-client</code>), and a list without keys (<code>list-key</code>).
+        Falling back to React is never a build failure, and that includes passing a function or a changing value to a React child (<code>island-prop</code>): the component that passes it renders with React. Some things are: server-only code reachable from the browser (<code>server-only-in-client</code>), and a list without keys (<code>list-key</code>).
       </Note>
 
       <h2 id="runtime">What the browser loads</h2>
