@@ -35,8 +35,8 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
-      <h2 id="alpha-11">2.0.0-alpha.11 · 14 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.10: #228–#232 (F165, F164 PR 2a + F169, F148a, F175, F182) */}
+      <h2 id="alpha-11">2.0.0-alpha.11 · 15 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.10: #228–#233 (F165, F164 PR 2a + F169, F148a, F175, F182, F178) */}
       <p>A one-command shadcn/ui setup, fewer worker processes for static apps, more components that compile, and fixes for builds that failed on valid React.</p>
 
       <h3>New</h3>
@@ -52,6 +52,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #232 (F182): #229 re-based instance records only for static wrappers */}
         <li>
           <strong>A native component that holds a component with its own server work no longer fails the build.</strong> A component with state and a handler that renders a child with a server job or <code>useId</code> stopped <code>brust build</code> with <code>nested-instance</code>. The component that renders it now stays React.
+        </li>
+        {/* source: PR #233 (F178, found by knock2 in the wave B spike) */}
+        <li>
+          <strong>An object constant used in an event handler no longer breaks the build.</strong> <code>const step = {'{'} up: 1, down: -1 {'}'}</code> inside a component, read in an <code>onClick</code>, was printed as invalid JavaScript and stopped <code>brust build</code>. It now compiles and behaves as in React.
         </li>
         {/* source: PR #229 (F169, Mellow N1) */}
         <li>
