@@ -146,6 +146,10 @@ pub struct ChildRef {
     /// them to revive the tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nested: Option<Vec<String>>,
+    /// F158 (R34.71): the names of the island's element props (`$x` at its call sites), the only names its
+    /// revive may revive. Sorted, deduplicated; absent when no call site passes one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub x: Vec<String>,
 }
 
 /// A component that lives in a package, rendered as a React island: the island's code is the

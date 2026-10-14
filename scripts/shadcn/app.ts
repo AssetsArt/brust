@@ -18,7 +18,7 @@ export function compileAsBuild(rel: string): ReturnType<typeof compileTree> {
   const external = [...new Set(first.components.flatMap((c) => { const ir = JSON.parse(c.ir) as { external?: { source: string } }; return ir.external ? [ir.external.source] : [] }))]
   const packages = preparePackageSources(FIXTURE, external)
   if (Object.keys(packages.scopes).length === 0) return first
-  return compileTree(rel, FIXTURE, '/_brust/runtime.js', [], undefined, undefined, undefined, JSON.stringify(packages))
+  return compileTree(rel, FIXTURE, '/_brust/runtime.js', [], undefined, undefined, undefined, undefined, JSON.stringify(packages))
 }
 
 export type Tier = 'static' | 'native' | 'react' | 'error'

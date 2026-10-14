@@ -16,7 +16,7 @@
       "native": 1,
       "react": 2
     },
-    "islands": 50,
+    "islands": 53,
     "pagesWithNoJs": 18,
     "jsGzipKb": {
       "min": 0,
@@ -39,18 +39,18 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 41,
+      "measuredRows": 43,
       "analysisOnlyRows": 0,
-      "appComponents": 144,
+      "appComponents": 145,
       "libraryComponents": 151
     },
     {
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 40,
+      "measuredRows": 41,
       "analysisOnlyRows": 0,
-      "appComponents": 140,
+      "appComponents": 141,
       "libraryComponents": 183
     },
     {
@@ -97,6 +97,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 3,
       "libraryComponents": 6
+    },
+    {
+      "blocker": "fallback:slot-dynamic",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 3,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:island-prop",
@@ -231,7 +240,7 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 190
+      "libraryComponents": 193
     },
     {
       "blocker": "useContext / use*Context",
@@ -434,7 +443,7 @@
       "islands": 1,
       "components": 3,
       "reactComponents": 2,
-      "jsGzipKb": 73,
+      "jsGzipKb": 74,
       "codes": [
         "external-component",
         "spread-props"
@@ -590,6 +599,7 @@
         "hook-unsupported",
         "member-tag",
         "ref-shape",
+        "slot-dynamic",
         "spread-props"
       ]
     },
@@ -616,10 +626,10 @@
       "id": "checkbox",
       "basis": "measured",
       "tier": "static",
-      "islands": 1,
-      "components": 7,
-      "reactComponents": 3,
-      "jsGzipKb": 91,
+      "islands": 2,
+      "components": 6,
+      "reactComponents": 5,
+      "jsGzipKb": 92,
       "codes": [
         "external-component",
         "spread-props"
@@ -650,6 +660,7 @@
         "external-component",
         "island-children",
         "jsx-expression",
+        "slot-dynamic",
         "spread-props"
       ]
     },
@@ -685,9 +696,9 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 24,
-      "reactComponents": 16,
-      "jsGzipKb": 103,
+      "components": 23,
+      "reactComponents": 18,
+      "jsGzipKb": 102,
       "codes": [
         "external-component",
         "island-children",
@@ -701,7 +712,7 @@
       "islands": 1,
       "components": 3,
       "reactComponents": 2,
-      "jsGzipKb": 69,
+      "jsGzipKb": 70,
       "codes": [
         "external-component",
         "island-children"
@@ -750,10 +761,11 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 10,
-      "reactComponents": 1,
-      "jsGzipKb": 85,
+      "components": 9,
+      "reactComponents": 3,
+      "jsGzipKb": 86,
       "codes": [
+        "external-component",
         "spread-props"
       ]
     },
@@ -848,11 +860,14 @@
       "id": "label",
       "basis": "measured",
       "tier": "static",
-      "islands": 0,
-      "components": 5,
-      "reactComponents": 0,
-      "jsGzipKb": 4,
-      "codes": []
+      "islands": 1,
+      "components": 4,
+      "reactComponents": 2,
+      "jsGzipKb": 85,
+      "codes": [
+        "external-component",
+        "spread-props"
+      ]
     },
     {
       "id": "marker",
@@ -975,9 +990,9 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 9,
-      "reactComponents": 5,
-      "jsGzipKb": 97,
+      "components": 8,
+      "reactComponents": 7,
+      "jsGzipKb": 96,
       "codes": [
         "external-component",
         "spread-props"
@@ -1069,6 +1084,7 @@
         "island-children",
         "linked-prop-precompute",
         "member-tag",
+        "slot-dynamic",
         "spread-props"
       ]
     },
@@ -1125,9 +1141,9 @@
       "id": "switch",
       "basis": "measured",
       "tier": "static",
-      "islands": 1,
-      "components": 7,
-      "reactComponents": 3,
+      "islands": 2,
+      "components": 6,
+      "reactComponents": 5,
       "jsGzipKb": 89,
       "codes": [
         "external-component",
@@ -1175,7 +1191,7 @@
       "islands": 2,
       "components": 3,
       "reactComponents": 2,
-      "jsGzipKb": 86,
+      "jsGzipKb": 87,
       "codes": [
         "external-component",
         "spread-props"

@@ -113,3 +113,17 @@ Accepted. The P5 finding (`__mk` revives `children` with no switch) makes this m
 - **Q5 Test only, with a condition:** pin React 19's handling of `javascript:` for `href`, `src`, `action` and `formAction` at the pinned version. If any of the four is not neutralised, add the scheme guard in `__props` for that attribute in this lane.
 
 Step 0 (the three probes) is reported as a task note before any code.
+
+## 11. Lane result (Tiësto, 2026-10-14)
+
+**Step 0 probes** (reported on the task before code): P2, a non-literal spread of data onto an island, demotes the page to React (`spread-props`) and never yields a `$x` literal (pinned: `a_nonliteral_spread_onto_an_island_never_reaches_the_revive`). React 19.3.0 `renderToString` rewrites `javascript:` to a throwing URL for `href`, `src`, `action` and `formAction` (case and whitespace variants too), so no `__props` scheme guard was added; a test pins it (`video poster` passes it through, but is not an executable context and not in the ruling). Route components are known at build time (`compile.ts` `routeComponent`) but not inside the compiler pass.
+
+**As built, and where it differs from the draft:**
+- R34.69: the build passes the route files to the compiler (`AnalyzeOptions.route_roots`, a new napi argument). The check is by **component id**, not by file: a route component is the default export of its file (`component_id(path)`), so a same-file or named component of a route file is not one (the first cut compared files and broke `cf-build` R34.22, whose host sits in the route file). A caller passing children or an element prop to it gets `revive-host-route-root` and falls back.
+- R34.70: `nestedOf`/`islandShim`/`buildJobs` take the route-root set; a route component always gets `createElement`. `index.ts` also throws a `BuildError('revive-host-route-root')` if a route component is still a host after compile (a compiler bug, fail closed; mutation-tested).
+- R34.71: `ChildRef.x` (the element-prop names per call site) feeds a per-host list; `__mk(C, props, X)` revives only `$x` names in `X` (default `[]`: nothing).
+- R34.72: `__mk` throws on any top-level `$`-key except `$x` (nested `$oid` stays data).
+- R34.73: tests in `build-island-slots.test.ts` (allowlist, reserved key, javascript: URLs, route-host build + SSR job with hostile data, `nestedOf`/`islandShim` unit), `island_slots.rs` (route component, same-file host, spread), and a served check: `brust build` + `brust start` of `fixtures/island-slots-route-host`, `GET /` with a loader returning a marker, `$x` and `$brust` renders the data as text in `<pre>`, `GET /other` (the caller, now React) renders.
+- **Battery rows: none.** The battery compiles one snippet, which is always the route root, so a "route component is also a host" shape cannot be expressed; the proof is the compile test plus the build test above. `docs/react-coverage.md` is unchanged.
+- **Extra fix (found by the route-root invariant being blind):** `nestedOf` returned `undefined` for `nested: []` (a host whose lowered children are plain elements only), so that island got no revive code. Fixed; five shadcn rows (aspect-ratio, checkbox, direction, label, toggle) move +1 KB gzip because they now carry it. No row changes tier.
+- Release note for alpha.8 (lead's request): what could reach the revive (loader data into a component that is both a route component and a host of lowered children), which versions (2.0.0-alpha.1 to alpha.7), what changed (above).

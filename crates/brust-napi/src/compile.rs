@@ -56,6 +56,7 @@ pub(crate) fn compile_tree_impl(
     slot_values: Option<String>,
     css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     icon_svgs: Option<String>,
+    route_roots: Vec<String>,
     packages: Option<String>,
 ) -> CompiledTree {
     // F153c: `{ "scopes": …, "refused": … }`, the package sources the build wrote (`pkg-src.ts`).
@@ -90,6 +91,7 @@ pub(crate) fn compile_tree_impl(
         css_modules,
         icon_svgs,
         icons_final,
+        route_roots: route_roots.into_iter().collect(),
         packages,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
@@ -140,6 +142,7 @@ pub fn compile_tree(
         std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     >,
     icon_svgs: Option<String>,
+    route_roots: Option<Vec<String>>,
     packages: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
@@ -151,6 +154,7 @@ pub fn compile_tree(
         slot_values,
         css_modules.unwrap_or_default(),
         icon_svgs,
+        route_roots.unwrap_or_default(),
         packages,
     )
 }
@@ -168,6 +172,7 @@ mod tests {
             None,
             Default::default(),
             None,
+            vec![],
             None,
         );
         assert!(t.error.is_none(), "{:?}", t.error);
@@ -189,6 +194,7 @@ mod tests {
             None,
             Default::default(),
             None,
+            vec![],
             None,
         );
         assert_eq!(t.error.as_ref().map(|d| d.class.as_str()), Some("error"));
