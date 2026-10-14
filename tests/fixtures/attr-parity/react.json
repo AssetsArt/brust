@@ -1,0 +1,612 @@
+{
+ "aria-checked": {
+  "0": "aria-checked=\"0\"",
+  "1": "aria-checked=\"1\"",
+  "true": "aria-checked=\"true\"",
+  "false": "aria-checked=\"false\"",
+  "''": "aria-checked=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "aria-checked=\"x\""
+ },
+ "aria-hidden": {
+  "0": "aria-hidden=\"0\"",
+  "1": "aria-hidden=\"1\"",
+  "true": "aria-hidden=\"true\"",
+  "false": "aria-hidden=\"false\"",
+  "''": "aria-hidden=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "aria-hidden=\"x\""
+ },
+ "aria-expanded": {
+  "0": "aria-expanded=\"0\"",
+  "1": "aria-expanded=\"1\"",
+  "true": "aria-expanded=\"true\"",
+  "false": "aria-expanded=\"false\"",
+  "''": "aria-expanded=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "aria-expanded=\"x\""
+ },
+ "data-x": {
+  "0": "data-x=\"0\"",
+  "1": "data-x=\"1\"",
+  "true": "data-x=\"true\"",
+  "false": "data-x=\"false\"",
+  "''": "data-x=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "data-x=\"x\""
+ },
+ "data-state": {
+  "0": "data-state=\"0\"",
+  "1": "data-state=\"1\"",
+  "true": "data-state=\"true\"",
+  "false": "data-state=\"false\"",
+  "''": "data-state=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "data-state=\"x\""
+ },
+ "draggable": {
+  "0": "draggable=\"0\"",
+  "1": "draggable=\"1\"",
+  "true": "draggable=\"true\"",
+  "false": "draggable=\"false\"",
+  "''": "draggable=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "draggable=\"x\""
+ },
+ "spellCheck": {
+  "0": "spellcheck=\"0\"",
+  "1": "spellcheck=\"1\"",
+  "true": "spellcheck=\"true\"",
+  "false": "spellcheck=\"false\"",
+  "''": "spellcheck=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "spellcheck=\"x\""
+ },
+ "contentEditable": {
+  "0": "contenteditable=\"0\"",
+  "1": "contenteditable=\"1\"",
+  "true": "contenteditable=\"true\"",
+  "false": "contenteditable=\"false\"",
+  "''": "contenteditable=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "contenteditable=\"x\""
+ },
+ "focusable": {
+  "0": "focusable=\"0\"",
+  "1": "focusable=\"1\"",
+  "true": "focusable=\"true\"",
+  "false": "focusable=\"false\"",
+  "''": "focusable=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "focusable=\"x\""
+ },
+ "autoReverse": {
+  "0": "autoreverse=\"0\"",
+  "1": "autoreverse=\"1\"",
+  "true": "autoreverse=\"true\"",
+  "false": "autoreverse=\"false\"",
+  "''": "autoreverse=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "autoreverse=\"x\""
+ },
+ "externalResourcesRequired": {
+  "0": "externalresourcesrequired=\"0\"",
+  "1": "externalresourcesrequired=\"1\"",
+  "true": "externalresourcesrequired=\"true\"",
+  "false": "externalresourcesrequired=\"false\"",
+  "''": "externalresourcesrequired=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "externalresourcesrequired=\"x\""
+ },
+ "preserveAlpha": {
+  "0": "preservealpha=\"0\"",
+  "1": "preservealpha=\"1\"",
+  "true": "preservealpha=\"true\"",
+  "false": "preservealpha=\"false\"",
+  "''": "preservealpha=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "preservealpha=\"x\""
+ },
+ "value": {
+  "0": "value=\"0\"",
+  "1": "value=\"1\"",
+  "true": "value=\"true\"",
+  "false": "value=\"false\"",
+  "''": "value=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "value=\"x\""
+ },
+ "hidden": {
+  "0": "",
+  "1": "hidden=\"\"",
+  "true": "hidden=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "hidden=\"\""
+ },
+ "disabled": {
+  "0": "",
+  "1": "disabled=\"\"",
+  "true": "disabled=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "disabled=\"\""
+ },
+ "checked": {
+  "0": "",
+  "1": "checked=\"\"",
+  "true": "checked=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "checked=\"\""
+ },
+ "selected": {
+  "0": "",
+  "1": "selected=\"\"",
+  "true": "selected=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "selected=\"\""
+ },
+ "multiple": {
+  "0": "",
+  "1": "multiple=\"\"",
+  "true": "multiple=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "multiple=\"\""
+ },
+ "muted": {
+  "0": "",
+  "1": "muted=\"\"",
+  "true": "muted=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "muted=\"\""
+ },
+ "open": {
+  "0": "",
+  "1": "open=\"\"",
+  "true": "open=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "open=\"\""
+ },
+ "inert": {
+  "0": "",
+  "1": "inert=\"\"",
+  "true": "inert=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "inert=\"\""
+ },
+ "itemScope": {
+  "0": "",
+  "1": "itemscope=\"\"",
+  "true": "itemscope=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "itemscope=\"\""
+ },
+ "allowFullScreen": {
+  "0": "",
+  "1": "allowfullscreen=\"\"",
+  "true": "allowfullscreen=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "allowfullscreen=\"\""
+ },
+ "async": {
+  "0": "",
+  "1": "async=\"\"",
+  "true": "async=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "async=\"\""
+ },
+ "autoFocus": {
+  "0": "",
+  "1": "autofocus=\"\"",
+  "true": "autofocus=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "autofocus=\"\""
+ },
+ "autoPlay": {
+  "0": "",
+  "1": "autoplay=\"\"",
+  "true": "autoplay=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "autoplay=\"\""
+ },
+ "controls": {
+  "0": "",
+  "1": "controls=\"\"",
+  "true": "controls=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "controls=\"\""
+ },
+ "default": {
+  "0": "",
+  "1": "default=\"\"",
+  "true": "default=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "default=\"\""
+ },
+ "defer": {
+  "0": "",
+  "1": "defer=\"\"",
+  "true": "defer=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "defer=\"\""
+ },
+ "formNoValidate": {
+  "0": "",
+  "1": "formnovalidate=\"\"",
+  "true": "formnovalidate=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "formnovalidate=\"\""
+ },
+ "loop": {
+  "0": "",
+  "1": "loop=\"\"",
+  "true": "loop=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "loop=\"\""
+ },
+ "noModule": {
+  "0": "",
+  "1": "nomodule=\"\"",
+  "true": "nomodule=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "nomodule=\"\""
+ },
+ "noValidate": {
+  "0": "",
+  "1": "novalidate=\"\"",
+  "true": "novalidate=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "novalidate=\"\""
+ },
+ "playsInline": {
+  "0": "",
+  "1": "playsinline=\"\"",
+  "true": "playsinline=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "playsinline=\"\""
+ },
+ "readOnly": {
+  "0": "",
+  "1": "readonly=\"\"",
+  "true": "readonly=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "readonly=\"\""
+ },
+ "required": {
+  "0": "",
+  "1": "required=\"\"",
+  "true": "required=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "required=\"\""
+ },
+ "reversed": {
+  "0": "",
+  "1": "reversed=\"\"",
+  "true": "reversed=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "reversed=\"\""
+ },
+ "scoped": {
+  "0": "",
+  "1": "scoped=\"\"",
+  "true": "scoped=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "scoped=\"\""
+ },
+ "seamless": {
+  "0": "",
+  "1": "seamless=\"\"",
+  "true": "seamless=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "seamless=\"\""
+ },
+ "disablePictureInPicture": {
+  "0": "",
+  "1": "disablepictureinpicture=\"\"",
+  "true": "disablepictureinpicture=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "disablepictureinpicture=\"\""
+ },
+ "disableRemotePlayback": {
+  "0": "",
+  "1": "disableremoteplayback=\"\"",
+  "true": "disableremoteplayback=\"\"",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "disableremoteplayback=\"\""
+ },
+ "download": {
+  "0": "download=\"0\"",
+  "1": "download=\"1\"",
+  "true": "download=\"\"",
+  "false": "",
+  "''": "download=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "download=\"x\""
+ },
+ "capture": {
+  "0": "capture=\"0\"",
+  "1": "capture=\"1\"",
+  "true": "capture=\"\"",
+  "false": "",
+  "''": "capture=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "capture=\"x\""
+ },
+ "translate": {
+  "0": "translate=\"0\"",
+  "1": "translate=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "translate=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "translate=\"x\""
+ },
+ "popover": {
+  "0": "popover=\"0\"",
+  "1": "popover=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "popover=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "popover=\"x\""
+ },
+ "autoCapitalize": {
+  "0": "autocapitalize=\"0\"",
+  "1": "autocapitalize=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "autocapitalize=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "autocapitalize=\"x\""
+ },
+ "autoComplete": {
+  "0": "autocomplete=\"0\"",
+  "1": "autocomplete=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "autocomplete=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "autocomplete=\"x\""
+ },
+ "className": {
+  "0": "class=\"0\"",
+  "1": "class=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "class=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "class=\"x\""
+ },
+ "id": {
+  "0": "id=\"0\"",
+  "1": "id=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "id=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "id=\"x\""
+ },
+ "tabIndex": {
+  "0": "tabindex=\"0\"",
+  "1": "tabindex=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "tabindex=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "tabindex=\"x\""
+ },
+ "role": {
+  "0": "role=\"0\"",
+  "1": "role=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "role=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "role=\"x\""
+ },
+ "title": {
+  "0": "title=\"0\"",
+  "1": "title=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "title=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "title=\"x\""
+ },
+ "href": {
+  "0": "href=\"0\"",
+  "1": "href=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "href=\"x\""
+ },
+ "src": {
+  "0": "src=\"0\"",
+  "1": "src=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "",
+  "null": "",
+  "undefined": "",
+  "'x'": "src=\"x\""
+ },
+ "crossOrigin": {
+  "0": "crossorigin=\"0\"",
+  "1": "crossorigin=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "crossorigin=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "crossorigin=\"x\""
+ },
+ "preload": {
+  "0": "preload=\"0\"",
+  "1": "preload=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "preload=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "preload=\"x\""
+ },
+ "wrap": {
+  "0": "wrap=\"0\"",
+  "1": "wrap=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "wrap=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "wrap=\"x\""
+ },
+ "is": {
+  "0": "is=\"0\"",
+  "1": "is=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "is=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "is=\"x\""
+ },
+ "rel": {
+  "0": "rel=\"0\"",
+  "1": "rel=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "rel=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "rel=\"x\""
+ },
+ "inputMode": {
+  "0": "inputmode=\"0\"",
+  "1": "inputmode=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "inputmode=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "inputmode=\"x\""
+ },
+ "foo": {
+  "0": "foo=\"0\"",
+  "1": "foo=\"1\"",
+  "true": "",
+  "false": "",
+  "''": "foo=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "foo=\"x\""
+ }
+}

@@ -1,2 +1,2 @@
 {# brust v2 · input_ee59abba · do not edit #}
-<form><label{% if __undefined | present %} class="{{ __undefined | attr_str | e }}"{% endif %}{% if id | present %} for="{{ id | attr_str | e }}"{% endif %}>Name</label><input{% if (id) | present %} id="{{ (id) | attr_str | e }}"{% endif %}><div{% if ("x") | present %} title="{{ ("x") | attr_str | e }}"{% endif %}></div></form>
+<form><label{% if __undefined | present_plain %} class="{{ __undefined | attr_str | e }}"{% endif %}{% if id | present_plain %} for="{{ id | attr_str | e }}"{% endif %}>Name</label><input{% if (id) | present_plain %} id="{{ (id) | attr_str | e }}"{% endif %}><div{% if ("x") | present_plain %} title="{{ ("x") | attr_str | e }}"{% endif %}></div></form>
