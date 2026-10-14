@@ -196,5 +196,6 @@
     }
   },
   "jobs_module": "jobs.js",
-  "actions": null
+  "actions": null,
+  "needs_workers": true
 }

@@ -123,3 +123,8 @@ Accepted; R-numbers R34.83–R34.87 are confirmed for this lane (F149's plan sta
 - **R34.97 Loops stay refused**, and any nested case the lane cannot lower **falls back to React at analysis time** (named code), never `nested-instance` as a build error. A test pins that no valid shadcn page or battery row turns into a build error.
 - **R34.98 Proof** stays the same: pagination and input-group served, HTML equal to React, 0 JS. F53 is closed for the non-loop case; the loop case stays open in the ledger.
 Mellow's security sign-off now also covers the re-based records (which props reach which job).
+
+**Amendment 2026-10-14 (PR 2 split, ruling on Guetta's sizing).** Job fusion (R34.96) is entangled with the cn-fold job module (`folded_instances`, ordinal skipping, `job_reads`) and with brust-core instance ordinals, so PR 2 ships as two PRs, owned by two people:
+- **PR 2a (Guetta, lane `spread-fed-2`).** R34.83 spread rule, the static-wrapper re-base case, F169, tests and battery rows. No job-module edits. Any nested fed case it cannot lower falls back at analysis time (R34.97), so 2a ships on its own.
+- **PR 2b (Dew, lane `spread-fed-fusion`, from main after 2a merges or stacked on it).** R34.96 job fusion: job module, template ordinals and brust-core instance ordinals, reconciled with cn-fold. **Contract first:** Guetta writes on the `spread-fed` task which instances fuse and the analysis output shape; Dew acknowledges it before coding. Guetta reviews the analysis side of 2b, and Mellow signs off on its security (which props reach which job).
+- AspectRatio stays blocked until 2a merges. If Dew's `idle-workers` lane gets review findings, those come first.
