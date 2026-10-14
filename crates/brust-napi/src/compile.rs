@@ -145,7 +145,6 @@ pub(crate) fn compile_tree_impl(
 // One positional argument per option: that is the JS call (`packages/brust/native/index.d.ts`).
 #[allow(clippy::too_many_arguments)]
 #[napi]
-#[allow(clippy::too_many_arguments)]
 pub fn compile_tree(
     path: String,
     root: String,
