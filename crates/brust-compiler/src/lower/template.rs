@@ -365,6 +365,21 @@ impl<'a, 'c> Printer<'a, 'c> {
     /// A placed value as a jinja expression.
     fn value(&self, e: &Expr) -> String {
         if self.blank {
+            // An inlined instance fed once (no row index, F142 R34.42) has the same job output in
+            // every row, so the row template a client-rendered list clones carries it too.
+            if let (
+                Expr::Precomputed {
+                    slot,
+                    per_item: None,
+                    state_dependent: false,
+                    ..
+                },
+                Some(i),
+            ) = (e, &self.inline)
+                && i.slot_loops.is_empty()
+            {
+                return self.slot_ref(slot, false);
+            }
             return UNDEFINED.into();
         }
         match e {

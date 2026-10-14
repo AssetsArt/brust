@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 48 | 24 | 7 | 17 | 0 | 0 | 0 | 0 |
+| B Composition | 49 | 24 | 8 | 17 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 19 | 1 | 0 | 0 | 0 |
 | E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 187 | 79 | 42 | 60 | 5 | 1 | 0 | 0 |
+| **Total** | 188 | 79 | 43 | 60 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -119,6 +119,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-fed-child-row-invariant-const | a child with a job of its own, the same in every row, in a list over a module const (shadcn table) | static | static | 0 | ok | — | F142 R34.42: no prop reads the row, so the instance is fed once (static record) and its slot is read without a row index |
 | b-fed-child-row-invariant-inline | a child with a job of its own, the same in every row, in a list over an inline array (shadcn carousel) | static | static | 0 | ok | — | F142 R34.42: an inline array literal is the same case |
 | b-fed-child-row-invariant-props | a child with a job of its own, the same in every row, in a list over a props path | static | static | 0 | ok | — | F142 R34.42 (ruling Q1, one rule): fed once instead of once per row |
+| b-fed-child-row-invariant-xfor | a child with a job of its own, the same in every row, in a client-rendered row (x-for) over a props path | native | native | 0 | ok | — | F142 R34.42 (ruling on Mellow N1): fed once; the zero-row template the client clones carries the same job output (not __undefined) |
 | b-fed-child-state-list | a child with a job of its own in a list over state | react | react | ssr | ok | fallback:instance-list-path | F142 R34.44: rows the client re-creates get no job output (instance-list-path fallback) |
 | b-fed-child-useid-const-list | a child with useId values in a list over a module const | react | react | ssr | ok | fallback:instance-list-path | F142: ids differ per row, so the instance is not row-invariant; per-row literal rows are PR 2 (R34.43) |
 | b-spread-event-handler | an event handler that reaches an element through a child's spread | native | native | 0 | ok | — | shadcn S1.3 R34.18 (F141): the parent hoists the handler as its own member (_hN) and the inline print binds it on the child's element (x-on-click); the child stays static |

@@ -129,3 +129,22 @@ fn what_stays_fail_closed() {
     );
     assert!(fallback(&u, "instance-list-path"), "{:?}", u.diags);
 }
+
+#[test]
+fn a_row_invariant_instance_in_a_client_rendered_row_keeps_its_value_in_the_row_template() {
+    // Ruling on Mellow's N1 (PR 1): a props-path list rendered by the client (`x-for`, a handler in
+    // the row). The zero-row template the runtime clones for new rows must carry the instance's
+    // job output, not `__undefined` (F146's blank printer), since it is the same in every row.
+    let o = lower(&format!(
+        "{STATE}import Cell from './Cell'\nexport default function P({{ items }}: any) {{ const [sel, setSel] = useState(''); return <ul><p>{{sel}}</p>{{items.map((it: any) => <li key={{it.id}} onClick={{() => setSel(it.id)}}><Cell tone=\"z\">{{it.name}}</Cell></li>)}}</ul> }}"
+    ));
+    assert_eq!(o.tier, Tier::Native, "{:?}", o.diags);
+    assert!(o.instances[0].loops.is_empty(), "{:?}", o.instances);
+    let template = &o.jinja[o.jinja.find("{% else %}").expect("a zero-row template")..];
+    assert!(template.contains(" hidden"), "{template}");
+    let class = "{% if __cell_d2903ca3_1[\"_s1\"] | present %} class=\"{{ __cell_d2903ca3_1[\"_s1\"] | attr_str | e }}\"{% endif %}";
+    assert!(template.contains(class), "{template}");
+    assert!(!template.contains("class=\"{{ __undefined"), "{template}");
+    // The server rows read the same slot, once.
+    assert_eq!(o.jinja.matches(class).count(), 2, "{}", o.jinja);
+}
