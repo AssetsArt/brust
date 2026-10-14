@@ -9,5 +9,6 @@ pub mod jsx;
 pub mod modules;
 pub mod names;
 pub mod passes;
+pub mod primitive;
 pub mod stores;
 pub mod use_scan;

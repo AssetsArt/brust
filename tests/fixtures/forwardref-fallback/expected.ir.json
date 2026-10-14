@@ -57,7 +57,7 @@
             "link": null,
             "tier": {
               "React": {
-                "reason": "the forwarded ref is read other than as `ref={ref}` on an element; the component renders as a React island",
+                "reason": "the forwarded ref is passed to <Reads>, which does not forward it to an element; the component renders as a React island",
                 "client_only": false
               }
             }
@@ -153,7 +153,7 @@
       "path": "tests/fixtures/forwardref-fallback/input.tsx",
       "tier": {
         "React": {
-          "reason": "the forwarded ref is read other than as `ref={ref}` on an element; the component renders as a React island",
+          "reason": "the forwarded ref is passed to <Reads>, which does not forward it to an element; the component renders as a React island",
           "client_only": false
         }
       }

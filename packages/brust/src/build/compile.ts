@@ -8,6 +8,7 @@ import { type CompiledComponent, type CompiledTree, compileTree } from '../../na
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
 import { checkAliasAgreement, readPathAliases } from './tsconfig-paths'
+import type { PackageSources } from './pkg-src'
 
 /** `ComponentIR` as the compiler serialises it (snake_case), with the fields that are absent
  * when default (`ir/mod.rs`) normalised. The build reads it; it never rewrites it. */
@@ -112,10 +113,13 @@ export function compileApp(opts: {
   iconsFinal?: boolean
   /** Values the build computed for `ir.build_eval` slots, by key (L2): the slots become literals. */
   slotValues?: Record<string, unknown>
+  /** F153c: the package sources this build wrote (`pkg-src.ts`); absent = package imports are islands. */
+  packages?: PackageSources
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
   const iconSvgsJson = opts.iconsFinal ? JSON.stringify({ final: true, svgs: opts.iconSvgs ?? {} }) : undefined
   const slotValuesJson = opts.slotValues && Object.keys(opts.slotValues).length > 0 ? JSON.stringify(opts.slotValues) : undefined
+  const packagesJson = opts.packages ? JSON.stringify(opts.packages) : undefined
   // The Rust side keys each map by its path relative to the app root (`/`-separated), like an import resolves.
   const { aliases, notes } = readPathAliases(appRoot)
   for (const n of notes) opts.log(`warning tsconfig-paths ${n}`)
@@ -143,7 +147,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).

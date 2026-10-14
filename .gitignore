@@ -12,3 +12,6 @@ tests/fixtures/cf-min/.devtest-*
 # the shadcn survey builds one page at a time here
 tests/fixtures/shadcn/.rows/
 tests/fixtures/shadcn/dist/
+
+# F153c: package sources the build writes
+**/.brust/pkg-src/

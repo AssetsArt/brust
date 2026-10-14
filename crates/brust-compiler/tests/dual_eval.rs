@@ -26,6 +26,7 @@ fn harness() -> PathBuf {
 /// without samples must be added here deliberately.
 const NO_SAMPLES: &[&str] = &[
     "arrow-default",
+    "body-destructure",
     "client-only",
     "fragment-root",
     "import-cycle",

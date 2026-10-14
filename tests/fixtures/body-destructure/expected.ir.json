@@ -1,0 +1,227 @@
+{
+  "id": "input_d5d9ba32",
+  "source": "tests/fixtures/body-destructure/input.tsx",
+  "tier": "Static",
+  "props": [
+    {
+      "name": "v",
+      "local": "v",
+      "ts_type": null,
+      "default": null
+    }
+  ],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 118,
+      "tag": "div",
+      "attrs": [],
+      "children": [
+        {
+          "Component": {
+            "loc": 130,
+            "name": "Sep",
+            "source": "./Sep",
+            "imported": "default",
+            "props": [
+              [
+                "orientation",
+                {
+                  "Server": {
+                    "loc": 147,
+                    "kind": {
+                      "Lit": {
+                        "Str": "vertical"
+                      }
+                    }
+                  }
+                }
+              ],
+              [
+                "className",
+                {
+                  "Server": {
+                    "loc": 168,
+                    "kind": {
+                      "Lit": {
+                        "Str": "a"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": null,
+            "tier": "Static"
+          }
+        },
+        {
+          "Component": {
+            "loc": 181,
+            "name": "Sep",
+            "source": "./Sep",
+            "imported": "default",
+            "props": [
+              [
+                "decorative",
+                {
+                  "Server": {
+                    "loc": 196,
+                    "kind": {
+                      "Lit": {
+                        "Bool": true
+                      }
+                    }
+                  }
+                }
+              ],
+              [
+                "id",
+                {
+                  "Server": {
+                    "loc": 200,
+                    "kind": {
+                      "Lit": {
+                        "Str": "d"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": null,
+            "tier": "Static"
+          }
+        },
+        {
+          "Component": {
+            "loc": 213,
+            "name": "Sep",
+            "source": "./Sep",
+            "imported": "default",
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": "Static"
+          }
+        },
+        {
+          "Component": {
+            "loc": 227,
+            "name": "Two",
+            "source": "./Two",
+            "imported": "default",
+            "props": [
+              [
+                "a",
+                {
+                  "Server": {
+                    "loc": 234,
+                    "kind": {
+                      "Lit": {
+                        "Str": "1"
+                      }
+                    }
+                  }
+                }
+              ],
+              [
+                "b",
+                {
+                  "Server": {
+                    "loc": 240,
+                    "kind": {
+                      "Lit": {
+                        "Str": "2"
+                      }
+                    }
+                  }
+                }
+              ],
+              [
+                "c",
+                {
+                  "Server": {
+                    "loc": 246,
+                    "kind": {
+                      "Lit": {
+                        "Str": "3"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "destructuring in component body",
+                "client_only": false
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_two_ad25393d"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      },
+      "literals": {
+        "a": "1",
+        "b": "2",
+        "c": "3"
+      }
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [
+    {
+      "name": "Sep",
+      "id": "sep_e1338c06",
+      "path": "tests/fixtures/body-destructure/Sep.tsx",
+      "tier": "Static"
+    },
+    {
+      "name": "Two",
+      "id": "two_ad25393d",
+      "path": "tests/fixtures/body-destructure/Two.tsx",
+      "tier": {
+        "React": {
+          "reason": "destructuring in component body",
+          "client_only": false
+        }
+      }
+    }
+  ],
+  "diagnostics": []
+}

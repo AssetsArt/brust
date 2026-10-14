@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 99 | 50 | 8 | 41 | 0 | 0 | 0 | 0 |
+| B Composition | 121 | 63 | 8 | 50 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 55 | 19 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 265 | 117 | 43 | 101 | 3 | 1 | 0 | 0 |
+| **Total** | 287 | 130 | 43 | 110 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -133,6 +133,15 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-in-inlined-row | react island inside an inlined per-row component | static | static | 0 | ok | — | S6 amendment L4 (F108): one island render per row of the Row instance (per-row child record) |
 | b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component |  |
 | b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
+| b-body-destructure | `const { a, b = 1, ...rest } = props` in the body reads like a parameter pattern | static | static | 0 | ok | — | S3 R34.66 |
+| b-body-destructure-two | two body destructurings of props (no rest) | static | static | 0 | ok | — |  |
+| b-body-destructure-rest-and-another | a rest pattern next to another props pattern stays body-shape | react | react | ssr | ok | fallback:body-shape, fallback:spread-props | JS: the rest carries `a`; brust keeps one list of declared props, so it declines |
+| b-body-destructure-mixed | a body destructuring next to a `props.x` read | static | static | 0 | ok | — |  |
+| b-body-destructure-nested | a nested pattern in the body destructuring stays body-shape | react | react | ssr | ok | fallback:body-shape |  |
+| b-body-destructure-two-rests | a second `...rest` in the body stays body-shape | react | react | ssr | ok | fallback:body-shape, fallback:spread-props |  |
+| b-body-destructure-other | destructuring something that is not the props object | react | react | ssr | ok | fallback:body-shape |  |
+| b-body-destructure-let | `let { a } = props` is not read as a props pattern | react | react | ssr | ok | fallback:let-var |  |
+| b-body-destructure-default-local | a body-destructuring default that reads a body local stays body-shape | react | react | ssr | ok | fallback:body-shape | review F1: the template binds no local for an absorbed default |
 | b-forwardref | forwardRef component (default export); `ref={ref}` on a host is dropped | static | static | 0 | ok | — | S3 R34.63: HTML has no ref, so the render is the same as React's for a caller that passes none |
 | b-forwardref-const | `const X = forwardRef(function (props, ref) {…})` exported by name, used by a parent | static | static | 0 | ok | — |  |
 | b-forwardref-arrow | forwardRef with an arrow callback and rest props | static | static | 0 | ok | — |  |
@@ -182,6 +191,19 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-aschild-raw-text-child | asChild whose child is a <style> element | react | react | ssr | ok | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape (a raw-text body is not markup) |
 | b-local-comp-ternary | a const tag that is a ternary of two components, not a Radix Slot | static | static | ssr | ok | — | shadcn S1.4 R34.28: any other initializer keeps fallback local-component (Pick is a React island; the page is static since island-children #203) |
 | b-local-comp-foreign-slot | a Slot imported from a module that is not Radix | static | static | ssr | ok | — | shadcn S1.4 R34.28 (Q5): only radix-ui and @radix-ui/react-slot are recognised; fallback local-component (Own is a React island; the page is static since island-children #203) |
+| b-pkg-leaf-pure | a package forwardRef component over Radix Primitive.div, compiled from its source | static | static | 0 | ok | — | F153c R34.61 + R34.65: the source map carries the authored TSX; Primitive.div is the host <div>, the forwarded ref is dropped |
+| b-pkg-leaf-handler | the Radix Label source (a handler on Primitive.label) | static | static | 0 | ok | — | F153c: the page stays static; the Label is a native child (its double-click selection guard binds as x-on on the <label>) |
+| b-pkg-aschild-false | a package Primitive leaf with asChild={false} | static | static | 0 | ok | — | F153c: a literal false is the host element (the leaf spreads its props into Primitive.div, so it requires `asChild` absent or false) |
+| b-pkg-primitive-aschild | Primitive.button asChild with one host child, written in the app | static | static | 0 | ok | — | F153c R34.65: asChild on a Primitive tag merges into the one host child (the R34.28 Button rule) |
+| b-pkg-aschild-through-spread | asChild passed to a package leaf that spreads it into Primitive | react | react | ssr | ok | fallback:slot-dynamic | F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles |
+| b-pkg-aschild-dynamic | a dynamic asChild on a package leaf | react | react | ssr | ok | fallback:slot-dynamic | F153c fail closed: slot-dynamic |
+| b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | react | react | ssr | ok | fallback:forwardref-ref, fallback:ref-in-render | F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none) |
+| b-pkg-ref-read | a package leaf that reads its forwarded ref | static | static | ssr | ok | fallback:external-component | F153c fail closed: the leaf needs React (forwardref-ref), so the app keeps the island of the published export |
+| b-pkg-no-map | a package that publishes no source map | static | static | ssr | ok | fallback:external-component | F153c G1: no sourcesContent, no analysis: the island of the published export (external-component, reason named) |
+| b-pkg-drift | a package whose published JS was not built from its map | static | static | ssr | ok | fallback:external-component | F153c R34.62: the integrity check fails: the island of the published export |
+| b-pkg-primitive-changed | a Primitive factory of another shape | static | static | ssr | ok | fallback:external-component | F153c R34.65 ruling Q1: no structural match, no host: the island of the published export |
+| b-pkg-dynamic-spread | a package leaf spreading an object computed by a call | static | static | ssr | ok | fallback:external-component | F153c fail closed: spread-props in the source, so the island of the published export |
+| b-pkg-namespace-barrel | a component reached through a package barrel (`export * as X from`) | static | static | 0 | ok | — | F153c: the `radix-ui` barrel shape (`export * as Label from '@radix-ui/react-label'`) is followed to the member |
 
 ## C. Hooks
 

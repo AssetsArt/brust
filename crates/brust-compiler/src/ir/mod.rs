@@ -228,6 +228,11 @@ pub struct ComponentIR {
     /// the bundler's own resolution.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub alias_imports: Vec<crate::analyze::aliases::AliasImport>,
+    /// Props a call site must not pass (F153c): this component spreads its props into a polymorphic child that
+    /// would render another element if the key were there (`asChild` through Radix `<Primitive.label {...props}>`).
+    /// A literal `false` is fine; a call site that spreads its own props on passes the requirement up.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub absent_props: Vec<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -333,6 +338,7 @@ impl ComponentIR {
             forwards_ref: false,
             icon_spread: false,
             alias_imports: vec![],
+            absent_props: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],

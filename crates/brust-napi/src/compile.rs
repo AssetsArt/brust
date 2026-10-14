@@ -55,6 +55,7 @@ pub(crate) struct CompileInputs {
     pub icon_svgs: Option<String>,
     pub route_roots: Vec<String>,
     pub path_aliases: Option<String>,
+    pub packages: Option<String>,
 }
 
 /// `compile_tree` on the compiler thread; `path` is relative to `root` so ids are stable.
@@ -71,7 +72,12 @@ pub(crate) fn compile_tree_impl(
         icon_svgs,
         route_roots,
         path_aliases,
+        packages,
     } = inputs;
+    // F153c: `{ "scopes": …, "refused": … }`, the package sources the build wrote (`pkg-src.ts`).
+    let packages = packages
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     // `[{ "pattern": "@/*", "targets": ["./*"] }]`: `tsconfig` `paths` (R34.76).
     let path_aliases: Vec<brust_compiler::analyze::aliases::PathAlias> = path_aliases
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -106,6 +112,7 @@ pub(crate) fn compile_tree_impl(
         icons_final,
         path_aliases,
         route_roots: route_roots.into_iter().collect(),
+        packages,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -142,6 +149,7 @@ pub(crate) fn compile_tree_impl(
 
 /// Compiles `path` (relative to `root`) and every child it reaches through lowering. `css_modules` (L20): the class
 /// map of each `*.module.css`, keyed by its path relative to `root`; `styles.x` folds to the literal class.
+/// `packages` (F153c): the JSON resolution map of the package sources the build wrote (`pkg-src.ts`).
 // One positional argument per option: that is the JS call (`packages/brust/native/index.d.ts`).
 #[allow(clippy::too_many_arguments)]
 #[napi]
@@ -157,6 +165,7 @@ pub fn compile_tree(
     icon_svgs: Option<String>,
     route_roots: Option<Vec<String>>,
     path_aliases: Option<String>,
+    packages: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
     compile_tree_impl(
@@ -170,6 +179,7 @@ pub fn compile_tree(
             icon_svgs,
             route_roots: route_roots.unwrap_or_default(),
             path_aliases,
+            packages,
         },
     )
 }
