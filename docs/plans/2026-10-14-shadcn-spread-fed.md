@@ -2,7 +2,7 @@
 
 owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Guetta (lane `spread-fed`, proposed) · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger rows: F159 leftover (b) (becomes this lane), next free F164 · governed by `docs/plans/2026-10-14-react-parity-north-star.md`
 
-Author: Guetta. Status: **DRAFT, not ruled; no lane started.** Base: origin/main de1ae0dd (after #219; `icon-shapes` @d81266e8 is in review, not yet on main). R-numbers are proposals (R34.83–R34.87); the lead renumbers. Numbers are `docs/shadcn-coverage.json` on the `icon-shapes` tree, which differs from main only by the three icon rows (spinner, breadcrumb, button-alias); the two rows of this plan are identical on both.
+Author: Guetta. Status: **RULED 2026-10-14 (see §10); lane may start.** Base: origin/main de1ae0dd (after #219; `icon-shapes` @d81266e8 is in review, not yet on main). R-numbers are proposals (R34.83–R34.87); the lead renumbers. Numbers are `docs/shadcn-coverage.json` on the `icon-shapes` tree, which differs from main only by the three icon rows (spinner, breadcrumb, button-alias); the two rows of this plan are identical on both.
 
 ## 1. Where it stands
 
@@ -108,3 +108,12 @@ Size: small, one lane, no new file; the review risk is the proof of "the spread 
 - **Q2 `InputGroupButton`.** It is a library row only (page `input-group` does not use it). In this lane as a battery row, at no extra rule; confirm, or leave it to the ledger.
 - **Q3 Order.** Independent of `icon-shapes` (no shared files once it is on main) and of F149. Recommended: this lane next (certain, 174 KB, small), the hydration-timing plan after it.
 - **Q4 Security pass.** Mellow's security pass on the key-carrying proof (§8.1), as for revive-hardening, because it decides which request-time keys feed a server job. OK?
+
+## 10. Lead ruling (2026-10-14)
+
+Accepted; R-numbers R34.83–R34.87 are confirmed for this lane (F149's plan starts at R34.88, the S2 context plan after it). Ledger row **F164**. Rulings on §9:
+
+- **Q1 Strict "not written": yes.** Writing a root at a call site (`isActive={false}`, `size={undefined}`) falls back with a named code; option B (spread-aware binding) is not built.
+- **Q2 `InputGroupButton`: a battery row in this lane**, no extra rule.
+- **Q3 Order: this lane next**, then the hydration-timing draft.
+- **Q4 Security pass: yes**, Mellow signs off the key-carrying proof (§8.1) as a gate, since it decides which request-time keys feed a server job.
