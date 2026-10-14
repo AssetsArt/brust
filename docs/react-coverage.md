@@ -11,8 +11,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 141 | 79 | 8 | 54 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 55 | 19 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 307 | 146 | 43 | 114 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
+| **Total** | 319 | 158 | 43 | 114 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -301,6 +301,18 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-lucide-icon-rest-spread | a lucide icon spread with the component's rest props | static | static | ssr | ok | — | R34.77: the rest lands on the inlined svg, after the icon's own attributes; parity in tests/server/icon-shapes.test.ts |
 | e-lucide-icon-rest-spread-size | a call site hands the spread icon a key the icon reads (size) | static | static | ssr | ok | — | R34.77: brustc alone leaves the icon an island; after `brust build` renders it the call site is refused (spread-props, page React): crates/brust-compiler/tests/icon_shapes.rs pins size, className, color |
 | e-lucide-icon-unknown-spread | a lucide icon spread with a computed object | react | react | ssr | ok | fallback:external-component, fallback:spread-props, warning:icon-dynamic-prop | R34.77: only the component's own props or rest spread onto an icon; any other spread keeps the island (icon-dynamic-prop) |
+| b-cn-fold-literal | a literal variant on a cva + cn component (shadcn Badge) | static | static | 0 | ok | — | F149 R34.88/R34.89: a candidate; `brust build` runs the job once and prints the class (R34.90) |
+| b-cn-fold-omitted | a cva + cn component with no props | static | static | 0 | ok | — | F149 R34.88: an omitted prop is an absent input |
+| b-cn-fold-module-const | a variant from a module const | static | static | 0 | ok | — | F149 R34.88: the call-site literal folds with the module consts (the constant folder) |
+| b-cn-fold-imported-cva | buttonVariants imported from a sibling that also imports radix-ui | static | static | 0 | ok | — | F149 R34.89 rule 3: the cva config is re-emitted folded for the evaluation, so radix-ui never loads at build |
+| b-cn-fold-lib-utils | the classic shadcn lib/utils cn (clsx + tailwind-merge) | static | static | 0 | ok | — | F149 R34.89 rule 4: a pure relative module whose imports are allowlisted is bundled whole |
+| b-cn-fold-pure-helper | a pure helper label(tone) from a relative module | static | static | 0 | ok | — | F149 ruling Q3: any constant-input instance job with allowed code, not only class composition |
+| b-cn-fold-prop-input | a variant from the page props | static | static | 0 | ok | — | F149 R34.92: the value differs per request, the job stays |
+| b-cn-fold-other-package | a child job that calls a package off the allowlist | static | static | 0 | ok | info:build-eval-instance | F149 R34.92 / ruling Q2: only cn, clsx, tailwind-merge and class-variance-authority run at build |
+| b-cn-fold-alias-import | cn imported through a tsconfig alias (@/lib/utils) | static | static | 0 | ok | info:build-eval-instance | F149 ruling Q5: with no tsconfig paths (brustc alone) the alias reads as a package; `brust build` resolves it once F159 lands |
+| b-cn-fold-useid | a child with useId and a cn class | static | static | 0 | ok | info:build-eval-instance | F149 R34.92: ids are per request |
+| b-cn-fold-row-reading | a cva component reading each row of a constant list | static | static | 0 | ok | — | F149 ruling Q4: per-row instances (per-row-literal) keep their job in v1 |
+| b-cn-fold-denied-global | a class computed from Date in the child module | static | static | 0 | ok | info:build-eval-instance | F149 R34.92: time differs between runs; the L2 denylist applies |
 | e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
 | e-member-named-alias | member of a renamed named import (`<D.Root>`) in a static parent | static | static | ssr | ok | fallback:external-component | S1.4 R34.35: resolved to the package member, an island (external-component), no member-tag |
 | e-member-namespace | member of a namespace import (`<P.Group>`) | static | static | ssr | ok | fallback:external-component |  |

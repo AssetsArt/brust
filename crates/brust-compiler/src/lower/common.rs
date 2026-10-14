@@ -304,6 +304,24 @@ pub fn module_code(
     names: &BTreeSet<String>,
     imports: &mut BTreeSet<ImportUse>,
 ) -> String {
+    let need = module_need(ir, names, imports);
+    let mut out = String::new();
+    for d in &ir.module_decls {
+        if d.names.iter().any(|n| need.contains(n)) {
+            out.push_str(&d.source);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The module-level names `names` reach transitively (what `module_code` prints), adding the
+/// imports they read to `imports`.
+pub fn module_need(
+    ir: &ComponentIR,
+    names: &BTreeSet<String>,
+    imports: &mut BTreeSet<ImportUse>,
+) -> BTreeSet<String> {
     let scope: HashMap<&str, &Vec<(String, IdentKind)>> = ir
         .module_scope
         .iter()
@@ -332,14 +350,7 @@ pub fn module_code(
             }
         }
     }
-    let mut out = String::new();
-    for d in &ir.module_decls {
-        if d.names.iter().any(|n| need.contains(n)) {
-            out.push_str(&d.source);
-            out.push('\n');
-        }
-    }
-    out
+    need
 }
 
 /// Module-level names among identifiers `r` reads (not body locals).

@@ -680,7 +680,7 @@ impl Placer<'_> {
         };
         let (opts, path) = (self.opts, self.path.clone());
         match classify(r, deps, placed, &self.module_decls, &|src| {
-            super::build_eval::module_is_pure(&path, src, opts)
+            super::build_eval::module_is_pure(&path, src, opts, &[])
         }) {
             Verdict::Not => {}
             Verdict::Pure => self.st.build_eval.push(candidate(false)),
