@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 43 | 21 | 7 | 15 | 0 | 0 | 0 | 0 |
+| B Composition | 64 | 30 | 7 | 27 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 19 | 1 | 0 | 0 | 0 |
 | E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 182 | 76 | 42 | 58 | 5 | 1 | 0 | 0 |
+| **Total** | 203 | 85 | 42 | 70 | 5 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -123,6 +123,27 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-spread-handler-onward | a handler a child passes on through a second spread | react | react | ssr | ok | fallback:spread-handler | shadcn S1.3 R34.19: bound one level deep only (fallback spread-handler) |
 | b-spread-handler-row-prop | a handler through a child's spread next to a prop that reads the row | react | react | ssr | ok | fallback:spread-handler | shadcn S1.3 R34.19: the handler makes the client render the row, so a row-reading prop would link the child (fallback spread-handler); pass row values as children instead |
 | b-spread-render-prop | a function that is not an event handler, through a child's spread | react | react | ssr | ok | fallback:spread-function | shadcn S1.3 R34.19: a render prop has no element binding (fallback spread-function) |
+| b-aschild-default | a component with `asChild ? Slot.Root : "button"`, used without asChild | static | static | 0 | ok | — | shadcn S1.4 R34.29 (a): the host element prints; the component is static (was local-component) |
+| b-aschild-false | asChild={false} written out | static | static | 0 | ok | — | shadcn S1.4 R34.29 (a) |
+| b-aschild-literal | asChild with one host-element child (the shadcn `<Button asChild><a/></Button>`) | static | static | 0 | ok | — | shadcn S1.4 R34.29 (b): the child element prints with the component's attributes merged in |
+| b-aschild-class-merge | className on the slot and on the child under asChild | static | static | 0 | ok | — | shadcn S1.4 R34.30: className joins slot first, then the child (Radix Slot mergeProps) |
+| b-aschild-style-merge | style objects on the slot and on the child under asChild | static | static | 0 | ok | — | shadcn S1.4 R34.30: style objects merge, the child wins |
+| b-aschild-child-wins | the same attribute on the slot and on the child under asChild | static | static | 0 | ok | — | shadcn S1.4 R34.30: every other attribute is the child's |
+| b-aschild-slot-namespace | Slot from `import * as Slot from "@radix-ui/react-slot"` and the swapped ternary | static | static | 0 | ok | — | shadcn S1.4 R34.28 (Q5): radix-ui and @radix-ui/react-slot, both orders |
+| b-aschild-dynamic | asChild passed through from a prop | react | react | ssr | ok | fallback:slot-dynamic | shadcn S1.4 R34.31: fallback slot-dynamic (the call site cannot tell which element renders) |
+| b-aschild-state | asChild read from state | react | react | ssr | ok | fallback:slot-dynamic | shadcn S1.4 R34.31: fallback slot-dynamic |
+| b-aschild-spread-in | props spread into a component with asChild | react | react | ssr | ok | fallback:slot-dynamic | shadcn S1.4 R34.31: fallback slot-dynamic (the spread may carry asChild) |
+| b-aschild-text-child | asChild with text between the tags | react | react | ssr | ok | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape (React throws on it too) |
+| b-aschild-two-children | asChild with two children | react | react | ssr | ok | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape |
+| b-aschild-component-child | asChild whose child is a component | react | react | ssr | ok | fallback:slot-child-component | shadcn S1.4 R34.31 (Q1): fallback slot-child-component; merging into a component's props is a follow-up |
+| b-aschild-child-handler | asChild whose child has an event handler | react | react | ssr | ok | fallback:slot-handler | shadcn S1.4 R34.31 (Q2): fallback slot-handler |
+| b-aschild-slot-handler | a handler passed to a component with asChild | react | react | ssr | ok | fallback:slot-handler | shadcn S1.4 R34.31 (Q2, Q4): fallback slot-handler until the parent-scope binding of S1.3 is on main |
+| b-aschild-ref-child | asChild whose child has a ref | react | react | ssr | ok | fallback:slot-ref | shadcn S1.4 R34.31: fallback slot-ref |
+| b-aschild-stateful | asChild on a component with state of its own | react | react | ssr | ok | fallback:slot-native | shadcn S1.4 R34.31: fallback slot-native |
+| b-aschild-runtime-spread | asChild child with class/style into a component that spreads an object of unknown keys | react | react | ssr | ok | fallback:slot-merge | shadcn S1.4 R34.31: fallback slot-merge (the merge needs both sides at compile time; never a build error) |
+| b-aschild-raw-text-child | asChild whose child is a <style> element | react | react | ssr | ok | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape (a raw-text body is not markup) |
+| b-local-comp-ternary | a const tag that is a ternary of two components, not a Radix Slot | static | static | ssr | ok | — | shadcn S1.4 R34.28: any other initializer keeps fallback local-component (Pick is a React island; the page is static since island-children #203) |
+| b-local-comp-foreign-slot | a Slot imported from a module that is not Radix | static | static | ssr | ok | — | shadcn S1.4 R34.28 (Q5): only radix-ui and @radix-ui/react-slot are recognised; fallback local-component (Own is a React island; the page is static since island-children #203) |
 
 ## C. Hooks
 

@@ -1,5 +1,5 @@
 // shadcn S1.3 (R34.18-R34.20, F141) in real Chromium: a native page hands `onClick`/`onChange` to shadcn components
-// that spread their props onto an element — Button (shadcn's, without the asChild branch) and the real Input. The page
+// that spread their props onto an element — the real Button (shadcn's own components/ui/button.tsx, asChild branch included, S1.4) and the real Input. The page
 // binds each handler itself on the component's element (`x-on-*` to its own member), the components stay static (no
 // chunk), and the page's state updates on click, on input and from a row of a list. Run alone:
 // `bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts`.

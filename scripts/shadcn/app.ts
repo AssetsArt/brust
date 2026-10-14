@@ -3,7 +3,7 @@
 // from its `dist/manifest.json` and `dist/client`. A page that is refused keeps its refusal (rule, place, construct) and
 // the compiler's own `compileTree` analysis, and is ANALYSIS-ONLY.
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import { compileTree } from '../../packages/brust/native/index.js'
@@ -49,6 +49,8 @@ export interface Measured {
   jsRaw: number
   jsGzip: number
   files: { name: string; raw: number; gzip: number }[]
+  /** files of the dist (client chunks and jobs.js) that carry Radix's Slot: an `asChild` page that was resolved at its call site ships none (S1.4 R34.33) */
+  slotFiles: string[]
 }
 
 /** The build error of a refused page: `error <rule> <file>:<line>:<col> <message>` split into its parts. */
@@ -149,6 +151,9 @@ type Manifest = {
 /** Relative JS imports of a chunk (`from"./x.js"`, `import("./x.js")`). */
 const importsOf = (text: string): string[] => [...text.matchAll(/(?:from\s*|import\s*\(\s*)["']\.\/([^"']+\.js)["']/g)].map((m) => m[1]!)
 
+/** What Radix's Slot looks like in a bundle (its identifiers survive minification as property names, and an unbundled import names the package). */
+const SLOT_CODE = /Slottable|SlotClone|@radix-ui\/react-slot|radix-ui/
+
 /** Reads a finished dist: tier of the page, islands, native chunks, and the client JS the page loads: the runtime core and
  * the feature modules its components need, plus the chunk of every island and native component the page reaches, plus the shared chunks those import (a React child
  * of an island is rendered by the island, so its own chunk is not loaded). */
@@ -199,6 +204,10 @@ export function measureDist(out: string): Measured {
     return { name: name.replace(/-[0-9a-f]{8,12}(?=\.js$)/, ''), raw: buf.length, gzip: gzipSync(buf).length }
   })
   const comps = Object.values(m.components)
+  const slotFiles = [...readdirSync(client).filter((f) => f.endsWith('.js')).map((f) => join('client', f)), 'jobs.js']
+    .filter((f) => existsSync(join(out, f)) && SLOT_CODE.test(readFileSync(join(out, f), 'utf8')))
+    .map((f) => f.replace(/-[0-9a-f]{8,12}(?=\.js$)/, ''))
+    .sort()
   return {
     tier: m.components[root]!.tier,
     islands,
@@ -208,6 +217,7 @@ export function measureDist(out: string): Measured {
     jsRaw: files.reduce((n, f) => n + f.raw, 0),
     jsGzip: files.reduce((n, f) => n + f.gzip, 0),
     files,
+    slotFiles,
   }
 }
 
