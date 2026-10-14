@@ -47,6 +47,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         indexes: Vec::new(),
         list_uses: Vec::new(),
         loop_sources: Vec::new(),
+        loop_literals: Vec::new(),
         instance_counts: HashMap::new(),
         instances: Vec::new(),
         ssr_outputs: HashMap::new(),
@@ -113,6 +114,8 @@ struct Walker<'s, 'c> {
     list_uses: Vec<super::ClientUse>,
     /// The enclosing `For` sources as props paths (`None` = not a plain path).
     loop_sources: Vec<Option<String>>,
+    /// The enclosing `For` sources as compile-time constant arrays (F142 R34.43), aligned.
+    loop_literals: Vec<Option<serde_json::Value>>,
     instance_counts: HashMap<String, u32>,
     instances: Vec<InstanceRecord>,
     ssr_outputs: HashMap<String, u32>,
@@ -124,6 +127,10 @@ struct Walker<'s, 'c> {
     /// Handlers hoisted from props a static child spreads onto an element (shadcn S1.3).
     handlers: Vec<crate::ir::HandlerDecl>,
 }
+
+/// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
+/// (F142 R34.43, ruling Q3: the same cap as island-children's per-instance tree).
+const MAX_ROWS_JSON: usize = 64 * 1024;
 
 /// A resolved child.
 struct Child {
@@ -497,7 +504,14 @@ impl Walker<'_, '_> {
                     raw: raw.map(|r| (r, self.loop_scope[..n].to_vec())),
                 };
                 let list_path = self.list_path(source);
+                let literal = match &*source {
+                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {
+                        r.json_literal().filter(serde_json::Value::is_array)
+                    }
+                    _ => None,
+                };
                 self.loop_sources.push(list_path);
+                self.loop_literals.push(literal);
                 self.lists.push(src);
                 self.list_uses.push(use_);
                 self.items.push(item.clone());
@@ -506,6 +520,7 @@ impl Walker<'_, '_> {
                 self.indexes.pop();
                 self.items.pop();
                 self.loop_sources.pop();
+                self.loop_literals.pop();
                 self.list_uses.pop();
                 self.lists.pop();
                 self.loop_scope.truncate(n);
@@ -1173,7 +1188,33 @@ impl Walker<'_, '_> {
                 *k += 1;
                 let k = *k;
                 let row_invariant = child.fed && self.row_invariant(&kept, &child);
-                if child.fed && !row_invariant && self.loop_sources.iter().any(Option::is_none) {
+                // F142 R34.43: one enclosing list that is a constant array feeds the instance per
+                // row from the literal the manifest carries (capped, ruling Q3).
+                let rows_literal = match (&self.loop_sources[..], &self.loop_literals[..]) {
+                    ([None], [Some(rows)]) if child.fed && !row_invariant => Some(rows.clone()),
+                    _ => None,
+                };
+                let too_big = rows_literal
+                    .as_ref()
+                    .map(|r| r.to_string().len())
+                    .filter(|n| *n > MAX_ROWS_JSON);
+                if let Some(size) = too_big {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "instance-list-path",
+                        format!(
+                            "<{name}> has a job of its own and reads the rows of a constant list of {size} bytes, over the {MAX_ROWS_JSON} byte cap"
+                        ),
+                        *loc,
+                        "move the list into a loader (it then comes from props), or keep the page a React island",
+                    ));
+                }
+                let rows_literal = rows_literal.filter(|_| too_big.is_none());
+                if child.fed
+                    && !row_invariant
+                    && rows_literal.is_none()
+                    && too_big.is_none()
+                    && self.loop_sources.iter().any(Option::is_none)
+                {
                     // Fail closed softly (ruling on challenge 4dc45c45, F142): the server feeds a
                     // per-instance job by indexing the list's props path; over a local or store list
                     // there is none, and the build would refuse the page (`manifest.ts`
@@ -1200,6 +1241,7 @@ impl Walker<'_, '_> {
                         props: Default::default(),
                         literals: Default::default(),
                         exprs: Default::default(),
+                        rows_literal,
                     };
                     for (name, v) in kept.iter() {
                         if matches!(v, Expr::ClientOnly { .. }) {

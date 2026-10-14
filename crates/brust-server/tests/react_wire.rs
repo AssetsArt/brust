@@ -82,7 +82,7 @@ fn dist(pattern: &str, chain: &[&str], components: Value) -> tempfile::TempDir {
         )
         .unwrap();
     }
-    let m = json!({"version": 2,
+    let m = json!({"version": 3,
         "routes": [{"id": "r1", "pattern": pattern, "chain": chain, "loaders": ["r1"], "cache": null, "catch_all": false}],
         "components": components,
         "assets": {"runtime": "client/runtime.js", "react": null},

@@ -112,22 +112,62 @@ fn one_rule_for_props_lists_and_derived_lists() {
 }
 
 #[test]
-fn what_stays_fail_closed() {
-    // A row-reading instance over a module const: rows from the literal are PR 2 (R34.43).
+fn a_row_reading_instance_over_a_constant_list_gets_its_rows_from_the_literal() {
+    // R34.43: the manifest carries the list (`per-row-literal`); a row read binds `__row`.
     let c = lower(
-        "import Cell from './Cell'\nconst rows = [{ id: 'a', t: 'p' }]\nexport default function P() { return <ul>{rows.map((r) => <li key={r.id}><Cell tone={r.t}>x</Cell></li>)}</ul> }",
+        "import Cell from './Cell'\nconst rows = [{ id: 'a', t: 'p' }, { id: 'b', t: 'q' }]\nexport default function P() { return <ul>{rows.map((r) => <li key={r.id}><Cell tone={r.t}>x</Cell></li>)}</ul> }",
     );
-    assert!(fallback(&c, "instance-list-path"), "{:?}", c.diags);
-    // A state list: rows the client re-creates would get no job output.
-    let s = lower(&format!(
-        "{STATE}import Cell from './Cell'\nexport default function P() {{ const [rows, setRows] = useState([1, 2]); return <ul><button onClick={{() => setRows([...rows, 3])}}>+</button>{{rows.map((n) => <li key={{n}}><Cell tone=\"q\">{{n}}</Cell></li>)}}</ul> }}"
-    ));
-    assert!(fallback(&s, "instance-list-path"), "{:?}", s.diags);
-    // useId values differ per row.
+    assert_eq!(c.tier, Tier::Static, "{:?}", c.diags);
+    assert!(!fallback(&c, "instance-list-path"), "{:?}", c.diags);
+    let rec = &c.instances[0];
+    assert_eq!(rec.loops, vec![None]);
+    assert_eq!(
+        rec.rows_literal,
+        Some(serde_json::json!([{ "id": "a", "t": "p" }, { "id": "b", "t": "q" }]))
+    );
+    assert_eq!(rec.exprs["tone"], "__row.t");
+    // Read per row, as for a props-path list.
+    assert!(c.jinja.contains("_1[_i"), "{}", c.jinja);
+    // An inline array literal and its index.
+    let i = lower(
+        "import Cell from './Cell'\nexport default function P() { return <ul>{['x', 'y'].map((t, n) => <li key={t}><Cell tone={t + n}>x</Cell></li>)}</ul> }",
+    );
+    assert_eq!(i.tier, Tier::Static, "{:?}", i.diags);
+    assert_eq!(
+        i.instances[0].rows_literal,
+        Some(serde_json::json!(["x", "y"]))
+    );
+    // A useId child: ids get the per-row suffix, as for a props-path list.
     let u = lower(
         "import Ided from './Ided'\nconst rows = ['a', 'b']\nexport default function P() { return <ul>{rows.map((r) => <li key={r}><Ided text=\"t\" /></li>)}</ul> }",
     );
-    assert!(fallback(&u, "instance-list-path"), "{:?}", u.diags);
+    assert_eq!(u.tier, Tier::Static, "{:?}", u.diags);
+    assert_eq!(
+        u.instances[0].rows_literal,
+        Some(serde_json::json!(["a", "b"]))
+    );
+}
+
+#[test]
+fn what_stays_fail_closed() {
+    // A state list: rows the client re-creates would get no job output.
+    let s = lower(&format!(
+        "{STATE}import Cell from './Cell'\nexport default function P() {{ const [rows, setRows] = useState([1, 2]); return <ul><button onClick={{() => setRows([...rows, 3])}}>+</button>{{rows.map((n) => <li key={{n}}><Cell tone={{String(n)}}>{{n}}</Cell></li>)}}</ul> }}"
+    ));
+    assert!(fallback(&s, "instance-list-path"), "{:?}", s.diags);
+    // A list derived at render (F152): no rows the planner can count.
+    let d = lower(
+        "import Cell from './Cell'\nconst rows = ['a', 'b']\nexport default function P({ q }: any) { const shown = rows.filter((r) => r !== q); return <ul>{shown.map((r) => <li key={r}><Cell tone={r}>x</Cell></li>)}</ul> }",
+    );
+    assert!(fallback(&d, "instance-list-path"), "{:?}", d.diags);
+    // Over the 64 KB cap (ruling Q3): move it into a loader.
+    let big: Vec<String> = (0..7000).map(|n| format!("'row-{n:05}'")).collect();
+    let b = lower(&format!(
+        "import Cell from './Cell'\nconst rows = [{}]\nexport default function P() {{ return <ul>{{rows.map((r) => <li key={{r}}><Cell tone={{r}}>x</Cell></li>)}}</ul> }}",
+        big.join(", ")
+    ));
+    assert!(fallback(&b, "instance-list-path"), "{:?}", b.diags);
+    assert!(b.instances.iter().all(|r| r.rows_literal.is_none()));
 }
 
 #[test]

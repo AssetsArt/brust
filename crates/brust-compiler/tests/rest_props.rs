@@ -263,9 +263,16 @@ fn rest_read_as_a_value_falls_back() {
 /// a build error; over a props path it stays native/static.
 #[test]
 fn fed_child_in_a_local_list_is_an_island_not_a_build_error() {
-    let local = lower(
+    // A constant list carries its rows since F142 R34.43 (tests/per_instance_jobs.rs).
+    let constant = lower(
         "P.tsx",
         "import Row from './Row'\nconst rows = [{ id: 1, name: 'a' }]\nexport default function P() { return <ul>{rows.map((r) => <Row key={r.id} name={r.name} />)}</ul> }",
+    );
+    assert_eq!(constant.tier, Tier::Static, "{:?}", constant.diags);
+    // A list that changes on the client still has no rows the server can feed.
+    let local = lower(
+        "P.tsx",
+        "import { useState } from 'react'\nimport Row from './Row'\nexport default function P() { const [rows, setRows] = useState([{ id: 1, name: 'a' }]); return <ul><button onClick={() => setRows([])}>x</button>{rows.map((r) => <Row key={r.id} name={r.name} />)}</ul> }",
     );
     assert!(
         matches!(local.tier, Tier::React { .. }),

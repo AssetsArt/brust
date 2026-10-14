@@ -157,6 +157,10 @@ pub struct ChildRecord {
     pub literals: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub exprs: BTreeMap<String, String>,
+    /// The rows of a `per-row-literal` instance: a constant list the compiler read from the
+    /// source (a module `const` or an array literal, F142 R34.43); absent otherwise.
+    #[serde(default)]
+    pub rows: Option<serde_json::Value>,
 }
 
 impl ChildRecord {
@@ -168,15 +172,17 @@ impl ChildRecord {
     }
 }
 
-/// The manifest format this server reads; 2 added `children[].literals`/`exprs` (F105).
-pub const MANIFEST_VERSION: u32 = 2;
+/// The manifest format this server reads; 2 added `children[].literals`/`exprs` (F105), 3 added
+/// `per-row-literal` instances with `children[].rows` (F142 R34.43).
+pub const MANIFEST_VERSION: u32 = 3;
 
 /// `"static"` | `"per-row:<list path>"` (the list's context path, not the
-/// client loop member).
+/// client loop member) | `"per-row-literal"` (the list is the record's `rows`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instances {
     Static,
     PerRow(String),
+    PerRowLiteral,
 }
 
 impl<'de> Deserialize<'de> for Instances {
@@ -185,18 +191,19 @@ impl<'de> Deserialize<'de> for Instances {
         // else (e.g. the withdrawn `{k, per_instance}` object) gets the same message.
         let s = String::deserialize(d).map_err(|e| {
             serde::de::Error::custom(format!(
-                "instances: want \"static\" or \"per-row:<list path>\" ({e})"
+                "instances: want \"static\", \"per-row:<list path>\" or \"per-row-literal\" ({e})"
             ))
         })?;
         match s.as_str() {
             "static" => Ok(Instances::Static),
+            "per-row-literal" => Ok(Instances::PerRowLiteral),
             _ => s
                 .strip_prefix("per-row:")
                 .filter(|p| !p.is_empty())
                 .map(|p| Instances::PerRow(p.to_string()))
                 .ok_or_else(|| {
                     serde::de::Error::custom(format!(
-                        "instances: want \"static\" or \"per-row:<list path>\", got {s:?}"
+                        "instances: want \"static\", \"per-row:<list path>\" or \"per-row-literal\", got {s:?}"
                     ))
                 }),
         }
@@ -342,12 +349,28 @@ fn check_paths(id: &str, c: &ComponentRecord) -> Result<(), ManifestError> {
     }
     for ch in &c.children {
         let per_row = match &ch.instances {
-            Instances::Static => false,
+            Instances::Static | Instances::PerRowLiteral => false,
             Instances::PerRow(list) => {
                 parse(format!("child {} instances", ch.id), list)?;
                 true
             }
         };
+        // `rows` belongs to a `per-row-literal` instance, which must carry a list.
+        let literal = matches!(ch.instances, Instances::PerRowLiteral);
+        let rows_ok = match &ch.rows {
+            Some(serde_json::Value::Array(_)) => literal,
+            Some(_) => false,
+            None => !literal,
+        };
+        if !rows_ok {
+            let field = format!("child {} rows", ch.id);
+            return Err(bad(
+                field,
+                "rows",
+                "a per-row-literal instance needs `rows` (an array), and only it may have one"
+                    .into(),
+            ));
+        }
         for (prop, src) in &ch.props {
             let field = format!("child {} props.{prop}", ch.id);
             if has_idx(&parse(field.clone(), src)?) && !per_row {
@@ -716,6 +739,52 @@ mod tests {
         bare["components"]["detailPage_c3"]["children"][0]["exprs"] = serde_json::json!({});
         let e = Manifest::from_parts(&bare.to_string(), &files).unwrap_err();
         assert!(matches!(e, ManifestError::UncoveredInput { .. }), "{e:?}");
+    }
+
+    /// F142 R34.43: a `per-row-literal` child carries its list; `rows` and the form go together.
+    #[test]
+    fn per_row_literal_children_carry_their_rows() {
+        let (mut m, files) = parts();
+        let ch = &mut m["components"]["detailPage_c3"]["children"][0];
+        ch["instances"] = "per-row-literal".into();
+        ch["props"] = serde_json::json!({});
+        ch["exprs"] = serde_json::json!({"move": "__row"});
+        ch["rows"] = serde_json::json!([{"name": "a"}, {"name": "b"}]);
+        let ok = Manifest::from_parts(&m.to_string(), &files).unwrap();
+        let rec = &ok.manifest.components["detailPage_c3"].children[0];
+        assert_eq!(rec.instances, Instances::PerRowLiteral);
+        assert_eq!(
+            rec.rows,
+            Some(serde_json::json!([{"name": "a"}, {"name": "b"}]))
+        );
+        for (instances, rows) in [
+            (
+                serde_json::json!("per-row-literal"),
+                serde_json::Value::Null,
+            ),
+            (
+                serde_json::json!("per-row-literal"),
+                serde_json::json!({"a": 1}),
+            ),
+            (serde_json::json!("static"), serde_json::json!([1])),
+        ] {
+            let mut bad = m.clone();
+            let ch = &mut bad["components"]["detailPage_c3"]["children"][0];
+            ch["instances"] = instances.clone();
+            if rows.is_null() {
+                ch.as_object_mut().unwrap().remove("rows");
+            } else {
+                ch["rows"] = rows.clone();
+            }
+            let e = Manifest::from_parts(&bad.to_string(), &files).unwrap_err();
+            assert!(e.to_string().contains("rows"), "{instances} {rows}: {e}");
+        }
+        // `[idx]` indexes the context list of a `per-row:` instance only.
+        let mut idx = m.clone();
+        idx["components"]["detailPage_c3"]["children"][0]["props"] =
+            serde_json::json!({"x": "pokemon.moves[idx]"});
+        let e = Manifest::from_parts(&idx.to_string(), &files).unwrap_err();
+        assert!(e.to_string().contains("per-row"), "{e}");
     }
 
     #[test]
