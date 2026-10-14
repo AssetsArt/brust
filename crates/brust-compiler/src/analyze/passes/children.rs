@@ -882,15 +882,9 @@ impl Walker<'_, '_> {
                 if island {
                     return;
                 }
-                // The `__ctx_` prefix is the lowering's own: a call site that writes such a prop would forge a frame value.
-                if let Some((k, _)) = props.iter().find(|(k, _)| {
-                    k.starts_with("__ctx_")
-                        && !cir.ctx_uses.iter().any(|u| {
-                            u.fields
-                                .iter()
-                                .any(|f| &crate::ir::ctx_prop(&u.context, f) == k)
-                        })
-                }) {
+                // The `__ctx_` prefix is the lowering's own. This pass runs before the lowering adds any hidden prop, so
+                // every prop met here with that prefix was written by the author: it would override a frame value.
+                if let Some((k, _)) = props.iter().find(|(k, _)| k.starts_with("__ctx_")) {
                     diags.push(Diagnostic::fallback(
                         "context-shape",
                         format!("the prop `{k}` uses the `__ctx_` prefix, which brust reserves for context values"),

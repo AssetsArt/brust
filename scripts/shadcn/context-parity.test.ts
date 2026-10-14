@@ -11,7 +11,7 @@ const PAGES = ['ctx-progress-basic', 'ctx-progress-max', 'ctx-progress-indetermi
 const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns',
   'ctx-imp-m-and', 'ctx-imp-m-computed', 'ctx-imp-m-index', 'ctx-imp-m-member', 'ctx-imp-m-nullish', 'ctx-imp-m-opt', 'ctx-imp-m-root', 'ctx-imp-m-template', 'ctx-imp-m-tern', 'ctx-loc-m-and', 'ctx-loc-m-computed', 'ctx-loc-m-index', 'ctx-loc-m-member', 'ctx-loc-m-nullish', 'ctx-loc-m-opt', 'ctx-loc-m-root', 'ctx-loc-m-template', 'ctx-loc-m-tern',
   'ctx-pown-imp-root', 'ctx-pown-imp-and', 'ctx-pown-imp-tern', 'ctx-pown-imp-member', 'ctx-pown-imp-index', 'ctx-pown-loc-root', 'ctx-pown-loc-and', 'ctx-pown-loc-tern', 'ctx-pown-loc-member', 'ctx-pown-loc-index',
-  'ctx-plain-imp-root', 'ctx-plain-imp-and', 'ctx-plain-imp-tern', 'ctx-plain-loc-root', 'ctx-plain-loc-and', 'ctx-plain-loc-tern', 'ctx-trio-prov', 'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call',
+  'ctx-plain-imp-root', 'ctx-plain-imp-and', 'ctx-plain-imp-tern', 'ctx-plain-loc-root', 'ctx-plain-loc-and', 'ctx-plain-loc-tern', 'ctx-trio-prov', 'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call', 'ctx-hid-provfed', 'ctx-hid-bare',
 ]
 // Imported plain value: stays a static page (no script), and renders like React.
 const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain']
@@ -113,6 +113,9 @@ for (const id of ISLAND_PAGES) {
     if (id.startsWith('ctx-island')) {
       expect(html).toContain(id === 'ctx-island-same' ? 'from-panel' : 'default')
       expect(html).not.toContain(id === 'ctx-island-same' ? '>default<' : '>from-panel<')
+    } else if (id.startsWith('ctx-hid-')) {
+      expect(html).toContain('lit') // React reads the context value, never the forged prop
+      expect(html).not.toContain('forged')
     } else if (id === 'ctx-trio-prov') {
       expect(html).toContain('$5.00')
     } else {

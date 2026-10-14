@@ -519,3 +519,27 @@ fn frame_values_are_literals_and_the_ctx_prefix_is_reserved() {
     let (ir, _) = page("react-basic.tsx");
     assert!(!is_react(&ir), "{:?} {:?}", ir.tier, ir.diagnostics);
 }
+
+/// Mellow (reservation): a call-site prop named EXACTLY the hidden name the lowering would use must fail closed too (the
+/// author-prop scan sees only author props), whether the consumer is fed by a Provider or not.
+#[test]
+fn a_call_site_prop_with_the_exact_hidden_name_fails_closed() {
+    for f in ["hid-provfed.tsx", "hid-bare.tsx"] {
+        let all = compile_all(f);
+        let page = all
+            .iter()
+            .find(|(id, ..)| id.starts_with("hid"))
+            .expect("page");
+        assert!(
+            rules(&page.1).contains(&"context-shape"),
+            "{f}: {:?}",
+            page.1.diagnostics
+        );
+        assert!(is_react(&page.1), "{f}: {:?}", page.1.tier);
+        assert!(
+            !page.2.contains("forged") || is_react(&page.1),
+            "{f}: {}",
+            page.2
+        );
+    }
+}

@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 170 | 93 | 8 | 69 | 0 | 0 | 0 | 0 |
+| B Composition | 171 | 93 | 8 | 70 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 348 | 172 | 43 | 129 | 3 | 1 | 0 | 0 |
+| **Total** | 349 | 172 | 43 | 130 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -183,6 +183,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-provider-field-element | a Provider value field holding an element holder | static | static | ssr | ok | — | Mellow: a Provider value field that holds an element would reach the consumer as a hidden prop and print as nothing; the Provider stays an island (context-state), the page stays static |
 | b-context-frame-prop | a Provider whose value reads a prop fed an element holder at the call site | react | react | ssr | ok | fallback:context-no-provider, fallback:context-value | Mellow: a frame value must be a literal (no prop read, no call); the page renders with React |
 | b-context-reserved-prefix | a user prop named __ctx_* | react | react | ssr | ok | fallback:context-island | lead ruling: the __ctx_ prefix is the lowering's own; a user prop of that name fails closed with its own code (context-shape) |
+| b-context-reserved-exact | a call-site prop with the exact hidden context name | react | react | ssr | ok | fallback:context-shape | Mellow reservation: any author prop starting __ctx_ fails closed (context-shape), including the exact hidden name; the page renders with React (value lit) |
 | b-jsx-const-child-unreadable | a child that is an import the compiler cannot resolve | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: an import it cannot read or resolve fails closed |
 | b-jsx-const-child-imported-plain | an imported plain value used as a child (control) | static | static | 0 | ok | — | control: a folded primitive import still lowers |
 | b-jsx-const-child-shadowed | a prop that shadows an imported JSX const name (control) | static | static | 0 | ok | — | control: the child is the prop, not the import; it lowers |
