@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 88 | 42 | 8 | 38 | 0 | 0 | 0 | 0 |
+| B Composition | 96 | 45 | 8 | 43 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 52 | 17 | 10 | 21 | 3 | 1 | 0 | 0 |
-| **Total** | 248 | 105 | 43 | 96 | 3 | 1 | 0 | 0 |
+| **Total** | 256 | 108 | 43 | 101 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -129,6 +129,14 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component |  |
 | b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
 | b-forwardref | forwardRef component | react | react | ssr | ok | fallback:default-export-shape |  |
+| b-body-destructure | `const { a, b = 1, ...rest } = props` in the body reads like a parameter pattern | static | static | 0 | ok | — | S3 R34.66 |
+| b-body-destructure-two | two body destructurings of props (no rest) | static | static | 0 | ok | — |  |
+| b-body-destructure-rest-and-another | a rest pattern next to another props pattern stays body-shape | react | react | ssr | ok | fallback:body-shape, fallback:spread-props | JS: the rest carries `a`; brust keeps one list of declared props, so it declines |
+| b-body-destructure-mixed | a body destructuring next to a `props.x` read | static | static | 0 | ok | — |  |
+| b-body-destructure-nested | a nested pattern in the body destructuring stays body-shape | react | react | ssr | ok | fallback:body-shape |  |
+| b-body-destructure-two-rests | a second `...rest` in the body stays body-shape | react | react | ssr | ok | fallback:body-shape, fallback:spread-props |  |
+| b-body-destructure-other | destructuring something that is not the props object | react | react | ssr | ok | fallback:body-shape |  |
+| b-body-destructure-let | `let { a } = props` is not read as a props pattern | react | react | ssr | ok | fallback:let-var |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get) |
 | b-spread-known-shape | data-*, aria-*, boolean and style props through a child's rest spread | static | static | 0 | ok | — | shadcn S1.2 R34.15 (a): keys known at the call site expand at compile time; children from the spread are the element children |

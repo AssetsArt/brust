@@ -78,6 +78,9 @@ pub struct NameTable<'a> {
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
     /// the bare object as a value, or inside code printed as written (R34.14: fail closed).
     pub rest_escape: std::cell::Cell<Option<u32>>,
+    /// Binding locations of the body statements `const { a, b = 1, ...rest } = props` that are read as the props
+    /// pattern (R34.66): the same reads as a parameter pattern, so the statement itself is skipped.
+    absorbed: HashSet<i32>,
     /// Module-level `const X = BASE.MEMBER` (never reassigned) with `BASE` imported from a package.
     member_aliases: HashMap<u32, MemberRef>,
     /// The component's polymorphic tag local (`Comp` of `const Comp = asChild ? Slot.Root : "a"`, R34.28).
@@ -136,7 +139,10 @@ impl<'a> NameTable<'a> {
         let mut table = Self::for_hook(ast);
         if let Some(arg) = component.args.slice().first() {
             match arg.binding.data {
-                B::BIdentifier(id) => table.props_ident = Some(table.key(id.r#ref)),
+                B::BIdentifier(id) => {
+                    table.props_ident = Some(table.key(id.r#ref));
+                    table.absorb_body_patterns(component);
+                }
                 // Only plain `key` / `key: local` / `key = default` bind a prop, and a
                 // trailing `...rest` (R34.14); nested patterns are a `prop-pattern`
                 // fallback (read_props) and their bindings stay Local.
@@ -168,6 +174,79 @@ impl<'a> NameTable<'a> {
         table
     }
 
+    /// `const { a, b = 1, ...rest } = props` at the top level of the body (with `props` the plain first parameter)
+    /// binds props exactly like the parameter pattern (R34.66). Only the plain shapes the parameter pattern reads
+    /// (`key`, `key: local`, `key = default`, a trailing `...rest`, one `...rest` per component) are absorbed; any
+    /// other destructuring stays the `body-shape` fallback.
+    fn absorb_body_patterns(&mut self, component: &js_ast::G::Fn) {
+        let Some(props) = self.props_ident else {
+            return;
+        };
+        let mut candidates = Vec::new();
+        for stmt in component.body.stmts.slice() {
+            let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
+                continue;
+            };
+            if !matches!(l.kind, js_ast::S::Kind::KConst) || l.decls.len() != 1 {
+                continue;
+            }
+            let d = &l.decls[0];
+            let (B::BObject(obj), Some(v)) = (d.binding.data, d.value) else {
+                continue;
+            };
+            let js_ast::expr::Data::EIdentifier(id) = &v.data else {
+                continue;
+            };
+            if self.key(id.ref_) != props {
+                continue;
+            }
+            let plain = obj.properties().iter().all(|p| {
+                matches!(p.value.data, B::BIdentifier(_))
+                    && (p.flags.contains(js_ast::flags::Property::IsSpread)
+                        || matches!(&p.key.data, js_ast::expr::Data::EString(_)))
+            });
+            if plain {
+                candidates.push((d.binding.loc.start, obj));
+            }
+        }
+        let is_rest = |p: &js_ast::b::Property| p.flags.contains(js_ast::flags::Property::IsSpread);
+        let with_rest = candidates
+            .iter()
+            .filter(|(_, o)| o.properties().iter().any(is_rest))
+            .count();
+        // `...rest` leaves out the keys of its own pattern only (JS), while a component's declared props are one
+        // list: a rest is read only when its pattern is the only one (anything else stays `body-shape`).
+        if with_rest > 1
+            || (with_rest == 1 && candidates.len() > 1)
+            || self.rest.is_some() && with_rest > 0
+        {
+            return;
+        }
+        for (loc, obj) in candidates {
+            for p in obj.properties() {
+                let B::BIdentifier(b) = p.value.data else {
+                    continue;
+                };
+                let k = self.key(b.r#ref);
+                if is_rest(p) {
+                    self.rest = Some(k);
+                } else if let js_ast::expr::Data::EString(key) = &p.key.data {
+                    let name = crate::analyze::expr::estring(key);
+                    if with_rest == 1 {
+                        self.named_props.push(name.clone());
+                    }
+                    self.props.insert(k, name);
+                }
+            }
+            self.absorbed.insert(loc);
+        }
+    }
+
+    /// The body statement whose binding starts at `loc` was absorbed into the props pattern.
+    pub fn is_absorbed(&self, loc: i32) -> bool {
+        self.absorbed.contains(&loc)
+    }
+
     /// The table for a custom hook's body (G3): the same module facts, and no props (a
     /// hook's first parameter is an ordinary argument).
     pub fn for_hook(ast: &'a js_ast::Ast<'_>) -> Self {
@@ -180,6 +259,7 @@ impl<'a> NameTable<'a> {
             rest: None,
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
+            absorbed: HashSet::new(),
             member_aliases: HashMap::new(),
             poly: HashMap::new(),
             state: HashSet::new(),
