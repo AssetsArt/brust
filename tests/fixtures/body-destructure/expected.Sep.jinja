@@ -1,0 +1,2 @@
+{# brust v2 · sep_e1338c06 · do not edit #}
+<div{{ spread_attrs(["data-orientation", (orientation if orientation is defined else "horizontal")], ["role", ("none" if (decorative | truthy) else "separator")], ((_props) | omit(["decorative", "orientation"]))) }}>{{ spread_children(spread_get(((_props) | omit(["decorative", "orientation"])), "children", __undefined)) }}</div>

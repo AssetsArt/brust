@@ -451,7 +451,7 @@ fn read_attr(
         if let E::EIdentifier(id) = &value.data
             && r.names.is_forwarded_ref(id.ref_)
         {
-            r.names.note_forwarded_ref_dropped();
+            r.names.note_forwarded_ref_dropped(value.loc.start);
             return None;
         }
         if let E::EIdentifier(id) = &value.data {
