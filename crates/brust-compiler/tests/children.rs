@@ -129,20 +129,32 @@ fn react_child_is_an_island_with_an_ssr_job() {
 }
 
 #[test]
-fn function_and_reactive_props_to_an_island_are_errors() {
+fn function_and_reactive_props_to_an_island_demote_the_host_to_react() {
     let ir = analyze(
         "import { useState } from 'react'\nimport Reviews from '../react-child/Reviews'\nexport default function P() { const [n, setN] = useState(0); return <div><Reviews onReset={() => setN(0)} count={n} /></div> }",
     );
     let e: Vec<_> = ir
         .diagnostics
         .iter()
-        .filter(|d| d.rule == "island-prop" && d.class == DiagClass::Error)
+        .filter(|d| d.rule == "island-prop" && d.class == DiagClass::Fallback)
         .map(|d| d.message.clone())
         .collect();
     assert_eq!(e.len(), 2, "{:?}", ir.diagnostics);
     assert!(e[0].contains("`onReset`") && e[0].contains("a function"));
     assert!(e[1].contains("`count`") && e[1].contains("reads state `n`"));
-    assert!(ir.jobs.is_empty());
+    // R34.56: the host renders with React (a fallback), never a build error.
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert!(
+        !ir.diagnostics.iter().any(|d| d.class == DiagClass::Error),
+        "{:?}",
+        ir.diagnostics
+    );
+    // R34.57: the host's one job is its own SSR render; the child is not an island, so it gets none.
+    assert!(
+        matches!(ir.jobs.as_slice(), [j] if matches!(j.kind, JobKind::Ssr { .. })),
+        "{:?}",
+        ir.jobs
+    );
 }
 
 /// Review Focus 4: an import cycle stops at the in-progress marker.

@@ -10,9 +10,9 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
 | B Composition | 70 | 33 | 8 | 29 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
-| D API surface | 29 | 8 | 1 | 19 | 1 | 0 | 0 | 0 |
-| E v2 specifics | 43 | 15 | 10 | 12 | 5 | 1 | 0 | 0 |
-| **Total** | 221 | 93 | 43 | 78 | 6 | 1 | 0 | 0 |
+| D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
+| E v2 specifics | 49 | 16 | 10 | 19 | 3 | 1 | 0 | 0 |
+| **Total** | 227 | 94 | 43 | 86 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -198,7 +198,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | d-suspense-static | <Suspense> around static content | react | react | ssr | ok | fallback:external-component, fallback:jsx-expression | spec §3 react tier: Suspense |
 | d-fragment-keyed | <Fragment key> inside a list | static | static | 0 | ok | — |  |
 | d-activity | <Activity mode> | static | static | ssr | ok | fallback:external-component | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
-| d-profiler | <Profiler onRender> | error | error | 0 | refused | error:island-prop, fallback:external-component | a function prop to an external component is refused (island-prop) |
+| d-profiler | <Profiler onRender> | react | react | ssr | ok | fallback:external-component, fallback:island-prop | shadcn S1 R34.56: a function prop to an external component makes the host React (fallback island-prop), never a build error |
 | d-profiler-bare | <Profiler> without onRender | static | static | ssr | ok | fallback:external-component | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
 | d-strictmode | <StrictMode> | static | static | ssr | ok | fallback:external-component | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
 | d-viewtransition | <ViewTransition> | static | static | ssr | ok | fallback:external-component | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
@@ -236,7 +236,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-member-shadowed | a prop shadows the import (`<D.Root>` with `{ D }` destructured) | react | react | ssr | ok | fallback:member-tag | resolved by symbol, not by spelling: the prop is not the import |
 | e-member-relative-namespace | member of a relative namespace import (`<UI.Button>`) stays member-tag | react | react | ssr | ok | fallback:member-tag | F-row: resolve it to that module's named export so it compiles instead of becoming an island |
 | e-member-react-namespace | member of the react namespace (`<R.Fragment>`) | react | react | ssr | ok | fallback:member-tag |  |
-| e-member-island-prop | function prop on a member island (the existing island-prop refusal) | error | error | 0 | refused | error:island-prop, fallback:external-component |  |
+| e-member-island-prop | function prop on a member island | react | react | ssr | ok | fallback:external-component, fallback:island-prop | shadcn S1 R34.56: a function prop on a member island makes the host React (fallback island-prop; was a build error) |
+| e-island-prop-static-host | function prop to a React child from a stateless host | react | react | ssr | ok | fallback:island-prop | shadcn S1 R34.56: the host renders with React (fallback island-prop), not a build error |
+| e-island-prop-state-value | a value read from state passed to a React child | react | react | ssr | ok | fallback:island-prop | shadcn S1 R34.56: fallback island-prop (reads state), the host is React |
+| e-island-prop-store-value | a store value passed to a React child | react | react | ssr | ok | fallback:island-prop | shadcn S1 R34.56: fallback island-prop (reads store `s.count`) |
+| e-island-prop-stateful-list | a React child in a list that changes with state | react | react | ssr | ok | fallback:island-prop | shadcn S1 R34.56: the second island-prop site (an island in a list the client changes) is a fallback too |
+| e-island-prop-react-host | a function prop to a child inside a host that is React for another reason | react | react | ssr | ok | fallback:hook-unsupported, fallback:island-prop | shadcn S1 R34.56/R34.57: the host is already React (unsupported hook): the child is not an island, no Ssr job, the build succeeds |
+| e-island-prop-json-control | literal and props-path values to a React child (control) | static | static | ssr | ok | — | shadcn S1 R34.56 control: JSON props still make an island under a static host (unchanged) |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |
@@ -244,7 +250,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-precompute-state | state-dependent value from a module helper | native | native | precompute | ok | — | spec §6.4 precompute |
 | e-precompute-per-item | per-item precompute in a list | static | static | precompute | ok | — | spec §6.4 precompute |
 | e-reactive-props-child | derived reactive value passed to a child | native | native | 0 | ok | — | spec §7.4 reactive props (D8) |
-| e-function-prop-react-child | function prop to a react child | error | error | 0 | refused | error:island-prop |  |
+| e-function-prop-react-child | function prop to a react child | react | react | ssr | ok | fallback:island-prop | shadcn S1 R34.56: a function prop to a React child makes the host React (fallback island-prop; was a build error) |
 | e-server-only-handler | server-only import reached from a handler | error | error | 0 | refused | error:server-only-in-client |  |
 | e-browser-global | browser global read during render | react | react | ssr | ok | fallback:browser-global | client-only React island |
 | e-request-prop | request state read in render | error | error | precompute | refused | error:request-state-in-render |  |
@@ -312,7 +318,7 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 |---|---|---|---|
 | [`<Activity>`](https://react.dev/reference/react/Activity) | static | d-activity | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
 | [`<Fragment>`](https://react.dev/reference/react/Fragment) | static | a-fragment, d-fragment-keyed | static fragment root: no <brust-host>, no warning (gaps L8) |
-| [`<Profiler>`](https://react.dev/reference/react/Profiler) | partial | d-profiler, d-profiler-bare | native/static: d-profiler-bare; refused: d-profiler |
+| [`<Profiler>`](https://react.dev/reference/react/Profiler) | partial | d-profiler, d-profiler-bare | native/static: d-profiler-bare; island: d-profiler |
 | [`<StrictMode>`](https://react.dev/reference/react/StrictMode) | static | d-strictmode | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
 | [`<Suspense>`](https://react.dev/reference/react/Suspense) | island | d-lazy-suspense, d-suspense-static | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
 | [`<ViewTransition>`](https://react.dev/reference/react/ViewTransition) | static | d-viewtransition | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
