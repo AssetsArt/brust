@@ -239,6 +239,36 @@ pub struct FoldedInstance {
     pub values: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
+/// A fed child instance rendered in this component's template whose job runs inside this
+/// component's own precompute job (R34.96, PR 2b): it has no `instances` record; its slots are
+/// outputs of `jobs[0]` under the names in `outputs`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FusedInstance {
+    pub child_id: String,
+    /// Byte offset of the call site in this component's source (`Node::Component.loc`).
+    pub loc: u32,
+    /// 1-based ordinal among this component's fused instances of `child_id`, template order.
+    pub ordinal: u32,
+    /// Every input root of the child's job (`jobs[0].inputs`) -> where its value comes from.
+    pub inputs: std::collections::BTreeMap<String, FusedInput>,
+    /// The child's slot -> this component's job output that carries it (`_f<child>_<ordinal>_<slot>`).
+    pub outputs: std::collections::BTreeMap<String, String>,
+}
+
+/// Where a fused child's job input comes from (R34.96 v1, ruling T1: no JS expressions).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FusedInput {
+    /// A path of this component's props (`className`, `config.size`).
+    Prop { path: String },
+    /// A constant (`"default"`, `null`).
+    Literal { value: serde_json::Value },
+    /// One of this component's own precompute slots (`_s1`, the `cn(...)` result).
+    Slot { name: String },
+    /// Not passed: the key is left out of the child's props, so its default applies.
+    Undefined,
+}
+
 /// One `useStore(handle)` binding of the component (M3-F D7).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StoreUse {
