@@ -264,7 +264,7 @@ export const rows: Row[] = [
     snippet: `import { Card } from './ui'\nconst extra = { id: 'z' }\nexport default function C() { return <main><Card><p {...extra}>x</p></Card></main> }`,
     files: { 'ui.tsx': ICARD },
     note: 'R34.23: fail closed — an unknown spread' },
-  // ---- shadcn S1 constant-slots (R34.49-R34.55, F152): lists, constant conditions and element props inside island children ----
+  // ---- shadcn S1 constant-slots (R34.49-R34.55, F156): lists, constant conditions and element props inside island children ----
   { id: 'b-island-slots-list-literal', category: 'B', authoring: 'a literal list inside island children', expect: 'static', jobs: 1,
     snippet: `import { Card } from './ui'\nexport default function C() { return <main><Card><ul>{[1, 2, 3].map((n) => <li key={n}>{n}</li>)}</ul></Card></main> }`,
     files: { 'ui.tsx': ICARD },
