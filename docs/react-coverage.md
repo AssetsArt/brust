@@ -11,8 +11,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 64 | 30 | 7 | 27 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 19 | 1 | 0 | 0 | 0 |
-| E v2 specifics | 43 | 15 | 10 | 12 | 5 | 1 | 0 | 0 |
-| **Total** | 215 | 90 | 42 | 76 | 6 | 1 | 0 | 0 |
+| E v2 specifics | 46 | 16 | 10 | 14 | 5 | 1 | 0 | 0 |
+| **Total** | 218 | 91 | 42 | 78 | 6 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -231,6 +231,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-member-relative-namespace | member of a relative namespace import (`<UI.Button>`) stays member-tag | react | react | ssr | ok | fallback:member-tag | F-row: resolve it to that module's named export so it compiles instead of becoming an island |
 | e-member-react-namespace | member of the react namespace (`<R.Fragment>`) | react | react | ssr | ok | fallback:member-tag |  |
 | e-member-island-prop | function prop on a member island (the existing island-prop refusal) | error | error | 0 | refused | error:island-prop, fallback:external-component |  |
+| e-jsx-runtime-call | a hand-written `jsx(…)` call from react/jsx-runtime (what compiled-JS packages contain) | react | react | ssr | ok | fallback:jsx-runtime-call | S3 R34.67: fails closed; read as an expression it would print an element object |
+| e-jsx-runtime-namespace | `R.jsxs(…)` through a namespace import of the dev runtime | react | react | ssr | ok | fallback:jsx-runtime-call |  |
+| e-jsx-runtime-local-name | a local function named `jsx` is not the runtime | static | static | precompute | ok | — |  |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |

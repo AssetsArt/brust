@@ -50,6 +50,44 @@ fn tag_ref(tag: &js_ast::Expr) -> Option<js_ast::Ref> {
     }
 }
 
+/// A hand-written call to React's JSX runtime (`jsx(…)`, `jsxs(…)`, `jsxDEV(…)`, also aliased or through a
+/// namespace import) that is not a lowered JSX element: what compiled-JS packages contain (shadcn S3, R34.67).
+/// It builds an element object the reader cannot see through, so the component must not be read as static.
+/// Returns the location of the first one.
+pub fn jsx_runtime_call(
+    calls: &[js_ast::Expr],
+    names: &crate::analyze::names::NameTable<'_>,
+) -> Option<u32> {
+    const RUNTIMES: [&str; 2] = ["react/jsx-runtime", "react/jsx-dev-runtime"];
+    const FNS: [&str; 3] = ["jsx", "jsxs", "jsxDEV"];
+    let import = |r: js_ast::Ref| names.import_of(r).filter(|(s, _)| RUNTIMES.contains(s));
+    for c in calls {
+        let E::ECall(call) = &c.data else { continue };
+        if call.was_jsx_element {
+            continue;
+        }
+        let hit = match &call.target.data {
+            E::EIdentifier(id) => import(id.ref_).is_some_and(|(_, i)| FNS.contains(&i)),
+            E::EImportIdentifier(id) => import(id.ref_).is_some_and(|(_, i)| FNS.contains(&i)),
+            // `import * as R from 'react/jsx-runtime'; R.jsx(…)`
+            E::EDot(d) => {
+                let base = match &d.target.data {
+                    E::EIdentifier(id) => Some(id.ref_),
+                    E::EImportIdentifier(id) => Some(id.ref_),
+                    _ => None,
+                };
+                base.is_some_and(|b| import(b).is_some_and(|(_, i)| i == "*"))
+                    && FNS.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+            }
+            _ => false,
+        };
+        if hit {
+            return Some(loc_of(c));
+        }
+    }
+    None
+}
+
 fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
     match &tag.data {
         E::EString(s) => Tag::Host(estring(s)),
