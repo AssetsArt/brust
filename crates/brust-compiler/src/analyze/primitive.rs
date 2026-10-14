@@ -130,7 +130,7 @@ fn string_array(stmt: &js_ast::Stmt) -> Option<Vec<String>> {
     let S::SLocal(l) = &stmt.data else {
         return None;
     };
-    let d = l.decls.iter().next()?;
+    let d = l.decls.first()?;
     let E::EArray(arr) = &d.value?.data else {
         return None;
     };

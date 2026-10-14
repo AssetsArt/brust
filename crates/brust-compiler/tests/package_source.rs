@@ -375,3 +375,67 @@ fn the_forwarded_ref_may_go_on_only_to_a_component_that_forwards_it() {
         .expect("island");
     assert!(d.message.contains("forward"), "{}", d.message);
 }
+
+/// Security (plan §6): package source is untrusted input to the SAME printer and sinks as app code. A hostile leaf
+/// compiled from a package prints exactly what the same file prints as an app module: the URL guard, escaping,
+/// `html_raw` as the only raw sink, and spread keys checked, all unchanged.
+#[test]
+fn hostile_package_source_goes_through_the_app_sinks() {
+    let hostile = "export function Leaf(props: any) {\n  return <div {...props}><a href={props.u}>go</a><a href=\"javascript:alert(1)\">x</a><span>{'</script><b>'}</span><p dangerouslySetInnerHTML={{ __html: props.h }} /></div>\n}\n";
+    let page = |from: &str| {
+        format!(
+            "import {{ Leaf }} from '{from}'\nexport default function App() {{ return <main><Leaf u=\"javascript:alert(2)\" h=\"<i>x</i>\" {{...{{ 'x-on-click': 'evil', onclick: 'evil()' }}}} /></main> }}"
+        )
+    };
+    let mut pkg = App::new();
+    pkg.file(&format!("{LEAF_DIR}/src/leaf.tsx"), hostile).map(
+        "",
+        "leafy",
+        &format!("{LEAF_DIR}/src/leaf.tsx"),
+    );
+    let a = pkg.compile(&page("leafy"));
+    let mut local = App::new();
+    local.file("Leaf.tsx", hostile);
+    let b = local.compile(&page("./Leaf"));
+    let strip = |t: &[(String, ComponentIR, String)]| {
+        let re = |s: &str| {
+            let mut out = String::new();
+            for w in s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+                // component ids carry a path hash
+                if w.len() > 9
+                    && w.rsplit('_')
+                        .next()
+                        .is_some_and(|h| h.len() == 8 && h.chars().all(|c| c.is_ascii_hexdigit()))
+                {
+                    out.push_str("ID ");
+                } else {
+                    out.push_str(w);
+                    out.push(' ');
+                }
+            }
+            out
+        };
+        (
+            re(&t[0].2),
+            t[0].1
+                .diagnostics
+                .iter()
+                .map(|d| d.rule.clone())
+                .collect::<Vec<_>>(),
+        )
+    };
+    let (ja, da) = strip(&a);
+    let (jb, db) = strip(&b);
+    assert_eq!(da, db, "{:?}", a[0].1.diagnostics);
+    assert_eq!(ja, jb, "package vs app template");
+    // And the sinks are the ones app code gets: one html_raw, no raw handler attribute, the literal script text escaped.
+    let jinja = &a[0].2;
+    // Compiled, not an island of either: the comparison is between two printed templates.
+    assert!(
+        jinja.contains("go</a>") && !jinja.contains("brust-island"),
+        "{jinja}"
+    );
+    assert_eq!(jinja.matches("html_raw").count(), 1, "{jinja}");
+    assert!(!jinja.contains("onclick=\"evil"), "{jinja}");
+    assert!(!jinja.contains("</script><b>"), "{jinja}");
+}
