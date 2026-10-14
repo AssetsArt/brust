@@ -89,6 +89,7 @@ fn plan(ir: &ComponentIR) -> Option<Plan<'_>> {
         roots.extend(s.guards.iter().map(|g| &g.1));
     }
     roots.extend(inits.iter().flatten());
+    roots.extend(fused_defaults(ir, &f));
     let mut reached = f.reach(&roots);
     for (_, name) in &slot_of_const {
         if f.derived.contains_key(name) {
@@ -160,6 +161,7 @@ pub fn job_reads(ir: &ComponentIR) -> Option<JobReads> {
     }
     roots.extend(p.inits.iter().flatten());
     roots.extend(p.derived.iter().map(|d| d.1));
+    roots.extend(fused_defaults(ir, &p.f));
     for r in &roots {
         super::common::visit_idents(r, &mut |name, kind| {
             if matches!(kind, IdentKind::Global | IdentKind::Unknown) {
@@ -365,6 +367,23 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
         fused_out.join(", ")
     ));
     Some(out)
+}
+
+/// The destructuring defaults of this component's props that a fused child's `Prop` input reads
+/// (R34.96): the job prints them, so they are roots too (their imports, module names, globals).
+fn fused_defaults<'a>(ir: &ComponentIR, f: &'a Facts<'_>) -> Vec<&'a RawExpr> {
+    let mut out = Vec::new();
+    for fi in &ir.fused {
+        for v in fi.inputs.values() {
+            if let crate::ir::FusedInput::Prop { path } = v {
+                let root = path.split(['.', '[']).next().unwrap_or(path);
+                if let Some(d) = f.prop_defaults.get(root) {
+                    out.push(d);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The props object a fused child's job is called with (R34.96): an `Undefined` input is left out, so

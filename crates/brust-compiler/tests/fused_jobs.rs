@@ -411,3 +411,48 @@ fn a_prop_the_parent_defaults_reaches_the_child_with_that_default() {
     );
     assert_eq!(link_class(&t, &out), "link off default next x", "{out}");
 }
+
+/// Next's default reads another of its props: the job must destructure that prop too.
+const NEXT_PROP_DEFAULT: &str = r#"import { Link } from './link'
+const cx = (...a: any[]) => a.filter((x) => x).join(' ')
+export default function Next({ className, active = className === 'x' }: any) {
+  return <nav><Link className={cx('next', className)} size="default" isActive={active} /></nav>
+}
+"#;
+
+#[test]
+fn a_default_that_reads_another_prop_is_computed_in_the_job() {
+    let t = tree_of(NEXT_PROP_DEFAULT);
+    let ts = lowered(&t.next, &t.by_id).server_ts.unwrap();
+    let out = run_job(&t.dir, &ts, &t.link.id, &t.link_ts, "{ className: 'x' }");
+    assert_eq!(
+        link_class(&t, &out),
+        "link on default next x",
+        "{out}\n{ts}"
+    );
+    let out = run_job(&t.dir, &ts, &t.link.id, &t.link_ts, "{ className: 'y' }");
+    assert_eq!(link_class(&t, &out), "link off default next y", "{out}");
+}
+
+/// A call as a default makes the parent React: it keeps no fused child (`tier.rs`).
+#[test]
+fn a_react_parent_keeps_no_fused_child() {
+    let dir = tmp();
+    std::fs::write(dir.join("link.tsx"), LINK).unwrap();
+    std::fs::write(
+        dir.join("next.tsx"),
+        NEXT.replace("active }: any", "active = Math.max(1, 2) > 1 }: any"),
+    )
+    .unwrap();
+    let by_id = compile(&dir, "next.tsx");
+    let next = by_id
+        .values()
+        .find(|c| c.source.ends_with("next.tsx"))
+        .unwrap();
+    assert!(
+        matches!(next.tier, brust_compiler::ir::Tier::React { .. }),
+        "{:?}",
+        next.tier
+    );
+    assert!(next.fused.is_empty(), "{:?}", next.fused);
+}
