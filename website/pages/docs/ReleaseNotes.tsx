@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-11', title: '2.0.0-alpha.11' },
       { id: 'alpha-10', title: '2.0.0-alpha.10' },
       { id: 'alpha-9', title: '2.0.0-alpha.9' },
       { id: 'alpha-8', title: '2.0.0-alpha.8' },
@@ -33,6 +34,54 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-11">2.0.0-alpha.11 · 15 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.10: #228–#234 (F165, F164 PR 2a + F169, F148a, F175, F182, F178, F164 PR 2b) */}
+      <p>A one-command shadcn/ui setup, fewer worker processes for static apps, more components that compile, and fixes for builds that failed on valid React.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #231 (F175, human request; plan 2026-10-14-shadcn-init-command, R41.1–R41.10) */}
+        <li>
+          <strong><code>brust shadcn init</code> sets up shadcn/ui in one command.</strong> Run <code>bunx brust shadcn init button card dialog</code> in a project. It writes <code>components.json</code>, adds the <code>@/*</code> path to <code>tsconfig.json</code> (your comments are kept) and installs the four packages the components use. Then it runs the shadcn CLI, at a pinned version, to add the theme and the components you named. A second run skips every step that is already done. <a href="/docs/guides/shadcn-setup">Set up shadcn/ui</a> is rewritten around it.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #232 (F182): #229 re-based instance records only for static wrappers */}
+        <li>
+          <strong>A native component that holds a component with its own server work no longer fails the build.</strong> A component with state and a handler that renders a child with a server job or <code>useId</code> stopped <code>brust build</code> with <code>nested-instance</code>. The component that renders it now stays React.
+        </li>
+        {/* source: PR #233 (F178, found by knock2 in the wave B spike) */}
+        <li>
+          <strong>An object constant used in an event handler no longer breaks the build.</strong> <code>const step = {'{'} up: 1, down: -1 {'}'}</code> inside a component, read in an <code>onClick</code>, was printed as invalid JavaScript and stopped <code>brust build</code>. It now compiles and behaves as in React.
+        </li>
+        {/* source: PR #229 (F169, Mellow N1) */}
+        <li>
+          <strong><code>useId</code> no longer repeats the same id.</strong> A child that calls <code>useId</code>, passed through a component that renders its children in every row of a list, printed the same id in each row. Such a child now renders with React.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #228 (F165, R40.1): manifest needs_workers */}
+        <li>
+          <strong>An app whose pages are all static no longer starts worker processes.</strong> If no page has a loader, a server job, an action, a React island to render on the server or a cache adapter, <code>brust start</code> serves without workers. It therefore no longer imports your route modules: top-level code in them runs during <code>brust build</code>, not at start.
+        </li>
+        {/* source: PR #229 (F164 PR 2a, R34.83 + static-wrapper re-base) */}
+        <li>
+          <strong>Props spread into a component that does server work now compile.</strong> A wrapper that spreads its props into such a child (<code>{'{'}...props{'}'}</code>) used to keep the page in React. It now compiles, and the shadcn <code>aspect-ratio</code> page goes from 74 KB of JavaScript to none.
+        </li>
+        {/* source: PR #234 (F164 PR 2b, R34.96 job fusion), served parity with React folded and per request */}
+        <li>
+          <strong>Components whose children need their own server work run as one job.</strong> When a component computes something on the server and so does a child it renders (shadcn&rsquo;s pagination link inside a button, an input group&rsquo;s addon), the child now runs inside the parent&rsquo;s job instead of keeping the page in React. Client JavaScript on the shadcn pages: pagination 87 → 0 KB, button-group 86 → 0 KB, separator 84 → 0 KB, input-group 87 → 4 KB, field 86 → 4 KB.
+        </li>
+        {/* source: PR #230 (F148a, R34.116–R34.125), reviewed for the data path (Afrojack) and security (Mellow) */}
+        <li>
+          <strong>A component that passes its own props into a React island compiles.</strong> If a wrapper renders an island and passes it <code>{'{'}title{'}'}</code>, <code>{'{'}children{'}'}</code> or a condition over its props, the page stays static and only the island loads React. Values from a request are only ever rendered as text or as attribute values, never as markup. A <code>style</code> object, a list over props and a wrapper that also spreads props into the island still render with React.
+        </li>
+      </ul>
 
       <h2 id="alpha-10">2.0.0-alpha.10 · 14 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.9: #222–#226 (F153b parts 3–4, hardening batch, F149, F164 PR 1) */}

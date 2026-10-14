@@ -43,6 +43,9 @@ pub struct PassState {
     /// Every component prop as read, by (component node loc, prop key), before placement
     /// rewrote it: `children` hoists a forwarded handler from it (shadcn S1.3).
     pub prop_raws: HashMap<(u32, String), crate::ir::RawExpr>,
+    /// S2: the `loc` of every component instance that is a lowered context Provider (its children are printed under a
+    /// Provider frame, which placement judges with the allowlist).
+    pub provider_locs: std::collections::BTreeSet<u32>,
 }
 
 /// Something the client chunk runs, with what it reads.
@@ -96,6 +99,12 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     stores::resolve(ir, ctx);
     // Before placement: a refused render read never becomes a placed value.
     stores::check_render(ir, ctx);
+    // S2: context Providers hand their values to the consumers under them as hidden props, before the structural
+    // snapshot and placement so every later pass reads them like any prop.
+    let provider_locs = {
+        let mut tmp = PassState::new(ir);
+        children::contexts(ir, &mut tmp, ctx)
+    };
     ir.structural = Some(Box::new(crate::ir::Structural {
         template: ir.template.clone(),
         state: ir.state.clone(),
@@ -103,6 +112,7 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
         refs: ir.refs.clone(),
     }));
     let mut st = PassState::new(ir);
+    st.provider_locs = provider_locs;
     placement::place(ir, &mut st, ctx);
     // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);

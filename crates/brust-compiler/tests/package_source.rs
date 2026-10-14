@@ -530,3 +530,37 @@ fn no_build_evaluation_for_package_source() {
     let leaf = tree.iter().find(|(s, ..)| s == "Leaf.tsx").unwrap();
     assert!(!leaf.1.build_eval.is_empty());
 }
+
+const CTXPKG_DIR: &str = ".brust/pkg-src/ctxpkg@1.0.0-00000005";
+const CTXPKG: &str = "import { createContext, useContext, useState } from 'react'
+const Ctx = createContext<{ label: string }>({ label: 'default' })
+export function Root({ children }: { children?: React.ReactNode }) {
+  const [label] = useState('from-root')
+  return <Ctx.Provider value={{ label }}><div>{children}</div></Ctx.Provider>
+}
+export function Item() {
+  const c = useContext(Ctx)
+  return <b>{c.label}</b>
+}
+";
+
+/// S2 integration (lead ruling): a context consumer of a package source (no job, no useId) passed as the children of
+/// the package's own Provider island would be revived from the map source while the Provider comes from the published
+/// dist: two `createContext` instances, the consumer reads the default. The caller stays React instead, by name.
+#[test]
+fn a_package_source_consumer_under_the_packages_provider_island_keeps_the_caller_react() {
+    let mut app = App::new();
+    app.file(&format!("{CTXPKG_DIR}/src/index.tsx"), CTXPKG)
+        .map("", "ctxpkg", &format!("{CTXPKG_DIR}/src/index.tsx"));
+    let tree = app.compile(
+        "import { Root, Item } from 'ctxpkg'\nfunction Shell(props: React.ComponentProps<typeof Root>) { return <Root {...props} /> }\nexport default function App() { return <Shell><Item /></Shell> }",
+    );
+    let (_, ir, _) = root_of(&tree);
+    assert!(
+        rules(ir).contains(&"context-island".to_string()),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
+    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+}

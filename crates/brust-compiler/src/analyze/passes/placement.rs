@@ -95,6 +95,13 @@ struct Placer<'s> {
     loop_scope: Vec<String>,
     diagnostics: Vec<Diagnostic>,
     jsx_flagged: bool,
+    /// > 0 while walking the children passed to a component: a child read there is judged by `child_read_problem`.
+    component_children: u32,
+    /// > 0 under a lowered Provider frame (or in a Provider component's own template): judged by the allowlist.
+    provider_children: u32,
+    /// Set while placing a frame value the compiler itself injected (`__ctx_*` hidden props): its expression comes from
+    /// the Provider's own value fields, already judged by `provider_problem`.
+    frame_value: bool,
     /// Locations of `list-shape` fallbacks: the reader already named the construct there.
     list_shape_locs: BTreeSet<u32>,
     /// L2: module path, source text, module declarations and build-computed slot values.
@@ -222,6 +229,13 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         loop_scope: Vec::new(),
         diagnostics: Vec::new(),
         jsx_flagged: false,
+        // A Provider component's OWN template is printed as its children's content too (the Provider tag lowers to a
+        // Fragment), so every Slot of it is judged like a child passed to a component.
+        component_children: 0,
+        // A Provider component's OWN template is printed under its own Provider element (the tag lowers to a Fragment),
+        // so every Slot of it is judged by the allowlist too.
+        provider_children: u32::from(!ir.provides.is_empty()),
+        frame_value: false,
         list_shape_locs: ir
             .diagnostics
             .iter()
@@ -397,6 +411,56 @@ pub(super) fn collect_slots(ir: &ComponentIR, f: &mut impl FnMut(&str, &[String]
     ir.derived.iter().for_each(|d| expr(&d.expr, f));
 }
 
+/// Every expression the server template prints (`Expr::Server`): the template's own and the derived locals'.
+pub(super) fn template_server_raws(ir: &ComponentIR, f: &mut dyn FnMut(&RawExpr)) {
+    fn expr(e: &Expr, f: &mut dyn FnMut(&RawExpr)) {
+        if let Expr::Server(crate::ir::ServerExpr(r)) = e {
+            f(r)
+        }
+    }
+    fn node(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
+        match n {
+            Node::Element {
+                attrs, children, ..
+            } => {
+                for a in attrs {
+                    if let Attr::Dynamic { value, .. }
+                    | Attr::Spread(value)
+                    | Attr::InnerHtml { value } = a
+                    {
+                        expr(value, f);
+                    }
+                }
+                children.iter().for_each(|c| node(c, f));
+            }
+            Node::Slot(e) => expr(e, f),
+            Node::If {
+                cond, then, else_, ..
+            } => {
+                expr(cond, f);
+                then.iter().chain(else_).for_each(|c| node(c, f));
+            }
+            Node::For {
+                source, key, body, ..
+            } => {
+                expr(source, f);
+                expr(key, f);
+                body.iter().for_each(|c| node(c, f));
+            }
+            Node::Component {
+                props, children, ..
+            } => {
+                props.iter().for_each(|(_, v)| expr(v, f));
+                children.iter().for_each(|c| node(c, f));
+            }
+            Node::Fragment(cs) => cs.iter().for_each(|c| node(c, f)),
+            Node::Text(_) | Node::Outlet => {}
+        }
+    }
+    node(&ir.template, f);
+    ir.derived.iter().for_each(|d| expr(&d.expr, f));
+}
+
 /// Identifiers of kind `Local` read directly (not inside a function or JSX).
 fn direct_locals(e: &RawExpr, out: &mut BTreeSet<String>) {
     match &e.kind {
@@ -481,6 +545,159 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 }
 
 impl Placer<'_> {
+    /// An imported binding whose VALUE can become the child: the expression itself, a branch of a conditional
+    /// (`on ? el : null`), the value side of `&&` / `||` / `??` (`on && el`), or an array element; or `ns.name` of a
+    /// namespace import. Not a callee, a member target, a test or a call argument: those never flow out as the printed
+    /// value (a helper's return value is the helper's business). `Some(name)` = the export cannot be resolved to a
+    /// folded primitive, so the child fails closed.
+    fn import_child_problem(&self, r: &RawExpr) -> Option<String> {
+        let proven = |source: &str, name: &str| {
+            crate::analyze::const_fold::imported_const(&self.path, source, name, self.opts, 0)
+                .is_some()
+        };
+        let sub = |x: &RawExpr| self.import_child_problem(x);
+        match &r.kind {
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Import { source, imported },
+            } => (imported != "*" && !proven(source, imported)).then(|| name.clone()),
+            RawKind::Member { target, name, .. } => match &target.kind {
+                RawKind::Ident {
+                    name: ns,
+                    kind: IdentKind::Import { source, imported },
+                } if imported == "*" => (!proven(source, name)).then(|| format!("{ns}.{name}")),
+                _ => None,
+            },
+            RawKind::Binary { op, left, right } => match op {
+                crate::ir::BinOp::And => sub(right),
+                crate::ir::BinOp::Or | crate::ir::BinOp::Nullish => {
+                    sub(left).or_else(|| sub(right))
+                }
+                _ => None,
+            },
+            RawKind::Cond { yes, no, .. } => sub(yes).or_else(|| sub(no)),
+            RawKind::Array(xs) => xs.iter().find_map(sub),
+            _ => None,
+        }
+    }
+
+    /// The allowlist predicate over a child expression (already folded): `None` when EVERY identifier read anywhere in
+    /// it is (1) a prop, (2) a component-local binding the lowering prints (a derived value, state, a loop binding) or
+    /// (3) already folded to a primitive literal, or a global; otherwise `Some(name)` of the first read that is not.
+    /// The match is exhaustive over `RawKind` and `IdentKind` with no wildcard: a new expression or identifier kind is a
+    /// compile error here, not a silent hole.
+    fn child_read_problem(&self, r: &RawExpr, depth: u8) -> Option<String> {
+        if depth > 8 {
+            return Some("an expression nested deeper than 8".into());
+        }
+        let go = |x: &RawExpr| self.child_read_problem(x, depth + 1);
+        match &r.kind {
+            RawKind::Lit(_) => None,
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Prop
+                | IdentKind::State
+                | IdentKind::Setter
+                | IdentKind::LoopBinding
+                | IdentKind::Global
+                | IdentKind::Store { .. } => None,
+                // A body local the lowering prints: a derived value is judged by what it reads. Any other local (a module
+                // const that did not fold to a primitive, a module function) is not provable.
+                IdentKind::Local => match self.derived_raw.get(name) {
+                    Some(d) => self.child_read_problem(d, depth + 1),
+                    None => Some(name.clone()),
+                },
+                IdentKind::Import { .. } | IdentKind::Unknown => Some(name.clone()),
+            },
+            RawKind::Member { target, name, .. } => match &target.kind {
+                // `ns.name` of a namespace import: the member is the value; it must resolve to a primitive.
+                RawKind::Ident {
+                    name: ns,
+                    kind: IdentKind::Import { source, imported },
+                } if imported == "*" => crate::analyze::const_fold::imported_const(
+                    &self.path, source, name, self.opts, 0,
+                )
+                .is_none()
+                .then(|| format!("{ns}.{name}")),
+                _ => go(target),
+            },
+            RawKind::Index { target, index } => go(target).or_else(|| go(index)),
+            RawKind::Call { callee, args } => {
+                // A call is plain only when its callee is a global (`Math.round`, `String`) or a string / array method
+                // on a plain value; a helper's result is not provable (it may return an element).
+                let callee_ok = match &callee.kind {
+                    RawKind::Ident {
+                        kind: IdentKind::Global,
+                        ..
+                    } => true,
+                    RawKind::Member { target, name, .. } => {
+                        matches!(
+                            &target.kind,
+                            RawKind::Ident {
+                                kind: IdentKind::Global,
+                                ..
+                            }
+                        ) || (go(target).is_none() && plain_method(name))
+                    }
+                    RawKind::Lit(_)
+                    | RawKind::Ident { .. }
+                    | RawKind::Index { .. }
+                    | RawKind::Call { .. }
+                    | RawKind::Binary { .. }
+                    | RawKind::Unary { .. }
+                    | RawKind::Cond { .. }
+                    | RawKind::Template { .. }
+                    | RawKind::Array(_)
+                    | RawKind::Object(_)
+                    | RawKind::Arrow { .. }
+                    | RawKind::Jsx(_)
+                    | RawKind::Opaque { .. } => false,
+                };
+                if !callee_ok {
+                    return Some(match &callee.kind {
+                        RawKind::Ident { name, .. } => name.clone(),
+                        _ => "a call".to_string(),
+                    });
+                }
+                args.iter().find_map(go)
+            }
+            RawKind::Binary { left, right, .. } => go(left).or_else(|| go(right)),
+            RawKind::Unary { value, .. } => go(value),
+            RawKind::Cond { test, yes, no } => go(test).or_else(|| go(yes)).or_else(|| go(no)),
+            RawKind::Template { parts, .. } => parts.iter().find_map(|(p, _)| go(p)),
+            RawKind::Array(xs) => xs.iter().find_map(go),
+            RawKind::Object(ps) => ps.iter().find_map(|(_, v)| go(v)),
+            RawKind::Arrow { .. } => Some("a function".into()),
+            RawKind::Jsx(_) => Some("an element".into()),
+            RawKind::Opaque { source, .. } => Some(source.clone()),
+        }
+    }
+
+    /// The first module const `r` reads (through other module consts) whose value is, or builds, JSX.
+    fn jsx_const_read(&self, r: &RawExpr, depth: u8) -> Option<String> {
+        if depth > 4 {
+            return None;
+        }
+        let mut hit = None;
+        crate::lower::common::visit_idents(r, &mut |name, kind| {
+            if hit.is_some() || *kind != crate::ir::IdentKind::Local {
+                return;
+            }
+            if let Some(c) = self
+                .module_decls
+                .iter()
+                .flat_map(|d| &d.consts)
+                .find(|c| c.name == name)
+            {
+                if contains_jsx(&c.value) {
+                    hit = Some(name.to_string());
+                } else if let Some(n) = self.jsx_const_read(&c.value, depth + 1) {
+                    hit = Some(n);
+                }
+            }
+        });
+        hit
+    }
+
     /// `e` with the folding module consts it reads replaced by their values.
     /// L20: `styles.x` / `styles['x']` of a CSS Module import is the literal class. An unknown class is a
     /// build error at its source location. This is an explicit exception to R1.1b: the map is frozen.
@@ -603,6 +820,16 @@ impl Placer<'_> {
         {
             return Expr::Server(crate::ir::ServerExpr(lit));
         }
+        // A module-level JSX const read as a value (`const el = <b/>; {el}`) has no printed form on the server: the job
+        // would print nothing. Fail closed with a named code, for plain wrappers and Providers alike.
+        if let Some(name) = self.jsx_const_read(r, 0) {
+            self.diagnostics.push(Diagnostic::fallback(
+                "jsx-const-child",
+                format!("`{name}` is a module-level JSX element used as a value; the server template cannot print it"),
+                r.loc,
+                "render the element inline, or return it from a component",
+            ));
+        }
         let deps = self.st.cx.deps(r, &self.loop_scope);
         self.next_slot += 1;
         let slot = format!("_s{}", self.next_slot);
@@ -707,6 +934,20 @@ impl Placer<'_> {
 
     /// Places one first-paint value.
     fn painted(&mut self, r: &RawExpr) -> Expr {
+        // Lead ruling (c), the single print point: EVERY expression printed under a lowered Provider frame or in a
+        // Provider component's own template (a child, an own slot, a component prop, an attribute, a condition or a
+        // loop body) goes through the total allowlist, so no print path can skip it.
+        if self.provider_children > 0
+            && !self.frame_value
+            && let Some(name) = self.child_read_problem(&self.fold(r), 0)
+        {
+            self.diagnostics.push(Diagnostic::fallback(
+                "jsx-const-child",
+                format!("`{name}` is read under a context Provider and brust cannot prove it is a plain value (a prop, a printed local or a primitive constant); the server template could print nothing for it"),
+                r.loc,
+                "render the element inline, pass a prop, or keep this component in React",
+            ));
+        }
         let deps = self.st.cx.deps(r, &self.loop_scope);
         self.st.painted.push(Painted {
             loc: r.loc,
@@ -897,7 +1138,30 @@ impl Placer<'_> {
                 }
             }
             Node::Text(_) => {}
-            Node::Slot(e) => self.expr(e),
+            Node::Slot(e) => {
+                // Lead ruling (c): under a lowered Provider frame (those were whole islands on main, so a fallback is no
+                // regression) a child is printed only when every identifier it reads, anywhere, is a prop, a printed local
+                // or a primitive (the total allowlist). A plain wrapper keeps main's behaviour plus the reviewed guards:
+                // an element holder at the root of the child or in its conditional / array / namespace value positions.
+                if let Expr::Raw(r) = &*e {
+                    let found = if self.provider_children > 0 {
+                        None // judged in `painted`, the single print point
+                    } else if self.component_children > 0 {
+                        self.import_child_problem(r)
+                    } else {
+                        None
+                    };
+                    if let Some(name) = found {
+                        self.diagnostics.push(Diagnostic::fallback(
+                            "jsx-const-child",
+                            format!("`{name}` is read as a child and brust cannot prove it is a plain value (a prop, a printed local or a primitive constant); the server template could print nothing for it"),
+                            r.loc,
+                            "render the element inline, pass a prop, or keep this component in React",
+                        ));
+                    }
+                }
+                self.expr(e)
+            }
             Node::If {
                 cond, then, else_, ..
             } => {
@@ -969,10 +1233,17 @@ impl Placer<'_> {
                     if let Expr::Raw(r) = v {
                         let r = r.clone();
                         self.st.prop_raws.insert((*loc, k.clone()), r.clone());
+                        self.frame_value = k.starts_with("__ctx_");
                         *v = self.child_prop(&r);
+                        self.frame_value = false;
                     }
                 }
+                let is_provider = self.st.provider_locs.contains(loc);
+                self.component_children += 1;
+                self.provider_children += u32::from(is_provider);
                 children.iter_mut().for_each(|c| self.node(c));
+                self.provider_children -= u32::from(is_provider);
+                self.component_children -= 1;
             }
             Node::Fragment(cs) => cs.iter_mut().for_each(|c| self.node(c)),
         }
@@ -1024,4 +1295,19 @@ fn collect_raw(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
         Node::Fragment(cs) => cs.iter().for_each(|c| collect_raw(c, f)),
         Node::Text(_) | Node::Outlet => {}
     }
+}
+
+/// The string / array methods the server template prints (`lower::server_expr::call`): their result is a plain value.
+fn plain_method(name: &str) -> bool {
+    matches!(
+        name,
+        "toUpperCase"
+            | "toLowerCase"
+            | "trim"
+            | "slice"
+            | "startsWith"
+            | "endsWith"
+            | "includes"
+            | "join"
+    )
 }

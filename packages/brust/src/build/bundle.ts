@@ -76,6 +76,9 @@ export function sourceDirPlugin(sourceOf: SourceOf, appRoot: string, external: s
         return src === undefined ? undefined : { path: Bun.resolveSync(a.path, dirname(src)) }
       })
       b.onResolve({ filter: /^[^./]/ }, (a) => {
+        // A package source imported as itself (a React component revived from it): its bare imports are the package's.
+        const own = sourceOf.has(a.importer) ? undefined : packageDirOf(a.importer)
+        if (own !== undefined && !matchesExternal(a.path, external)) return { path: Bun.resolveSync(a.path, own) }
         if (!sourceOf.has(a.importer) || matchesExternal(a.path, external)) return undefined
         // F153c: an artifact compiled from a package's source imports what that package sees.
         const pkg = packageDirOf(sourceOf.get(a.importer)!)
@@ -599,6 +602,22 @@ export async function buildCacheAdapter(dist: string, entry: string, cssMaps: Ma
   return 'cache-adapter.js'
 }
 
+/** R34.96: a parent's job calls the job of each child fused into it through `brust-job:<component id>`, resolved here to
+ * that child's staged job module (`fileOf`). Only a compiled component's id resolves: anything else fails the bundle. */
+export function jobImportPlugin(fileOf: (id: string) => string | undefined): BunPlugin {
+  return {
+    name: 'brust-job-import',
+    setup(b) {
+      b.onResolve({ filter: /^brust-job:/ }, (a) => {
+        const id = a.path.slice('brust-job:'.length)
+        const file = /^[A-Za-z0-9_$-]+$/.test(id) ? fileOf(id) : undefined
+        if (file === undefined) throw new BuildError('bundle', `${a.importer}: no job module for ${JSON.stringify(id)}`)
+        return { path: file }
+      })
+    },
+  }
+}
+
 /** `dist/jobs.js` (`target: 'bun'`, React and `@brust/core` external): default export
  * `{ [componentId]: { precompute?, ssr? } }`; `ssr` only for react-tier, non-client_only components. */
 export async function buildJobs(
@@ -655,7 +674,14 @@ export async function buildJobs(
     format: 'esm',
     define: PRODUCTION,
     external: JOBS_EXTERNALS,
-    plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps), workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS), exposePlugin(compiled)],
+    plugins: [
+      jobImportPlugin((id) => (compiled.get(id)?.serverTs !== undefined ? join(dist, 'jobs', `${id}.server.ts`) : undefined)),
+      serverOnlyEmptyPlugin(),
+      cssPlugin(cssMaps),
+      workerStorePlugin,
+      sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS),
+      exposePlugin(compiled),
+    ],
   })
   if (!res.success) throw new BuildError('bundle', `jobs: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'jobs.js'), await res.outputs[0]!.text())

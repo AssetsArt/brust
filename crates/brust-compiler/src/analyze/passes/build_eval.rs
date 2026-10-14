@@ -294,6 +294,14 @@ pub fn instance_job(
     if ir.jobs[0].inputs.iter().any(|i| i == "__store" || i == "*") {
         return Err("its job reads a store or the whole props object".into());
     }
+    // R34.96 A1: a fused child's job runs inside this one, so it must be evaluable too.
+    if let Some((f, why)) = ir
+        .fused
+        .iter()
+        .find_map(|f| f.eval_refused.as_ref().map(|w| (f, w)))
+    {
+        return Err(format!("its fused child {} cannot: {why}", f.child_id));
+    }
     let Some(reads) = crate::lower::server::job_reads(ir) else {
         return Err("its job could not be read".into());
     };
