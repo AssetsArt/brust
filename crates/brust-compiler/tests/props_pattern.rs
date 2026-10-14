@@ -139,3 +139,39 @@ fn a_body_pattern_name_used_before_the_pattern_falls_back() {
         assert!(is_react(&ir), "{f}: {:?}", ir.tier);
     }
 }
+
+/// F168 (hardening-batch, option b): the same names READ as a member (`props.loop`, also inside a `.map`, or `rest.loop`)
+/// fall back with `prop-jinja-name`: the template printed the bare name, which jinja's own loop object / function shadows.
+#[test]
+fn a_template_name_read_as_a_member_falls_back() {
+    for (f, key) in [
+        ("mem-loop.tsx", "loop"),
+        ("mem-range.tsx", "range"),
+        ("mem-namespace.tsx", "namespace"),
+        ("mem-caller.tsx", "caller"),
+        ("mem-self.tsx", "self"),
+        ("mem-rest.tsx", "loop"),
+    ] {
+        let (ir, _) = compile(f);
+        let d = ir
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "prop-jinja-name")
+            .unwrap_or_else(|| panic!("{f}: {:?}", ir.diagnostics));
+        assert!(
+            d.message.contains(&format!("`{key}`")),
+            "{f}: {}",
+            d.message
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+    // A member read of an ordinary name inside the same `.map` is untouched.
+    let (ir, jinja) = compile("mem-ok.tsx");
+    assert!(
+        !is_react(&ir) && rules(&ir).is_empty(),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
+    assert!(jinja.contains("label"), "{jinja}");
+}

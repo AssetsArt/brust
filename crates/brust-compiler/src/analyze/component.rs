@@ -501,6 +501,14 @@ fn read_function_as(
     ir.props = body.props;
     ir.props_rest = body.props_rest;
     ir.poly = body.poly;
+    if let Some((loc, name, code, what)) = reader.names.prop_read_problem.borrow().clone() {
+        ir.diagnostics.push(Diagnostic::fallback(
+            code,
+            format!("the props key `{name}` {what}"),
+            loc,
+            "rename the prop at the call sites, or keep this component in React",
+        ));
+    }
     if let Some(loc) = reader.names.use_before_pattern.get() {
         ir.diagnostics.push(Diagnostic::fallback(
             "prop-pattern-tdz",

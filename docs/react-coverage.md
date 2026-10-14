@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 133 | 75 | 8 | 50 | 0 | 0 | 0 | 0 |
+| B Composition | 135 | 77 | 8 | 50 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 55 | 19 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 299 | 142 | 43 | 110 | 3 | 1 | 0 | 0 |
+| **Total** | 301 | 144 | 43 | 110 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -156,6 +156,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-props-jinja-own-name | a prop named loop (a name the server template binds itself) | static | static | ssr | ok | — | props-pattern N2, prop-jinja-name: loop, range, namespace, caller and self shadow template names; the component is a React island now |
 | b-props-jinja-keyword | a prop whose key is a template keyword, renamed to a local | static | static | ssr | ok | — | props-pattern N1, prop-jinja-name: the message names a keyword (not "a plain identifier"); the component is a React island now |
 | b-props-body-tdz | a body-pattern name used before the pattern statement | static | static | ssr | ok | — | F162 prop-pattern-tdz: React throws (TDZ); brust rendered a defined prop. The component is a React island now (so it fails like React) |
+| b-props-jinja-member-loop | props.loop read as a member inside a .map | static | static | ssr | ok | — | F168 prop-jinja-name on a member read: the template printed `loop`, which is jinja's own loop object inside the for; the component is a React island now |
+| b-props-jinja-member-range | props.range read as a member | static | static | ssr | ok | — | F168 prop-jinja-name on a member read: `range` printed as the built-in function; the component is a React island now |
 | b-props-body-quoted-key | a quoted hyphen key in a body pattern const { ... } = props | static | static | ssr | ok | — | F161 prop-quoted-key, body pattern (R34.66 reads it like the parameter pattern): the component is a React island now |
 | b-props-body-iife | an immediately-invoked default in a body pattern | static | static | ssr | ok | — | F161 prop-default-iife, body pattern: the component is a React island now |
 | b-props-default-iife | a destructuring default that is an immediately-invoked function | static | static | ssr, ssr | ok | — | F161 prop-default-iife: the default printed as none, so the page rendered without it; the component is a React island now |

@@ -383,7 +383,7 @@ fn read_object_pattern(
         // F161 (R39.1): a prop is a template variable named by its key, so a key that is not a plain identifier
         // (`'data-x': dx`) prints as `data-x`, which jinja reads as a subtraction: every render fails. Fail closed;
         // native support for quoted keys is a later F-row.
-        if let Some((code, what)) = template_name_problem(&name) {
+        if let Some((code, what)) = crate::analyze::names::template_name_problem(&name) {
             out.fallback(
                 code,
                 format!("the props key `{name}` {what}"),
@@ -418,41 +418,6 @@ fn read_object_pattern(
             ts_type: None,
             default,
         });
-    }
-}
-
-/// Why a prop named `name` cannot be a plain template variable, as `(code, what)`; `None` = it can. A key that is not
-/// an identifier prints as an expression (`data-x` reads as a subtraction); a jinja keyword is a syntax error or the
-/// wrong value; `loop`, `range`, `namespace`, `caller` and `self` are names the template itself binds or calls (a loop
-/// variable, `Array.from` lowers to `range(...)`), so a prop of that name would shadow them.
-fn template_name_problem(name: &str) -> Option<(&'static str, &'static str)> {
-    const KEYWORDS: &[&str] = &[
-        "true", "false", "none", "True", "False", "None", "and", "or", "not", "in", "is", "if",
-        "else",
-    ];
-    const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
-    let mut cs = name.chars();
-    let ident = cs
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if !ident {
-        Some((
-            "prop-quoted-key",
-            "is not a plain identifier, so it cannot name a template variable",
-        ))
-    } else if KEYWORDS.contains(&name) {
-        Some((
-            "prop-jinja-name",
-            "is a keyword of the server template language, so it cannot name a template variable",
-        ))
-    } else if TEMPLATE_OWN.contains(&name) {
-        Some((
-            "prop-jinja-name",
-            "is a name the server template uses itself (a loop variable or a built-in), so a prop of that name would shadow it",
-        ))
-    } else {
-        None
     }
 }
 
