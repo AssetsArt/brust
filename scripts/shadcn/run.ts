@@ -6,7 +6,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { surveyApp, surveyRepro, type AppRow, type Repro } from './app.ts'
 import { surveyLibs, type LibPackage } from './lib.ts'
-import { FIXTURE, REPORT } from './paths.ts'
+import { FIXTURE, REPORT, REPORT_JSON } from './paths.ts'
+import { renderJson } from './json.ts'
 import { renderReport } from './report.ts'
 
 export const SIZES = join(FIXTURE, '.rows/shadcn-sizes.json')
@@ -27,12 +28,14 @@ export function survey(): { rows: AppRow[]; libs: LibPackage[]; repro: Repro[] }
 if (import.meta.main) {
   const { rows, libs, repro } = survey()
   const doc = renderReport(rows, libs, repro)
+  const json = renderJson(rows, libs)
   const check = process.argv.includes('--check')
   if (check) {
-    const stale = readFileSync(REPORT, 'utf8') !== doc
-    console.log(`[shadcn] ${rows.length} rows, ${libs.length} packages: docs/shadcn-coverage.md ${stale ? 'is STALE (run bun run shadcn)' : 'is current'}`)
+    const stale = readFileSync(REPORT, 'utf8') !== doc || readFileSync(REPORT_JSON, 'utf8') !== json
+    console.log(`[shadcn] ${rows.length} rows, ${libs.length} packages: docs/shadcn-coverage.md + .json ${stale ? 'is STALE (run bun run shadcn)' : 'is current'}`)
     process.exit(stale ? 1 : 0)
   }
   writeFileSync(REPORT, doc)
-  console.log(`[shadcn] ${rows.length} rows, ${libs.length} packages -> docs/shadcn-coverage.md`)
+  writeFileSync(REPORT_JSON, json)
+  console.log(`[shadcn] ${rows.length} rows, ${libs.length} packages -> docs/shadcn-coverage.md, docs/shadcn-coverage.json`)
 }

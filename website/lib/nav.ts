@@ -18,8 +18,10 @@ import IconsAndPackages, { packagesLoader } from '../pages/docs/IconsAndPackages
 import ProjectStructure, { projectStructureLoader } from '../pages/docs/ProjectStructure'
 import Quickstart, { quickstartLoader } from '../pages/docs/Quickstart'
 import ReactCoverage, { reactCoverageLoader } from '../pages/docs/ReactCoverage'
+import ReleaseNotes, { releaseNotesLoader } from '../pages/docs/ReleaseNotes'
 import RenderingTiers, { renderingTiersLoader } from '../pages/docs/RenderingTiers'
 import Routing, { routingLoader } from '../pages/docs/Routing'
+import Shadcn, { shadcnLoader } from '../pages/docs/Shadcn'
 import Store, { storeLoader } from '../pages/docs/Store'
 import CloudflareAdapter, { cloudflareAdapterLoader } from '../pages/docs/cache-adapters/Cloudflare'
 import CacheAdaptersOverview, { overviewLoader } from '../pages/docs/cache-adapters/Overview'
@@ -55,6 +57,7 @@ export const NAV: NavGroup[] = [
     items: [
       { slug: 'introduction', title: 'Introduction', file: 'pages/docs/Introduction.tsx', Component: Introduction, loader: introductionLoader },
       { slug: 'installation', title: 'Installation', file: 'pages/docs/Installation.tsx', Component: Installation, loader: installationLoader },
+      { slug: 'release-notes', title: 'Release notes', file: 'pages/docs/ReleaseNotes.tsx', Component: ReleaseNotes, loader: releaseNotesLoader },
       { slug: 'quickstart', title: 'Quickstart', file: 'pages/docs/Quickstart.tsx', Component: Quickstart, loader: quickstartLoader },
       { slug: 'project-structure', title: 'Project structure', file: 'pages/docs/ProjectStructure.tsx', Component: ProjectStructure, loader: projectStructureLoader },
       { slug: 'routing', title: 'Routing', file: 'pages/docs/Routing.tsx', Component: Routing, loader: routingLoader },
@@ -65,6 +68,7 @@ export const NAV: NavGroup[] = [
       { slug: 'store', title: 'Store', file: 'pages/docs/Store.tsx', Component: Store, loader: storeLoader },
       { slug: 'css', title: 'CSS', file: 'pages/docs/Css.tsx', Component: Css, loader: cssLoader },
       { slug: 'packages', title: 'Icons and packages', file: 'pages/docs/IconsAndPackages.tsx', Component: IconsAndPackages, loader: packagesLoader },
+      { slug: 'shadcn', title: 'shadcn/ui and libraries', file: 'pages/docs/Shadcn.tsx', Component: Shadcn, loader: shadcnLoader },
       { slug: 'react-coverage', title: 'React coverage', file: 'pages/docs/ReactCoverage.tsx', Component: ReactCoverage, loader: reactCoverageLoader },
       { slug: 'configuration', title: 'Configuration', file: 'pages/docs/Configuration.tsx', Component: Configuration, loader: configurationLoader },
       { slug: 'cli', title: 'CLI', file: 'pages/docs/Cli.tsx', Component: Cli, loader: cliLoader },

@@ -51,6 +51,7 @@ export async function renderingTiersLoader(): Promise<RenderingTiersData> {
       { id: 'three', title: 'Three tiers' },
       { id: 'live', title: 'The three, live' },
       { id: 'hooks', title: 'What decides the tier' },
+      { id: 'runtime', title: 'What the browser loads' },
       { id: 'see', title: 'See what you got' },
     ],
     blocks: {
@@ -163,7 +164,22 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
         Falling back to React is never a build failure, and that includes passing a function or a changing value to a React child (<code>island-prop</code>): the component that passes it renders with React. Some things are: server-only code reachable from the browser (<code>server-only-in-client</code>), and a list without keys (<code>list-key</code>).
       </Note>
 
-      <h2 id="see">See what you got</h2>
+      <h2 id="runtime">What the browser loads</h2>
+      {/* source: packages/brust/src/build/features.ts:8-30 (the feature modules and the directive each binds), :41-54 (featuresOf: the set a template needs; an unbound directive is a build error), crates/brust-core/src/render.rs (modulepreload links), docs/plans/2026-10-14-runtime-split.md R35.1-R35.3 (L33, PR #201) */}
+      <p>
+        A native component or an island needs a small piece of JavaScript in the browser. It is not one file. The runtime is a core (signals, <code>mount</code>, the directive registry) plus feature modules, and a page loads the core and only the features its components use:
+      </p>
+      <ul>
+        <li><code>basics</code>: <code>x-text</code>, <code>x-show</code>, <code>x-ref</code>, and the <code>x-bind-*</code> and <code>x-on-*</code> directives; nearly every native page needs it.</li>
+        <li><code>if</code>, <code>for</code>, <code>model</code>, <code>html</code>: conditionals, lists, form models and raw HTML, each only for pages that use it.</li>
+        <li><code>island</code>: the glue that hydrates React islands, only for pages that have one.</li>
+        <li><code>store</code>: the shared store, only for pages whose components read one.</li>
+      </ul>
+      <p>
+        The build works out the set for each component and the server links the modules of a route, preloaded in the page head. A static page with no island loads none of it. If a template uses a directive that no feature binds, the build stops with <code>runtime-feature-missing</code> instead of shipping a page that does nothing. Before, every page with a native component loaded the whole runtime (about 6 KB gzipped, <code>docs/plans/2026-10-14-runtime-split.md</code>).
+      </p>
+
+            <h2 id="see">See what you got</h2>
       <p>Every fallback is printed once per component by the build, with the rule and the line. This is the pokedex example's build:</p>
       <CodeBlock code={blocks.warning.code} lang={blocks.warning.lang} cwd={blocks.warning.cwd} html={blocks.warning.html} />
       <p>
