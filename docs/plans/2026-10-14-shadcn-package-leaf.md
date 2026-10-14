@@ -1,8 +1,8 @@
 # shadcn S3 step 1 — lane `package-leaf` (draft for the lead's ruling)
 
-owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: TBD · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F152 (proposed)
+owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: knock2 (F153a, F153b); F153c assigned at its start · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger rows: F153a / F153b / F153c (F152 is constant-slots)
 
-Author: knock2. Status: **DRAFT for the lead's ruling; no lane started.** Base: origin/main a4a527a2. Evidence: the read-only task `package-leaf-spike` (probe pages, extracted leaf sources and the probe script live in the spike's scratchpad; every claim below that says "probe" was run through `compileTree` on those files). R-numbers continue after R34.60 (island-prop demotion) and start at R34.61. This is step 1 of R34.7 ("the compiler follows imports into packages and analyses each component like app code"): the **pure leaves** only.
+Author: knock2. Status: **RULED 2026-10-14 (see §10); F153a may start.** Base: origin/main a4a527a2. Evidence: the read-only task `package-leaf-spike` (probe pages, extracted leaf sources and the probe script live in the spike's scratchpad; every claim below that says "probe" was run through `compileTree` on those files). R-numbers continue after R34.60 (island-prop demotion) and start at R34.61. This is step 1 of R34.7 ("the compiler follows imports into packages and analyses each component like app code"): the **pure leaves** only.
 
 ## 0. Givens (from the lead's ruling on the spike)
 
@@ -135,3 +135,21 @@ Gates: `cargo test -p brust-compiler`, clippy `-D warnings`, fmt; the battery sc
 - **Q4 Package sources on disk (`.brust/pkg-src`, recommended) vs a new napi parameter carrying virtual files.** Disk keeps `compileTree` unchanged and makes the sources inspectable; the parameter avoids a build artefact.
 - **Q5 Order.** Land `jsx-runtime-call` (R34.67) first and alone, then `forwardRef` / body destructuring / union spread as app-level lanes, then the package lane (recommended) — or fold them into the package lane (one big PR, three shared files).
 - **Q6 Scope of step 1.** Pure leaves only (`label`, `separator`, `aspect-ratio`, `visually-hidden`, `arrow`); `progress`, `avatar`, `toggle`, … wait for the context lane and controllable state. Confirm.
+
+## 10. Lead ruling (2026-10-14)
+
+Accepted, with the givens G1–G3 binding. The spike's §1 finding (a hand-written `jsx()` call compiles Static as an opaque server slot) is a correctness hole in app code today, independent of packages, so it ships first. The work is split into three lanes, each its own task, PR and ledger row:
+
+- **F153a `jsx-runtime-call` (R34.67), now, alone.** Small; knock2. Fail closed on `jsx`/`jsxs`/`jsxDEV` from `react/jsx-runtime(-dev)`; battery row; nothing else.
+- **F153b app-level component shapes (R34.63, R34.64, R34.66), next.** `forwardRef` const components (with the esbuild wrappers and alias exports) and the `ref` rules, body destructuring of props. These help ordinary React apps (`forwardRef` is everywhere), not only packages, so they are app features first. The **union spread** part of R34.66 waits for the constant-slots folder (F152) to be on main and reuses it; if F153b is ready first it ships without union spread and the union spread follows as a small PR. knock2.
+- **F153c package source (R34.61, R34.62, R34.65, R34.68).** Resolution, `sourcesContent` extraction to `.brust/pkg-src`, integrity, `Primitive`. Starts after F153b merges; owner assigned then.
+
+Rulings on §9:
+
+- **Q1 `Primitive`: structural recognition.** A changed shape fails closed (island). No hash pin, no general factory evaluator.
+- **Q2 The `window[Symbol.for('radix-ui')]` marker: dropped** from static/native output and documented in `docs/shadcn.md`, with the grep evidence that nothing in the installed tree reads it.
+- **Q3 Integrity check: mandatory.** No "trust the map" option.
+- **Q4 Sources on disk** under `.brust/pkg-src`, keyed by resolved real path + version; the build cleans the directory it owns (stale `.brust` content must never be read: a past trap).
+- **Q5 Order: as above** (F153a → F153b → F153c).
+- **Q6 Step 1 scope: pure leaves only**, confirmed.
+- **Risk 1 is a gate for step 2:** the step-2 plan must say how `Presence`, `Portal`, `createContextScope` and `useControllableState` are compiled by general features, or state that they stay islands. No per-primitive recognisers beyond `Primitive`.
