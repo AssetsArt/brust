@@ -102,7 +102,7 @@ test('a condition renders what React renders, for every kind of value and both f
   try {
     const values: unknown[] = ['x', '', 'a b', 1, 0, -0, Number.NaN, true, false, null, undefined, {}, { a: 1 }, [], [0], { $brust: 'el', t: 'script' }]
     const yes = react.createElement('u', null, 'yes')
-    const section = (child: unknown) => server.renderToString(react.createElement('section', null, child)).replaceAll('<!-- -->', '')
+    const section = (child: unknown) => server.renderToString(react.createElement('section', null, child as any)).replaceAll('<!-- -->', '')
     for (const value of values) {
       const tag = `${typeof value} ${Object.is(value, -0) ? '-0' : JSON.stringify(value) ?? String(value)}`
       // `{v && <u>yes</u>}` (the node carries `a`): a falsy number is text, an empty string nothing.
@@ -122,7 +122,7 @@ test('a text hole renders what React renders for a string, a number and an array
   const react = await import('react')
   const server = (await import('react-dom/server')) as unknown as { renderToString(el: unknown): string }
   try {
-    const section = (child: unknown) => server.renderToString(react.createElement('section', null, child)).replaceAll('<!-- -->', '')
+    const section = (child: unknown) => server.renderToString(react.createElement('section', null, child as any)).replaceAll('<!-- -->', '')
     for (const value of ['a', '', 'x </b>', 3, 0, true, false, null, undefined, ['a', 'b'], ['a', 2, 'c'], []]) {
       expect(render([{ $brust: 'v', k: '$p0' }], { $p0: value }), JSON.stringify(value) ?? 'undefined').toBe(section(value))
     }
