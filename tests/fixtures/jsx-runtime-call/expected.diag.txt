@@ -1,0 +1,1 @@
+fallback jsx-runtime-call tests/fixtures/jsx-runtime-call/input.tsx:4:10 a hand-written call to React's JSX runtime (`jsx(…)`) is not read as an element; the component renders as a React island — write JSX, or keep the module in a React-tier component

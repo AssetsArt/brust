@@ -16,7 +16,25 @@ use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
+    // Module consts the folder may read (R34.49): never a name the component body declares, and
+    // never one with a use that is not a proven read (an array or object another use could change).
+    let shadowed = |n: &str| {
+        ir.derived.iter().any(|d| d.name == n)
+            || ir.state.iter().any(|d| d.name == n)
+            || ir.id_bindings.iter().any(|i| i == n)
+            || ir.refs.iter().any(|r| r.name == n)
+            || st.handler_names.contains(n)
+    };
+    let module_consts: Rc<HashMap<String, RawExpr>> = Rc::new(
+        ir.module_decls
+            .iter()
+            .flat_map(|d| d.consts.iter())
+            .filter(|c| !c.mutated && !shadowed(&c.name))
+            .map(|c| (c.name.clone(), c.value.clone()))
+            .collect(),
+    );
     let mut w = Walker {
+        module_consts,
         st,
         ctx,
         links: Vec::new(),
@@ -29,6 +47,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         indexes: Vec::new(),
         list_uses: Vec::new(),
         loop_sources: Vec::new(),
+        loop_literals: Vec::new(),
         instance_counts: HashMap::new(),
         instances: Vec::new(),
         ssr_outputs: HashMap::new(),
@@ -51,6 +70,21 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         "every RowOnly link is visited by resolve_row_only"
     );
     ir.template = template;
+    // A list or condition the children lowered folded its slot away: the precompute job no longer
+    // computes what no node reads (the server would warn about the missing output on every request).
+    let mut live = BTreeSet::new();
+    super::placement::collect_slots(ir, &mut |slot, _, _| {
+        live.insert(slot.to_string());
+    });
+    for j in ir
+        .jobs
+        .iter_mut()
+        .filter(|j| matches!(j.kind, crate::ir::JobKind::Precompute))
+    {
+        j.outputs.retain(|o| live.contains(o));
+    }
+    ir.jobs
+        .retain(|j| !(matches!(j.kind, crate::ir::JobKind::Precompute) && j.outputs.is_empty()));
     ir.child_links.extend(w.links);
     ir.instances.extend(w.instances);
     ir.children.extend(w.refs);
@@ -60,6 +94,8 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
 }
 
 struct Walker<'s, 'c> {
+    /// Foldable module `const` initializers by name (see `children`).
+    module_consts: Rc<HashMap<String, RawExpr>>,
     st: &'s mut PassState,
     ctx: &'s PassCtx<'c>,
     links: Vec<ChildLink>,
@@ -78,6 +114,8 @@ struct Walker<'s, 'c> {
     list_uses: Vec<super::ClientUse>,
     /// The enclosing `For` sources as props paths (`None` = not a plain path).
     loop_sources: Vec<Option<String>>,
+    /// The enclosing `For` sources as compile-time constant arrays (F142 R34.43), aligned.
+    loop_literals: Vec<Option<serde_json::Value>>,
     instance_counts: HashMap<String, u32>,
     instances: Vec<InstanceRecord>,
     ssr_outputs: HashMap<String, u32>,
@@ -89,6 +127,10 @@ struct Walker<'s, 'c> {
     /// Handlers hoisted from props a static child spreads onto an element (shadcn S1.3).
     handlers: Vec<crate::ir::HandlerDecl>,
 }
+
+/// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
+/// (F142 R34.43, ruling Q3: the same cap as island-children's per-instance tree).
+const MAX_ROWS_JSON: usize = 64 * 1024;
 
 /// A resolved child.
 struct Child {
@@ -116,6 +158,8 @@ struct Child {
     onward: HandlerSink,
     /// The props roots the compiled child's jobs read (the server feeds each instance these).
     job_roots: BTreeSet<String>,
+    /// The compiled child is a `forwardRef` component (R34.63): a call site that passes `ref` needs React.
+    forwards_ref: bool,
     /// The compiled child has `useId` values (the server seeds them per instance, per row).
     use_id: bool,
 }
@@ -326,8 +370,20 @@ fn linked_prop_precompute(name: &str, loc: u32) -> Diagnostic {
 /// The marker key of a lowered element in an island's `children` prop (read by `reviveSource`).
 const MARK: &str = "$brust";
 
+/// The literal prop of an island instance that lists the props holding an element tree (R34.52):
+/// the only thing that makes the revive turn a prop back into elements.
+const X_KEY: &str = "$x";
+
 /// Shadcn S1 (R34.23): the most JSON one island instance's lowered children may take.
 const MAX_CHILDREN_JSON: usize = 64 * 1024;
+
+/// A prop name an element may travel under (R34.52): never one the revive strips or reads itself.
+fn slot_prop_ok(k: &str) -> bool {
+    !matches!(
+        k,
+        "children" | "ref" | "key" | "dangerouslySetInnerHTML" | "__proto__"
+    ) && !k.starts_with('$')
+}
 
 /// Attributes React reads a bare `<x disabled />` of as `true`; any other bare or empty attribute is
 /// ambiguous in the IR (`aria-hidden` is `"true"`, `alt=""` is empty) and does not lower.
@@ -450,7 +506,14 @@ impl Walker<'_, '_> {
                     raw: raw.map(|r| (r, self.loop_scope[..n].to_vec())),
                 };
                 let list_path = self.list_path(source);
+                let literal = match &*source {
+                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {
+                        r.json_literal().filter(serde_json::Value::is_array)
+                    }
+                    _ => None,
+                };
                 self.loop_sources.push(list_path);
+                self.loop_literals.push(literal);
                 self.lists.push(src);
                 self.list_uses.push(use_);
                 self.items.push(item.clone());
@@ -459,6 +522,7 @@ impl Walker<'_, '_> {
                 self.indexes.pop();
                 self.items.pop();
                 self.loop_sources.pop();
+                self.loop_literals.pop();
                 self.list_uses.pop();
                 self.lists.pop();
                 self.loop_scope.truncate(n);
@@ -560,6 +624,7 @@ impl Walker<'_, '_> {
             poly_runtime_spread: false,
             onward: HandlerSink::default(),
             job_roots: BTreeSet::new(),
+            forwards_ref: false,
             use_id: false,
         }
     }
@@ -596,6 +661,7 @@ impl Walker<'_, '_> {
                     poly_runtime_spread: false,
                     onward: HandlerSink::default(),
                     job_roots: BTreeSet::new(),
+                    forwards_ref: false,
                     use_id: false,
                 };
             }
@@ -650,6 +716,7 @@ impl Walker<'_, '_> {
                         poly_runtime_spread: false,
                         onward: HandlerSink::default(),
                         job_roots: BTreeSet::new(),
+                        forwards_ref: false,
                         use_id: false,
                     };
                 };
@@ -693,8 +760,10 @@ impl Walker<'_, '_> {
         let mut onward = HandlerSink::default();
         let mut job_roots = BTreeSet::new();
         let mut use_id = false;
+        let mut forwards_ref = false;
         let tier = match lookup {
             Lookup::Compiled(ir) => {
+                forwards_ref = ir.forwards_ref;
                 job_roots = ir
                     .jobs
                     .iter()
@@ -777,6 +846,7 @@ impl Walker<'_, '_> {
             poly_runtime_spread,
             onward,
             job_roots,
+            forwards_ref,
             use_id,
         }
     }
@@ -914,6 +984,16 @@ impl Walker<'_, '_> {
             }
         };
         *tier = child.tier.clone();
+        // R34.64: a `ref` at the call site of a `forwardRef` component reaches an element React attaches it to; a
+        // static or native render has none to give it.
+        if child.forwards_ref && props.iter().any(|(k, _)| k == "ref") {
+            self.diagnostics.push(Diagnostic::fallback(
+                "forwardref-ref",
+                format!("`ref` is passed to the forwardRef component <{name}>; brust renders it without a ref"),
+                *loc,
+                "drop the ref, or keep this component in React",
+            ));
+        }
         let (hoisted, unbound) = self.forward_handlers(name, *loc, props, &child);
         self.check_spread(name, props, &child, *loc, &hoisted, &unbound);
         // A hoisted handler is the parent's own member: not a prop of the instance.
@@ -939,7 +1019,46 @@ impl Walker<'_, '_> {
                 let mut prop_map = std::collections::BTreeMap::new();
                 let mut literals = std::collections::BTreeMap::new();
                 let mut ok = true;
+                let mut element_props: Vec<(String, serde_json::Value)> = Vec::new();
                 for (k, v) in props.iter() {
+                    // `$`-prefixed props are the compiler's own (`$x`, the revive switch): a call-site prop of
+                    // that name, written or inlined from a literal spread, could make data revive as elements.
+                    if k.starts_with('$') {
+                        self.diagnostics.push(Diagnostic::fallback(
+                            "island-prop",
+                            format!("the prop `{k}` of the React island <{name}> starts with `$`, which brust reserves for its own island props"),
+                            *loc,
+                            "rename the prop",
+                        ));
+                        continue;
+                    }
+                    // An element as a prop of the island (R34.52): lowered like children, revived
+                    // from the names in the instance's `$x` literal.
+                    if let Expr::Raw(RawExpr {
+                        kind: RawKind::Jsx(el),
+                        ..
+                    }) = v
+                    {
+                        let lowered = if slot_prop_ok(k) {
+                            self.lower_children(std::slice::from_ref(&**el))
+                        } else {
+                            Err("a prop name the revive reserves".to_string())
+                        };
+                        match lowered {
+                            Ok((tree, nested)) => {
+                                literals.insert(k.clone(), tree.clone());
+                                element_props.push((k.clone(), tree));
+                                self.note_nested(name, nested);
+                            }
+                            Err(why) => self.diagnostics.push(Diagnostic::fallback(
+                                "island-children",
+                                format!("JSX passed as the prop `{k}` of the React island <{name}> cannot be lowered: {why}"),
+                                *loc,
+                                "render the element inside the island component, or pass constant markup",
+                            )),
+                        }
+                        continue;
+                    }
                     let d = self.deps_of(v);
                     let why = if matches!(v, Expr::ClientOnly { .. }) {
                         Some("a function".to_string())
@@ -979,6 +1098,29 @@ impl Walker<'_, '_> {
                             prop_map.insert(k.clone(), self.prop_path(v));
                         }
                     }
+                }
+                if !element_props.is_empty() {
+                    for (k, tree) in &element_props {
+                        let raw = RawExpr {
+                            loc: *loc,
+                            kind: raw_json(tree, *loc),
+                        };
+                        if let Some(slot) = props.iter_mut().find(|(n, _)| n == k) {
+                            slot.1 = Expr::Server(ServerExpr(raw));
+                        }
+                    }
+                    let names = serde_json::Value::Array(
+                        element_props
+                            .iter()
+                            .map(|(k, _)| serde_json::Value::String(k.clone()))
+                            .collect(),
+                    );
+                    let raw = RawExpr {
+                        loc: *loc,
+                        kind: raw_json(&names, *loc),
+                    };
+                    props.push((X_KEY.to_string(), Expr::Server(ServerExpr(raw))));
+                    literals.insert(X_KEY.to_string(), names);
                 }
                 if !children.is_empty() {
                     match self.lower_children(children) {
@@ -1040,12 +1182,57 @@ impl Walker<'_, '_> {
                 }
             }
             _ => {
+                // An element as a prop travels only to a React island (R34.52); anything else
+                // keeps the fallback `placement` used to raise for it.
+                if props.iter().any(|(_, v)| {
+                    matches!(
+                        v,
+                        Expr::Raw(RawExpr {
+                            kind: RawKind::Jsx(_),
+                            ..
+                        })
+                    )
+                }) && !self.diagnostics.iter().any(|d| d.rule == "jsx-expression")
+                {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "jsx-expression",
+                        "JSX inside an expression that is not a list, a condition or a child",
+                        *loc,
+                        "use a ternary, && or .map directly in the JSX children",
+                    ));
+                }
                 // The template backend numbers every inlined instance of a child id.
                 let k = self.instance_counts.entry(child_id.clone()).or_insert(0);
                 *k += 1;
                 let k = *k;
                 let row_invariant = child.fed && self.row_invariant(&kept, &child);
-                if child.fed && !row_invariant && self.loop_sources.iter().any(Option::is_none) {
+                // F142 R34.43: one enclosing list that is a constant array feeds the instance per
+                // row from the literal the manifest carries (capped, ruling Q3).
+                let rows_literal = match (&self.loop_sources[..], &self.loop_literals[..]) {
+                    ([None], [Some(rows)]) if child.fed && !row_invariant => Some(rows.clone()),
+                    _ => None,
+                };
+                let too_big = rows_literal
+                    .as_ref()
+                    .map(|r| r.to_string().len())
+                    .filter(|n| *n > MAX_ROWS_JSON);
+                if let Some(size) = too_big {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "instance-list-path",
+                        format!(
+                            "<{name}> has a job of its own and reads the rows of a constant list of {size} bytes, over the {MAX_ROWS_JSON} byte cap"
+                        ),
+                        *loc,
+                        "move the list into a loader (it then comes from props), or keep the page a React island",
+                    ));
+                }
+                let rows_literal = rows_literal.filter(|_| too_big.is_none());
+                if child.fed
+                    && !row_invariant
+                    && rows_literal.is_none()
+                    && too_big.is_none()
+                    && self.loop_sources.iter().any(Option::is_none)
+                {
                     // Fail closed softly (ruling on challenge 4dc45c45, F142): the server feeds a
                     // per-instance job by indexing the list's props path; over a local or store list
                     // there is none, and the build would refuse the page (`manifest.ts`
@@ -1072,6 +1259,7 @@ impl Walker<'_, '_> {
                         props: Default::default(),
                         literals: Default::default(),
                         exprs: Default::default(),
+                        rows_literal,
                     };
                     for (name, v) in kept.iter() {
                         if matches!(v, Expr::ClientOnly { .. }) {
@@ -1336,12 +1524,18 @@ impl Walker<'_, '_> {
     /// Shadcn S1 (R34.21): the JSX children of a React island as a JSON tree, so they travel in its
     /// props (the island and its SSR job revive them with React). Only a constant tree lowers; the
     /// `Err` names what stopped it (R34.23). Also returns the ids of the components inside the tree.
+    /// Lists, constant conditions and element-valued props lower too (R34.50-R34.52): the constants
+    /// are folded by [`crate::ir::FoldEnv`], which never runs user code.
     fn lower_children(
         &mut self,
         nodes: &[Node],
     ) -> Result<(serde_json::Value, Vec<String>), String> {
+        let consts = self.module_consts.clone();
+        let lookup = move |n: &str| consts.get(n).cloned();
+        let mut env = crate::ir::FoldEnv::new(&lookup);
         let mut nested = Vec::new();
-        let mut items = self.lower_nodes(nodes, &mut nested)?;
+        let mut bytes = 0usize;
+        let mut items = self.lower_nodes(nodes, &mut nested, &mut env, &mut bytes, 0)?;
         let tree = if items.len() == 1 {
             items.remove(0)
         } else {
@@ -1358,28 +1552,67 @@ impl Walker<'_, '_> {
         Ok((tree, nested))
     }
 
+    /// The ids inside a lowered tree the island `name` revives (`ChildRef.nested`).
+    fn note_nested(&mut self, name: &str, nested: Vec<String>) {
+        if let Some(r) = self.refs.iter_mut().find(|r| r.name == name) {
+            let all = r.nested.get_or_insert_with(Vec::new);
+            for id in nested {
+                if !all.contains(&id) {
+                    all.push(id);
+                }
+            }
+        }
+    }
+
+    /// The expression as the folder reads it: a slot reads back as the expression it came from.
+    fn raw_of(&self, e: &Expr) -> Option<RawExpr> {
+        match e {
+            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => Some(r.clone()),
+            Expr::Precomputed { slot, .. } => self.st.slots.get(slot).map(|s| s.raw.clone()),
+            _ => None,
+        }
+    }
+
+    fn fold_expr(
+        &self,
+        e: &Expr,
+        env: &mut crate::ir::FoldEnv<'_>,
+    ) -> Result<crate::ir::V, String> {
+        match self.raw_of(e) {
+            Some(r) => env.fold(&r),
+            None if matches!(e, Expr::ClientOnly { .. }) => Err("a function".into()),
+            None => Err("a value computed at request time".into()),
+        }
+    }
+
     fn lower_nodes(
         &mut self,
         nodes: &[Node],
         nested: &mut Vec<String>,
+        env: &mut crate::ir::FoldEnv<'_>,
+        bytes: &mut usize,
+        lists: u32,
     ) -> Result<Vec<serde_json::Value>, String> {
+        use crate::ir::V;
         use serde_json::{Map, Value, json};
-        let constant = |e: &Expr| match e {
-            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
-            _ => None,
-        };
         let mut out = Vec::new();
         for n in nodes {
             match n {
                 Node::Text(t) => out.push(Value::String(t.clone())),
-                Node::Slot(e) => match constant(e) {
-                    Some(v @ (Value::String(_) | Value::Number(_))) => out.push(v),
-                    Some(Value::Null | Value::Bool(_)) => {}
-                    _ => return Err("an expression that is not a constant".into()),
+                Node::Slot(e) => match self.fold_expr(e, env) {
+                    Ok(v @ (V::Str(_) | V::Num(_))) => match v.to_json() {
+                        Some(j) => out.push(j),
+                        None => return Err("a number that is not finite".into()),
+                    },
+                    Ok(V::Undef | V::Null | V::Bool(_)) => {}
+                    Ok(_) => return Err("an array or object rendered as a child".into()),
+                    Err(why) => {
+                        return Err(format!("an expression that is not a constant ({why})"));
+                    }
                 },
-                Node::Fragment(c) => {
-                    out.push(json!({ MARK: "fr", "c": self.lower_nodes(c, nested)? }))
-                }
+                Node::Fragment(c) => out.push(
+                    json!({ MARK: "fr", "c": self.lower_nodes(c, nested, env, bytes, lists)? }),
+                ),
                 Node::Element {
                     tag,
                     attrs,
@@ -1405,13 +1638,22 @@ impl Walker<'_, '_> {
                             Attr::Static { name, value } => {
                                 p.insert(name.clone(), Value::String(value.clone()));
                             }
-                            Attr::Dynamic { name, value } => match constant(value) {
-                                Some(Value::Null) => {}
-                                Some(v) => {
-                                    p.insert(name.clone(), v);
-                                }
-                                None => {
-                                    return Err(format!("attribute `{name}` is not a constant"));
+                            Attr::Dynamic { name, value } => match self.fold_expr(value, env) {
+                                Ok(V::Null | V::Undef) => {}
+                                Ok(v) => match v.to_json() {
+                                    Some(j) => {
+                                        p.insert(name.clone(), j);
+                                    }
+                                    None => {
+                                        return Err(format!(
+                                            "attribute `{name}` is not a constant (a value JSON cannot hold)"
+                                        ));
+                                    }
+                                },
+                                Err(why) => {
+                                    return Err(format!(
+                                        "attribute `{name}` is not a constant ({why})"
+                                    ));
                                 }
                             },
                             Attr::Event { event, .. } => {
@@ -1425,7 +1667,7 @@ impl Walker<'_, '_> {
                         }
                     }
                     out.push(
-                        json!({ MARK: "el", "t": tag, "p": p, "c": self.lower_nodes(children, nested)? }),
+                        json!({ MARK: "el", "t": tag, "p": p, "c": self.lower_nodes(children, nested, env, bytes, lists)? }),
                     );
                 }
                 Node::Component {
@@ -1442,17 +1684,60 @@ impl Walker<'_, '_> {
                         return Err("a member tag such as <A.B>".into());
                     }
                     let mut p = Map::new();
+                    let mut slots: Vec<String> = Vec::new();
                     for (k, v) in props {
                         if k == crate::ir::SPREAD_KEY {
                             return Err(format!("a spread into <{name}>"));
                         }
-                        match constant(v) {
-                            Some(Value::Null) => {}
-                            Some(v) => {
-                                p.insert(k.clone(), v);
+                        if k.starts_with('$') {
+                            return Err(format!(
+                                "the prop `{k}` of <{name}> starts with `$`, which brust reserves"
+                            ));
+                        }
+                        // An element as a prop (R34.52): lowered to a marker tree and named in `x`,
+                        // the only list of props the revive turns back into elements.
+                        if let Expr::Raw(RawExpr {
+                            kind: RawKind::Jsx(el),
+                            ..
+                        }) = v
+                        {
+                            if !slot_prop_ok(k) {
+                                return Err(format!(
+                                    "an element passed as the prop `{k}` of <{name}>"
+                                ));
                             }
-                            None => {
-                                return Err(format!("prop `{k}` of <{name}> is not a constant"));
+                            let mut items = self.lower_nodes(
+                                std::slice::from_ref(&**el),
+                                nested,
+                                env,
+                                bytes,
+                                lists,
+                            )?;
+                            let tree = if items.len() == 1 {
+                                items.remove(0)
+                            } else {
+                                json!({ MARK: "fr", "c": items })
+                            };
+                            p.insert(k.clone(), tree);
+                            slots.push(k.clone());
+                            continue;
+                        }
+                        match self.fold_expr(v, env) {
+                            Ok(V::Null | V::Undef) => {}
+                            Ok(v) => match v.to_json() {
+                                Some(j) => {
+                                    p.insert(k.clone(), j);
+                                }
+                                None => {
+                                    return Err(format!(
+                                        "prop `{k}` of <{name}> is not a constant (a value JSON cannot hold)"
+                                    ));
+                                }
+                            },
+                            Err(why) => {
+                                return Err(format!(
+                                    "prop `{k}` of <{name}> is not a constant ({why})"
+                                ));
                             }
                         }
                     }
@@ -1476,12 +1761,59 @@ impl Walker<'_, '_> {
                         });
                     }
                     nested.push(id.clone());
-                    out.push(
-                        json!({ MARK: "cmp", "id": id, "p": p, "c": self.lower_nodes(children, nested)? }),
-                    );
+                    let mut node = json!({ MARK: "cmp", "id": id, "p": p, "c": self.lower_nodes(children, nested, env, bytes, lists)? });
+                    if !slots.is_empty() {
+                        node["x"] = json!(slots);
+                    }
+                    out.push(node);
                 }
-                Node::If { .. } => return Err("a condition".into()),
-                Node::For { .. } => return Err("a list".into()),
+                Node::If { cond, then, else_ } => {
+                    let c = self
+                        .fold_expr(cond, env)
+                        .map_err(|why| format!("a condition that is not a constant ({why})"))?;
+                    let branch = if c.truthy() { then } else { else_ };
+                    out.extend(self.lower_nodes(branch, nested, env, bytes, lists)?);
+                }
+                Node::For {
+                    source,
+                    item,
+                    index,
+                    key,
+                    body,
+                } => {
+                    let src = self.fold_expr(source, env).map_err(|why| {
+                        format!("a list over data that is not a constant ({why})")
+                    })?;
+                    let V::Arr(rows) = src else {
+                        return Err("a list over a value that is not an array".into());
+                    };
+                    let count = rows.len();
+                    for (i, row) in rows.into_iter().enumerate() {
+                        env.bind(item, row);
+                        let mut bound = 1;
+                        if let Some(ix) = index {
+                            env.bind(ix, V::Num(i as f64));
+                            bound += 1;
+                        }
+                        let step = self
+                            .fold_expr(key, env)
+                            .map_err(|why| {
+                                format!("the key of a list item is not a constant ({why})")
+                            })
+                            .and_then(|_| self.lower_nodes(body, nested, env, bytes, lists + 1));
+                        env.unbind(bound);
+                        let rows_out = step?;
+                        if lists == 0 {
+                            *bytes += rows_out.iter().map(|v| v.to_string().len()).sum::<usize>();
+                            if *bytes > MAX_CHILDREN_JSON {
+                                return Err(format!(
+                                    "the list has {count} items and its lowered tree is over the {MAX_CHILDREN_JSON} byte cap"
+                                ));
+                            }
+                        }
+                        out.extend(rows_out);
+                    }
+                }
                 Node::Outlet => return Err("<Outlet/>".into()),
             }
         }

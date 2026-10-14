@@ -212,7 +212,7 @@ fn object_form_instances_is_rejected() {
             assert!(
                 source
                     .to_string()
-                    .contains("want \"static\" or \"per-row:<list path>\""),
+                    .contains("want \"static\", \"per-row:<list path>\" or \"per-row-literal\""),
                 "{source}"
             )
         }

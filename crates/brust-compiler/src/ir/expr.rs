@@ -1,5 +1,6 @@
 //! Expressions as the analyzer reads them (`RawExpr`) and as later stages place
 //! them (`Expr`). Plain Rust: this module never names Bun types (spec §9).
+use super::fold::FoldEnv;
 use serde::{Deserialize, Serialize};
 
 /// What an identifier refers to, decided from its symbol and import record,
@@ -173,69 +174,16 @@ pub enum JsCtx {
     Client,
 }
 
-/// A number as JSON: an integer when it is one, `None` when it is not finite.
-fn num_json(n: f64) -> Option<serde_json::Value> {
-    if n.fract() == 0.0 && n.abs() < 9e15 {
-        Some(serde_json::Value::from(n as i64))
-    } else {
-        serde_json::Number::from_f64(n).map(serde_json::Value::Number)
-    }
-}
-
 impl RawExpr {
-    /// The JSON value of a pure literal expression (string, number, boolean, `null`, a
-    /// template without substitutions, or an array/object of literals); `None` for anything
-    /// else, including `undefined` and non-finite numbers.
+    /// The JSON value of a constant expression with no names in it: [`FoldEnv::fold`] with an empty
+    /// environment (literals, templates, arithmetic, array and object literals; shadcn S1, R34.49).
+    /// `None` for anything else, including `undefined` and non-finite numbers.
+    ///
+    /// Relied on by: literal island props and instance props (`children.rs`), a literal `useState`
+    /// default (`hooks.rs`), icon props (`icons.rs`) and literal child props (`lower/template.rs`).
+    /// Widening the folder widens all of them (F148c).
     pub fn json_literal(&self) -> Option<serde_json::Value> {
-        use serde_json::Value;
-        match &self.kind {
-            RawKind::Lit(Literal::Str(s)) => Some(Value::String(s.clone())),
-            RawKind::Lit(Literal::Num(n)) => num_json(*n),
-            // Arithmetic on number literals folds (`ratio={16 / 9}`), with JS's own results.
-            RawKind::Binary { op, left, right }
-                if matches!(
-                    op,
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem
-                ) =>
-            {
-                let (Some(Value::Number(l)), Some(Value::Number(r))) =
-                    (left.json_literal(), right.json_literal())
-                else {
-                    return None;
-                };
-                let (l, r) = (l.as_f64()?, r.as_f64()?);
-                num_json(match op {
-                    BinOp::Add => l + r,
-                    BinOp::Sub => l - r,
-                    BinOp::Mul => l * r,
-                    BinOp::Div => l / r,
-                    _ => l % r,
-                })
-            }
-            RawKind::Unary {
-                op: UnOp::Neg,
-                value,
-            } => match value.json_literal() {
-                Some(Value::Number(n)) => num_json(-n.as_f64()?),
-                _ => None,
-            },
-            RawKind::Lit(Literal::Bool(b)) => Some(Value::Bool(*b)),
-            RawKind::Lit(Literal::Null) => Some(Value::Null),
-            RawKind::Template { head, parts } if parts.is_empty() => {
-                Some(Value::String(head.clone()))
-            }
-            RawKind::Array(items) => items
-                .iter()
-                .map(RawExpr::json_literal)
-                .collect::<Option<Vec<_>>>()
-                .map(Value::Array),
-            RawKind::Object(fields) => fields
-                .iter()
-                .map(|(k, v)| v.json_literal().map(|v| (k.clone(), v)))
-                .collect::<Option<serde_json::Map<_, _>>>()
-                .map(Value::Object),
-            _ => None,
-        }
+        FoldEnv::empty().fold(self).ok()?.to_json()
     }
 
     /// JS for the precompute job ([`JsCtx::Server`]).

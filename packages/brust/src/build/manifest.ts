@@ -34,6 +34,8 @@ export interface ChildRecord {
   literals?: Record<string, unknown>
   /** F105: jinja over `__props` (and `__row`/`__idx` per row) the server evaluates. */
   exprs?: Record<string, string>
+  /** F142 R34.43: the list of a `per-row-literal` instance (a constant the compiler read). */
+  rows?: unknown[]
 }
 
 export interface ComponentRecord {
@@ -70,7 +72,7 @@ export interface ActionsRecord {
 }
 
 /** The manifest format the Rust loader accepts (`MANIFEST_VERSION` in brust-core `manifest.rs`): the one place TS names it. */
-export const MANIFEST_VERSION = 2 as const
+export const MANIFEST_VERSION = 3 as const
 
 export interface ManifestJson {
   version: typeof MANIFEST_VERSION
@@ -243,7 +245,8 @@ export function childRecords(c: Compiled, clientOnly: string[] = []): ChildRecor
     if (inst.loops.length > 1)
       throw new BuildError('nested-instance', `${ir.id}: child ${inst.child_id} sits in nested lists (M3)`)
     const list = inst.loops[0]
-    if (list === null)
+    const literal = list === null && Array.isArray(inst.rows_literal)
+    if (list === null && !literal)
       throw new BuildError('instance-list-path', `${ir.id}: child ${inst.child_id} sits in a list that is not a props path`)
     const props: Record<string, string> = {}
     for (const [name, path] of Object.entries(inst.props)) {
@@ -254,9 +257,10 @@ export function childRecords(c: Compiled, clientOnly: string[] = []): ChildRecor
         )
       props[name] = path
     }
-    const rec: ChildRecord = { id: inst.child_id, instances: list === undefined ? 'static' : `per-row:${list}`, props }
+    const rec: ChildRecord = { id: inst.child_id, instances: literal ? 'per-row-literal' : list === undefined ? 'static' : `per-row:${list}`, props }
     if (inst.literals && Object.keys(inst.literals).length > 0) rec.literals = { ...inst.literals }
     if (inst.exprs && Object.keys(inst.exprs).length > 0) rec.exprs = { ...inst.exprs }
+    if (literal) rec.rows = inst.rows_literal
     return rec
   })
   for (const id of clientOnly) out.push({ id, instances: 'static', props: {} })

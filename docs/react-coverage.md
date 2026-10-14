@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 70 | 33 | 8 | 29 | 0 | 0 | 0 | 0 |
+| B Composition | 97 | 49 | 8 | 40 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
-| D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 49 | 16 | 10 | 19 | 3 | 1 | 0 | 0 |
-| **Total** | 227 | 94 | 43 | 86 | 3 | 1 | 0 | 0 |
+| D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
+| E v2 specifics | 52 | 17 | 10 | 21 | 3 | 1 | 0 | 0 |
+| **Total** | 257 | 112 | 43 | 98 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -104,24 +104,51 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-children-prop | island children that read a prop | react | react | ssr | ok | fallback:island-children | R34.23: out of v1 — prop-path children are a named follow-up (F138e); fail closed |
 | b-island-children-renderprop | render-prop children of an island | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a function child |
 | b-island-children-html | dangerouslySetInnerHTML inside island children | react | react | ssr | ok | fallback:island-children | R34.26(c) ruling: a raw HTML sink inside lowered children fails closed in v1 |
-| b-island-children-cond | conditional island children | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a condition |
+| b-island-children-cond | conditional island children | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a condition on a prop (a constant condition lowers: b-island-slots-cond-const) |
 | b-island-children-spread | spread in island children | react | react | ssr | ok | fallback:island-children, fallback:spread-props | R34.23: fail closed — an unknown spread |
+| b-island-slots-list-literal | a literal list inside island children | static | static | ssr | ok | — | R34.50: a list over a foldable array unrolls at compile time into the island's children tree; hydrates in tests/server/island-slots.chromium.test.ts |
+| b-island-slots-list-const | a list over a module const of objects, with the index | static | static | ssr | ok | — | R34.50: member reads on folded objects, the index parameter and a template of both fold (the sidebar shape) |
+| b-island-slots-list-from | Array.from({ length }).map with the array parameter | static | static | ssr | ok | — | R34.49/R34.50: the scroll-area shape; the folder is a closed interpreter, no user code runs at build |
+| b-island-slots-list-nested | a list in a list with components inside the rows | static | static | ssr | ok | — | R34.50: nested lists, arithmetic on the row, a static component per item |
+| b-island-slots-list-empty | an empty list inside island children | static | static | ssr | ok | — | R34.50: zero items lower to zero children |
+| b-island-slots-cond-const | constant && and ternary inside island children | static | static | ssr | ok | — | R34.51: a condition the folder can decide keeps only the chosen branch |
+| b-island-slots-elprop | an element passed as a prop of a react island | static | static | ssr | ok | — | R34.52: the element lowers to a marker tree under its prop name; the island instance lists the name in `$x`, the only thing the revive turns back into elements |
+| b-island-slots-elprop-fragment | a fragment passed as a prop of a react island | static | static | ssr | ok | — | R34.52: a fragment is a marked fragment |
+| b-island-slots-elprop-nested | an element prop on a component inside island children | static | static | ssr | ok | — | R34.52: a nested component node carries its own `x` list |
+| b-island-slots-cond-prop | a prop condition inside island children | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — "a condition that is not a constant (the prop `show`)" |
+| b-island-slots-list-prop | a list over a prop inside island children | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — "a list over data that is not a constant"; prop-path children stay a follow-up (F148a) |
+| b-island-slots-list-filter | a list through .filter inside island children | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — the message names the call outside the folded subset (`rows.filter`) |
+| b-island-slots-list-block | a module const mapped with a block-body callback | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — a `.map` callback with a block body |
+| b-island-slots-from-long | Array.from over the length bound | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — `Array.from` length is bounded to 10 000 |
+| b-island-slots-over-cap | an unrolled list over the 64 KB cap | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — the list has 5000 items and its lowered tree is over the 64 KB cap |
+| b-island-slots-elprop-state | an element prop that reads parent state | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — state inside the element |
+| b-island-slots-elprop-handler | an element prop with an event handler | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — a handler cannot travel as JSON |
+| b-island-slots-elprop-static-child | an element prop on a static component | react | react | ssr | ok | fallback:jsx-expression | R34.52: element props travel to React islands only; any other child keeps fallback:jsx-expression |
 | b-island-in-inlined | react island inside an inlined native component (G11) | static | static | 0 | ok | — | S6 amendment L4 (F108): the island render is the inlined Tiers instance job, so the page has no job of its own |
 | b-island-in-inlined-row | react island inside an inlined per-row component | static | static | 0 | ok | — | S6 amendment L4 (F108): one island render per row of the Row instance (per-row child record) |
 | b-component-map | component map dispatch | react | react | ssr | ok | fallback:local-component |  |
 | b-memo | memo() wrapper around a plain component | native | native | 0 | ok | — | spec §3 memo() |
-| b-forwardref | forwardRef component | react | react | ssr | ok | fallback:default-export-shape |  |
+| b-forwardref | forwardRef component (default export); `ref={ref}` on a host is dropped | static | static | 0 | ok | — | S3 R34.63: HTML has no ref, so the render is the same as React's for a caller that passes none |
+| b-forwardref-const | `const X = forwardRef(function (props, ref) {…})` exported by name, used by a parent | static | static | 0 | ok | — |  |
+| b-forwardref-arrow | forwardRef with an arrow callback and rest props | static | static | 0 | ok | — |  |
+| b-forwardref-alias-export | `const X = forwardRef(…)` then `export { X, X as Root }` | static | static | 0 | ok | — |  |
+| b-forwardref-callsite-ref | a call site passes `ref` to a forwardRef component | react | react | ssr | ok | fallback:forwardref-ref, fallback:ref-in-render | R34.64: forwardref-ref on the caller |
+| b-forwardref-ref-read | the forwarded ref is read (`useImperativeHandle`) | react | react | ssr | ok | fallback:forwardref-ref, fallback:hook-unsupported |  |
+| b-forwardref-ref-passed | the forwarded ref is passed on to a child component | react | react | ssr | ok | fallback:forwardref-ref |  |
+| b-forwardref-ref-destructured | the second parameter is destructured | react | react | ssr | ok | fallback:forwardref-ref |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get) |
 | b-spread-known-shape | data-*, aria-*, boolean and style props through a child's rest spread | static | static | 0 | ok | — | shadcn S1.2 R34.15 (a): keys known at the call site expand at compile time; children from the spread are the element children |
 | b-spread-alias-known | HTML aliases at the call site into a child that writes React names after its spread | static | static | 0 | ok | — | shadcn S1.2 review F1: compile-time expansion merges on the HTML attribute too (class="x", for="a", once each) |
-| b-fed-child-local-list | a child with a job of its own in a list over a local array | react | react | ssr | ok | fallback:instance-list-path | ruling on challenge 4dc45c45 (F142): Row reads the row, so it is not row-invariant (R34.42); rows from the literal are R34.43 (PR 2). An island, never a build error (instance-list-path fallback) |
+| b-fed-child-local-list | a child with a job of its own in a list over a local array | static | static | 0 | ok | — | F142 R34.43: Row reads the row of a module const, so the manifest carries the rows (per-row-literal) and the server feeds one instance per row (was the instance-list-path fallback, challenge 4dc45c45) |
 | b-fed-child-row-invariant-const | a child with a job of its own, the same in every row, in a list over a module const (shadcn table) | static | static | 0 | ok | — | F142 R34.42: no prop reads the row, so the instance is fed once (static record) and its slot is read without a row index |
 | b-fed-child-row-invariant-inline | a child with a job of its own, the same in every row, in a list over an inline array (shadcn carousel) | static | static | 0 | ok | — | F142 R34.42: an inline array literal is the same case |
 | b-fed-child-row-invariant-props | a child with a job of its own, the same in every row, in a list over a props path | static | static | 0 | ok | — | F142 R34.42 (ruling Q1, one rule): fed once instead of once per row |
 | b-fed-child-row-invariant-xfor | a child with a job of its own, the same in every row, in a client-rendered row (x-for) over a props path | native | native | 0 | ok | — | F142 R34.42 (ruling on Mellow N1): fed once; the zero-row template the client clones carries the same job output (not __undefined) |
+| b-fed-child-row-reading-inline | a child with a job of its own reading each row of an inline array (and its index) | static | static | 0 | ok | — | F142 R34.43: rows from the literal; the instance reads __row and __idx |
+| b-fed-child-derived-list | a child with a job of its own reading each row of a list derived at render | react | react | ssr | ok | fallback:instance-list-path | F142 R34.44 / F152: the rows exist only after a render step (two-phase planning), instance-list-path fallback |
 | b-fed-child-state-list | a child with a job of its own in a list over state | react | react | ssr | ok | fallback:instance-list-path | F142 R34.44: rows the client re-creates get no job output (instance-list-path fallback) |
-| b-fed-child-useid-const-list | a child with useId values in a list over a module const | react | react | ssr | ok | fallback:instance-list-path | F142: ids differ per row, so the instance is not row-invariant; per-row literal rows are PR 2 (R34.43) |
+| b-fed-child-useid-const-list | a child with useId values in a list over a module const | static | static | 0 | ok | — | F142 R34.43: ids differ per row, so the instance is not row-invariant; the rows come from the literal and each row gets its own id suffix |
 | b-spread-event-handler | an event handler that reaches an element through a child's spread | native | native | 0 | ok | — | shadcn S1.3 R34.18 (F141): the parent hoists the handler as its own member (_hN) and the inline print binds it on the child's element (x-on-click); the child stays static |
 | b-spread-handler-row | a handler reading the row, through a child's spread in a list | native | native | 0 | ok | — | shadcn S1.3 R34.18: the row is client-rendered (x-for) and the binding names the row (x-on-click="_h1:it"), as a hand-written handler |
 | b-spread-handler-input | onChange through a text field's spread (shadcn Input) | native | native | 0 | ok | — | shadcn S1.3 R34.18: React's onChange on a text field is the input event (x-on-input) |
@@ -191,11 +218,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
 | d-cache | cache() around a server helper | static | static | precompute | ok | — | spec §3.4 cache() |
-| d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:jsx-expression, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
+| d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
 | d-createcontext | createContext provider | react | react | ssr | ok | fallback:member-tag |  |
 | d-clone-element | cloneElement | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-expression |  |
-| d-suspense-static | <Suspense> around static content | react | react | ssr | ok | fallback:external-component, fallback:jsx-expression | spec §3 react tier: Suspense |
+| d-suspense-static | <Suspense> around static content | static | static | ssr | ok | fallback:external-component | spec §3 react tier: Suspense is a React island; since R34.52 its constant `fallback` element travels as an element prop, so the page is static (shadcn S1, constant-slots) |
 | d-fragment-keyed | <Fragment key> inside a list | static | static | 0 | ok | — |  |
 | d-activity | <Activity mode> | static | static | ssr | ok | fallback:external-component | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
 | d-profiler | <Profiler onRender> | react | react | ssr | ok | fallback:external-component, fallback:island-prop | shadcn S1 R34.56: a function prop to an external component makes the host React (fallback island-prop), never a build error |
@@ -243,6 +270,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-island-prop-stateful-list | a React child in a list that changes with state | react | react | ssr | ok | fallback:island-prop | shadcn S1 R34.56: the second island-prop site (an island in a list the client changes) is a fallback too |
 | e-island-prop-react-host | a function prop to a child inside a host that is React for another reason | react | react | ssr | ok | fallback:hook-unsupported, fallback:island-prop | shadcn S1 R34.56/R34.57: the host is already React (unsupported hook): the child is not an island, no Ssr job, the build succeeds |
 | e-island-prop-json-control | literal and props-path values to a React child (control) | static | static | ssr | ok | — | shadcn S1 R34.56 control: JSON props still make an island under a static host (unchanged) |
+| e-jsx-runtime-call | a hand-written `jsx(…)` call from react/jsx-runtime (what compiled-JS packages contain) | react | react | ssr | ok | fallback:jsx-runtime-call | S3 R34.67: fails closed; read as an expression it would print an element object |
+| e-jsx-runtime-namespace | `R.jsxDEV(…)` through a namespace import of the dev runtime | react | react | ssr | ok | fallback:jsx-runtime-call |  |
+| e-jsx-runtime-local-name | a local function named `jsx` is not the runtime | static | static | precompute | ok | — |  |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |
@@ -283,8 +313,8 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 |---|---|
 | native | 11 |
 | static | 12 |
-| partial | 3 |
-| island | 27 |
+| partial | 4 |
+| island | 26 |
 | unsupported | 0 |
 | n/a | 5 |
 | **Total** | 58 |
@@ -320,7 +350,7 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 | [`<Fragment>`](https://react.dev/reference/react/Fragment) | static | a-fragment, d-fragment-keyed | static fragment root: no <brust-host>, no warning (gaps L8) |
 | [`<Profiler>`](https://react.dev/reference/react/Profiler) | partial | d-profiler, d-profiler-bare | native/static: d-profiler-bare; island: d-profiler |
 | [`<StrictMode>`](https://react.dev/reference/react/StrictMode) | static | d-strictmode | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
-| [`<Suspense>`](https://react.dev/reference/react/Suspense) | island | d-lazy-suspense, d-suspense-static | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
+| [`<Suspense>`](https://react.dev/reference/react/Suspense) | partial | d-lazy-suspense, d-suspense-static | native/static: d-suspense-static; island: d-lazy-suspense |
 | [`<ViewTransition>`](https://react.dev/reference/react/ViewTransition) | static | d-viewtransition | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
 
 ### APIs

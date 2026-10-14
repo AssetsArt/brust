@@ -3,7 +3,7 @@
 //! `export { X } from './x'` (an `index.ts` barrel) all spell "the component X of this project", and an
 //! island imports it by that binding. Everything that cannot be proven falls back to the binding itself
 //! (an opaque island), never to a guess.
-use crate::analyze::component::{AnalyzeOptions, module_fn};
+use crate::analyze::component::{AnalyzeOptions, FoundFn, module_component, module_fn};
 use crate::analyze::modules::{Export, resolve};
 use crate::analyze::names::{MemberRef, member_of};
 use crate::analyze::stores::Module;
@@ -59,6 +59,11 @@ pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
                             if let Some(mr) = d.value.and_then(|v| m.member_ref(&v)) {
                                 return Binding::Member(mr);
                             }
+                            // `export const X = forwardRef(function (props, ref) {…})` (R34.63)
+                            if matches!(module_component(ast, export), Some(FoundFn::ForwardRef(_)))
+                            {
+                                return Binding::Fn(export.to_string());
+                            }
                             return match d.value.map(|v| v.data) {
                                 Some(E::EImportIdentifier(i)) => m.reexport(i.ref_),
                                 _ => Binding::Opaque,
@@ -73,7 +78,7 @@ pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
                             let r = item.name.ref_;
                             let local = m.name(r);
                             return match m.reexport(r) {
-                                Binding::Opaque if module_fn(ast, &local).is_some() => {
+                                Binding::Opaque if module_component(ast, &local).is_some() => {
                                     Binding::Fn(local)
                                 }
                                 Binding::Opaque => m
@@ -102,6 +107,9 @@ pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
                 _ => {}
             }
         }
+    }
+    if let Some(FoundFn::ForwardRef(_)) = module_component(ast, export) {
+        return Binding::Local(export.to_string());
     }
     if let Some(f) = module_fn(ast, export) {
         let exported = f.flags.contains(js_ast::flags::Function::IsExport);

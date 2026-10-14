@@ -1,0 +1,2 @@
+fallback forwardref-ref tests/fixtures/forwardref-fallback/input.tsx:25:7 `ref` is passed to the forwardRef component <Plain>; brust renders it without a ref — drop the ref, or keep this component in React
+fallback ref-in-render tests/fixtures/forwardref-fallback/input.tsx:25:19 a ref is read during render — read refs in effects and handlers

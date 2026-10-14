@@ -44,23 +44,80 @@
               [
                 "fallback",
                 {
-                  "Raw": {
-                    "loc": 171,
+                  "Server": {
+                    "loc": 151,
                     "kind": {
-                      "Jsx": {
-                        "Element": {
-                          "loc": 171,
-                          "tag": "p",
-                          "attrs": [],
-                          "children": [
-                            {
-                              "Text": "…"
+                      "Object": [
+                        [
+                          "$brust",
+                          {
+                            "loc": 151,
+                            "kind": {
+                              "Lit": {
+                                "Str": "el"
+                              }
                             }
-                          ],
-                          "host": false,
-                          "ref_name": null
+                          }
+                        ],
+                        [
+                          "c",
+                          {
+                            "loc": 151,
+                            "kind": {
+                              "Array": [
+                                {
+                                  "loc": 151,
+                                  "kind": {
+                                    "Lit": {
+                                      "Str": "…"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ],
+                        [
+                          "p",
+                          {
+                            "loc": 151,
+                            "kind": {
+                              "Object": []
+                            }
+                          }
+                        ],
+                        [
+                          "t",
+                          {
+                            "loc": 151,
+                            "kind": {
+                              "Lit": {
+                                "Str": "p"
+                              }
+                            }
+                          }
+                        ]
+                      ]
+                    }
+                  }
+                }
+              ],
+              [
+                "$x",
+                {
+                  "Server": {
+                    "loc": 151,
+                    "kind": {
+                      "Array": [
+                        {
+                          "loc": 151,
+                          "kind": {
+                            "Lit": {
+                              "Str": "fallback"
+                            }
+                          }
                         }
-                      }
+                      ]
                     }
                   }
                 }
@@ -151,7 +208,8 @@
           "reason": "external component",
           "client_only": false
         }
-      }
+      },
+      "nested": []
     },
     {
       "name": "Panel",
@@ -187,20 +245,11 @@
     {
       "class": "Fallback",
       "rule": "island-children",
-      "message": "JSX children passed to the React island <Suspense> cannot be lowered: a condition",
+      "message": "JSX children passed to the React island <Suspense> cannot be lowered: a condition that is not a constant (the prop `open`)",
       "loc": 151,
       "line": 4,
       "col": 10,
       "remediation": "render the children inside the island component, or pass constant markup"
-    },
-    {
-      "class": "Fallback",
-      "rule": "jsx-expression",
-      "message": "JSX inside an expression that is not a list, a condition or a child",
-      "loc": 171,
-      "line": 4,
-      "col": 30,
-      "remediation": "use a ternary, && or .map directly in the JSX children"
     },
     {
       "class": "Fallback",

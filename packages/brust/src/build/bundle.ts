@@ -9,7 +9,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { builtinModules } from 'node:module'
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
@@ -47,6 +47,19 @@ export interface BrowserCtx {
   cssMaps?: Map<string, Record<string, string>>
 }
 
+/** `file` sits under `root`. */
+const inside = (root: string, file: string): boolean => file === root || file.startsWith(root.endsWith(sep) ? root : root + sep)
+
+/** The package a bare specifier names is installed in a `node_modules` above `from` (node's own lookup). */
+function visibleFrom(spec: string, from: string): boolean {
+  const parts = spec.split('/')
+  const name = spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]!
+  for (let d = from; ; d = dirname(d)) {
+    if (existsSync(join(d, 'node_modules', name, 'package.json'))) return true
+    if (dirname(d) === d) return false
+  }
+}
+
 /** Resolution for staged artifacts (`importer` = a staged file registered in `sourceOf`): relative
  * imports mean the component's SOURCE directory; bare imports (`react`, `react-dom/client`, npm
  * packages) resolve from `appRoot`, never from wherever `dist/` sits (an `--out-dir` outside the
@@ -62,6 +75,11 @@ export function sourceDirPlugin(sourceOf: SourceOf, appRoot: string, external: s
       })
       b.onResolve({ filter: /^[^./]/ }, (a) => {
         if (!sourceOf.has(a.importer) || matchesExternal(a.path, external)) return undefined
+        // A package the staged file can see from where it sits resolves natively: the bundler then picks the package's ESM
+        // entry (`module` / `exports.import`) and tree-shakes it. `Bun.resolveSync` answers with the CJS `main`, which
+        // bundles the whole package (recharts: +85 KB gzip on the chart page). Packages only the app root sees (a staged
+        // file under `dist/`, an `--out-dir` outside the app) keep the pinned resolution, so one copy of each package.
+        if (inside(appRoot, a.importer) && visibleFrom(a.path, dirname(a.importer))) return undefined
         return { path: Bun.resolveSync(a.path, appRoot) }
       })
     },
@@ -369,15 +387,18 @@ export const reviveSource = (reg: string): string =>
   // The tree is compiler output, but props travel in page markup: read it as untrusted. A tag must be a plain element
   // name, a component must be in this island's registry (own keys only), and the raw-HTML prop is never revived.
   `const __props = (p: any): any => { const o: any = {}; if (p && typeof p === 'object') for (const k of Object.keys(p)) if (k !== '__proto__' && k !== 'dangerouslySetInnerHTML' && k !== 'children' && k !== 'ref' && k !== 'key') o[k] = p[k]; return o }\n` +
+  // `x` (on a component node) and `$x` (on the island's props) are the compiler's list of props that hold an element
+  // tree. Only those names are revived, and only when the prop is an own key of the copy; data is never revived.
+  `const __xs = (o: any, x: any): any => { if (Array.isArray(x)) for (const k of x) if (typeof k === 'string' && k.charAt(0) !== '$' && __own.call(o, k)) o[k] = __rv(o[k]); return o }\n` +
   `const __rv = (n: any): any => {\n` +
   `  if (n === null || typeof n !== 'object') return n\n` +
   `  const kids = Array.isArray(n.c) ? n.c.map(__rv) : []\n` +
   `  if (n.$brust === 'fr') return createElement(Fragment, null, ...kids)\n` +
   `  if (n.$brust === 'el') { if (typeof n.t !== 'string' || !/^[a-zA-Z][a-zA-Z0-9-]*$/.test(n.t)) throw new Error('brust: island children hold an invalid element name'); return createElement(n.t, __props(n.p), ...kids) }\n` +
-  `  if (n.$brust === 'cmp') { if (typeof n.id !== 'string' || !__own.call(__reg, n.id)) throw new Error('brust: island children name the component ' + String(n.id) + ', which this island does not import'); return createElement(__reg[n.id], __props(n.p), ...kids) }\n` +
+  `  if (n.$brust === 'cmp') { if (typeof n.id !== 'string' || !__own.call(__reg, n.id)) throw new Error('brust: island children name the component ' + String(n.id) + ', which this island does not import'); return createElement(__reg[n.id], __xs(__props(n.p), n.x), ...kids) }\n` +
   `  throw new Error('brust: island children hold an unknown node')\n` +
   `}\n` +
-  `const __mk = (C: any, props: any) => { const { children, ...rest } = props; return createElement(C, rest, ...(children === undefined ? [] : Array.isArray(children) ? children : [children]).map(__rv)) }\n`
+  `const __mk = (C: any, props: any) => { const { children, $x, ...rest } = props; __xs(rest, $x); return createElement(C, rest, ...(children === undefined ? [] : Array.isArray(children) ? children : [children]).map(__rv)) }\n`
 
 /** A helper component its module does not export (`ir.unexported`: `function SheetOverlay() {…}` rendered by an exported
  * `SheetContent`) that still renders as an island has nothing to import: the module is loaded with `export { Name }`

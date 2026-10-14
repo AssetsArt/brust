@@ -1,0 +1,45 @@
+{
+  "function": "Form",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 0,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "id",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t1",
+        "t2"
+      ]
+    },
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t3"
+      ]
+    },
+    {
+      "id": 3,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t1",
+          "reactive": true
+        },
+        {
+          "name": "t2",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t4"
+      ]
+    }
+  ]
+}
