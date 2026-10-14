@@ -12,12 +12,12 @@
     "measured": 62,
     "analysisOnly": 2,
     "tier": {
-      "static": 55,
+      "static": 56,
       "native": 1,
-      "react": 6
+      "react": 5
     },
-    "islands": 52,
-    "pagesWithNoJs": 17,
+    "islands": 51,
+    "pagesWithNoJs": 18,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -88,15 +88,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 4,
       "libraryComponents": 1
-    },
-    {
-      "blocker": "fallback:instance-list-path",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 3,
-      "analysisOnlyRows": 0,
-      "appComponents": 3,
-      "libraryComponents": 0
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -577,7 +568,6 @@
         "event-capture",
         "external-component",
         "hook-unsupported",
-        "instance-list-path",
         "island-children",
         "member-tag",
         "ref-shape",
@@ -1058,7 +1048,6 @@
         "external-component",
         "hook-shape",
         "hook-unsupported",
-        "instance-list-path",
         "island-children",
         "linked-prop-precompute",
         "member-tag",
@@ -1132,14 +1121,12 @@
     {
       "id": "table",
       "basis": "measured",
-      "tier": "react",
-      "islands": 1,
+      "tier": "static",
+      "islands": 0,
       "components": 8,
-      "reactComponents": 1,
-      "jsGzipKb": 81,
-      "codes": [
-        "instance-list-path"
-      ]
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
     },
     {
       "id": "tabs",
