@@ -8,6 +8,7 @@ import { dirname, join, relative } from 'node:path'
 import type { BunPlugin } from 'bun'
 import { BrustConfigError, type CorsConfig, loadCors } from '../config'
 import { layoutAssets } from './cf-assets'
+import { serverOnlyEmptyPlugin } from './server-only'
 import { type CfConfigJson, cfEntrySource } from './cf-entry'
 import { type CoreCf, resolveCoreCf } from './cf-core'
 import { type CacheNeed, mergeWrangler, readUserWrangler, renderWrangler, type UserWrangler, verifyCacheBindings } from './cf-wrangler'
@@ -275,7 +276,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     define: PRODUCTION,
     minify: false,
     external: ['node:*', 'cloudflare:*', glueSpec],
-    plugins: [cssPlugin(ctx.cssMaps ?? new Map()), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*']), exposePlugin(ctx.compiled)],
+    plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map()), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*']), exposePlugin(ctx.compiled)],
   })
   if (violations.length > 0) throw new BuildError('cf-unsupported', `${[...new Set(violations)].join('\n')}\nthese modules do not exist on Cloudflare Workers; swap them with [cloudflare] alias`)
   if (!res.success) throw new BuildError('bundle', `cloudflare: ${res.logs.map(String).join('\n')}`)

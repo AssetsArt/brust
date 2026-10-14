@@ -10,6 +10,7 @@ import { type CacheBridgeDeps, runCache } from './cache-adapter/bridge'
 import type { CacheManifest } from './cache-adapter/load'
 import { type Handlers, type JobsModule, type ManifestLike, makeHandlers, type SsgRecord, toJson } from './handlers'
 import { cacheClear, cacheL2Count, cacheReplay, planJobs, planJobsBuf, putFetchReply, registerWorker, takeFetchBody } from './native'
+import { installServerOnlyRuntime } from './build/server-only'
 import { flattenRoutes, type Route } from './routes'
 
 export * from './handlers'
@@ -188,6 +189,7 @@ export async function startWorker(opts: StartWorkerOptions = {}): Promise<number
   const manifest = (await Bun.file(manifestFile).json()) as ManifestLike & { cache?: CacheManifest | null; actions_only?: boolean }
   let routes: Route[] | undefined = []
   if (!manifest.actions_only) {
+    installServerOnlyRuntime()
     const app = await import(resolve(entry))
     routes = (app.routes ?? app.default) as Route[] | undefined
   }
