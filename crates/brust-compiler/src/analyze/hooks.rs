@@ -1269,9 +1269,11 @@ fn inline_hook(
     if imported == "*" {
         return false;
     }
-    let Some(path) = crate::analyze::modules::resolve(&m.parsed.path(), &source, opts) else {
+    let Some(path) = crate::analyze::modules::resolve_module(&m.parsed.path(), &source, opts)
+    else {
         return false;
     };
+    let (path, imported) = follow_reexports(opts, path, imported);
     let hook = site.hook;
     let bytes = match std::fs::read(opts.root.join(&path)) {
         Ok(b) => b,
@@ -1315,6 +1317,50 @@ fn inline_hook(
         }
     });
     true
+}
+
+/// A package barrel (`export { useX } from "./use-x"`, the build's own P1 barrel) names the hook but does not
+/// declare it: follow named re-exports to the module that does. A module that declares it, or any hop that cannot
+/// be read, parsed or resolved, ends the walk where it stands and `inline_hook` reports from there.
+fn follow_reexports(
+    opts: &AnalyzeOptions,
+    mut path: String,
+    mut imported: String,
+) -> (String, String) {
+    for _ in 0..4 {
+        let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
+            break;
+        };
+        let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+            break;
+        };
+        let next = parsed.with_ast(|ast| {
+            if exported_fn(ast, &imported).is_some() {
+                return None;
+            }
+            let records = ast.import_records.as_slice();
+            ast.parts.iter().find_map(|part| {
+                part.stmts.slice().iter().find_map(|stmt| match &stmt.data {
+                    S::SExportFrom(f) => f.items.slice().iter().find_map(|item| {
+                        if item.alias.slice() != imported.as_bytes() {
+                            return None;
+                        }
+                        let spec = records.get(f.import_record_index as usize)?;
+                        let spec = String::from_utf8_lossy(spec.path.text).into_owned();
+                        let to = crate::analyze::modules::resolve_module(&path, &spec, opts)?;
+                        let original = String::from_utf8_lossy(item.original_name.slice());
+                        Some((to, original.into_owned()))
+                    }),
+                    _ => None,
+                })
+            })
+        });
+        match next {
+            Some((to, original)) => (path, imported) = (to, original),
+            None => break,
+        }
+    }
+    (path, imported)
 }
 
 /// The module-level `function` declaring `target`.
