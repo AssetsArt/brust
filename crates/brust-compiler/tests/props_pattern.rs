@@ -49,17 +49,10 @@ fn the_two_broken_shapes_fall_back_with_named_codes() {
     }
 }
 
-/// The same loss of meaning in neighbouring shapes: a call of a local function, a module constant, JSX and `typeof`.
+/// The same loss of meaning in neighbouring shapes: a call of a local function, JSX and `typeof`. (A module constant is folded, F153b: see `a_module_constant_default_is_folded`.)
 #[test]
 fn a_default_the_template_cannot_evaluate_falls_back() {
-    for f in [
-        "call-default.tsx",
-        "p1.tsx",
-        "p2.tsx",
-        "p4.tsx",
-        "p6.tsx",
-        "p7.tsx",
-    ] {
+    for f in ["call-default.tsx", "p2.tsx", "p4.tsx", "p6.tsx", "p7.tsx"] {
         let (ir, jinja) = compile(f);
         assert!(
             rules(&ir).contains(&"prop-default-shape"),
@@ -69,6 +62,19 @@ fn a_default_the_template_cannot_evaluate_falls_back() {
         assert!(is_react(&ir), "{f}: {:?}", ir.tier);
         assert!(!jinja.contains("else none"), "{f}: {jinja}");
     }
+}
+
+/// F153b: `const D = 'dd'` as a default is the value `dd` in the template (it printed as an unbound name before).
+#[test]
+fn a_module_constant_default_is_folded() {
+    let (ir, jinja) = compile("p1.tsx");
+    assert!(
+        !is_react(&ir) && rules(&ir).is_empty(),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
+    assert!(jinja.contains("\"dd\""), "{jinja}");
 }
 
 /// Defaults the template prints correctly keep their tier: literals, an earlier prop, supported calls, an arrow, a rename.

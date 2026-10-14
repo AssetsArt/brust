@@ -21,7 +21,7 @@ use js_ast::OpCode;
 use js_ast::b::B;
 use js_ast::expr::Data as E;
 use js_ast::stmt::Data as S;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Array methods that return the elements (or a new array of them) without changing the array.
 const PASS_THROUGH: &[&str] = &["map", "filter", "find", "slice", "concat", "at"];
@@ -36,7 +36,39 @@ pub fn unsafe_to_fold(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u
         aliases: Vec::new(),
         ret_esc: true,
         writing: false,
+        lit_objects: HashMap::new(),
+        lit_prims: HashSet::new(),
     };
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            if let S::SLocal(l) = &stmt.data
+                && matches!(l.kind, js_ast::S::Kind::KConst)
+            {
+                for d in l.decls.iter() {
+                    if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
+                        && matches!(v.data, E::EObject(_))
+                    {
+                        s.lit_objects.insert(id.r#ref.inner_index(), *v);
+                    }
+                }
+            }
+        }
+    }
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            if let S::SLocal(l) = &stmt.data
+                && matches!(l.kind, js_ast::S::Kind::KConst)
+            {
+                for d in l.decls.iter() {
+                    if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
+                        && (is_primitive(v) || s.reads_literal(v))
+                    {
+                        s.lit_prims.insert(id.r#ref.inner_index());
+                    }
+                }
+            }
+        }
+    }
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
             s.stmt(stmt);
@@ -64,9 +96,82 @@ struct Scan<'x, 'a> {
     ret_esc: bool,
     /// The expression being visited is the target of a write: even `.length` is a mutation.
     writing: bool,
+    /// Module-level `const X = { … }` object literals, by binding: a member chain read from one that ends in a
+    /// literal is a primitive, which aliases nothing (`const D = X.a` does not make `X` escape).
+    lit_objects: HashMap<u32, js_ast::Expr>,
+    /// Module-level `const`s holding a primitive literal (or reading one from a literal object): a use of one that
+    /// lands anywhere carries no object, so it is never an escape.
+    lit_prims: HashSet<u32>,
+}
+
+fn is_primitive(e: &js_ast::Expr) -> bool {
+    matches!(
+        e.data,
+        E::ENumber(_) | E::EString(_) | E::EBoolean(_) | E::ENull(_)
+    )
 }
 
 impl Scan<'_, '_> {
+    /// `e` (`X.a.b`) reads a primitive literal out of a module-level object literal.
+    fn reads_literal(&self, e: &js_ast::Expr) -> bool {
+        fn leaf(s: &Scan<'_, '_>, e: &js_ast::Expr, depth: u32) -> Option<js_ast::Expr> {
+            if depth > 8 {
+                return None;
+            }
+            let E::EDot(d) = &e.data else {
+                return match &e.data {
+                    E::EIdentifier(id) => s.lit_objects.get(&id.ref_.inner_index()).copied(),
+                    _ => None,
+                };
+            };
+            let E::EObject(o) = &leaf(s, &d.target, depth + 1)?.data else {
+                return None;
+            };
+            o.properties
+                .iter()
+                .rev()
+                .find(|p| {
+                    p.key.as_ref().is_some_and(
+                        |k| matches!(&k.data, E::EString(k) if k.slice8() == d.name.slice()),
+                    )
+                })
+                .and_then(|p| p.value)
+        }
+        matches!(&e.data, E::EDot(_)) && leaf(self, e, 0).is_some_and(|v| is_primitive(&v))
+    }
+
+    /// `Object.values(X)` / `keys` / `entries` of a module-level object literal whose values are all primitive
+    /// literals: an array of primitives, which aliases nothing.
+    fn reads_literal_entries(&self, e: &js_ast::Expr) -> bool {
+        let E::ECall(c) = &e.data else {
+            return false;
+        };
+        let E::EDot(d) = &c.target.data else {
+            return false;
+        };
+        if !self.is_named(&d.target, "Object")
+            || !matches!(d.name.slice(), b"keys" | b"entries" | b"values")
+        {
+            return false;
+        }
+        let [a] = c.args.as_slice() else {
+            return false;
+        };
+        let E::EIdentifier(id) = &a.data else {
+            return false;
+        };
+        let Some(E::EObject(o)) = self
+            .lit_objects
+            .get(&id.ref_.inner_index())
+            .map(|x| &x.data)
+        else {
+            return false;
+        };
+        o.properties
+            .iter()
+            .all(|p| p.value.as_ref().is_some_and(is_primitive))
+    }
+
     fn mark(&mut self, r: js_ast::Ref) {
         self.bad.insert(r.inner_index());
     }
@@ -126,7 +231,7 @@ impl Scan<'_, '_> {
     fn expr(&mut self, e: &js_ast::Expr, esc: bool) {
         match &e.data {
             E::EIdentifier(id) => {
-                if esc {
+                if esc && !self.lit_prims.contains(&id.ref_.inner_index()) {
                     self.mark(id.ref_)
                 }
             }
@@ -334,7 +439,9 @@ impl Scan<'_, '_> {
             S::SLocal(l) => {
                 for d in l.decls.iter() {
                     if let Some(v) = &d.value {
-                        self.expr(v, true);
+                        let primitive = matches!(l.kind, js_ast::S::Kind::KConst)
+                            && (self.reads_literal(v) || self.reads_literal_entries(v));
+                        self.expr(v, !primitive);
                     }
                 }
             }
