@@ -16,6 +16,7 @@
       "default": null
     }
   ],
+  "holds_island": true,
   "state": [],
   "derived": [],
   "effects": [],

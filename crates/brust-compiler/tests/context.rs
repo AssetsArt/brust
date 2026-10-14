@@ -316,3 +316,28 @@ fn a_context_declared_in_a_shared_module_stays_react() {
         }
     }
 }
+
+/// Mellow F3 (lead ruling): an island under a Provider that is lowered away would hydrate standalone and read the
+/// context DEFAULT. Any island under an active frame (directly, through a static wrapper, or reading the context from
+/// another module) keeps the page React; an island BESIDE the Provider does not, and a Provider with none still lowers.
+#[test]
+fn an_island_under_a_lowered_provider_keeps_the_page_react() {
+    for f in ["island-under.tsx", "island-cross.tsx", "island-wrapped.tsx"] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"context-island"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+    for f in ["island-beside.tsx", "react-basic.tsx"] {
+        let (ir, _) = page(f);
+        assert!(
+            !rules(&ir).contains(&"context-island"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(!is_react(&ir), "{f}: {:?} {:?}", ir.tier, ir.diagnostics);
+    }
+}

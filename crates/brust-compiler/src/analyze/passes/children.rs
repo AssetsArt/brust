@@ -68,6 +68,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         handlers: Vec::new(),
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
         absent: BTreeSet::new(),
+        holds_island: false,
         foreign: Default::default(),
     }
 }
@@ -175,6 +176,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.instances.extend(w.instances);
     ir.build_eval_instances.extend(w.eval_instances);
     ir.folded_instances.extend(w.folded_instances);
+    ir.holds_island |= w.holds_island;
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.jobs.extend(w.jobs);
@@ -223,6 +225,8 @@ struct Walker<'s, 'c> {
     own_named: BTreeSet<String>,
     /// Keys this component's own call sites must not pass (`ComponentIR::absent_props`, F153c).
     absent: BTreeSet<String>,
+    /// S2 F3: a child of this template is a React island, or holds one.
+    holds_island: bool,
     /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
     /// of its module scope in this component's jobs, the component, the names).
     foreign: std::cell::RefCell<ForeignModules>,
@@ -813,7 +817,23 @@ impl Walker<'_, '_> {
                 };
                 // A React island (and what it receives as children or element props) renders with React's own
                 // context at run time: nothing in its subtree is read here, and it provides nothing at compile time.
-                if !matches!(cir.tier, Tier::Static | Tier::Native) {
+                let island = !matches!(cir.tier, Tier::Static | Tier::Native);
+                // F3 (fail closed): a Provider that is lowered away no longer shares a React tree with an island
+                // under it, which would hydrate standalone and read the context DEFAULT. Any island (or a static
+                // child holding one) under an active frame, or inside a Provider's own tree, keeps the page React.
+                if ((island || cir.holds_island) && !frames.is_empty())
+                    || (!island && cir.holds_island && !cir.provides.is_empty())
+                {
+                    diags.push(Diagnostic::fallback(
+                        "context-island",
+                        format!(
+                            "<{name}> is, or holds, a React island under a context Provider that is rendered natively; an island would not see the Provider's value"
+                        ),
+                        *loc,
+                        "keep the island outside the Provider, or render the page with React",
+                    ));
+                }
+                if island {
                     return;
                 }
                 // Consumer: each field it reads comes from the nearest frame of its context, else bubbles up.
@@ -1791,6 +1811,11 @@ impl Walker<'_, '_> {
             }
         };
         *tier = child.tier.clone();
+        if !matches!(child.tier, Tier::Static | Tier::Native)
+            || child.ir.as_ref().is_some_and(|c| c.holds_island)
+        {
+            self.holds_island = true;
+        }
         // R34.64: a `ref` at the call site of a `forwardRef` component reaches an element React attaches it to; a
         // static or native render has none to give it.
         // F153c: passing this component's own forwarded ref on is React's `ref` chain; it ends on a host element

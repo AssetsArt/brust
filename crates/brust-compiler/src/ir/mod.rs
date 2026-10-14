@@ -239,6 +239,10 @@ pub struct ComponentIR {
     /// The context fields this component reads, each as a hidden prop (see `CtxUse`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ctx_uses: Vec<CtxUse>,
+    /// This component's rendered tree holds a React island (a React-tier child, or a static child that does): such a
+    /// subtree hydrates standalone, so a lowered context Provider above it cannot reach it (S2, F3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub holds_island: bool,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -354,6 +358,7 @@ impl ComponentIR {
             absent_props: Vec::new(),
             provides: Vec::new(),
             ctx_uses: Vec::new(),
+            holds_island: false,
             state: vec![],
             derived: vec![],
             effects: vec![],

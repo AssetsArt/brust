@@ -7,6 +7,8 @@ import { join } from 'node:path'
 import { FIXTURE, repo } from './paths.ts'
 
 const PAGES = ['ctx-progress-basic', 'ctx-progress-max', 'ctx-progress-indeterminate', 'ctx-progress-invalid']
+// F3: islands under a Provider keep the page React (the island hydrates, so scripts are expected and markup is React's own).
+const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross']
 const ROWS = join(FIXTURE, '.rows')
 const ENTRY = '.rows/ctx-parity-routes.tsx'
 const bin = join(repo, 'packages/brust/bin/brust')
@@ -19,8 +21,9 @@ const camel = (s: string) => s.replace(/(^|-)(\w)/g, (_, __, c: string) => c.toU
 
 beforeAll(async () => {
   mkdirSync(ROWS, { recursive: true })
-  const imports = PAGES.map((p) => `import ${camel(p)}Page from "../repro/${p}"`).join('\n')
-  const routes = PAGES.map((p) => `  { path: "/${p}", Component: ${camel(p)}Page },`).join('\n')
+  const ALL = [...PAGES, ...ISLAND_PAGES]
+  const imports = ALL.map((p) => `import ${camel(p)}Page from "../repro/${p}"`).join('\n')
+  const routes = ALL.map((p) => `  { path: "/${p}", Component: ${camel(p)}Page },`).join('\n')
   writeFileSync(join(FIXTURE, ENTRY), `import { defineRoutes } from "@brust/core/routes"\n${imports}\nexport const routes = defineRoutes([\n${routes}\n])\n`)
   const b = Bun.spawnSync([process.execPath, bin, 'build', ENTRY, '--out-dir', '.rows/dist-ctx-parity'], { cwd: FIXTURE, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}${b.stdout.toString()}`)
@@ -83,5 +86,22 @@ for (const id of PAGES) {
     const html = await r.text()
     expect(html).not.toMatch(/<script[^>]+src=/) // a static page ships no component JS
     expect(normalise(html)).toContain(react)
+  }, 60_000)
+}
+
+const plain = (h: string) => normalise(h.replace(/<!-- -->/g, ''))
+for (const id of ISLAND_PAGES) {
+  test(`${id}: an island under a Provider reads the Provider's value exactly as React does`, async () => {
+    const mod = (await import(join(FIXTURE, 'repro', `${id}.tsx`))) as { default: () => unknown }
+    const { renderToString } = await fromFixture<typeof import('react-dom/server')>('react-dom/server')
+    const { createElement } = await fromFixture<typeof import('react')>('react')
+    const react = plain(renderToString(createElement(mod.default as never)))
+    const r = await fetch(`${base}/${id}`)
+    expect(r.status).toBe(200)
+    const html = plain(await r.text())
+    expect(html).toContain(react)
+    // The value React reads: the Provider's for the same-module island, the island module's own default for the other.
+    expect(html).toContain(id === 'ctx-island-same' ? 'from-panel' : 'default')
+    expect(html).not.toContain(id === 'ctx-island-same' ? '>default<' : '>from-panel<')
   }, 60_000)
 }
