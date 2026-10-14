@@ -217,8 +217,20 @@ pub struct BuildEvalInstance {
     /// Relative imports of the job module the evaluation replaces with a folded constant (rule 3).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stubs: Vec<EvalStub>,
+    /// The job modules of the children fused into this child's job (R34.96), each with its own stubs:
+    /// the evaluation stages them too, since the child's job imports them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fused: Vec<FusedEvalJob>,
     pub line: u32,
     pub col: u32,
+}
+
+/// A fused child's job module a build-evaluated job imports (R34.96, A1).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FusedEvalJob {
+    pub child_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stubs: Vec<EvalStub>,
 }
 
 /// An import of a job module that build evaluation serves from `code` instead of the module's file:
@@ -253,6 +265,13 @@ pub struct FusedInstance {
     pub inputs: std::collections::BTreeMap<String, FusedInput>,
     /// The child's slot -> this component's job output that carries it (`_f<child>_<ordinal>_<slot>`).
     pub outputs: std::collections::BTreeMap<String, String>,
+    /// Why the child's job may not run at build (`build_eval::instance_job` on the child, A1); `None` when
+    /// it may, and then this component's job may too only if every fused child's may.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_refused: Option<String>,
+    /// The child job's imports that build evaluation serves folded (`instance_job`'s stubs for the child).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stubs: Vec<EvalStub>,
 }
 
 /// Where a fused child's job input comes from (R34.96 v1, ruling T1: no JS expressions).

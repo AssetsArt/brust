@@ -218,6 +218,20 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
         ir.id
     );
     out.push_str(&import_lines(&imports));
+    // R34.96: the job modules of the fused children, one import per child id (the bundler resolves
+    // `brust-job:<id>` to that component's own job module).
+    let fused_mods: Vec<&str> = ir.fused.iter().fold(Vec::new(), |mut v, f| {
+        if !v.contains(&f.child_id.as_str()) {
+            v.push(f.child_id.as_str());
+        }
+        v
+    });
+    for (i, id) in fused_mods.iter().enumerate() {
+        out.push_str(&format!(
+            "import {{ precompute as __fj{i} }} from {}\n",
+            js_string(&format!("brust-job:{id}"))
+        ));
+    }
     out.push_str(&module);
     out.push_str(&format!(
         "export const inputs = [{}] as const\n",
@@ -320,15 +334,78 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
         entries.push((slot_num(slot), format!("{slot}: {name}")));
     }
     entries.sort_by_key(|e| e.0);
+    let own = entries
+        .into_iter()
+        .map(|e| e.1)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if ir.fused.is_empty() {
+        out.push_str(&format!("  return {{ {own} }}\n}}\n"));
+        return Some(out);
+    }
+    // R34.96: each fused child's job runs after this component's own slots, with the inputs the
+    // analysis bound; its slots come back under this job's output names.
+    out.push_str(&format!("  const __own = {{ {own} }}\n"));
+    let mut fused_out: Vec<String> = Vec::new();
+    for (n, f) in ir.fused.iter().enumerate() {
+        let m = fused_mods.iter().position(|id| *id == f.child_id)?;
+        out.push_str(&format!(
+            "  const __f{n} = __fj{m}({{ {} }})\n",
+            fused_args(&f.inputs)
+        ));
+        for (slot, name) in &f.outputs {
+            fused_out.push(format!("{}: __f{n}[{}]", js_string(name), js_string(slot)));
+        }
+    }
     out.push_str(&format!(
-        "  return {{ {} }}\n}}\n",
-        entries
-            .into_iter()
-            .map(|e| e.1)
-            .collect::<Vec<_>>()
-            .join(", ")
+        "  return {{ ...__own, {} }}\n}}\n",
+        fused_out.join(", ")
     ));
     Some(out)
+}
+
+/// The props object a fused child's job is called with (R34.96): an `Undefined` input is left out, so
+/// the child's destructuring default applies (A3); a literal keeps `null`; a prop reads this
+/// component's props as the call site's JSX did; a slot is this component's own result.
+fn fused_args(inputs: &std::collections::BTreeMap<String, crate::ir::FusedInput>) -> String {
+    use crate::ir::FusedInput;
+    inputs
+        .iter()
+        .filter_map(|(k, v)| {
+            let js = match v {
+                FusedInput::Undefined => return None,
+                FusedInput::Literal { value } => {
+                    serde_json::to_string(value).unwrap_or_else(|_| "undefined".into())
+                }
+                FusedInput::Slot { name } => format!("__own[{}]", js_string(name)),
+                FusedInput::Prop { path } => props_path_js(path),
+            };
+            Some(format!("{}: {js}", js_string(k)))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `config.size` / `items[0].id` as a read of the job's `props` (`props["config"]["size"]`): every
+/// segment is printed as a string or number index, never as code.
+fn props_path_js(path: &str) -> String {
+    let mut js = String::from("props");
+    for part in path.split('.') {
+        let (name, rest) = part.split_once('[').map_or((part, ""), |(n, r)| (n, r));
+        if !name.is_empty() {
+            js.push_str(&format!("[{}]", js_string(name)));
+        }
+        for idx in rest.split('[') {
+            let idx = idx.trim_end_matches(']');
+            if !idx.is_empty() {
+                match idx.parse::<u64>() {
+                    Ok(i) => js.push_str(&format!("[{i}]")),
+                    Err(_) => js.push_str(&format!("[{}]", js_string(idx))),
+                }
+            }
+        }
+    }
+    js
 }
 
 /// The build-time evaluation module (L2): one thunk per `ir.build_eval` slot, keyed by

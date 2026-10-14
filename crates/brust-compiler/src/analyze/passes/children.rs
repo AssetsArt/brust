@@ -205,6 +205,8 @@ struct Child {
     job_eval: Option<Result<Vec<crate::ir::EvalStub>, String>>,
     /// The child's job outputs (`_sN`), all of which an evaluated instance must get.
     job_outputs: Vec<String>,
+    /// The job modules fused into the child's job (R34.96), which an evaluated instance stages too.
+    job_fused: Vec<crate::ir::FusedEvalJob>,
     /// Keys the call site must not write at all (`ComponentIR::unwritten_props`).
     unwritten: Vec<String>,
 }
@@ -850,6 +852,7 @@ impl Walker<'_, '_> {
             absent: Vec::new(),
             job_eval: None,
             job_outputs: Vec::new(),
+            job_fused: Vec::new(),
             unwritten: Vec::new(),
         }
     }
@@ -896,6 +899,7 @@ impl Walker<'_, '_> {
                     absent: Vec::new(),
                     job_eval: None,
                     job_outputs: Vec::new(),
+                    job_fused: Vec::new(),
                     unwritten: Vec::new(),
                 };
             }
@@ -1058,6 +1062,7 @@ impl Walker<'_, '_> {
                         absent: Vec::new(),
                         job_eval: None,
                         job_outputs: Vec::new(),
+                        job_fused: Vec::new(),
                         unwritten: Vec::new(),
                     };
                 };
@@ -1110,6 +1115,7 @@ impl Walker<'_, '_> {
         let mut absent = Vec::new();
         let mut job_eval = None;
         let mut job_outputs = Vec::new();
+        let mut job_fused = Vec::new();
         let mut unwritten = Vec::new();
         let tier = match lookup {
             Lookup::Compiled(ir) => {
@@ -1160,6 +1166,14 @@ impl Walker<'_, '_> {
                 if fed && let Some(p) = &path {
                     job_eval = Some(super::build_eval::instance_job(&ir, p, self.ctx.opts));
                     job_outputs = ir.jobs.iter().flat_map(|j| j.outputs.clone()).collect();
+                    job_fused = ir
+                        .fused
+                        .iter()
+                        .map(|f| crate::ir::FusedEvalJob {
+                            child_id: f.child_id.clone(),
+                            stubs: f.stubs.clone(),
+                        })
+                        .collect();
                 }
                 use_id = ir.use_id_slots > 0;
                 // An island's ssr render over the wrapper's props is computed once too (L4).
@@ -1218,6 +1232,7 @@ impl Walker<'_, '_> {
             absent,
             job_eval,
             job_outputs,
+            job_fused,
             unwritten,
         }
     }
@@ -2339,6 +2354,7 @@ impl Walker<'_, '_> {
             ),
             outputs: child.job_outputs.clone(),
             stubs,
+            fused: child.job_fused.clone(),
             line,
             col,
         });
