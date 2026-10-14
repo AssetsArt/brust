@@ -9,10 +9,17 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 
 fn page(file: &str) -> ComponentIR {
+    page_with(file, &[])
+}
+
+/// `page`, with `route_roots` (paths relative to the repo root) declared as route components.
+fn page_with(file: &str, route_roots: &[&str]) -> ComponentIR {
     let file = file.to_string();
+    let route_roots = route_roots.iter().map(|s| s.to_string()).collect();
     run_on_compiler_thread(move || {
         let opts = AnalyzeOptions {
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            route_roots,
             ..Default::default()
         };
         let out = compile_tree(
@@ -297,4 +304,62 @@ fn a_dollar_prop_on_a_nested_component_does_not_lower() {
     let ir = page("x-nested.tsx");
     let d = rule(&ir, "island-children").unwrap_or_else(|| panic!("{:?}", ir.diagnostics));
     assert!(d.message.contains("reserves"), "{}", d.message);
+}
+
+/// R34.73 (revive-hardening, P2): a non-literal spread of data onto an island demotes the page to
+/// React (`spread-props`), so the data is never an island instance's props: no `$x` literal, no
+/// revive of `children`.
+#[test]
+fn a_nonliteral_spread_onto_an_island_never_reaches_the_revive() {
+    for f in ["x-spread-data.tsx", "x-spread-data-children.tsx"] {
+        let ir = page(f);
+        assert!(
+            rule(&ir, "spread-props").is_some(),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+        assert!(literal(&ir, "$x").is_empty(), "{f}");
+    }
+}
+
+const HOST: &str = "crates/brust-compiler/tests/fixtures/island-slots/host-default.tsx";
+
+/// R34.69 (F158): a component that is a page or layout takes request data as props, so lowered JSX from a
+/// caller is never handed to it: the caller falls back to React (never a build error), whether the JSX is
+/// children or an element prop. The same page lowers when the component is not a route component.
+#[test]
+fn a_route_component_never_receives_lowered_jsx() {
+    for f in ["root-children.tsx", "root-elprop.tsx"] {
+        let open = page(f);
+        assert!(
+            !is_react(&open) && rule(&open, "revive-host-route-root").is_none(),
+            "{f} (control): {:?}",
+            open.diagnostics
+        );
+        let ir = page_with(f, &[HOST]);
+        let d = rule(&ir, "revive-host-route-root")
+            .unwrap_or_else(|| panic!("{f}: {:?}", ir.diagnostics));
+        assert!(d.message.contains("page or layout"), "{f}: {}", d.message);
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+        assert!(
+            literal(&ir, "$x").is_empty() && literal(&ir, "children").is_empty(),
+            "{f}"
+        );
+    }
+}
+
+/// R34.69: the check is by component, not by file: a same-file island of a route file still takes lowered children.
+#[test]
+fn a_same_file_island_of_a_route_file_still_takes_lowered_children() {
+    let ir = page_with(
+        "local-host.tsx",
+        &["crates/brust-compiler/tests/fixtures/island-slots/local-host.tsx"],
+    );
+    assert!(
+        rule(&ir, "revive-host-route-root").is_none(),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(!is_react(&ir), "{:?}", ir.tier);
 }
