@@ -47,6 +47,7 @@ fn diag(d: &Diagnostic) -> NapiDiagnostic {
 }
 
 /// `compile_tree` on the compiler thread; `path` is relative to `root` so ids are stable.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_tree_impl(
     path: &str,
     root: &str,
@@ -128,6 +129,7 @@ pub(crate) fn compile_tree_impl(
 /// map of each `*.module.css`, keyed by its path relative to `root`; `styles.x` folds to the literal class.
 /// `packages` (F153c): the JSON resolution map of the package sources the build wrote (`pkg-src.ts`).
 #[napi]
+#[allow(clippy::too_many_arguments)]
 pub fn compile_tree(
     path: String,
     root: String,
