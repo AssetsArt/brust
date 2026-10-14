@@ -84,3 +84,43 @@ fn printable_defaults_and_renames_still_compile() {
         );
     }
 }
+
+/// F161 follow-up (props-pattern N1, N2): a prop named like a template keyword or like a name the template binds itself
+/// falls back with `prop-jinja-name`, and the message says which of the two it is (not "not a plain identifier").
+#[test]
+fn a_prop_named_like_a_template_name_falls_back_with_its_own_code() {
+    for (f, key, words) in [
+        ("jn-loop.tsx", "loop", "uses itself"),
+        ("jn-range.tsx", "range", "uses itself"),
+        ("jn-namespace.tsx", "namespace", "uses itself"),
+        ("jn-caller.tsx", "caller", "uses itself"),
+        ("jn-self.tsx", "self", "uses itself"),
+        ("jn-none.tsx", "none", "keyword"),
+    ] {
+        let (ir, _) = compile(f);
+        let d = ir
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "prop-jinja-name")
+            .unwrap_or_else(|| panic!("{f}: {:?}", ir.diagnostics));
+        assert!(
+            d.message.contains(&format!("`{key}`")) && d.message.contains(words),
+            "{f}: {}",
+            d.message
+        );
+        assert!(
+            !d.message.contains("plain identifier"),
+            "{f}: {}",
+            d.message
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+    // The quoted key keeps its own code and wording.
+    let (ir, _) = compile("quoted-key.tsx");
+    let d = ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "prop-quoted-key")
+        .expect("quoted");
+    assert!(d.message.contains("plain identifier"), "{}", d.message);
+}
