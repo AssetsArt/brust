@@ -1631,6 +1631,29 @@ impl Walker<'_, '_> {
                         "map over a list that comes from props (a loader), or keep the page a React island",
                     ));
                 }
+                if child.fed && !self.ctx.is_root {
+                    // F53 (R34.97): this component is inlined into its callers, and the server feeds only the
+                    // route component's own instances: the grandchild's slot key and record do not exist yet.
+                    // An island, never the `nested-instance` build error of the lowering.
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "nested-instance",
+                        format!(
+                            "<{name}> has a job or useId and sits inside a component that is inlined into its callers, which the server cannot feed per instance"
+                        ),
+                        *loc,
+                        "use it directly in the route component, or keep this component interactive with React",
+                    ));
+                }
+                if child.fed && !row_invariant && self.loop_sources.len() > 1 {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "nested-instance",
+                        format!(
+                            "<{name}> has a job or useId and sits inside nested lists, which the server cannot feed per row"
+                        ),
+                        *loc,
+                        "flatten the lists or render the child per row in its own component",
+                    ));
+                }
                 if child.fed {
                     let mut record = InstanceRecord {
                         child_id: child_id.clone(),
@@ -1646,6 +1669,7 @@ impl Walker<'_, '_> {
                         exprs: Default::default(),
                         rows_literal,
                     };
+                    let child_name = name.clone();
                     for (name, v) in kept.iter() {
                         if matches!(v, Expr::ClientOnly { .. }) {
                             continue;
@@ -1661,6 +1685,16 @@ impl Walker<'_, '_> {
                         } else if let Some(e) = self.instance_expr(v) {
                             record.exprs.insert(name.clone(), e);
                         } else {
+                            // The manifest has no binding for this value (a job's output, a call): its
+                            // `instance-prop-path` build error becomes an island here (F164, R34.97).
+                            self.diagnostics.push(Diagnostic::fallback(
+                                "instance-prop-path",
+                                format!(
+                                    "the prop `{name}` of <{child_name}> is not a props path, a literal or a template expression over props, and <{child_name}> has a job or useId the server feeds per instance"
+                                ),
+                                *loc,
+                                "compute it in a loader and pass it as a prop, or keep the page a React island",
+                            ));
                             record.props.insert(name.clone(), None);
                         }
                     }
