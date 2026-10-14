@@ -4,6 +4,7 @@
 use crate::analyze::component::AnalyzeOptions;
 use crate::analyze::expr::{Js, Reader, Walk, loc_of, print_js_with};
 use crate::analyze::names::{Alias, Aliases, NameTable};
+use crate::analyze::plain_fn;
 use crate::ir::{
     ArrowBody, DerivedDecl, DiagClass, Diagnostic, EffectDecl, Expr, HandlerDecl, IdentKind,
     Literal, PolyTag, PropDecl, RawExpr, RawKind, RefDecl, StateDecl, StoreUse, UnOp, line_col,
@@ -92,14 +93,20 @@ pub fn react_hook_name(call: &js_ast::E::Call, names: &NameTable<'_>) -> Option<
     react_hook_target(&call.target, names)
 }
 
+fn react_named(names: &NameTable<'_>, r: js_ast::Ref) -> Option<String> {
+    match names.import_of(r) {
+        Some(("react", imported)) if imported != "default" && imported != "*" => {
+            Some(imported.to_string())
+        }
+        _ => None,
+    }
+}
+
 fn react_hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<String> {
     match &target.data {
-        E::EImportIdentifier(id) => match names.import_of(id.ref_) {
-            Some(("react", imported)) if imported != "default" && imported != "*" => {
-                Some(imported.to_string())
-            }
-            _ => None,
-        },
+        E::EImportIdentifier(id) => react_named(names, id.ref_),
+        // A module const read as React's own hook (`names.rs`, `collect_react_hook_aliases`).
+        E::EIdentifier(id) => react_named(names, id.ref_),
         // `React.useState` on the default or namespace import of `react`.
         E::EDot(d) => {
             let r = match &d.target.data {
@@ -756,7 +763,7 @@ fn dev_only_block(stmt: &js_ast::Stmt, rest: &[js_ast::Stmt], names: &NameTable<
                 };
                 if react_hook_target(&c.target, names).as_deref() != Some("useRef")
                     || c.args.len() > 1
-                    || !c.args.iter().all(|a| pure_expr(a))
+                    || !c.args.iter().all(pure_expr)
                 {
                     return false;
                 }
@@ -1331,7 +1338,13 @@ fn read_expr_stmt(
         }
     }
     match hook {
-        Some((hook, call, true)) if hook == "useEffect" || hook == "useLayoutEffect" => {
+        Some((hook, call, true))
+            if hook == "useEffect"
+                || hook == "useLayoutEffect"
+                // R34.105: inside a custom hook only (a library's own bookkeeping effect); written in a
+                // component it stays the unsupported hook the spec lists (§3).
+                || (hook == "useInsertionEffect" && !out.inline.stack.is_empty()) =>
+        {
             let args: Vec<js_ast::Expr> = call.args.to_vec();
             let Some(f) = args.first() else {
                 return out.fallback(
@@ -1349,7 +1362,7 @@ fn read_expr_stmt(
             out.effects.push(EffectDecl {
                 body,
                 deps,
-                layout: hook == "useLayoutEffect",
+                layout: hook != "useEffect",
             });
         }
         Some((_, call, _)) if is_use_store(&call.target, r.names) => out.fallback(
@@ -1759,6 +1772,7 @@ fn read_hook(
         );
     }
     // Callees of hook calls never reach the output: inlined, read as React hooks, or a fallback.
+    let mut helpers: Vec<(js_ast::Ref, js_ast::Stmt, &js_ast::G::Fn)> = Vec::new();
     let mut callees: Vec<js_ast::Ref> = Vec::new();
     for c in &w.calls {
         let E::ECall(call) = &c.data else { continue };
@@ -1785,6 +1799,19 @@ fn read_hook(
         }
         let (_, kind) = hnames.kind_of(*u);
         let spelled = hnames.name(*u);
+        // R34.105: a module function of the hook's file that is proven plain (`plain_fn.rs`) and reads nothing but its
+        // own parameters, locals and globals is carried into the component under a generated name.
+        if imported
+            && !matches!(kind, IdentKind::Global)
+            && let Some((stmt, f)) = module_fn(hm.ast, &hnames, *u)
+            && plain_fn::plain_fns(hm.ast, &hnames).contains(&spelled)
+            && self_contained(f, &hnames)
+        {
+            if !helpers.iter().any(|(h, _, _)| hnames.same(*h, *u)) {
+                helpers.push((*u, stmt, f));
+            }
+            continue;
+        }
         if spelled == "arguments" {
             return fail(
                 out,
@@ -1827,6 +1854,11 @@ fn read_hook(
     for d in &w.declared {
         if !locals.iter().any(|(l, _)| hnames.same(*l, *d)) {
             locals.push((*d, hnames.name(*d)));
+        }
+    }
+    for (h, _, _) in &helpers {
+        if !locals.iter().any(|(l, _)| hnames.same(*l, *h)) {
+            locals.push((*h, hnames.name(*h)));
         }
     }
     let suffix = clean_name(hook);
@@ -2006,6 +2038,13 @@ fn read_hook(
                 }),
             });
         }
+        for (h, stmt, f) in &helpers {
+            let e = hr.function_decl(stmt, f);
+            out.derived.push(DerivedDecl {
+                name: hr.names.name(*h),
+                expr: Expr::Raw(e),
+            });
+        }
         let returned = read_stmts(&body, &mut hr, out, hm);
         nested_hooks_in(func, &body, hr.names, out);
         out.diagnostics.append(&mut hr.diagnostics);
@@ -2051,6 +2090,47 @@ fn read_hook(
         return;
     }
     bind_result(r, out, site, returned);
+}
+
+/// The module-level `function` declaring `target`, with its statement.
+fn module_fn<'x>(
+    ast: &'x js_ast::Ast<'_>,
+    names: &NameTable<'_>,
+    target: js_ast::Ref,
+) -> Option<(js_ast::Stmt, &'x js_ast::G::Fn)> {
+    ast.parts.iter().find_map(|part| {
+        part.stmts.slice().iter().find_map(|s| match &s.data {
+            S::SFunction(f)
+                if f.func
+                    .name
+                    .as_ref()
+                    .is_some_and(|n| names.same(n.ref_, target)) =>
+            {
+                Some((*s, &f.func))
+            }
+            _ => None,
+        })
+    })
+}
+
+/// A function whose body reads only its own parameters and locals (and itself) and globals: it can be copied
+/// anywhere without the module around it.
+fn self_contained(f: &js_ast::G::Fn, names: &NameTable<'_>) -> bool {
+    let mut w = Walk::default();
+    if let Some(n) = &f.name {
+        w.declared.push(n.ref_);
+    }
+    for arg in f.args.slice() {
+        w.declare_binding(&arg.binding);
+        if let Some(d) = &arg.default {
+            w.expr(d);
+        }
+    }
+    w.stmts(f.body.stmts.slice());
+    w.used.iter().all(|u| {
+        w.declared.iter().any(|d| names.same(*d, *u))
+            || matches!(names.kind_of(*u).1, IdentKind::Global)
+    })
 }
 
 /// An argument that is a plain identifier is the caller's own binding.

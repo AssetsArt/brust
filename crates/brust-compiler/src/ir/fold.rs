@@ -427,6 +427,19 @@ impl<'a> FoldEnv<'a> {
                 },
                 "from",
             ) if g == "Array" => self.array_from(args),
+            // Pure string methods of no argument (R34.105: a library spells a name `' useX '.trim().toString()` so a
+            // bundler cannot read it). A string only: `toString` of a number or an array has other meanings.
+            (_, m @ ("trim" | "toString")) if args.is_empty() => {
+                let t = self.fold(target)?;
+                let V::Str(s) = t else {
+                    return Err(format!("`.{m}()` on {}", t.kind()));
+                };
+                Ok(V::Str(if m == "trim" {
+                    s.trim_matches(is_js_space).to_string()
+                } else {
+                    s
+                }))
+            }
             (_, "map") => {
                 let t = self.fold(target)?;
                 let V::Arr(items) = t else {
@@ -497,6 +510,30 @@ impl<'a> FoldEnv<'a> {
         }
         Ok(V::Arr(out))
     }
+}
+
+/// ECMAScript `WhiteSpace` and `LineTerminator` (what `String.prototype.trim` strips), which is not Rust's
+/// `char::is_whitespace`: U+FEFF is in, U+0085 is out.
+pub fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\u{9}'
+            | '\u{A}'
+            | '\u{B}'
+            | '\u{C}'
+            | '\u{D}'
+            | '\u{20}'
+            | '\u{A0}'
+            | '\u{1680}'
+            | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
 }
 
 /// Own members of `Object.prototype` a missing key must not be read as.
@@ -601,6 +638,24 @@ mod tests {
 
     fn json_num(n: i64) -> Value {
         Value::from(n)
+    }
+
+    #[test]
+    fn trim_and_to_string_fold_on_strings_only() {
+        let call = |t: RawExpr, m: &str| call(member(t, m), vec![]);
+        // JS whitespace, not Rust's: U+FEFF is trimmed, U+0085 is not.
+        assert_eq!(
+            fold(&call(call(st(" \u{FEFF}\t useX \n"), "trim"), "toString")),
+            Ok(V::Str("useX".into()))
+        );
+        assert_eq!(
+            fold(&call(st("\u{85}x"), "trim")),
+            Ok(V::Str("\u{85}x".into()))
+        );
+        // Not a string, or with an argument (`(255).toString(16)`): refused.
+        assert!(fold(&call(num(255.0), "toString")).is_err());
+        assert!(fold(&call(e(RawKind::Array(vec![])), "trim")).is_err());
+        assert!(fold(&self::call(member(st("a"), "toString"), vec![num(2.0)])).is_err());
     }
 
     #[test]

@@ -8,7 +8,7 @@ mod tests;
 
 pub use decls::*;
 pub use expr::*;
-pub use fold::{FoldEnv, V};
+pub use fold::{FoldEnv, V, is_js_space};
 pub use template::*;
 
 use serde::{Deserialize, Serialize};
