@@ -12,16 +12,16 @@
     "measured": 64,
     "analysisOnly": 0,
     "tier": {
-      "static": 57,
+      "static": 61,
       "native": 1,
-      "react": 6
+      "react": 2
     },
     "islands": 53,
     "pagesWithNoJs": 18,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
-      "max": 239
+      "max": 240
     },
     "libraries": {
       "packages": 76,
@@ -42,7 +42,7 @@
       "measuredRows": 43,
       "analysisOnlyRows": 0,
       "appComponents": 145,
-      "libraryComponents": 1
+      "libraryComponents": 151
     },
     {
       "blocker": "fallback:spread-props",
@@ -51,25 +51,25 @@
       "measuredRows": 41,
       "analysisOnlyRows": 0,
       "appComponents": 141,
-      "libraryComponents": 18
+      "libraryComponents": 183
     },
     {
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 26,
+      "measuredRows": 25,
       "analysisOnlyRows": 0,
-      "appComponents": 36,
-      "libraryComponents": 15
+      "appComponents": 33,
+      "libraryComponents": 73
     },
     {
       "blocker": "fallback:hook-unsupported",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 5,
+      "measuredRows": 6,
       "analysisOnlyRows": 0,
-      "appComponents": 11,
-      "libraryComponents": 28
+      "appComponents": 12,
+      "libraryComponents": 187
     },
     {
       "blocker": "fallback:member-tag",
@@ -78,16 +78,25 @@
       "measuredRows": 4,
       "analysisOnlyRows": 0,
       "appComponents": 4,
-      "libraryComponents": 5
+      "libraryComponents": 19
+    },
+    {
+      "blocker": "fallback:control-flow",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 3,
+      "analysisOnlyRows": 0,
+      "appComponents": 8,
+      "libraryComponents": 36
     },
     {
       "blocker": "fallback:jsx-expression",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
+      "measuredRows": 3,
       "analysisOnlyRows": 0,
-      "appComponents": 6,
-      "libraryComponents": 3
+      "appComponents": 3,
+      "libraryComponents": 6
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -99,22 +108,13 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:control-flow",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 2,
-      "analysisOnlyRows": 0,
-      "appComponents": 7,
-      "libraryComponents": 24
-    },
-    {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 9
+      "libraryComponents": 35
     },
     {
       "blocker": "fallback:child-component",
@@ -123,7 +123,16 @@
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 4
+      "libraryComponents": 6
+    },
+    {
+      "blocker": "fallback:hook-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 5
     },
     {
       "blocker": "fallback:body-shape",
@@ -132,7 +141,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 21
+      "libraryComponents": 184
     },
     {
       "blocker": "fallback:local-component",
@@ -141,7 +150,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 7
+      "libraryComponents": 20
     },
     {
       "blocker": "fallback:prop-pattern",
@@ -150,25 +159,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 6
-    },
-    {
-      "blocker": "fallback:hook-shape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 2
-    },
-    {
-      "blocker": "fallback:ref-shape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 2
+      "libraryComponents": 11
     },
     {
       "blocker": "fallback:browser-global",
@@ -177,7 +168,16 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 0
+      "libraryComponents": 9
+    },
+    {
+      "blocker": "fallback:ref-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 5
     },
     {
       "blocker": "fallback:event-capture",
@@ -232,6 +232,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 286
+    },
+    {
+      "blocker": "fallback:forwardref-ref",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 193
     },
     {
       "blocker": "useContext / use*Context",
@@ -339,6 +348,15 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
+      "libraryComponents": 9
+    },
+    {
+      "blocker": "fallback:ref-in-render",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
       "libraryComponents": 8
     },
     {
@@ -367,6 +385,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 2
+    },
+    {
+      "blocker": "fallback:raw-text-child",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 1
     }
   ],
   "rows": [
@@ -560,17 +587,16 @@
     {
       "id": "carousel",
       "basis": "measured",
-      "tier": "react",
+      "tier": "static",
       "islands": 1,
       "components": 9,
-      "reactComponents": 6,
+      "reactComponents": 5,
       "jsGzipKb": 96,
       "codes": [
         "control-flow",
         "event-capture",
         "external-component",
         "hook-unsupported",
-        "island-children",
         "member-tag",
         "ref-shape",
         "slot-dynamic",
@@ -580,15 +606,17 @@
     {
       "id": "chart",
       "basis": "measured",
-      "tier": "react",
+      "tier": "static",
       "islands": 1,
-      "components": 8,
+      "components": 9,
       "reactComponents": 8,
-      "jsGzipKb": 239,
+      "jsGzipKb": 240,
       "codes": [
+        "control-flow",
         "external-component",
+        "hook-shape",
+        "hook-unsupported",
         "island-children",
-        "jsx-expression",
         "local-component",
         "member-tag",
         "use-id-in-render"
@@ -670,7 +698,7 @@
       "islands": 1,
       "components": 23,
       "reactComponents": 18,
-      "jsGzipKb": 114,
+      "jsGzipKb": 102,
       "codes": [
         "external-component",
         "island-children",
@@ -987,10 +1015,10 @@
     {
       "id": "scroll-area",
       "basis": "measured",
-      "tier": "react",
+      "tier": "static",
       "islands": 1,
       "components": 10,
-      "reactComponents": 10,
+      "reactComponents": 9,
       "jsGzipKb": 92,
       "codes": [
         "external-component",
@@ -1042,10 +1070,10 @@
     {
       "id": "sidebar",
       "basis": "measured",
-      "tier": "react",
+      "tier": "static",
       "islands": 1,
       "components": 14,
-      "reactComponents": 7,
+      "reactComponents": 6,
       "jsGzipKb": 116,
       "codes": [
         "browser-global",

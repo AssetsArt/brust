@@ -99,11 +99,12 @@ export default function Shadcn({ summary, pinned, blockers, rows, blocks }: Shad
       </Lead>
 
       <h2 id="compiles">What compiles</h2>
-      {/* source: docs/plans/2026-10-13-shadcn.md R34.14–R34.19 (rest props, spread), R34.21–R34.27 (constant children), R34.28–R34.34 (asChild), R34.35–R34.41 (member tags); the release notes list the pull requests */}
+      {/* source: docs/plans/2026-10-13-shadcn.md R34.14–R34.19 (rest props, spread), R34.21–R34.27 (constant children), R34.28–R34.34 (asChild), R34.35–R34.41 (member tags), R34.49–R34.55 (constant lists and conditions), R34.63–R34.64 (forwardRef); the release notes list the pull requests */}
       <ul>
         <li><strong>Rest props and spread.</strong> <code>{'{'} className, ...props {'}'}</code> in the signature and <code>{'{'}...props{'}'}</code> on an element, with handlers that come through the spread.</li>
         <li><strong><code>asChild</code> and <code>Slot</code>.</strong> Decided where the component is used, as below.</li>
-        <li><strong>Constant children.</strong> Markup between the tags of a React island, when it is constant, travels into the island as data, so the page around it stays static.</li>
+        <li><strong>Constant children.</strong> Markup between the tags of a React island, when it is constant, travels into the island as data, so the page around it stays static. That includes a constant list (<code>[1, 2, 3].map(…)</code>, <code>Array.from({'{'} length: 4 {'}'})</code>), a constant condition and an element passed as a prop.</li>
+        <li><strong><code>forwardRef</code>.</strong> A component wrapped in <code>forwardRef</code> compiles; a forwarded <code>ref</code> on an HTML element is dropped, and any other use of it keeps the component on React.</li>
         <li><strong>Member tags.</strong> <code>&lt;DialogPrimitive.Root&gt;</code> resolves to the package export.</li>
         <li><strong>Components exported by name.</strong> A file with many components (<code>Card</code>, <code>CardHeader</code>, …) is fine; any of them may be an island.</li>
       </ul>

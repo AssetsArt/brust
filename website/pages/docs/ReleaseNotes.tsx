@@ -32,13 +32,13 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-7">2.0.0-alpha.7</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.6: #206 (per-instance-jobs PR1, F142) and #207 (island-prop-demotion, F138h); docs/shadcn-coverage.json (64 of 64 pages build) */}
+      {/* source: the pull requests merged after v2.0.0-alpha.6: #206–#212 (F142 PR1 and PR2, F138h, F153a, F157, F155, F153b part 1); docs/shadcn-coverage.json (64 of 64 pages build) */}
       <p>
-        Every page of the shadcn/ui fixture now builds, and a table of rows no longer needs React. See <a href="/docs/shadcn">shadcn/ui and React libraries</a> for the current numbers.
+        Every page of the shadcn/ui fixture now builds, lists and conditions made of constants no longer force a React island, and the largest page is smaller. See <a href="/docs/shadcn">shadcn/ui and React libraries</a> for the current numbers.
       </p>
 
       <h3>Upgrade note</h3>
-      {/* source: per-instance-jobs PR 2 (lane/per-instance-jobs @40a8db65, reviewed, not yet on main when this was written): the manifest format moves from version 2 to 3; the refusal text was produced by starting a version 2 manifest with that build (Dew, task per-instance-jobs). Check this line against crates/brust-core/src/manifest.rs once PR 2 is on main. */}
+      {/* source: PR #210 (F142 PR 2): MANIFEST_VERSION 2 to 3 in crates/brust-core/src/manifest.rs; the refusal text is that file's Version error, produced by starting a version 2 manifest with that build (Dew, task per-instance-jobs). */}
       <p>
         <strong>Rebuild your app after you upgrade.</strong> The build output (<code>dist/manifest.json</code>) changed format, from version 2 to 3. A build made with an earlier brust is refused when it starts:
       </p>
@@ -54,6 +54,26 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #206 lane/per-instance-jobs PR 1 (F142, R34.42): a fed instance whose job inputs are the same in every row of a list over a module constant or an inline array */}
         <li>
           <strong>Lists over a constant.</strong> A component rendered in a <code>.map</code> over a module constant or an inline array, whose props do not depend on the row, is rendered once per page instead of making the page a React island (<code>instance-list-path</code>). A table of rows built from a constant array is static.
+        </li>
+        {/* source: PR #210 lane/per-instance-jobs PR 2 (F142, R34.43): rows of a constant list ride the manifest (per-row-literal), hence manifest version 3 */}
+        <li>
+          <strong>A component fed by the row of a constant list.</strong> A component rendered in a <code>.map</code> over a module constant or inline array, whose props read the row, gets one job call per row from the literal instead of falling back. The served HTML of the started page equals the React build&rsquo;s.
+        </li>
+        {/* source: PR #209 lane/constant-slots (F157, R34.49–R34.55): a closed-subset folder, never runs your code */}
+        <li>
+          <strong>Constant lists, conditions and element props inside an island&rsquo;s children.</strong> <code>[1, 2, 3].map(n =&gt; &lt;li&gt;{'{'}n{'}'}&lt;/li&gt;)</code>, <code>Array.from({'{'} length: 4 {'}'}, …)</code>, a constant condition, and an element passed as a prop (<code>content={'{'}&lt;Tooltip /&gt;{'}'}</code>) are worked out at build time. The scroll-area, carousel, sidebar and chart pages stop being React pages, each keeping only its library island. A prop named <code>$…</code> on an island fails closed.
+        </li>
+        {/* source: PR #211 lane/esm-resolve (F155, R37.1–R37.4): staged bare imports resolve natively; one React copy across chunks is a test */}
+        <li>
+          <strong>Smaller island bundles.</strong> A package imported by a staged island is now resolved the way your own source is, so it is tree-shaken: the chart page goes from 324 to 240 KB gzip and the dialog page from 114 to 102 KB. One copy of React is bundled across island, runtime and job chunks, for the Bun build, the Cloudflare build and <code>--target static</code>.
+        </li>
+        {/* source: PR #212 lane/forwardref-components (F153b part 1, R34.63, R34.64): forwardRef components compile; refs drop on hosts */}
+        <li>
+          <strong><code>forwardRef</code> components.</strong> <code>const X = React.forwardRef(function X(props, ref) {'{'} … {'}'})</code>, an arrow callback, <code>export default forwardRef(…)</code> and alias exports (<code>export {'{'} X, X as Root {'}'}</code>) compile like any component. A forwarded <code>ref={'{'}ref{'}'}</code> on an HTML element is dropped; any other use of the ref (reading it, passing <code>ref</code> to a component, <code>useImperativeHandle</code>) keeps the component on React (<code>forwardref-ref</code>).
+        </li>
+        {/* source: PR #208 lane/jsx-runtime-call (F153a, R34.67): hand-written jsx() calls fall back */}
+        <li>
+          <strong>A hand-written <code>jsx()</code> call is no longer printed as an object.</strong> A call to <code>jsx</code>, <code>jsxs</code> or <code>jsxDEV</code> from <code>react/jsx-runtime</code> now falls back to React (<code>jsx-runtime-call</code>). Before, the page compiled static with the element object in its HTML.
         </li>
       </ul>
 
