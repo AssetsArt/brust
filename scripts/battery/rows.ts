@@ -516,7 +516,7 @@ export const rows: Row[] = [
   { id: 'e-jsx-runtime-call', category: 'E', authoring: 'a hand-written `jsx(…)` call from react/jsx-runtime (what compiled-JS packages contain)', expect: 'react',
     snippet: `import { jsx } from 'react/jsx-runtime'\nexport default function C({ cls }: any) { return jsx('div', { className: cls, children: 'x' }) }`,
     note: 'S3 R34.67: fails closed; read as an expression it would print an element object' },
-  { id: 'e-jsx-runtime-namespace', category: 'E', authoring: '`R.jsxs(…)` through a namespace import of the dev runtime', expect: 'react',
+  { id: 'e-jsx-runtime-namespace', category: 'E', authoring: '`R.jsxDEV(…)` through a namespace import of the dev runtime', expect: 'react',
     snippet: `import * as R from 'react/jsx-dev-runtime'\nexport default function C() { return R.jsxDEV('p', {}) }` },
   { id: 'e-jsx-runtime-local-name', category: 'E', authoring: 'a local function named `jsx` is not the runtime', expect: 'static',
     snippet: `const jsx = (s: string) => s\nexport default function C() { return <p>{jsx('a')}</p> }` },

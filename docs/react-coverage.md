@@ -232,7 +232,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-member-react-namespace | member of the react namespace (`<R.Fragment>`) | react | react | ssr | ok | fallback:member-tag |  |
 | e-member-island-prop | function prop on a member island (the existing island-prop refusal) | error | error | 0 | refused | error:island-prop, fallback:external-component |  |
 | e-jsx-runtime-call | a hand-written `jsx(…)` call from react/jsx-runtime (what compiled-JS packages contain) | react | react | ssr | ok | fallback:jsx-runtime-call | S3 R34.67: fails closed; read as an expression it would print an element object |
-| e-jsx-runtime-namespace | `R.jsxs(…)` through a namespace import of the dev runtime | react | react | ssr | ok | fallback:jsx-runtime-call |  |
+| e-jsx-runtime-namespace | `R.jsxDEV(…)` through a namespace import of the dev runtime | react | react | ssr | ok | fallback:jsx-runtime-call |  |
 | e-jsx-runtime-local-name | a local function named `jsx` is not the runtime | static | static | precompute | ok | — |  |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
