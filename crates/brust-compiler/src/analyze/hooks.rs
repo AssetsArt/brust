@@ -332,36 +332,60 @@ fn read_props(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, out: &mut BodyDecls)
                 name,
                 ts_type: None,
                 default: None,
-            })
-        }
-        B::BObject(obj) => {
-            for p in obj.properties() {
-                let ploc = loc_of(&p.key);
-                if p.flags.contains(js_ast::flags::Property::IsSpread) {
-                    match p.value.data {
-                        B::BIdentifier(id) => out.props_rest = Some(r.names.name(id.r#ref)),
-                        _ => pattern(out, ploc, "a pattern after `...`"),
-                    }
-                    continue;
+            });
+            // `const { a, ...rest } = props` in the body reads like a parameter pattern (R34.66).
+            let whole = out.props.len() - 1;
+            for stmt in func.body.stmts.slice() {
+                if let S::SLocal(l) = &stmt.data
+                    && let Some(d) = l.decls.first()
+                    && r.names.is_absorbed(d.binding.loc.start)
+                    && let B::BObject(obj) = d.binding.data
+                {
+                    read_object_pattern(&obj, r, out, &pattern);
                 }
-                let E::EString(key) = &p.key.data else {
-                    pattern(out, ploc, "a computed key");
-                    continue;
-                };
-                let B::BIdentifier(id) = p.value.data else {
-                    pattern(out, ploc, "a nested pattern");
-                    continue;
-                };
-                let default = p.default_value.as_ref().map(|d| r.expr(d));
-                out.props.push(PropDecl {
-                    name: crate::analyze::expr::estring(key),
-                    local: r.names.name(id.r#ref),
-                    ts_type: None,
-                    default,
-                });
+            }
+            // the plain `props` binding is not a prop named `props`: a rest must not leave a key of that name out
+            if out.props_rest.is_some() {
+                out.props.remove(whole);
             }
         }
+        B::BObject(obj) => read_object_pattern(&obj, r, out, &pattern),
         B::BArray(_) | B::BMissing(_) => pattern(out, loc, "an array pattern"),
+    }
+}
+
+/// The props of one object pattern (a parameter, or a body `const { … } = props`): plain keys with their defaults
+/// and a trailing `...rest`; anything else is a `prop-pattern` fallback.
+fn read_object_pattern(
+    obj: &js_ast::B::Object,
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    pattern: &dyn Fn(&mut BodyDecls, u32, &str),
+) {
+    for p in obj.properties() {
+        let ploc = loc_of(&p.key);
+        if p.flags.contains(js_ast::flags::Property::IsSpread) {
+            match p.value.data {
+                B::BIdentifier(id) => out.props_rest = Some(r.names.name(id.r#ref)),
+                _ => pattern(out, ploc, "a pattern after `...`"),
+            }
+            continue;
+        }
+        let E::EString(key) = &p.key.data else {
+            pattern(out, ploc, "a computed key");
+            continue;
+        };
+        let B::BIdentifier(id) = p.value.data else {
+            pattern(out, ploc, "a nested pattern");
+            continue;
+        };
+        let default = p.default_value.as_ref().map(|d| r.expr(d));
+        out.props.push(PropDecl {
+            name: crate::analyze::expr::estring(key),
+            local: r.names.name(id.r#ref),
+            ts_type: None,
+            default,
+        });
     }
 }
 
@@ -435,6 +459,10 @@ fn read_stmts(
         }
         match &stmt.data {
             S::SLocal(local) => {
+                // Read as the props pattern (names.rs `absorb_body_patterns`): nothing else to read here.
+                if local.decls.len() == 1 && r.names.is_absorbed(local.decls[0].binding.loc.start) {
+                    continue;
+                }
                 if !matches!(local.kind, js_ast::S::Kind::KConst) {
                     out.fallback(
                         "let-var",

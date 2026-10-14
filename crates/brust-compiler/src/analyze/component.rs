@@ -470,7 +470,7 @@ fn read_function_as(
     // read (`ref.current`, passed on, `useImperativeHandle`) needs React.
     let mut body_walk = crate::analyze::expr::Walk::default();
     body_walk.stmts(func.body.stmts.slice());
-    if reader.names.forwarded_ref_escapes(&body_walk.used) > 0 {
+    if reader.names.forwarded_ref_escapes(&body_walk.used_at) > 0 {
         ir.diagnostics.push(Diagnostic::fallback(
             "forwardref-ref",
             "the forwarded ref is read other than as `ref={ref}` on an element; the component renders as a React island",

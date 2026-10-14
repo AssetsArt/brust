@@ -51,7 +51,7 @@
       "measuredRows": 41,
       "analysisOnlyRows": 0,
       "appComponents": 141,
-      "libraryComponents": 183
+      "libraryComponents": 180
     },
     {
       "blocker": "fallback:island-children",
@@ -141,7 +141,16 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 184
+      "libraryComponents": 36
+    },
+    {
+      "blocker": "fallback:prop-pattern",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 23
     },
     {
       "blocker": "fallback:local-component",
@@ -151,15 +160,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 20
-    },
-    {
-      "blocker": "fallback:prop-pattern",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 11
     },
     {
       "blocker": "fallback:browser-global",
