@@ -222,3 +222,30 @@ fn an_own_attribute_after_a_union_spread_wins_and_a_component_prop_follows_the_s
         "<b title=\"own\">1</b>"
     );
 }
+
+#[test]
+fn a_union_into_a_component_refuses_handlers_html_refs_and_styles_like_a_host() {
+    for key in [
+        "onClick: props.f",
+        "dangerouslySetInnerHTML: { __html: 'x' }",
+        "ref: props.r",
+        "style: { color: 'red' }",
+    ] {
+        let o = lower(
+            "G.tsx",
+            &format!(
+                "function Box({{ ...rest }}: any) {{ return <div {{...rest}} /> }}\nexport default function T(props: any) {{ return <Box {{...(props.c ? {{ {key} }} : {{}})}} /> }}"
+            ),
+        );
+        assert!(
+            o.diags.iter().any(|(_, r)| r == "spread-props"),
+            "{key}: {:?}",
+            o.diags
+        );
+        assert!(
+            o.diags.iter().all(|(_, r)| r != "spread-innerhtml"),
+            "{key}: {:?}",
+            o.diags
+        );
+    }
+}

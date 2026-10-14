@@ -334,6 +334,10 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                         let joined = u.value(&name, &absent, &mut |v| {
                             let raw = if host {
                                 read_union_attr(r, &name, v, &mut ref_name)
+                            } else if union_key_refused(&name) {
+                                // The child may spread these onto an element, where they are not a plain value
+                                // (a handler that may be undefined, raw HTML, a ref, a style object): same refusal.
+                                None
                             } else {
                                 Some(r.expr(v))
                             };
@@ -732,6 +736,15 @@ fn union_refused(value: &js_ast::Expr, why: &str) -> Diagnostic {
     )
 }
 
+/// A key a union spread never carries, on a host element or a component: an `on[A-Z]*` handler, `style`, `ref` and
+/// `dangerouslySetInnerHTML` are not a plain conditional value, so they refuse the whole union (a fallback).
+fn union_key_refused(name: &str) -> bool {
+    matches!(name, "style" | "ref" | "dangerouslySetInnerHTML")
+        || name
+            .strip_prefix("on")
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_uppercase()))
+}
+
 /// One entry of a union spread on a host element, as the expression the joined attribute evaluates. Only a plain
 /// attribute value qualifies (a string, a boolean, an expression): handlers, refs, `style`, `class` merging and
 /// `dangerouslySetInnerHTML` are not expressible as a conditional value, so they refuse the whole union.
@@ -741,7 +754,7 @@ fn read_union_attr(
     v: &js_ast::Expr,
     ref_name: &mut Option<String>,
 ) -> Option<RawExpr> {
-    if name == "style" || name == "ref" || name == "dangerouslySetInnerHTML" {
+    if union_key_refused(name) {
         return None;
     }
     let lit = |l| RawExpr {
