@@ -505,6 +505,8 @@ fn read_function_as(
     ir.poly = body.poly;
     // S2: the context fields this component reads are hidden props the call site fills from the Provider frame.
     ir.ctx_uses = reader.names.ctx_uses();
+    ir.ctx_pkg =
+        !ir.ctx_uses.is_empty() && ir.source.starts_with(crate::analyze::modules::PKG_SRC_DIR);
     ir.provides = std::mem::take(&mut reader.provides);
     for u in &ir.ctx_uses {
         for f in &u.fields {

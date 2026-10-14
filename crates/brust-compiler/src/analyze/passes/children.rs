@@ -73,6 +73,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         passes_to_repeater: false,
         holds_island: false,
         provider_locs: Default::default(),
+        bubbled_pkg: false,
         foreign: Default::default(),
     }
 }
@@ -160,6 +161,7 @@ pub fn contexts(
                 .collect(),
         ));
     }
+    ir.ctx_pkg |= w.bubbled_pkg;
     for (c, f) in &bubbled {
         let name = crate::ir::ctx_prop(c, f);
         if !ir.props.iter().any(|p| p.name == name) {
@@ -278,6 +280,8 @@ struct Walker<'s, 'c> {
     holds_island: bool,
     /// S2: component instances that push a Provider frame.
     provider_locs: std::collections::BTreeSet<u32>,
+    /// A need bubbled out of a package-source consumer ([`ComponentIR::ctx_pkg`]).
+    bubbled_pkg: bool,
     /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
     /// of its module scope in this component's jobs, the component, the names).
     foreign: std::cell::RefCell<ForeignModules>,
@@ -900,7 +904,8 @@ impl Walker<'_, '_> {
     }
 
     /// The first component in `nodes` (at any depth) that reads a context (`ctx_uses` non-empty), is not itself a
-    /// React island, and carries a job, a `useId` or fed child instances (a wrapper around one): those need the
+    /// React island, and carries a job, a `useId` or fed child instances (a wrapper around one), or reads a context declared in a package
+    /// source (`ctx_pkg`; revived from the map source it would not share the Provider island's dist `createContext`): those need the
     /// hidden inputs a frame fills. A plain one is revived by the island from its source and reads the island's own
     /// React context.
     fn consumer_in(&mut self, nodes: &[Node]) -> Option<String> {
@@ -928,7 +933,8 @@ impl Walker<'_, '_> {
                         if child.ir.as_ref().is_some_and(|c| {
                             matches!(c.tier, Tier::Static | Tier::Native)
                                 && !c.ctx_uses.is_empty()
-                                && (!c.jobs.is_empty()
+                                && (c.ctx_pkg
+                                    || !c.jobs.is_empty()
                                     || c.use_id_slots > 0
                                     || !c.instances.is_empty())
                         }) {
@@ -1071,6 +1077,7 @@ impl Walker<'_, '_> {
                                     }),
                             ),
                             None => {
+                                self.bubbled_pkg |= cir.ctx_pkg;
                                 if !bubbled.iter().any(|(c, g)| c == &u.context && g == f) {
                                     bubbled.push((u.context.clone(), f.clone()));
                                 }

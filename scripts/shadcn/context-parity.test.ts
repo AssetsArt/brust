@@ -8,7 +8,7 @@ import { FIXTURE, repo } from './paths.ts'
 
 const PAGES = ['ctx-progress-basic', 'ctx-progress-max', 'ctx-progress-indeterminate', 'ctx-progress-invalid']
 // F3: islands under a Provider keep the page React (the island hydrates, so scripts are expected and markup is React's own).
-const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix', 'ctx-page-collapsible', 'ctx-page-dialog', 'ctx-page-sheet', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns',
+const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix', 'ctx-page-collapsible', 'ctx-page-dialog', 'ctx-page-sheet', 'ctx-dlg-title', 'ctx-sheet-title', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns',
   'ctx-imp-m-and', 'ctx-imp-m-computed', 'ctx-imp-m-index', 'ctx-imp-m-member', 'ctx-imp-m-nullish', 'ctx-imp-m-opt', 'ctx-imp-m-root', 'ctx-imp-m-template', 'ctx-imp-m-tern', 'ctx-loc-m-and', 'ctx-loc-m-computed', 'ctx-loc-m-index', 'ctx-loc-m-member', 'ctx-loc-m-nullish', 'ctx-loc-m-opt', 'ctx-loc-m-root', 'ctx-loc-m-template', 'ctx-loc-m-tern',
   'ctx-pown-imp-root', 'ctx-pown-imp-and', 'ctx-pown-imp-tern', 'ctx-pown-imp-member', 'ctx-pown-imp-index', 'ctx-pown-loc-root', 'ctx-pown-loc-and', 'ctx-pown-loc-tern', 'ctx-pown-loc-member', 'ctx-pown-loc-index',
   'ctx-plain-imp-root', 'ctx-plain-imp-and', 'ctx-plain-imp-tern', 'ctx-plain-loc-root', 'ctx-plain-loc-and', 'ctx-plain-loc-tern', 'ctx-trio-prov', 'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call', 'ctx-hid-provfed', 'ctx-hid-bare',
@@ -111,7 +111,7 @@ for (const id of ISLAND_PAGES) {
     const html = plain(await r.text())
     expect(html).toContain(react)
     // The value React reads: the Provider's for the same-module island, the island module's own default for the other.
-    if (id.startsWith('ctx-page-')) {
+    if (id.startsWith('ctx-page-') || id.endsWith('-title')) {
       expect(html).toContain('data-slot=')
     } else if (id === 'ctx-island-radix') {
       expect(html).toContain('<button aria-expanded=false data-slot=trigger data-state=closed type=button>Toggle</button>')
