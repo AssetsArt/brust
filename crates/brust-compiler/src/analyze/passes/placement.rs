@@ -99,6 +99,10 @@ struct Placer<'s> {
     component_children: u32,
     /// > 0 under a lowered Provider frame (or in a Provider component's own template): judged by the allowlist.
     provider_children: u32,
+    /// F173: set while placing a `{child}` slot (content the template prints as text or markup). Under a plain wrapper
+    /// only those are judged: an element read there prints nothing, while an attribute or a component prop prints it the
+    /// way React does (`String(value)`) or hands it to the child, as on main.
+    slot_content: bool,
     /// Set while placing a frame value the compiler itself injected (`__ctx_*` hidden props): its expression comes from
     /// the Provider's own value fields, already judged by `provider_problem`.
     frame_value: bool,
@@ -240,6 +244,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         // so every Slot of it is judged by the allowlist too.
         provider_children: u32::from(!ir.provides.is_empty()),
         frame_value: false,
+        slot_content: false,
         list_shape_locs: ir
             .diagnostics
             .iter()
@@ -551,42 +556,6 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 }
 
 impl Placer<'_> {
-    /// An imported binding whose VALUE can become the child: the expression itself, a branch of a conditional
-    /// (`on ? el : null`), the value side of `&&` / `||` / `??` (`on && el`), or an array element; or `ns.name` of a
-    /// namespace import. Not a callee, a member target, a test or a call argument: those never flow out as the printed
-    /// value (a helper's return value is the helper's business). `Some(name)` = the export cannot be resolved to a
-    /// folded primitive, so the child fails closed.
-    fn import_child_problem(&self, r: &RawExpr) -> Option<String> {
-        let proven = |source: &str, name: &str| {
-            crate::analyze::const_fold::imported_const(&self.path, source, name, self.opts, 0)
-                .is_some()
-        };
-        let sub = |x: &RawExpr| self.import_child_problem(x);
-        match &r.kind {
-            RawKind::Ident {
-                name,
-                kind: IdentKind::Import { source, imported },
-            } => (imported != "*" && !proven(source, imported)).then(|| name.clone()),
-            RawKind::Member { target, name, .. } => match &target.kind {
-                RawKind::Ident {
-                    name: ns,
-                    kind: IdentKind::Import { source, imported },
-                } if imported == "*" => (!proven(source, name)).then(|| format!("{ns}.{name}")),
-                _ => None,
-            },
-            RawKind::Binary { op, left, right } => match op {
-                crate::ir::BinOp::And => sub(right),
-                crate::ir::BinOp::Or | crate::ir::BinOp::Nullish => {
-                    sub(left).or_else(|| sub(right))
-                }
-                _ => None,
-            },
-            RawKind::Cond { yes, no, .. } => sub(yes).or_else(|| sub(no)),
-            RawKind::Array(xs) => xs.iter().find_map(sub),
-            _ => None,
-        }
-    }
-
     /// The allowlist predicate over a child expression (already folded): `None` when EVERY identifier read anywhere in
     /// it is (1) a prop, (2) a component-local binding the lowering prints (a derived value, state, a loop binding) or
     /// (3) already folded to a primitive literal, or a global; otherwise `Some(name)` of the first read that is not.
@@ -676,6 +645,24 @@ impl Placer<'_> {
                         name,
                         kind: IdentKind::Local,
                     } => self.plain_fns.contains(name) && !self.derived_raw.contains_key(name),
+                    // F173: a function a relative module exports and proves plain by the same rules (`formatPrice(x)`).
+                    RawKind::Ident {
+                        kind: IdentKind::Import { source, imported },
+                        ..
+                    } if imported != "*" && imported != "default" => {
+                        // Memoised beside the derived values (a key no identifier can spell): one module read per import.
+                        let key = format!("import {source} {imported}");
+                        let known = self.read_memo.borrow().get(&key).map(Option::is_none);
+                        known.unwrap_or_else(|| {
+                            let ok = crate::analyze::plain_fn::imported_plain_fn(
+                                &self.path, source, imported, self.opts,
+                            );
+                            self.read_memo
+                                .borrow_mut()
+                                .insert(key, (!ok).then(|| imported.clone()));
+                            ok
+                        })
+                    }
                     RawKind::Member { target, name, .. } => {
                         matches!(
                             &target.kind,
@@ -983,14 +970,20 @@ impl Placer<'_> {
     fn painted(&mut self, r: &RawExpr) -> Expr {
         // Lead ruling (c), the single print point: EVERY expression printed under a lowered Provider frame or in a
         // Provider component's own template (a child, an own slot, a component prop, an attribute, a condition or a
-        // loop body) goes through the total allowlist, so no print path can skip it.
-        if self.provider_children > 0
+        // loop body) goes through the total allowlist, so no print path can skip it. F173: under a plain wrapper, every
+        // `{child}` slot printed in the children passed to it (at any depth) goes through the same predicate.
+        if (self.provider_children > 0 || (self.component_children > 0 && self.slot_content))
             && !self.frame_value
             && let Some(name) = self.child_read_problem(&self.fold(r), 0)
         {
+            let under = if self.provider_children > 0 {
+                "under a context Provider"
+            } else {
+                "as a child of a component"
+            };
             self.diagnostics.push(Diagnostic::fallback(
                 "jsx-const-child",
-                format!("`{name}` is read under a context Provider and brust cannot prove it is a plain value (a prop, a printed local or a primitive constant); the server template could print nothing for it"),
+                format!("`{name}` is read {under} and brust cannot prove it is a plain value (a prop, a printed local, a primitive constant or a helper proven to return one); the server template could print nothing for it"),
                 r.loc,
                 "render the element inline, pass a prop, or keep this component in React",
             ));
@@ -1186,28 +1179,9 @@ impl Placer<'_> {
             }
             Node::Text(_) => {}
             Node::Slot(e) => {
-                // Lead ruling (c): under a lowered Provider frame (those were whole islands on main, so a fallback is no
-                // regression) a child is printed only when every identifier it reads, anywhere, is a prop, a printed local
-                // or a primitive (the total allowlist). A plain wrapper keeps main's behaviour plus the reviewed guards:
-                // an element holder at the root of the child or in its conditional / array / namespace value positions.
-                if let Expr::Raw(r) = &*e {
-                    let found = if self.provider_children > 0 {
-                        None // judged in `painted`, the single print point
-                    } else if self.component_children > 0 {
-                        self.import_child_problem(r)
-                    } else {
-                        None
-                    };
-                    if let Some(name) = found {
-                        self.diagnostics.push(Diagnostic::fallback(
-                            "jsx-const-child",
-                            format!("`{name}` is read as a child and brust cannot prove it is a plain value (a prop, a printed local or a primitive constant); the server template could print nothing for it"),
-                            r.loc,
-                            "render the element inline, pass a prop, or keep this component in React",
-                        ));
-                    }
-                }
-                self.expr(e)
+                self.slot_content = true;
+                self.expr(e);
+                self.slot_content = false;
             }
             Node::If {
                 cond, then, else_, ..

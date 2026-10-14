@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 191 | 103 | 9 | 79 | 0 | 0 | 0 | 0 |
+| B Composition | 195 | 105 | 9 | 81 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 369 | 181 | 44 | 140 | 3 | 1 | 0 | 0 |
+| **Total** | 373 | 183 | 44 | 142 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -106,7 +106,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-children-handler | island children with an event handler | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a handler cannot travel as JSON |
 | b-island-children-prop | island children that read a prop | static | static | ssr | ok | — | F148a (R34.116-R34.120): a prop the children read is a hole of the island (a primitive leaf), not a constant; was fail closed in v1 |
 | b-island-children-prop-expr | island children that compute from a prop | react | react | ssr | ok | fallback:island-children | F148a (R34.123): only a plain props path is a hole; an expression over props keeps fallback:island-children |
-| b-island-children-renderprop | render-prop children of an island | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a function child |
+| b-island-children-renderprop | render-prop children of an island | react | react | ssr | ok | fallback:island-children, fallback:jsx-const-child | R34.23: fail closed — a function child |
 | b-island-children-html | dangerouslySetInnerHTML inside island children | react | react | ssr | ok | fallback:island-children | R34.26(c) ruling: a raw HTML sink inside lowered children fails closed in v1 |
 | b-island-children-cond | conditional island children | static | static | ssr | ok | — | F148a (R34.122): a condition on a plain prop is a conditional node the revive takes by the truthiness of a primitive; was fail closed in v1 |
 | b-island-children-cond-expr | island children under a computed condition | react | react | ssr | ok | fallback:island-children | F148a (R34.122): a condition that is not a plain props path keeps fallback:island-children |
@@ -188,8 +188,12 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-jsx-const-child-imported-provider | an imported JSX const used as a child of a Provider component | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: the same, widened by Providers (on main the Provider was an island and React rendered el) |
 | b-jsx-const-child-allowlist | a child under a Provider that reads an element holder through a member, index, ?:, && and a template | react | react | ssr | ok | fallback:jsx-const-child | lead ruling (allowlist): every identifier a child reads, anywhere in the expression, must be a prop, a printed local or a primitive; the guard is exhaustive over the expression grammar |
 | b-jsx-const-child-provider-own | an imported JSX const read directly under a Provider element in the Provider component's own template | static | static | ssr | ok | — | Mellow: the Provider tag lowers to a Fragment, so its own template is judged by the same predicate (the Panel is a React island now; the page stays static) |
-| b-child-reads-plain-wrapper | ordinary child reads (a data lookup, .length, an imported helper call) under a PLAIN wrapper | static | static | precompute | ok | — | lead ruling c: the total allowlist is scoped to Provider frames; a plain wrapper keeps lowering these (pinned, no regression) |
-| b-child-reads-provider | the same child reads under a Provider component | react | react | ssr | ok | fallback:jsx-const-child | lead ruling c: under a lowered Provider the allowlist applies (a helper result and a data lookup are not provable yet: F174); the page is React (it is the whole island, as on main) |
+| b-child-reads-plain-wrapper | ordinary child reads (a data lookup, .length, an imported helper call) under a PLAIN wrapper | static | static | precompute | ok | — | F173: a plain wrapper's {child} slots go through the total predicate now; these three still lower (the const map folds, formatPrice is proven plain in its module): pinned, no regression |
+| b-child-reads-provider | the same child reads under a Provider component | static | static | precompute | ok | — | F173: the const map folds and formatPrice is proven plain in its own module (plain_fn::imported_plain_fn), so the Provider lowers too |
+| b-plain-wrapper-member | an imported element read through a member, as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173 (pre-existing on main: the child printed nothing): a plain wrapper is judged by the total predicate (jsx-const-child); served and compared with React in scripts/shadcn/context-parity.test.ts |
+| b-plain-wrapper-index-array | an imported element read through an index and wrapped in an array, under a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173: the index and array shapes of the same drop (jsx-const-child) |
+| b-plain-wrapper-helper-jsx | an imported helper returning an element, called as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F190: the helper is not proven plain in its module, so the child falls back by name (jsx-const-child) |
+| b-plain-wrapper-helper-proven | imported helpers proven to return a primitive (a template, a method of a number or string), under a plain wrapper | static | static | precompute | ok | — | F173 control: plain_fn rules read in the helper module (its consts, primitive-returning methods); the child lowers |
 | b-context-prop-under-provider | a component prop holding an element holder under a Provider frame | react | react | ssr | ok | fallback:jsx-const-child | Mellow scoping: the predicate runs at Placer::painted, the single print point (a prop is printed too) |
 | b-context-provider-field-element | a Provider value field holding an element holder | static | static | ssr | ok | — | Mellow: a Provider value field that holds an element would reach the consumer as a hidden prop and print as nothing; the Provider stays an island (context-state), the page stays static |
 | b-context-frame-prop | a Provider whose value reads a prop fed an element holder at the call site | react | react | ssr | ok | fallback:context-no-provider, fallback:context-value | Mellow: a frame value must be a literal (no prop read, no call); the page renders with React |
@@ -334,7 +338,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | d-taint-unique | experimental_taintUniqueValue | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-lazy-component | lazy component without Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:local-component |  |
 | d-memo-state | default export memo(function …) with state | react | react | ssr | ok | fallback:default-export-shape | fail-closed: an inline function inside the default export is the default-export-shape fallback (memo(Named) is b-memo) |
-| d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | fallback:member-tag, fallback:jsx-expression |  |
+| d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | fallback:member-tag, fallback:jsx-const-child, fallback:jsx-expression |  |
 | d-createportal | createPortal | react | react | ssr | ok | fallback:browser-global |  |
 | d-flushsync | flushSync in a handler | react | native | 0 | ok | — | known gap: F115: compiles native but the client chunk imports react-dom (a native chunk must contain no react import); it should fall back to react |
 | d-preconnect | preconnect in render | react | react | ssr | ok | fallback:body-shape |  |

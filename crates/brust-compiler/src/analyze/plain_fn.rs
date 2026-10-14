@@ -30,6 +30,17 @@ const GLOBAL_CALLS: &[&str] = &[
     "isNaN",
     "isFinite",
 ];
+/// F173: methods that return a string, number or boolean on the string, number or array they are called on.
+const PRIMITIVE_METHODS: &[&str] = &[
+    "toFixed",
+    "toUpperCase",
+    "toLowerCase",
+    "trim",
+    "startsWith",
+    "endsWith",
+    "includes",
+    "join",
+];
 const MATH_CALLS: &[&str] = &[
     "abs", "ceil", "floor", "round", "trunc", "sign", "min", "max", "pow", "sqrt", "cbrt", "log",
     "log2", "log10", "exp", "sin", "cos", "tan", "atan", "atan2", "hypot",
@@ -102,11 +113,16 @@ impl Ctx<'_, '_> {
                         || self.fns.contains(&n))
             }
             E::EDot(d) => {
-                matches!(&d.target.data, E::EIdentifier(id)
+                let method = String::from_utf8_lossy(d.name.slice());
+                (matches!(&d.target.data, E::EIdentifier(id)
                     if self.names.name(id.ref_) == "Math"
                         && !self.locals.contains("Math")
                         && self.is_global(id.ref_))
-                    && MATH_CALLS.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+                    && MATH_CALLS.contains(&method.as_ref()))
+                    // F173: a primitive-returning method of a plain value (`n.toFixed(2)`, `s.trim()`, `xs.join(', ')`).
+                    || (d.optional_chain.is_none()
+                        && PRIMITIVE_METHODS.contains(&method.as_ref())
+                        && self.expr(&d.target))
             }
             _ => false,
         }
@@ -252,4 +268,48 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
     let mut out: Vec<String> = alive.into_iter().collect();
     out.sort();
     out
+}
+
+/// F173 (plain wrappers): the export `imported` of the RELATIVE module `source` (seen from `from`) is a function that
+/// module proves plain by the same rules (`plain_fns`, read in its own module: its consts, its helpers). An import is a
+/// read-only binding, so the importer cannot rebind it; the exporting module's own reassignments are refused there.
+/// Anything that does not resolve, read or parse is not proven.
+pub fn imported_plain_fn(
+    from: &str,
+    source: &str,
+    imported: &str,
+    opts: &crate::analyze::component::AnalyzeOptions,
+) -> bool {
+    let Some(path) = crate::analyze::modules::resolve(from, source, opts) else {
+        return false;
+    };
+    let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
+        return false;
+    };
+    let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+        return false;
+    };
+    parsed.with_ast(|ast| {
+        let dummy = js_ast::G::Fn::default();
+        let names = NameTable::new(ast, &dummy);
+        // `export function f` (the declaration itself), or `export { f }` / `export { f as g }` naming a module function.
+        let mut local = None;
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                if let S::SFunction(f) = &stmt.data
+                    && f.func.flags.contains(js_ast::flags::Function::IsExport)
+                    && let Some(n) = &f.func.name
+                    && names.name(n.ref_) == imported
+                {
+                    local = Some(imported.to_string());
+                }
+            }
+        }
+        let Some(local) =
+            local.or_else(|| crate::analyze::const_fold::exported_const_name(ast, imported))
+        else {
+            return false;
+        };
+        plain_fns(ast, &names).contains(&local)
+    })
 }
