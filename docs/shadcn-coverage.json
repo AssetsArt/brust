@@ -48,9 +48,9 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 40,
+      "measuredRows": 38,
       "analysisOnlyRows": 0,
-      "appComponents": 143,
+      "appComponents": 142,
       "libraryComponents": 151
     },
     {
@@ -151,15 +151,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 20
-    },
-    {
-      "blocker": "fallback:prop-default-shape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 10
     },
     {
       "blocker": "fallback:browser-global",
@@ -369,6 +360,15 @@
       "libraryComponents": 5
     },
     {
+      "blocker": "fallback:prop-default-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 4
+    },
+    {
       "blocker": "fallback:prop-quoted-key",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -557,11 +557,10 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 6,
-      "reactComponents": 3,
+      "components": 7,
+      "reactComponents": 2,
       "jsGzipKb": 86,
       "codes": [
-        "external-component",
         "spread-props"
       ]
     },
@@ -624,7 +623,6 @@
         "island-children",
         "local-component",
         "member-tag",
-        "prop-default-shape",
         "use-id-in-render"
       ]
     },
@@ -1018,8 +1016,8 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 10,
-      "reactComponents": 9,
+      "components": 11,
+      "reactComponents": 8,
       "jsGzipKb": 92,
       "codes": [
         "external-component",
@@ -1046,11 +1044,10 @@
       "basis": "measured",
       "tier": "static",
       "islands": 2,
-      "components": 3,
-      "reactComponents": 2,
+      "components": 4,
+      "reactComponents": 1,
       "jsGzipKb": 84,
       "codes": [
-        "external-component",
         "spread-props"
       ]
     },

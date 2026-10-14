@@ -392,7 +392,14 @@ fn read_object_pattern(
             );
             continue;
         }
-        let default = p.default_value.as_ref().map(|d| r.expr(d));
+        let mut default = p.default_value.as_ref().map(|d| r.expr(d));
+        // F153b: a default naming module constants (`orientation = DEFAULT_ORIENTATION`) is the folded value.
+        if let Some(d) = &default
+            && default_unprintable(d, &HashSet::new()).is_some()
+            && let Some(folded) = fold_default(r, d)
+        {
+            default = Some(folded);
+        }
         if let Some(d) = &default {
             // Props whose destructuring default is in effect (this pattern and any before it): a default reading
             // one would see the raw prop, without its default.
@@ -419,6 +426,50 @@ fn read_object_pattern(
             default,
         });
     }
+}
+
+/// `d` with its module constants folded to a literal value, `None` when it does not fold (the caller keeps `d` and
+/// its diagnostic). The constants are the module's never-written `const`s of literal shape; the folder never runs
+/// user code and fails closed on anything it does not know.
+fn fold_default(r: &mut Reader<'_, '_>, d: &RawExpr) -> Option<RawExpr> {
+    let inits: Vec<(String, js_ast::Expr)> = r
+        .names
+        .module_inits()
+        .iter()
+        .map(|(n, e)| (n.clone(), *e))
+        .collect();
+    if inits.is_empty() {
+        return None;
+    }
+    let consts: HashMap<String, RawExpr> =
+        inits.into_iter().map(|(n, e)| (n, r.expr(&e))).collect();
+    let lookup = |n: &str| consts.get(n).cloned();
+    let v = crate::ir::FoldEnv::new(&lookup).fold(d).ok()?;
+    value_expr(&v, d.loc)
+}
+
+/// A folded value as a literal expression (`undefined` is not one: a default that folds to it stays as written).
+fn value_expr(v: &crate::ir::V, loc: u32) -> Option<RawExpr> {
+    use crate::ir::{Literal, V};
+    let kind = match v {
+        V::Undef => return None,
+        V::Null => RawKind::Lit(Literal::Null),
+        V::Bool(b) => RawKind::Lit(Literal::Bool(*b)),
+        V::Num(n) if n.is_finite() => RawKind::Lit(Literal::Num(*n)),
+        V::Num(_) => return None,
+        V::Str(s) => RawKind::Lit(Literal::Str(s.clone())),
+        V::Arr(xs) => RawKind::Array(
+            xs.iter()
+                .map(|x| value_expr(x, loc))
+                .collect::<Option<_>>()?,
+        ),
+        V::Obj(ps) => RawKind::Object(
+            ps.iter()
+                .map(|(k, x)| Some((k.clone(), value_expr(x, loc)?)))
+                .collect::<Option<_>>()?,
+        ),
+    };
+    Some(RawExpr { loc, kind })
 }
 
 /// A prop name the template can read as a plain variable (`name`, `_a1`; no jinja word).
