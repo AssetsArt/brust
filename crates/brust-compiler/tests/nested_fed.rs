@@ -114,3 +114,71 @@ fn a_prop_the_manifest_cannot_bind_is_a_fallback_not_a_build_error() {
         p.fallbacks
     );
 }
+
+// Review r1 (Mellow, F1): the lowering's `nested-instance` errors are unreachable from analysis. Three more shapes
+// of valid React that reached them: children with a job passed to a component that repeats them (D), and an island
+// with a per-row prop in two lists (E) or in a component inlined into its callers (F).
+
+#[test]
+fn children_with_a_job_passed_to_a_component_that_repeats_them_fall_back() {
+    let t = lower(
+        "import List from './List'\nimport Cell from '../per-instance-jobs/Cell'\nexport default function P(props: { items: string[] }) { return <List items={props.items}><Cell tone=\"x\">x</Cell></List> }",
+    );
+    let p = named(&t, "p_");
+    assert!(is_react(p), "{:?}", p.tier);
+    assert!(
+        p.fallbacks.contains(&"nested-instance".to_string()),
+        "{:?}",
+        p.fallbacks
+    );
+}
+
+#[test]
+fn an_island_with_a_per_row_prop_in_two_lists_falls_back() {
+    let t = lower(
+        "import Tip from './Tip'\nexport default function P(props: { rows: { cols: string[] }[] }) { return <div>{props.rows.map((r, i) => <p key={i}>{r.cols.map((c) => <Tip key={c} t={c} />)}</p>)}</div> }",
+    );
+    let p = named(&t, "p_");
+    assert!(is_react(p), "{:?}", p.tier);
+    assert!(
+        p.fallbacks.contains(&"nested-instance".to_string()),
+        "{:?}",
+        p.fallbacks
+    );
+}
+
+#[test]
+fn an_island_mapped_inside_an_inlined_component_falls_back() {
+    let t = lower(
+        "import WrapTip from './WrapTip'\nexport default function P(props: { rows: string[] }) { return <WrapTip rows={props.rows} /> }",
+    );
+    let w = named(&t, "wrapTip_");
+    assert!(is_react(w), "{:?}", w.tier);
+    assert!(
+        w.fallbacks.contains(&"nested-instance".to_string()),
+        "{:?}",
+        w.fallbacks
+    );
+}
+
+/// The shapes that must keep working next to them: an island in ONE list of the route component, a fed child in
+/// one list. Every shape compiles (`lower` expects `Ok`), so the lowering's errors are not reached.
+#[test]
+fn the_neighbouring_valid_shapes_still_compile_as_before() {
+    let t = lower(
+        "import Tip from './Tip'\nexport default function P(props: { rows: string[] }) { return <div>{props.rows.map((r) => <Tip key={r} t={r} />)}</div> }",
+    );
+    assert!(
+        matches!(named(&t, "p_").tier, Tier::Static),
+        "{:?}",
+        named(&t, "p_").tier
+    );
+    let t = lower(
+        "import Cell from '../per-instance-jobs/Cell'\nexport default function P(props: { rows: string[] }) { return <table><tbody>{props.rows.map((r) => <tr key={r}><Cell tone={r}>x</Cell></tr>)}</tbody></table> }",
+    );
+    assert!(
+        matches!(named(&t, "p_").tier, Tier::Static),
+        "{:?}",
+        named(&t, "p_").tier
+    );
+}

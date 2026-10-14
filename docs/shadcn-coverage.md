@@ -39,7 +39,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 1 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 40 | 0 | 140 | 180 | `spread-props` diagnostic (docs/react-coverage.md) |
 | 2 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 40 | 0 | 143 | 151 | `external-component` diagnostic (docs/react-coverage.md) |
 | 3 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 25 | 0 | 33 | 73 | `island-children` diagnostic (docs/react-coverage.md) |
-| 4 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 8 | 0 | 12 | 0 | `nested-instance` diagnostic (docs/react-coverage.md) |
+| 4 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 9 | 0 | 13 | 0 | `nested-instance` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 12 | 187 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 9 | 0 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
 | 7 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 19 | `member-tag` diagnostic (docs/react-coverage.md) |
@@ -154,7 +154,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | sheet | measured | static | 1 | 20 (16) | 101 | external-component, island-children, spread-props | built |
 | sidebar | measured | static | 1 | 14 (6) | 116 | browser-global, control-flow, external-component, hook-shape, hook-unsupported, instance-prop-path, island-children, linked-prop-precompute, member-tag, nested-instance, spread-props | built |
 | skeleton | measured | static | 0 | 2 (0) | 0 | — | built |
-| slider | measured | static | 1 | 6 (5) | 93 | external-component, island-children, spread-props | built |
+| slider | measured | static | 1 | 6 (5) | 93 | external-component, island-children, nested-instance, spread-props | built |
 | sonner | measured | native | 1 | 3 (1) | 87 | child-component | built |
 | spinner | measured | static | 0 | 2 (0) | 0 | external-component, spread-props | built |
 | switch | measured | static | 1 | 7 (3) | 89 | external-component, island-children, spread-props | built |
@@ -312,7 +312,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/sidebar.tsx#sidebarMenuButton | control-flow, hook-unsupported | 1 |
 | components/ui/sidebar.tsx#sidebarProvider | browser-global, hook-shape, island-children, member-tag | 1 |
 | components/ui/sidebar.tsx#sidebarTrigger | control-flow, external-component, hook-unsupported, instance-prop-path, linked-prop-precompute, nested-instance, spread-props | 1 |
-| components/ui/slider.tsx#slider | external-component, island-children, spread-props | 1 |
+| components/ui/slider.tsx#slider | external-component, island-children, nested-instance, spread-props | 1 |
 | components/ui/spinner.tsx#spinner | external-component, spread-props | 1 |
 | components/ui/switch.tsx#switch | external-component, island-children, spread-props | 1 |
 | components/ui/tabs.tsx#tabs | external-component, spread-props | 1 |

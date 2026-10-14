@@ -176,6 +176,8 @@ struct Child {
     reads_children_value: bool,
     /// The compiled child has `useId` values (the server seeds them per instance, per row).
     use_id: bool,
+    /// The compiled child's template repeats something in a list (a `For`): slot content is printed once and pasted per row.
+    has_for: bool,
     /// Keys the call site must not pass (`ComponentIR::absent_props`).
     absent: Vec<String>,
 }
@@ -236,6 +238,18 @@ fn poly_has_runtime_spread(n: &Node) -> bool {
         Node::If { then, else_, .. } => then.iter().chain(else_).any(poly_has_runtime_spread),
         Node::For { body, .. } => body.iter().any(poly_has_runtime_spread),
         Node::Component { children, .. } => children.iter().any(poly_has_runtime_spread),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
+/// Whether `n` repeats anything in a list (`lower::template` pastes slot content once per row there).
+fn template_has_for(n: &Node) -> bool {
+    match n {
+        Node::For { .. } => true,
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().any(template_has_for),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(template_has_for),
         Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
     }
 }
@@ -778,6 +792,7 @@ impl Walker<'_, '_> {
             icon_spread: false,
             reads_children_value: false,
             use_id: false,
+            has_for: false,
             absent: Vec::new(),
         }
     }
@@ -818,6 +833,7 @@ impl Walker<'_, '_> {
                     icon_spread: false,
                     reads_children_value: false,
                     use_id: false,
+                    has_for: false,
                     absent: Vec::new(),
                 };
             }
@@ -974,6 +990,7 @@ impl Walker<'_, '_> {
                         icon_spread: false,
                         reads_children_value: false,
                         use_id: false,
+                        has_for: false,
                         absent: Vec::new(),
                     };
                 };
@@ -1017,6 +1034,7 @@ impl Walker<'_, '_> {
         let mut onward = HandlerSink::default();
         let mut job_roots = BTreeSet::new();
         let mut use_id = false;
+        let mut has_for = false;
         let mut forwards_ref = false;
         let mut icon_spread = false;
         let mut reads_children_value = false;
@@ -1026,6 +1044,7 @@ impl Walker<'_, '_> {
                 forwards_ref = ir.forwards_ref;
                 icon_spread = ir.icon_spread;
                 absent = ir.absent_props.clone();
+                has_for = template_has_for(&ir.template);
                 reads_children_value =
                     matches!(ir.tier, Tier::Static | Tier::Native) && reads_children_as_value(&ir);
                 job_roots = ir
@@ -1114,6 +1133,7 @@ impl Walker<'_, '_> {
             icon_spread,
             reads_children_value,
             use_id,
+            has_for,
             absent,
         }
     }
@@ -1543,6 +1563,22 @@ impl Walker<'_, '_> {
                         "key the list on props only to keep this component native; it renders with React meanwhile",
                     ));
                 }
+                if ok
+                    && self.items.last().is_some()
+                    && (!self.ctx.is_root || self.loop_sources.len() > 1)
+                {
+                    // F53 (R34.97): the server hands an island's job one array indexed by ONE list of the route
+                    // component; a row of an inlined component, or a second list, has no slot key.
+                    ok = false;
+                    self.diagnostics.push(island_err(
+                        "nested-instance",
+                        format!(
+                            "the React island <{name}> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot feed per row"
+                        ),
+                        *loc,
+                        "map over the list in the route component, or keep this component interactive with React",
+                    ));
+                }
                 if ok {
                     for (src, _) in &self.lists {
                         inputs.extend(src.iter().cloned());
@@ -1779,7 +1815,22 @@ impl Walker<'_, '_> {
             }
         }
         // After this node's own link id: `_pN` follow document order.
+        let fed_before = self.instances.len();
         children.iter_mut().for_each(|c| self.node(c));
+        if child.has_for
+            && !matches!(child.tier, Tier::React { .. })
+            && self.instances.len() > fed_before
+        {
+            // Slot content is printed once and pasted per row: a job or `useId` inside it would repeat.
+            self.diagnostics.push(Diagnostic::fallback(
+                "nested-instance",
+                format!(
+                    "children with a job or useId are passed to <{name}>, which repeats them in a list"
+                ),
+                *loc,
+                "render the child inside the repeating component, or keep this component interactive with React",
+            ));
+        }
     }
 
     /// Fail closed (shadcn S1.4, R34.29/R34.31): a child with a polymorphic tag (`asChild`) is

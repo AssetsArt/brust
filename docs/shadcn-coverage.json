@@ -66,9 +66,9 @@
       "blocker": "fallback:nested-instance",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 8,
+      "measuredRows": 9,
       "analysisOnlyRows": 0,
-      "appComponents": 12,
+      "appComponents": 13,
       "libraryComponents": 0
     },
     {
@@ -1141,6 +1141,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "nested-instance",
         "spread-props"
       ]
     },

@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 133 | 73 | 8 | 52 | 0 | 0 | 0 | 0 |
+| B Composition | 136 | 74 | 8 | 54 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 55 | 19 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 299 | 140 | 43 | 112 | 3 | 1 | 0 | 0 |
+| **Total** | 302 | 141 | 43 | 114 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -166,6 +166,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-fed-child-in-wrapper | a wrapper component rendering a child with a job of its own (shadcn PaginationNext over PaginationLink) | static | static | ssr | ok | — | F164 R34.97: the grandchild's job has no slot key inside an inlined wrapper (F53), so the wrapper is the React island (nested-instance fallback); it was the nested-instance build error of the lowering |
 | b-fed-child-nested-lists | a child with a job of its own inside two nested lists over props | react | react | ssr | ok | fallback:nested-instance | F164 R34.97: the server feeds one list level per instance; nested lists were the nested-instance build error of the manifest, now a fallback |
 | b-fed-child-prop-is-a-job-output | a prop of a child with a job of its own is computed by a call (className={cn(…)}) | react | react | ssr | ok | fallback:instance-prop-path | F164 R34.97: the value is another job's output, which the single-phase planner cannot bind; it was the instance-prop-path build error of the manifest, now a fallback |
+| b-fed-children-repeated-by-list | children with a job of their own passed to a component that repeats them in a list | react | react | ssr | ok | fallback:nested-instance | F164 R34.97 (review r1 D): slot content is printed once and pasted per row, so a job inside it would repeat; it was the lowering nested-instance error |
+| b-island-per-row-in-two-lists | a React island with a per-row prop inside two lists | react | react | ssr | ok | fallback:nested-instance | F164 R34.97 (review r1 E): the server hands an island job one array indexed by ONE list; it was the lowering nested-instance error |
+| b-island-per-row-in-inlined-component | a static wrapper mapping a React island over its own rows | static | static | ssr | ok | — | F164 R34.97 (review r1 F): a row of an inlined component has no slot key for the island job, so the wrapper is the island; it was the lowering nested-instance error |
 | b-fed-child-local-list | a child with a job of its own in a list over a local array | static | static | 0 | ok | — | F142 R34.43: Row reads the row of a module const, so the manifest carries the rows (per-row-literal) and the server feeds one instance per row (was the instance-list-path fallback, challenge 4dc45c45) |
 | b-fed-child-row-invariant-const | a child with a job of its own, the same in every row, in a list over a module const (shadcn table) | static | static | 0 | ok | — | F142 R34.42: no prop reads the row, so the instance is fed once (static record) and its slot is read without a row index |
 | b-fed-child-row-invariant-inline | a child with a job of its own, the same in every row, in a list over an inline array (shadcn carousel) | static | static | 0 | ok | — | F142 R34.42: an inline array literal is the same case |
