@@ -183,11 +183,10 @@ fn a_dev_block_is_left_out_only_when_all_it_does_is_log() {
     // An `else` branch is code too.
     let with_else = "if (DEV) { const seen = React.useRef(1); React.useEffect(() => { seen.current = 2 }, [prop]) } else { console.log(1) }";
     let ir = run(&hook(PARAM, HELPER, with_else, ALIAS), USE);
-    // Not dropped: it is read like any statement of the hook, and a branch before the return is `control-flow`.
+    // Not dropped: its statements are read like any other, and the first thing an imported hook may not do there is
+    // read the module's `DEV`.
     assert!(
-        fallbacks(&ir)
-            .iter()
-            .any(|d| d.message.contains("control flow before return")),
+        reasons(&ir).contains("reads `DEV`"),
         "{:?} {}",
         ir.tier,
         reasons(&ir)
