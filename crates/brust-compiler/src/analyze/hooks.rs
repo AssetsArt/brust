@@ -10,6 +10,7 @@ use crate::ir::{
 };
 use crate::parse::Parsed;
 use bun_ast as js_ast;
+use js_ast::OpCode;
 use js_ast::b::B;
 use js_ast::expr::Data as E;
 use js_ast::stmt::Data as S;
@@ -689,6 +690,16 @@ fn read_stmts(
 /// expression, a JSX attribute, a prop default or a nested function (spec
 /// §4.3: such a component is React-only).
 fn nested_hooks(func: &js_ast::G::Fn, names: &NameTable<'_>, out: &mut BodyDecls) {
+    nested_hooks_in(func, func.body.stmts.slice(), names, out)
+}
+
+/// [`nested_hooks`] over `stmts`, the body without the blocks a hook left out.
+fn nested_hooks_in(
+    func: &js_ast::G::Fn,
+    stmts: &[js_ast::Stmt],
+    names: &NameTable<'_>,
+    out: &mut BodyDecls,
+) {
     let mut w = Walk::default();
     for arg in func.args.slice() {
         w.declare_binding(&arg.binding);
@@ -696,7 +707,7 @@ fn nested_hooks(func: &js_ast::G::Fn, names: &NameTable<'_>, out: &mut BodyDecls
             w.expr(d);
         }
     }
-    w.stmts(func.body.stmts.slice());
+    w.stmts(stmts);
     for e in &w.calls {
         let E::ECall(call) = &e.data else {
             continue;
@@ -712,6 +723,144 @@ fn nested_hooks(func: &js_ast::G::Fn, names: &NameTable<'_>, out: &mut BodyDecls
                 "call hooks only as `const x = useHook(...)` at the top of the component",
             );
         }
+    }
+}
+
+/// "Hook-shape relaxations" (R34.105): `if (FLAG) { const ref = useRef(…); useEffect(() => { … }) }`, the dev-only
+/// warning a library keeps behind a module flag. Left out when nothing in it can be seen but a log: the test is a
+/// plain name; the block holds only `useRef` bindings and `useEffect`s; an effect only declares consts, reads and
+/// writes the block's own refs, branches, and calls `console.*`; and no other statement of the hook names those refs.
+/// Anything else stays and is read (or refused) like any statement.
+fn dev_only_block(stmt: &js_ast::Stmt, rest: &[js_ast::Stmt], names: &NameTable<'_>) -> bool {
+    let S::SIf(i) = &stmt.data else {
+        return false;
+    };
+    if i.no.is_some() || !matches!(i.test.data, E::EIdentifier(_) | E::EImportIdentifier(_)) {
+        return false;
+    }
+    let inner: Vec<js_ast::Stmt> = match &i.yes.data {
+        S::SBlock(b) => b.stmts.slice().to_vec(),
+        _ => vec![i.yes],
+    };
+    let mut refs: Vec<js_ast::Ref> = Vec::new();
+    let mut effects = Vec::new();
+    for st in &inner {
+        match &st.data {
+            S::SLocal(l) if matches!(l.kind, js_ast::S::Kind::KConst) && l.decls.len() == 1 => {
+                let d = &l.decls[0];
+                let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) else {
+                    return false;
+                };
+                let E::ECall(c) = &v.data else {
+                    return false;
+                };
+                if react_hook_target(&c.target, names).as_deref() != Some("useRef")
+                    || c.args.len() > 1
+                    || !c.args.iter().all(|a| pure_expr(a))
+                {
+                    return false;
+                }
+                refs.push(id.r#ref);
+            }
+            S::SExpr(x) => {
+                let E::ECall(c) = &x.value.data else {
+                    return false;
+                };
+                if react_hook_target(&c.target, names).as_deref() != Some("useEffect") {
+                    return false;
+                }
+                let args: Vec<_> = c.args.iter().collect();
+                let Some(E::EArrow(a)) = args.first().map(|a| &a.data) else {
+                    return false;
+                };
+                if a.is_async
+                    || !a.args.is_empty()
+                    || !args.get(1).is_none_or(|d| match &d.data {
+                        E::EArray(d) => d.items.iter().all(pure_expr),
+                        _ => false,
+                    })
+                    || args.len() > 2
+                {
+                    return false;
+                }
+                effects.push(a.body.stmts.slice().to_vec());
+            }
+            _ => return false,
+        }
+    }
+    if !effects.iter().all(|e| log_only(e, &refs, names)) {
+        return false;
+    }
+    let mut w = Walk::default();
+    w.stmts(rest);
+    !w.used
+        .iter()
+        .any(|u| refs.iter().any(|r| names.same(*r, *u)))
+}
+
+/// Effect statements that only declare consts, touch the block's own `refs`, branch and log.
+fn log_only(stmts: &[js_ast::Stmt], refs: &[js_ast::Ref], names: &NameTable<'_>) -> bool {
+    stmts.iter().all(|st| match &st.data {
+        S::SEmpty(_) => true,
+        S::SLocal(l) => {
+            matches!(l.kind, js_ast::S::Kind::KConst)
+                && l.decls.iter().all(|d| {
+                    matches!(d.binding.data, B::BIdentifier(_))
+                        && d.value.as_ref().is_some_and(pure_expr)
+                })
+        }
+        S::SIf(i) => {
+            pure_expr(&i.test)
+                && log_only(std::slice::from_ref(&i.yes), refs, names)
+                && i.no
+                    .as_ref()
+                    .is_none_or(|n| log_only(std::slice::from_ref(n), refs, names))
+        }
+        S::SBlock(b) => log_only(b.stmts.slice(), refs, names),
+        S::SExpr(x) => match &x.value.data {
+            E::ECall(c) => {
+                matches!(&c.target.data,
+                    E::EDot(d) if matches!(&d.target.data, E::EIdentifier(id) if names.name(id.ref_) == "console"))
+                    && c.args.iter().all(pure_expr)
+            }
+            E::EBinary(b) if matches!(b.op, OpCode::BinAssign) => {
+                matches!(&b.left.data,
+                    E::EDot(d) if d.name.slice() == b"current"
+                        && matches!(&d.target.data, E::EIdentifier(id) if refs.iter().any(|r| names.same(*r, id.ref_))))
+                    && pure_expr(&b.right)
+            }
+            _ => false,
+        },
+        _ => false,
+    })
+}
+
+/// An expression that computes a value without calling anything or writing anything.
+fn pure_expr(e: &js_ast::Expr) -> bool {
+    match &e.data {
+        E::EIdentifier(_)
+        | E::EImportIdentifier(_)
+        | E::EString(_)
+        | E::ENumber(_)
+        | E::EBoolean(_)
+        | E::ENull(_)
+        | E::EUndefined(_) => true,
+        E::EDot(d) => pure_expr(&d.target),
+        E::EBinary(b) => {
+            matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None)
+                && pure_expr(&b.left)
+                && pure_expr(&b.right)
+        }
+        E::EUnary(u) => {
+            matches!(
+                OpCode::unary_assign_target(u.op),
+                js_ast::AssignTarget::None
+            ) && !matches!(u.op, OpCode::UnDelete)
+                && pure_expr(&u.value)
+        }
+        E::EIf(i) => pure_expr(&i.test) && pure_expr(&i.yes) && pure_expr(&i.no),
+        E::ETemplate(t) => t.tag.is_none() && t.parts.slice().iter().all(|p| pure_expr(&p.value)),
+        _ => false,
     }
 }
 
@@ -1478,11 +1627,41 @@ fn read_hook(
             format!("custom hook {hook} is async or a generator"),
         );
     }
+    // A parameter is a plain identifier, or (R34.105, "hook-shape relaxations") an object pattern of plain keys
+    // with optional defaults, bound to an object literal at the call site.
     let mut params = Vec::new();
+    let mut slots: Vec<Slot> = Vec::new();
     for arg in func.args.slice() {
         match arg.binding.data {
             B::BIdentifier(id) if arg.default.is_none() && !func.flags.contains(F::HasRestArg) => {
-                params.push(id.r#ref)
+                params.push(id.r#ref);
+                slots.push(Slot::Whole(id.r#ref));
+            }
+            B::BObject(obj) if arg.default.is_none() && !func.flags.contains(F::HasRestArg) => {
+                let mut members = Vec::new();
+                for p in obj.properties() {
+                    let (false, false, E::EString(key), B::BIdentifier(id)) = (
+                        p.flags.contains(js_ast::flags::Property::IsSpread),
+                        p.flags.contains(js_ast::flags::Property::IsComputed),
+                        &p.key.data,
+                        p.value.data,
+                    ) else {
+                        return fail(
+                            out,
+                            "hook-shape",
+                            format!(
+                                "custom hook {hook}: a computed key, ...rest or nested pattern in its parameter"
+                            ),
+                        );
+                    };
+                    params.push(id.r#ref);
+                    members.push(Member {
+                        local: id.r#ref,
+                        key: crate::analyze::expr::estring(key),
+                        default: p.default_value,
+                    });
+                }
+                slots.push(Slot::Object(members));
             }
             _ => {
                 return fail(
@@ -1493,7 +1672,7 @@ fn read_hook(
             }
         }
     }
-    if site.call.args.len() > params.len() {
+    if site.call.args.len() > func.args.len() {
         return fail(
             out,
             "hook-shape",
@@ -1513,12 +1692,28 @@ fn read_hook(
         );
     }
     mark_state_bindings(func, &mut hnames);
+    // R34.105: a dev-only warning block (`if (FLAG) { useRef; useEffect(… console.warn …) }`) is left out.
+    let all = func.body.stmts.slice();
+    let body: Vec<js_ast::Stmt> = all
+        .iter()
+        .enumerate()
+        .filter(|(i, st)| {
+            let rest: Vec<js_ast::Stmt> = all
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| j != i)
+                .map(|(_, x)| *x)
+                .collect();
+            !dev_only_block(st, &rest, &hnames)
+        })
+        .map(|(_, st)| *st)
+        .collect();
 
     let mut w = Walk::default();
     for arg in func.args.slice() {
         w.declare_binding(&arg.binding);
     }
-    w.stmts(func.body.stmts.slice());
+    w.stmts(&body);
     if w.calls
         .iter()
         .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element))
@@ -1662,30 +1857,116 @@ fn read_hook(
     // Arguments: an identifier is the caller's binding; anything else is computed once at
     // the call site, under the parameter's generated name.
     let mut param_aliases = Vec::new();
-    for (i, p) in params.iter().enumerate() {
-        let alias = match site.call.args.get(i).map(|a| (a, &a.data)) {
-            Some((_, E::EIdentifier(js_ast::E::Identifier { ref_, .. })))
-            | Some((_, E::EImportIdentifier(js_ast::E::ImportIdentifier { ref_, .. }))) => Alias {
-                print: r.names.name(*ref_),
-                kind: Some(r.names.kind_of(*ref_)),
-            },
-            arg => {
-                let name = gen_of(&hnames, *p);
-                let expr = match arg {
-                    Some((a, _)) => r.expr(a),
-                    None => undefined_at(vloc),
+    // `name === undefined ? default : name` for a defaulted member, read once the aliases are set.
+    let mut defaulted: Vec<(String, RawExpr, js_ast::Expr)> = Vec::new();
+    for (i, slot) in slots.iter().enumerate() {
+        let call_arg = site.call.args.get(i);
+        match slot {
+            Slot::Whole(p) => {
+                let alias = match call_arg.and_then(|a| ident_alias(r.names, a)) {
+                    Some(alias) => alias,
+                    None => {
+                        let name = gen_of(&hnames, *p);
+                        let expr = match call_arg {
+                            Some(a) => r.expr(a),
+                            None => undefined_at(vloc),
+                        };
+                        out.derived.push(DerivedDecl {
+                            name: name.clone(),
+                            expr: Expr::Raw(expr),
+                        });
+                        Alias {
+                            print: name,
+                            kind: None,
+                        }
+                    }
                 };
-                out.derived.push(DerivedDecl {
-                    name: name.clone(),
-                    expr: Expr::Raw(expr),
-                });
-                Alias {
-                    print: name,
-                    kind: None,
+                param_aliases.push((*p, alias));
+            }
+            Slot::Object(members) => {
+                // Destructuring `undefined` throws; the call site must hand over an object literal of plain keys.
+                let Some(E::EObject(lit)) = call_arg.map(|a| &a.data) else {
+                    return fail(
+                        out,
+                        "hook-shape",
+                        format!(
+                            "custom hook {hook} destructures its argument, which the call site does not write as an object literal"
+                        ),
+                    );
+                };
+                let mut given: Vec<(String, &js_ast::Expr)> = Vec::new();
+                for prop in lit.properties.iter() {
+                    let plain = matches!(prop.kind, js_ast::G::PropertyKind::Normal)
+                        && !prop.flags.contains(js_ast::flags::Property::IsComputed)
+                        && !prop.flags.contains(js_ast::flags::Property::IsMethod);
+                    let (true, Some(E::EString(key)), Some(value)) = (
+                        plain,
+                        prop.key.as_ref().map(|k| k.data),
+                        prop.value.as_ref(),
+                    ) else {
+                        return fail(
+                            out,
+                            "hook-shape",
+                            format!(
+                                "custom hook {hook}: its object argument has a spread, a computed key, a method or an accessor"
+                            ),
+                        );
+                    };
+                    given.push((crate::analyze::expr::estring(&key), value));
+                }
+                for m in members {
+                    let value = given
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| *k == m.key)
+                        .map(|(_, v)| *v);
+                    let raw = match value {
+                        Some(v) => r.expr(v),
+                        None => undefined_at(vloc),
+                    };
+                    match (m.default, value.and_then(|a| ident_alias(r.names, a))) {
+                        (None, Some(alias)) => param_aliases.push((m.local, alias)),
+                        (None, None) => {
+                            let name = gen_of(&hnames, m.local);
+                            out.derived.push(DerivedDecl {
+                                name: name.clone(),
+                                expr: Expr::Raw(raw),
+                            });
+                            param_aliases.push((
+                                m.local,
+                                Alias {
+                                    print: name,
+                                    kind: None,
+                                },
+                            ));
+                        }
+                        (Some(d), _) => {
+                            // The value is read twice (`v === undefined ? d : v`): only a value whose
+                            // computation can be dropped may be.
+                            if !inert(&raw) {
+                                return fail(
+                                    out,
+                                    "hook-shape",
+                                    format!(
+                                        "custom hook {hook}: `{}` has a default and the call site passes a computed value",
+                                        m.key
+                                    ),
+                                );
+                            }
+                            let name = gen_of(&hnames, m.local);
+                            defaulted.push((name.clone(), raw, d));
+                            param_aliases.push((
+                                m.local,
+                                Alias {
+                                    print: name,
+                                    kind: None,
+                                },
+                            ));
+                        }
+                    }
                 }
             }
-        };
-        param_aliases.push((*p, alias));
+        }
     }
     for (l, _) in &locals {
         if !params.iter().any(|p| hnames.same(*p, *l)) {
@@ -1704,8 +1985,29 @@ fn read_hook(
     let returned = {
         let print = |js: Js<'_>, a: &Aliases| print_js_with(hm.parsed, hm.ast, a, js);
         let mut hr = Reader::new(&mut hnames, &print);
-        let returned = read_stmts(func.body.stmts.slice(), &mut hr, out, hm);
-        nested_hooks(func, hr.names, out);
+        for (name, raw, default) in defaulted {
+            let d = hr.expr(&default);
+            out.derived.push(DerivedDecl {
+                name,
+                expr: Expr::Raw(RawExpr {
+                    loc: vloc,
+                    kind: RawKind::Cond {
+                        test: Box::new(RawExpr {
+                            loc: vloc,
+                            kind: RawKind::Binary {
+                                op: crate::ir::BinOp::StrictEq,
+                                left: Box::new(raw.clone()),
+                                right: Box::new(undefined_at(vloc)),
+                            },
+                        }),
+                        yes: Box::new(d),
+                        no: Box::new(raw),
+                    },
+                }),
+            });
+        }
+        let returned = read_stmts(&body, &mut hr, out, hm);
+        nested_hooks_in(func, &body, hr.names, out);
         out.diagnostics.append(&mut hr.diagnostics);
         if !hr.pending_handlers.is_empty() {
             fail(
@@ -1749,6 +2051,30 @@ fn read_hook(
         return;
     }
     bind_result(r, out, site, returned);
+}
+
+/// An argument that is a plain identifier is the caller's own binding.
+fn ident_alias(names: &NameTable<'_>, a: &js_ast::Expr) -> Option<Alias> {
+    match &a.data {
+        E::EIdentifier(js_ast::E::Identifier { ref_, .. })
+        | E::EImportIdentifier(js_ast::E::ImportIdentifier { ref_, .. }) => Some(Alias {
+            print: names.name(*ref_),
+            kind: Some(names.kind_of(*ref_)),
+        }),
+        _ => None,
+    }
+}
+
+/// A custom hook's parameter: a plain identifier, or an object pattern of plain keys.
+enum Slot {
+    Whole(js_ast::Ref),
+    Object(Vec<Member>),
+}
+
+struct Member {
+    local: js_ast::Ref,
+    key: String,
+    default: Option<js_ast::Expr>,
 }
 
 /// Lengths of `out`'s lists before a hook is read, so what it added can be found.
