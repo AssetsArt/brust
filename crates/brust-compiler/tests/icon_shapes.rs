@@ -264,10 +264,15 @@ const SPIN: &str = "import { Heart } from 'lucide-react'\nexport function Spin({
 #[test]
 fn a_call_site_may_not_hand_an_icon_spread_a_key_the_icon_reads() {
     for (call, refused) in [
-        ("<Spin title=\"t\" />", false),
         ("<Spin size={12} />", true),
         ("<Spin className=\"x\" />", true),
         ("<Spin color=\"red\" />", true),
+        ("<Spin aria-label=\"next\" />", true),
+        ("<Spin aria-hidden=\"false\" />", true),
+        ("<Spin role=\"img\" />", true),
+        ("<Spin title=\"t\" />", true),
+        ("<Spin nonScalingStroke />", true),
+        ("<Spin data-x=\"1\" />", false),
     ] {
         let page = format!(
             "import {{ Spin }} from './spin'\nexport default function P() {{ return <main>{call}</main> }}\n"
@@ -292,4 +297,72 @@ fn a_spread_of_unknown_keys_into_an_icon_component_is_refused() {
     let all = icon_tree(&[("spin.tsx", SPIN), ("page.tsx", page)], "page.tsx");
     let p = all.iter().find(|i| i.source == "page.tsx").unwrap();
     assert!(rule(p, "spread-props").is_some(), "{:?}", p.diagnostics);
+}
+
+#[test]
+fn the_longest_prefix_pattern_wins_as_in_typescript_and_bun() {
+    let root = tmp_app("overlap");
+    std::fs::create_dir_all(root.join("ui")).unwrap();
+    std::fs::create_dir_all(root.join("src/ui")).unwrap();
+    std::fs::write(
+        root.join("ui/b.tsx"),
+        "export function B() { return <i>root</i> }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/ui/b.tsx"),
+        "export function B() { return <u>src</u> }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("page.tsx"),
+        "import { B } from '@/ui/b'\nexport default function P() { return <main><B /></main> }\n",
+    )
+    .unwrap();
+    let aliases = vec![
+        PathAlias {
+            pattern: "@/*".into(),
+            targets: vec!["*".into()],
+        },
+        PathAlias {
+            pattern: "@/ui/*".into(),
+            targets: vec!["src/ui/*".into()],
+        },
+    ];
+    let all = tree(&root, "page.tsx", aliases.clone());
+    let page = all.iter().find(|i| i.source == "page.tsx").unwrap();
+    assert_eq!(page.alias_imports[0].target, "src/ui/b.tsx");
+    // Order in the config does not matter.
+    let mut rev = aliases;
+    rev.reverse();
+    let all = tree(&root, "page.tsx", rev);
+    assert_eq!(
+        all.iter()
+            .find(|i| i.source == "page.tsx")
+            .unwrap()
+            .alias_imports[0]
+            .target,
+        "src/ui/b.tsx"
+    );
+    // An exact pattern beats a star pattern.
+    let exact = vec![
+        PathAlias {
+            pattern: "@/ui/*".into(),
+            targets: vec!["src/ui/*".into()],
+        },
+        PathAlias {
+            pattern: "@/ui/b".into(),
+            targets: vec!["ui/b".into()],
+        },
+    ];
+    let all = tree(&root, "page.tsx", exact);
+    assert_eq!(
+        all.iter()
+            .find(|i| i.source == "page.tsx")
+            .unwrap()
+            .alias_imports[0]
+            .target,
+        "ui/b.tsx"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }

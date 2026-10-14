@@ -87,10 +87,22 @@ pub fn rewrite(parent: &str, spec: &str) -> Option<(String, String)> {
     } else {
         parent.to_string()
     };
-    for alias in &active.aliases {
-        let Some(cap) = captured(&alias.pattern, spec) else {
-            continue;
-        };
+    // TypeScript (and Bun) use the pattern with the longest prefix before `*`; an exact pattern beats any `*` one.
+    let mut matching: Vec<(&PathAlias, Option<&str>, usize)> = active
+        .aliases
+        .iter()
+        .filter_map(|a| {
+            let cap = captured(&a.pattern, spec)?;
+            let rank = if cap.is_none() {
+                usize::MAX
+            } else {
+                a.pattern.find('*').unwrap_or(0)
+            };
+            Some((a, cap, rank))
+        })
+        .collect();
+    matching.sort_by_key(|(_, _, rank)| std::cmp::Reverse(*rank));
+    if let Some((alias, cap, _)) = matching.first() {
         for t in &alias.targets {
             let t = match cap {
                 Some(c) => t.replacen('*', c, 1),
@@ -104,19 +116,16 @@ pub fn rewrite(parent: &str, spec: &str) -> Option<(String, String)> {
                 continue;
             }
             let found = EXTS.iter().find_map(|e| {
-                let c = if e.is_empty() && !(target.ends_with(".tsx") || target.ends_with(".ts")) {
+                if e.is_empty() && !(target.ends_with(".tsx") || target.ends_with(".ts")) {
                     return None;
-                } else {
-                    format!("{target}{e}")
-                };
+                }
+                let c = format!("{target}{e}");
                 active.root.join(&c).is_file().then_some(c)
             });
             if let Some(found) = found {
                 return Some((relative(&parent, &found), found));
             }
         }
-        // The first pattern that matches decides, as TypeScript does.
-        return None;
     }
     None
 }

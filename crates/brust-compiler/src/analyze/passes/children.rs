@@ -410,6 +410,18 @@ fn reads_children_as_value(ir: &ComponentIR) -> bool {
         .any(|p| p == "children" || p.starts_with("children."))
 }
 
+/// A key lucide-react 1.56 reads itself: any `aria-*`, `role` or `title` (it then drops its own `aria-hidden`),
+/// `nonScalingStroke`, `iconNode`, `icon`, besides [`ICON_OWN_PROPS`]. Brust bakes `aria-hidden` at build time, so none of
+/// them may reach an icon through a runtime spread.
+fn icon_reads_itself(k: &str) -> bool {
+    ICON_OWN_PROPS.contains(&k)
+        || k.starts_with("aria-")
+        || matches!(
+            k,
+            "role" | "title" | "nonScalingStroke" | "iconNode" | "icon"
+        )
+}
+
 /// Props a lucide icon component reads itself; none may reach one through a runtime spread (R34.77).
 const ICON_OWN_PROPS: &[&str] = &[
     "size",
@@ -2072,7 +2084,7 @@ impl Walker<'_, '_> {
             }
             if let Some((k, _)) = props
                 .iter()
-                .find(|(k, _)| ICON_OWN_PROPS.contains(&k.as_str()) && child.spread.lands(k))
+                .find(|(k, _)| icon_reads_itself(k) && child.spread.lands(k))
             {
                 self.diagnostics.push(refuse(format!(
                     "the prop `{k}` of <{name}> reaches an icon through a spread, and the icon reads `{k}` itself"

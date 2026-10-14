@@ -50,6 +50,8 @@ test('the page is static: no island of its own', () => {
   expect(tiers.spinner).toBe('static')
   // The page that gives `Sep` children falls back to React (`children-read`), not to a wrong answer.
   expect(tiers.withChildren).toBe('react')
+  // An icon that reads aria-*/role/title itself: refused at the call site, rendered by React.
+  expect(tiers.labelled).toBe('react')
 })
 
 async function react(file: string): Promise<string> {
@@ -64,7 +66,7 @@ test('the served HTML equals the React render (alias imports, ?? and || fallback
   expect(served).toBe(await react('Page.tsx'))
   expect(served).toContain('<i>none</i>')
   expect(served).toContain('>given<')
-  expect(served).toContain('aria-label="Saving"')
+  expect(served).toContain('data-x="1"')
   // `label=""`: `||` falls back as JS does.
   expect(served.match(/<i>none<\/i>/g)?.length).toBe(2)
 })
@@ -74,4 +76,13 @@ test('children given to a component that tests `children` render as React render
   expect(served).toBe(await react('WithChildren.tsx'))
   expect(served).toContain('>custom<')
   expect(served).toContain('>0<')
+})
+
+test('an icon given aria-*, role, title or nonScalingStroke through a spread equals the React render (a labelled icon is not hidden)', async () => {
+  const served = normalize(await (await fetch(`${base}/labelled`)).text())
+  expect(served).toBe(await react('Labelled.tsx'))
+  expect(served).toContain('aria-label="next"')
+  // React drops `aria-hidden` when the icon is labelled; the page must not print both.
+  expect(served).not.toMatch(/aria-hidden="true"[^>]*aria-label|aria-label[^>]*aria-hidden="true"/)
+  expect(served).not.toContain('nonScalingStroke')
 })

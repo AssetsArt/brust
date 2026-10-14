@@ -11,7 +11,7 @@ export default function Page() {
       <Fallback label="given" />
       <Fallback label="" />
       <Spinner />
-      <Spinner aria-label="Saving" data-x="1" />
+      <Spinner data-x="1" id="s2" />
     </main>
   )
 }
