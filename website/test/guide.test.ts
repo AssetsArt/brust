@@ -5,7 +5,7 @@ import { type Browser, chromium, type Page } from 'playwright'
 import { PAGES } from '../lib/nav'
 import { build, component, freshOut, HOOK_MS, type Manifest, ready, serve, type Server, TEST_MS, until, WAIT_MS } from './harness'
 
-const GUIDE = PAGES.filter((p) => p.group === 'Guide' && p.slug !== 'quickstart')
+const GUIDE = PAGES.filter((p) => (p.group === 'Guide' || p.group === 'React & libraries') && p.slug !== 'quickstart')
 let base = ''
 let srv: Server | undefined
 let browser: Browser | undefined
@@ -41,7 +41,7 @@ async function open(path: string): Promise<Page> {
 const errorsOf = (p: Page) => (p as Page & { errors: string[] }).errors
 
 test('every Guide page is 200 with its title, a live demo frame and no compiler warning besides the react demos', async () => {
-  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'release-notes', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'css', 'packages', 'shadcn', 'guides/shadcn-setup', 'react-coverage', 'configuration', 'cli', 'dev-mode', 'deployment', 'migrating'])
+  expect(GUIDE.map((p) => p.slug)).toEqual(['introduction', 'installation', 'release-notes', 'project-structure', 'routing', 'loaders', 'rendering-tiers', 'caching', 'actions', 'store', 'css', 'configuration', 'cli', 'dev-mode', 'deployment', 'migrating', 'react-coverage', 'packages', 'shadcn', 'guides/shadcn-setup'])
   for (const p of GUIDE) {
     const r = await fetch(`${base}/docs/${p.slug}`)
     expect([p.slug, r.status]).toEqual([p.slug, 200])

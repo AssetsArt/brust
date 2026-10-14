@@ -26,10 +26,13 @@ afterAll(async () => {
   freshOut('shadcn-setup')
 }, HOOK_MS)
 
-test('the page is in the Guide right after "shadcn/ui and libraries", has its anchors and renders static', () => {
-  const guide = NAV.find((g) => g.group === 'Guide')!.items.map((i) => i.slug)
+test('the page is in React & libraries right after "shadcn/ui and libraries", has its anchors and renders static', () => {
+  const guide = NAV.find((g) => g.group === 'React & libraries')!.items.map((i) => i.slug)
   expect(guide[guide.indexOf('shadcn') + 1]).toBe('guides/shadcn-setup')
   expect(PAGES.some((p) => p.slug === 'guides/shadcn-setup')).toBe(true)
+  // the group sits right after Guide, in the order the human asked for, and the moved pages keep their slugs
+  expect(NAV.map((g) => g.group).slice(0, 2)).toEqual(['Guide', 'React & libraries'])
+  expect(guide).toEqual(['react-coverage', 'packages', 'shadcn', 'guides/shadcn-setup'])
   for (const id of ['create', 'config', 'add', 'use', 'build', 'dark']) expect([id, html.includes(`id="${id}"`), html.includes(`href="#${id}"`)]).toEqual([id, true, true])
   expect(component(manifest, 'ShadcnSetup').tier).toBe('static')
   expect(html).not.toMatch(/§/)

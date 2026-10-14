@@ -38,7 +38,8 @@ test('routes: /docs plus one /docs/{slug} per nav entry, in nav order; the canon
   // /docs/routes is a permanent redirect to /docs/routing (the blank template's starter links it), not a nav entry
   expect(patterns).toEqual(['/', '/docs', ...PAGES.map((p) => `/docs/${p.slug}`), '/docs/routes', '*'])
   expect(NAV.map((g) => [g.group, g.items.length])).toEqual([
-    ['Guide', 21],
+    ['Guide', 17],
+    ['React & libraries', 4],
     ['Cloudflare', 3],
     ['Cache adapters', 4],
     ['Cookbook', 5],
@@ -63,7 +64,7 @@ test('every docs route is 200 with its title and current sidebar link; /docs is 
     // page loader keys merge over the layouts': the header version must survive every page
     expect(html).toMatch(new RegExp(`<span class="[^"]*">${coreVersion}</span>`))
     expect(html).toMatch(new RegExp(`<a class="[^"]*" href="/docs/${p.slug}" aria-current="page">${p.title}</a>`))
-    expect(html).toMatch(new RegExp(`<div class="[^"]*">${p.group} / ${p.title}</div>`))
+    expect(html).toMatch(new RegExp(`<div class="[^"]*">${p.group.replaceAll('&', '&amp;')} / ${p.title}</div>`))
     expect(html).toContain(`${EDIT_BASE}${p.file}`)
   }
   const home = PAGES.find((p) => p.slug === DOCS_HOME)!
@@ -82,7 +83,10 @@ test('pager: previous/next follow the nav order across groups; the ends have one
   const qs = await (await fetch(`${base}/docs/quickstart`)).text()
   expect(qs).toMatch(pager('Previous', '/docs/release-notes', 'Release notes'))
   expect(qs).toMatch(pager('Next', '/docs/project-structure', 'Project structure'))
-  const cross = await (await fetch(`${base}/docs/migrating`)).text()
+  const group = await (await fetch(`${base}/docs/migrating`)).text()
+  expect(group).toMatch(pager('Next', '/docs/react-coverage', 'React coverage'))
+  const cross = await (await fetch(`${base}/docs/guides/shadcn-setup`)).text()
+  expect(cross).toMatch(pager('Previous', '/docs/shadcn', 'shadcn/ui and libraries'))
   expect(cross).toMatch(pager('Next', '/docs/cloudflare/workers', 'Workers target'))
   const last = await (await fetch(`${base}/docs/cookbook/invalidate-the-cache`)).text()
   expect(last).not.toContain('>Next</span>')
