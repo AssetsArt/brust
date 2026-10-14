@@ -95,6 +95,13 @@ fn refused(o: &Out, rule: &str) {
     assert!(fallback_rules(o).contains(&rule), "{rule}: {:?}", o.diags);
 }
 
+/// [`refused_any`] for a binding other than `aria-pressed`.
+fn refused_any_of(o: &Out, bound: &str) {
+    assert!(matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+    assert!(!fallback_rules(o).is_empty(), "{:?}", o.diags);
+    assert!(!o.jinja.contains(bound), "{}", o.jinja);
+}
+
 /// The parent falls back to React (whatever code names it), and binds nothing.
 fn refused_any(o: &Out) {
     assert!(matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
@@ -312,6 +319,8 @@ fn keys_that_merge_set_a_property_or_are_not_attributes_stay_refused() {
         "value={on ? 'a' : 'b'}",
         "checked={on}",
         "x-html={on ? 'a' : 'b'}",
+        "href={on ? '/a' : ''}",
+        "src={on ? '/a.png' : ''}",
         "dangerouslySetInnerHTML={{ __html: on ? 'a' : 'b' }}",
         "onMouseDown={on}",
     ] {
@@ -450,4 +459,17 @@ fn an_instance_that_is_linked_anyway_binds_no_live_forward() {
         assert_eq!(o.tier, Tier::Native, "{:?}", o.diags);
         no_mixed_scope(&o.jinja);
     }
+}
+
+#[test]
+fn a_live_url_through_a_spread_is_never_bound_by_the_parent() {
+    // React keeps `href=""` on an anchor and drops it elsewhere (`<img src="">`): the print decides by the element's
+    // tag, and the parent only knows the component's name (review F2).
+    let o = page(
+        "import Anchor from './Anchor'",
+        &format!(
+            "{FLIP} return <div><Anchor href={{on ? '/a' : ''}} /><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    refused_any_of(&o, "x-bind-href");
 }

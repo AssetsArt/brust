@@ -4297,6 +4297,8 @@ pub(crate) fn live_key_ok(k: &str) -> bool {
         && !brust_jinja::is_refused_attr(&html)
         && crate::analyze::jsx::event_name(k).is_none()
         && !k.to_ascii_lowercase().starts_with("x-")
+        // The element is the child's: `<a href="">` keeps its empty href in React, which the print decides by the tag.
+        && !brust_jinja::is_url_attr(&html)
         && !matches!(
             html.as_str(),
             "class" | "style" | "value" | "checked" | "selected" | "children" | "key" | "ref"
