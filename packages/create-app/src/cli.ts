@@ -5,7 +5,7 @@ import { copyTemplate } from './copy.ts'
 import { parseArgs, USAGE } from './args.ts'
 import { applyOverrides, monorepoRoot, resolveBrustDep } from './dep.ts'
 import { TAILWIND_DEFAULT_NOTE } from './tailwind.ts'
-import { runShadcn, spawnRunner } from './shadcn.ts'
+import { runShadcn, shq, spawnRunner } from './shadcn.ts'
 import { selectTemplate } from './templates.ts'
 
 // F131: read at run time from the package.json that `bun publish` ships, so release-bump.ts stays the only place versions change.
@@ -70,7 +70,7 @@ function printNextSteps(name: string, targetDir: string, template: string, spec:
   const displayPath = targetDir.startsWith(`${cwd}/`) ? `./${targetDir.slice(cwd.length + 1)}` : targetDir
   console.log(`Created ${name} at ${targetDir} (template: ${template}, @brust/core ${spec})\n`)
   console.log('Next:')
-  console.log(`  cd ${displayPath}`)
+  console.log(`  cd ${shq(displayPath)}`)
   if (!installed) console.log(workspace ? '  bun install   # run it at the brust repo root: this app is a workspace member' : '  bun install')
   console.log('  bun run dev')
 }
