@@ -41,28 +41,31 @@ afterAll(async () => {
   rmSync(join(app, out), { recursive: true, force: true })
 })
 
-/** Holds every React chunk for `ms`, so the window between first paint and `hydrateRoot` is wide and deterministic. */
-async function openSlow(ms: number) {
+/** Holds every React chunk until `release()` is called, so the window between first paint and `hydrateRoot` is exactly as wide as the test needs, whatever the CI load. */
+async function openGated() {
+  let release!: () => void
+  const gate = new Promise<void>((r) => { release = r })
   const page = await browser.newPage()
   const errors: string[] = []
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
-  await page.route('**/_brust/client/react-*.js', async (route) => { await Bun.sleep(ms); await route.continue() })
-  await page.route('**/_brust/client/chunk-*.js', async (route) => { await Bun.sleep(ms); await route.continue() })
+  await page.route('**/_brust/client/react-*.js', async (route) => { await gate; await route.continue() })
+  await page.route('**/_brust/client/chunk-*.js', async (route) => { await gate; await route.continue() })
   await page.goto(`${base}/`, { waitUntil: 'commit' })
-  return { page, errors }
+  return { page, errors, release }
 }
 
 test('a click on server HTML before hydrateRoot is dropped, and the next click after data-hydrated works', async () => {
-  const { page, errors } = await openSlow(1500)
+  const { page, errors, release } = await openGated()
   const trigger = page.getByText('Toggle two')
   await trigger.waitFor({ state: 'visible' }) // server markup, painted
   expect(await page.locator('brust-island[data-hydrated="1"]').count()).toBe(0)
   await trigger.click() // the dead window: no React listener exists yet
   expect(await page.locator('brust-island[data-hydrated="1"]').count()).toBe(0)
+  release() // the chunks load now; hydration follows
   await page.waitForFunction(() => document.querySelectorAll('brust-island[data-hydrated="1"]').length === 3, undefined, { timeout: 20_000 })
   // Not replayed: hydration finished and the disclosure is still closed.
-  await page.waitForTimeout(300)
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0)))))
   expect(await page.locator('[data-testid="disc-two"][data-state="open"]').count()).toBe(0)
   // The same control now works, once.
   await trigger.click()

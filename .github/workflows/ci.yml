@@ -290,6 +290,7 @@ jobs:
       - run: bun test --timeout 120000 tests/server/island-children.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-slots.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/prop-path-children.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/hydration-timing.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/object-literal-arrow.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/icon-shapes.test.ts
       - run: bun test --timeout 120000 tests/server/nested-fed.test.ts
