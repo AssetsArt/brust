@@ -1,7 +1,12 @@
 {
   "id": "input_22f43551",
   "source": "tests/fixtures/react-child-nested/input.tsx",
-  "tier": "Static",
+  "tier": {
+    "React": {
+      "reason": "the React island <Reviews> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot feed per row",
+      "client_only": false
+    }
+  },
   "props": [
     {
       "name": "props",
@@ -178,20 +183,13 @@
         }
       },
       "inputs": [
-        "__store",
-        "groups"
+        "*",
+        "__store"
       ],
       "outputs": [
-        "_ssr_reviews_37b0da66"
+        "_ssr_input_22f43551"
       ],
-      "per_item": "it",
-      "props": {
-        "__store": "__store",
-        "item": "groups[idx].items[idx]"
-      },
-      "literals": {
-        "limit": 3
-      }
+      "per_item": null
     }
   ],
   "child_links": [],
@@ -213,5 +211,15 @@
       }
     }
   ],
-  "diagnostics": []
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "nested-instance",
+      "message": "the React island <Reviews> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot feed per row",
+      "loc": 222,
+      "line": 4,
+      "col": 81,
+      "remediation": "map over the list in the route component, or keep this component interactive with React"
+    }
+  ]
 }

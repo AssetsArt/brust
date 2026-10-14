@@ -57,7 +57,15 @@ test('outlet-outside-layout, unresolvable Component and lowering Error are build
   const bad = join(import.meta.dir, 'fixtures/bad')
   await expect(buildFixture(join(bad, 'outlet-leaf'))).rejects.toMatchObject({ rule: 'outlet-outside-layout' })
   await expect(buildFixture(join(bad, 'inline-component'))).rejects.toMatchObject({ rule: 'component-source' })
-  await expect(buildFixture(join(bad, 'nested-instance'))).rejects.toMatchObject({ rule: 'nested-instance' })
+})
+
+// F164 R34.97: the server feeds one list level per instance; two lists used to be a lowering/manifest
+// `nested-instance` build error for valid React. The page is a React island now.
+test('a child with a job of its own inside two lists falls back to React, never a build error', async () => {
+  const { compiled } = await buildFixture(join(import.meta.dir, 'fixtures/bad/nested-instance'))
+  const grid = [...compiled.values()].find((c) => c.id.startsWith('grid_'))!
+  expect(grid.ir.tier).toHaveProperty('React')
+  expect((grid.diagnostics ?? []).some((d) => d.class === 'fallback' && d.rule === 'nested-instance')).toBe(true)
 })
 
 // gaps L7: route Components resolve through the import graph, not just the entry's own default imports.

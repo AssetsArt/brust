@@ -75,24 +75,36 @@ fn expressions_over_props_and_the_row_are_recorded_as_jinja() {
     assert_eq!(inst[0].props["code"], Some("src".to_string()));
 }
 
+/// F164 R34.97: a value the manifest cannot bind (no path, literal or expression) makes the component an island
+/// with a named fallback; it used to be the `instance-prop-path` build error.
+fn falls_back_unbound(parent: &str) -> bool {
+    let ir = analyze(parent);
+    matches!(ir.tier, Tier::React { .. })
+        && ir
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == "instance-prop-path")
+}
+
 #[test]
 fn outside_the_subset_stays_unbound() {
     // A local, a call outside the printer's table: no path, literal or expression.
-    let inst = instances(
-        "import Code from './Code'\nexport default function T({ src }: any) { const s = src.repeat(2); return <div><Code code={s} lang=\"ts\" /><Code code={src.padStart(4)} lang=\"ts\" /></div> }",
-    );
-    for i in &inst {
-        assert_eq!(i.props.get("code"), Some(&None), "{i:?}");
-        assert!(i.exprs.is_empty(), "{i:?}");
-    }
+    assert!(falls_back_unbound(
+        "import Code from './Code'\nexport default function T({ src }: any) { const s = src.repeat(2); return <div><Code code={s} lang=\"ts\" /></div> }",
+    ));
+    assert!(falls_back_unbound(
+        "import Code from './Code'\nexport default function T({ src }: any) { return <div><Code code={src.padStart(4)} lang=\"ts\" /></div> }",
+    ));
     // The whole props object is not a value the server hands a child; a member of it is.
+    assert!(falls_back_unbound(
+        "import Code from './Code'\nexport default function T(props: any) { return <div><Code code={props} lang=\"ts\" /></div> }",
+    ));
     let inst = instances(
-        "import Code from './Code'\nexport default function T(props: any) { return <div><Code code={props} lang=\"ts\" /><Code code={props.src + '!'} lang=\"ts\" /></div> }",
+        "import Code from './Code'\nexport default function T(props: any) { return <div><Code code={props.src + '!'} lang=\"ts\" /></div> }",
     );
-    assert_eq!(inst[0].props.get("code"), Some(&None), "{:?}", inst[0]);
     assert_eq!(
-        inst[1].exprs["code"], "((__props.src | js_string) ~ \"!\")",
+        inst[0].exprs["code"], "((__props.src | js_string) ~ \"!\")",
         "{:?}",
-        inst[1]
+        inst[0]
     );
 }

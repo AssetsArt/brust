@@ -501,11 +501,14 @@ fn lower_err(name: &str) -> Option<brust_compiler::ir::Diagnostic> {
     })
 }
 
-/// Spot-check 05c677eb: a react child under two loops cannot be served (one-level rule) -> Error, not a 2-D slot.
+/// Spot-check 05c677eb: a react child under two loops cannot be served (one-level rule), so it is not a 2-D slot:
+/// an analysis fallback (F164 R34.97; it was the lowering Error), never a build error.
 #[test]
-fn react_child_in_nested_lists_is_a_nested_instance_error() {
-    let err = lower_err("react-child-nested").expect("lowering must fail");
-    assert_eq!(err.rule, "nested-instance", "{err:?}");
+fn react_child_in_nested_lists_falls_back_at_analysis() {
+    assert!(
+        lower_err("react-child-nested").is_none(),
+        "analysis must catch it before the lowering"
+    );
     // and one level still works
     let jinja = lowered_jinja("react-child-row");
     assert!(jinja.contains("_ssr_reviews_"), "{jinja}");

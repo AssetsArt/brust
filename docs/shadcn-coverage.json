@@ -64,6 +64,24 @@
       "libraryComponents": 73
     },
     {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 12,
+      "analysisOnlyRows": 0,
+      "appComponents": 14,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:instance-prop-path",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 9,
+      "analysisOnlyRows": 0,
+      "appComponents": 10,
+      "libraryComponents": 0
+    },
+    {
       "blocker": "fallback:hook-unsupported",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -454,6 +472,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "nested-instance",
         "slot-child-component",
         "spread-props"
       ]
@@ -468,6 +487,7 @@
       "jsGzipKb": 74,
       "workerCalls": 1,
       "codes": [
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -585,6 +605,8 @@
       "jsGzipKb": 86,
       "workerCalls": 1,
       "codes": [
+        "instance-prop-path",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -629,7 +651,9 @@
         "event-capture",
         "external-component",
         "hook-unsupported",
+        "instance-prop-path",
         "member-tag",
+        "nested-instance",
         "ref-shape",
         "spread-props"
       ]
@@ -693,8 +717,10 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "instance-prop-path",
         "island-children",
         "jsx-expression",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -807,6 +833,8 @@
       "jsGzipKb": 86,
       "workerCalls": 1,
       "codes": [
+        "instance-prop-path",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -863,6 +891,8 @@
       "jsGzipKb": 87,
       "workerCalls": 2,
       "codes": [
+        "instance-prop-path",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -1007,6 +1037,8 @@
       "workerCalls": 3,
       "codes": [
         "external-component",
+        "instance-prop-path",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -1080,7 +1112,9 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "instance-prop-path",
         "island-children",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -1109,6 +1143,8 @@
       "jsGzipKb": 84,
       "workerCalls": 2,
       "codes": [
+        "instance-prop-path",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -1142,9 +1178,11 @@
         "external-component",
         "hook-shape",
         "hook-unsupported",
+        "instance-prop-path",
         "island-children",
         "linked-prop-precompute",
         "member-tag",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -1171,6 +1209,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "nested-instance",
         "spread-props"
       ]
     },
