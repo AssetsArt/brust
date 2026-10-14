@@ -52,6 +52,8 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         loop_literals: Vec::new(),
         instance_counts: HashMap::new(),
         instances: Vec::new(),
+        eval_instances: Vec::new(),
+        folded_instances: Vec::new(),
         ssr_outputs: HashMap::new(),
         row_only: HashMap::new(),
         // Props can change on the client unless nothing can reach this component: a child may be
@@ -91,6 +93,8 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         .retain(|j| !(matches!(j.kind, crate::ir::JobKind::Precompute) && j.outputs.is_empty()));
     ir.child_links.extend(w.links);
     ir.instances.extend(w.instances);
+    ir.build_eval_instances.extend(w.eval_instances);
+    ir.folded_instances.extend(w.folded_instances);
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.jobs.extend(w.jobs);
@@ -123,6 +127,10 @@ struct Walker<'s, 'c> {
     loop_literals: Vec<Option<serde_json::Value>>,
     instance_counts: HashMap<String, u32>,
     instances: Vec<InstanceRecord>,
+    /// Instances whose child job the build may run once (F149, R34.88-R34.90).
+    eval_instances: Vec<crate::ir::BuildEvalInstance>,
+    /// Instances the build ran (the recompile): no record, their slots are literals.
+    folded_instances: Vec<crate::ir::FoldedInstance>,
     ssr_outputs: HashMap<String, u32>,
     /// `RowOnly` links by id with the client reads they imply, resolved after the walk.
     /// With the child's name and location when it derives values from its props on the server (F96d).
@@ -173,6 +181,11 @@ struct Child {
     use_id: bool,
     /// Keys the call site must not pass (`ComponentIR::absent_props`).
     absent: Vec<String>,
+    /// Whether the build may run the child's precompute job for a constant-input instance (F149,
+    /// `build_eval::instance_job`); `None` when the child is not fed.
+    job_eval: Option<Result<Vec<crate::ir::EvalStub>, String>>,
+    /// The child's job outputs (`_sN`), all of which an evaluated instance must get.
+    job_outputs: Vec<String>,
 }
 
 /// Facts that decide whether a handler landing in a static child's spread can be bound by the
@@ -716,6 +729,8 @@ impl Walker<'_, '_> {
             forwards_ref: false,
             use_id: false,
             absent: Vec::new(),
+            job_eval: None,
+            job_outputs: Vec::new(),
         }
     }
 
@@ -754,6 +769,8 @@ impl Walker<'_, '_> {
                     forwards_ref: false,
                     use_id: false,
                     absent: Vec::new(),
+                    job_eval: None,
+                    job_outputs: Vec::new(),
                 };
             }
             // A package export (a member of one included): its source when the build wrote it (F153c), else
@@ -908,6 +925,8 @@ impl Walker<'_, '_> {
                         forwards_ref: false,
                         use_id: false,
                         absent: Vec::new(),
+                        job_eval: None,
+                        job_outputs: Vec::new(),
                     };
                 };
                 ctx.modules
@@ -952,6 +971,8 @@ impl Walker<'_, '_> {
         let mut use_id = false;
         let mut forwards_ref = false;
         let mut absent = Vec::new();
+        let mut job_eval = None;
+        let mut job_outputs = Vec::new();
         let tier = match lookup {
             Lookup::Compiled(ir) => {
                 forwards_ref = ir.forwards_ref;
@@ -991,6 +1012,10 @@ impl Walker<'_, '_> {
                         .iter()
                         .any(|j| j.inputs.iter().any(|i| i == "__store"));
                 fed = crate::ir::is_fed(&ir);
+                if fed && let Some(p) = &path {
+                    job_eval = Some(super::build_eval::instance_job(&ir, p, self.ctx.opts));
+                    job_outputs = ir.jobs.iter().flat_map(|j| j.outputs.clone()).collect();
+                }
                 use_id = ir.use_id_slots > 0;
                 // An island's ssr render over the wrapper's props is computed once too (L4).
                 prop_precompute = ir.jobs.iter().any(|j| {
@@ -1041,6 +1066,8 @@ impl Walker<'_, '_> {
             forwards_ref,
             use_id,
             absent,
+            job_eval,
+            job_outputs,
         }
     }
 
@@ -1575,8 +1602,11 @@ impl Walker<'_, '_> {
                         if matches!(v, Expr::ClientOnly { .. }) {
                             continue;
                         }
+                        // F149 R34.88: folded with this module's consts (`const v = "outline"`).
                         let lit = match v {
-                            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
+                            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {
+                                r.json_literal().or_else(|| self.fold_json(r))
+                            }
                             _ => None,
                         };
                         if let Some(p) = self.prop_path(v) {
@@ -1611,7 +1641,9 @@ impl Walker<'_, '_> {
                             );
                         }
                     }
-                    self.instances.push(record);
+                    if !self.fold_instance(name, *loc, &child, &record) {
+                        self.instances.push(record);
+                    }
                 }
                 // Native / static child (§7.4, F70): see `instance_needs_link`.
                 let need = instance_needs_link(
@@ -1840,6 +1872,85 @@ impl Walker<'_, '_> {
                 "give the child plain attributes, or keep the page on React",
             ));
         }
+    }
+
+    /// `r` folded to JSON with this module's consts (`crate::ir::FoldEnv`, which runs no user code).
+    fn fold_json(&self, r: &RawExpr) -> Option<serde_json::Value> {
+        let consts = self.module_consts.clone();
+        let lookup = move |n: &str| consts.get(n).cloned();
+        crate::ir::FoldEnv::new(&lookup).fold(r).ok()?.to_json()
+    }
+
+    /// F149 (R34.88-R34.90): a static instance whose job inputs are all constant, of a child whose
+    /// job the build may run, is a build-evaluation candidate; in the recompile, with every output
+    /// evaluated, it is folded (`true`: its record is dropped and its slots print as literals).
+    fn fold_instance(
+        &mut self,
+        name: &str,
+        loc: u32,
+        child: &Child,
+        record: &InstanceRecord,
+    ) -> bool {
+        let Some(verdict) = &child.job_eval else {
+            return false;
+        };
+        let constant = record.loops.is_empty()
+            && record.rows_literal.is_none()
+            && record.props.is_empty()
+            && record
+                .exprs
+                .values()
+                .all(|e| e == crate::lower::server_expr::UNDEFINED);
+        if !constant {
+            return false;
+        }
+        let stubs = match verdict {
+            Ok(stubs) => stubs.clone(),
+            Err(why) => {
+                self.diagnostics.push(Diagnostic::info(
+                    "build-eval-instance",
+                    format!("<{name}> keeps its per-request job: {why}"),
+                    loc,
+                    "only constants and the packages cn, clsx, tailwind-merge and class-variance-authority run at build",
+                ));
+                return false;
+            }
+        };
+        let key = format!("{}@{}", self.ctx.path, loc);
+        let values: Option<std::collections::BTreeMap<String, serde_json::Value>> = child
+            .job_outputs
+            .iter()
+            .map(|o| {
+                let v = self.ctx.opts.slot_values.get(&format!("{key}#{o}"))?;
+                Some((o.clone(), v.clone()))
+            })
+            .collect();
+        if let Some(values) = values.filter(|v| !v.is_empty()) {
+            self.folded_instances.push(crate::ir::FoldedInstance {
+                child_id: record.child_id.clone(),
+                k: record.k,
+                values,
+            });
+            return true;
+        }
+        let (line, col) = crate::ir::line_col(self.ctx.text, loc);
+        self.eval_instances.push(crate::ir::BuildEvalInstance {
+            key,
+            child_id: record.child_id.clone(),
+            k: record.k,
+            inputs: serde_json::Value::Object(
+                record
+                    .literals
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            ),
+            outputs: child.job_outputs.clone(),
+            stubs,
+            line,
+            col,
+        });
+        false
     }
 
     /// Shadcn S1 (R34.21): the JSX children of a React island as a JSON tree, so they travel in its

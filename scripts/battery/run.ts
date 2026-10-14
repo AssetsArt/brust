@@ -32,6 +32,9 @@ export interface Result {
   built: boolean
   /** `html_raw` occurrences in the printed templates: the one unescaped sink (`dangerouslySetInnerHTML`) */
   rawSinks: number
+  /** F149: the root's build-evaluation candidates, and why its constant-input instances keep their jobs */
+  buildEval: number
+  evalWhy: string[]
   /** expectation not met (tier or job count), and the row is not a known gap */
   warn: boolean
 }
@@ -42,8 +45,8 @@ export function buildBrustc(): string {
   return join(process.env.CARGO_TARGET_DIR ?? join(repo, 'target'), 'debug/brustc')
 }
 
-type Diag = { class: string; rule: string }
-type IR = { tier: string | { React: unknown }; jobs: { kind: string | Record<string, unknown> }[]; diagnostics: Diag[] }
+type Diag = { class: string; rule: string; message: string }
+type IR = { tier: string | { React: unknown }; jobs: { kind: string | Record<string, unknown> }[]; diagnostics: Diag[]; build_eval_instances?: unknown[] }
 
 /** Pure: classifies the `--emit all` spawn. An `Error` diagnostic makes `brustc` exit 1 by design (`compile_tree` returns the error). */
 export function classifyBuild(status: number | null, stderr: string, hasErrorDiag: boolean): Build {
@@ -75,7 +78,7 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
       const message = lines[0]!.includes('panicked')
         ? `compiler panic: ${lines[1] ?? ''}`
         : lines[0]!.replace(/^error:\s*/, '').replaceAll(dir, '.')
-      return { row, observed: 'compile-error', jobs: [], diagnostics: [], message, build: 'ok', built: false, rawSinks: 0 }
+      return { row, observed: 'compile-error', jobs: [], diagnostics: [], message, build: 'ok', built: false, rawSinks: 0, buildEval: 0, evalWhy: [] }
     }
     const ir = JSON.parse(p.stdout) as IR
     const diagnostics = [...new Set(ir.diagnostics.map((d) => `${d.class.toLowerCase()}:${d.rule}`))]
@@ -87,7 +90,9 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
     const buildMessage = build === 'failed'
       ? ((b.stderr ?? '').split('\n').find((l) => l.trim()) ?? `exit ${b.status}`).replace(/^error:\s*/, '').replaceAll(dir, '.')
       : undefined
-    return { row, observed: hasError ? 'error' : tier, jobs, diagnostics, build, buildMessage, built: true, rawSinks: countRawSinks(join(dir, 'out')) }
+    const buildEval = ir.build_eval_instances?.length ?? 0
+    const evalWhy = ir.diagnostics.filter((d) => d.rule === 'build-eval-instance').map((d) => d.message)
+    return { row, observed: hasError ? 'error' : tier, jobs, diagnostics, build, buildMessage, built: true, rawSinks: countRawSinks(join(dir, 'out')), buildEval, evalWhy }
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -124,7 +129,9 @@ export function runBattery(): Result[] {
   const brustc = buildBrustc()
   return rows.map((row) => {
     const r = compile(brustc, row)
-    const jobMiss = row.jobs !== undefined && row.jobs !== r.jobs.length
+    // F149: a row that pins its build-evaluation candidates (and the reason one is refused) must match.
+    const evalMiss = (row.buildEval !== undefined && row.buildEval !== r.buildEval) || (row.evalWhy !== undefined && !r.evalWhy.some((m) => m.includes(row.evalWhy!)))
+    const jobMiss = (row.jobs !== undefined && row.jobs !== r.jobs.length) || evalMiss
     // A crash is never a documented gap; an error row must refuse; a non-error row must not.
     const buildBad = r.built && (r.build === 'failed' || (r.build === 'refused') !== (r.observed === 'error'))
     return { ...r, warn: buildBad || (!row.knownGap && (r.observed !== row.expect || jobMiss)) }
@@ -183,7 +190,7 @@ if (import.meta.main) {
   const report = renderReport(results)
   if (!process.argv.includes('--check')) { writeFileSync(REPORT, report); writeFileSync(REPORT_JSON, renderJson(results)); writeFileSync(EXIT_REPORT, renderExitReport(results)) }
   const bad = results.filter((r) => r.warn)
-  for (const r of bad) console.error(`⚠ ${r.row.id}: expected ${r.row.expect}${r.row.jobs !== undefined ? ` (${r.row.jobs} jobs)` : ''}, observed ${r.observed} (${r.jobs.length} jobs) ${r.diagnostics.join(',')}`)
+  for (const r of bad) console.error(`⚠ ${r.row.id}: expected ${r.row.expect}${r.row.jobs !== undefined ? ` (${r.row.jobs} jobs)` : ''}${r.row.buildEval !== undefined ? ` (${r.row.buildEval} build-eval)` : ''}, observed ${r.observed} (${r.jobs.length} jobs, ${r.buildEval} build-eval${r.evalWhy.length ? `: ${r.evalWhy.join('; ')}` : ''}) ${r.diagnostics.join(',')}`)
   console.log(`[battery] ${results.length} rows, ${bad.length} unexplained ⚠${process.argv.includes('--check') ? '' : ' -> docs/react-coverage.md, docs/react-coverage.json, docs/plans/m1-exit-report.md'}`)
   process.exit(bad.length ? 1 : 0)
 }

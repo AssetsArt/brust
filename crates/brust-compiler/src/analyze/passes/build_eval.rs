@@ -4,6 +4,10 @@
 //! and is pure: only allowlisted globals, no module `let`/`var` captures, and (v1) no package
 //! imports. `buildTime(() => …)` imported from `@brust/core` is the explicit opt-in that lifts the
 //! package-import and `async` limits; the global denylist and the time/random rules still apply.
+//!
+//! F149 (R34.88-R34.90): an inlined instance whose child job reads only constants runs that job at
+//! build when the job's code is allowed: allowlisted packages, pure relative modules, and constants of
+//! other modules re-emitted folded ([`instance_job`]).
 use super::deps::Deps;
 use crate::analyze::component::AnalyzeOptions;
 use crate::analyze::expr::Walk;
@@ -12,6 +16,10 @@ use crate::ir::{IdentKind, ModuleDecl, RawExpr, RawKind};
 use bun_ast as js_ast;
 use js_ast::stmt::Data as S;
 use std::collections::HashSet;
+
+/// The packages a build-evaluated instance job may import (F149 ruling Q2): exact package names.
+pub const INSTANCE_PACKAGES: &[&str] =
+    &["cn", "clsx", "tailwind-merge", "class-variance-authority"];
 
 /// Globals a v1 slot may read.
 const ALLOWED_GLOBALS: &[&str] = &[
@@ -68,7 +76,7 @@ pub fn build_time_call(r: &RawExpr) -> Option<&RawExpr> {
 }
 
 /// `Math.random` anywhere in `r` (the global itself is allowlisted).
-fn reads_random(r: &RawExpr) -> bool {
+pub fn reads_random(r: &RawExpr) -> bool {
     match &r.kind {
         RawKind::Member { target, name, .. } => {
             (name == "random"
@@ -172,17 +180,19 @@ pub fn classify(
 }
 
 /// Globals an imported module may read besides the allowlist (values, not capabilities).
-const VALUE_GLOBALS: &[&str] = &["NaN", "Infinity"];
+const VALUE_GLOBALS: &[&str] = &["NaN", "Infinity", "undefined"];
 
 /// A relatively imported module a pure slot may call into (R0.1: fail closed). Its body is read,
 /// not assumed: no package or `node:` imports, no module `let` / `var`, no dynamic `import()`, no
 /// global outside the allowlist (`process`, `require`, `Date`, …) and no `Math.random`; its own
-/// relative imports must pass too (depth <= 8).
-pub fn module_is_pure(from: &str, source: &str, opts: &AnalyzeOptions) -> bool {
+/// relative imports must pass too (depth <= 8). `packages` are package imports it may also have
+/// (F149: the classic shadcn `lib/utils.ts` imports `clsx` and `tailwind-merge`).
+pub fn module_is_pure(from: &str, source: &str, opts: &AnalyzeOptions, packages: &[&str]) -> bool {
     fn go(
         from: &str,
         source: &str,
         opts: &AnalyzeOptions,
+        packages: &[&str],
         depth: usize,
         seen: &mut HashSet<String>,
     ) -> bool {
@@ -208,6 +218,9 @@ pub fn module_is_pure(from: &str, source: &str, opts: &AnalyzeOptions) -> bool {
             let mut rels = Vec::new();
             for rec in ast.import_records.as_slice() {
                 let spec = String::from_utf8_lossy(rec.path.text).into_owned();
+                if packages.contains(&spec.as_str()) {
+                    continue;
+                }
                 if !(spec.starts_with("./") || spec.starts_with("../")) {
                     return None;
                 }
@@ -243,9 +256,126 @@ pub fn module_is_pure(from: &str, source: &str, opts: &AnalyzeOptions) -> bool {
             Some(rels)
         });
         match rels {
-            Some(rels) => rels.iter().all(|r| go(&path, r, opts, depth + 1, seen)),
+            Some(rels) => rels
+                .iter()
+                .all(|r| go(&path, r, opts, packages, depth + 1, seen)),
             None => false,
         }
     }
-    go(from, source, opts, 0, &mut HashSet::new())
+    go(from, source, opts, packages, 0, &mut HashSet::new())
+}
+
+/// F149 (R34.89): whether the build may run the precompute job of the compiled child `ir` (its
+/// source `path`) once for an instance with constant inputs. `Ok` carries the relative imports the
+/// evaluation serves folded (rule 3); `Err` the first reason it may not. It runs nothing.
+pub fn instance_job(
+    ir: &crate::ir::ComponentIR,
+    path: &str,
+    opts: &AnalyzeOptions,
+) -> Result<Vec<crate::ir::EvalStub>, String> {
+    use crate::ir::{JobKind, Tier};
+    // F153c N1: the authored source of a package never runs at build.
+    if crate::analyze::modules::is_package_source(path) {
+        return Err("it is compiled from a package's source".into());
+    }
+    if !matches!(ir.tier, Tier::Static) {
+        return Err("it is not a static component".into());
+    }
+    if ir.use_id_slots > 0 {
+        return Err("it has `useId` values".into());
+    }
+    if !ir.state.is_empty() || !ir.stores.is_empty() {
+        return Err("it reads state or a store".into());
+    }
+    match ir.jobs.as_slice() {
+        [j] if matches!(j.kind, JobKind::Precompute) => {}
+        _ => return Err("it has a job other than its precompute job".into()),
+    }
+    if ir.jobs[0].inputs.iter().any(|i| i == "__store" || i == "*") {
+        return Err("its job reads a store or the whole props object".into());
+    }
+    let Some(reads) = crate::lower::server::job_reads(ir) else {
+        return Err("its job could not be read".into());
+    };
+    if reads.per_item {
+        return Err("its job computes a value per list item".into());
+    }
+    if let Some(n) = reads.opaque_decls.first() {
+        return Err(format!(
+            "its job runs the module declaration `{n}`, which is not a constant"
+        ));
+    }
+    for g in &reads.globals {
+        if DENIED_GLOBALS.contains(&g.as_str()) {
+            return Err(format!("its job reads `{g}`, which differs between runs"));
+        }
+        if !ALLOWED_GLOBALS.contains(&g.as_str()) && !VALUE_GLOBALS.contains(&g.as_str()) {
+            return Err(format!("its job reads the global `{g}`"));
+        }
+    }
+    for e in &reads.exprs {
+        if reads_random(e) {
+            return Err("its job reads `Math.random`".into());
+        }
+        if opaque(e) {
+            return Err("its job has code the compiler does not read (a block body)".into());
+        }
+    }
+    let mut stubs: Vec<crate::ir::EvalStub> = Vec::new();
+    let mut by_source: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for (_, source, imported) in &reads.imports {
+        by_source.entry(source).or_default().push(imported);
+    }
+    for (source, names) in by_source {
+        if INSTANCE_PACKAGES.contains(&source) {
+            continue;
+        }
+        if !(source.starts_with("./") || source.starts_with("../")) {
+            return Err(format!(
+                "its job imports the package `{source}`, which is not allowed at build"
+            ));
+        }
+        if module_is_pure(path, source, opts, INSTANCE_PACKAGES) {
+            continue;
+        }
+        let mut code = String::new();
+        for name in names {
+            match crate::analyze::const_fold::imported_call_const(
+                path,
+                source,
+                name,
+                opts,
+                INSTANCE_PACKAGES,
+            ) {
+                Ok(c) => code.push_str(&c),
+                Err(why) => return Err(format!("its job imports {why}")),
+            }
+        }
+        stubs.push(crate::ir::EvalStub {
+            source: source.to_string(),
+            code,
+        });
+    }
+    Ok(stubs)
+}
+
+/// Code the compiler keeps as text (a block body, an opaque construct) anywhere in `r`.
+fn opaque(r: &RawExpr) -> bool {
+    match &r.kind {
+        RawKind::Opaque { .. } => true,
+        RawKind::Arrow { body, .. } => match body {
+            crate::ir::ArrowBody::Expr(b) => opaque(b),
+            crate::ir::ArrowBody::Block { .. } => true,
+        },
+        RawKind::Member { target, .. } => opaque(target),
+        RawKind::Index { target, index } => opaque(target) || opaque(index),
+        RawKind::Unary { value, .. } => opaque(value),
+        RawKind::Binary { left, right, .. } => opaque(left) || opaque(right),
+        RawKind::Cond { test, yes, no } => opaque(test) || opaque(yes) || opaque(no),
+        RawKind::Template { parts, .. } => parts.iter().any(|(p, _)| opaque(p)),
+        RawKind::Call { callee, args } => opaque(callee) || args.iter().any(opaque),
+        RawKind::Array(items) => items.iter().any(opaque),
+        RawKind::Object(props) => props.iter().any(|(_, v)| opaque(v)),
+        RawKind::Lit(_) | RawKind::Ident { .. } | RawKind::Jsx(_) => false,
+    }
 }

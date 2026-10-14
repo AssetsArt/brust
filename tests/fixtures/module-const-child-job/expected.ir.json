@@ -33,6 +33,19 @@
     }
   },
   "jobs": [],
+  "build_eval_instances": [
+    {
+      "key": "tests/fixtures/module-const-child-job/input.tsx@346",
+      "child_id": "panel_6cae9645",
+      "k": 1,
+      "inputs": {},
+      "outputs": [
+        "_s1"
+      ],
+      "line": 24,
+      "col": 7
+    }
+  ],
   "child_links": [],
   "instances": [
     {
