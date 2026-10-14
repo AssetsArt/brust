@@ -254,6 +254,16 @@ pub struct ComponentIR {
     /// its props into a fed child whose job reads them, and a spread cannot feed a job input.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unwritten_props: Vec<String>,
+    /// Keys a call site must not write (2b-handlers, R34.18 extended): this component binds a live value to the key on a
+    /// static child's element, ahead of a spread of its own rest, and a call site that writes the key would override it
+    /// in React (last wins) where the one shared chunk cannot tell.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadowed_props: Vec<String>,
+    /// Live props the parent binds itself on a static child's element (2b-handlers): the prop `key` of the component
+    /// node at `loc`, printed in this component's scope like an attribute written there (handlers: see
+    /// [`HandlerDecl::forwarded`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub live_forwards: Vec<Forwarded>,
     /// The slot content this component is given is printed more than once: its template repeats in a list, or
     /// passes its children on to a component that does (F169, transitive).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -380,6 +390,8 @@ impl ComponentIR {
             plain_fns: Vec::new(),
             holds_island: false,
             unwritten_props: Vec::new(),
+            shadowed_props: Vec::new(),
+            live_forwards: Vec::new(),
             repeats_children: false,
             state: vec![],
             derived: vec![],
