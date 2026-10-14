@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-9', title: '2.0.0-alpha.9' },
       { id: 'alpha-8', title: '2.0.0-alpha.8' },
       { id: 'alpha-7', title: '2.0.0-alpha.7' },
       { id: 'alpha-6', title: '2.0.0-alpha.6' },
@@ -31,6 +32,40 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-9">2.0.0-alpha.9 · 14 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.8: #216–#220 (F153b part 2, L35, F153c, F161, F159); docs/shadcn-coverage.json */}
+      <p>
+        brust now compiles published library source, more shadcn/ui pages ship no JavaScript, and there is a guide for setting up shadcn/ui. See <a href="/docs/guides/shadcn-setup">Set up shadcn/ui</a> and <a href="/docs/shadcn">shadcn/ui and libraries</a>.
+      </p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #219 lane/props-pattern-fix (F161): found by Mellow; the template read `data-x` as `data - x` */}
+        <li>
+          <strong>A props pattern with a quoted key no longer breaks every render.</strong> <code>function C({'{'} 'data-x': dx, ...rest {'}'})</code> compiled, but each render of that component failed and the page answered 500. A default that is an immediately called function, <code>{'{'} a = (() =&gt; 1)() {'}'}</code>, rendered empty. Both, and the related defaults that could not be printed, now render with React (a named fallback), in parameter and body patterns.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #218 lane/package-source (F153c): sourcesContent extracted to .brust/pkg-src, integrity-checked against the dist, never executed */}
+        <li>
+          <strong>Published packages are compiled from their own source.</strong> When a package ships its original TypeScript in its source maps (every <code>@radix-ui/*</code> package does), brust compiles the components you use instead of shipping them as a React island. The first one is Radix Label: the label page goes from 85 KB to 4 KB of JavaScript. A package without its source stays an island, as before.
+        </li>
+        {/* source: PR #220 lane/icon-shapes (F159, R34.76–R34.78) */}
+        <li>
+          <strong><code>@/</code> imports, icons that receive props, and <code>??</code> fallbacks compile.</strong> <code>tsconfig.json</code> <code>paths</code> (such as <code>"@/*": ["./*"]</code>, which the shadcn CLI writes) resolve like relative imports; a lucide icon that receives <code>{'{'}...props{'}'}</code> renders as plain SVG; <code>{'{'}children ?? &lt;ChevronRight /&gt;{'}'}</code> renders without React. The spinner, breadcrumb and button pages ship no JavaScript.
+        </li>
+        {/* source: PR #216 lane/forwardref-body-destructure (F153b part 2, R34.66) */}
+        <li>
+          <strong>Props destructured in the component body.</strong> <code>const {'{'} a, b = 1, ...rest {'}'} = props</code> compiles like the same pattern in the parameter list.
+        </li>
+        {/* source: PR #217 lane/shadcn-setup-guide (L35), verified with the real shadcn CLI on a fresh project */}
+        <li>
+          <strong>Guide: set up shadcn/ui.</strong> A step-by-step guide from <code>bun create @brust/app</code> to shadcn/ui components, and a new &ldquo;React &amp; libraries&rdquo; section in these docs.
+        </li>
+      </ul>
 
       <h2 id="alpha-8">2.0.0-alpha.8 · 14 October 2026</h2>
       {/* source: PR #214 lane/revive-hardening (F158, R34.69–R34.75); the HTTP 500 was reproduced by Mellow on 2.0.0-alpha.6 and alpha.7 (React error #31 thrown by the SSR job) */}
