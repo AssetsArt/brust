@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 194 | 105 | 10 | 79 | 0 | 0 | 0 | 0 |
+| B Composition | 196 | 105 | 12 | 79 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 372 | 183 | 45 | 140 | 3 | 1 | 0 | 0 |
+| **Total** | 374 | 183 | 47 | 140 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -118,6 +118,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-attr-boolean-as-string | aria-*, data-*, draggable and spellCheck given a boolean prop | static | static | 0 | ok | — | F196: React writes true/false on these as the strings "true"/"false"; the template used to drop false (an aria-checked switch lost its attribute). Matrix: crates/brust-compiler/tests/attr_boolean_parity.rs against tests/fixtures/attr-parity/react.json |
 | b-attr-boolean-omitted-or-empty | a boolean attribute, download and a plain attribute given a boolean prop | static | static | 0 | ok | — | F196: false omits hidden/download, true prints ""; a plain attribute (title) prints nothing for either boolean, as React does |
 | b-synthetic-event-methods | a handler that calls isPropagationStopped, isDefaultPrevented and persist | native | native | 0 | ok | — | F195: a DOM event has none of these; the runtime adds them to the event a handler receives (packages/runtime-dom/src/directives/on.ts). Served in tests/server/event-aria.chromium.test.ts |
+| b-attr-boolean-client-update | a boolean attribute outside the old 8 (loop, inert, muted) changed by state | native | native | 0 | ok | — | F201: x-bind-* knew 8 of React's 28 boolean names (a state-driven loop/inert printed loop="true"); its sets are now generated from the brust-jinja table (scripts/gen-attr-kinds.ts). Served in tests/server/bind-parity.chromium.test.ts |
+| b-svg-anchor-empty-href | an SVG <a> whose href changes to an empty string | native | native | 0 | ok | — | F202: the runtime dropped href="" on an SVG <a> (tagName is lowercase there); React keeps it on any <a> |
 | b-island-holes-style | a style read from props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.118, F170): an object-valued attribute is never a hole; fallback:island-children |
 | b-island-holes-list | a list over props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.122, F171): a list over request data needs structure from data; fallback:island-children |
 | b-island-holes-route-children | {children} of a route component inside an island | react | react | ssr | ok | fallback:island-children | F148a (R34.121): a route component has no call site to bind a tree; its children are request data; fallback:island-children |

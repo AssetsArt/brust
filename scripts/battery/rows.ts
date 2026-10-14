@@ -325,6 +325,13 @@ export const rows: Row[] = [
   { id: 'b-synthetic-event-methods', category: 'B', authoring: 'a handler that calls isPropagationStopped, isDefaultPrevented and persist', expect: 'native', jobs: 0,
     snippet: `import { useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); return <div onClick={() => setN(n + 10)}><button onClick={(e) => { if (e.isPropagationStopped()) return; e.persist(); if (!e.isDefaultPrevented()) e.stopPropagation(); setN(n + 1) }}>{n}</button></div> }`,
     note: 'F195: a DOM event has none of these; the runtime adds them to the event a handler receives (packages/runtime-dom/src/directives/on.ts). Served in tests/server/event-aria.chromium.test.ts' },
+  // ---- F201/F202: the runtime binder prints an attribute the way the compiler's classifier does ----
+  { id: 'b-attr-boolean-client-update', category: 'B', authoring: 'a boolean attribute outside the old 8 (loop, inert, muted) changed by state', expect: 'native', jobs: 0,
+    snippet: `import { useState } from 'react'\nexport default function C() { const [on, setOn] = useState(true); return <div><button onClick={() => setOn(!on)}>go</button><video loop={on} muted={on} /><div inert={on} aria-busy={on} /></div> }`,
+    note: 'F201: x-bind-* knew 8 of React\'s 28 boolean names (a state-driven loop/inert printed loop="true"); its sets are now generated from the brust-jinja table (scripts/gen-attr-kinds.ts). Served in tests/server/bind-parity.chromium.test.ts' },
+  { id: 'b-svg-anchor-empty-href', category: 'B', authoring: 'an SVG <a> whose href changes to an empty string', expect: 'native', jobs: 0,
+    snippet: `import { useState } from 'react'\nexport default function C() { const [on, setOn] = useState(true); return <div><button onClick={() => setOn(!on)}>go</button><svg><a href={on ? '/x' : ''}><circle r="2" /></a></svg></div> }`,
+    note: 'F202: the runtime dropped href="" on an SVG <a> (tagName is lowercase there); React keeps it on any <a>' },
   { id: 'b-island-holes-style', category: 'B', authoring: 'a style read from props inside island children', expect: 'react',
     snippet: `import { Card } from './ui'\nexport default function C({ look }: any) { return <main><Card><b style={look}>x</b></Card></main> }`,
     files: { 'ui.tsx': ICARD },

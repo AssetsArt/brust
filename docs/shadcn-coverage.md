@@ -137,15 +137,15 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | drawer | measured | static | 1 | 20 (16) | 108 | 1 | external-component, island-children, island-prop, spread-props | built |
 | dropdown-menu | measured | static | 1 | 18 (15) | 118 | 1 | external-component, island-children, island-prop, spread-props | built |
 | empty | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
-| field | measured | static | 0 | 10 (0) | 4 | 0 | — | built |
+| field | measured | static | 0 | 10 (0) | 5 | 0 | — | built |
 | form | measured | react | 1 | 4 (3) | 101 | 1 | child-component, hook-unsupported, island-children, island-prop, spread-props | built |
 | hover-card | measured | static | 1 | 9 (7) | 103 | 1 | external-component, island-children, island-prop, spread-props | built |
 | input | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
-| input-group | measured | static | 0 | 5 (0) | 4 | 1 | — | built |
+| input-group | measured | static | 0 | 5 (0) | 5 | 1 | — | built |
 | input-otp | measured | static | 1 | 6 (3) | 87 | 1 | body-shape, external-component, hook-unsupported, island-prop, spread-props | built |
 | item | measured | static | 0 | 7 (0) | 0 | 0 | — | built |
 | kbd | measured | static | 0 | 3 (0) | 0 | 0 | — | built |
-| label | measured | static | 0 | 5 (0) | 4 | 0 | — | built |
+| label | measured | static | 0 | 5 (0) | 5 | 0 | — | built |
 | marker | measured | static | 0 | 3 (0) | 0 | 0 | — | built |
 | menubar | measured | static | 1 | 16 (14) | 117 | 1 | external-component, island-children, island-prop, spread-props | built |
 | message | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
@@ -155,7 +155,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | pagination | measured | static | 0 | 8 (0) | 0 | 3 | external-component | built |
 | popover | measured | static | 1 | 9 (7) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
 | progress | measured | static | 1 | 5 (2) | 85 | 1 | external-component, island-children, island-prop, spread-props | built |
-| radio-group | measured | static | 1 | 9 (5) | 97 | 1 | external-component, island-prop, spread-props | built |
+| radio-group | measured | static | 1 | 9 (5) | 98 | 1 | external-component, island-prop, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
 | scroll-area | measured | static | 1 | 11 (7) | 92 | 1 | external-component, island-prop, spread-props | built |
 | select | measured | react | 1 | 26 (20) | 117 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |

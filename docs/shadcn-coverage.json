@@ -908,7 +908,7 @@
       "islands": 0,
       "components": 10,
       "reactComponents": 0,
-      "jsGzipKb": 4,
+      "jsGzipKb": 5,
       "workerCalls": 0,
       "codes": []
     },
@@ -963,7 +963,7 @@
       "islands": 0,
       "components": 5,
       "reactComponents": 0,
-      "jsGzipKb": 4,
+      "jsGzipKb": 5,
       "workerCalls": 1,
       "codes": []
     },
@@ -1013,7 +1013,7 @@
       "islands": 0,
       "components": 5,
       "reactComponents": 0,
-      "jsGzipKb": 4,
+      "jsGzipKb": 5,
       "workerCalls": 0,
       "codes": []
     },
@@ -1152,7 +1152,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 5,
-      "jsGzipKb": 97,
+      "jsGzipKb": 98,
       "workerCalls": 1,
       "codes": [
         "external-component",
