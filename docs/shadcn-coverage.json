@@ -153,6 +153,15 @@
       "libraryComponents": 20
     },
     {
+      "blocker": "fallback:prop-default-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 10
+    },
+    {
       "blocker": "fallback:browser-global",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -358,6 +367,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 5
+    },
+    {
+      "blocker": "fallback:prop-quoted-key",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 4
     },
     {
       "blocker": "React.Children",
@@ -606,6 +624,7 @@
         "island-children",
         "local-component",
         "member-tag",
+        "prop-default-shape",
         "use-id-in-render"
       ]
     },
