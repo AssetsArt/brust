@@ -170,3 +170,30 @@ owner: Detoro · authority: in-loop. R-numbers R42.1–R42.3 are confirmed. Task
 - **Q5: recorded only.** The Suspense form is the larger decision because it changes every island's SSR output. It is not started.
 - **Q6: decided together with C, not now.** **Q7: no real-device pass needed** for Q1–Q3. It is required before any ruling on C.
 - **Q8: yes.** Ledger **F184**: the dead window, documented and not fixed. Ledger **F185**: an island whose SSR output is empty (the `chart` shape) cannot be deferred to save its first paint.
+
+## 11. Result of the `hydration-preload` lane (Guetta, 2026-10-15)
+
+**R42.1 does not ship.** The criterion was written on the task before measuring: in every page × profile cell the median hydrated-at improves by at least 30 ms and the median FCP regresses by at most 15 ms. It fails, and the lead's wording ("hydrated-at improves with no FCP regression on all three throttle profiles") fails with it. Shipped instead: R42.2 (the Chromium pin) and R42.3 (the docs note).
+
+Setup: the same three shadcn pages, now wrapped in a real `<html><head>` document so the existing L33 `modulepreload` links (runtime, `rt-island`) are present and the new links go right after them (a fragment page has no head and gets no links, `render.rs` `preload_insert_at`). Profiles: slow-4G + CPU 4× (150 ms RTT, 1.6 Mbit/s), regular-4G + CPU 2× (70 ms RTT, 9 Mbit/s), unthrottled. n = 7 per cell, runs interleaved across variants (rep-major) to cancel host drift, 0 failed runs. Variants: `eager` (control), `preload-react` (`react-<id>.js` only), `preload-both` (react chunk + the shared chunk it imports, placed after the existing preload links), `preload-both-late` (same two links placed just before the first module script). ms, median of 7; Δ against `eager` in the same profile.
+
+| Page · profile | eager FCP / hydrated | preload-react Δ FCP / Δ hydrated | preload-both Δ FCP / Δ hydrated | preload-both-late Δ FCP / Δ hydrated |
+|---|---|---|---|---|
+| accordion · slow-4G | 348 / 866 | +0 / +2 | **+92** / −65 | **+68** / −61 |
+| accordion · regular-4G | 144 / 291 | +0 / −1 | +16 / −64 | +20 / −61 |
+| accordion · none | 32 / 49 | +0 / +0 | +4 / +1 | +0 / +0 |
+| select · slow-4G | 348 / 976 | +0 / +11 | **+80** / −41 | **+80** / −56 |
+| select · regular-4G | 140 / 316 | +8 / +1 | +16 / −63 | +12 / −64 |
+| select · none | 32 / 54 | +0 / −1 | +0 / −5 | +0 / −2 |
+| chart · slow-4G | none (blank) / 1696 | n/a / −10 | n/a / −83 | n/a / −64 |
+| chart · regular-4G | 532 / 470 | +12 / +5 | −60 / −63 | −60 / −61 |
+| chart · none | 120 / 85 | −4 / −4 | −8 / −8 | −12 / −9 |
+
+Reading:
+- **`preload-react` does nothing** (|Δ| ≤ 12 ms everywhere). Preloading only `react-<id>.js` does not start the shared chunk earlier; Chromium fetches the chunk's imports after it has parsed it, which is the same waterfall as today.
+- **`preload-both` and `-late` shorten hydration by 41–65 ms on a throttled link and cost 68–92 ms of FCP on slow-4G** on the two pages whose server HTML paints content. The extra 90–114 KB (gzip) competes with the render-blocking stylesheet for a 1.6 Mbit/s link, so first paint moves later by about as much as hydration moves earlier. Placing the links later in the document (`-late`) does not change that. Unthrottled the effect is within noise (|Δ| ≤ 8 ms), so it cannot meet "improves" either.
+- **`chart` improves in every cell because its FCP *is* its hydration** (the server paints nothing, F185); that is the shape where a preload helps, and it is one page out of 41.
+- The trade is real but not a win under the ruling: faster hydration for a first paint that is later by the same amount on slow links. A sharper variant (preload only when the stylesheet is already cached, or `fetchpriority="low"`, which `modulepreload` supports) is the only lead left; it was not measured because the ruling asks for a measured win of the simple form, and a priority hint is a behaviour-affecting browser heuristic that would need its own three-profile run on more than one browser. Recorded as a possible follow-up, not started.
+
+What shipped: `tests/server/hydration-timing.chromium.test.ts` (R42.2; 2 tests, 3/3 green runs) and a note in `website/pages/docs/RenderingTiers.tsx` (R42.3). No Rust, runtime or server code changed. Probes and raw runs stay in the session scratchpad: `hyd-measure2.ts`, `matrix3.sh`/`matrix4.sh`, `m3-first.jsonl`, `m4.jsonl` (189 + 126 runs).
+
