@@ -2,7 +2,7 @@
 
 owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Guetta (lane `icon-shapes`) · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger rows: F153c (package source, ruled), F159 (`icon-shapes`, next free)
 
-Author: Guetta. Status: **DRAFT, awaiting the lead's ruling.** Base: origin/main e970250c (alpha.7). Numbers are `docs/shadcn-coverage.json` at that commit: 64 pages, 64 built; 61 static, 1 native, **2 react**; 53 islands; 18 pages with 0 JS; client JS gzip min 0 / median 87 / max 240 KB. R-numbers continue after R34.68. **Confirmed** = read from the generated doc/json or the fixture source; **inferred** = read from source, not built; every inferred row is a measured row at the start of its lane, and the PR reports any row that does not move.
+Author: Guetta. Status: **RULED 2026-10-14 (see §11); `icon-shapes` may start.** R-numbers renumbered by the lead to R34.76–R34.82 (R34.69–R34.75 are revive-hardening). Base: origin/main e970250c (alpha.7). Numbers are `docs/shadcn-coverage.json` at that commit: 64 pages, 64 built; 61 static, 1 native, **2 react**; 53 islands; 18 pages with 0 JS; client JS gzip min 0 / median 87 / max 240 KB. R-numbers continue after R34.68. **Confirmed** = read from the generated doc/json or the fixture source; **inferred** = read from source, not built; every inferred row is a measured row at the start of its lane, and the PR reports any row that does not move.
 
 ## 1. Where the scoreboard stands
 
@@ -36,23 +36,23 @@ It is already ruled (package-leaf plan §10: F153a → F153b → F153c; a and b 
 
 **Recommendation.** Rule #1 (F153c) as the next lane, as already ordered, and run #2 **in parallel**: they share no files (F153c is `analyze/modules.rs` + build; #2 is `icons.rs`, `jsx.rs`, `placement.rs`, `modules.rs` path resolution is the only touch point and is a different function). #3 is the real prize but cannot be planned from the survey; I propose a **read-only spike** (no product change, a task note, one working session) answering §7 Q3 before its plan. #4 and #5 are not recommended before #3: a tier flip without a byte change is bookkeeping.
 
-## 4. Design: lane `icon-shapes` (R34.69–R34.75)
+## 4. Design: lane `icon-shapes` (R34.76–R34.82)
 
 Four small, independent compiler shapes. Each one removes an island whose page is otherwise static; each keeps every existing fail-closed rule.
 
-### 4.1 `tsconfig` `paths` alias (R34.69) — button-alias, 85 KB, **and every real shadcn app**
+### 4.1 `tsconfig` `paths` alias (R34.76) — button-alias, 85 KB, **and every real shadcn app**
 
 The shadcn CLI writes `import { Button } from "@/components/ui/button"`. The compiler reads `@/…` as a package (`external-component`), so the component is an island. The S0 fixture **rewrote** these imports to relative ones (documented in the generated doc) precisely because of this; a user who runs `shadcn add` gets the un-rewritten form, so the measured table understates the real-world cost: every shadcn page imports through `@/`. Resolve `compilerOptions.paths` (and `baseUrl`) from the nearest `tsconfig.json`/`jsconfig.json` in `modules.rs::resolve`, exact and single-`*` patterns only, first existing file wins; a target outside the app root, a pattern that is not exact/single-star, or a missing file keeps today's behaviour (a package). The island build already resolves aliases through the bundler (`bun` reads tsconfig `paths`); the compiler must agree with it, so the rule is "the compiler's answer equals `Bun.resolveSync` for the same specifier" and a build-time check fails the build if they differ (Q1).
 
-### 4.2 Rest/spread onto a lucide icon (R34.70) — spinner 82 KB (confirmed), pagination (inferred)
+### 4.2 Rest/spread onto a lucide icon (R34.77) — spinner 82 KB (confirmed), pagination (inferred)
 
 `<Loader2Icon className={cn(…)} {...props} />`: L23 inlines an icon whose props are constants or the four `DYNAMIC_PROPS`; any spread keeps the icon a component (`external-component` + `spread-props`). The inlined icon is an `<svg>` element, so a spread of a known-shape rest object lands on that `<svg>` exactly as R34.15 does on a host element (`spread_attrs`, later wins). Extend `icons.rs`: a spread on an inlined icon becomes a spread on its root `svg`; the icon's own computed attributes (width/height/stroke…) keep React's precedence (the icon's defaults first, call-site props after, as `lucide-react` does). Spread of an unknown shape keeps today's fallback.
 
-### 4.3 Element fallback in `??` / `||` (R34.71) — breadcrumb 85 KB (confirmed)
+### 4.3 Element fallback in `??` / `||` (R34.78) — breadcrumb 85 KB (confirmed)
 
 `{children ?? <ChevronRight />}` is `jsx-expression` today (JSX inside an expression that is not a list, a condition or a child). `a ?? <X/>` and `a || <X/>` over a prop or constant are conditions in disguise: lower to `If(a is not nullish / falsy) { slot a } else { <X/> }`, evaluated by the existing `If` machinery (server: `{% if %}`; native: `x-show`/`x-if`). Only when the left side is a prop, a constant or a state read, and the right side is JSX; everything else keeps `jsx-expression`. Needs the nullish test to be `is none/undefined` and the falsy test to match JS truthiness for the shapes the template can render (string, number, element); `0` and `""` follow JS (`??` keeps them; `||` drops them), pinned by battery rows.
 
-### 4.4 pagination and input-group (R34.72) — to be measured first
+### 4.4 pagination and input-group (R34.79) — to be measured first
 
 `pagination` (87 KB, 2 islands: `PaginationPrevious/Next` = icon + `PaginationLink {...props}`; `PaginationEllipsis` = icon) and `input-group` (87 KB, `InputGroupButton`: `<Button … {...props}/>` with `slot-dynamic`, and `InputGroupInput`) are probably covered by 4.2 and the local-component/asChild + spread rules already on main, but I have not built them on e970250c. Step 0 of the lane builds both and names the remaining code; the PR claims only what moves. `slot-dynamic` on `InputGroupButton` (a dynamic `asChild` forwarded to `Button`) is out unless step 0 shows it is the only blocker; then it is a separate Q (Q2).
 
@@ -62,13 +62,13 @@ No new tier rule, no runtime change, no bundler change, no new revive path. Luci
 
 ## 5. Requirements
 
-- **R34.69 `paths` alias.** §4.1, with the agreement check against the bundler and the existing fallbacks.
-- **R34.70 Spread on an inlined icon.** §4.2.
-- **R34.71 Element fallback in `??`/`||`.** §4.3.
-- **R34.72 Measure pagination and input-group; claim only what moves.** §4.4.
-- **R34.73 Fail closed.** §6; each row holds its named code, no `knownGap`.
-- **R34.74 Battery rows** (`scripts/battery/rows.ts`, built AND, where a behaviour changes, served and compared with the React build's HTML per R34.3).
-- **R34.75 Proof and docs.** `docs/shadcn-coverage.md`/`.json`, `docs/react-coverage.md`, `m1-exit-report.md` regenerated; the PR lists every page that changes tier or code and the gzip delta per row; ledger F159.
+- **R34.76 `paths` alias.** §4.1, with the agreement check against the bundler and the existing fallbacks.
+- **R34.77 Spread on an inlined icon.** §4.2.
+- **R34.78 Element fallback in `??`/`||`.** §4.3.
+- **R34.79 Measure pagination and input-group; claim only what moves.** §4.4.
+- **R34.80 Fail closed.** §6; each row holds its named code, no `knownGap`.
+- **R34.81 Battery rows** (`scripts/battery/rows.ts`, built AND, where a behaviour changes, served and compared with the React build's HTML per R34.3).
+- **R34.82 Proof and docs.** `docs/shadcn-coverage.md`/`.json`, `docs/react-coverage.md`, `m1-exit-report.md` regenerated; the PR lists every page that changes tier or code and the gzip delta per row; ledger F159.
 
 ## 6. Fail-closed list and battery rows
 
@@ -114,3 +114,15 @@ Boundary: `crates/brust-compiler/src/analyze/{modules,jsx,placement}.rs` and `an
 - **Q3 Order and parallelism.** F153c first and `icon-shapes` in parallel (no shared files), plus a read-only spike for #3 (Radix non-overlay compounds) by a third agent so its plan is evidence-based. Or `icon-shapes` first because it is cheaper and certain? Recommended: parallel.
 - **Q4 Hydration timing as a separate lever.** 69 % of the JS is the per-page floor of pages that keep an island. Deferring the island chunk to idle/visible/first interaction would cut load cost on all 41 overlay and compound pages without compiling Radix, but it risks hydration fidelity (React replays only discrete events at a dehydrated Suspense boundary) and is a runtime change. Not in this plan; do you want it scoped as its own plan?
 - **Q5 The two react pages.** Confirm they stay tier-count rows (combobox, form) and are not scheduled until #3's spike says whether a template for render-prop children is worth its language.
+
+## 11. Lead ruling (2026-10-14)
+
+The ranking is accepted: the floor analysis (69 % of JS is the per-page React floor, so only a lane that removes a page's LAST island saves bytes) is the ranking rule from now on. Rulings on §10:
+
+- **Q1 tsconfig scope: as recommended** (`paths` + `baseUrl` of the nearest `tsconfig.json`/`jsconfig.json`, exact and single-`*` patterns), with the agreement check against the bundler as a gate. Not following `extends`/`references` is a named fallback message, plus an F-row (Vite's shadcn setup puts `paths` in `tsconfig.app.json`; widen on that evidence).
+- **Q2 `slot-dynamic` on `InputGroupButton`: as recommended.**
+- **Q3 Parallel.** F153c (package source) and `icon-shapes` run at the same time. F153c's owner is assigned by the lead with the task. The read-only spike for #3 (Radix non-overlay compounds) goes to the first agent that frees up; its plan is drafted from the spike.
+- **Q4 Hydration timing: yes, scope it as its own plan** (draft only, after icon-shapes is in review). It must state the fidelity risks (event replay, Suspense, focus) and keep "same behaviour as React" (R34.3) as the gate; a byte win that changes behaviour is not accepted.
+- **Q5 Confirmed:** combobox and form are tier-count rows, not scheduled before the #3 spike.
+
+`revive-hardening` (F158) has priority over this lane for review and gates; it blocks alpha.8.
