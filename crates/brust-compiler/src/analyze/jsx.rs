@@ -207,6 +207,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     let mut children = Vec::new();
     let mut ref_name = None;
     let mut children_prop = false;
+    let mut forwarded_ref = false;
     for p in obj.properties.iter() {
         let Some(value) = &p.value else { continue };
         if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
@@ -295,6 +296,16 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                 }
             }
             _ => {
+                // F153c: the component's own forwarded ref passed on (`<Primitive.label ref={forwardedRef}>`); the
+                // children pass decides whether the child can take it.
+                if name == "ref"
+                    && let E::EIdentifier(id) = &value.data
+                    && r.names.is_forwarded_ref(id.ref_)
+                {
+                    r.names.note_forwarded_ref_dropped();
+                    forwarded_ref = true;
+                    continue;
+                }
                 let v = r.expr(value);
                 props_out.push((name, Expr::Raw(v)));
             }
@@ -350,6 +361,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             children,
             link: None,
             tier: crate::ir::Tier::Pending,
+            forwarded_ref,
         },
         Tag::Imported { name, m } => Node::Component {
             loc,
@@ -361,6 +373,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             children,
             link: None,
             tier: crate::ir::Tier::Pending,
+            forwarded_ref,
         },
         Tag::Member(_) => Node::Component {
             loc,
@@ -372,6 +385,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             children,
             link: None,
             tier: crate::ir::Tier::Pending,
+            forwarded_ref,
         },
     }
 }

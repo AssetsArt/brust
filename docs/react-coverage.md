@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 97 | 49 | 8 | 40 | 0 | 0 | 0 | 0 |
+| B Composition | 110 | 59 | 8 | 43 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 52 | 17 | 10 | 21 | 3 | 1 | 0 | 0 |
-| **Total** | 257 | 112 | 43 | 98 | 3 | 1 | 0 | 0 |
+| **Total** | 270 | 122 | 43 | 101 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -177,6 +177,19 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-aschild-raw-text-child | asChild whose child is a <style> element | react | react | ssr | ok | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape (a raw-text body is not markup) |
 | b-local-comp-ternary | a const tag that is a ternary of two components, not a Radix Slot | static | static | ssr | ok | — | shadcn S1.4 R34.28: any other initializer keeps fallback local-component (Pick is a React island; the page is static since island-children #203) |
 | b-local-comp-foreign-slot | a Slot imported from a module that is not Radix | static | static | ssr | ok | — | shadcn S1.4 R34.28 (Q5): only radix-ui and @radix-ui/react-slot are recognised; fallback local-component (Own is a React island; the page is static since island-children #203) |
+| b-pkg-leaf-pure | a package forwardRef component over Radix Primitive.div, compiled from its source | static | static | 0 | ok | — | F153c R34.61 + R34.65: the source map carries the authored TSX; Primitive.div is the host <div>, the forwarded ref is dropped |
+| b-pkg-leaf-handler | the Radix Label source (a handler on Primitive.label) | static | static | 0 | ok | — | F153c: the page stays static; the Label is a native child (its double-click selection guard binds as x-on on the <label>) |
+| b-pkg-aschild-false | a package Primitive leaf with asChild={false} | static | static | 0 | ok | — | F153c: a literal false is the host element (the leaf spreads its props into Primitive.div, so it requires `asChild` absent or false) |
+| b-pkg-primitive-aschild | Primitive.button asChild with one host child, written in the app | static | static | 0 | ok | — | F153c R34.65: asChild on a Primitive tag merges into the one host child (the R34.28 Button rule) |
+| b-pkg-aschild-through-spread | asChild passed to a package leaf that spreads it into Primitive | react | react | ssr | ok | fallback:slot-dynamic | F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles |
+| b-pkg-aschild-dynamic | a dynamic asChild on a package leaf | react | react | ssr | ok | fallback:slot-dynamic | F153c fail closed: slot-dynamic |
+| b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | react | react | ssr | ok | fallback:forwardref-ref, fallback:ref-in-render | F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none) |
+| b-pkg-ref-read | a package leaf that reads its forwarded ref | static | static | ssr | ok | fallback:external-component | F153c fail closed: the leaf needs React (forwardref-ref), so the app keeps the island of the published export |
+| b-pkg-no-map | a package that publishes no source map | static | static | ssr | ok | fallback:external-component | F153c G1: no sourcesContent, no analysis: the island of the published export (external-component, reason named) |
+| b-pkg-drift | a package whose published JS was not built from its map | static | static | ssr | ok | fallback:external-component | F153c R34.62: the integrity check fails: the island of the published export |
+| b-pkg-primitive-changed | a Primitive factory of another shape | static | static | ssr | ok | fallback:external-component | F153c R34.65 ruling Q1: no structural match, no host: the island of the published export |
+| b-pkg-dynamic-spread | a package leaf spreading an object computed by a call | static | static | ssr | ok | fallback:external-component | F153c fail closed: spread-props in the source, so the island of the published export |
+| b-pkg-namespace-barrel | a component reached through a package barrel (`export * as X from`) | static | static | 0 | ok | — | F153c: the `radix-ui` barrel shape (`export * as Label from '@radix-ui/react-label'`) is followed to the member |
 
 ## C. Hooks
 

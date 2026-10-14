@@ -115,6 +115,20 @@ pub struct AnalyzeOptions {
     /// L20: the class map of every `*.module.css` file, keyed by its path relative to `root` (`/`-separated).
     /// `styles.x` from such an import folds to the literal class; empty = nothing folds.
     pub css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    /// F153c (R34.61): the package sources the build wrote (`packages/brust/src/build/pkg-src.ts`); empty = a
+    /// package import is the React island of its export, as before.
+    pub packages: PackageSources,
+}
+
+/// Where a bare import resolves to package SOURCE (F153c, R34.61): per importing scope (`""` = the app, else
+/// the root-relative directory of a written package), the specifier → the root-relative path of its entry
+/// source, or why the build refused it (no source map, integrity, …).
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+pub struct PackageSources {
+    #[serde(default)]
+    pub scopes: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub refused: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
 }
 
 /// Parses `source` as the module at `path` and runs the full analysis,

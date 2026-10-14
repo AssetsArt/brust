@@ -59,6 +59,10 @@ pub enum Node {
         link: Option<u32>,
         /// The child's tier (M1b-2 children pass); `Pending` until resolved.
         tier: crate::ir::Tier,
+        /// `ref={ref}` passes this component's own forwarded ref on (F153c): fine when the child is a `forwardRef`
+        /// component that drops it on a host element (R34.64), `forwardref-ref` otherwise.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        forwarded_ref: bool,
     },
     Fragment(Vec<Node>),
     /// `<Outlet />` from `@brust/core/routes` (S8): the server's child slot, printed as `{{ __outlet | safe }}`.

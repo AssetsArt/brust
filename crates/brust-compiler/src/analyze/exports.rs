@@ -4,7 +4,7 @@
 //! island imports it by that binding. Everything that cannot be proven falls back to the binding itself
 //! (an opaque island), never to a guess.
 use crate::analyze::component::{AnalyzeOptions, FoundFn, module_component, module_fn};
-use crate::analyze::modules::{Export, resolve};
+use crate::analyze::modules::{Export, resolve_module};
 use crate::analyze::names::{MemberRef, member_of};
 use crate::analyze::stores::Module;
 use bun_ast as js_ast;
@@ -34,6 +34,9 @@ pub enum Binding {
     Follow(String, String),
     /// `export * from …` clauses that may carry it.
     Stars(Vec<String>),
+    /// A namespace of the module the specifier names: `export * as X from '…'`, or `import * as X from '…'`
+    /// re-exported (F153c: the `radix-ui` barrel). A member of it (`X.Root`) is that module's export.
+    Namespace(String),
     /// Nothing exports it.
     Absent,
 }
@@ -104,6 +107,16 @@ pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
                 S::SExportStar(st) if st.alias.is_none() && export != "default" => {
                     stars.extend(spec_of(st.import_record_index));
                 }
+                S::SExportStar(st)
+                    if st
+                        .alias
+                        .as_ref()
+                        .is_some_and(|a| a.original_name.slice() == export.as_bytes()) =>
+                {
+                    if let Some(spec) = spec_of(st.import_record_index) {
+                        return Binding::Namespace(spec);
+                    }
+                }
                 _ => {}
             }
         }
@@ -138,7 +151,8 @@ impl Module<'_> {
     /// An exported binding that is itself an import is a re-export; anything else is declared here.
     fn reexport(&self, r: js_ast::Ref) -> Binding {
         match self.import_of(r) {
-            Some((_, "*")) | None => Binding::Opaque,
+            Some((spec, "*")) => Binding::Namespace(spec.to_string()),
+            None => Binding::Opaque,
             Some((spec, imported)) => Binding::Follow(spec.to_string(), imported.to_string()),
         }
     }
@@ -184,7 +198,7 @@ fn follow(
     };
     let found = parsed.with_ast(|ast| find(ast, name));
     let next = |spec: &str, there: &str| {
-        let target = resolve(path, spec, opts)?;
+        let target = resolve_module(path, spec, opts)?;
         let export = if there == "default" {
             Export::Default
         } else {
@@ -198,4 +212,47 @@ fn follow(
         Binding::Absent => None,
         _ => Some((path.to_string(), export.clone())),
     }
+}
+
+/// The module and export a component import names, member path included (F153c): `imported` of the module at
+/// `path`, followed through barrels, then each `member` off a namespace export (`Label.Root` of
+/// `export * as Label from '@radix-ui/react-label'`). `None` when a step cannot be proven.
+pub fn declared_member(
+    path: &str,
+    imported: &str,
+    member: &[String],
+    opts: &AnalyzeOptions,
+) -> Option<(String, Export)> {
+    let as_export = |n: &str| {
+        if n == "default" {
+            Export::Default
+        } else {
+            Export::Named(n.to_string())
+        }
+    };
+    // `import * as X` then `<X.Root>`: the namespace is the module itself.
+    let (mut path, mut rest) = if imported == "*" {
+        let (first, rest) = member.split_first()?;
+        (declared_in(path, &as_export(first), opts), rest)
+    } else {
+        (declared_in(path, &as_export(imported), opts), member)
+    };
+    for _ in 0..MAX_DEPTH {
+        let Some((first, tail)) = rest.split_first() else {
+            return Some(path);
+        };
+        let bytes = std::fs::read(opts.root.join(&path.0)).ok()?;
+        let parsed = crate::parse::parse_tsx(&path.0, bytes).ok()?;
+        let name = match &path.1 {
+            Export::Default => "default".to_string(),
+            Export::Named(n) => n.clone(),
+        };
+        let Binding::Namespace(spec) = parsed.with_ast(|ast| find(ast, &name)) else {
+            return None;
+        };
+        let target = resolve_module(&path.0, &spec, opts)?;
+        path = declared_in(&target, &as_export(first), opts);
+        rest = tail;
+    }
+    None
 }

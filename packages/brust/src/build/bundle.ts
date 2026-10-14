@@ -15,6 +15,7 @@ import type { Compiled } from './compile'
 import { cssPlugin } from './css'
 import { BuildError } from './errors'
 import { RUNTIME_FEATURES } from './features'
+import { packageDirOf } from './pkg-src'
 
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
 /** Production React (and the production JSX transform: `react/jsx-runtime`, never `jsxDEV`). `brust dev` builds set
@@ -75,6 +76,9 @@ export function sourceDirPlugin(sourceOf: SourceOf, appRoot: string, external: s
       })
       b.onResolve({ filter: /^[^./]/ }, (a) => {
         if (!sourceOf.has(a.importer) || matchesExternal(a.path, external)) return undefined
+        // F153c: an artifact compiled from a package's source imports what that package sees.
+        const pkg = packageDirOf(sourceOf.get(a.importer)!)
+        if (pkg !== undefined) return { path: Bun.resolveSync(a.path, pkg) }
         // A package the staged file can see from where it sits resolves natively: the bundler then picks the package's ESM
         // entry (`module` / `exports.import`) and tree-shakes it. `Bun.resolveSync` answers with the CJS `main`, which
         // bundles the whole package (recharts: +85 KB gzip on the chart page). Packages only the app root sees (a staged

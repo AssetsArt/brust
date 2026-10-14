@@ -55,7 +55,12 @@ pub(crate) fn compile_tree_impl(
     slot_values: Option<String>,
     css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     icon_svgs: Option<String>,
+    packages: Option<String>,
 ) -> CompiledTree {
+    // F153c: `{ "scopes": …, "refused": … }`, the package sources the build wrote (`pkg-src.ts`).
+    let packages = packages
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     // `{ "final": bool, "svgs": { "<key>": "<svg markup>" } }`: lucide icons the build rendered (L23).
     let (icon_svgs, icons_final): (
         std::collections::HashMap<String, brust_compiler::analyze::component::IconMarkup>,
@@ -84,6 +89,7 @@ pub(crate) fn compile_tree_impl(
         css_modules,
         icon_svgs,
         icons_final,
+        packages,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -120,6 +126,7 @@ pub(crate) fn compile_tree_impl(
 
 /// Compiles `path` (relative to `root`) and every child it reaches through lowering. `css_modules` (L20): the class
 /// map of each `*.module.css`, keyed by its path relative to `root`; `styles.x` folds to the literal class.
+/// `packages` (F153c): the JSON resolution map of the package sources the build wrote (`pkg-src.ts`).
 #[napi]
 pub fn compile_tree(
     path: String,
@@ -131,6 +138,7 @@ pub fn compile_tree(
         std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     >,
     icon_svgs: Option<String>,
+    packages: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
     compile_tree_impl(
@@ -141,6 +149,7 @@ pub fn compile_tree(
         slot_values,
         css_modules.unwrap_or_default(),
         icon_svgs,
+        packages,
     )
 }
 
@@ -156,6 +165,7 @@ mod tests {
             vec![],
             None,
             Default::default(),
+            None,
             None,
         );
         assert!(t.error.is_none(), "{:?}", t.error);
@@ -176,6 +186,7 @@ mod tests {
             vec![],
             None,
             Default::default(),
+            None,
             None,
         );
         assert_eq!(t.error.as_ref().map(|d| d.class.as_str()), Some("error"));
