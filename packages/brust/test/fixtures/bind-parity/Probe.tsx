@@ -11,6 +11,7 @@ export default function Probe({ start }: { start: boolean }) {
       </button>
       <div
         data-testid="bools"
+        // @ts-expect-error TS reports one excess prop for the whole element; React renders every one of them
         loop={on}
         muted={on}
         inert={on}
