@@ -58,7 +58,7 @@ test('a failing evaluation is a warning with its location; the instance keeps it
 test('the served page equals the per-request job path (R34.93 dual run, BRUST_BUILD_EVAL=0)', async () => {
   const ref = build({ BRUST_BUILD_EVAL: '0' }, 'dist-ref')
   expect(ref.exitCode, ref.stderr.toString()).toBe(0)
-  expect(page(manifest('dist-ref')).children).toHaveLength(5) // reference: every instance keeps its job
+  expect(page(manifest('dist-ref')).children).toHaveLength(6) // reference: every instance keeps its job
   const serve = async (dist: string) => {
     const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', dist], { cwd: app, env: { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }, stdout: 'pipe', stderr: 'inherit' })
     const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
@@ -77,6 +77,9 @@ test('the served page equals the per-request job path (R34.93 dual run, BRUST_BU
     const get = async (s: { base: string }) => (await fetch(`${s.base}/`)).text()
     const [folded, job] = [await get(a), await get(b)]
     expect(folded).toContain('class="inline-flex size-9"')
+    // Review F1: a deep input whose leaf the call site leaves out (`config.variant`, `config={{}}`) is undefined in the
+    // job, per request as at build, so cva applies its default (an explicit null would skip it).
+    expect(job).toContain('<b class="deep v-default">deep</b>')
     expect(folded).toBe(job)
   } finally {
     await a.stop()

@@ -109,6 +109,14 @@ impl Path {
         Some(cur)
     }
 
+    /// Whether everything but the last segment resolves in `ctx` (a missing leaf, not a missing object on the way).
+    pub fn parent_exists(&self, ctx: &Node, idx: Option<usize>) -> bool {
+        match self.0.split_last() {
+            None | Some((_, [])) => true,
+            Some((_, parent)) => Path(parent.to_vec()).find(ctx, idx).is_some(),
+        }
+    }
+
     fn has_idx(&self) -> bool {
         self.0.contains(&Seg::Idx)
     }
@@ -186,15 +194,15 @@ impl Projection {
         }
         let mut out = MapInner::new();
         for (p, keys) in &self.kept {
-            // F149/F151: a prop root the props do not have stays absent (JS `undefined`, as React passes an omitted
-            // prop), never `null`: `cva` reads an explicit `null` as "no variant" and skips its default. A deeper path
-            // keeps its objects with a `null` leaf, so a job reading `__store.cart.count` with no snapshot never
-            // reads a member of `undefined`.
-            let value = match p.find(ctx, idx) {
-                Some(v) => v,
-                None if keys.len() == 1 => continue,
-                None => p.get(ctx, idx),
-            };
+            // F149/F151 (review F1): a value the context lacks is never `null` in the job (JS `undefined`, as React
+            // passes an omitted prop; `cva` reads an explicit `null` as "no variant" and skips its default). A missing
+            // leaf is left unset under the objects that hold it (`config: {}` keeps `config.variant` undefined); a
+            // missing object on the way makes the whole input absent (`config` undefined), at any depth, index
+            // segments included. A present `null` stays `null`. Store reads in a job are optional (`?.` / `?? {}`).
+            let value = p.find(ctx, idx);
+            if value.is_none() && !p.parent_exists(ctx, idx) {
+                continue;
+            }
             let (last, prefix) = keys.split_last().expect("parsed path is non-empty");
             let mut node = &mut out;
             for k in prefix {
@@ -206,7 +214,9 @@ impl Projection {
                 node = slot.map_mut().expect("projection prefix is an object");
             }
             // An Arc bump for a map/array/string: the context's value is shared.
-            node.insert(Arc::from(last.as_str()), value.clone());
+            if let Some(v) = value {
+                node.insert(Arc::from(last.as_str()), v.clone());
+            }
         }
         Ok(Node::map(out))
     }
@@ -562,13 +572,24 @@ mod tests {
 
     #[test]
     fn a_missing_input_stays_absent_and_an_explicit_null_stays_null() {
-        // F149/F151: an omitted prop reaches the job as `undefined` (React's value), not `null`; a deeper path
-        // keeps its objects and a `null` leaf (store reads, `brust-server` store_job_keys).
-        let ctx = n(json!({"a": 1, "n": null, "o": {}}));
-        let inputs: Vec<String> = ["a", "n", "gone", "o.x", "deep.y"].map(String::from).into();
+        // F149/F151 (review F1): nothing the context lacks reaches the job as `null`.
+        let ctx =
+            n(json!({"a": 1, "n": null, "o": {}, "cfg": {"v": null}, "rows": [{"x": 1}, {}]}));
+        let inputs: Vec<String> = [
+            "a",         // present
+            "n",         // present null stays null
+            "gone",      // missing root: absent
+            "o.x",       // missing leaf: the object is kept, the leaf unset
+            "deep.y",    // missing object on the way: the input is absent
+            "cfg.v",     // present null leaf
+            "rows[1].x", // missing leaf under an index
+            "rows[5].x", // missing index on the way: absent
+        ]
+        .map(String::from)
+        .into();
         assert_eq!(
             project(&ctx, &inputs, None).unwrap(),
-            n(json!({"a": 1, "n": null, "o": {"x": null}, "deep": {"y": null}}))
+            n(json!({"a": 1, "n": null, "o": {}, "cfg": {"v": null}, "rows": {"[1]": {}}}))
         );
         // A child prop bound to a parent path the context lacks is not passed either.
         let props = [("x", "a"), ("y", "gone"), ("z", "n")]

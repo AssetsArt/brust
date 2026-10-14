@@ -1,5 +1,6 @@
 import { Badge } from './badge'
 import { Chip } from './chip'
+import { Deep } from './deep'
 import { PageLink } from './link'
 
 export default function Page() {
@@ -10,6 +11,7 @@ export default function Page() {
       <Badge variant="boom">c</Badge>
       <PageLink href="/2">2</PageLink>
       <Chip />
+      <Deep config={{}} />
     </main>
   )
 }
