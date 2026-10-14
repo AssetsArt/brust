@@ -5,8 +5,10 @@
 use super::deps::{Deps, minimal_paths};
 use super::{PassCtx, PassState, run_passes};
 use crate::analyze::component::finish_diagnostics;
-use crate::analyze::exports::{declared_in, package_member};
-use crate::analyze::modules::{Entry, Export, Lookup, cache_key, compile, resolve};
+use crate::analyze::exports::{declared_in, declared_member, package_member};
+use crate::analyze::modules::{
+    Entry, Export, Lookup, cache_key, compile, is_package_source, resolve, resolve_package,
+};
 use crate::ir::{
     Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind,
     InstanceRecord, JobDecl, JobKind, JsCtx, Node, PolyTag, RawExpr, RawKind, ServerExpr, Tier,
@@ -61,6 +63,8 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             || !ir.handlers.is_empty()
             || !ir.refs.is_empty(),
         handlers: Vec::new(),
+        own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
+        absent: BTreeSet::new(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
@@ -88,6 +92,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.child_links.extend(w.links);
     ir.instances.extend(w.instances);
     ir.children.extend(w.refs);
+    ir.absent_props = w.absent.iter().cloned().collect();
     ir.jobs.extend(w.jobs);
     ir.diagnostics.extend(w.diagnostics);
     ir.handlers.extend(w.handlers);
@@ -126,6 +131,10 @@ struct Walker<'s, 'c> {
     props_reactive: bool,
     /// Handlers hoisted from props a static child spreads onto an element (shadcn S1.3).
     handlers: Vec<crate::ir::HandlerDecl>,
+    /// This component's named props (its `...rest` holds every other key).
+    own_named: BTreeSet<String>,
+    /// Keys this component's own call sites must not pass (`ComponentIR::absent_props`, F153c).
+    absent: BTreeSet<String>,
 }
 
 /// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
@@ -162,6 +171,8 @@ struct Child {
     forwards_ref: bool,
     /// The compiled child has `useId` values (the server seeds them per instance, per row).
     use_id: bool,
+    /// Keys the call site must not pass (`ComponentIR::absent_props`).
+    absent: Vec<String>,
 }
 
 /// Facts that decide whether a handler landing in a static child's spread can be bound by the
@@ -477,6 +488,53 @@ fn external_component_id(source: &str, export: &str, member: &[String]) -> Strin
     named_component_id(&scope, &name)
 }
 
+/// Why a component compiled from package source cannot be used as compiled (F153c): it, or a component in its
+/// subtree, renders as React (an island of a package's SOURCE would run code the React build never ran), or it
+/// failed to compile. `None` = static or native all the way down.
+fn package_needs_react(
+    lookup: &Lookup,
+    modules: &crate::analyze::modules::ModuleCache,
+) -> Option<String> {
+    let ir = match lookup {
+        Lookup::Compiled(ir) => ir.clone(),
+        Lookup::Cycle => return Some("an import cycle".into()),
+        Lookup::Failed(d) => return Some(d.message.clone()),
+    };
+    let by_id: HashMap<String, Rc<ComponentIR>> = modules
+        .done()
+        .into_iter()
+        .map(|(_, ir)| (ir.id.clone(), ir))
+        .collect();
+    let mut stack = vec![ir];
+    let mut seen = BTreeSet::new();
+    while let Some(ir) = stack.pop() {
+        if !seen.insert(ir.id.clone()) {
+            continue;
+        }
+        if let Tier::React { reason, .. } = &ir.tier {
+            return Some(format!(
+                "{} renders as React in its source: {reason}",
+                ir.source
+            ));
+        }
+        for c in &ir.children {
+            if let Tier::React { reason, .. } = &c.tier {
+                return Some(format!(
+                    "<{}> in {} renders as React: {reason}",
+                    c.name, ir.source
+                ));
+            }
+            if let Some(next) = c.id.as_ref().and_then(|id| by_id.get(id)) {
+                stack.push(next.clone());
+            }
+        }
+    }
+    None
+}
+
+/// The export name of a `Primitive.<tag>` component (R34.65).
+const PRIMITIVE_EXPORT: &str = "Primitive";
+
 fn react(reason: &str) -> Tier {
     Tier::React {
         reason: reason.into(),
@@ -580,6 +638,19 @@ impl Walker<'_, '_> {
         member: &[String],
         loc: u32,
     ) -> Child {
+        self.external_child_why(name, source, export, member, loc, None)
+    }
+
+    /// [`Self::external_child`]; `why`: why the package's source was not compiled instead (F153c).
+    fn external_child_why(
+        &mut self,
+        name: &str,
+        source: &str,
+        export: &str,
+        member: &[String],
+        loc: u32,
+        why: Option<String>,
+    ) -> Child {
         let ctx = self.ctx;
         let at = if member.is_empty() {
             String::new()
@@ -596,7 +667,12 @@ impl Walker<'_, '_> {
         };
         self.diagnostics.push(Diagnostic::fallback(
             "external-component",
-            format!("<{name}> comes from the package {source}{at}; it renders as a React island"),
+            match &why {
+                None => format!("<{name}> comes from the package {source}{at}; it renders as a React island"),
+                Some(w) => format!(
+                    "<{name}> comes from the package {source}{at}; it renders as a React island (package source: {w})"
+                ),
+            },
             loc,
             "use a component from this project to keep it native",
         ));
@@ -639,6 +715,7 @@ impl Walker<'_, '_> {
             job_roots: BTreeSet::new(),
             forwards_ref: false,
             use_id: false,
+            absent: Vec::new(),
         }
     }
 
@@ -676,10 +753,19 @@ impl Walker<'_, '_> {
                     job_roots: BTreeSet::new(),
                     forwards_ref: false,
                     use_id: false,
+                    absent: Vec::new(),
                 };
             }
-            // A package export (a member of one included): the island is the export itself.
-            return self.external_child(name, source, imported.unwrap_or("default"), member, loc);
+            // A package export (a member of one included): its source when the build wrote it (F153c), else
+            // the island is the export itself.
+            return self.package_child(
+                name,
+                ctx.path,
+                source,
+                imported.unwrap_or("default"),
+                member,
+                loc,
+            );
         };
         let export = match imported {
             None | Some("default") => Export::Default,
@@ -689,13 +775,103 @@ impl Walker<'_, '_> {
         let (path, export) = declared_in(&path, &export, ctx.opts);
         // `export { Root }` after `const Root = DialogPrimitive.Root`: the component is the package member.
         if let Some(m) = package_member(&path, &export, ctx.opts) {
-            return self.external_child(name, &m.source, &m.imported, &m.member, loc);
+            return self.package_child(name, &path, &m.source, &m.imported, &m.member, loc);
         }
         let id = match &export {
             Export::Default => component_id(&path),
             Export::Named(n) => named_component_id(&path, n),
         };
         let lookup = compile(&path, &export, None, ctx.opts, ctx.modules);
+        self.finish(name, Some(id), Some(path), lookup, loc)
+    }
+
+    /// A component a bare import of the module at `from` names (F153c, R34.61): compiled from the package source
+    /// the build wrote, like app code. Fails closed to the React island of the export (today's L22 rule) when the
+    /// build refused the package, the export cannot be followed, or anything in the compiled subtree needs React:
+    /// an island is always the published package export, never its source (G1, R34.62).
+    fn package_child(
+        &mut self,
+        name: &str,
+        from: &str,
+        source: &str,
+        imported: &str,
+        member: &[String],
+        loc: u32,
+    ) -> Child {
+        let ctx = self.ctx;
+        // Inside a package source, an import the build did not write is not followed either: the subtree is then
+        // React, and the app-level import falls back as a whole.
+        let entry = match resolve_package(from, source, ctx.opts) {
+            Ok(entry) => entry,
+            Err(why) => return self.external_child_why(name, source, imported, member, loc, why),
+        };
+        // R34.65: `Primitive.<tag>` of the Radix factory is the host element.
+        if let [tag] = member
+            && imported != "*"
+        {
+            let there = if imported == "default" {
+                Export::Default
+            } else {
+                Export::Named(imported.to_string())
+            };
+            if let (decl, Export::Named(n)) = declared_in(&entry, &there, ctx.opts)
+                && let Some(nodes) = crate::analyze::primitive::primitive_nodes(&decl, &n, ctx.opts)
+                && nodes.iter().any(|t| t == tag)
+            {
+                return self.primitive_child(name, &decl, tag, loc);
+            }
+        }
+        let Some((path, export)) = declared_member(&entry, imported, member, ctx.opts) else {
+            return self.external_child_why(
+                name,
+                source,
+                imported,
+                member,
+                loc,
+                Some("the export is not declared in a form the compiler follows".into()),
+            );
+        };
+        let id = match &export {
+            Export::Default => component_id(&path),
+            Export::Named(n) => named_component_id(&path, n),
+        };
+        let lookup = compile(&path, &export, None, ctx.opts, ctx.modules);
+        let needs_react = package_needs_react(&lookup, &ctx.modules.borrow());
+        if let Some(why) = needs_react {
+            // Only the outermost package import is the island: a nested one says nothing new.
+            if is_package_source(from) {
+                return self.external_child(name, source, imported, member, loc);
+            }
+            return self.external_child_why(name, source, imported, member, loc, Some(why));
+        }
+        self.finish(name, Some(id), Some(path), lookup, loc)
+    }
+
+    /// `Primitive.<tag>` of a recognised Radix factory declared in the module at `decl` (R34.65): the component the
+    /// factory makes for `tag`, as the source it is equivalent to (asChild aside, which the call site resolves like
+    /// `Button`'s; the write-only `window` marker dropped). Compiled once per tag, beside the factory's module.
+    fn primitive_child(&mut self, name: &str, decl: &str, tag: &str, loc: u32) -> Child {
+        let ctx = self.ctx;
+        let dir = decl.rsplit_once('/').map_or("", |(d, _)| d);
+        let path = format!("{dir}/primitive.{tag}.tsx");
+        let export = Export::Named(PRIMITIVE_EXPORT.to_string());
+        let source = format!(
+            "import * as React from 'react'\n\
+             import {{ Slot }} from '@radix-ui/react-slot'\n\
+             const {PRIMITIVE_EXPORT} = React.forwardRef(function {PRIMITIVE_EXPORT}({{ asChild, ...primitiveProps }}: any, forwardedRef: any) {{\n  \
+             const Comp = asChild ? Slot : '{tag}'\n  \
+             return <Comp {{...primitiveProps}} ref={{forwardedRef}} />\n\
+             }})\n\
+             export {{ {PRIMITIVE_EXPORT} }}\n"
+        );
+        let id = named_component_id(&path, PRIMITIVE_EXPORT);
+        let lookup = compile(
+            &path,
+            &export,
+            Some(source.into_bytes()),
+            ctx.opts,
+            ctx.modules,
+        );
         self.finish(name, Some(id), Some(path), lookup, loc)
     }
 
@@ -731,6 +907,7 @@ impl Walker<'_, '_> {
                         job_roots: BTreeSet::new(),
                         forwards_ref: false,
                         use_id: false,
+                        absent: Vec::new(),
                     };
                 };
                 ctx.modules
@@ -774,9 +951,11 @@ impl Walker<'_, '_> {
         let mut job_roots = BTreeSet::new();
         let mut use_id = false;
         let mut forwards_ref = false;
+        let mut absent = Vec::new();
         let tier = match lookup {
             Lookup::Compiled(ir) => {
                 forwards_ref = ir.forwards_ref;
+                absent = ir.absent_props.clone();
                 job_roots = ir
                     .jobs
                     .iter()
@@ -861,7 +1040,79 @@ impl Walker<'_, '_> {
             job_roots,
             forwards_ref,
             use_id,
+            absent,
         }
+    }
+
+    /// Whether the props spread into a child at this call site may carry `key` (F153c): `Ok(true)` when one of them is
+    /// this component's own props object, or its `...rest` and `key` is not a named prop; `Err` when a spread of
+    /// keys known only at render (a props path) is among them.
+    fn spread_carries(&self, key: &str, props: &[(String, Expr)]) -> Result<bool, ()> {
+        let mut carries = false;
+        for (k, v) in props {
+            if k != crate::ir::SPREAD_KEY {
+                continue;
+            }
+            match v {
+                Expr::Raw(r) | Expr::Server(ServerExpr(r)) => match &r.kind {
+                    RawKind::Ident {
+                        name,
+                        kind: IdentKind::Prop,
+                    } if name == "*" => carries = true,
+                    RawKind::Ident {
+                        name,
+                        kind: IdentKind::Prop,
+                    } if name == crate::ir::REST_PROPS => carries |= !self.own_named.contains(key),
+                    _ => return Err(()),
+                },
+                _ => return Err(()),
+            }
+        }
+        Ok(carries)
+    }
+
+    /// The child must not get `key` (its `absent_props`, F153c): a written literal `false` / `undefined` is fine, a
+    /// spread of this component's own props passes the requirement to this component's call sites, anything
+    /// else falls back. `true` = satisfied (the child renders as compiled).
+    fn require_absent(
+        &mut self,
+        name: &str,
+        key: &str,
+        props: &[(String, Expr)],
+        loc: u32,
+    ) -> bool {
+        let written = props.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v);
+        let falsy = match written {
+            None => true,
+            Some(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => {
+                matches!(r.json_literal(), Some(serde_json::Value::Bool(false)))
+                    || matches!(r.kind, RawKind::Lit(crate::ir::Literal::Undefined))
+            }
+            Some(_) => false,
+        };
+        // A route root's props come from the request: no call site checks a requirement passed up to it.
+        let carried = self.spread_carries(key, props).and_then(|c| {
+            if c && self.ctx.is_root {
+                Err(())
+            } else {
+                Ok(c)
+            }
+        });
+        if falsy && let Ok(carries) = carried {
+            if carries {
+                self.absent.insert(key.to_string());
+            }
+            return true;
+        }
+        self.diagnostics.push(Diagnostic::fallback(
+            "slot-dynamic",
+            format!(
+                "`{key}` of <{name}> is not a literal `false` or absent (or props of unknown keys are spread in), so brust cannot tell which element it renders"
+            ),
+            loc,
+            "leave the prop out, or keep the page on React",
+        ));
+        false
     }
 
     /// Mirrors `lower::template::expr_reactive`.
@@ -969,6 +1220,7 @@ impl Walker<'_, '_> {
             children,
             link,
             tier,
+            forwarded_ref,
         } = n
         else {
             return;
@@ -999,6 +1251,18 @@ impl Walker<'_, '_> {
         *tier = child.tier.clone();
         // R34.64: a `ref` at the call site of a `forwardRef` component reaches an element React attaches it to; a
         // static or native render has none to give it.
+        // F153c: passing this component's own forwarded ref on is React's `ref` chain; it ends on a host element
+        // (dropped, R34.63) only when the child forwards it there itself.
+        if *forwarded_ref && (!child.forwards_ref || matches!(child.tier, Tier::React { .. })) {
+            self.diagnostics.push(Diagnostic::fallback(
+                "forwardref-ref",
+                format!(
+                    "the forwarded ref is passed to <{name}>, which does not forward it to an element; the component renders as a React island"
+                ),
+                *loc,
+                "pass the ref to an element, or to a forwardRef component that does",
+            ));
+        }
         if child.forwards_ref && props.iter().any(|(k, _)| k == "ref") {
             self.diagnostics.push(Diagnostic::fallback(
                 "forwardref-ref",
@@ -1016,6 +1280,13 @@ impl Walker<'_, '_> {
             .cloned()
             .collect();
         self.check_poly(name, props, children, &child, *loc);
+        if !matches!(child.tier, Tier::React { .. }) {
+            for key in child.absent.clone() {
+                if !self.require_absent(name, &key, props, *loc) {
+                    break;
+                }
+            }
+        }
         if !self.refs.iter().any(|r| r.name == *name) {
             self.refs.push(ChildRef {
                 name: name.clone(),
@@ -1435,6 +1706,17 @@ impl Walker<'_, '_> {
             Some(_) => None,
         };
         let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
+        // F153c: absent (or a literal false) while this component's own props are spread in is the host element,
+        // provided this component's call sites leave the flag out too.
+        if spreads_in
+            && value == Some(false)
+            && !poly.negate
+            && self.spread_carries(&poly.flag, props).is_ok()
+        {
+            let flag = poly.flag.clone();
+            self.require_absent(name, &flag, props, loc);
+            return;
+        }
         let Some(value) = value.filter(|_| !spreads_in) else {
             self.diagnostics.push(refuse(
                 "slot-dynamic",
@@ -1896,7 +2178,14 @@ impl Walker<'_, '_> {
         props: &[(String, Expr)],
         child: &Child,
     ) -> (Vec<String>, Vec<(String, String)>) {
-        let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
+        // A spread of unknown keys replaces a handler only when it comes after the handler's last
+        // occurrence (React: later wins); `{...props} onMouseDown={…}` keeps the handler (F153c, Label).
+        let spread_after = |key: &str| {
+            let last = props.iter().rposition(|(k, _)| k == key).unwrap_or(0);
+            props[last..]
+                .iter()
+                .any(|(k, _)| k == crate::ir::SPREAD_KEY)
+        };
         let mut want: Vec<String> = Vec::new();
         let mut unbound: Vec<(String, String)> = Vec::new();
         // Keys that are not attribute names (a quoted key of a literal spread, which Bun inlines
@@ -1925,7 +2214,7 @@ impl Walker<'_, '_> {
                 Some(format!(
                     "<{name}> is not static (a handler can be bound only on a static child's element)"
                 ))
-            } else if spreads_in {
+            } else if spread_after(k) {
                 Some(format!(
                     "props of unknown keys are also spread into <{name}> here, and may replace it"
                 ))

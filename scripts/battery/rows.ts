@@ -3,6 +3,9 @@
 // §8.1 diagnostic classes), never from what the compiler happens to do.
 // Rule: every native/static row cites its spec row in `note` (e.g. 'spec §3 memo()');
 // documentation discipline only — the pinned sets in exit.ts are the test.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 export type Expect = 'static' | 'native' | 'react' | 'error' | 'compile-error'
 
 interface RowBase {
@@ -13,6 +16,10 @@ interface RowBase {
   snippet: string
   /** Sibling modules the snippet imports, by file name. */
   files?: Record<string, string>
+  /** Stub npm packages (F153c), by name: their source files, written under `node_modules/<name>/` with a published
+   * `dist/index.mjs` transpiled from them and a source map carrying them (`sourcesContent`), unless `publish` says
+   * otherwise. The runner writes the package sources the way `brust build` does and passes them to `brustc`. */
+  packages?: Record<string, StubPackage>
   note?: string
   /** react.dev reference entries (`react-api.ts` names) this row is evidence for. Every entry needs at least one row. */
   api?: string[]
@@ -20,10 +27,21 @@ interface RowBase {
   knownGap?: string
 }
 
+export interface StubPackage {
+  files: Record<string, string>
+  /** `map`: as built (default); `no-map`: dist only; `drift`: the dist was built from other sources. */
+  publish?: 'map' | 'no-map' | 'drift'
+}
+
 /** Native/static rows must pin their job count (precompute or ssr); the other tiers cannot. */
 export type Row = RowBase & ({ expect: 'native' | 'static'; jobs: number } | { expect: 'react' | 'error' | 'compile-error'; jobs?: never })
 
 const R = `import { useState } from 'react'\n`
+// F153c: the Radix sources as `@radix-ui/react-primitive` 2.2.0 and `@radix-ui/react-label` 2.1.17 publish them.
+const RADIX_PRIMITIVE = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/primitive.tsx'), 'utf8')
+const RADIX_LABEL = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/label.tsx'), 'utf8')
+const PKG_PRIMITIVE: StubPackage = { files: { 'src/primitive.tsx': RADIX_PRIMITIVE } }
+const PKG_LEAF = `import * as React from 'react'\nimport { Primitive } from '@radix-ui/react-primitive'\nexport const Root = React.forwardRef(function Root(props: any, forwardedRef: any) { return <Primitive.div {...props} ref={forwardedRef} /> })`
 const SLOT_BTN = `import { Slot } from 'radix-ui'\nexport default function Btn({ asChild = false, variant = 'default', className, ...props }: any) { const Comp = asChild ? Slot.Root : 'button'; return <Comp data-slot="btn" data-variant={variant} className={'base ' + (className ?? '')} {...props} /> }`
 const child = (body: string) => `export default function Child(props: any) { ${body} }`
 const ICARD = `import { useReducer } from 'react'\nexport function Card(props: any) { const [n, bump] = useReducer((x: number) => x + 1, 0); return <section><button onClick={() => bump()}>{n}</button>{props.children}</section> }\nexport function Badge(props: any) { return <span>{props.n}</span> }\nexport function Trigger(props: any) { const [n, bump] = useReducer((x: number) => x + 1, 0); return props.asChild ? <span onClick={() => bump()}>{props.children}{n}</span> : <button onClick={() => bump()}>{props.children}</button> }`
@@ -602,6 +620,60 @@ export const rows: Row[] = [
     snippet: `import Own from './Own'\nexport default function C() { return <Own>x</Own> }`,
     files: { 'Own.tsx': `import { Slot } from './mine'\nexport default function Own({ asChild, ...props }: any) { const Comp = asChild ? Slot.Root : 'span'; return <Comp {...props} /> }`, 'mine.ts': `export const Slot = { Root: 'div' }` },
     note: 'shadcn S1.4 R34.28 (Q5): only radix-ui and @radix-ui/react-slot are recognised; fallback local-component (Own is a React island; the page is static since island-children #203)' },
+
+  // ---- shadcn S3 package source (F153c, R34.61/R34.62/R34.65): stub packages compiled from their source map ----
+  { id: 'b-pkg-leaf-pure', category: 'B', authoring: 'a package forwardRef component over Radix Primitive.div, compiled from its source', expect: 'static', jobs: 0,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root title="t">x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c R34.61 + R34.65: the source map carries the authored TSX; Primitive.div is the host <div>, the forwarded ref is dropped' },
+  { id: 'b-pkg-leaf-handler', category: 'B', authoring: 'the Radix Label source (a handler on Primitive.label)', expect: 'static', jobs: 0,
+    snippet: `import { Root } from '@radix-ui/react-label'\nexport default function C() { return <div><Root htmlFor="x">Name</Root></div> }`,
+    packages: { '@radix-ui/react-label': { files: { 'src/label.tsx': RADIX_LABEL } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c: the page stays static; the Label is a native child (its double-click selection guard binds as x-on on the <label>)' },
+  { id: 'b-pkg-aschild-false', category: 'B', authoring: 'a package Primitive leaf with asChild={false}', expect: 'static', jobs: 0,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root asChild={false}>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c: a literal false is the host element (the leaf spreads its props into Primitive.div, so it requires `asChild` absent or false)' },
+  { id: 'b-pkg-primitive-aschild', category: 'B', authoring: 'Primitive.button asChild with one host child, written in the app', expect: 'static', jobs: 0,
+    snippet: `import { Primitive } from '@radix-ui/react-primitive'\nexport default function C() { return <div><Primitive.button asChild className="b"><a href="/y">y</a></Primitive.button></div> }`,
+    packages: { '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c R34.65: asChild on a Primitive tag merges into the one host child (the R34.28 Button rule)' },
+  { id: 'b-pkg-aschild-through-spread', category: 'B', authoring: 'asChild passed to a package leaf that spreads it into Primitive', expect: 'react',
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root asChild><a href="/y">y</a></Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles' },
+  { id: 'b-pkg-aschild-dynamic', category: 'B', authoring: 'a dynamic asChild on a package leaf', expect: 'react',
+    snippet: `import { Root } from 'leafy'\nexport default function C({ on }: any) { return <section><Root asChild={on}><a href="/y">y</a></Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c fail closed: slot-dynamic' },
+  { id: 'b-pkg-callsite-ref', category: 'B', authoring: 'a ref passed to a package forwardRef leaf', expect: 'react',
+    snippet: `import { useRef } from 'react'\nimport { Root } from 'leafy'\nexport default function C() { const r = useRef(null); return <section><Root ref={r}>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none)' },
+  { id: 'b-pkg-ref-read', category: 'B', authoring: 'a package leaf that reads its forwarded ref', expect: 'static', jobs: 1,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF.replace('ref={forwardedRef}', 'ref={forwardedRef} data-r={String(forwardedRef)}') } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c fail closed: the leaf needs React (forwardref-ref), so the app keeps the island of the published export' },
+  { id: 'b-pkg-no-map', category: 'B', authoring: 'a package that publishes no source map', expect: 'static', jobs: 1,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF }, publish: 'no-map' }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c G1: no sourcesContent, no analysis: the island of the published export (external-component, reason named)' },
+  { id: 'b-pkg-drift', category: 'B', authoring: 'a package whose published JS was not built from its map', expect: 'static', jobs: 1,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF }, publish: 'drift' }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c R34.62: the integrity check fails: the island of the published export' },
+  { id: 'b-pkg-primitive-changed', category: 'B', authoring: 'a Primitive factory of another shape', expect: 'static', jobs: 1,
+    snippet: `import { Primitive } from '@radix-ui/react-primitive'\nexport default function C() { return <div><Primitive.span>x</Primitive.span></div> }`,
+    packages: { '@radix-ui/react-primitive': { files: { 'src/primitive.tsx': RADIX_PRIMITIVE.replace('const Comp: any = asChild ? Slot : node;', 'const Comp: any = asChild ? node : Slot;') } } },
+    note: 'F153c R34.65 ruling Q1: no structural match, no host: the island of the published export' },
+  { id: 'b-pkg-dynamic-spread', category: 'B', authoring: 'a package leaf spreading an object computed by a call', expect: 'static', jobs: 1,
+    snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
+    packages: { leafy: { files: { 'src/leaf.tsx': `import * as React from 'react'\nfunction attrs(): any { return { role: 'note' } }\nexport const Root = React.forwardRef(function Root(props: any, ref: any) { return <div {...attrs()} {...props} ref={ref} /> })` } } },
+    note: 'F153c fail closed: spread-props in the source, so the island of the published export' },
+  { id: 'b-pkg-namespace-barrel', category: 'B', authoring: 'a component reached through a package barrel (`export * as X from`)', expect: 'static', jobs: 0,
+    snippet: `import { Leafy } from 'barrel'\nexport default function C() { return <section><Leafy.Root>x</Leafy.Root></section> }`,
+    packages: { barrel: { files: { 'src/index.ts': `export * as Leafy from 'leafy'` } }, leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
+    note: 'F153c: the `radix-ui` barrel shape (`export * as Label from \'@radix-ui/react-label\'`) is followed to the member' },
 
   // ---- C. Hooks -------------------------------------------------------------
   { id: 'c-usestate', category: 'C', authoring: 'useState', api: ['useState'], expect: 'native', jobs: 0,

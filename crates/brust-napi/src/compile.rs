@@ -57,7 +57,12 @@ pub(crate) fn compile_tree_impl(
     css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     icon_svgs: Option<String>,
     route_roots: Vec<String>,
+    packages: Option<String>,
 ) -> CompiledTree {
+    // F153c: `{ "scopes": …, "refused": … }`, the package sources the build wrote (`pkg-src.ts`).
+    let packages = packages
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     // `{ "final": bool, "svgs": { "<key>": "<svg markup>" } }`: lucide icons the build rendered (L23).
     let (icon_svgs, icons_final): (
         std::collections::HashMap<String, brust_compiler::analyze::component::IconMarkup>,
@@ -87,6 +92,7 @@ pub(crate) fn compile_tree_impl(
         icon_svgs,
         icons_final,
         route_roots: route_roots.into_iter().collect(),
+        packages,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -123,6 +129,7 @@ pub(crate) fn compile_tree_impl(
 
 /// Compiles `path` (relative to `root`) and every child it reaches through lowering. `css_modules` (L20): the class
 /// map of each `*.module.css`, keyed by its path relative to `root`; `styles.x` folds to the literal class.
+/// `packages` (F153c): the JSON resolution map of the package sources the build wrote (`pkg-src.ts`).
 #[napi]
 #[allow(clippy::too_many_arguments)]
 pub fn compile_tree(
@@ -136,6 +143,7 @@ pub fn compile_tree(
     >,
     icon_svgs: Option<String>,
     route_roots: Option<Vec<String>>,
+    packages: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
     compile_tree_impl(
@@ -147,6 +155,7 @@ pub fn compile_tree(
         css_modules.unwrap_or_default(),
         icon_svgs,
         route_roots.unwrap_or_default(),
+        packages,
     )
 }
 
@@ -164,6 +173,7 @@ mod tests {
             Default::default(),
             None,
             vec![],
+            None,
         );
         assert!(t.error.is_none(), "{:?}", t.error);
         let c = &t.components[0];
@@ -185,6 +195,7 @@ mod tests {
             Default::default(),
             None,
             vec![],
+            None,
         );
         assert_eq!(t.error.as_ref().map(|d| d.class.as_str()), Some("error"));
     }

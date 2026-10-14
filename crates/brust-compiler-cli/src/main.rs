@@ -1,9 +1,10 @@
 //! brustc — the v2 compiler CLI:
 //! `--emit parse|hir|ir|diag|template|server|client|all [--out <dir>] [--runtime-import <spec>]`
-//! or the debug command `--render <props.json> [--slots <slots.json>]`.
+//! or the debug command `--render <props.json> [--slots <slots.json>]`; `--packages <index.json>` (F153c) reads
+//! the package sources a build wrote (`.brust/pkg-src/index.json`).
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: brustc <file.tsx> --emit parse|hir|ir|diag|template|server|client|all [--out <dir>] [--runtime-import <spec>]\n       brustc <file.tsx> --render <props.json> [--slots <slots.json>]   (DEBUG: jinja + props + slots -> html; not for production paths)";
+const USAGE: &str = "usage: brustc <file.tsx> --emit parse|hir|ir|diag|template|server|client|all [--out <dir>] [--runtime-import <spec>] [--packages <index.json>]\n       brustc <file.tsx> --render <props.json> [--slots <slots.json>]   (DEBUG: jinja + props + slots -> html; not for production paths)";
 
 struct Args {
     file: String,
@@ -12,6 +13,19 @@ struct Args {
     runtime_import: String,
     render: Option<String>,
     slots: Option<String>,
+    packages: Option<String>,
+}
+
+/// The analysis options of this run: the package sources `--packages` names (F153c), nothing else.
+fn analyze_options(
+    packages: Option<&str>,
+) -> Result<brust_compiler::analyze::component::AnalyzeOptions, String> {
+    let mut opts = brust_compiler::analyze::component::AnalyzeOptions::default();
+    if let Some(path) = packages {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+        opts.packages = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+    }
+    Ok(opts)
 }
 
 fn main() -> ExitCode {
@@ -42,13 +56,20 @@ fn main() -> ExitCode {
     if ["template", "server", "client", "all"].contains(&emit.as_str()) {
         return brust_compiler::parse::run_on_compiler_thread(|| emit_lowered(&args, source));
     }
-    brust_compiler::parse::run_on_compiler_thread(|| run(&file, &emit, source))
+    let packages = args.packages.clone();
+    brust_compiler::parse::run_on_compiler_thread(|| run(&file, &emit, source, packages.as_deref()))
 }
 
 /// `--render <props.json> [--slots <slots.json>]`: the root template rendered
 /// with the sample props and the precompute job output; prints the HTML.
 fn render_cmd(args: &Args, source: Vec<u8>) -> ExitCode {
-    use brust_compiler::analyze::component::AnalyzeOptions;
+    let opts = match analyze_options(args.packages.as_deref()) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(1);
+        }
+    };
     use brust_compiler::ir::{JobKind, render_diagnostics};
     let read_json = |path: &str| -> Result<serde_json::Value, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
@@ -72,7 +93,7 @@ fn render_cmd(args: &Args, source: Vec<u8>) -> ExitCode {
     let tree = match brust_compiler::pipeline::compile_tree(
         &args.file,
         Some(source),
-        &AnalyzeOptions::default(),
+        &opts,
         &args.runtime_import,
     ) {
         Ok(t) => t,
@@ -105,12 +126,18 @@ fn render_cmd(args: &Args, source: Vec<u8>) -> ExitCode {
 /// `all --out <dir>` writes every compiled component's artifacts and prints
 /// the file list.
 fn emit_lowered(args: &Args, source: Vec<u8>) -> ExitCode {
-    use brust_compiler::analyze::component::AnalyzeOptions;
+    let opts = match analyze_options(args.packages.as_deref()) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(1);
+        }
+    };
     use brust_compiler::ir::render_diagnostics;
     let tree = match brust_compiler::pipeline::compile_tree(
         &args.file,
         Some(source),
-        &AnalyzeOptions::default(),
+        &opts,
         &args.runtime_import,
     ) {
         Ok(t) => t,
@@ -155,7 +182,7 @@ fn emit_lowered(args: &Args, source: Vec<u8>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run(file: &str, emit: &str, source: Vec<u8>) -> ExitCode {
+fn run(file: &str, emit: &str, source: Vec<u8>, packages: Option<&str>) -> ExitCode {
     let parsed = match brust_compiler::parse::parse_tsx(file, source) {
         Ok(p) => p,
         Err(e) => {
@@ -174,7 +201,7 @@ fn run(file: &str, emit: &str, source: Vec<u8>) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if emit == "ir" || emit == "diag" {
-        return emit_ir(file, emit);
+        return emit_ir(file, emit, packages);
     }
     match brust_compiler::analyze::hir::analyze_hir(&parsed) {
         Ok(summary) => {
@@ -191,10 +218,17 @@ fn run(file: &str, emit: &str, source: Vec<u8>) -> ExitCode {
 /// `ir`: the ComponentIR as pretty JSON. `diag`: one line per diagnostic; exit 1
 /// when any is an `Error` (or the module has no default export). Child
 /// components are resolved relative to the current directory.
-fn emit_ir(file: &str, emit: &str) -> ExitCode {
-    use brust_compiler::analyze::component::{AnalyzeOptions, analyze_file};
+fn emit_ir(file: &str, emit: &str, packages: Option<&str>) -> ExitCode {
+    use brust_compiler::analyze::component::analyze_file;
     use brust_compiler::ir::{DiagClass, render_diagnostics};
-    let ir = match analyze_file(file, &AnalyzeOptions::default()) {
+    let opts = match analyze_options(packages) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let ir = match analyze_file(file, &opts) {
         Ok(ir) => ir,
         Err(d) => {
             eprint!("{}", render_diagnostics(&[d], file));
@@ -220,6 +254,7 @@ fn parse_args(args: &[String]) -> Option<Args> {
     let mut runtime_import = brust_compiler::lower::DEFAULT_RUNTIME_IMPORT.to_string();
     let mut render = None;
     let mut slots = None;
+    let mut packages = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -237,6 +272,10 @@ fn parse_args(args: &[String]) -> Option<Args> {
             }
             "--slots" => {
                 slots = Some(args.get(i + 1)?.clone());
+                i += 2;
+            }
+            "--packages" => {
+                packages = Some(args.get(i + 1)?.clone());
                 i += 2;
             }
             "--runtime-import" => {
@@ -267,5 +306,6 @@ fn parse_args(args: &[String]) -> Option<Args> {
         runtime_import,
         render,
         slots,
+        packages,
     })
 }

@@ -151,7 +151,9 @@ fn compile_uncached(
             let local = match binding {
                 Binding::Fn(l) | Binding::Local(l) => l,
                 // Declared, but not as a function the compiler reads: an island that imports the binding.
-                Binding::Opaque | Binding::Member(_) => return Ok(opaque_island(path, name)),
+                Binding::Opaque | Binding::Member(_) | Binding::Namespace(_) => {
+                    return Ok(opaque_island(path, name));
+                }
                 _ => name.clone(),
             };
             let mut ir =
@@ -209,6 +211,57 @@ pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String>
     candidates.push(format!("{joined}/index.tsx"));
     candidates.push(format!("{joined}/index.ts"));
     candidates.into_iter().find(|c| opts.root.join(c).is_file())
+}
+
+/// Where the build writes package sources (F153c), relative to the root.
+pub const PKG_SRC_DIR: &str = ".brust/pkg-src/";
+
+/// The scope a module's bare imports resolve in: the written package it lies in (`.brust/pkg-src/<dir>`),
+/// or `""` for the app.
+pub fn package_scope(path: &str) -> &str {
+    let Some(rest) = path.strip_prefix(PKG_SRC_DIR) else {
+        return "";
+    };
+    match rest.find('/') {
+        Some(i) => &path[..PKG_SRC_DIR.len() + i],
+        None => "",
+    }
+}
+
+/// Whether the module at `path` is a package source the build wrote (F153c).
+pub fn is_package_source(path: &str) -> bool {
+    !package_scope(path).is_empty()
+}
+
+/// The package source a bare import of the module at `parent` names (F153c, R34.61): `Ok(entry)` when the build
+/// wrote it, `Err(Some(reason))` when it refused the package, `Err(None)` when it was never asked.
+pub fn resolve_package(
+    parent: &str,
+    spec: &str,
+    opts: &AnalyzeOptions,
+) -> Result<String, Option<String>> {
+    let scope = package_scope(parent);
+    let p = &opts.packages;
+    if let Some(entry) = p.scopes.get(scope).and_then(|m| m.get(spec)) {
+        // Review F1: only a file the build wrote under its own directory is package source; anything else (a path
+        // that leaves it) is refused, never read as app code.
+        if !is_package_source(entry)
+            || entry
+                .split('/')
+                .any(|s| s == ".." || s == "." || s.is_empty())
+        {
+            return Err(Some(format!(
+                "the package source path {entry} is not inside {PKG_SRC_DIR}"
+            )));
+        }
+        return Ok(entry.clone());
+    }
+    Err(p.refused.get(scope).and_then(|m| m.get(spec)).cloned())
+}
+
+/// [`resolve`], then [`resolve_package`]: the module a relative or a bare import names, if the compiler may read it.
+pub fn resolve_module(parent: &str, spec: &str, opts: &AnalyzeOptions) -> Option<String> {
+    resolve(parent, spec, opts).or_else(|| resolve_package(parent, spec, opts).ok())
 }
 
 /// L20: the key of the CSS module `rel` names, relative to the module at `parent`: a path relative to the
