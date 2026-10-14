@@ -76,6 +76,9 @@ export function sourceDirPlugin(sourceOf: SourceOf, appRoot: string, external: s
         return src === undefined ? undefined : { path: Bun.resolveSync(a.path, dirname(src)) }
       })
       b.onResolve({ filter: /^[^./]/ }, (a) => {
+        // A package source imported as itself (a React component revived from it): its bare imports are the package's.
+        const own = sourceOf.has(a.importer) ? undefined : packageDirOf(a.importer)
+        if (own !== undefined && !matchesExternal(a.path, external)) return { path: Bun.resolveSync(a.path, own) }
         if (!sourceOf.has(a.importer) || matchesExternal(a.path, external)) return undefined
         // F153c: an artifact compiled from a package's source imports what that package sees.
         const pkg = packageDirOf(sourceOf.get(a.importer)!)

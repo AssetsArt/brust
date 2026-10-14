@@ -899,6 +899,67 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// The first component in `nodes` (at any depth) that reads a context (`ctx_uses` non-empty), is not itself a
+    /// React island, and carries a job, a `useId` or fed child instances (a wrapper around one): those need the
+    /// hidden inputs a frame fills. A plain one is revived by the island from its source and reads the island's own
+    /// React context.
+    fn consumer_in(&mut self, nodes: &[Node]) -> Option<String> {
+        for n in nodes {
+            match n {
+                Node::Component {
+                    loc,
+                    name,
+                    source,
+                    imported,
+                    member,
+                    children,
+                    ..
+                } => {
+                    if name != "<member>" {
+                        let mark = self.diagnostics.len();
+                        let child = self.resolve_child(
+                            name,
+                            source.as_deref(),
+                            imported.as_deref(),
+                            member,
+                            *loc,
+                        );
+                        self.diagnostics.truncate(mark);
+                        if child.ir.as_ref().is_some_and(|c| {
+                            matches!(c.tier, Tier::Static | Tier::Native)
+                                && !c.ctx_uses.is_empty()
+                                && (!c.jobs.is_empty()
+                                    || c.use_id_slots > 0
+                                    || !c.instances.is_empty())
+                        }) {
+                            return Some(name.clone());
+                        }
+                    }
+                    if let Some(w) = self.consumer_in(children) {
+                        return Some(w);
+                    }
+                }
+                Node::Element { children, .. } | Node::Fragment(children) => {
+                    if let Some(w) = self.consumer_in(children) {
+                        return Some(w);
+                    }
+                }
+                Node::If { then, else_, .. } => {
+                    if let Some(w) = self.consumer_in(then).or_else(|| self.consumer_in(else_)) {
+                        return Some(w);
+                    }
+                }
+                Node::For { body, .. } => {
+                    if let Some(w) = self.consumer_in(body) {
+                        return Some(w);
+                    }
+                }
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            }
+        }
+        None
+    }
+
     /// The frames walk of [`contexts`].
     fn frames_node(
         &mut self,
@@ -964,6 +1025,18 @@ impl Walker<'_, '_> {
                         ),
                         *loc,
                         "keep the island outside the Provider, or render the page with React",
+                    ));
+                }
+                // A context consumer passed as the children of a React island is revived by the island from its source: it
+                // reads the island's own (real React) context, which brust did not lower, so it must not be compiled as a
+                // native consumer waiting for a frame. Fail closed (the page renders with React) instead of leaving a
+                // consumer with a job and no instance record (R34.97: valid React is never a build error).
+                if island && let Some(who) = self.consumer_in(children) {
+                    diags.push(Diagnostic::fallback(
+                        "context-island",
+                        format!("<{who}> reads a context and is passed as the children of the React island <{name}>; the island supplies that context at run time"),
+                        *loc,
+                        "render the page with React, or keep the consumer inside the Provider component",
                     ));
                 }
                 if island {

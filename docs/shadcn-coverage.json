@@ -9,14 +9,14 @@
   },
   "summary": {
     "pages": 64,
-    "measured": 61,
-    "analysisOnly": 3,
+    "measured": 64,
+    "analysisOnly": 0,
     "tier": {
       "static": 58,
       "native": 1,
-      "react": 2
+      "react": 5
     },
-    "islands": 42,
+    "islands": 45,
     "pagesWithNoJs": 22,
     "pagesWithNoWorker": 19,
     "jsGzipKb": {
@@ -40,8 +40,8 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 35,
-      "analysisOnlyRows": 3,
+      "measuredRows": 38,
+      "analysisOnlyRows": 0,
       "appComponents": 137,
       "libraryComponents": 151
     },
@@ -49,8 +49,8 @@
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 31,
-      "analysisOnlyRows": 3,
+      "measuredRows": 34,
+      "analysisOnlyRows": 0,
       "appComponents": 126,
       "libraryComponents": 180
     },
@@ -58,8 +58,8 @@
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 31,
-      "analysisOnlyRows": 2,
+      "measuredRows": 33,
+      "analysisOnlyRows": 0,
       "appComponents": 90,
       "libraryComponents": 176
     },
@@ -67,8 +67,8 @@
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 17,
-      "analysisOnlyRows": 2,
+      "measuredRows": 19,
+      "analysisOnlyRows": 0,
       "appComponents": 20,
       "libraryComponents": 55
     },
@@ -107,6 +107,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 8,
       "libraryComponents": 36
+    },
+    {
+      "blocker": "fallback:context-island",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 3,
+      "analysisOnlyRows": 0,
+      "appComponents": 5,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:child-component",
@@ -235,7 +244,7 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:use-id-in-render",
+      "blocker": "fallback:slot-dynamic",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -244,38 +253,11 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "build: child-chunk-link collapsible_ed7681b4: collapsibleTrigger_7af94655 has a job or useId but no instances[] record",
-      "kind": "build",
-      "classification": "survey truth (build rule)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 1,
-      "appComponents": 0,
-      "libraryComponents": 0
-    },
-    {
-      "blocker": "build: child-chunk-link dialog_70c85330: close_8cc15054 has a job or useId but no instances[] record",
-      "kind": "build",
-      "classification": "survey truth (build rule)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 1,
-      "appComponents": 0,
-      "libraryComponents": 0
-    },
-    {
-      "blocker": "build: child-chunk-link sheet_06e64d44: close_8cc15054 has a job or useId but no instances[] record",
-      "kind": "build",
-      "classification": "survey truth (build rule)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 1,
-      "appComponents": 0,
-      "libraryComponents": 0
-    },
-    {
-      "blocker": "fallback:slot-dynamic",
+      "blocker": "fallback:use-id-in-render",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 1,
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 0
     },
@@ -784,17 +766,18 @@
     },
     {
       "id": "collapsible",
-      "basis": "analysis-only",
-      "tier": "static",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 9,
+      "reactComponents": 5,
+      "jsGzipKb": 89,
+      "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "spread-props"
-      ],
-      "refusal": {
-        "rule": "child-chunk-link",
-        "at": "collapsible_ed7681b4:",
-        "construct": "collapsibleTrigger_7af94655 has a job or useId but no instances[] record"
-      }
+      ]
     },
     {
       "id": "combobox",
@@ -847,20 +830,21 @@
     },
     {
       "id": "dialog",
-      "basis": "analysis-only",
-      "tier": "static",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 25,
+      "reactComponents": 16,
+      "jsGzipKb": 101,
+      "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "island-children",
         "island-prop",
         "slot-dynamic",
         "spread-props"
-      ],
-      "refusal": {
-        "rule": "child-chunk-link",
-        "at": "dialog_70c85330:",
-        "construct": "close_8cc15054 has a job or useId but no instances[] record"
-      }
+      ]
     },
     {
       "id": "direction",
@@ -1245,19 +1229,20 @@
     },
     {
       "id": "sheet",
-      "basis": "analysis-only",
-      "tier": "static",
+      "basis": "measured",
+      "tier": "react",
+      "islands": 1,
+      "components": 21,
+      "reactComponents": 15,
+      "jsGzipKb": 101,
+      "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "island-children",
         "island-prop",
         "spread-props"
-      ],
-      "refusal": {
-        "rule": "child-chunk-link",
-        "at": "sheet_06e64d44:",
-        "construct": "close_8cc15054 has a job or useId but no instances[] record"
-      }
+      ]
     },
     {
       "id": "sidebar",

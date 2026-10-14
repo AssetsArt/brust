@@ -316,6 +316,15 @@ fn an_island_under_a_lowered_provider_keeps_the_page_react() {
         );
         assert!(is_react(&ir), "{f}: {:?}", ir.tier);
     }
+    // A consumer passed as the children of a React island: the island's own React context is the Provider, so the
+    // consumer must not lower on its own (it would wait for a frame that never comes).
+    let (ir, _) = page("island-consumer.tsx");
+    assert!(
+        rules(&ir).contains(&"context-island"),
+        "island-consumer.tsx: {:?}",
+        ir.diagnostics
+    );
+    assert!(is_react(&ir), "island-consumer.tsx: {:?}", ir.tier);
     for f in ["island-beside.tsx", "react-basic.tsx"] {
         let (ir, _) = page(f);
         assert!(
