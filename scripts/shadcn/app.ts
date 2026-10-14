@@ -7,18 +7,22 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 import { compileTree } from '../../packages/brust/native/index.js'
+import { readPathAliases } from '../../packages/brust/src/build/tsconfig-paths'
 import { preparePackageSources } from '../../packages/brust/src/build/pkg-src.ts'
 import { FIXTURE, repo } from './paths.ts'
 
+/** The fixture's `tsconfig` `paths` (the CLI writes `@/` imports), as the build hands them to the compiler. */
+const ALIASES = JSON.stringify(readPathAliases(FIXTURE).aliases)
+
 /** `compileTree` as `brust build` runs it (F153c): once, then again with the sources of the packages the tree
- * imports components from, so the analysis sees what the build compiles. */
+ * imports components from, so the analysis sees what the build compiles. Both passes carry the `paths` aliases. */
 export function compileAsBuild(rel: string): ReturnType<typeof compileTree> {
-  const first = compileTree(rel, FIXTURE, '/_brust/runtime.js', [])
+  const first = compileTree(rel, FIXTURE, '/_brust/runtime.js', [], null, null, null, [], ALIASES)
   if (first.error) return first
   const external = [...new Set(first.components.flatMap((c) => { const ir = JSON.parse(c.ir) as { external?: { source: string } }; return ir.external ? [ir.external.source] : [] }))]
   const packages = preparePackageSources(FIXTURE, external)
   if (Object.keys(packages.scopes).length === 0) return first
-  return compileTree(rel, FIXTURE, '/_brust/runtime.js', [], undefined, undefined, undefined, undefined, JSON.stringify(packages))
+  return compileTree(rel, FIXTURE, '/_brust/runtime.js', [], null, null, null, [], ALIASES, JSON.stringify(packages))
 }
 
 export type Tier = 'static' | 'native' | 'react' | 'error'

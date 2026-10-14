@@ -13,6 +13,10 @@ pub struct Parsed {
     ast: Box<js_ast::Ast<'static>>,
     default_export_fn: Option<String>,
     import_paths: Vec<String>,
+    /// The alias imports rewritten at parse time (`tsconfig` `paths`, R34.76).
+    alias_imports: Vec<crate::analyze::aliases::AliasImport>,
+    /// Owns the rewritten specifiers the import records borrow.
+    _alias_text: Vec<Box<[u8]>>,
     source: Box<js_ast::Source>,
     _define: Box<bun_js_parser::Define>,
     // Holds the `AstAllocState` the parser's `AstVec`s were carved from. Its
@@ -170,12 +174,29 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
     if log.errors > 0 {
         return Err(first_error(&log, text_ref));
     }
-    let ast = match result {
+    let mut ast = match result {
         Ok(bun_js_parser::Result::Ast(ast)) => ast,
         Ok(_) => return Err(plain_error("parser did not return an AST")),
         Err(e) => return Err(plain_error(&format!("{e:?}"))),
     };
 
+    // `tsconfig` `paths`: an alias specifier becomes the relative one of the file it names, so every later stage
+    // reads an ordinary relative import. The new text lives in `_alias_text` (boxes never move).
+    let mut alias_imports = Vec::new();
+    let mut alias_text: Vec<Box<[u8]>> = Vec::new();
+    for r in ast.import_records.as_mut_slice() {
+        let spec = String::from_utf8_lossy(r.path.text).into_owned();
+        if let Some((rel, target)) = crate::analyze::aliases::rewrite(path, &spec) {
+            alias_text.push(rel.into_bytes().into_boxed_slice());
+            // SAFETY: the box is moved into `Parsed` (`_alias_text`), never mutated, and dropped after `ast`.
+            r.path.text = unsafe { boxed(&**alias_text.last().expect("just pushed")) };
+            alias_imports.push(crate::analyze::aliases::AliasImport {
+                from: path.to_string(),
+                spec,
+                target,
+            });
+        }
+    }
     let import_paths = ast
         .import_records
         .as_slice()
@@ -188,6 +209,8 @@ pub fn parse_tsx(path: &str, source: Vec<u8>) -> Result<Parsed, ParseError> {
         ast,
         default_export_fn,
         import_paths,
+        alias_imports,
+        _alias_text: alias_text,
         source: src,
         _define: define,
         _ast_alloc: ast_alloc,
@@ -273,6 +296,11 @@ impl Parsed {
     /// The module's source text.
     pub fn text(&self) -> &[u8] {
         &self._text
+    }
+
+    /// The alias imports this module wrote (`tsconfig` `paths`).
+    pub fn alias_imports(&self) -> Vec<crate::analyze::aliases::AliasImport> {
+        self.alias_imports.clone()
     }
 
     pub fn import_paths(&self) -> Vec<String> {

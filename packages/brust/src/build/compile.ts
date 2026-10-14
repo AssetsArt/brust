@@ -7,6 +7,7 @@ import { relative, sep } from 'node:path'
 import { type CompiledComponent, type CompiledTree, compileTree } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
+import { checkAliasAgreement, readPathAliases } from './tsconfig-paths'
 import type { PackageSources } from './pkg-src'
 
 /** `ComponentIR` as the compiler serialises it (snake_case), with the fields that are absent
@@ -131,6 +132,9 @@ export function compileApp(opts: {
   const slotValuesJson = opts.slotValues && Object.keys(opts.slotValues).length > 0 ? JSON.stringify(opts.slotValues) : undefined
   const packagesJson = opts.packages ? JSON.stringify(opts.packages) : undefined
   // The Rust side keys each map by its path relative to the app root (`/`-separated), like an import resolves.
+  const { aliases, notes } = readPathAliases(appRoot)
+  for (const n of notes) opts.log(`warning tsconfig-paths ${n}`)
+  const pathAliasesJson = aliases.length > 0 ? JSON.stringify(aliases) : undefined
   const cssModules = Object.fromEntries([...(opts.cssMaps ?? [])].map(([abs, map]) => [relative(realpathSync(appRoot), abs).split(sep).join('/'), map]))
   const seen = new Map<string, Seen>()
   const rootIdOfFile = new Map<string, string>()
@@ -154,7 +158,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, packagesJson)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).
@@ -176,6 +180,7 @@ export function compileApp(opts: {
     for (const d of c.diagnostics)
       if (d.class === 'fallback' || d.class === 'warning') opts.log(`warning ${d.rule} ${where(c.source, d)} ${d.message}`)
     const ir = JSON.parse(c.ir) as ComponentIR
+    if (ir.alias_imports?.length) checkAliasAgreement(appRoot, ir.alias_imports)
     ir.use_id_slots ??= 0
     ir.uses_outlet ??= false
     ir.instances ??= []

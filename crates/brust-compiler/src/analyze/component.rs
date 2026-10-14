@@ -115,6 +115,9 @@ pub struct AnalyzeOptions {
     /// L20: the class map of every `*.module.css` file, keyed by its path relative to `root` (`/`-separated).
     /// `styles.x` from such an import folds to the literal class; empty = nothing folds.
     pub css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    /// `tsconfig` `paths` aliases (R34.76): an import that matches one is rewritten to the relative import of the file it
+    /// names; empty = every non-relative specifier is a package.
+    pub path_aliases: Vec<crate::analyze::aliases::PathAlias>,
     /// F158 (R34.69): the source files (relative to `root`, `/`-separated) whose default export is a route component,
     /// a page or layout, whose props are request data. A component from one of them never receives lowered JSX: its caller
     /// falls back to React (`revive-host-route-root`).
@@ -162,6 +165,7 @@ pub fn analyze_with(
     modules: &std::cell::RefCell<crate::analyze::modules::ModuleCache>,
 ) -> Result<ComponentIR, Diagnostic> {
     use crate::analyze::modules::{Export, Lookup, cache_key, compile, normalize};
+    let _aliases = crate::analyze::aliases::Scope::enter(&opts.root, &opts.path_aliases);
     modules
         .borrow_mut()
         .set_root(cache_key(&normalize(path), &Export::Default));
