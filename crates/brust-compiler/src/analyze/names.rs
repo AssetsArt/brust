@@ -5,6 +5,48 @@ use bun_ast as js_ast;
 use js_ast::b::B;
 use std::collections::{HashMap, HashSet};
 
+/// A member of an imported binding (shadcn S1.4, R34.35): `<DialogPrimitive.Root>` with
+/// `import { Dialog as DialogPrimitive } from "radix-ui"` is `radix-ui` / `Dialog` / `["Root"]`; the same holds
+/// for a module-level `const Root = DialogPrimitive.Root` alias. `imported` is `default`, `*` or a name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberRef {
+    pub source: String,
+    pub imported: String,
+    pub member: Vec<String>,
+}
+
+/// Sources a member tag may resolve into: packages. A relative module (its members are components the
+/// compiler could compile, a later lane) and React itself (`React.Fragment`) are not.
+pub fn is_package_source(source: &str) -> bool {
+    !(source.starts_with('.')
+        || source.starts_with('/')
+        || source == "react"
+        || source.starts_with("react/"))
+}
+
+/// `BASE.MEMBER` where `BASE` is an import from a package (single level, no optional chain).
+pub fn member_of(
+    e: &js_ast::Expr,
+    import_of: impl Fn(js_ast::Ref) -> Option<(String, String)>,
+) -> Option<MemberRef> {
+    use js_ast::expr::Data as E;
+    let E::EDot(d) = &e.data else { return None };
+    if d.optional_chain.is_some() {
+        return None;
+    }
+    let r = match &d.target.data {
+        E::EIdentifier(id) => id.ref_,
+        E::EImportIdentifier(id) => id.ref_,
+        _ => return None,
+    };
+    let (source, imported) = import_of(r)?;
+    is_package_source(&source).then(|| MemberRef {
+        source,
+        imported,
+        member: vec![String::from_utf8_lossy(d.name.slice()).into_owned()],
+    })
+}
+
 /// What the printer prints a renamed symbol as, by symbol index (custom hooks, G3).
 pub type Aliases = HashMap<u32, String>;
 
@@ -36,6 +78,8 @@ pub struct NameTable<'a> {
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
     /// the bare object as a value, or inside code printed as written (R34.14: fail closed).
     pub rest_escape: std::cell::Cell<Option<u32>>,
+    /// Module-level `const X = BASE.MEMBER` (never reassigned) with `BASE` imported from a package.
+    member_aliases: HashMap<u32, MemberRef>,
     /// The component's polymorphic tag local (`Comp` of `const Comp = asChild ? Slot.Root : "a"`, R34.28).
     poly: HashMap<u32, PolyTag>,
     state: HashSet<u32>,
@@ -136,6 +180,7 @@ impl<'a> NameTable<'a> {
             rest: None,
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
+            member_aliases: HashMap::new(),
             poly: HashMap::new(),
             state: HashSet::new(),
             setters: HashSet::new(),
@@ -146,7 +191,39 @@ impl<'a> NameTable<'a> {
             printed: HashMap::new(),
         };
         table.jsx_runtime = table.collect_jsx_runtime(ast);
+        table.member_aliases = table.collect_member_aliases(ast);
         table
+    }
+
+    fn collect_member_aliases(&self, ast: &js_ast::Ast<'_>) -> HashMap<u32, MemberRef> {
+        let mut out = HashMap::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
+                    continue;
+                };
+                // A `let`/`var` may be reassigned: only `const` is an alias.
+                if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                    continue;
+                }
+                for d in l.decls.iter() {
+                    if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                        && let Some(m) = member_of(&v, |r| {
+                            self.import_of(r)
+                                .map(|(s, i)| (s.to_string(), i.to_string()))
+                        })
+                    {
+                        out.insert(self.key(id.r#ref), m);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// `r` is a module-level `const` that aliases a member of a package import.
+    pub fn member_alias_of(&self, r: js_ast::Ref) -> Option<&MemberRef> {
+        self.member_aliases.get(&self.key(r))
     }
 
     fn collect_jsx_runtime(&self, ast: &js_ast::Ast<'_>) -> HashSet<u32> {

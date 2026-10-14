@@ -5,6 +5,7 @@
 //! (an opaque island), never to a guess.
 use crate::analyze::component::{AnalyzeOptions, module_fn};
 use crate::analyze::modules::{Export, resolve};
+use crate::analyze::names::{MemberRef, member_of};
 use crate::analyze::stores::Module;
 use bun_ast as js_ast;
 use js_ast::b::B;
@@ -26,6 +27,9 @@ pub enum Binding {
     Opaque,
     /// `export default …`: the default export is read by the default path.
     Default,
+    /// Declared here as an alias of a member of a package import (`const Root = Dialog.Root`, R34.35):
+    /// the component is that package member.
+    Member(MemberRef),
     /// Re-exported from another module: `(specifier, name there)`; `default` there is the default.
     Follow(String, String),
     /// `export * from …` clauses that may carry it.
@@ -52,6 +56,9 @@ pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
                         if let B::BIdentifier(id) = d.binding.data
                             && m.name(id.r#ref) == export
                         {
+                            if let Some(mr) = d.value.and_then(|v| m.member_ref(&v)) {
+                                return Binding::Member(mr);
+                            }
                             return match d.value.map(|v| v.data) {
                                 Some(E::EImportIdentifier(i)) => m.reexport(i.ref_),
                                 _ => Binding::Opaque,
@@ -69,6 +76,10 @@ pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
                                 Binding::Opaque if module_fn(ast, &local).is_some() => {
                                     Binding::Fn(local)
                                 }
+                                Binding::Opaque => m
+                                    .const_value(r)
+                                    .and_then(|v| m.member_ref(&v))
+                                    .map_or(Binding::Opaque, Binding::Member),
                                 b => b,
                             };
                         }
@@ -108,12 +119,35 @@ pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
 }
 
 impl Module<'_> {
+    /// `BASE.MEMBER` with `BASE` imported from a package.
+    fn member_ref(&self, e: &js_ast::Expr) -> Option<MemberRef> {
+        member_of(e, |r| {
+            self.import_of(r)
+                .map(|(s, i)| (s.to_string(), i.to_string()))
+        })
+    }
+
     /// An exported binding that is itself an import is a re-export; anything else is declared here.
     fn reexport(&self, r: js_ast::Ref) -> Binding {
         match self.import_of(r) {
             Some((_, "*")) | None => Binding::Opaque,
             Some((spec, imported)) => Binding::Follow(spec.to_string(), imported.to_string()),
         }
+    }
+}
+
+/// The package member that the export `export` of the project module at `path` is an alias of
+/// (`export { Root }` after `const Root = Dialog.Root`), if it is one.
+pub fn package_member(path: &str, export: &Export, opts: &AnalyzeOptions) -> Option<MemberRef> {
+    let bytes = std::fs::read(opts.root.join(path)).ok()?;
+    let parsed = crate::parse::parse_tsx(path, bytes).ok()?;
+    let name = match export {
+        Export::Default => "default",
+        Export::Named(n) => n,
+    };
+    match parsed.with_ast(|ast| find(ast, name)) {
+        Binding::Member(m) => Some(m),
+        _ => None,
     }
 }
 

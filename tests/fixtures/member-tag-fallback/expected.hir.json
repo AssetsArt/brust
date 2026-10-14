@@ -1,0 +1,57 @@
+{
+  "function": "Fallback",
+  "params": 1,
+  "scopes": [
+    {
+      "id": 0,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t1",
+        "t2"
+      ]
+    },
+    {
+      "id": 2,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t3"
+      ]
+    },
+    {
+      "id": 4,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "Tag",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t4"
+      ]
+    },
+    {
+      "id": 5,
+      "pruned": false,
+      "deps": [],
+      "decls": [
+        "t5"
+      ]
+    },
+    {
+      "id": 6,
+      "pruned": false,
+      "deps": [
+        {
+          "name": "t4",
+          "reactive": true
+        }
+      ],
+      "decls": [
+        "t6"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+fallback external-component tests/fixtures/member-tag-alias/input.tsx:9:7 <Root> comes from the package radix-ui (Dialog.Root); it renders as a React island — use a component from this project to keep it native
+fallback external-component tests/fixtures/member-tag-alias/input.tsx:10:7 <Trigger> comes from the package radix-ui (Dialog.Trigger); it renders as a React island — use a component from this project to keep it native
+fallback external-component tests/fixtures/member-tag-alias/input.tsx:11:7 <Close> comes from the package radix-ui (Dialog.Close); it renders as a React island — use a component from this project to keep it native

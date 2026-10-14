@@ -336,6 +336,11 @@ impl<'a> Module<'a> {
         idx
     }
 
+    /// The initialiser of the module-level `const` `r`.
+    pub(crate) fn const_value(&self, r: js_ast::Ref) -> Option<js_ast::Expr> {
+        self.consts.get(&self.key(r)).copied()
+    }
+
     pub(crate) fn name(&self, r: js_ast::Ref) -> String {
         self.symbols
             .get(self.key(r) as usize)

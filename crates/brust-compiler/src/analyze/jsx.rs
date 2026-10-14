@@ -2,6 +2,7 @@
 //! `was_jsx_element`) back into template `Node`s. The parser has already applied
 //! JSX whitespace collapsing and entity decoding to text children.
 use crate::analyze::expr::{Reader, estring, loc_of};
+use crate::analyze::names::{MemberRef, member_of};
 use crate::ir::template::VOID;
 use crate::ir::{Attr, Diagnostic, Expr, HandlerDecl, IdentKind, Node, RawExpr, RawKind};
 use bun_ast as js_ast;
@@ -30,7 +31,13 @@ enum Tag {
         source: Option<String>,
         imported: Option<String>,
     },
-    Member,
+    /// `<DialogPrimitive.Root>` or an alias of it: a member of an import from a package (R34.35).
+    Imported {
+        name: String,
+        m: MemberRef,
+    },
+    /// Any other member tag; the text says why it is not resolved.
+    Member(&'static str),
     /// `Outlet` imported from `@brust/core/routes` (S8).
     Outlet,
 }
@@ -51,6 +58,12 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
             if r.names.is_fragment(*ref_) {
                 return Tag::Fragment;
             }
+            if let Some(m) = r.names.member_alias_of(*ref_) {
+                return Tag::Imported {
+                    name: r.names.name(*ref_),
+                    m: m.clone(),
+                };
+            }
             if r.names.import_of(*ref_) == Some(("@brust/core/routes", "Outlet")) {
                 return Tag::Outlet;
             }
@@ -65,7 +78,42 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
                 imported,
             }
         }
-        _ => Tag::Member,
+        E::EDot(d) => {
+            let imp = |x: js_ast::Ref| {
+                r.names
+                    .import_of(x)
+                    .map(|(s, i)| (s.to_string(), i.to_string()))
+            };
+            if let Some(m) = member_of(tag, imp) {
+                let base = match &d.target.data {
+                    E::EIdentifier(id) => id.ref_,
+                    E::EImportIdentifier(id) => id.ref_,
+                    _ => unreachable!("member_of read an identifier target"),
+                };
+                return Tag::Imported {
+                    name: format!("{}.{}", r.names.name(base), m.member[0]),
+                    m,
+                };
+            }
+            let target_ref = match &d.target.data {
+                E::EIdentifier(id) => Some(id.ref_),
+                E::EImportIdentifier(id) => Some(id.ref_),
+                _ => None,
+            };
+            Tag::Member(match (&d.target.data, target_ref) {
+                (E::EDot(_), _) => {
+                    "a member tag deeper than one level (`<A.B.C>`) is not resolved; import the component by name"
+                }
+                (_, Some(x)) if r.names.import_of(x).is_some() => {
+                    "a member of a module imported from a relative path or from react is not resolved; import the component by name"
+                }
+                (_, Some(_)) => {
+                    "a member of a local object (`<Ctx.Provider>`, a context provider) is not supported natively; context components are the context lane"
+                }
+                _ => "a computed member tag is not supported natively",
+            })
+        }
+        _ => Tag::Member("a member tag is not supported natively"),
     }
 }
 
@@ -104,10 +152,10 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     if matches!(tag, Tag::Outlet) {
         return Node::Outlet;
     }
-    if matches!(tag, Tag::Member) {
+    if let Tag::Member(why) = &tag {
         r.diagnostics.push(Diagnostic::fallback(
             "member-tag",
-            "member-expression component tags (`<Ctx.Provider>`) are not supported natively",
+            *why,
             loc,
             "import the component under its own name",
         ));
@@ -259,16 +307,29 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             name,
             source,
             imported,
+            member: Vec::new(),
             props: props_out,
             children,
             link: None,
             tier: crate::ir::Tier::Pending,
         },
-        Tag::Member => Node::Component {
+        Tag::Imported { name, m } => Node::Component {
+            loc,
+            name,
+            source: Some(m.source),
+            imported: Some(m.imported),
+            member: m.member,
+            props: props_out,
+            children,
+            link: None,
+            tier: crate::ir::Tier::Pending,
+        },
+        Tag::Member(_) => Node::Component {
             loc,
             name: "<member>".into(),
             source: None,
             imported: None,
+            member: Vec::new(),
             props: props_out,
             children,
             link: None,
