@@ -356,3 +356,37 @@ fn a_module_level_jsx_const_used_as_a_child_falls_back_by_name() {
         assert!(is_react(&ir), "{f}: {:?}", ir.tier);
     }
 }
+
+/// Lead ruling (a): an imported binding in child position is printed only when it provably is not JSX. An imported JSX
+/// const (under a plain wrapper, under a Provider, through a namespace) and an unresolvable import fall back by name;
+/// an imported plain value still lowers, and a prop that shadows the imported name is the prop.
+#[test]
+fn an_imported_child_is_printed_only_when_it_provably_is_not_jsx() {
+    for f in [
+        "imp-wrap.tsx",
+        "imp-provider.tsx",
+        "imp-unreadable.tsx",
+        "imp-ns.tsx",
+    ] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"jsx-const-child"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+    for f in ["imp-plain.tsx", "imp-shadow.tsx"] {
+        let (ir, jinja) = page(f);
+        assert!(
+            !rules(&ir).contains(&"jsx-const-child") && !is_react(&ir),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+        assert!(
+            jinja.contains("plain") || jinja.contains("mine"),
+            "{f}: {jinja}"
+        );
+    }
+}

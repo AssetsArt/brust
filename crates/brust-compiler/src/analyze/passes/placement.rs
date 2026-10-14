@@ -527,6 +527,39 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 }
 
 impl Placer<'_> {
+    /// A child expression that is a bare imported binding, or `ns.name` of a namespace import, whose export cannot be
+    /// resolved to a value that is provably not JSX (a folded primitive const). `Some(name)` = fail closed.
+    fn import_child_problem(&self, r: &RawExpr) -> Option<String> {
+        let (name, source, imported) = match &r.kind {
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Import { source, imported },
+            } if imported != "*" => (name.as_str(), source.as_str(), imported.as_str()),
+            RawKind::Member {
+                target,
+                name: member,
+                ..
+            } => match &target.kind {
+                RawKind::Ident {
+                    name: ns,
+                    kind: IdentKind::Import { source, imported },
+                } if imported == "*" => {
+                    let proven = crate::analyze::const_fold::imported_const(
+                        &self.path, source, member, self.opts, 0,
+                    )
+                    .is_some();
+                    return (!proven).then(|| format!("{ns}.{member}"));
+                }
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let proven =
+            crate::analyze::const_fold::imported_const(&self.path, source, imported, self.opts, 0)
+                .is_some();
+        (!proven).then(|| name.to_string())
+    }
+
     /// The first module const `r` reads (through other module consts) whose value is, or builds, JSX.
     fn jsx_const_read(&self, r: &RawExpr, depth: u8) -> Option<String> {
         if depth > 4 {
@@ -979,7 +1012,21 @@ impl Placer<'_> {
                 }
             }
             Node::Text(_) => {}
-            Node::Slot(e) => self.expr(e),
+            Node::Slot(e) => {
+                // A child that is an imported binding (or a member of a namespace import) is printed only when it
+                // provably is not JSX (lead ruling a): the server would print an element object as nothing.
+                if let Expr::Raw(r) = &*e
+                    && let Some(name) = self.import_child_problem(r)
+                {
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "jsx-const-child",
+                        format!("`{name}` is an imported value used as a child, and brust cannot prove it is not a JSX element; the server template could print nothing for it"),
+                        r.loc,
+                        "render the element inline, import a plain value, or keep this component in React",
+                    ));
+                }
+                self.expr(e)
+            }
             Node::If { cond, then, else_ } => {
                 let guard = match &*cond {
                     Expr::Raw(r) => {

@@ -8,7 +8,9 @@ import { FIXTURE, repo } from './paths.ts'
 
 const PAGES = ['ctx-progress-basic', 'ctx-progress-max', 'ctx-progress-indeterminate', 'ctx-progress-invalid']
 // F3: islands under a Provider keep the page React (the island hydrates, so scripts are expected and markup is React's own).
-const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider']
+const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns']
+// Imported plain value: stays a static page (no script), and renders like React.
+const PLAIN_PAGES = ['ctx-imp-plain']
 const ROWS = join(FIXTURE, '.rows')
 const ENTRY = '.rows/ctx-parity-routes.tsx'
 const bin = join(repo, 'packages/brust/bin/brust')
@@ -21,7 +23,7 @@ const camel = (s: string) => s.replace(/(^|-)(\w)/g, (_, __, c: string) => c.toU
 
 beforeAll(async () => {
   mkdirSync(ROWS, { recursive: true })
-  const ALL = [...PAGES, ...ISLAND_PAGES]
+  const ALL = [...PAGES, ...ISLAND_PAGES, ...PLAIN_PAGES]
   const imports = ALL.map((p) => `import ${camel(p)}Page from "../repro/${p}"`).join('\n')
   const routes = ALL.map((p) => `  { path: "/${p}", Component: ${camel(p)}Page },`).join('\n')
   writeFileSync(join(FIXTURE, ENTRY), `import { defineRoutes } from "@brust/core/routes"\n${imports}\nexport const routes = defineRoutes([\n${routes}\n])\n`)
@@ -75,7 +77,7 @@ function normalise(html: string): string {
     .trim()
 }
 
-for (const id of PAGES) {
+for (const id of [...PAGES, ...PLAIN_PAGES]) {
   test(`${id}: the compiled page renders the DOM the React build renders`, async () => {
     const mod = (await import(join(FIXTURE, 'repro', `${id}.tsx`))) as { default: () => unknown }
     const { renderToStaticMarkup } = await fromFixture<typeof import('react-dom/server')>('react-dom/server')

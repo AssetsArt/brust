@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 157 | 89 | 8 | 60 | 0 | 0 | 0 | 0 |
+| B Composition | 162 | 91 | 8 | 63 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 335 | 168 | 43 | 120 | 3 | 1 | 0 | 0 |
+| **Total** | 340 | 170 | 43 | 123 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -173,6 +173,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-island-beside | an island BESIDE (not under) a Provider component | static | static | ssr | ok | — | Mellow F3 control: an island that is not under the Provider changes nothing; the Provider still lowers (static page + one island) |
 | b-jsx-const-child | a module-level JSX const used as a child of a wrapper | react | react | ssr | ok | fallback:jsx-const-child | Mellow jsx-const-child (pre-existing on main: the child printed nothing): fail closed at the printed slot; served and compared with React in scripts/shadcn/context-parity.test.ts |
 | b-jsx-const-child-provider | a module-level JSX const used as a child of a Provider component | react | react | ssr | ok | fallback:jsx-const-child | Mellow jsx-const-child: the same drop point, widened by Providers (an empty section) |
+| b-jsx-const-child-imported | an imported JSX const used as a child of a wrapper | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: an imported binding in child position is printed only when it provably is not JSX (jsx-const-child) |
+| b-jsx-const-child-imported-provider | an imported JSX const used as a child of a Provider component | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: the same, widened by Providers (on main the Provider was an island and React rendered el) |
+| b-jsx-const-child-unreadable | a child that is an import the compiler cannot resolve | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: an import it cannot read or resolve fails closed |
+| b-jsx-const-child-imported-plain | an imported plain value used as a child (control) | static | static | 0 | ok | — | control: a folded primitive import still lowers |
+| b-jsx-const-child-shadowed | a prop that shadows an imported JSX const name (control) | static | static | 0 | ok | — | control: the child is the prop, not the import; it lowers |
 | b-context-console-if | an if whose branches only call console.* | static | static | 0 | ok | — | S2 R34.104: a diagnostic-only statement is not part of the render (Radix Progress validates its props this way) |
 | b-props-quoted-key | a quoted hyphen key bound to a local in the props pattern | static | static | ssr | ok | — | F161 prop-quoted-key: the template read `data-x` as a subtraction and every render failed (500); the component is a React island now (the page stays static). Native support is a later F-row |
 | b-props-jinja-own-name | a prop named loop (a name the server template binds itself) | static | static | ssr | ok | — | props-pattern N2, prop-jinja-name: loop, range, namespace, caller and self shadow template names; the component is a React island now |
