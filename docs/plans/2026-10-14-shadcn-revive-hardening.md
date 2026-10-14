@@ -2,7 +2,7 @@
 
 owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Tiësto · reviewer: Mellow (security path, risk 4) · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F158
 
-Author: Tiësto. Status: **DRAFT, awaiting the lead's ruling; no lane started.** Base: origin/main e970250c. R-numbers continue after R34.68 (package-leaf). Origin: Mellow's N1 residual on constant-slots (PR #209), recorded as F158 in `docs/plans/m1a-followups.md`: *before any revive v2 (prop-path children, F148a), prove no request value can reach the revive switch.* Everything below was read from the code at the base; the two points I could not settle by reading are marked **[probe]** and are step 0 of the lane.
+Author: Tiësto. Status: **RULED 2026-10-14 (see §10); lane may start, priority over other S1 work.** Base: origin/main e970250c. R-numbers continue after R34.68 (package-leaf). Origin: Mellow's N1 residual on constant-slots (PR #209), recorded as F158 in `docs/plans/m1a-followups.md`: *before any revive v2 (prop-path children, F148a), prove no request value can reach the revive switch.* Everything below was read from the code at the base; the two points I could not settle by reading are marked **[probe]** and are step 0 of the lane.
 
 ## 1. What the revive is today (read from `packages/brust/src/build/bundle.ts`)
 
@@ -101,3 +101,15 @@ Boundary: `crates/brust-compiler/src/analyze/passes/children.rs` (host check), `
 - **Q3 Rule 3 (R34.72).** Include the reserved-key assertion, or leave it out if the P2 probe shows the path is closed? Recommended: include only if the probe finds a path; otherwise drop R34.72 and keep the fixture.
 - **Q4 Order vs F148a.** This lane lands before any prop-path children work, and F148a's plan must cite R34.69–R34.71 as its preconditions. Recommended: yes.
 - **Q5 `javascript:` URLs.** Pin React 19's behaviour with a test, or add our own scheme guard in `__props` for `href/src/action/formaction`? Recommended: test only; a second guard is the kind of drift that bites later.
+
+## 10. Lead ruling (2026-10-14)
+
+Accepted. The P5 finding (`__mk` revives `children` with no switch) makes this more than Mellow's N1: it is the one data→elements path, it shipped in 2.0.0-alpha.7, and it is reachable only when one component is both a route root/layout and a host of lowered children (rare; React escaping, the dropped `dangerouslySetInnerHTML` and the own-registry rule still hold). So: **no hotfix release, but this lane has priority for review and gates, and it is a blocker for 2.0.0-alpha.8.** The alpha.8 release notes carry a short security note (what could reach the revive, which versions, what changed). Rulings on §9:
+
+- **Q1 Fallback at the caller** (`revive-host-route-root`), never a build error.
+- **Q2 Pages and layouts in this lane;** the non-literal spread case (P2) is settled by the probe fixture, whatever it shows.
+- **Q3 R34.72 is IN, regardless of the probe.** The assertion is one `Object.keys` pass on top-level SSR input keys of a host (not nested values, so data such as `{ "$oid": … }` inside a prop value is untouched); defense in depth on the only data→elements path is worth that cost.
+- **Q4 Yes:** F148a's plan cites R34.69–R34.72 as preconditions; no prop-path children work starts before this lane is on main.
+- **Q5 Test only, with a condition:** pin React 19's handling of `javascript:` for `href`, `src`, `action` and `formAction` at the pinned version. If any of the four is not neutralised, add the scheme guard in `__props` for that attribute in this lane.
+
+Step 0 (the three probes) is reported as a task note before any code.
