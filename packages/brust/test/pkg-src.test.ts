@@ -173,3 +173,99 @@ test('a .brust or .brust/pkg-src that links out of the app is refused before any
   mkdirSync(join(root, PKG_SRC_DIR), { recursive: true })
   expect(() => preparePackageSources(root, [])).not.toThrow()
 })
+
+// ---------------------------------------------------------------------------------------------------------------
+// Wave A step 0 (P1, P2): a bundle of several sources with no entry in the map, and the `unstable_` export aliases.
+
+const HOOK = `import * as React from 'react'\nexport function useThing(x: number) {\n  return React.useState(x)\n}\n`
+const REDUCER = `import * as R2 from 'react'\nexport function useThingReducer(x: number) {\n  return R2.useReducer((s: number) => s, x)\n}\n`
+const clause = (body: string) => `export { ${body} }\n`
+const distOf = (srcs: string[], exportClause: string) => `${srcs.map((s) => new Bun.Transpiler({ loader: 'tsx' }).transformSync(s).replace(/^export /gm, '')).join('\n')}\n${exportClause}`
+
+test('P1: a bundle of several sources is entered through a barrel written from the published export clause', () => {
+  const root = app()
+  pkg(root, 'bundle', { 'src/thing.tsx': HOOK, 'src/thing-reducer.tsx': REDUCER }, { dist: distOf([HOOK, REDUCER], clause('useThing, useThingReducer')) })
+  const r = preparePackageSources(root, ['bundle'])
+  const entry = r.scopes['']?.bundle
+  expect(r.refused).toEqual({})
+  expect(entry).toMatch(/\/src\/index\.ts$/)
+  expect(readFileSync(join(root, entry!), 'utf8')).toBe(`export { useThing } from "./thing"\nexport { useThingReducer } from "./thing-reducer"\n`)
+})
+
+test('P1 bounds: an alias, an unexplained source, a doubly declared name, a default or a star export are refused', () => {
+  const root = app()
+  const sources = { 'src/thing.tsx': HOOK, 'src/thing-reducer.tsx': REDUCER }
+  pkg(root, 'aliased', sources, { dist: distOf([HOOK, REDUCER], clause('useThing, useThingReducer as other')) })
+  pkg(root, 'unexplained', sources, { dist: distOf([HOOK, REDUCER], clause('useThing')) })
+  pkg(root, 'double', { 'src/a.tsx': HOOK, 'src/b.tsx': HOOK }, { dist: distOf([HOOK], clause('useThing')) })
+  pkg(root, 'defaulted', sources, { dist: distOf([HOOK, REDUCER], `${clause('useThing, useThingReducer')}export default 1\n`) })
+  pkg(root, 'starred', sources, { dist: distOf([HOOK, REDUCER], `${clause('useThing, useThingReducer')}export * from './x'\n`) })
+  pkg(root, 'two-clauses', sources, { dist: distOf([HOOK, REDUCER], `${clause('useThing')}${clause('useThingReducer')}`) })
+  for (const name of ['aliased', 'unexplained', 'double', 'defaulted', 'starred', 'two-clauses']) expect([name, refusedFor(root, name)]).toEqual([name, expect.stringContaining('none is the entry')])
+  // Every source still goes through the integrity compare: a changed literal in one of them refuses the package.
+  pkg(root, 'drifted', sources, { dist: distOf([HOOK, REDUCER.replace('useReducer', 'useState')], clause('useThing, useThingReducer')) })
+  expect(refusedFor(root, 'drifted')).toContain('do not match the published')
+})
+
+const ALIAS_SRC = `import * as React from 'react'\nfunction Inner() {\n  return <i />\n}\nexport { Inner as Provider }\n`
+const aliasDist = (pubClause: string, from = ALIAS_SRC) => `${new Bun.Transpiler({ loader: 'tsx' }).transformSync(from).replace(/^export \{.*\};?\s*$/m, '')}\nexport { ${pubClause} }\n`
+
+test('P2: an export alias the published file spells unstable_<alias> over the SAME local binding is not a difference', () => {
+  expect(integrityGaps([{ path: 'src/a.tsx', text: ALIAS_SRC }], aliasDist('Inner as unstable_Provider'))).toEqual([])
+  // The alias is also fine when the published file keeps it as written.
+  expect(integrityGaps([{ path: 'src/a.tsx', text: ALIAS_SRC }], aliasDist('Inner as Provider'))).toEqual([])
+})
+
+test('P2 bounds: any other alias difference stays a refusal (pinned)', () => {
+  const src = [{ path: 'src/a.tsx', text: ALIAS_SRC }]
+  // A different prefix, a different alias, another local binding, no export at all, a suffix: all differences.
+  for (const pub of ['Inner as stable_Provider', 'Inner as unstable_Other', 'Inner as Unstable_Provider', 'Inner as unstable_Provider2', 'Inner']) {
+    expect(integrityGaps(src, aliasDist(pub)).join(), pub).toContain('name `Provider`')
+  }
+  const other = ALIAS_SRC.replace('function Inner() {', 'function Elsewhere() {\n  return <b />\n}\nfunction Inner() {')
+  expect(integrityGaps([{ path: 'src/a.tsx', text: other }], aliasDist('Elsewhere as unstable_Provider', other)).join()).toContain('name `Provider`')
+  // The alias name is not hidden when the source USES it as an ordinary name too.
+  const uses = ALIAS_SRC.replace('return <i />', 'return <i title={String(Provider)} />')
+  expect(integrityGaps([{ path: 'src/a.tsx', text: uses }], aliasDist('Inner as unstable_Provider')).join()).toContain('name `Provider`')
+})
+
+// (`..` and `//` never reach the barrel: the map path is normalized first, and a path that leaves the package is refused before.)
+test('P1 hostile map paths: a path with anything but plain path characters is refused, never printed into the barrel', () => {
+  const root = app()
+  const hostile = [
+    "src/a'b",
+    'src/a"b',
+    'src/a\nb',
+    'src/a\\b',
+    'src/a*/b',
+    'src/a`b',
+    'src/a${1}b',
+    String.raw`src/a\u0041b`,
+    'src/a b',
+    'src/\u00e9',
+  ]
+  for (const [i, bad] of hostile.entries()) {
+    const name = `hostile-${i}`
+    const dist = distOf([HOOK, REDUCER], clause('useThing, useThingReducer'))
+    pkg(root, name, { [`${bad}-thing.tsx`]: HOOK, 'src/thing-reducer.tsx': REDUCER }, { dist })
+    const r = preparePackageSources(root, [name])
+    expect([JSON.stringify(bad), r.scopes['']?.[name], typeof r.refused['']?.[name]]).toEqual([JSON.stringify(bad), undefined, 'string'])
+  }
+})
+
+test('source paths: hostile, doubled-slash and absolute map paths are refused at the source; a legit nested path is accepted', () => {
+  const root = app()
+  const refusedWith = (name: string, path: string) => {
+    pkg(root, name, { 'src/leaf.tsx': LEAF }, { mapSources: [path] })
+    return `${name}: ${refusedFor(root, name)}`
+  }
+  expect(refusedWith('inject', "../src/a';\nimport 'evil-pkg.tsx")).toContain('has characters other than')
+  expect(refusedWith('slashes', '..//src//leaf.tsx')).toContain('has characters other than')
+  expect(refusedWith('absolute', '/etc/leaf.tsx')).toContain('outside the package')
+  expect(refusedWith('space', '../src/le af.tsx')).toContain('has characters other than')
+  expect(refusedWith('backtick', '../src/le`af.tsx')).toContain('has characters other than')
+  const ok = join(root, 'ok-dir')
+  pkg(root, 'nested', { 'src/deep/er/leaf.tsx': LEAF })
+  expect(preparePackageSources(root, ['nested']).scopes['']?.nested).toMatch(/\/src\/deep\/er\/leaf\.tsx$/)
+  void ok
+})
