@@ -19,7 +19,7 @@ import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from '
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
 import { importsStore } from './features'
-import { type CacheRecord, type ManifestJson, needsWorkers, tierOf, writeManifest } from './manifest'
+import { type CacheRecord, type ManifestJson, needsWorkers, reachedJobs, tierOf, writeManifest } from './manifest'
 import { scanRoutes } from './scan'
 import { type ExprReads, prepareStatic, writeStatic } from './static'
 import { writeStaticWorker } from './static-worker'
@@ -289,7 +289,7 @@ async function buildInto(
     const files = [...new Set((routeCss.get(r.id) ?? []).flatMap((s) => (css.file.has(s) ? [css.file.get(s)!] : [])))]
     if (files.length > 0) r.css = files
   }
-  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps, routeRoots)
+  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps, routeRoots, reachedJobs(manifest))
   manifest.actions =
     o.actions && o.actionsEntry
       ? { entry: await buildActions(out, o.actionsEntry, css.maps), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite }

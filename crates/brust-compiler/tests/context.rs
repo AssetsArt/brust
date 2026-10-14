@@ -552,3 +552,55 @@ fn a_call_site_prop_with_the_exact_hidden_name_fails_closed() {
         );
     }
 }
+
+/// F174 (PR 1c): a module function the compiler PROVES returns a primitive (a literal, a template, an operator or a
+/// conversion over plain values, other proven helpers) may be called under a Provider; one that can return an element,
+/// an object, a function or a member of its argument cannot, nor can one that calls such a helper.
+#[test]
+fn a_helper_proven_to_return_a_primitive_may_be_read_under_a_provider() {
+    let (ir, _) = page("ph-plain.tsx");
+    assert!(!is_react(&ir), "{:?} {:?}", ir.tier, ir.diagnostics);
+    let all = compile_all("ph-plain.tsx");
+    let panel = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("panel_"))
+        .expect("panel");
+    assert!(
+        !rules(&panel.1).contains(&"jsx-const-child"),
+        "{:?}",
+        panel.1.diagnostics
+    );
+    assert!(!is_react(&panel.1), "{:?}", panel.1.tier);
+    for f in [
+        "ph-jsx.tsx",
+        "ph-obj.tsx",
+        "ph-member.tsx",
+        "ph-closure.tsx",
+        "ph-chain.tsx",
+        "ph-reassign.tsx",
+        // Afrojack F1/F2: a rest parameter returns an array; a body local that shadows a helper is not the helper.
+        "ph-rest.tsx",
+        "ph-shadow.tsx",
+        // Mellow F1: a global is the language's own only when nothing in the module binds the name.
+        "ph-g-string.tsx",
+        "ph-g-number.tsx",
+        "ph-g-parseint.tsx",
+        "ph-g-math-ns.tsx",
+        "ph-g-import-string.tsx",
+        "ph-g-const-math.tsx",
+        "ph-g-param.tsx",
+        "ph-g-nan.tsx",
+    ] {
+        let all = compile_all(f);
+        let panel = all
+            .iter()
+            .find(|(id, ..)| id.starts_with("panel_"))
+            .expect("panel");
+        assert!(
+            rules(&panel.1).contains(&"jsx-const-child"),
+            "{f}: {:?}",
+            panel.1.diagnostics
+        );
+        assert!(is_react(&panel.1), "{f}: {:?}", panel.1.tier);
+    }
+}

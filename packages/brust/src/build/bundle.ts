@@ -628,6 +628,8 @@ export async function buildJobs(
   stores: string[] = [],
   cssMaps: Map<string, Record<string, string>> = new Map(),
   routeRoots?: ReadonlySet<string>,
+  /** F183 (`reachedJobs`): only these entries are written; every one when absent. */
+  reached?: { planned: ReadonlySet<string>; ssr: ReadonlySet<string> },
 ): Promise<void> {
   const imports: string[] = ["import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"]
   const entries: string[] = []
@@ -651,13 +653,16 @@ export async function buildJobs(
   for (const c of compiled.values()) {
     const fns: string[] = []
     if (c.serverTs !== undefined) {
+      // Staged even when unreached: a parent's fused job imports it (`brust-job:<id>`, R34.96).
       const file = join(dist, 'jobs', `${c.id}.server.ts`)
       write(file, c.serverTs)
       stage(sourceOf, file, c)
-      imports.push(`import * as j${n} from ${JSON.stringify(file)}`)
-      fns.push(`precompute: j${n}.precompute`)
+      if (reached === undefined || reached.planned.has(c.id)) {
+        imports.push(`import * as j${n} from ${JSON.stringify(file)}`)
+        fns.push(`precompute: j${n}.precompute`)
+      }
     }
-    if (isReact(c) && !c.ir.tier.React.client_only) {
+    if (isReact(c) && !c.ir.tier.React.client_only && (reached === undefined || reached.ssr.has(c.id))) {
       imports.push(componentImport(c, `C${n}`))
       // Ruling 2bf3775a (R1): the island's component id prefixes React's useId on BOTH sides
       // (the shim's hydrateRoot passes the same prefix), so ids differ across islands.
