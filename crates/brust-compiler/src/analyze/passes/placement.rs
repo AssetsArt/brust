@@ -99,6 +99,9 @@ struct Placer<'s> {
     component_children: u32,
     /// > 0 under a lowered Provider frame (or in a Provider component's own template): judged by the allowlist.
     provider_children: u32,
+    /// Set while placing a frame value the compiler itself injected (`__ctx_*` hidden props): its expression comes from
+    /// the Provider's own value fields, already judged by `provider_problem`.
+    frame_value: bool,
     /// Locations of `list-shape` fallbacks: the reader already named the construct there.
     list_shape_locs: BTreeSet<u32>,
     /// L2: module path, source text, module declarations and build-computed slot values.
@@ -232,6 +235,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         // A Provider component's OWN template is printed under its own Provider element (the tag lowers to a Fragment),
         // so every Slot of it is judged by the allowlist too.
         provider_children: u32::from(!ir.provides.is_empty()),
+        frame_value: false,
         list_shape_locs: ir
             .diagnostics
             .iter()
@@ -926,6 +930,20 @@ impl Placer<'_> {
 
     /// Places one first-paint value.
     fn painted(&mut self, r: &RawExpr) -> Expr {
+        // Lead ruling (c), the single print point: EVERY expression printed under a lowered Provider frame or in a
+        // Provider component's own template (a child, an own slot, a component prop, an attribute, a condition or a
+        // loop body) goes through the total allowlist, so no print path can skip it.
+        if self.provider_children > 0
+            && !self.frame_value
+            && let Some(name) = self.child_read_problem(&self.fold(r), 0)
+        {
+            self.diagnostics.push(Diagnostic::fallback(
+                "jsx-const-child",
+                format!("`{name}` is read under a context Provider and brust cannot prove it is a plain value (a prop, a printed local or a primitive constant); the server template could print nothing for it"),
+                r.loc,
+                "render the element inline, pass a prop, or keep this component in React",
+            ));
+        }
         let deps = self.st.cx.deps(r, &self.loop_scope);
         self.st.painted.push(Painted {
             loc: r.loc,
@@ -1123,7 +1141,7 @@ impl Placer<'_> {
                 // an element holder at the root of the child or in its conditional / array / namespace value positions.
                 if let Expr::Raw(r) = &*e {
                     let found = if self.provider_children > 0 {
-                        self.child_read_problem(&self.fold(r), 0)
+                        None // judged in `painted`, the single print point
                     } else if self.component_children > 0 {
                         self.import_child_problem(r)
                     } else {
@@ -1209,7 +1227,9 @@ impl Placer<'_> {
                     if let Expr::Raw(r) = v {
                         let r = r.clone();
                         self.st.prop_raws.insert((*loc, k.clone()), r.clone());
+                        self.frame_value = k.starts_with("__ctx_");
                         *v = self.child_prop(&r);
+                        self.frame_value = false;
                     }
                 }
                 let is_provider = self.st.provider_locs.contains(loc);

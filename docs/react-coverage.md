@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 166 | 93 | 8 | 65 | 0 | 0 | 0 | 0 |
+| B Composition | 168 | 94 | 8 | 66 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 344 | 172 | 43 | 125 | 3 | 1 | 0 | 0 |
+| **Total** | 346 | 173 | 43 | 126 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -179,6 +179,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-jsx-const-child-provider-own | an imported JSX const read directly under a Provider element in the Provider component's own template | static | static | ssr | ok | — | Mellow: the Provider tag lowers to a Fragment, so its own template is judged by the same predicate (the Panel is a React island now; the page stays static) |
 | b-child-reads-plain-wrapper | ordinary child reads (a data lookup, .length, an imported helper call) under a PLAIN wrapper | static | static | precompute | ok | — | lead ruling c: the total allowlist is scoped to Provider frames; a plain wrapper keeps lowering these (pinned, no regression) |
 | b-child-reads-provider | the same child reads under a Provider component | react | react | ssr | ok | fallback:jsx-const-child | lead ruling c: under a lowered Provider the allowlist applies (a helper result and a data lookup are not provable yet: F174); the page is React (it is the whole island, as on main) |
+| b-context-prop-under-provider | a component prop holding an element holder under a Provider frame | react | react | ssr | ok | fallback:jsx-const-child | Mellow scoping: the predicate runs at Placer::painted, the single print point (a prop is printed too) |
+| b-context-provider-field-element | a Provider value field holding an element holder | static | static | ssr | ok | — | Mellow: a Provider value field that holds an element would reach the consumer as a hidden prop and print as nothing; the Provider stays an island (context-state), the page stays static |
 | b-jsx-const-child-unreadable | a child that is an import the compiler cannot resolve | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: an import it cannot read or resolve fails closed |
 | b-jsx-const-child-imported-plain | an imported plain value used as a child (control) | static | static | 0 | ok | — | control: a folded primitive import still lowers |
 | b-jsx-const-child-shadowed | a prop that shadows an imported JSX const name (control) | static | static | 0 | ok | — | control: the child is the prop, not the import; it lowers |

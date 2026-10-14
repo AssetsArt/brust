@@ -49,19 +49,28 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 37,
+      "measuredRows": 38,
       "analysisOnlyRows": 0,
-      "appComponents": 136,
+      "appComponents": 137,
       "libraryComponents": 151
     },
     {
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 24,
+      "measuredRows": 25,
       "analysisOnlyRows": 0,
-      "appComponents": 32,
+      "appComponents": 33,
       "libraryComponents": 60
+    },
+    {
+      "blocker": "fallback:jsx-const-child",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 13
     },
     {
       "blocker": "fallback:hook-unsupported",
@@ -388,15 +397,6 @@
       "libraryComponents": 6
     },
     {
-      "blocker": "fallback:jsx-const-child",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 5
-    },
-    {
       "blocker": "useImperativeHandle",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
@@ -684,6 +684,7 @@
         "event-capture",
         "external-component",
         "hook-unsupported",
+        "jsx-const-child",
         "ref-shape",
         "spread-props"
       ]
@@ -702,6 +703,7 @@
         "external-component",
         "hook-shape",
         "island-children",
+        "jsx-const-child",
         "local-component",
         "use-id-in-render"
       ]
@@ -1084,10 +1086,12 @@
       "tier": "static",
       "islands": 1,
       "components": 5,
-      "reactComponents": 1,
+      "reactComponents": 2,
       "jsGzipKb": 85,
       "workerCalls": 1,
       "codes": [
+        "external-component",
+        "island-children",
         "spread-props"
       ]
     },
@@ -1193,6 +1197,7 @@
         "external-component",
         "hook-shape",
         "island-children",
+        "jsx-const-child",
         "linked-prop-precompute",
         "spread-props"
       ]
@@ -1327,6 +1332,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "jsx-const-child",
         "spread-props"
       ]
     },

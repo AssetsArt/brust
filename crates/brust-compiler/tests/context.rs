@@ -478,3 +478,37 @@ fn the_allowlist_is_scoped_to_provider_frames_and_plain_wrappers_keep_lowering()
     );
     assert!(is_react(&ir), "{:?}", ir.tier);
 }
+
+/// Mellow (scoping): a component PROP under a Provider frame is printed too (`<Badge icon={el}/>`), so it goes through the
+/// predicate at the single print point (`Placer::painted`), imported and local.
+#[test]
+fn a_component_prop_under_a_provider_frame_is_judged_by_the_predicate() {
+    for f in ["pprop-imp.tsx", "pprop-loc.tsx"] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"jsx-const-child"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+}
+
+/// Mellow: a Provider VALUE field holding an element holder (`value={{ icon: el }}`, imported or local) reaches the consumer
+/// as a hidden prop and would print as nothing: the Provider component stays a React island (the page stays static).
+#[test]
+fn a_provider_value_field_holding_an_element_keeps_the_provider_an_island() {
+    for f in ["pfield-imp.tsx", "pfield-loc.tsx"] {
+        let all = compile_all(f);
+        let panel = all
+            .iter()
+            .find(|(id, ..)| id.starts_with("panel_"))
+            .expect("panel");
+        assert!(
+            rules(&panel.1).contains(&"context-state"),
+            "{f}: {:?}",
+            panel.1.diagnostics
+        );
+        assert!(is_react(&panel.1), "{f}: {:?}", panel.1.tier);
+    }
+}

@@ -106,6 +106,10 @@ pub fn scan(table: &NameTable<'_>, ast: &js_ast::Ast<'_>) -> Contexts {
 pub fn provider_problem(ir: &crate::ir::ComponentIR) -> Option<(u32, String)> {
     use crate::ir::{Expr, IdentKind, RawExpr, RawKind};
     fn bad(ir: &crate::ir::ComponentIR, r: &RawExpr, depth: u8) -> Option<String> {
+        bad_in(ir, r, depth, false)
+    }
+    /// `callee`: the identifier is the function being called (a helper of the Provider's module is fine there).
+    fn bad_in(ir: &crate::ir::ComponentIR, r: &RawExpr, depth: u8, callee: bool) -> Option<String> {
         if depth > 8 {
             return Some("a chain of derived values deeper than 8".into());
         }
@@ -119,7 +123,11 @@ pub fn provider_problem(ir: &crate::ir::ComponentIR) -> Option<(u32, String)> {
         match &r.kind {
             RawKind::Lit(_) => None,
             RawKind::Ident { name, kind } => match kind {
-                IdentKind::Prop | IdentKind::Global | IdentKind::Import { .. } => None,
+                IdentKind::Prop | IdentKind::Global => None,
+                // F-fix (Mellow): an imported binding read as a VALUE may be an element (`value={{ icon: el }}`), which the
+                // consumer would print as nothing; only a called helper is fine.
+                IdentKind::Import { .. } if callee => None,
+                IdentKind::Import { .. } => Some(format!("`{name}`, an import read as a value")),
                 IdentKind::Local => {
                     if let Some(d) = ir.derived.iter().find(|d| &d.name == name) {
                         return match &d.expr {
@@ -127,8 +135,20 @@ pub fn provider_problem(ir: &crate::ir::ComponentIR) -> Option<(u32, String)> {
                             _ => Some(format!("`{name}`, which is not a plain expression")),
                         };
                     }
-                    if ir.module_scope.iter().any(|(n, _)| n == name) {
+                    // A module const is judged by its value (a JSX element, an import or a call there is not a plain value).
+                    if let Some(c) = ir
+                        .module_decls
+                        .iter()
+                        .flat_map(|d| &d.consts)
+                        .find(|c| &c.name == name)
+                    {
+                        return bad(ir, &c.value, depth + 1)
+                            .map(|w| format!("`{name}`, a module const holding {w}"));
+                    }
+                    if callee && ir.module_scope.iter().any(|(n, _)| n == name) {
                         None
+                    } else if ir.module_scope.iter().any(|(n, _)| n == name) {
+                        Some(format!("`{name}`, a module function read as a value"))
                     } else {
                         Some(format!("`{name}`, a local of the component"))
                     }
@@ -142,7 +162,7 @@ pub fn provider_problem(ir: &crate::ir::ComponentIR) -> Option<(u32, String)> {
                 bad(ir, target, depth).or_else(|| bad(ir, index, depth))
             }
             RawKind::Call { callee, args } => {
-                bad(ir, callee, depth).or_else(|| first(ir, args.iter(), depth))
+                bad_in(ir, callee, depth, true).or_else(|| first(ir, args.iter(), depth))
             }
             RawKind::Binary { left, right, .. } => {
                 bad(ir, left, depth).or_else(|| bad(ir, right, depth))
