@@ -58,6 +58,32 @@ pub(crate) struct CompileInputs {
     pub packages: Option<String>,
 }
 
+/// An optional JSON argument; one that does not parse is an error, not an empty value: `path_aliases` and `packages`
+/// are both `Option<String>` positions on the JS call, so a swapped pair must not silently drop either.
+fn json_input<T: Default>(
+    name: &str,
+    text: Option<String>,
+    parse: impl Fn(&str) -> serde_json::Result<T>,
+) -> Result<T, Box<CompiledTree>> {
+    let Some(text) = text else {
+        return Ok(T::default());
+    };
+    parse(&text).map_err(|e| {
+        Box::new(CompiledTree {
+            components: vec![],
+            error: Some(NapiDiagnostic {
+                class: "error".into(),
+                rule: "compile-input".into(),
+                message: format!("compileTree argument `{name}` is not the JSON it takes: {e}"),
+                line: 0,
+                col: 0,
+                remediation:
+                    "pass `pathAliases` (an array) and `packages` (an object) in that order".into(),
+            }),
+        })
+    })
+}
+
 /// `compile_tree` on the compiler thread; `path` is relative to `root` so ids are stable.
 pub(crate) fn compile_tree_impl(
     path: &str,
@@ -75,13 +101,16 @@ pub(crate) fn compile_tree_impl(
         packages,
     } = inputs;
     // F153c: `{ "scopes": …, "refused": … }`, the package sources the build wrote (`pkg-src.ts`).
-    let packages = packages
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    let packages = match json_input("packages", packages, |s| serde_json::from_str(s)) {
+        Ok(v) => v,
+        Err(e) => return *e,
+    };
     // `[{ "pattern": "@/*", "targets": ["./*"] }]`: `tsconfig` `paths` (R34.76).
-    let path_aliases: Vec<brust_compiler::analyze::aliases::PathAlias> = path_aliases
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
+    let path_aliases: Vec<brust_compiler::analyze::aliases::PathAlias> =
+        match json_input("pathAliases", path_aliases, |s| serde_json::from_str(s)) {
+            Ok(v) => v,
+            Err(e) => return *e,
+        };
     // `{ "final": bool, "svgs": { "<key>": "<svg markup>" } }`: lucide icons the build rendered (L23).
     let (icon_svgs, icons_final): (
         std::collections::HashMap<String, brust_compiler::analyze::component::IconMarkup>,
@@ -201,6 +230,37 @@ mod tests {
         assert!(c.ir.contains("\"uses_outlet\":true"));
         assert!(c.jinja.contains("{{ __outlet | safe }}"));
         assert!(c.client_js.is_none() && c.server_ts.is_none());
+    }
+
+    #[test]
+    fn swapped_path_aliases_and_packages_are_an_error_not_silently_empty() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        let t = super::compile_tree_impl(
+            "tests/fixtures/outlet-layout/input.tsx",
+            root,
+            "brust/runtime-dom",
+            super::CompileInputs {
+                path_aliases: Some(r#"{"scopes":{},"refused":{}}"#.into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            t.error.as_ref().map(|d| d.rule.as_str()),
+            Some("compile-input")
+        );
+        let t = super::compile_tree_impl(
+            "tests/fixtures/outlet-layout/input.tsx",
+            root,
+            "brust/runtime-dom",
+            super::CompileInputs {
+                packages: Some(r#"[{"pattern":"@/*","targets":["*"]}]"#.into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            t.error.as_ref().map(|d| d.rule.as_str()),
+            Some("compile-input")
+        );
     }
 
     #[test]

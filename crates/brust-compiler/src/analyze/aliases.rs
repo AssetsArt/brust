@@ -87,6 +87,10 @@ pub fn rewrite(parent: &str, spec: &str) -> Option<(String, String)> {
     } else {
         parent.to_string()
     };
+    // The app's `paths` are the app's: a package source the build wrote (F153c) resolves its own `@/…` itself.
+    if crate::analyze::modules::is_package_source(&parent) {
+        return None;
+    }
     // TypeScript (and Bun) use the pattern with the longest prefix before `*`; an exact pattern beats any `*` one.
     let mut matching: Vec<(&PathAlias, Option<&str>, usize)> = active
         .aliases
@@ -166,6 +170,29 @@ mod tests {
             relative("components/ui/a.tsx", "lib/utils.ts"),
             "../../lib/utils.ts"
         );
+    }
+
+    #[test]
+    fn a_package_source_is_not_rewritten_with_the_apps_paths() {
+        let root = std::env::temp_dir().join(format!("brust-alias-pkg-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("lib")).unwrap();
+        std::fs::write(root.join("lib/x.ts"), "export const x = 1\n").unwrap();
+        let _scope = Scope::enter(
+            &root,
+            &[PathAlias {
+                pattern: "@/*".into(),
+                targets: vec!["*".into()],
+            }],
+        );
+        let app = rewrite("pages/a.tsx", "@/lib/x");
+        assert_eq!(app, Some(("../lib/x.ts".into(), "lib/x.ts".into())));
+        assert_eq!(
+            rewrite(".brust/pkg-src/leafy@1.0.0-00000003/src/a.tsx", "@/lib/x"),
+            None
+        );
+        let abs = root.join(".brust/pkg-src/leafy@1.0.0-00000003/src/a.tsx");
+        assert_eq!(rewrite(abs.to_str().unwrap(), "@/lib/x"), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
