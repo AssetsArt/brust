@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|
-| 64 | 57 | 1 | 6 | 53 | 18 | 0 / 87 / 239 KB |
+| 64 | 61 | 1 | 2 | 53 | 18 | 0 / 87 / 324 KB |
 
 ### Analysis-only (0 of 64 pages refused)
 
@@ -38,18 +38,18 @@ One line per thing that keeps a row or a library component off the static/native
 |---|---|---|---|---|---|---|---|---|
 | 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 43 | 0 | 145 | 1 | `external-component` diagnostic (docs/react-coverage.md) |
 | 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 41 | 0 | 141 | 18 | `spread-props` diagnostic (docs/react-coverage.md) |
-| 3 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 26 | 0 | 36 | 15 | `island-children` diagnostic (docs/react-coverage.md) |
-| 4 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 5 | 0 | 11 | 28 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
+| 3 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 25 | 0 | 33 | 15 | `island-children` diagnostic (docs/react-coverage.md) |
+| 4 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 12 | 28 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 5 | `member-tag` diagnostic (docs/react-coverage.md) |
-| 6 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 6 | 3 | `jsx-expression` diagnostic (docs/react-coverage.md) |
-| 7 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 4 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
-| 8 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 7 | 24 | `control-flow` diagnostic (docs/react-coverage.md) |
+| 6 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 24 | `control-flow` diagnostic (docs/react-coverage.md) |
+| 7 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 3 | `jsx-expression` diagnostic (docs/react-coverage.md) |
+| 8 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 4 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
 | 9 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 9 | `island-prop` diagnostic (docs/react-coverage.md) |
 | 10 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 4 | `child-component` diagnostic (docs/react-coverage.md) |
-| 11 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 21 | `body-shape` diagnostic (docs/react-coverage.md) |
-| 12 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `local-component` diagnostic (docs/react-coverage.md) |
-| 13 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 6 | `prop-pattern` diagnostic (docs/react-coverage.md) |
-| 14 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `hook-shape` diagnostic (docs/react-coverage.md) |
+| 11 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 2 | `hook-shape` diagnostic (docs/react-coverage.md) |
+| 12 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 21 | `body-shape` diagnostic (docs/react-coverage.md) |
+| 13 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `local-component` diagnostic (docs/react-coverage.md) |
+| 14 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 6 | `prop-pattern` diagnostic (docs/react-coverage.md) |
 | 15 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 2 | `ref-shape` diagnostic (docs/react-coverage.md) |
 | 16 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `browser-global` diagnostic (docs/react-coverage.md) |
 | 17 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
@@ -110,8 +110,8 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | button-group | measured | static | 1 | 6 (3) | 86 | external-component, spread-props | built |
 | calendar | measured | static | 1 | 3 (2) | 107 | external-component, island-prop, prop-pattern, spread-props | built |
 | card | measured | static | 0 | 9 (0) | 0 | — | built |
-| carousel | measured | react | 1 | 9 (6) | 96 | control-flow, event-capture, external-component, hook-unsupported, island-children, member-tag, ref-shape, slot-dynamic, spread-props | built |
-| chart | measured | react | 1 | 8 (8) | 239 | external-component, island-children, jsx-expression, local-component, member-tag, use-id-in-render | built |
+| carousel | measured | static | 1 | 9 (5) | 96 | control-flow, event-capture, external-component, hook-unsupported, member-tag, ref-shape, slot-dynamic, spread-props | built |
+| chart | measured | static | 1 | 9 (8) | 324 | control-flow, external-component, hook-shape, hook-unsupported, island-children, local-component, member-tag, use-id-in-render | built |
 | checkbox | measured | static | 2 | 6 (5) | 91 | external-component, spread-props | built |
 | collapsible | measured | static | 1 | 8 (6) | 89 | external-component, spread-props | built |
 | combobox | measured | react | 1 | 20 (17) | 158 | external-component, island-children, jsx-expression, slot-dynamic, spread-props | built |
@@ -142,11 +142,11 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | progress | measured | static | 1 | 4 (3) | 85 | external-component, island-children, spread-props | built |
 | radio-group | measured | static | 1 | 8 (7) | 96 | external-component, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 103 | external-component, island-children, spread-props | built |
-| scroll-area | measured | react | 1 | 10 (10) | 92 | external-component, island-children, spread-props | built |
+| scroll-area | measured | static | 1 | 10 (9) | 92 | external-component, island-children, spread-props | built |
 | select | measured | static | 1 | 24 (23) | 118 | external-component, island-children, spread-props | built |
 | separator | measured | static | 2 | 3 (2) | 84 | external-component, spread-props | built |
 | sheet | measured | static | 1 | 20 (16) | 101 | external-component, island-children, spread-props | built |
-| sidebar | measured | react | 1 | 14 (7) | 116 | browser-global, control-flow, external-component, hook-shape, hook-unsupported, island-children, linked-prop-precompute, member-tag, slot-dynamic, spread-props | built |
+| sidebar | measured | static | 1 | 14 (6) | 116 | browser-global, control-flow, external-component, hook-shape, hook-unsupported, island-children, linked-prop-precompute, member-tag, slot-dynamic, spread-props | built |
 | skeleton | measured | static | 0 | 2 (0) | 0 | — | built |
 | slider | measured | static | 1 | 6 (5) | 93 | external-component, island-children, spread-props | built |
 | sonner | measured | native | 1 | 3 (1) | 87 | child-component | built |
@@ -194,14 +194,15 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/carousel.tsx#carouselNext | control-flow, external-component, hook-unsupported, slot-dynamic, spread-props | 1 |
 | components/ui/carousel.tsx#carouselPrevious | control-flow, external-component, hook-unsupported, slot-dynamic, spread-props | 1 |
 | components/ui/chart.tsx#chartContainer | external-component, island-children, local-component, member-tag, use-id-in-render | 1 |
+| components/ui/chart.tsx#chartTooltipContent | control-flow, hook-shape, hook-unsupported | 1 |
 | components/ui/checkbox.tsx#checkbox | external-component, spread-props | 1 |
 | components/ui/collapsible.tsx#collapsible | external-component, spread-props | 1 |
 | components/ui/collapsible.tsx#collapsibleContent | external-component, spread-props | 1 |
 | components/ui/collapsible.tsx#collapsibleTrigger | external-component, spread-props | 1 |
-| components/ui/combobox.tsx#comboboxClear | external-component, jsx-expression, spread-props | 1 |
+| components/ui/combobox.tsx#comboboxClear | external-component, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxContent | external-component, island-children, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxEmpty | external-component, spread-props | 1 |
-| components/ui/combobox.tsx#comboboxInput | external-component, jsx-expression, spread-props | 1 |
+| components/ui/combobox.tsx#comboboxInput | external-component, island-children, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxList | external-component, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxTrigger | external-component, island-children, spread-props | 1 |
 | components/ui/command.tsx#command | external-component, spread-props | 1 |
@@ -320,12 +321,9 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/tooltip.tsx#tooltipContent | external-component, island-children, spread-props | 1 |
 | components/ui/tooltip.tsx#tooltipTrigger | external-component, spread-props | 1 |
 | pages/button-alias.tsx#buttonAlias | external-component | 1 |
-| pages/carousel.tsx#carousel | island-children | 1 |
-| pages/chart.tsx#chart | external-component, island-children, jsx-expression | 1 |
+| pages/chart.tsx#chart | external-component | 1 |
 | pages/combobox.tsx#combobox | external-component, island-children, jsx-expression | 1 |
 | pages/form.tsx#form | child-component, hook-unsupported, island-children, island-prop, spread-props | 1 |
-| pages/scroll-area.tsx#scrollArea | island-children | 1 |
-| pages/sidebar.tsx#sidebar | island-children | 1 |
 | pages/sonner.tsx#sonner | child-component | 1 |
 
 ## Libraries
