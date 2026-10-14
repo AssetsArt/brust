@@ -447,6 +447,13 @@ fn read_attr(
         return None;
     }
     if name == "ref" {
+        // `ref={ref}` with `ref` the forwarded ref of a `forwardRef` component: nothing to bind in HTML (R34.63).
+        if let E::EIdentifier(id) = &value.data
+            && r.names.is_forwarded_ref(id.ref_)
+        {
+            r.names.note_forwarded_ref_dropped();
+            return None;
+        }
         if let E::EIdentifier(id) = &value.data {
             let n = r.names.name(id.ref_);
             *ref_name = Some(n.clone());

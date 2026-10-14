@@ -125,6 +125,11 @@ pub struct InstanceRecord {
     /// `__row` (the item) and `__idx` (F105, ledger F60).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub exprs: std::collections::BTreeMap<String, String>,
+    /// The rows of the one enclosing list when it is a compile-time constant (a module `const`
+    /// or an array literal, F142 R34.43): the manifest carries them (`per-row-literal`) and the
+    /// server feeds the instance once per row. `loops` is then `[None]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows_literal: Option<serde_json::Value>,
 }
 
 /// One child component used by the template (deduplicated by name).

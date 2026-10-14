@@ -409,6 +409,7 @@ impl<'r, 'a> Reader<'r, 'a> {
         let mut decls = Vec::new();
         let mutated = crate::analyze::use_scan::unsafe_to_fold(ast, &*self.names);
         let strip = |s: String| s.strip_prefix("export ").map(str::to_string).unwrap_or(s);
+        let module = crate::analyze::stores::Module::new(ast);
         for part in ast.parts.iter() {
             for stmt in part.stmts.slice() {
                 match &stmt.data {
@@ -431,6 +432,19 @@ impl<'r, 'a> Reader<'r, 'a> {
                         let mut names = Vec::new();
                         let mut consts = Vec::new();
                         for d in l.decls.iter() {
+                            // `const X = forwardRef(function (props, ref) {…})` is a component, declared like a
+                            // function: its parameters are not module-level values to fold (R34.63).
+                            if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
+                                && let Some(f) =
+                                    crate::analyze::component::forward_ref_callback(&module, v)
+                            {
+                                let (captures, _) =
+                                    self.captures_of(f.args.slice(), f.body.stmts.slice());
+                                let name = self.names.name(id.r#ref);
+                                names.push(name.clone());
+                                out.push((name, captures));
+                                continue;
+                            }
                             if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) {
                                 let mut w = Walk::default();
                                 w.expr(v);

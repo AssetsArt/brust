@@ -30,6 +30,8 @@ const NO_SAMPLES: &[&str] = &[
     "client-only",
     "fragment-root",
     "import-cycle",
+    "forwardref-const",
+    "forwardref-fallback",
     "jsx-runtime-call",
     "jsx-shapes",
     "lazy-import",

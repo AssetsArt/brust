@@ -38,7 +38,7 @@ test('routes: /docs plus one /docs/{slug} per nav entry, in nav order; the canon
   // /docs/routes is a permanent redirect to /docs/routing (the blank template's starter links it), not a nav entry
   expect(patterns).toEqual(['/', '/docs', ...PAGES.map((p) => `/docs/${p.slug}`), '/docs/routes', '*'])
   expect(NAV.map((g) => [g.group, g.items.length])).toEqual([
-    ['Guide', 18],
+    ['Guide', 20],
     ['Cloudflare', 3],
     ['Cache adapters', 4],
     ['Cookbook', 5],
@@ -76,8 +76,11 @@ test('pager: previous/next follow the nav order across groups; the ends have one
   const first = await (await fetch(`${base}/docs/introduction`)).text()
   expect(first).not.toContain('>Previous</span>')
   expect(first).toMatch(pager('Next', '/docs/installation', 'Installation'))
+  const notes = await (await fetch(`${base}/docs/release-notes`)).text()
+  expect(notes).toMatch(pager('Previous', '/docs/installation', 'Installation'))
+  expect(notes).toMatch(pager('Next', '/docs/quickstart', 'Quickstart'))
   const qs = await (await fetch(`${base}/docs/quickstart`)).text()
-  expect(qs).toMatch(pager('Previous', '/docs/installation', 'Installation'))
+  expect(qs).toMatch(pager('Previous', '/docs/release-notes', 'Release notes'))
   expect(qs).toMatch(pager('Next', '/docs/project-structure', 'Project structure'))
   const cross = await (await fetch(`${base}/docs/migrating`)).text()
   expect(cross).toMatch(pager('Next', '/docs/cloudflare/workers', 'Workers target'))

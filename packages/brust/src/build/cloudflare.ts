@@ -12,6 +12,7 @@ import { type CfConfigJson, cfEntrySource } from './cf-entry'
 import { type CoreCf, resolveCoreCf } from './cf-core'
 import { type CacheNeed, mergeWrangler, readUserWrangler, renderWrangler, type UserWrangler, verifyCacheBindings } from './cf-wrangler'
 import { type CloudflareBuildConfig, CF_MIN_COMPAT_DATE } from './config'
+import { MANIFEST_VERSION } from './manifest'
 import { exposePlugin, PRODUCTION, type SourceOf, sourceDirPlugin } from './bundle'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
@@ -196,7 +197,7 @@ plugin({
 const m = await import(${JSON.stringify(app)})
 const bad = []
 for (const k of ['loader', 'jobs', 'action', 'install']) if (typeof m[k] !== 'function') bad.push(k + ' is not a function')
-if (typeof m.MANIFEST !== 'string' || JSON.parse(m.MANIFEST).version !== 2) bad.push('MANIFEST.version !== 2')
+if (typeof m.MANIFEST !== 'string' || JSON.parse(m.MANIFEST).version !== ${MANIFEST_VERSION}) bad.push('MANIFEST.version !== ${MANIFEST_VERSION}')
 if (typeof m.CONFIG !== 'string' || JSON.parse(m.CONFIG).abi !== 1) bad.push('CONFIG.abi !== 1')
 if (typeof m.TEMPLATES !== 'object' || m.TEMPLATES === null) bad.push('TEMPLATES is not an object')
 const r = await m.loader('{}')
