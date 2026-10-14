@@ -284,6 +284,7 @@ jobs:
       - run: bun test --timeout 120000 tests/server/island-in-inlined.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/named-export-islands.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-children.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/island-slots.chromium.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
       - run: bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts
       # F142 PR 1: shadcn's table page built AND started, its HTML equal to React's.

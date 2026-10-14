@@ -12,8 +12,8 @@
     "entries": 58,
     "native": 11,
     "static": 12,
-    "island": 27,
-    "partial": 3,
+    "island": 26,
+    "partial": 4,
     "unsupported": 0,
     "n/a": 5
   },
@@ -652,19 +652,19 @@
       "name": "<Suspense>",
       "group": "components",
       "url": "https://react.dev/reference/react/Suspense",
-      "status": "island",
+      "status": "partial",
       "rows": [
         "d-lazy-suspense",
         "d-suspense-static"
       ],
       "tiers": [
-        "react"
+        "react",
+        "static"
       ],
       "diagnostics": [
         "fallback:dynamic-import",
         "fallback:external-component",
         "fallback:island-children",
-        "fallback:jsx-expression",
         "fallback:local-component"
       ],
       "shapes": [
@@ -677,22 +677,20 @@
             "fallback:dynamic-import",
             "fallback:external-component",
             "fallback:island-children",
-            "fallback:jsx-expression",
             "fallback:local-component"
           ]
         },
         {
           "row": "d-suspense-static",
           "authoring": "<Suspense> around static content",
-          "expected": "react",
-          "observed": "react",
+          "expected": "static",
+          "observed": "static",
           "diagnostics": [
-            "fallback:external-component",
-            "fallback:jsx-expression"
+            "fallback:external-component"
           ]
         }
       ],
-      "note": "F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic"
+      "note": "native/static: d-suspense-static; island: d-lazy-suspense"
     },
     {
       "name": "<ViewTransition>",
@@ -953,7 +951,6 @@
         "fallback:dynamic-import",
         "fallback:external-component",
         "fallback:island-children",
-        "fallback:jsx-expression",
         "fallback:local-component"
       ],
       "shapes": [
@@ -966,7 +963,6 @@
             "fallback:dynamic-import",
             "fallback:external-component",
             "fallback:island-children",
-            "fallback:jsx-expression",
             "fallback:local-component"
           ]
         },
