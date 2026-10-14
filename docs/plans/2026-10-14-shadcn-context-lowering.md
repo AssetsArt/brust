@@ -2,7 +2,7 @@
 
 owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Tiësto (proposed) · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: next free F-number (F168 or later; F166/F167 are hardening-batch)
 
-Author: Tiësto. Status: **DRAFT, awaiting the lead's ruling; no lane started.** Base: origin/main 690670e9 (2.0.0-alpha.9). R-numbers: **R34.100–R34.115** (the lead's range; R34.88–R34.99 are F149 and the lanes before it). Evidence: the task `radix-compounds-spike` (a long note; the lead's rulings on it are on that task: bubble input kept with a native event, Presence kept as a small feature, wave A first), `docs/shadcn-coverage.{md,json}` at this base, and the original TypeScript of each Radix package, read from its source map. Anything I did not run is marked **[verify]** and is step 0 of the lane.
+Author: Tiësto. Status: **RULED 2026-10-14 (see §11); lane may start after hardening-batch.** Base: origin/main 690670e9 (2.0.0-alpha.9). R-numbers: **R34.100–R34.115** (the lead's range; R34.88–R34.99 are F149 and the lanes before it). Evidence: the task `radix-compounds-spike` (a long note; the lead's rulings on it are on that task: bubble input kept with a native event, Presence kept as a small feature, wave A first), `docs/shadcn-coverage.{md,json}` at this base, and the original TypeScript of each Radix package, read from its source map. Anything I did not run is marked **[verify]** and is step 0 of the lane.
 
 ## 1. What this lane buys, and what it does not
 
@@ -133,3 +133,13 @@ Boundary: `crates/brust-compiler/src/analyze/{hooks,names,aliases,exports}.rs` a
 - **Q3 Controlled state.** v1 supports uncontrolled plus a constant controlled prop only. OK? Recommended: yes; the dynamic-controlled case is a React-shaped use (the page owns state) and stays an island.
 - **Q4 Stop rule.** R34.115: stop and report if the first flipped page is more than about 10 KB gzip. OK?
 - **Q5 Order inside the lane.** progress (pure compile-time context), then toggle and collapsible, then switch and checkbox (effects, bubble input), then avatar. Recommended as written; each is its own commit and gets its own served check.
+
+## 11. Lead ruling (2026-10-14)
+
+Accepted. The design (a context is an implicit prop threaded lexically from the nearest Provider frame, on top of the shipped `x-props-bind` and the inlined-child substitution) adds no runtime feature for context itself, which is what the north star asks for. Rulings on §10:
+
+- **Q1 Accept the `createContextScope` recogniser**, integrity-checked, as the **second and last** structural recogniser (after `Primitive`): it is one generic API shared by every Radix primitive, not a per-primitive shim. React's own `createContext`/`useContext`/`<C.Provider>` is compiled in the same lane (ordinary apps use it); it is the general feature, the Radix factory only feeds it. Any further recogniser needs its own ruling.
+- **Q2 Avatar: try it; on a failed step 0 it moves to wave A2** with a short note, without blocking the other pages.
+- **Q3 Controlled state: uncontrolled + a constant controlled prop only** in v1; a page-owned dynamic controlled prop stays an island (`controlled-state`).
+- **Q4 Stop rule accepted:** stop and report if the first flipped page is above ~10 KB gzip.
+- **Q5 Order accepted, and shipped incrementally: one PR per step** so bytes land early and reviews stay small: PR 1 = recognisers + frames + progress (compile-time context, 0 JS); PR 2 = toggle + collapsible; PR 3 = switch + checkbox (effects, bubble input, Presence feature); PR 4 = avatar. Each PR has its served check and its measured scoreboard rows; Mellow reviews each (security: the frame decides which values reach which DOM bindings).
