@@ -87,18 +87,28 @@ fn falls_back_unbound(parent: &str) -> bool {
 }
 
 #[test]
-fn outside_the_subset_stays_unbound() {
-    // A local, a call outside the printer's table: no path, literal or expression.
+fn outside_the_subset_runs_inside_the_parents_job_or_falls_back() {
+    // A local or a call outside the printer's table is no path, literal or expression the server binds: it is
+    // computed by this component's own job, and the child's job runs inside it (R34.96, PR 2b).
+    let ir = analyze(
+        "import Code from './Code'\nexport default function T({ src }: any) { return <div><Code code={src.padStart(4)} lang=\"ts\" /></div> }",
+    );
+    assert!(
+        !matches!(ir.tier, Tier::React { .. }),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert_eq!(ir.fused.len(), 1, "{:?}", ir.diagnostics);
+    assert!(ir.instances.is_empty());
+    // A local const the compiler does not fold stays unbound: the island, with its named fallback.
     assert!(falls_back_unbound(
         "import Code from './Code'\nexport default function T({ src }: any) { const s = src.repeat(2); return <div><Code code={s} lang=\"ts\" /></div> }",
     ));
-    assert!(falls_back_unbound(
-        "import Code from './Code'\nexport default function T({ src }: any) { return <div><Code code={src.padStart(4)} lang=\"ts\" /></div> }",
-    ));
-    // The whole props object is not a value the server hands a child; a member of it is.
+    // The whole props object is not a value the server hands a child: the island, with its named fallback.
     assert!(falls_back_unbound(
         "import Code from './Code'\nexport default function T(props: any) { return <div><Code code={props} lang=\"ts\" /></div> }",
     ));
+    // A member of it is.
     let inst = instances(
         "import Code from './Code'\nexport default function T(props: any) { return <div><Code code={props.src + '!'} lang=\"ts\" /></div> }",
     );

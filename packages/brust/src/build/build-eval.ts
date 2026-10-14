@@ -12,7 +12,7 @@
 import { realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BunPlugin } from 'bun'
-import { type SourceOf, PRODUCTION, sourceDirPlugin, stage, write } from './bundle'
+import { jobImportPlugin, type SourceOf, PRODUCTION, sourceDirPlugin, stage, write } from './bundle'
 import type { Compiled } from './compile'
 import { BuildError } from './errors'
 import { serverOnlyEmptyPlugin } from './server-only'
@@ -247,27 +247,38 @@ async function evaluateInstances(
   const modules = new Map<string, string>()
   const stubs = new Map<string, Map<string, string>>()
   const imports: string[] = []
+  /** Component id -> its staged job module; written once, with the stubs its own imports are served by. */
+  const staged = new Map<string, string>()
+  const stageJob = (c: Compiled, served: { source: string; code: string }[]) => {
+    if (staged.has(c.id)) return
+    const file = join(dist, '.stage', 'eval', `${c.id}.job.ts`)
+    write(file, c.serverTs!)
+    stage(sourceOf, file, c)
+    const map = new Map<string, string>()
+    for (const [i, st] of served.entries()) {
+      const stub = join(dist, '.stage', 'eval', 'stubs', c.id, `${i}.ts`)
+      write(stub, st.code)
+      stage(sourceOf, stub, c)
+      map.set(st.source, stub)
+    }
+    if (map.size > 0) {
+      stubs.set(file, map)
+      stubs.set(realpathSync(file), map)
+    }
+    staged.set(c.id, file)
+  }
   for (const c of compiled.values()) {
     for (const inst of c.ir.build_eval_instances ?? []) {
       const child = compiled.get(inst.child_id)
       if (child?.serverTs === undefined) continue
+      // R34.96 (A1): the job modules fused into this child's job, which it imports through `brust-job:<id>`.
+      const fused = (inst.fused ?? []).map((f) => ({ f, c: compiled.get(f.child_id) }))
+      if (fused.some(({ c }) => c?.serverTs === undefined)) continue
+      for (const { f, c } of fused) stageJob(c!, f.stubs ?? [])
       if (!modules.has(child.id)) {
-        const file = join(dist, '.stage', 'eval', `${child.id}.job.ts`)
-        write(file, child.serverTs)
-        stage(sourceOf, file, child)
-        const served = new Map<string, string>()
-        for (const [i, st] of (inst.stubs ?? []).entries()) {
-          const stub = join(dist, '.stage', 'eval', 'stubs', child.id, `${i}.ts`)
-          write(stub, st.code)
-          stage(sourceOf, stub, child)
-          served.set(st.source, stub)
-        }
-        if (served.size > 0) {
-          stubs.set(file, served)
-          stubs.set(realpathSync(file), served)
-        }
+        stageJob(child, inst.stubs ?? [])
         modules.set(child.id, `j${modules.size}`)
-        imports.push(`import { precompute as ${modules.get(child.id)} } from ${JSON.stringify(file)}`)
+        imports.push(`import { precompute as ${modules.get(child.id)} } from ${JSON.stringify(staged.get(child.id))}`)
       }
       const id = `${inst.child_id}\0${JSON.stringify(inst.inputs)}`
       const where = `${c.file.slice(appRoot.length + 1)}:${inst.line}:${inst.col}`
@@ -285,7 +296,7 @@ async function evaluateInstances(
     target: 'bun',
     format: 'esm',
     define: PRODUCTION,
-    plugins: [stubPlugin(stubs), sourceDirPlugin(sourceOf, appRoot)],
+    plugins: [jobImportPlugin((id) => staged.get(id)), stubPlugin(stubs), sourceDirPlugin(sourceOf, appRoot)],
   })
   if (!res.success) {
     log(`warning build-eval the instance jobs could not be bundled for build evaluation, they stay per-request jobs: ${res.logs.map(String).join(' | ').split('\n')[0]}`)

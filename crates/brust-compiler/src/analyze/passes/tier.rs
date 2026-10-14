@@ -118,6 +118,8 @@ pub fn react_jobs(ir: &mut ComponentIR) {
         // F105: React renders the children itself, so nothing feeds or links them per instance.
         ir.instances.clear();
         ir.child_links.clear();
+        // R34.96: no precompute job runs a fused child's job either.
+        ir.fused.clear();
     }
     ir.needs_worker = !ir.jobs.is_empty();
 }

@@ -223,8 +223,20 @@ pub struct BuildEvalInstance {
     /// Relative imports of the job module the evaluation replaces with a folded constant (rule 3).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stubs: Vec<EvalStub>,
+    /// The job modules of the children fused into this child's job (R34.96), each with its own stubs:
+    /// the evaluation stages them too, since the child's job imports them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fused: Vec<FusedEvalJob>,
     pub line: u32,
     pub col: u32,
+}
+
+/// A fused child's job module a build-evaluated job imports (R34.96, A1).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FusedEvalJob {
+    pub child_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stubs: Vec<EvalStub>,
 }
 
 /// An import of a job module that build evaluation serves from `code` instead of the module's file:
@@ -243,6 +255,43 @@ pub struct FoldedInstance {
     pub k: u32,
     /// Slot name -> value, in the build's encoding (`const_fold::json_to_raw`).
     pub values: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// A fed child instance rendered in this component's template whose job runs inside this
+/// component's own precompute job (R34.96, PR 2b): it has no `instances` record; its slots are
+/// outputs of `jobs[0]` under the names in `outputs`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FusedInstance {
+    pub child_id: String,
+    /// Byte offset of the call site in this component's source (`Node::Component.loc`).
+    pub loc: u32,
+    /// 1-based ordinal among this component's fused instances of `child_id`, template order.
+    pub ordinal: u32,
+    /// Every input root of the child's job (`jobs[0].inputs`) -> where its value comes from.
+    pub inputs: std::collections::BTreeMap<String, FusedInput>,
+    /// The child's slot -> this component's job output that carries it (`_f<child>_<ordinal>_<slot>`).
+    pub outputs: std::collections::BTreeMap<String, String>,
+    /// Why the child's job may not run at build (`build_eval::instance_job` on the child, A1); `None` when
+    /// it may, and then this component's job may too only if every fused child's may.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_refused: Option<String>,
+    /// The child job's imports that build evaluation serves folded (`instance_job`'s stubs for the child).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stubs: Vec<EvalStub>,
+}
+
+/// Where a fused child's job input comes from (R34.96 v1, ruling T1: no JS expressions).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FusedInput {
+    /// A path of this component's props (`className`, `config.size`).
+    Prop { path: String },
+    /// A constant (`"default"`, `null`).
+    Literal { value: serde_json::Value },
+    /// One of this component's own precompute slots (`_s1`, the `cn(...)` result).
+    Slot { name: String },
+    /// Not passed: the key is left out of the child's props, so its default applies.
+    Undefined,
 }
 
 /// One `useStore(handle)` binding of the component (M3-F D7).

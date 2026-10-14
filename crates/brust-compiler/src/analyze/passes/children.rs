@@ -70,10 +70,41 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         holes: None,
         unwritten: BTreeSet::new(),
         passes_to_repeater: false,
+        own_fed: crate::ir::is_fed(ir),
+        own_job: ir
+            .jobs
+            .iter()
+            .any(|j| matches!(j.kind, crate::ir::JobKind::Precompute)),
+        guard_depth: 0,
+        fused: Vec::new(),
+        fused_counts: HashMap::new(),
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
     ir.repeats_children = w.passes_to_repeater || template_has_for(&template);
+    if !w.fused.is_empty() {
+        // R34.96: the job of this component also runs its fused children's jobs: their renamed outputs are its
+        // outputs, and the props they read are its inputs (the caller's record maps them, A4).
+        if let Some(job) = ir
+            .jobs
+            .iter_mut()
+            .find(|j| matches!(j.kind, crate::ir::JobKind::Precompute))
+        {
+            for f in &w.fused {
+                job.outputs.extend(f.outputs.values().cloned());
+                for i in f.inputs.values() {
+                    if let crate::ir::FusedInput::Prop { path } = i {
+                        let root = path.split(['.', '[']).next().unwrap_or(path);
+                        let input = format!("props.{root}");
+                        if !job.inputs.iter().any(|x| x == &input || x == "*") {
+                            job.inputs.push(input);
+                        }
+                    }
+                }
+            }
+        }
+        ir.fused = std::mem::take(&mut w.fused);
+    }
     w.resolve_row_only(std::slice::from_mut(&mut template), false);
     debug_assert!(
         w.row_only.is_empty(),
@@ -91,7 +122,10 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         .iter_mut()
         .filter(|j| matches!(j.kind, crate::ir::JobKind::Precompute))
     {
-        j.outputs.retain(|o| live.contains(o));
+        // A fused child's slots are read by the printer through the renamed outputs (R34.96), not by a node.
+        j.outputs.retain(|o| {
+            live.contains(o) || ir.fused.iter().any(|f| f.outputs.values().any(|x| x == o))
+        });
     }
     ir.jobs
         .retain(|j| !(matches!(j.kind, crate::ir::JobKind::Precompute) && j.outputs.is_empty()));
@@ -155,6 +189,15 @@ struct Walker<'s, 'c> {
     unwritten: BTreeSet<String>,
     /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
     passes_to_repeater: bool,
+    /// This component runs a precompute job of its own, or has `useId` values: its caller feeds it per instance.
+    own_fed: bool,
+    /// ... and a `Precompute` job exists for fused children to join (R34.96).
+    own_job: bool,
+    /// Open `If` branches: a fused child's job would run whether or not the branch renders (v1: refused).
+    guard_depth: u32,
+    /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
+    fused: Vec<crate::ir::FusedInstance>,
+    fused_counts: HashMap<String, u32>,
 }
 
 /// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
@@ -209,6 +252,8 @@ struct Child {
     job_eval: Option<Result<Vec<crate::ir::EvalStub>, String>>,
     /// The child's job outputs (`_sN`), all of which an evaluated instance must get.
     job_outputs: Vec<String>,
+    /// The job modules fused into the child's job (R34.96), which an evaluated instance stages too.
+    job_fused: Vec<crate::ir::FusedEvalJob>,
     /// Keys the call site must not write at all (`ComponentIR::unwritten_props`).
     unwritten: Vec<String>,
 }
@@ -710,8 +755,10 @@ impl Walker<'_, '_> {
                 children.iter_mut().for_each(|c| self.node(c))
             }
             Node::If { then, else_, .. } => {
+                self.guard_depth += 1;
                 then.iter_mut().for_each(|c| self.node(c));
                 else_.iter_mut().for_each(|c| self.node(c));
+                self.guard_depth -= 1;
             }
             Node::For {
                 source,
@@ -884,6 +931,7 @@ impl Walker<'_, '_> {
             absent: Vec::new(),
             job_eval: None,
             job_outputs: Vec::new(),
+            job_fused: Vec::new(),
             unwritten: Vec::new(),
         }
     }
@@ -930,6 +978,7 @@ impl Walker<'_, '_> {
                     absent: Vec::new(),
                     job_eval: None,
                     job_outputs: Vec::new(),
+                    job_fused: Vec::new(),
                     unwritten: Vec::new(),
                 };
             }
@@ -1092,6 +1141,7 @@ impl Walker<'_, '_> {
                         absent: Vec::new(),
                         job_eval: None,
                         job_outputs: Vec::new(),
+                        job_fused: Vec::new(),
                         unwritten: Vec::new(),
                     };
                 };
@@ -1144,6 +1194,7 @@ impl Walker<'_, '_> {
         let mut absent = Vec::new();
         let mut job_eval = None;
         let mut job_outputs = Vec::new();
+        let mut job_fused = Vec::new();
         let mut unwritten = Vec::new();
         let tier = match lookup {
             Lookup::Compiled(ir) => {
@@ -1194,6 +1245,14 @@ impl Walker<'_, '_> {
                 if fed && let Some(p) = &path {
                     job_eval = Some(super::build_eval::instance_job(&ir, p, self.ctx.opts));
                     job_outputs = ir.jobs.iter().flat_map(|j| j.outputs.clone()).collect();
+                    job_fused = ir
+                        .fused
+                        .iter()
+                        .map(|f| crate::ir::FusedEvalJob {
+                            child_id: f.child_id.clone(),
+                            stubs: f.stubs.clone(),
+                        })
+                        .collect();
                 }
                 use_id = ir.use_id_slots > 0;
                 // An island's ssr render over the wrapper's props is computed once too (L4).
@@ -1252,6 +1311,7 @@ impl Walker<'_, '_> {
             absent,
             job_eval,
             job_outputs,
+            job_fused,
             unwritten,
         }
     }
@@ -1301,7 +1361,7 @@ impl Walker<'_, '_> {
                 };
                 let end = path.find(['.', '[']).unwrap_or(path.len());
                 let (root, rest) = path.split_at(end);
-                if root == "__store" || root == "children" && rest.is_empty() && false {
+                if root == "__store" {
                     rec.props.insert(n.clone(), Some(path.clone()));
                     continue;
                 }
@@ -1356,6 +1416,110 @@ impl Walker<'_, '_> {
             }
         }
         Ok(())
+    }
+
+    /// Fuses the job of the fed child `child` into this component's own job (R34.96, PR 2b analysis half): every
+    /// root of the child's job is bound from this component's props, a literal, one of its own precompute slots, or
+    /// left out (the child's default applies). `false` = not fused; the caller keeps today's record or fallback.
+    fn try_fuse(
+        &mut self,
+        name: &str,
+        loc: u32,
+        props: &[(String, Expr)],
+        child: &Child,
+        child_id: &str,
+    ) -> bool {
+        use crate::ir::{FusedInput, FusedInstance};
+        let spreads = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
+        let plain = matches!(child.tier, Tier::Static)
+            && !child.use_id
+            && !child.stores
+            && !child.job_all
+            && !child.job_roots.contains("children")
+            && !child.job_roots.contains("__store")
+            && !child.job_outputs.is_empty()
+            && self.loop_sources.is_empty()
+            && self.guard_depth == 0
+            && !props.iter().any(|(k, _)| k == "children");
+        if !plain {
+            return false;
+        }
+        let mut inputs = std::collections::BTreeMap::new();
+        for root in &child.job_roots {
+            let given = props.iter().rev().find(|(k, _)| k == root).map(|(_, v)| v);
+            let input = match given {
+                None => FusedInput::Undefined,
+                Some(Expr::ClientOnly { .. }) => return false,
+                Some(
+                    v @ Expr::Precomputed {
+                        slot,
+                        per_item: None,
+                        state_dependent: false,
+                        ..
+                    },
+                ) if !self.deps_of(v).reactive() => FusedInput::Slot { name: slot.clone() },
+                Some(v) => {
+                    if self.reads_state(v) {
+                        return false;
+                    }
+                    if let Some(path) = self.prop_path(v) {
+                        // This component's own `children` is markup, never a job input: the fused job
+                        // would read it as absent (review r1, Afrojack). Whole-component fallback (T2).
+                        if path.split(['.', '[']).next() == Some("children") {
+                            return false;
+                        }
+                        FusedInput::Prop { path }
+                    } else if let Some(value) = match v {
+                        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {
+                            r.json_literal().or_else(|| self.fold_json(r))
+                        }
+                        _ => None,
+                    } {
+                        FusedInput::Literal { value }
+                    } else {
+                        return false;
+                    }
+                }
+            };
+            inputs.insert(root.clone(), input);
+        }
+        let has_slot = inputs
+            .values()
+            .any(|i| matches!(i, FusedInput::Slot { .. }));
+        // Without a job of its own to join, the record (or the 2a re-base) already serves the child.
+        if !self.own_job {
+            debug_assert!(!has_slot, "a slot input implies a precompute job");
+            return false;
+        }
+        // A spread of this component's props carries only keys the call sites are required to leave out.
+        if spreads && self.spread_feeds_no_job_input(name, props, child).is_err() {
+            return false;
+        }
+        let ordinal = {
+            let n = self.fused_counts.entry(child_id.to_string()).or_insert(0);
+            *n += 1;
+            *n
+        };
+        let outputs = child
+            .job_outputs
+            .iter()
+            .map(|slot| (slot.clone(), format!("_f{child_id}_{ordinal}_{slot}")))
+            .collect();
+        let (eval_refused, stubs) = match &child.job_eval {
+            Some(Ok(stubs)) => (None, stubs.clone()),
+            Some(Err(why)) => (Some(why.clone()), Vec::new()),
+            None => (Some("not fed".to_string()), Vec::new()),
+        };
+        self.fused.push(FusedInstance {
+            child_id: child_id.to_string(),
+            loc,
+            ordinal,
+            inputs,
+            outputs,
+            eval_refused,
+            stubs,
+        });
+        true
     }
 
     /// A spread of this component's own props into a fed child (F164, R34.83): fine when no input root of the child's
@@ -2010,11 +2174,17 @@ impl Walker<'_, '_> {
                         "use a ternary, && or .map directly in the JSX children",
                     ));
                 }
+                // R34.96: a fed child of a component that has a job of its own runs inside that job.
+                let fused = child.fed && self.try_fuse(name, *loc, props, &child, &child_id);
                 // The template backend numbers every inlined instance of a child id.
-                let k = self.instance_counts.entry(child_id.clone()).or_insert(0);
-                *k += 1;
-                let k = *k;
-                let row_invariant = child.fed && self.row_invariant(&kept, &child);
+                let k = if fused {
+                    0
+                } else {
+                    let k = self.instance_counts.entry(child_id.clone()).or_insert(0);
+                    *k += 1;
+                    *k
+                };
+                let row_invariant = !fused && child.fed && self.row_invariant(&kept, &child);
                 // F142 R34.43: one enclosing list that is a constant array feeds the instance per
                 // row from the literal the manifest carries (capped, ruling Q3).
                 let rows_literal = match (&self.loop_sources[..], &self.loop_literals[..]) {
@@ -2065,7 +2235,20 @@ impl Walker<'_, '_> {
                         "flatten the lists or render the child per row in its own component",
                     ));
                 }
-                if child.fed {
+                if child.fed && !fused && self.own_fed && !self.ctx.is_root {
+                    // This component is inlined into its callers and its server instance cannot also feed a
+                    // child of its own that was not fused (F53, R34.97).
+                    self.diagnostics.push(Diagnostic::fallback(
+                        "nested-instance",
+                        format!(
+                            "<{name}> has a job or useId and sits inside <{}> that has its own, which the server cannot feed through it",
+                            self.ctx.path
+                        ),
+                        *loc,
+                        "use it directly in the route component, or keep this component interactive with React",
+                    ));
+                }
+                if child.fed && !fused {
                     let mut record = InstanceRecord {
                         child_id: child_id.clone(),
                         k,
@@ -2471,6 +2654,7 @@ impl Walker<'_, '_> {
             ),
             outputs: child.job_outputs.clone(),
             stubs,
+            fused: child.job_fused.clone(),
             line,
             col,
         });

@@ -38,6 +38,8 @@ export type ComponentIR = Record<string, any> & {
     inputs: Record<string, unknown>
     outputs: string[]
     stubs?: { source: string; code: string }[]
+    /** R34.96: the job modules fused into the child's job, which it imports (`FusedEvalJob`). */
+    fused?: { child_id: string; stubs?: { source: string; code: string }[] }[]
     line: number
     col: number
   }[]
