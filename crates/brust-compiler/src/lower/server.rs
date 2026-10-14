@@ -326,7 +326,11 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
                 None => item.clone(),
             };
             js = guard(
-                format!("({}).map(({params}) => {js})", server_js(src, &f)),
+                format!(
+                    "({}).map(({params}) => {})",
+                    server_js(src, &f),
+                    super::common::arrow_body(&js)
+                ),
                 level,
             );
         }

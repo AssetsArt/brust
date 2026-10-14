@@ -326,15 +326,19 @@ struct Inner {
     refs: Vec<ChildRef>,
     /// A fed child of it was evaluated at build (`folded_instances`): its slot lookup is local to that component.
     folded: bool,
+    /// Static: its template is printed inline, so the caller can number and feed its children. A Native wrapper (state,
+    /// handlers) keeps its records on itself, where no chain component's `instances[]` can see them.
+    rebasable: bool,
 }
 
 impl Inner {
     fn of(ir: &ComponentIR) -> Option<Inner> {
         let has = !ir.instances.is_empty() || !ir.folded_instances.is_empty();
-        (has && matches!(ir.tier, Tier::Static) && !crate::ir::is_fed(ir)).then(|| Inner {
+        (has && !matches!(ir.tier, Tier::React { .. }) && !crate::ir::is_fed(ir)).then(|| Inner {
             records: ir.instances.clone(),
             refs: ir.children.clone(),
             folded: !ir.folded_instances.is_empty(),
+            rebasable: matches!(ir.tier, Tier::Static),
         })
     }
 }
@@ -1316,6 +1320,12 @@ impl Walker<'_, '_> {
     /// wrapper becomes one of ours, numbered in template order, with the wrapper's prop paths replaced by what this
     /// call site passes. `Err` = a shape it cannot bind (the caller falls back to React).
     fn rebase(&mut self, inner: &Inner, props: &[(String, Expr)]) -> Result<(), String> {
+        if !inner.rebasable {
+            return Err(
+                "it has state or handlers of its own, so the server cannot feed its children"
+                    .into(),
+            );
+        }
         if inner.folded {
             return Err("one of its instances was evaluated at build".into());
         }

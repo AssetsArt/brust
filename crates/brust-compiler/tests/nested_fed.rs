@@ -362,3 +362,29 @@ fn a_spread_of_the_wrappers_rest_into_the_fused_child_is_allowed_by_the_spread_r
     assert_eq!(fused.len(), 1, "{fb:?}");
     assert_eq!(records, 0);
 }
+
+// #229 hole (found via the context-lowering consult): a NATIVE wrapper (not Static, not fed itself) keeps its fed
+// child's record on the wrapper, where no chain component's `instances[]` can see it. The caller must fall back.
+#[test]
+fn a_native_wrapper_with_a_fed_child_makes_the_caller_an_island() {
+    let t = lower(
+        "import W from './NativeWrap'\nexport default function P() { return <div><W /></div> }",
+    );
+    let _w = named(&t, "nativeWrap_");
+    let p = named(&t, "p_");
+    assert!(is_react(p), "P {:?} {:?}", p.tier, p.fallbacks);
+    assert!(
+        p.fallbacks.contains(&"nested-instance".to_string()),
+        "{:?}",
+        p.fallbacks
+    );
+}
+
+#[test]
+fn a_static_wrapper_with_a_fed_child_still_compiles_next_to_the_native_one() {
+    // the re-base of a Static wrapper (#229) is untouched by the Native-wrapper fallback
+    let t = lower(
+        "import W from './Wrapper'\nexport default function P() { return <div><W tone=\"a\" /></div> }",
+    );
+    assert!(!is_react(named(&t, "p_")), "{:?}", named(&t, "p_").tier);
+}
