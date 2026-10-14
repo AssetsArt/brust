@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 147 | 81 | 8 | 58 | 0 | 0 | 0 | 0 |
+| B Composition | 157 | 87 | 8 | 62 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
-| D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
+| D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 325 | 160 | 43 | 118 | 3 | 1 | 0 | 0 |
+| **Total** | 335 | 165 | 43 | 123 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -104,10 +104,20 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-children-native-parent | native parent with state and constant island children | native | native | ssr | ok | — | Q4 ruling: a parent with its own state is fine when the children never read it |
 | b-island-children-state | island children that read parent state | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — state in the children keeps the parent on React (fallback:island-children) |
 | b-island-children-handler | island children with an event handler | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a handler cannot travel as JSON |
-| b-island-children-prop | island children that read a prop | react | react | ssr | ok | fallback:island-children | R34.23: out of v1 — prop-path children are a named follow-up (F138e); fail closed |
+| b-island-children-prop | island children that read a prop | static | static | ssr | ok | — | F148a (R34.116-R34.120): a prop the children read is a hole of the island (a primitive leaf), not a constant; was fail closed in v1 |
+| b-island-children-prop-expr | island children that compute from a prop | react | react | ssr | ok | fallback:island-children | F148a (R34.123): only a plain props path is a hole; an expression over props keeps fallback:island-children |
 | b-island-children-renderprop | render-prop children of an island | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a function child |
 | b-island-children-html | dangerouslySetInnerHTML inside island children | react | react | ssr | ok | fallback:island-children | R34.26(c) ruling: a raw HTML sink inside lowered children fails closed in v1 |
-| b-island-children-cond | conditional island children | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a condition on a prop (a constant condition lowers: b-island-slots-cond-const) |
+| b-island-children-cond | conditional island children | static | static | ssr | ok | — | F148a (R34.122): a condition on a plain prop is a conditional node the revive takes by the truthiness of a primitive; was fail closed in v1 |
+| b-island-children-cond-expr | island children under a computed condition | react | react | ssr | ok | fallback:island-children | F148a (R34.122): a condition that is not a plain props path keeps fallback:island-children |
+| b-island-holes-wrapper-text | a static wrapper that renders a prop inside its island | static | static | 0 | ok | — | F148a: the wrapper stays static (it was the island); each call site feeds the island one value per hole. Hydrates in tests/server/prop-path-children.chromium.test.ts |
+| b-island-holes-wrapper-children | a static wrapper that renders {children} inside its island | static | static | 0 | ok | — | F148a (R34.121): the caller's constant tree is bound at the call site (the reserved prop __ch); a call without children binds none |
+| b-island-holes-attr-cond | attributes and a condition read from props inside island children | static | static | ssr | ok | — | F148a (R34.118): attribute holes are primitives; a javascript: URL keeps React 19.3's guard (packages/brust/test/prop-path-children-revive.test.ts) |
+| b-island-prop-expr | an island prop that is an expression over props | react | react | ssr | ok | fallback:island-prop | F148a: the server hands an island a props path or a JSON value; anything else is fallback:island-prop, not the ssr-prop-not-a-path build error (the direction page hit it once its wrapper stopped being React) |
+| b-island-holes-style | a style read from props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.118, F170): an object-valued attribute is never a hole; fallback:island-children |
+| b-island-holes-list | a list over props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.122, F171): a list over request data needs structure from data; fallback:island-children |
+| b-island-holes-route-children | {children} of a route component inside an island | react | react | ssr | ok | fallback:island-children | F148a (R34.121): a route component has no call site to bind a tree; its children are request data; fallback:island-children |
+| b-island-holes-wrapper-state | state in the children handed to a wrapper's island | react | react | ssr | ok | fallback:island-children | F148a (R34.121): the same fallback a React wrapper gave; the caller's children must be a constant tree |
 | b-island-children-spread | spread in island children | react | react | ssr | ok | fallback:island-children, fallback:spread-props | R34.23: fail closed — an unknown spread |
 | b-island-slots-list-literal | a literal list inside island children | static | static | ssr | ok | — | R34.50: a list over a foldable array unrolls at compile time into the island's children tree; hydrates in tests/server/island-slots.chromium.test.ts |
 | b-island-slots-list-const | a list over a module const of objects, with the index | static | static | ssr | ok | — | R34.50: member reads on folded objects, the index parameter and a template of both fold (the sidebar shape) |
@@ -118,7 +128,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-slots-elprop | an element passed as a prop of a react island | static | static | ssr | ok | — | R34.52: the element lowers to a marker tree under its prop name; the island instance lists the name in `$x`, the only thing the revive turns back into elements |
 | b-island-slots-elprop-fragment | a fragment passed as a prop of a react island | static | static | ssr | ok | — | R34.52: a fragment is a marked fragment |
 | b-island-slots-elprop-nested | an element prop on a component inside island children | static | static | ssr | ok | — | R34.52: a nested component node carries its own `x` list |
-| b-island-slots-cond-prop | a prop condition inside island children | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — "a condition that is not a constant (the prop `show`)" |
+| b-island-slots-cond-prop | a prop condition inside island children | static | static | ssr | ok | — | F148a (R34.122): a condition on a plain prop is a conditional node of the tree (was R34.53 fail closed); a list over a prop still is (b-island-slots-list-prop) |
 | b-island-slots-list-prop | a list over a prop inside island children | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — "a list over data that is not a constant"; prop-path children stay a follow-up (F148a) |
 | b-island-slots-list-filter | a list through .filter inside island children | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — the message names the call outside the folded subset (`rows.filter`) |
 | b-island-slots-list-block | a module const mapped with a block-body callback | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — a `.map` callback with a block body |
@@ -277,7 +287,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-expression |  |
 | d-suspense-static | <Suspense> around static content | static | static | ssr | ok | fallback:external-component | spec §3 react tier: Suspense is a React island; since R34.52 its constant `fallback` element travels as an element prop, so the page is static (shadcn S1, constant-slots) |
 | d-fragment-keyed | <Fragment key> inside a list | static | static | 0 | ok | — |  |
-| d-activity | <Activity mode> | static | static | ssr | ok | fallback:external-component | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
+| d-activity | <Activity mode> | react | react | ssr | ok | fallback:external-component, fallback:island-prop | F148a: `mode` is an expression over props, which the server cannot hand to the island (fallback:island-prop). It read as static before only because the battery compiles without building: `brust build` failed it with ssr-prop-not-a-path (F60). With a plain prop or a literal mode it is a static page with the React built-in as an island (R34.21) |
 | d-profiler | <Profiler onRender> | react | react | ssr | ok | fallback:external-component, fallback:island-prop | shadcn S1 R34.56: a function prop to an external component makes the host React (fallback island-prop), never a build error |
 | d-profiler-bare | <Profiler> without onRender | static | static | ssr | ok | fallback:external-component | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
 | d-strictmode | <StrictMode> | static | static | ssr | ok | fallback:external-component | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
@@ -306,7 +316,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 |---|---|---|---|---|---|---|---|
 | e-lucide-icon-rest-spread | a lucide icon spread with the component's rest props | static | static | ssr | ok | — | R34.77: the rest lands on the inlined svg, after the icon's own attributes; parity in tests/server/icon-shapes.test.ts |
 | e-lucide-icon-rest-spread-size | a call site hands the spread icon a key the icon reads (size) | static | static | ssr | ok | — | R34.77: brustc alone leaves the icon an island; after `brust build` renders it the call site is refused (spread-props, page React): crates/brust-compiler/tests/icon_shapes.rs pins size, className, color |
-| e-lucide-icon-unknown-spread | a lucide icon spread with a computed object | react | react | ssr | ok | fallback:external-component, fallback:spread-props, warning:icon-dynamic-prop | R34.77: only the component's own props or rest spread onto an icon; any other spread keeps the island (icon-dynamic-prop) |
+| e-lucide-icon-unknown-spread | a lucide icon spread with a computed object | react | react | ssr | ok | fallback:external-component, fallback:spread-props, warning:icon-dynamic-prop, warning:island-prop | R34.77: only the component's own props or rest spread onto an icon; any other spread keeps the island (icon-dynamic-prop) |
 | b-cn-fold-literal | a literal variant on a cva + cn component (shadcn Badge) | static | static | 0 | ok | — | F149 R34.88/R34.89: a candidate; `brust build` runs the job once and prints the class (R34.90) |
 | b-cn-fold-omitted | a cva + cn component with no props | static | static | 0 | ok | — | F149 R34.88: an omitted prop is an absent input |
 | b-cn-fold-module-const | a variant from a module const | static | static | 0 | ok | — | F149 R34.88: the call-site literal folds with the module consts (the constant folder) |
@@ -380,9 +390,9 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 | Status | Entries |
 |---|---|
 | native | 11 |
-| static | 12 |
+| static | 11 |
 | partial | 4 |
-| island | 26 |
+| island | 27 |
 | unsupported | 0 |
 | n/a | 5 |
 | **Total** | 58 |
@@ -414,7 +424,7 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 
 | Entry | Status | Rows | Note |
 |---|---|---|---|
-| [`<Activity>`](https://react.dev/reference/react/Activity) | static | d-activity | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |
+| [`<Activity>`](https://react.dev/reference/react/Activity) | island | d-activity | F148a: `mode` is an expression over props, which the server cannot hand to the island (fallback:island-prop). It read as static before only because the battery compiles without building: `brust build` failed it with ssr-prop-not-a-path (F60). With a plain prop or a literal mode it is a static page with the React built-in as an island (R34.21) |
 | [`<Fragment>`](https://react.dev/reference/react/Fragment) | static | a-fragment, d-fragment-keyed | static fragment root: no <brust-host>, no warning (gaps L8) |
 | [`<Profiler>`](https://react.dev/reference/react/Profiler) | partial | d-profiler, d-profiler-bare | native/static: d-profiler-bare; island: d-profiler |
 | [`<StrictMode>`](https://react.dev/reference/react/StrictMode) | static | d-strictmode | R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children |

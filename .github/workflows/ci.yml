@@ -244,6 +244,9 @@ jobs:
       - run: cd packages/brust && bun test test/napi-server.test.ts
       - run: cd packages/brust && bun test test/build-manifest.test.ts
       - run: cd packages/brust && bun test --timeout 180000 test/build-cn-fold.test.ts
+      # F148a (R34.124): the hostile-input set for the island revive, with the build tests of the lowered children it guards
+      # (build-island-children, build-island-slots and build-props-pattern were not run here before).
+      - run: cd packages/brust && bun test --timeout 180000 test/prop-path-children-revive.test.ts test/build-prop-path-children.test.ts test/build-island-children.test.ts test/build-island-slots.test.ts test/build-props-pattern.test.ts
       - run: cd packages/brust && bun test test/cli.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-child-literals.test.ts
@@ -286,6 +289,7 @@ jobs:
       - run: bun test --timeout 120000 tests/server/named-export-islands.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-children.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-slots.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/prop-path-children.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/icon-shapes.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
       - run: bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts

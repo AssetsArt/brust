@@ -150,6 +150,12 @@ pub struct ChildRef {
     /// revive may revive. Sorted, deduplicated; absent when no call site passes one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub x: Vec<String>,
+    /// F148a (R34.116-R34.121): the island props the compiler wrote for the values its lowered children read from
+    /// the enclosing component's props: `$p<N>` hold a primitive (text, an attribute, a condition), `$c<N>` an
+    /// element tree the call site of the wrapper bound at compile time. Sorted, deduplicated. The revive reads
+    /// only these names; any other `$` key in the island's props throws.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holes: Vec<String>,
 }
 
 /// A component that lives in a package, rendered as a React island: the island's code is the

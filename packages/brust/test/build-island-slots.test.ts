@@ -163,7 +163,7 @@ test('element-only children still make an island a host; a route component never
   const map = new Map([['host', host], ['caller', caller]])
   // `nested: []` (a tree of plain elements) is a host: it was `undefined` and the island got raw JSON children.
   expect(nestedOf(map, 'host')).toEqual([])
-  expect(islandShim(host, map)).toContain('__mk(Comp, props, ["icon"])')
+  expect(islandShim(host, map)).toContain('__mk(Comp, props, ["icon"], [])')
   // A route component (page or layout) is not a host, whatever a caller did: plain createElement.
   const roots = new Set(['host'])
   expect(nestedOf(map, 'host', roots)).toBeUndefined()

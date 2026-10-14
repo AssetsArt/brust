@@ -11,8 +11,8 @@
   "summary": {
     "entries": 58,
     "native": 11,
-    "static": 12,
-    "island": 26,
+    "static": 11,
+    "island": 27,
     "partial": 4,
     "unsupported": 0,
     "n/a": 5
@@ -527,28 +527,30 @@
       "name": "<Activity>",
       "group": "components",
       "url": "https://react.dev/reference/react/Activity",
-      "status": "static",
+      "status": "island",
       "rows": [
         "d-activity"
       ],
       "tiers": [
-        "static"
+        "react"
       ],
       "diagnostics": [
-        "fallback:external-component"
+        "fallback:external-component",
+        "fallback:island-prop"
       ],
       "shapes": [
         {
           "row": "d-activity",
           "authoring": "<Activity mode>",
-          "expected": "static",
-          "observed": "static",
+          "expected": "react",
+          "observed": "react",
           "diagnostics": [
-            "fallback:external-component"
+            "fallback:external-component",
+            "fallback:island-prop"
           ]
         }
       ],
-      "note": "R34.21 (F138e): the React built-in is an island and its constant children travel as JSON; the page was react only for island-children"
+      "note": "F148a: `mode` is an expression over props, which the server cannot hand to the island (fallback:island-prop). It read as static before only because the battery compiles without building: `brust build` failed it with ssr-prop-not-a-path (F60). With a plain prop or a literal mode it is a static page with the React built-in as an island (R34.21)"
     },
     {
       "name": "<Fragment>",

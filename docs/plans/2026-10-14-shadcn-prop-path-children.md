@@ -129,3 +129,17 @@ owner: Detoro · authority: in-loop. Task `prop-path-children`, ledger row **F14
 - **Q4: two reviewers.** Afrojack reviews the data path (R34.120–R34.123). Mellow signs off on security as a gate (R34.116–R34.119, R34.124). The hostile-input set (R34.124) runs in CI before merge.
 - **Lists over props (R34.122)** stay out of v1. Ledger row F171.
 - **Fallback rule:** anything this lane cannot lower keeps `island-children` at analysis time with a named reason. It must never become a build error on valid React (R34.97 applies here as well).
+
+## 12. Implementation report (knock2, lane `prop-path-children`)
+
+What was built is R34.116–R34.125 as ruled, with these precisions and one finding:
+
+- **Names.** A hole is an island prop: `$p<N>` (a primitive) or `$c<N>` (the caller's tree). The island's `ChildRef.holes` lists them; `__mk(C, props, X, H)` takes `H`, strips them from the props the component sees, and throws on any other `$` key (R34.72 kept). The same value read twice is one hole.
+- **Nodes.** `v` (a primitive leaf: text, an attribute, a component prop), `if` (truthiness of a primitive; an object is false), `slot` (the caller's tree). `slot` recurses with no holes, so a tree cannot name one.
+- **Element holes (`{children}`).** The wrapper's island job takes the reserved input `__ch`; each call site of the wrapper lowers its children (constant, same cap) and binds them as `__ch` in the instance record. Registry: the ids named in a call site's tree are added to the island's `nestedOf` through the wrapper's ref. A route file (by `route_roots`) or a root component never takes one.
+- **Not holes, named `island-children` reasons:** `style`/`on*`/`ref`/`key`/`children`/`dangerouslySetInnerHTML` names, state or a store, anything that is not a plain props path of a named prop (so `className={cn(base, className)}` and template strings stay refused: option B's "cheap part of C" needs the instance machinery for an island's own props and was not built), a constant holding `$brust`, a list over props (F171), over 64 holes.
+- **Finding, fixed here.** An island prop that is an expression over props (`dir={direction ?? dir}`) has no path for the server: the manifest raised `ssr-prop-not-a-path` (F60) at *build*. The wrapper being React for `island-children` had hidden it; the `direction` page failed to build the moment it stopped (first scoreboard run: 63 built, 1 refused). It is now `fallback:island-prop` at analysis, so valid React stays a fallback (R34.97). Side effects: battery `d-activity` is react (it only read static because the battery compiles without building), `children.rs` unit test no longer pins `props.n = None`.
+- **Fixed on the way.** `packages/brust/test/build-props-pattern.test.ts` still expected the module-const default (`cards/const.tsx`) to fall back; part 4(a) (#224) folds it. Not run by that lane; corrected here (`const` is static, 3 `prop-default-shape`).
+- **Golden.** `tests/fixtures/lazy-import`: `{open && <Suspense><Panel/></Suspense>}` now reaches `<Panel>` (the condition is a hole), which cannot be resolved, so its `island-children` message changes and `local-component` appears twice; a snapshot change, not a behaviour change (the page stays React).
+
+Scoreboard (`docs/shadcn-coverage.md`): tiers 61 static / 1 native / 2 react, 46 islands, client JS 0 / 87 / 240 KB, all unchanged; `island-children` 25 → 20 measured rows (33 → 22 app components, 73 → 69 library); `direction` stops listing it. As predicted in §0 the shadcn gain is nil.

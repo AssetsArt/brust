@@ -248,11 +248,20 @@
     {
       "class": "Fallback",
       "rule": "island-children",
-      "message": "JSX children passed to the React island <Suspense> cannot be lowered: a condition that is not a constant (the prop `open`)",
+      "message": "JSX children passed to the React island <Suspense> cannot be lowered: <Panel> could not be resolved",
       "loc": 151,
       "line": 4,
       "col": 10,
       "remediation": "render the children inside the island component, or pass constant markup"
+    },
+    {
+      "class": "Fallback",
+      "rule": "local-component",
+      "message": "<Panel> is not a function declaration in this module",
+      "loc": 192,
+      "line": 4,
+      "col": 51,
+      "remediation": "declare it as `function Name(props) { … }`"
     },
     {
       "class": "Fallback",
