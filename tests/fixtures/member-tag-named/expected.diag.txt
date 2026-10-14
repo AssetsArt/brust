@@ -1,0 +1,5 @@
+fallback external-component tests/fixtures/member-tag-named/input.tsx:8:7 <DialogPrimitive.Root> comes from the package radix-ui (Dialog.Root); it renders as a React island — use a component from this project to keep it native
+fallback external-component tests/fixtures/member-tag-named/input.tsx:9:7 <DialogPrimitive.Trigger> comes from the package radix-ui (Dialog.Trigger); it renders as a React island — use a component from this project to keep it native
+fallback external-component tests/fixtures/member-tag-named/input.tsx:10:7 <DialogPrimitive.Root> comes from the package radix-ui (Dialog.Root); it renders as a React island — use a component from this project to keep it native
+fallback external-component tests/fixtures/member-tag-named/input.tsx:11:7 <ResizablePrimitive.Group> comes from the package react-resizable-panels (Group); it renders as a React island — use a component from this project to keep it native
+fallback external-component tests/fixtures/member-tag-named/input.tsx:12:7 <Primitive.Item> comes from the package cmdk (default.Item); it renders as a React island — use a component from this project to keep it native

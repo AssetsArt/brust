@@ -151,7 +151,7 @@ fn compile_uncached(
             let local = match binding {
                 Binding::Fn(l) | Binding::Local(l) => l,
                 // Declared, but not as a function the compiler reads: an island that imports the binding.
-                Binding::Opaque => return Ok(opaque_island(path, name)),
+                Binding::Opaque | Binding::Member(_) => return Ok(opaque_island(path, name)),
                 _ => name.clone(),
             };
             let mut ir =

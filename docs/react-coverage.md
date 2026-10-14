@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 49 | 24 | 8 | 17 | 0 | 0 | 0 | 0 |
+| B Composition | 70 | 33 | 8 | 29 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 19 | 1 | 0 | 0 | 0 |
-| E v2 specifics | 31 | 10 | 10 | 6 | 4 | 1 | 0 | 0 |
-| **Total** | 188 | 79 | 43 | 60 | 5 | 1 | 0 | 0 |
+| E v2 specifics | 43 | 15 | 10 | 12 | 5 | 1 | 0 | 0 |
+| **Total** | 221 | 93 | 43 | 78 | 6 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -129,6 +129,27 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-spread-handler-onward | a handler a child passes on through a second spread | react | react | ssr | ok | fallback:spread-handler | shadcn S1.3 R34.19: bound one level deep only (fallback spread-handler) |
 | b-spread-handler-row-prop | a handler through a child's spread next to a prop that reads the row | react | react | ssr | ok | fallback:spread-handler | shadcn S1.3 R34.19: the handler makes the client render the row, so a row-reading prop would link the child (fallback spread-handler); pass row values as children instead |
 | b-spread-render-prop | a function that is not an event handler, through a child's spread | react | react | ssr | ok | fallback:spread-function | shadcn S1.3 R34.19: a render prop has no element binding (fallback spread-function) |
+| b-aschild-default | a component with `asChild ? Slot.Root : "button"`, used without asChild | static | static | 0 | ok | — | shadcn S1.4 R34.29 (a): the host element prints; the component is static (was local-component) |
+| b-aschild-false | asChild={false} written out | static | static | 0 | ok | — | shadcn S1.4 R34.29 (a) |
+| b-aschild-literal | asChild with one host-element child (the shadcn `<Button asChild><a/></Button>`) | static | static | 0 | ok | — | shadcn S1.4 R34.29 (b): the child element prints with the component's attributes merged in |
+| b-aschild-class-merge | className on the slot and on the child under asChild | static | static | 0 | ok | — | shadcn S1.4 R34.30: className joins slot first, then the child (Radix Slot mergeProps) |
+| b-aschild-style-merge | style objects on the slot and on the child under asChild | static | static | 0 | ok | — | shadcn S1.4 R34.30: style objects merge, the child wins |
+| b-aschild-child-wins | the same attribute on the slot and on the child under asChild | static | static | 0 | ok | — | shadcn S1.4 R34.30: every other attribute is the child's |
+| b-aschild-slot-namespace | Slot from `import * as Slot from "@radix-ui/react-slot"` and the swapped ternary | static | static | 0 | ok | — | shadcn S1.4 R34.28 (Q5): radix-ui and @radix-ui/react-slot, both orders |
+| b-aschild-dynamic | asChild passed through from a prop | react | react | ssr | ok | fallback:slot-dynamic | shadcn S1.4 R34.31: fallback slot-dynamic (the call site cannot tell which element renders) |
+| b-aschild-state | asChild read from state | react | react | ssr | ok | fallback:slot-dynamic | shadcn S1.4 R34.31: fallback slot-dynamic |
+| b-aschild-spread-in | props spread into a component with asChild | react | react | ssr | ok | fallback:slot-dynamic | shadcn S1.4 R34.31: fallback slot-dynamic (the spread may carry asChild) |
+| b-aschild-text-child | asChild with text between the tags | react | react | ssr | ok | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape (React throws on it too) |
+| b-aschild-two-children | asChild with two children | react | react | ssr | ok | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape |
+| b-aschild-component-child | asChild whose child is a component | react | react | ssr | ok | fallback:slot-child-component | shadcn S1.4 R34.31 (Q1): fallback slot-child-component; merging into a component's props is a follow-up |
+| b-aschild-child-handler | asChild whose child has an event handler | react | react | ssr | ok | fallback:slot-handler | shadcn S1.4 R34.31 (Q2): fallback slot-handler |
+| b-aschild-slot-handler | a handler passed to a component with asChild | react | react | ssr | ok | fallback:slot-handler | shadcn S1.4 R34.31 (Q2, Q4): fallback slot-handler until the parent-scope binding of S1.3 is on main |
+| b-aschild-ref-child | asChild whose child has a ref | react | react | ssr | ok | fallback:slot-ref | shadcn S1.4 R34.31: fallback slot-ref |
+| b-aschild-stateful | asChild on a component with state of its own | react | react | ssr | ok | fallback:slot-native | shadcn S1.4 R34.31: fallback slot-native |
+| b-aschild-runtime-spread | asChild child with class/style into a component that spreads an object of unknown keys | react | react | ssr | ok | fallback:slot-merge | shadcn S1.4 R34.31: fallback slot-merge (the merge needs both sides at compile time; never a build error) |
+| b-aschild-raw-text-child | asChild whose child is a <style> element | react | react | ssr | ok | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape (a raw-text body is not markup) |
+| b-local-comp-ternary | a const tag that is a ternary of two components, not a Radix Slot | static | static | ssr | ok | — | shadcn S1.4 R34.28: any other initializer keeps fallback local-component (Pick is a React island; the page is static since island-children #203) |
+| b-local-comp-foreign-slot | a Slot imported from a module that is not Radix | static | static | ssr | ok | — | shadcn S1.4 R34.28 (Q5): only radix-ui and @radix-ui/react-slot are recognised; fallback local-component (Own is a React island; the page is static since island-children #203) |
 
 ## C. Hooks
 
@@ -204,6 +225,18 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | Pattern | Authoring | Expected | Observed tier | Jobs | Build | Diagnostics | Note |
 |---|---|---|---|---|---|---|---|
 | e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
+| e-member-named-alias | member of a renamed named import (`<D.Root>`) in a static parent | static | static | ssr | ok | fallback:external-component | S1.4 R34.35: resolved to the package member, an island (external-component), no member-tag |
+| e-member-namespace | member of a namespace import (`<P.Group>`) | static | static | ssr | ok | fallback:external-component |  |
+| e-member-default | member of a default import (`<P.Item>`) | static | static | ssr | ok | fallback:external-component |  |
+| e-member-two | two members of one import are two islands | static | static | ssr, ssr | ok | fallback:external-component |  |
+| e-member-alias-const | module-level `const R = D.Root` used as a tag | static | static | ssr | ok | fallback:external-component |  |
+| e-member-alias-let | `let R = D.Root` (reassignable) used as a tag stays local-component | react | react | ssr | ok | fallback:local-component |  |
+| e-member-deeper | a member tag deeper than one level (`<D.Sub.Trigger>`) | react | react | ssr | ok | fallback:member-tag |  |
+| e-member-local-object | member of a local object (`<o.Tag>`) | react | react | ssr | ok | fallback:member-tag |  |
+| e-member-shadowed | a prop shadows the import (`<D.Root>` with `{ D }` destructured) | react | react | ssr | ok | fallback:member-tag | resolved by symbol, not by spelling: the prop is not the import |
+| e-member-relative-namespace | member of a relative namespace import (`<UI.Button>`) stays member-tag | react | react | ssr | ok | fallback:member-tag | F-row: resolve it to that module's named export so it compiles instead of becoming an island |
+| e-member-react-namespace | member of the react namespace (`<R.Fragment>`) | react | react | ssr | ok | fallback:member-tag |  |
+| e-member-island-prop | function prop on a member island (the existing island-prop refusal) | error | error | 0 | refused | error:island-prop, fallback:external-component |  |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |

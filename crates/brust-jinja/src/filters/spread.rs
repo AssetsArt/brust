@@ -205,6 +205,22 @@ pub fn omit_attrs(d: Value, names: Vec<String>) -> Value {
     Value::from(out)
 }
 
+/// `class_join(a, b, …)`: the class names that are present, joined by one space (the `className` of
+/// a Radix `Slot`: the component's first, then the child's). Nothing present is undefined.
+pub fn class_join(parts: Rest<Value>) -> Value {
+    let joined: Vec<String> = parts
+        .iter()
+        .filter(|v| present(v))
+        .map(attr_string)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if joined.is_empty() {
+        Value::UNDEFINED
+    } else {
+        Value::from(joined.join(" "))
+    }
+}
+
 /// `spread_merge(seg, …)`: the segments merged into one object (a whole-props binding).
 pub fn spread_merge(segs: Rest<Value>) -> Value {
     Value::from(merge(&segs).into_iter().collect::<BTreeMap<_, _>>())
@@ -219,6 +235,20 @@ mod tests {
         let mut env = Environment::new();
         crate::register(&mut env);
         env.render_str(src, crate::value_of(ctx)).unwrap()
+    }
+
+    #[test]
+    fn class_join_keeps_the_present_names_in_order() {
+        let ctx = json!({ "a": "base x", "b": "child", "n": null, "e": "" });
+        assert_eq!(
+            render("{{ class_join(a, b) }}", ctx.clone()),
+            "base x child"
+        );
+        assert_eq!(
+            render("{{ class_join(a, n, e, u) }}", ctx.clone()),
+            "base x"
+        );
+        assert_eq!(render("[{{ class_join(n, e) }}]", ctx), "[]");
     }
 
     #[test]

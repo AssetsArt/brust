@@ -1,1 +1,1 @@
-fallback member-tag tests/fixtures/jsx-shapes/input.tsx:14:7 member-expression component tags (`<Ctx.Provider>`) are not supported natively — import the component under its own name
+fallback member-tag tests/fixtures/jsx-shapes/input.tsx:14:7 a member of a module imported from a relative path or from react is not resolved; import the component by name — import the component under its own name

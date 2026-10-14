@@ -149,8 +149,11 @@ pub struct ChildRef {
 pub struct ExternalRef {
     /// The import specifier, as written (`lucide-react`).
     pub source: String,
-    /// The export: a name, or `default`.
+    /// The export: a name, `default`, or `*` (a namespace import).
     pub export: String,
+    /// Members read off the export (`Dialog` + `["Root"]` is `Dialog.Root`); absent for a plain export.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub member: Vec<String>,
 }
 
 /// A lucide-react icon the build should render to inline SVG (L23): the first compile leaves it as
@@ -223,4 +226,19 @@ pub struct CacheDecl {
     pub key: Option<RawExpr>,
     pub tags: Option<RawExpr>,
     pub revalidate: Option<f64>,
+}
+
+/// The polymorphic tag of a component (shadcn S1.4, R34.28): `const Comp = asChild ? Slot.Root :
+/// "button"` and `<Comp …/>`. The call site decides: no `asChild` prints `<host>`; a literal
+/// `asChild` prints the call's single child element with this element's attributes merged in
+/// (Radix `Slot`); anything else keeps the caller on React.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PolyTag {
+    /// The prop that selects the Slot (`asChild`).
+    pub flag: String,
+    /// The ternary is `flag ? host : Slot` (the Slot is the else branch).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub negate: bool,
+    /// The host tag when the Slot is not selected.
+    pub host: String,
 }

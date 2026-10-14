@@ -3,7 +3,7 @@
   "source": "tests/fixtures/jsx-shapes/input.tsx",
   "tier": {
     "React": {
-      "reason": "member-expression component tags (`<Ctx.Provider>`) are not supported natively",
+      "reason": "a member of a module imported from a relative path or from react is not resolved; import the component by name",
       "client_only": false
     }
   },
@@ -339,7 +339,7 @@
     {
       "class": "Fallback",
       "rule": "member-tag",
-      "message": "member-expression component tags (`<Ctx.Provider>`) are not supported natively",
+      "message": "a member of a module imported from a relative path or from react is not resolved; import the component by name",
       "loc": 410,
       "line": 14,
       "col": 7,

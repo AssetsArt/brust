@@ -1,0 +1,326 @@
+{
+  "id": "input_2588b2c2",
+  "source": "tests/fixtures/member-tag-named/input.tsx",
+  "tier": "Static",
+  "props": [],
+  "state": [],
+  "derived": [],
+  "effects": [],
+  "handlers": [],
+  "refs": [],
+  "id_bindings": [],
+  "template": {
+    "Element": {
+      "loc": 192,
+      "tag": "nav",
+      "attrs": [],
+      "children": [
+        {
+          "Component": {
+            "loc": 204,
+            "name": "DialogPrimitive.Root",
+            "source": "radix-ui",
+            "imported": "Dialog",
+            "member": [
+              "Root"
+            ],
+            "props": [
+              [
+                "data-slot",
+                {
+                  "Server": {
+                    "loc": 236,
+                    "kind": {
+                      "Lit": {
+                        "Str": "dialog"
+                      }
+                    }
+                  }
+                }
+              ]
+            ],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "external component",
+                "client_only": false
+              }
+            }
+          }
+        },
+        {
+          "Component": {
+            "loc": 254,
+            "name": "DialogPrimitive.Trigger",
+            "source": "radix-ui",
+            "imported": "Dialog",
+            "member": [
+              "Trigger"
+            ],
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "external component",
+                "client_only": false
+              }
+            }
+          }
+        },
+        {
+          "Component": {
+            "loc": 288,
+            "name": "DialogPrimitive.Root",
+            "source": "radix-ui",
+            "imported": "Dialog",
+            "member": [
+              "Root"
+            ],
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "external component",
+                "client_only": false
+              }
+            }
+          }
+        },
+        {
+          "Component": {
+            "loc": 319,
+            "name": "ResizablePrimitive.Group",
+            "source": "react-resizable-panels",
+            "imported": "*",
+            "member": [
+              "Group"
+            ],
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "external component",
+                "client_only": false
+              }
+            }
+          }
+        },
+        {
+          "Component": {
+            "loc": 354,
+            "name": "Primitive.Item",
+            "source": "cmdk",
+            "imported": "default",
+            "member": [
+              "Item"
+            ],
+            "props": [],
+            "children": [],
+            "link": null,
+            "tier": {
+              "React": {
+                "reason": "external component",
+                "client_only": false
+              }
+            }
+          }
+        }
+      ],
+      "host": true,
+      "ref_name": null
+    }
+  },
+  "jobs": [
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_dialogRoot_39cc22ba"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      },
+      "literals": {
+        "data-slot": "dialog"
+      }
+    },
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_dialogTrigger_f8e0079d"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
+    },
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_dialogRoot_39cc22ba_2"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
+    },
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_group_04b1678d"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
+    },
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_cmdkItem_0728f779"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
+    }
+  ],
+  "child_links": [],
+  "client_props": [],
+  "client_imports": [],
+  "client_module_locals": [],
+  "needs_worker": true,
+  "cache": null,
+  "children": [
+    {
+      "name": "DialogPrimitive.Root",
+      "id": "dialogRoot_39cc22ba",
+      "path": null,
+      "tier": {
+        "React": {
+          "reason": "external component",
+          "client_only": false
+        }
+      }
+    },
+    {
+      "name": "DialogPrimitive.Trigger",
+      "id": "dialogTrigger_f8e0079d",
+      "path": null,
+      "tier": {
+        "React": {
+          "reason": "external component",
+          "client_only": false
+        }
+      }
+    },
+    {
+      "name": "ResizablePrimitive.Group",
+      "id": "group_04b1678d",
+      "path": null,
+      "tier": {
+        "React": {
+          "reason": "external component",
+          "client_only": false
+        }
+      }
+    },
+    {
+      "name": "Primitive.Item",
+      "id": "cmdkItem_0728f779",
+      "path": null,
+      "tier": {
+        "React": {
+          "reason": "external component",
+          "client_only": false
+        }
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "external-component",
+      "message": "<DialogPrimitive.Root> comes from the package radix-ui (Dialog.Root); it renders as a React island",
+      "loc": 204,
+      "line": 8,
+      "col": 7,
+      "remediation": "use a component from this project to keep it native"
+    },
+    {
+      "class": "Fallback",
+      "rule": "external-component",
+      "message": "<DialogPrimitive.Trigger> comes from the package radix-ui (Dialog.Trigger); it renders as a React island",
+      "loc": 254,
+      "line": 9,
+      "col": 7,
+      "remediation": "use a component from this project to keep it native"
+    },
+    {
+      "class": "Fallback",
+      "rule": "external-component",
+      "message": "<DialogPrimitive.Root> comes from the package radix-ui (Dialog.Root); it renders as a React island",
+      "loc": 288,
+      "line": 10,
+      "col": 7,
+      "remediation": "use a component from this project to keep it native"
+    },
+    {
+      "class": "Fallback",
+      "rule": "external-component",
+      "message": "<ResizablePrimitive.Group> comes from the package react-resizable-panels (Group); it renders as a React island",
+      "loc": 319,
+      "line": 11,
+      "col": 7,
+      "remediation": "use a component from this project to keep it native"
+    },
+    {
+      "class": "Fallback",
+      "rule": "external-component",
+      "message": "<Primitive.Item> comes from the package cmdk (default.Item); it renders as a React island",
+      "loc": 354,
+      "line": 12,
+      "col": 7,
+      "remediation": "use a component from this project to keep it native"
+    }
+  ]
+}

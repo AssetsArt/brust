@@ -31,6 +31,10 @@ const NO_SAMPLES: &[&str] = &[
     "import-cycle",
     "jsx-shapes",
     "lazy-import",
+    // shadcn S1.4: package members render as islands, nothing to evaluate on the server.
+    "member-tag-alias",
+    "member-tag-fallback",
+    "member-tag-named",
     "missing-key",
     // Negative cases: they stay jobs (R0.1/R1.1/R1.3); the manifest test pins that.
     "module-const-call",

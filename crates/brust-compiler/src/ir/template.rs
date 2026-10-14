@@ -22,6 +22,11 @@ pub enum Node {
         /// component prints only its children; an interactive one keeps the `<brust-host>` element.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         synthetic: bool,
+        /// The element of the component's polymorphic tag (`<Comp>` of `const Comp = asChild ?
+        /// Slot.Root : "button"`, `ComponentIR::poly`): `tag` is the host it prints as without
+        /// `asChild`; a call site with a literal `asChild` prints its child element instead.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        poly: bool,
     },
     Text(String),
     Slot(Expr),
@@ -45,6 +50,10 @@ pub enum Node {
         /// The imported export name (`default` for a default import); `None`
         /// when declared in this file.
         imported: Option<String>,
+        /// A member of the imported binding (`<DialogPrimitive.Root>`: `["Root"]`), shadcn S1.4 (R34.35);
+        /// empty for every other component.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        member: Vec<String>,
         props: Vec<(String, Expr)>,
         children: Vec<Node>,
         link: Option<u32>,

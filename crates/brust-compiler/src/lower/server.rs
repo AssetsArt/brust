@@ -156,31 +156,40 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
             .join(", ")
     ));
     out.push_str("export function precompute(props: any) {\n");
-    // Props by local name (a renamed prop: `title: heading`).
-    let mut fields = Vec::new();
-    for p in &props {
-        if p == "*" {
-            continue;
+    // Props by local name (a renamed prop: `title: heading`). The server hands a prop the call site
+    // left out as `null` (JSON has no `undefined`), so a default applies to `null` too (`??`);
+    // props without a default are destructured as they are.
+    let mut run: Vec<String> = Vec::new();
+    let flush = |out: &mut String, run: &mut Vec<String>| {
+        if !run.is_empty() {
+            out.push_str(&format!("  const {{ {} }} = props\n", run.join(", ")));
+            run.clear();
         }
-        let default = f
-            .prop_defaults
-            .get(p)
-            .map(|d| format!(" = {}", server_js(d, &f)))
-            .unwrap_or_default();
-        match f.prop_locals.get(p) {
-            Some(local) if local != p => fields.push(format!("{p}: {local}{default}")),
-            _ => fields.push(format!("{p}{default}")),
-        }
-    }
+    };
     if props.contains("*")
         && let Some(local) = f.prop_locals.get("*")
         && local != "props"
     {
         out.push_str(&format!("  const {local} = props\n"));
     }
-    if !fields.is_empty() {
-        out.push_str(&format!("  const {{ {} }} = props\n", fields.join(", ")));
+    for p in &props {
+        if p == "*" {
+            continue;
+        }
+        let local = f.prop_locals.get(p).cloned().unwrap_or_else(|| p.clone());
+        match f.prop_defaults.get(p) {
+            Some(d) => {
+                flush(&mut out, &mut run);
+                out.push_str(&format!(
+                    "  const {local} = props.{p} ?? ({})\n",
+                    server_js(d, &f)
+                ));
+            }
+            None if local != *p => run.push(format!("{p}: {local}")),
+            None => run.push(p.clone()),
+        }
     }
+    flush(&mut out, &mut run);
     let mut decls: Vec<(u32, String)> = Vec::new();
     for (i, s) in ir.state.iter().enumerate() {
         if let Some(r) = &inits[i] {

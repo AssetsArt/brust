@@ -211,6 +211,9 @@ pub struct ComponentIR {
     /// the identifier `REST_PROPS` of kind `Prop`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub props_rest: Option<String>,
+    /// The polymorphic tag `const Comp = flag ? Slot.Root : "host"` of this component (R34.28).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poly: Option<PolyTag>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -312,6 +315,7 @@ impl ComponentIR {
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,
+            poly: None,
             state: vec![],
             derived: vec![],
             effects: vec![],
