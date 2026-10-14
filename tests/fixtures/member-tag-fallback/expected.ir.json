@@ -23,13 +23,13 @@
   "id_bindings": [],
   "template": {
     "Element": {
-      "loc": 223,
+      "loc": 286,
       "tag": "div",
       "attrs": [],
       "children": [
         {
           "Component": {
-            "loc": 235,
+            "loc": 298,
             "name": "<member>",
             "source": null,
             "imported": null,
@@ -41,7 +41,7 @@
         },
         {
           "Component": {
-            "loc": 255,
+            "loc": 318,
             "name": "<member>",
             "source": null,
             "imported": null,
@@ -53,7 +53,7 @@
         },
         {
           "Component": {
-            "loc": 284,
+            "loc": 347,
             "name": "<member>",
             "source": null,
             "imported": null,
@@ -62,7 +62,7 @@
                 "value",
                 {
                   "Server": {
-                    "loc": 305,
+                    "loc": 368,
                     "kind": {
                       "Lit": {
                         "Num": 1.0
@@ -75,7 +75,7 @@
             "children": [
               {
                 "Element": {
-                  "loc": 317,
+                  "loc": 380,
                   "tag": "i",
                   "attrs": [],
                   "children": [],
@@ -90,7 +90,7 @@
         },
         {
           "Component": {
-            "loc": 351,
+            "loc": 414,
             "name": "<member>",
             "source": null,
             "imported": null,
@@ -102,7 +102,7 @@
         },
         {
           "Component": {
-            "loc": 371,
+            "loc": 434,
             "name": "Reassigned",
             "source": null,
             "imported": null,
@@ -163,7 +163,7 @@
       "class": "Fallback",
       "rule": "member-tag",
       "message": "a member of a module imported from a relative path or from react is not resolved; import the component by name",
-      "loc": 235,
+      "loc": 298,
       "line": 11,
       "col": 7,
       "remediation": "import the component under its own name"
@@ -172,7 +172,7 @@
       "class": "Fallback",
       "rule": "member-tag",
       "message": "a member tag deeper than one level (`<A.B.C>`) is not resolved; import the component by name",
-      "loc": 255,
+      "loc": 318,
       "line": 12,
       "col": 7,
       "remediation": "import the component under its own name"
@@ -181,7 +181,7 @@
       "class": "Fallback",
       "rule": "member-tag",
       "message": "a member of a local object (`<Ctx.Provider>`, a context provider) is not supported natively; context components are the context lane",
-      "loc": 284,
+      "loc": 347,
       "line": 13,
       "col": 7,
       "remediation": "import the component under its own name"
@@ -190,7 +190,7 @@
       "class": "Fallback",
       "rule": "member-tag",
       "message": "a member of a local object (`<Ctx.Provider>`, a context provider) is not supported natively; context components are the context lane",
-      "loc": 351,
+      "loc": 414,
       "line": 16,
       "col": 7,
       "remediation": "import the component under its own name"
@@ -199,7 +199,7 @@
       "class": "Fallback",
       "rule": "local-component",
       "message": "<Reassigned> is not a function declaration in this module",
-      "loc": 371,
+      "loc": 434,
       "line": 17,
       "col": 7,
       "remediation": "declare it as `function Name(props) { … }`"

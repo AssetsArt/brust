@@ -233,6 +233,12 @@ pub struct ComponentIR {
     /// A literal `false` is fine; a call site that spreads its own props on passes the requirement up.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub absent_props: Vec<String>,
+    /// S2 context lowering: what this component's Provider element hands to its children (see `ProvideDecl`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provides: Vec<ProvideDecl>,
+    /// The context fields this component reads, each as a hidden prop (see `CtxUse`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctx_uses: Vec<CtxUse>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -339,6 +345,8 @@ impl ComponentIR {
             icon_spread: false,
             alias_imports: vec![],
             absent_props: Vec::new(),
+            provides: Vec::new(),
+            ctx_uses: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],

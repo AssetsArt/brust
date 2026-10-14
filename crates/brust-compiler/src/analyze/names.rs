@@ -3,6 +3,7 @@
 use crate::ir::{IdentKind, PolyTag};
 use bun_ast as js_ast;
 use js_ast::b::B;
+use js_ast::expr::Data as E;
 use std::collections::{HashMap, HashSet};
 
 /// A member of an imported binding (shadcn S1.4, R34.35): `<DialogPrimitive.Root>` with
@@ -104,6 +105,14 @@ pub struct NameTable<'a> {
     /// Renamed symbols (G3), and the same map as print names for the printer.
     aliases: HashMap<u32, Alias>,
     printed: Aliases,
+    /// The context declarations of the module (S2): Providers, hooks, React contexts.
+    pub contexts: crate::analyze::context::Contexts,
+    /// `const context = useXContext(…)` locals (symbol key → context name): `context.field` reads a hidden prop.
+    ctx_locals: HashMap<u32, String>,
+    /// The fields read per context by this component (first-use order).
+    ctx_fields: std::cell::RefCell<Vec<(String, String)>>,
+    /// Where a context local is used as a bare value (not `context.field`): brust cannot narrow it (fail closed).
+    pub ctx_escape: std::cell::Cell<Option<u32>>,
 }
 
 /// Every `import` binding of the module: local symbol (`Ref::inner_index`) → (module path,
@@ -292,7 +301,12 @@ impl<'a> NameTable<'a> {
             jsx_runtime: HashSet::new(),
             aliases: HashMap::new(),
             printed: HashMap::new(),
+            contexts: Default::default(),
+            ctx_locals: HashMap::new(),
+            ctx_fields: std::cell::RefCell::new(Vec::new()),
+            ctx_escape: std::cell::Cell::new(None),
         };
+        table.contexts = crate::analyze::context::scan(&table, ast);
         table.jsx_runtime = table.collect_jsx_runtime(ast);
         table.member_aliases = table.collect_member_aliases(ast);
         for part in ast.parts.iter() {
@@ -422,6 +436,101 @@ impl<'a> NameTable<'a> {
                 {
                     out.insert(k);
                 }
+            }
+        }
+        out
+    }
+
+    /// [`Self::key`] for the context scan.
+    pub fn key_of(&self, r: js_ast::Ref) -> u32 {
+        self.key(r)
+    }
+
+    /// The name as written in the source (no alias).
+    pub fn local_name(&self, r: js_ast::Ref) -> String {
+        self.symbols
+            .get(self.key(r) as usize)
+            .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())
+            .unwrap_or_default()
+    }
+
+    /// `target` is the identifier imported as `name` from `source` (`createContextScope(…)`).
+    pub fn is_import_call(&self, target: &js_ast::Expr, source: &str, name: &str) -> bool {
+        let Some(r) = ident_ref(target) else {
+            return false;
+        };
+        matches!(self.imports.get(&self.key(r)), Some((s, n)) if s == source && n == name)
+    }
+
+    /// `createContext(…)` or `React.createContext(…)`: React's own, by import (never by spelling alone).
+    pub fn is_react_call(&self, target: &js_ast::Expr, name: &str) -> bool {
+        match &target.data {
+            E::EIdentifier(_) | E::EImportIdentifier(_) => ident_ref(target).is_some_and(|r| {
+                matches!(self.imports.get(&self.key(r)), Some((s, n)) if s == "react" && n == name)
+            }),
+            E::EDot(d) if d.name.slice() == name.as_bytes() => ident_ref(&d.target).is_some_and(|r| {
+                matches!(
+                    self.imports.get(&self.key(r)),
+                    Some((s, n)) if s == "react" && (n == "*" || n == "default")
+                )
+            }),
+            _ => false,
+        }
+    }
+
+    /// The context a Provider tag (`<XProvider>` or `<C.Provider>`) belongs to, or the context object `C` itself.
+    pub fn context_of_provider(&self, r: js_ast::Ref) -> Option<&str> {
+        self.contexts
+            .providers
+            .get(&self.key(r))
+            .map(String::as_str)
+    }
+
+    /// The context a Radix hook (`useXContext`) reads.
+    pub fn context_of_hook(&self, r: js_ast::Ref) -> Option<&str> {
+        self.contexts.hooks.get(&self.key(r)).map(String::as_str)
+    }
+
+    /// The React context object `C` of `createContext`.
+    pub fn react_context(&self, r: js_ast::Ref) -> Option<&str> {
+        self.contexts.react.get(&self.key(r)).map(String::as_str)
+    }
+
+    /// A destructured context field (`const { value } = useXContext(…)`): the local reads the hidden prop.
+    pub fn bind_prop_local(&mut self, r: js_ast::Ref, prop: &str) {
+        let k = self.key(r);
+        self.props.insert(k, prop.to_string());
+    }
+
+    /// `const context = useXContext(…)`: reads of `context.field` are the hidden prop of that field.
+    pub fn bind_ctx_local(&mut self, r: js_ast::Ref, context: &str) {
+        let k = self.key(r);
+        self.ctx_locals.insert(k, context.to_string());
+    }
+
+    /// The context a local is bound to.
+    pub fn ctx_local(&self, r: js_ast::Ref) -> Option<&str> {
+        self.ctx_locals.get(&self.key(r)).map(String::as_str)
+    }
+
+    /// A `context.field` read: remembered so the component declares the hidden prop.
+    pub fn note_ctx_field(&self, context: &str, field: &str) {
+        let mut f = self.ctx_fields.borrow_mut();
+        if !f.iter().any(|(c, n)| c == context && n == field) {
+            f.push((context.to_string(), field.to_string()));
+        }
+    }
+
+    /// The fields read, grouped by context (first-use order).
+    pub fn ctx_uses(&self) -> Vec<crate::ir::CtxUse> {
+        let mut out: Vec<crate::ir::CtxUse> = Vec::new();
+        for (c, n) in self.ctx_fields.borrow().iter() {
+            match out.iter_mut().find(|u| &u.context == c) {
+                Some(u) => u.fields.push(n.clone()),
+                None => out.push(crate::ir::CtxUse {
+                    context: c.clone(),
+                    fields: vec![n.clone()],
+                }),
             }
         }
         out
@@ -641,5 +750,14 @@ pub fn binding_refs(b: &js_ast::Binding, out: &mut Vec<js_ast::Ref>) {
             }
         }
         B::BMissing(_) => {}
+    }
+}
+
+/// The symbol an identifier expression names (an import binding included).
+pub fn ident_ref(e: &js_ast::Expr) -> Option<js_ast::Ref> {
+    match &e.data {
+        E::EIdentifier(id) => Some(id.ref_),
+        E::EImportIdentifier(id) => Some(id.ref_),
+        _ => None,
     }
 }

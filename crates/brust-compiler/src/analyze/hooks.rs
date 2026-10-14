@@ -693,6 +693,91 @@ fn nested_hooks(func: &js_ast::G::Fn, names: &NameTable<'_>, out: &mut BodyDecls
     }
 }
 
+/// S2: `useXContext(NAME, scope)` (a Radix hook) or `useContext(C)` (React's) of a context declared in this module:
+/// the context's name.
+fn context_read(value: &js_ast::Expr, names: &NameTable<'_>) -> Option<String> {
+    let E::ECall(call) = &value.data else {
+        return None;
+    };
+    if let Some(r) = crate::analyze::names::ident_ref(&call.target)
+        && let Some(c) = names.context_of_hook(r)
+    {
+        return Some(c.to_string());
+    }
+    if names.is_import_call(&call.target, "react", "useContext")
+        || names.is_react_call(&call.target, "useContext")
+    {
+        if let Some(r) = call.args.first().and_then(crate::analyze::names::ident_ref) {
+            return names.react_context(r).map(str::to_string);
+        }
+    }
+    None
+}
+
+/// `const context = useXContext(…)` binds the local to the context (`context.field` reads a hidden prop);
+/// `const { a, b } = useXContext(…)` binds each plain key; any other shape falls back.
+fn read_context_use(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    decl: &js_ast::G::Decl,
+    value: &js_ast::Expr,
+    ctx: &str,
+    vloc: u32,
+) {
+    if let E::ECall(call) = &value.data {
+        out.classified_hooks.insert(call_addr(call));
+        // R34.101: the scope argument is the component's own pass-through (a prop local), or absent.
+        if call.args.len() > 2
+            || call.args.get(1).is_some_and(|a| {
+                !matches!(
+                    &a.data,
+                    E::EIdentifier(_) | E::EImportIdentifier(_) | E::EUndefined(_)
+                )
+            })
+        {
+            out.fallback(
+                "context-scope",
+                "a context hook is called with a scope other than the component's own scope prop"
+                    .into(),
+                vloc,
+                "pass the scope prop through unchanged, or keep this component in React",
+            );
+            return;
+        }
+    }
+    match decl.binding.data {
+        B::BIdentifier(id) => r.names.bind_ctx_local(id.r#ref, ctx),
+        B::BObject(obj) => {
+            for p in obj.properties() {
+                let plain = !p.flags.contains(js_ast::flags::Property::IsSpread)
+                    && !p.flags.contains(js_ast::flags::Property::IsComputed)
+                    && p.default_value.is_none();
+                let (true, E::EString(key), B::BIdentifier(id)) =
+                    (plain, &p.key.data, p.value.data)
+                else {
+                    out.fallback(
+                        "context-shape",
+                        "a context is destructured with a rest, a default, a computed or nested key".into(),
+                        vloc,
+                        "write const { a, b } = useXContext(…), or read context.a",
+                    );
+                    return;
+                };
+                let field = crate::analyze::expr::estring(key);
+                r.names.note_ctx_field(ctx, &field);
+                r.names
+                    .bind_prop_local(id.r#ref, &crate::ir::ctx_prop(ctx, &field));
+            }
+        }
+        _ => out.fallback(
+            "context-shape",
+            "a context hook result is destructured as an array".into(),
+            vloc,
+            "write const context = useXContext(…)",
+        ),
+    }
+}
+
 fn read_decl(
     r: &mut Reader<'_, '_>,
     out: &mut BodyDecls,
@@ -715,6 +800,9 @@ fn read_decl(
         B::BIdentifier(id) => Some(r.names.name(id.r#ref)),
         _ => None,
     };
+    if let Some(ctx) = context_read(value, r.names) {
+        return read_context_use(r, out, decl, value, &ctx, vloc);
+    }
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
         out.classified_hooks.insert(call_addr(call));
         let args: Vec<js_ast::Expr> = call.args.to_vec();

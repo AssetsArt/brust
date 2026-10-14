@@ -25,6 +25,8 @@ pub struct Reader<'r, 'a> {
     /// Set while reading the callback of a `.map(…)` call: its JSX body is a
     /// list item body, where `key` belongs.
     map_callback: bool,
+    /// The context Providers read in the template (S2): what this component hands to its consumers.
+    pub provides: Vec<crate::ir::ProvideDecl>,
 }
 
 impl<'r, 'a> Reader<'r, 'a> {
@@ -36,6 +38,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             pending_handlers: Vec::new(),
             loop_scope: Vec::new(),
             map_callback: false,
+            provides: Vec::new(),
         }
     }
 
@@ -79,8 +82,27 @@ impl<'r, 'a> Reader<'r, 'a> {
                 }
                 return self.opaque(e, "props rest object");
             }
+            // A context local read as a value (not `context.field`): brust cannot narrow it (fail closed).
+            E::EIdentifier(id) if self.names.ctx_local(id.ref_).is_some() => {
+                if self.names.ctx_escape.get().is_none() {
+                    self.names.ctx_escape.set(Some(loc));
+                }
+                return self.opaque(e, "context value");
+            }
             E::EIdentifier(id) => self.ident(id.ref_),
             E::EImportIdentifier(id) => self.ident(id.ref_),
+            // `context.field` of a context local reads the hidden prop of that field (S2).
+            E::EDot(d)
+                if let E::EIdentifier(t) = &d.target.data
+                    && let Some(ctx) = self.names.ctx_local(t.ref_).map(str::to_string) =>
+            {
+                let field = String::from_utf8_lossy(d.name.slice()).into_owned();
+                self.names.note_ctx_field(&ctx, &field);
+                RawKind::Ident {
+                    name: crate::ir::ctx_prop(&ctx, &field),
+                    kind: IdentKind::Prop,
+                }
+            }
             E::EDot(d)
                 if let Some(kind) =
                     self.rest_member(&d.target, &String::from_utf8_lossy(d.name.slice())) =>

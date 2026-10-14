@@ -502,6 +502,30 @@ fn read_function_as(
     ir.props = body.props;
     ir.props_rest = body.props_rest;
     ir.poly = body.poly;
+    // S2: the context fields this component reads are hidden props the call site fills from the Provider frame.
+    ir.ctx_uses = reader.names.ctx_uses();
+    ir.provides = std::mem::take(&mut reader.provides);
+    for u in &ir.ctx_uses {
+        for f in &u.fields {
+            let name = crate::ir::ctx_prop(&u.context, f);
+            if !ir.props.iter().any(|p| p.name == name) {
+                ir.props.push(crate::ir::PropDecl {
+                    name: name.clone(),
+                    local: name,
+                    ts_type: None,
+                    default: None,
+                });
+            }
+        }
+    }
+    if let Some(loc) = reader.names.ctx_escape.get() {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "context-escape",
+            "a context value is used as a whole (not `context.field`); brust reads the fields one by one",
+            loc,
+            "read context.field, or keep this component in React",
+        ));
+    }
     if let Some(loc) = reader.names.rest_escape.get() {
         // R34.14 fail closed: brust reads `rest.k` and spreads `{...rest}`; any other read of the
         // rest object (a value, or code printed as written) would see the named keys too.

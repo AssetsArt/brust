@@ -13,6 +13,28 @@ pub struct PropDecl {
     pub default: Option<RawExpr>,
 }
 
+/// The values a component hands to the consumers under it (S2 context lowering, R34.100-R34.103): its template root was a
+/// Provider element, which is transparent. `context` names the context (the module's provider or context binding);
+/// each field is an expression in this component's own scope (props, derived locals, module names).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ProvideDecl {
+    pub context: String,
+    pub fields: Vec<(String, RawExpr)>,
+}
+
+/// The context fields a component reads (`const context = useXContext(...)`, then `context.field`). Each field is a
+/// hidden prop `__ctx_<context>_<field>` (`ctx_prop`) the call site fills from the nearest Provider frame.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CtxUse {
+    pub context: String,
+    pub fields: Vec<String>,
+}
+
+/// The hidden prop a context field travels as (a plain identifier: it is printed like any prop).
+pub fn ctx_prop(context: &str, field: &str) -> String {
+    format!("__ctx_{context}_{field}")
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StateDecl {
     /// `_stN` (N = 1-based position among the state decls) when the value slot
