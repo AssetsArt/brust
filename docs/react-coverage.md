@@ -11,8 +11,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 70 | 33 | 8 | 29 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 49 | 16 | 10 | 19 | 3 | 1 | 0 | 0 |
-| **Total** | 227 | 94 | 43 | 86 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 52 | 17 | 10 | 21 | 3 | 1 | 0 | 0 |
+| **Total** | 230 | 95 | 43 | 88 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -243,6 +243,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-island-prop-stateful-list | a React child in a list that changes with state | react | react | ssr | ok | fallback:island-prop | shadcn S1 R34.56: the second island-prop site (an island in a list the client changes) is a fallback too |
 | e-island-prop-react-host | a function prop to a child inside a host that is React for another reason | react | react | ssr | ok | fallback:hook-unsupported, fallback:island-prop | shadcn S1 R34.56/R34.57: the host is already React (unsupported hook): the child is not an island, no Ssr job, the build succeeds |
 | e-island-prop-json-control | literal and props-path values to a React child (control) | static | static | ssr | ok | — | shadcn S1 R34.56 control: JSON props still make an island under a static host (unchanged) |
+| e-jsx-runtime-call | a hand-written `jsx(…)` call from react/jsx-runtime (what compiled-JS packages contain) | react | react | ssr | ok | fallback:jsx-runtime-call | S3 R34.67: fails closed; read as an expression it would print an element object |
+| e-jsx-runtime-namespace | `R.jsxDEV(…)` through a namespace import of the dev runtime | react | react | ssr | ok | fallback:jsx-runtime-call |  |
+| e-jsx-runtime-local-name | a local function named `jsx` is not the runtime | static | static | precompute | ok | — |  |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |
