@@ -1094,7 +1094,12 @@ fn read_list_arms(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Vec<Node> {
             let cond = Expr::Raw(r.expr(&i.test));
             let then = read_list_arms(r, &i.yes);
             let else_ = read_list_arms(r, &i.no);
-            vec![Node::If { cond, then, else_ }]
+            vec![Node::If {
+                cond,
+                then,
+                else_,
+                and: false,
+            }]
         }
         E::EBinary(b) if b.op == OpCode::BinLogicalAnd => {
             let cond = Expr::Raw(r.expr(&b.left));
@@ -1103,6 +1108,7 @@ fn read_list_arms(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Vec<Node> {
                 cond,
                 then,
                 else_: Vec::new(),
+                and: true,
             }]
         }
         E::ECall(c) if c.was_jsx_element => vec![read_element(r, e, true)],
@@ -1212,6 +1218,7 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
                 cond,
                 then,
                 else_: Vec::new(),
+                and: true,
             });
         }
         // `a ?? <X/>` and `a || <X/>` over a plain read (shadcn S1, R34.78): a condition in disguise.
@@ -1253,6 +1260,7 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
                 cond,
                 then: vec![Node::Slot(Expr::Raw(left))],
                 else_,
+                and: false,
             });
         }
         E::EIf(i) if is_jsx(&i.yes) || is_jsx(&i.no) => {
@@ -1261,7 +1269,12 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
             read_child(r, &i.yes, &mut then);
             let mut else_ = Vec::new();
             read_child(r, &i.no, &mut else_);
-            out.push(Node::If { cond, then, else_ });
+            out.push(Node::If {
+                cond,
+                then,
+                else_,
+                and: false,
+            });
         }
         E::ECall(c) => match read_list(r, e, c) {
             Some(node) => out.push(node),

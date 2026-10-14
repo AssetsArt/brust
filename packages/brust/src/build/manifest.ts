@@ -88,6 +88,16 @@ export interface ManifestJson {
   actions_remote?: { prefix: string }
   /** `[cache]` (cache adapters); absent without one (the manifest is then byte-identical). */
   cache?: CacheRecord
+  /** F165 (R40.1): `brust start` spawns its worker pool (`needsWorkers`). Read by `run.ts` only; an
+   * absent value (an older or actions-only manifest) means the pool is needed. */
+  needs_workers?: boolean
+}
+
+/** F165 (R40.1): whether any request can call a worker. Workers answer four kinds of call
+ * (worker.ts): `loader`, `jobs` (precompute and SSR), `fetch` (the local actions app) and `cache`
+ * (the adapter). Every component's jobs count, reached by a route or not (F166 prunes those later). */
+export function needsWorkers(m: Pick<ManifestJson, 'routes' | 'components' | 'actions' | 'cache'>): boolean {
+  return Object.values(m.components).some((c) => c.jobs.length > 0) || m.routes.some((r) => r.loaders.length > 0) || m.actions !== null || m.cache !== undefined
 }
 
 /** `manifest.cache` / `CONFIG.cache`: the adapter the runtime loads (`cache-adapter/load.ts`). */

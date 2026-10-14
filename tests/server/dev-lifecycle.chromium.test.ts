@@ -25,7 +25,8 @@ const page = (text: string) => `export default function Home() {
 }
 `
 /** `delayMs`: the FIRST worker that boots (a marker file outside the app says whether one already did) waits that long,
- * which keeps that child "booting" for a while; later boots are immediate. Build does not set BRUST_WORKER_ID. */
+ * which keeps that child "booting" for a while; later boots are immediate. Build does not set BRUST_WORKER_ID. The
+ * loader keeps the worker pool (F165: an app no route of which calls a worker starts none, so nothing would wait). */
 const routes = (delayMs: number, marker: string) => `import { existsSync, writeFileSync } from 'node:fs'
 import { defineRoutes } from '@brust/core/routes'
 import Home from './pages/Home'
@@ -33,7 +34,7 @@ if (process.env.BRUST_WORKER_ID !== undefined && !existsSync(${JSON.stringify(ma
   writeFileSync(${JSON.stringify(marker)}, '1')
   await new Promise((r) => setTimeout(r, ${delayMs}))
 }
-export const routes = defineRoutes([{ path: '/', Component: Home }])
+export const routes = defineRoutes([{ path: '/', Component: Home, loader: () => ({}) }])
 `
 
 function freePort(): number {

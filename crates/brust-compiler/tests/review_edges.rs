@@ -773,9 +773,10 @@ fn react_grandchild_under_an_inlined_row_renders_from_the_row_slot() {
     );
 }
 
-/// L4: an island repeated by a list INSIDE an inlined child would need a 2-D slot: still `nested-instance`.
+/// L4: an island repeated by a list INSIDE an inlined child would need a 2-D slot: an analysis fallback
+/// `nested-instance` (F164 R34.97), not the lowering error it was.
 #[test]
-fn island_per_item_inside_an_inlined_child_is_a_nested_instance_error() {
+fn island_per_item_inside_an_inlined_child_falls_back_at_analysis() {
     let dir = root(
         "island-per-item-inlined",
         &[
@@ -793,8 +794,8 @@ fn island_per_item_inside_an_inlined_child_is_a_nested_instance_error() {
             ),
         ],
     );
-    let err = compile_err_or_jinja(dir).expect_err("a per-item island in an inlined child");
-    assert_eq!(err.rule, "nested-instance", "{err:?}");
+    compile_err_or_jinja(dir)
+        .expect("a per-item island in an inlined child is a fallback, not an error");
 }
 
 #[test]

@@ -240,10 +240,13 @@ jobs:
         if: always()
         with: { name: shadcn-sizes, path: tests/fixtures/shadcn/.rows/shadcn-sizes.json, retention-days: 14, if-no-files-found: ignore }
       # Unit files together; each server-starting file on its own (port/process hygiene).
-      - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/store-server-context.test.ts test/worker-store.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-client.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/run-options.test.ts test/actions-bridge.test.ts test/cache-adapter-memory.test.ts test/cache-adapter-bridge.test.ts test/cache-adapter-runtime.test.ts test/build-config-cache.test.ts test/build-cache.test.ts test/ssg.test.ts test/dev-unit.test.ts test/config-l10.test.ts test/pkg-src.test.ts test/runtime-features.test.ts
+      - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/store-server-context.test.ts test/worker-store.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-client.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/run-options.test.ts test/actions-bridge.test.ts test/cache-adapter-memory.test.ts test/cache-adapter-bridge.test.ts test/cache-adapter-runtime.test.ts test/build-config-cache.test.ts test/build-cache.test.ts test/ssg.test.ts test/dev-unit.test.ts test/config-l10.test.ts test/pkg-src.test.ts test/runtime-features.test.ts test/idle-workers.test.ts
       - run: cd packages/brust && bun test test/napi-server.test.ts
       - run: cd packages/brust && bun test test/build-manifest.test.ts
       - run: cd packages/brust && bun test --timeout 180000 test/build-cn-fold.test.ts
+      # F148a (R34.124): the hostile-input set for the island revive, with the build tests of the lowered children it guards
+      # (build-island-children, build-island-slots and build-props-pattern were not run here before).
+      - run: cd packages/brust && bun test --timeout 180000 test/prop-path-children-revive.test.ts test/build-prop-path-children.test.ts test/build-island-children.test.ts test/build-island-slots.test.ts test/build-props-pattern.test.ts
       - run: cd packages/brust && bun test test/cli.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-child-literals.test.ts
@@ -286,13 +289,17 @@ jobs:
       - run: bun test --timeout 120000 tests/server/named-export-islands.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-children.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/island-slots.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/prop-path-children.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/icon-shapes.test.ts
+      - run: bun test --timeout 120000 tests/server/nested-fed.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
       - run: bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts
       # F142 PR 1: shadcn's table page built AND started, its HTML equal to React's.
       - run: bun test --timeout 120000 tests/server/per-instance-jobs.test.ts
       - run: bun test --timeout 120000 tests/server/body-destructure.test.ts
       - run: bun test --timeout 120000 tests/server/forwardref.test.ts
+      # F165: an all-static app starts with no worker (tests/fixtures/shadcn/started/idle-workers).
+      - run: bun test --timeout 180000 tests/server/idle-workers.test.ts
       # F153c: shadcn's Label compiled from @radix-ui/react-label's source map (no island), HTML and behaviour as React's.
       - run: bun test --timeout 180000 tests/server/package-source.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/cn-fold.test.ts

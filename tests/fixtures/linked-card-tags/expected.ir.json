@@ -3,6 +3,7 @@
   "source": "tests/fixtures/linked-card-tags/input.tsx",
   "tier": "Native",
   "props": [],
+  "repeats_children": true,
   "state": [
     {
       "name": "items",

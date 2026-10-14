@@ -11,6 +11,7 @@
     }
   ],
   "holds_island": true,
+  "repeats_children": true,
   "state": [],
   "derived": [],
   "effects": [],

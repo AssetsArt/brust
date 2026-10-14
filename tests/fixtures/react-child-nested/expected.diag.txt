@@ -1,0 +1,1 @@
+fallback nested-instance tests/fixtures/react-child-nested/input.tsx:4:81 the React island <Reviews> has per-row props and sits in nested lists or in a component inlined into its callers, which the server cannot feed per row — map over the list in the route component, or keep this component interactive with React

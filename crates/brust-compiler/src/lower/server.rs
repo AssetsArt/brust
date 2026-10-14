@@ -495,11 +495,14 @@ fn collect(n: &Node, s: &Node, cx: &mut Ctx, out: &mut Vec<Slot>) {
         }
         (Node::Slot(e), Node::Slot(se)) => expr(e, se, cx, out),
         (
-            Node::If { cond, then, else_ },
+            Node::If {
+                cond, then, else_, ..
+            },
             Node::If {
                 cond: sc,
                 then: st,
                 else_: se,
+                ..
             },
         ) => {
             expr(cond, sc, cx, out);

@@ -10,6 +10,7 @@
       "default": null
     }
   ],
+  "repeats_children": true,
   "state": [
     {
       "name": "showTotal",
@@ -279,7 +280,8 @@
                             }
                           }
                         ],
-                        "else_": []
+                        "else_": [],
+                        "and": true
                       }
                     }
                   ],

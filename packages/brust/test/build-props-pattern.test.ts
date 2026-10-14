@@ -15,7 +15,7 @@ const CASES: [string, Record<string, unknown>[], 'react' | 'static'][] = [
   ['quoted', [{ 'data-x': '1', id: 'a' }, {}], 'react'],
   ['iife', [{ a: 'z' }, {}], 'react'],
   ['call', [{}, { a: 'q' }], 'react'],
-  // F153b part 4 folds a module-constant default (`a = D`) to its literal: the template prints it, so it stays static.
+  // F153b part 4(a): a never-written literal module const is folded into the default, so this one compiles.
   ['const', [{}, { a: 'q' }], 'static'],
   ['earlier', [{}, { a: 'q' }], 'react'],
   ['jsx', [{}], 'react'],

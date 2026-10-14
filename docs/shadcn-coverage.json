@@ -9,15 +9,15 @@
   },
   "summary": {
     "pages": 64,
-    "measured": 64,
-    "analysisOnly": 0,
+    "measured": 61,
+    "analysisOnly": 3,
     "tier": {
-      "static": 61,
+      "static": 58,
       "native": 1,
       "react": 2
     },
-    "islands": 46,
-    "pagesWithNoJs": 21,
+    "islands": 42,
+    "pagesWithNoJs": 22,
     "pagesWithNoWorker": 19,
     "jsGzipKb": {
       "min": 0,
@@ -28,40 +28,58 @@
       "packages": 76,
       "components": 561,
       "exported": 334,
-      "static": 1,
+      "static": 0,
       "native": 0,
-      "react": 283,
+      "react": 284,
       "unresolved": 0,
       "error": 50
     }
   },
   "blockers": [
     {
-      "blocker": "fallback:spread-props",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 40,
-      "analysisOnlyRows": 0,
-      "appComponents": 140,
-      "libraryComponents": 180
-    },
-    {
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 38,
-      "analysisOnlyRows": 0,
+      "measuredRows": 35,
+      "analysisOnlyRows": 3,
       "appComponents": 137,
       "libraryComponents": 151
+    },
+    {
+      "blocker": "fallback:spread-props",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 31,
+      "analysisOnlyRows": 3,
+      "appComponents": 126,
+      "libraryComponents": 180
+    },
+    {
+      "blocker": "fallback:island-prop",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 31,
+      "analysisOnlyRows": 2,
+      "appComponents": 90,
+      "libraryComponents": 176
     },
     {
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 25,
+      "measuredRows": 17,
+      "analysisOnlyRows": 2,
+      "appComponents": 20,
+      "libraryComponents": 55
+    },
+    {
+      "blocker": "fallback:instance-prop-path",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 10,
       "analysisOnlyRows": 0,
-      "appComponents": 33,
-      "libraryComponents": 60
+      "appComponents": 11,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:jsx-const-child",
@@ -91,15 +109,6 @@
       "libraryComponents": 36
     },
     {
-      "blocker": "fallback:island-prop",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 2,
-      "analysisOnlyRows": 0,
-      "appComponents": 2,
-      "libraryComponents": 28
-    },
-    {
       "blocker": "fallback:child-component",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -125,6 +134,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 2,
       "libraryComponents": 5
+    },
+    {
+      "blocker": "fallback:spread-handler",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 3,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:body-shape",
@@ -199,6 +217,15 @@
       "libraryComponents": 0
     },
     {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
       "blocker": "fallback:slot-child-component",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -208,7 +235,7 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:slot-dynamic",
+      "blocker": "fallback:use-id-in-render",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -217,11 +244,38 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:use-id-in-render",
+      "blocker": "build: child-chunk-link collapsible_ed7681b4: collapsibleTrigger_7af94655 has a job or useId but no instances[] record",
+      "kind": "build",
+      "classification": "survey truth (build rule)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 1,
+      "appComponents": 0,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "build: child-chunk-link dialog_70c85330: close_8cc15054 has a job or useId but no instances[] record",
+      "kind": "build",
+      "classification": "survey truth (build rule)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 1,
+      "appComponents": 0,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "build: child-chunk-link sheet_06e64d44: close_8cc15054 has a job or useId but no instances[] record",
+      "kind": "build",
+      "classification": "survey truth (build rule)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 1,
+      "appComponents": 0,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:slot-dynamic",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
+      "measuredRows": 0,
+      "analysisOnlyRows": 1,
       "appComponents": 1,
       "libraryComponents": 0
     },
@@ -482,6 +536,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -508,6 +563,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "slot-child-component",
         "spread-props"
       ]
@@ -516,14 +572,12 @@
       "id": "aspect-ratio",
       "basis": "measured",
       "tier": "static",
-      "islands": 1,
+      "islands": 0,
       "components": 4,
-      "reactComponents": 1,
-      "jsGzipKb": 74,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
       "workerCalls": 1,
-      "codes": [
-        "spread-props"
-      ]
+      "codes": []
     },
     {
       "id": "attachment",
@@ -547,6 +601,8 @@
       "workerCalls": 2,
       "codes": [
         "external-component",
+        "instance-prop-path",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -639,6 +695,8 @@
       "jsGzipKb": 86,
       "workerCalls": 1,
       "codes": [
+        "instance-prop-path",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -676,7 +734,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 5,
-      "jsGzipKb": 96,
+      "jsGzipKb": 97,
       "workerCalls": 1,
       "codes": [
         "context-state",
@@ -684,9 +742,10 @@
         "event-capture",
         "external-component",
         "hook-unsupported",
+        "instance-prop-path",
         "jsx-const-child",
         "ref-shape",
-        "spread-props"
+        "spread-handler"
       ]
     },
     {
@@ -702,7 +761,7 @@
         "control-flow",
         "external-component",
         "hook-shape",
-        "island-children",
+        "island-prop",
         "jsx-const-child",
         "local-component",
         "use-id-in-render"
@@ -719,35 +778,38 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
     {
       "id": "collapsible",
-      "basis": "measured",
+      "basis": "analysis-only",
       "tier": "static",
-      "islands": 1,
-      "components": 9,
-      "reactComponents": 5,
-      "jsGzipKb": 89,
-      "workerCalls": 1,
       "codes": [
         "external-component",
         "spread-props"
-      ]
+      ],
+      "refusal": {
+        "rule": "child-chunk-link",
+        "at": "collapsible_ed7681b4:",
+        "construct": "collapsibleTrigger_7af94655 has a job or useId but no instances[] record"
+      }
     },
     {
       "id": "combobox",
       "basis": "measured",
       "tier": "react",
       "islands": 1,
-      "components": 20,
-      "reactComponents": 17,
-      "jsGzipKb": 158,
+      "components": 22,
+      "reactComponents": 18,
+      "jsGzipKb": 159,
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "instance-prop-path",
         "island-children",
+        "island-prop",
         "jsx-expression",
         "spread-props"
       ]
@@ -763,6 +825,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -778,24 +841,26 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
     {
       "id": "dialog",
-      "basis": "measured",
+      "basis": "analysis-only",
       "tier": "static",
-      "islands": 1,
-      "components": 25,
-      "reactComponents": 16,
-      "jsGzipKb": 103,
-      "workerCalls": 1,
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "slot-dynamic",
         "spread-props"
-      ]
+      ],
+      "refusal": {
+        "rule": "child-chunk-link",
+        "at": "dialog_70c85330:",
+        "construct": "close_8cc15054 has a job or useId but no instances[] record"
+      }
     },
     {
       "id": "direction",
@@ -808,7 +873,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "island-children"
+        "island-prop"
       ]
     },
     {
@@ -823,6 +888,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -833,11 +899,12 @@
       "islands": 1,
       "components": 18,
       "reactComponents": 15,
-      "jsGzipKb": 117,
+      "jsGzipKb": 118,
       "workerCalls": 1,
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -862,7 +929,7 @@
       "jsGzipKb": 86,
       "workerCalls": 1,
       "codes": [
-        "spread-props"
+        "instance-prop-path"
       ]
     },
     {
@@ -894,6 +961,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -918,7 +986,7 @@
       "jsGzipKb": 87,
       "workerCalls": 2,
       "codes": [
-        "spread-props"
+        "instance-prop-path"
       ]
     },
     {
@@ -934,6 +1002,7 @@
         "body-shape",
         "external-component",
         "hook-unsupported",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -988,11 +1057,12 @@
       "islands": 1,
       "components": 16,
       "reactComponents": 14,
-      "jsGzipKb": 116,
+      "jsGzipKb": 117,
       "workerCalls": 1,
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1019,6 +1089,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "jsx-expression",
         "spread-props"
       ]
@@ -1047,7 +1118,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1062,7 +1133,7 @@
       "workerCalls": 3,
       "codes": [
         "external-component",
-        "spread-props"
+        "instance-prop-path"
       ]
     },
     {
@@ -1077,6 +1148,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1092,6 +1164,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1106,6 +1179,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1116,11 +1190,11 @@
       "islands": 1,
       "components": 7,
       "reactComponents": 6,
-      "jsGzipKb": 103,
+      "jsGzipKb": 104,
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1135,7 +1209,8 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "island-children",
+        "instance-prop-path",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1151,6 +1226,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1164,23 +1240,24 @@
       "jsGzipKb": 84,
       "workerCalls": 2,
       "codes": [
-        "spread-props"
+        "instance-prop-path"
       ]
     },
     {
       "id": "sheet",
-      "basis": "measured",
+      "basis": "analysis-only",
       "tier": "static",
-      "islands": 1,
-      "components": 21,
-      "reactComponents": 15,
-      "jsGzipKb": 101,
-      "workerCalls": 1,
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
-      ]
+      ],
+      "refusal": {
+        "rule": "child-chunk-link",
+        "at": "sheet_06e64d44:",
+        "construct": "close_8cc15054 has a job or useId but no instances[] record"
+      }
     },
     {
       "id": "sidebar",
@@ -1189,16 +1266,18 @@
       "islands": 1,
       "components": 14,
       "reactComponents": 6,
-      "jsGzipKb": 116,
+      "jsGzipKb": 117,
       "workerCalls": 1,
       "codes": [
         "context-value",
         "control-flow",
         "external-component",
         "hook-shape",
+        "instance-prop-path",
         "island-children",
         "jsx-const-child",
         "linked-prop-precompute",
+        "spread-handler",
         "spread-props"
       ]
     },
@@ -1225,6 +1304,8 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -1267,6 +1348,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1292,6 +1374,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1317,6 +1400,7 @@
       "workerCalls": 2,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1331,7 +1415,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "island-children",
+        "island-prop",
         "jsx-const-child",
         "spread-props"
       ]
@@ -1343,11 +1427,12 @@
       "islands": 1,
       "components": 12,
       "reactComponents": 10,
-      "jsGzipKb": 105,
+      "jsGzipKb": 106,
       "workerCalls": 1,
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     }

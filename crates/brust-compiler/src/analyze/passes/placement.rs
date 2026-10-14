@@ -383,7 +383,9 @@ pub(super) fn collect_slots(ir: &ComponentIR, f: &mut impl FnMut(&str, &[String]
                 children.iter().for_each(|c| node(c, f));
             }
             Node::Slot(e) => expr(e, f),
-            Node::If { cond, then, else_ } => {
+            Node::If {
+                cond, then, else_, ..
+            } => {
                 expr(cond, f);
                 then.iter().chain(else_).for_each(|c| node(c, f));
             }
@@ -432,7 +434,9 @@ pub(super) fn template_server_raws(ir: &ComponentIR, f: &mut dyn FnMut(&RawExpr)
                 children.iter().for_each(|c| node(c, f));
             }
             Node::Slot(e) => expr(e, f),
-            Node::If { cond, then, else_ } => {
+            Node::If {
+                cond, then, else_, ..
+            } => {
                 expr(cond, f);
                 then.iter().chain(else_).for_each(|c| node(c, f));
             }
@@ -1158,7 +1162,9 @@ impl Placer<'_> {
                 }
                 self.expr(e)
             }
-            Node::If { cond, then, else_ } => {
+            Node::If {
+                cond, then, else_, ..
+            } => {
                 let guard = match &*cond {
                     Expr::Raw(r) => {
                         let d = self.st.cx.deps(r, &self.loop_scope);
@@ -1267,7 +1273,9 @@ fn collect_raw(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
             children.iter().for_each(|c| collect_raw(c, f));
         }
         Node::Slot(e) => expr(e, f),
-        Node::If { cond, then, else_ } => {
+        Node::If {
+            cond, then, else_, ..
+        } => {
             expr(cond, f);
             then.iter().chain(else_).for_each(|c| collect_raw(c, f));
         }
