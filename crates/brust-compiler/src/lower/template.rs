@@ -1815,6 +1815,17 @@ impl<'a, 'c> Printer<'a, 'c> {
                     Some(i) => (i.slots.clone(), i.slot_loops.clone(), i.folded.clone()),
                     None => (String::new(), Vec::new(), None),
                 };
+                // This component may itself be fused into its own parent: its output names are then
+                // renamed once more there, so the child's names go through this frame's rename too.
+                let outer = self.inline.as_ref().map(|i| &i.rename);
+                let rename = f
+                    .outputs
+                    .iter()
+                    .map(|(slot, out)| {
+                        let out = outer.and_then(|r| r.get(out)).unwrap_or(out);
+                        (slot.clone(), out.clone())
+                    })
+                    .collect();
                 Inline {
                     segs,
                     bind: bind.clone(),
@@ -1823,7 +1834,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     suffix: format!("_f{}{}", short(&id), f.ordinal),
                     as_child,
                     folded,
-                    rename: f.outputs.clone(),
+                    rename,
                 }
             }
             None => Inline {

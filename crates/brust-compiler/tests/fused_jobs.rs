@@ -373,3 +373,41 @@ fn a_parent_runs_at_build_only_if_every_fused_child_may() {
     let why = refused.unwrap_err();
     assert!(why.contains(&t.link.id) && why.contains("`Date`"), "{why}");
 }
+
+/// Next reads `active` through its own default (`active = true`), as shadcn's ButtonGroupSeparator does.
+const NEXT_DEFAULT: &str = r#"import { Link } from './link'
+const cx = (...a: any[]) => a.filter((x) => x).join(' ')
+export default function Next({ className, active = true }: any) {
+  return <nav><Link className={cx('next', className)} size="default" isActive={active} /></nav>
+}
+"#;
+
+#[test]
+fn a_prop_the_parent_defaults_reaches_the_child_with_that_default() {
+    let t = tree_of(NEXT_DEFAULT);
+    let ts = lowered(&t.next, &t.by_id).server_ts.unwrap();
+    // Absent: the parent's default, as the local the JSX read.
+    let out = run_job(&t.dir, &ts, &t.link.id, &t.link_ts, "{ className: 'x' }");
+    assert_eq!(
+        link_class(&t, &out),
+        "link on default next x",
+        "{out}\n{ts}"
+    );
+    // An explicit null is not undefined: no default, as in destructuring.
+    let out = run_job(
+        &t.dir,
+        &ts,
+        &t.link.id,
+        &t.link_ts,
+        "{ className: 'x', active: null }",
+    );
+    assert_eq!(link_class(&t, &out), "link null default next x", "{out}");
+    let out = run_job(
+        &t.dir,
+        &ts,
+        &t.link.id,
+        &t.link_ts,
+        "{ className: 'x', active: false }",
+    );
+    assert_eq!(link_class(&t, &out), "link off default next x", "{out}");
+}

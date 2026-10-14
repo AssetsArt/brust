@@ -346,12 +346,15 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
     // R34.96: each fused child's job runs after this component's own slots, with the inputs the
     // analysis bound; its slots come back under this job's output names.
     out.push_str(&format!("  const __own = {{ {own} }}\n"));
+    // A prop the call site reads through this component's own destructuring default (`orientation =
+    // "vertical"`) gets that default when absent, as the local the JSX read does.
+    let p_default = |root: &str| f.prop_defaults.get(root).map(|d| server_js(d, &f));
     let mut fused_out: Vec<String> = Vec::new();
     for (n, f) in ir.fused.iter().enumerate() {
         let m = fused_mods.iter().position(|id| *id == f.child_id)?;
         out.push_str(&format!(
             "  const __f{n} = __fj{m}({{ {} }})\n",
-            fused_args(&f.inputs)
+            fused_args(&f.inputs, &|root| p_default(root))
         ));
         for (slot, name) in &f.outputs {
             fused_out.push(format!("{}: __f{n}[{}]", js_string(name), js_string(slot)));
@@ -367,7 +370,10 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
 /// The props object a fused child's job is called with (R34.96): an `Undefined` input is left out, so
 /// the child's destructuring default applies (A3); a literal keeps `null`; a prop reads this
 /// component's props as the call site's JSX did; a slot is this component's own result.
-fn fused_args(inputs: &std::collections::BTreeMap<String, crate::ir::FusedInput>) -> String {
+fn fused_args(
+    inputs: &std::collections::BTreeMap<String, crate::ir::FusedInput>,
+    default: &dyn Fn(&str) -> Option<String>,
+) -> String {
     use crate::ir::FusedInput;
     inputs
         .iter()
@@ -378,7 +384,7 @@ fn fused_args(inputs: &std::collections::BTreeMap<String, crate::ir::FusedInput>
                     serde_json::to_string(value).unwrap_or_else(|_| "undefined".into())
                 }
                 FusedInput::Slot { name } => format!("__own[{}]", js_string(name)),
-                FusedInput::Prop { path } => props_path_js(path),
+                FusedInput::Prop { path } => props_path_js(path, default),
             };
             Some(format!("{}: {js}", js_string(k)))
         })
@@ -388,24 +394,40 @@ fn fused_args(inputs: &std::collections::BTreeMap<String, crate::ir::FusedInput>
 
 /// `config.size` / `items[0].id` as a read of the job's `props` (`props["config"]["size"]`): every
 /// segment is printed as a string or number index, never as code.
-fn props_path_js(path: &str) -> String {
+fn props_path_js(path: &str, default: &dyn Fn(&str) -> Option<String>) -> String {
     let mut js = String::from("props");
-    for part in path.split('.') {
+    for (i, part) in path.split('.').enumerate() {
+        // The root: `props["p"]`, or with a destructuring default `(props["p"] === undefined ? (d) : props["p"])`.
+        if i == 0 {
+            let (name, rest) = part.split_once('[').map_or((part, ""), |(n, r)| (n, r));
+            let read = format!("props[{}]", js_string(name));
+            js = match default(name) {
+                Some(d) => format!("({read} === undefined ? ({d}) : {read})"),
+                None => read,
+            };
+            index_js(&mut js, rest);
+            continue;
+        }
         let (name, rest) = part.split_once('[').map_or((part, ""), |(n, r)| (n, r));
         if !name.is_empty() {
             js.push_str(&format!("[{}]", js_string(name)));
         }
-        for idx in rest.split('[') {
-            let idx = idx.trim_end_matches(']');
-            if !idx.is_empty() {
-                match idx.parse::<u64>() {
-                    Ok(i) => js.push_str(&format!("[{i}]")),
-                    Err(_) => js.push_str(&format!("[{}]", js_string(idx))),
-                }
+        index_js(&mut js, rest);
+    }
+    js
+}
+
+/// The `[0][1]` tail of a path segment (`rest` is what follows its first `[`).
+fn index_js(js: &mut String, rest: &str) {
+    for idx in rest.split('[') {
+        let idx = idx.trim_end_matches(']');
+        if !idx.is_empty() {
+            match idx.parse::<u64>() {
+                Ok(i) => js.push_str(&format!("[{i}]")),
+                Err(_) => js.push_str(&format!("[{}]", js_string(idx))),
             }
         }
     }
-    js
 }
 
 /// The build-time evaluation module (L2): one thunk per `ir.build_eval` slot, keyed by
