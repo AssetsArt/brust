@@ -77,6 +77,44 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
 /// The Provider modules whose helpers a substituted context value calls: alias → (the module's component, names).
 type ForeignModules = std::collections::BTreeMap<String, (Rc<ComponentIR>, BTreeSet<String>)>;
 
+/// Cut scope (lead ruling on 84a4650a): a frame VALUE, as it reads at the call site, must be a literal (or operators,
+/// templates, arrays and objects over literals and globals). NO prop or state read (it may carry an element), no call (a
+/// helper may return one), no import, no module name, no element. Everything that crosses a frame is then primitive.
+fn plain_frame_value(r: &RawExpr) -> Result<(), String> {
+    match &r.kind {
+        RawKind::Lit(_) => Ok(()),
+        RawKind::Ident { name, kind } => match kind {
+            IdentKind::Global => Ok(()),
+            IdentKind::Prop
+            | IdentKind::State
+            | IdentKind::LoopBinding
+            | IdentKind::Local
+            | IdentKind::Setter
+            | IdentKind::Import { .. }
+            | IdentKind::Store { .. }
+            | IdentKind::Unknown => Err(format!("a read of `{name}`, which is not plain data")),
+        },
+        RawKind::Member { target, .. } => plain_frame_value(target),
+        RawKind::Index { target, index } => {
+            plain_frame_value(target).and_then(|()| plain_frame_value(index))
+        }
+        RawKind::Call { .. } => Err("a call (its result may be an element)".into()),
+        RawKind::Binary { left, right, .. } => {
+            plain_frame_value(left).and_then(|()| plain_frame_value(right))
+        }
+        RawKind::Unary { value, .. } => plain_frame_value(value),
+        RawKind::Cond { test, yes, no } => plain_frame_value(test)
+            .and_then(|()| plain_frame_value(yes))
+            .and_then(|()| plain_frame_value(no)),
+        RawKind::Template { parts, .. } => parts.iter().try_for_each(|(p, _)| plain_frame_value(p)),
+        RawKind::Array(xs) => xs.iter().try_for_each(plain_frame_value),
+        RawKind::Object(ps) => ps.iter().try_for_each(|(_, v)| plain_frame_value(v)),
+        RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
+            Err("a function or an element".into())
+        }
+    }
+}
+
 /// What a context Provider hands to the consumers under it (S2, R34.102): each field an expression of the scope that
 /// renders the Provider component (its call site), not of the Provider's own body.
 struct Frame {
@@ -844,6 +882,22 @@ impl Walker<'_, '_> {
                 if island {
                     return;
                 }
+                // The `__ctx_` prefix is the lowering's own: a call site that writes such a prop would forge a frame value.
+                if let Some((k, _)) = props.iter().find(|(k, _)| {
+                    k.starts_with("__ctx_")
+                        && !cir.ctx_uses.iter().any(|u| {
+                            u.fields
+                                .iter()
+                                .any(|f| &crate::ir::ctx_prop(&u.context, f) == k)
+                        })
+                }) {
+                    diags.push(Diagnostic::fallback(
+                        "context-shape",
+                        format!("the prop `{k}` uses the `__ctx_` prefix, which brust reserves for context values"),
+                        *loc,
+                        "rename the prop",
+                    ));
+                }
                 // Consumer: each field it reads comes from the nearest frame of its context, else bubbles up.
                 for u in &cir.ctx_uses {
                     for f in &u.fields {
@@ -884,7 +938,11 @@ impl Walker<'_, '_> {
                     let mut fields = Vec::new();
                     let mut failed = None;
                     for (k, raw) in &pd.fields {
-                        match self.subst(raw, &cir, props, 0) {
+                        match self.subst(raw, &cir, props, 0).and_then(|v| {
+                            plain_frame_value(&v)
+                                .map(|()| v)
+                                .map_err(|w| format!("`{k}` is {w}"))
+                        }) {
                             Ok(v) => fields.push((k.clone(), v)),
                             Err(why) => {
                                 failed = Some(why);

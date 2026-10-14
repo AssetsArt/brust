@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 168 | 94 | 8 | 66 | 0 | 0 | 0 | 0 |
+| B Composition | 170 | 93 | 8 | 69 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 346 | 173 | 43 | 126 | 3 | 1 | 0 | 0 |
+| **Total** | 348 | 172 | 43 | 129 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -161,8 +161,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-react-provider | createContext: a Provider component and a consumer under it | static | static | 0 | ok | — | S2 R34.100-R34.103: the value is resolved at the call site; no hidden prop reaches the page, no job, no client JS |
 | b-context-nested | two Providers of one context: the nearest wins | static | static | 0 | ok | — | S2 R34.102: frames are a stack (1, 2, then 1 again) |
 | b-context-wrapper | a consumer inside a wrapper component, under a Provider | static | static | 0 | ok | — | S2 R34.104: the need bubbles up through the wrapper and is filled where the Provider is |
-| b-context-rest-wrapper | a shadcn-style wrapper forwarding its ...rest into a Provider component | static | static | 0 | ok | — | S2: the rest carries max (not named by the wrapper); value is named and not forwarded, so it is the Provider default |
-| b-context-helper | a Provider value computed by helpers of its own module, used from another module | static | static | precompute | ok | — | S2: the helper runs in the page job through a scoped copy of the Provider module declarations; the const default MAX is the literal 100 |
+| b-context-rest-wrapper | a shadcn-style wrapper forwarding its ...rest into a Provider component | static | static | ssr | ok | — | S2: frame values must be literals (lead ruling on 84a4650a): this wrapper's Provider reads props, so it stays a React island (context-value; F174 narrows it); the page stays static |
+| b-context-helper | a Provider value computed by helpers of its own module, used from another module | react | react | ssr | ok | fallback:context-no-provider, fallback:context-value | S2: a frame value that calls a helper is not a literal (lead ruling on 84a4650a), so the page renders with React (context-value; F174 narrows it to helpers proven to return primitives) |
 | b-context-radix-scope | Radix createContextScope: Provider props, a default, a consumer | static | static | 0 | ok | — | S2 R34.100/101: the second structural recogniser (Radix createContextScope); a scope that is a pass-through is ignored |
 | b-context-no-provider | a consumer with no Provider above it, at the route | react | react | ssr | ok | fallback:context-no-provider | S2 context-no-provider: fail closed (the default of a createContext is not read in v1) |
 | b-context-escape | a context value used as a whole | react | react | ssr | ok | fallback:context-island | S2 context-escape: the consumer reads the whole object, so it is a React island; under a lowered Provider that keeps the page React (F3 context-island) |
@@ -181,6 +181,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-child-reads-provider | the same child reads under a Provider component | react | react | ssr | ok | fallback:jsx-const-child | lead ruling c: under a lowered Provider the allowlist applies (a helper result and a data lookup are not provable yet: F174); the page is React (it is the whole island, as on main) |
 | b-context-prop-under-provider | a component prop holding an element holder under a Provider frame | react | react | ssr | ok | fallback:jsx-const-child | Mellow scoping: the predicate runs at Placer::painted, the single print point (a prop is printed too) |
 | b-context-provider-field-element | a Provider value field holding an element holder | static | static | ssr | ok | — | Mellow: a Provider value field that holds an element would reach the consumer as a hidden prop and print as nothing; the Provider stays an island (context-state), the page stays static |
+| b-context-frame-prop | a Provider whose value reads a prop fed an element holder at the call site | react | react | ssr | ok | fallback:context-no-provider, fallback:context-value | Mellow: a frame value must be a literal (no prop read, no call); the page renders with React |
+| b-context-reserved-prefix | a user prop named __ctx_* | react | react | ssr | ok | fallback:context-island | lead ruling: the __ctx_ prefix is the lowering's own; a user prop of that name fails closed with its own code (context-shape) |
 | b-jsx-const-child-unreadable | a child that is an import the compiler cannot resolve | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: an import it cannot read or resolve fails closed |
 | b-jsx-const-child-imported-plain | an imported plain value used as a child (control) | static | static | 0 | ok | — | control: a folded primitive import still lowers |
 | b-jsx-const-child-shadowed | a prop that shadows an imported JSX const name (control) | static | static | 0 | ok | — | control: the child is the prop, not the import; it lowers |

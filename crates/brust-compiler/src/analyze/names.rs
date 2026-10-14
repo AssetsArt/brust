@@ -890,6 +890,12 @@ pub fn template_name_problem(name: &str) -> Option<(&'static str, &'static str)>
         "else",
     ];
     const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
+    if name.starts_with("__ctx_") {
+        return Some((
+            "context-shape",
+            "uses the `__ctx_` prefix, which brust reserves for context values",
+        ));
+    }
     let mut cs = name.chars();
     let ident = cs
         .next()

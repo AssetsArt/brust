@@ -158,40 +158,21 @@ fn a_whole_context_value_and_a_scalar_provider_value_fall_back() {
     }
 }
 
-/// The Provider's values call helpers of ITS module (`clamp`, `stateOf`, a const default): they are evaluated by the
-/// page's precompute job through a copy of the module's declarations, kept in a function scope (S2, R34.103).
+/// The Provider's values call helpers of ITS module (`clamp`, `stateOf`): a call is not a literal, so under the lead's scope
+/// cut the page renders with React (context-value); F174 narrows it to helpers proven to return primitives.
 #[test]
-fn a_provider_value_that_calls_a_helper_of_another_module_is_computed_by_a_job() {
+fn a_provider_value_that_calls_a_helper_is_not_lowered_yet() {
     let out = compile_all("helper-page.tsx");
     let page = out
         .iter()
         .find(|(id, ..)| id.starts_with("helperPage_"))
         .expect("page");
     assert!(
-        matches!(page.1.tier, Tier::Static) && page.1.diagnostics.is_empty(),
-        "{:?} {:?}",
-        page.1.tier,
+        rules(&page.1).contains(&"context-value"),
+        "{:?}",
         page.1.diagnostics
     );
-    assert!(
-        page.2.contains("(_s1)") && page.2.contains("(_s2)"),
-        "{}",
-        page.2
-    );
-    let ts = page.3.as_deref().expect("a precompute job");
-    // The helpers travel in a function scope under a private name; the default `MAX` is the literal 100.
-    assert!(
-        ts.contains("const __ctxm_meter_")
-            && ts.contains("function clamp(")
-            && ts.contains("function stateOf("),
-        "{ts}"
-    );
-    assert!(ts.contains("clamp(v, 100)"), "{ts}");
-    // The Provider and the consumer themselves have no job: they are inlined.
-    for id in ["meter_", "fill_"] {
-        let c = out.iter().find(|(i, ..)| i.starts_with(id)).expect(id);
-        assert!(c.1.jobs.is_empty(), "{id}: {:?}", c.1.jobs);
-    }
+    assert!(is_react(&page.1), "{:?}", page.1.tier);
 }
 
 /// R34.104: an `if` whose branches only call `console.*` is a diagnostic, not part of the render; any other effect
@@ -210,15 +191,19 @@ fn a_console_only_if_is_left_out_and_any_other_if_still_falls_back() {
     assert!(is_react(&ir), "{:?}", ir.tier);
 }
 
-/// A wrapper that forwards its `...rest` into the Provider component (the shadcn shape): the Provider's value reads the
-/// props the rest carries (`max`), a prop the wrapper names and does not forward (`value`) is the Provider's default.
+/// A wrapper that forwards its `...rest` into the Provider component (the shadcn shape): the frame VALUES here read props
+/// (`max` from the rest, `value` the Provider default), which the lead's scope cut keeps out of a lowered frame
+/// (context-value, F174 narrows it): nothing wrong is printed, the page renders with React.
 #[test]
-fn a_rest_spread_into_the_provider_carries_the_props_the_wrapper_does_not_name() {
-    let (ir, jinja) = page("rest-wrapper.tsx");
-    assert!(!is_react(&ir), "{:?} {:?}", ir.tier, ir.diagnostics);
-    // The page's inlined Wrap: max=5 from the call site through the rest, value=0 (the default).
-    assert!(jinja.contains("(5)") && jinja.contains("(0)"), "{jinja}");
-    assert!(!jinja.contains("__ctx_"), "{jinja}");
+fn a_rest_spread_into_the_provider_stays_react_while_frame_values_must_be_literals() {
+    let all = compile_all("rest-wrapper.tsx");
+    let rules_all: Vec<&str> = all.iter().flat_map(|(_, ir, ..)| rules(ir)).collect();
+    assert!(rules_all.contains(&"context-value"), "{rules_all:?}");
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("restWrapper_"))
+        .expect("page");
+    assert!(!page.2.contains("(5)"), "{}", page.2);
 }
 
 /// A Provider that hands out state (a native provider is a later step) stays a React island, as before; the page that
@@ -511,4 +496,26 @@ fn a_provider_value_field_holding_an_element_keeps_the_provider_an_island() {
         );
         assert!(is_react(&panel.1), "{f}: {:?}", panel.1.tier);
     }
+}
+
+/// Lead ruling on 84a4650a: every Provider frame VALUE must be a literal (no prop read, no call, no import): a Prop-fed field
+/// (`<PanelP icon={el}>` with `value={{ icon }}`) and a helper-fed field (`value={{ icon: makeIcon() }}`) keep the page React
+/// (the Provider cannot be lowered); a user prop named `__ctx_*` fails closed with its own code.
+#[test]
+fn frame_values_are_literals_and_the_ctx_prefix_is_reserved() {
+    for f in ["pframe-prop.tsx", "pframe-call.tsx"] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"context-value"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+    let all = compile_all("pframe-reserved.tsx");
+    let rules_all: Vec<&str> = all.iter().flat_map(|(_, ir, ..)| rules(ir)).collect();
+    assert!(rules_all.contains(&"context-shape"), "{rules_all:?}");
+    // The literal case still lowers (react-basic: value={{ title, shout }} from literal props at the call site).
+    let (ir, _) = page("react-basic.tsx");
+    assert!(!is_react(&ir), "{:?} {:?}", ir.tier, ir.diagnostics);
 }

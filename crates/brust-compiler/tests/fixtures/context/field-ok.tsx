@@ -15,9 +15,9 @@ function Leaf() {
   return <b>{ok}</b>
 }
 
-export default function Page({ t }: { t: string }) {
+export default function Page() {
   return (
-    <Box t={t}>
+    <Box t="x">
       <Leaf />
     </Box>
   )
