@@ -58,13 +58,14 @@ export class Instance {
     return true
   }
   onCleanup(fn: () => void): void { this.cleanups.push(fn) }
-  ref<E extends Element = HTMLElement>(name: string): { current: E | null } {
+  ref<E extends Element = HTMLElement>(name: string, init?: unknown): { current: E | null } {
     let r = this.refs.get(name)
-    if (!r) { r = { current: null }; this.refs.set(name, r) }
+    // `useRef(init)`: the cell starts at `init`; an `x-ref` element replaces it when it binds (React attaches the same way).
+    if (!r) { r = { current: (init ?? null) as Element | null }; this.refs.set(name, r) }
     return r as { current: E | null }
   }
   ctx(): BehaviorCtx {
-    return { el: this.host, props: this.props, effect: (fn) => this.componentEffect(fn), onCleanup: (fn) => this.onCleanup(fn), ref: (n) => this.ref(n) }
+    return { el: this.host, props: this.props, effect: (fn) => this.componentEffect(fn), onCleanup: (fn) => this.onCleanup(fn), ref: (n, init) => this.ref(n, init) }
   }
   init(factory: BehaviorFactory): void {
     const m = factory(this.ctx())

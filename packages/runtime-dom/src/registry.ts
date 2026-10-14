@@ -5,7 +5,7 @@ export interface BehaviorCtx {
   props: Signal<Record<string, unknown>>
   effect: (fn: () => void | (() => void)) => Dispose
   onCleanup: (fn: () => void) => void
-  ref: <E extends Element = HTMLElement>(name: string) => { current: E | null }
+  ref: <E extends Element = HTMLElement>(name: string, init?: unknown) => { current: E | null }
 }
 export type BehaviorInstance = Record<string, unknown>
 export type BehaviorFactory = (ctx: BehaviorCtx) => BehaviorInstance | void

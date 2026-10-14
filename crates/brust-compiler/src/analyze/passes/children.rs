@@ -416,11 +416,9 @@ struct HandlerSink {
     components: SpreadSink,
     /// Prop roots the child reads by name outside its spreads; `None` = the whole props object.
     reads: Option<BTreeSet<String>>,
-    /// The child reads its `...rest` as a value (`Object.keys(rest)`, `rest` handed to a helper or a hook): every
-    /// key is read (2b-handlers C2).
-    rest_read: bool,
     /// Spreads of the child's props or its rest, anywhere in its template (elements and components): a live value
-    /// is bound on the one element a single spread lands on (2b-handlers C2).
+    /// is bound on the one element a single spread lands on (2b-handlers C2; a child that reads its rest as a value is
+    /// React already, `prop-pattern`).
     spread_sites: usize,
 }
 
@@ -439,7 +437,6 @@ impl HandlerSink {
         let roots = d.prop_roots();
         HandlerSink {
             components: SpreadSink::of_where(ir, false),
-            rest_read: roots.contains(crate::ir::REST_PROPS),
             reads: (!roots.contains("*")).then_some(roots),
             spread_sites: count_prop_spreads(&ir.template),
         }
@@ -2522,6 +2519,16 @@ impl Walker<'_, '_> {
         }
         let live = self.forward_live(name, *loc, props, &child);
         let (mut hoisted, unbound) = self.forward_handlers(name, *loc, props, &child, &live);
+        // A hoisted handler is a member of this component, printed from its own declaration: the prop's slot in the
+        // precompute job is read by nothing any more, and must not keep the job (and a per-instance feed) alive.
+        for (k, v) in props.iter_mut() {
+            if hoisted.contains(k) && matches!(v, Expr::Precomputed { .. }) {
+                *v = Expr::Raw(RawExpr {
+                    loc: *loc,
+                    kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                });
+            }
+        }
         // A live value the parent binds itself is, like a hoisted handler, the parent's own member: not a prop of the
         // instance, and nothing for `check_spread` to refuse.
         hoisted.extend(live);
@@ -3893,7 +3900,6 @@ impl Walker<'_, '_> {
                 || !child.spread.lands(k)
                 || !self.reads_state(v)
                 || !live_key_ok(k)
-                || child.onward.rest_read
                 || child.onward.spread_sites != 1
                 || child.onward.components.lands(k)
                 || child

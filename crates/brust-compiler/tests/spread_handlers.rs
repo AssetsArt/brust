@@ -194,14 +194,20 @@ fn limits_stay_fail_closed_with_their_own_codes() {
         ),
         "spread-handler",
     );
-    // A linked instance (another prop reads state).
+    // A linked instance: another prop the child BINDS BY NAME reads state (a prop that lands in the spread is the
+    // parent's to bind since 2b-handlers, tests/live_forward.rs, and links nothing).
     refused(
         &page(
             "import Btn from './Btn'",
-            &format!("{inc} return <Btn title={{String(n)}} onClick={{() => setN(n + 1)}} />"),
+            &format!("{inc} return <Btn className={{String(n)}} onClick={{() => setN(n + 1)}} />"),
         ),
         "spread-handler",
     );
+    let bound = page(
+        "import Btn from './Btn'",
+        &format!("{inc} return <Btn title={{String(n)}} onClick={{() => setN(n + 1)}} />"),
+    );
+    assert_eq!(bound.tier, Tier::Native, "{:?}", bound.diags);
     // Another prop reads the row: the handler makes the client render the row, which would link it.
     refused(
         &page(

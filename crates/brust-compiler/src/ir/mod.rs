@@ -213,6 +213,10 @@ pub struct ComponentIR {
     /// the identifier `REST_PROPS` of kind `Prop`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub props_rest: Option<String>,
+    /// The parameter that holds the whole props object (`function C(props)`), when the body destructures it with a
+    /// `...rest` (so no prop is named after it): a verbatim body naming it (`props.disabled`) binds that name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub props_whole: Option<String>,
     /// The polymorphic tag `const Comp = flag ? Slot.Root : "host"` of this component (R34.28).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poly: Option<PolyTag>,
@@ -379,6 +383,7 @@ impl ComponentIR {
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,
+            props_whole: None,
             poly: None,
             forwards_ref: false,
             icon_spread: false,

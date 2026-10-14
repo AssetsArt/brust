@@ -159,3 +159,17 @@ test('F97: a throwing mount effect is logged and does not stop later hosts from 
     expect(errs.some((e) => e.includes('effect threw: f97bad'))).toBe(true)
   } finally { console.error = orig }
 })
+
+test('ref(name, init) is a cell that starts at init (useRef(init)); a bound x-ref element replaces it', () => {
+  let cell: { current: unknown } | null = null; let again: { current: unknown } | null = null
+  defineBehavior('r_init', ({ ref }) => { cell = ref('prev', 5); again = ref('prev', 9); return {} })
+  document.body.innerHTML = `<div x-data="r_init"></div>`
+  mount()
+  expect(cell!.current).toBe(5)
+  expect(again).toBe(cell)           // one cell per name: a second ask does not reset it
+  let el: { current: unknown } | null = null
+  defineBehavior('r_init2', ({ ref }) => { el = ref('box', 'seed'); return {} })
+  document.body.innerHTML = `<div x-data="r_init2"><p id="p" x-ref="box"></p></div>`
+  mount()
+  expect(el!.current).toBe(document.getElementById('p'))   // React attaches the element over the initial value
+})
