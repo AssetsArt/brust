@@ -5,8 +5,8 @@ use brust_compiler::parse::run_on_compiler_thread;
 use brust_compiler::pipeline::compile_tree;
 use std::path::PathBuf;
 
-/// Every component of the tree of `file`: (source file name, IR, jinja).
-fn compile(file: &str) -> Vec<(String, ComponentIR, String)> {
+/// Every component of the tree of `file`: (id, IR, jinja, precompute job module).
+fn compile_all(file: &str) -> Vec<(String, ComponentIR, String, Option<String>)> {
     let file = file.to_string();
     run_on_compiler_thread(move || {
         let opts = AnalyzeOptions {
@@ -21,9 +21,23 @@ fn compile(file: &str) -> Vec<(String, ComponentIR, String)> {
         )
         .unwrap()
         .into_iter()
-        .map(|l| (l.ir.id.clone(), (*l.ir).clone(), l.artifacts.jinja.clone()))
+        .map(|l| {
+            (
+                l.ir.id.clone(),
+                (*l.ir).clone(),
+                l.artifacts.jinja.clone(),
+                l.artifacts.server_ts.clone(),
+            )
+        })
         .collect()
     })
+}
+
+fn compile(file: &str) -> Vec<(String, ComponentIR, String)> {
+    compile_all(file)
+        .into_iter()
+        .map(|(a, b, c, _)| (a, b, c))
+        .collect()
 }
 
 fn rules(ir: &ComponentIR) -> Vec<&str> {
@@ -141,5 +155,41 @@ fn a_whole_context_value_and_a_scalar_provider_value_fall_back() {
         let all = compile(f);
         let rules: Vec<&str> = all.iter().flat_map(|(_, ir, _)| rules(ir)).collect();
         assert!(rules.contains(&code), "{f}: {rules:?}");
+    }
+}
+
+/// The Provider's values call helpers of ITS module (`clamp`, `stateOf`, a const default): they are evaluated by the
+/// page's precompute job through a copy of the module's declarations, kept in a function scope (S2, R34.103).
+#[test]
+fn a_provider_value_that_calls_a_helper_of_another_module_is_computed_by_a_job() {
+    let out = compile_all("helper-page.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("helperPage_"))
+        .expect("page");
+    assert!(
+        matches!(page.1.tier, Tier::Static) && page.1.diagnostics.is_empty(),
+        "{:?} {:?}",
+        page.1.tier,
+        page.1.diagnostics
+    );
+    assert!(
+        page.2.contains("(_s1)") && page.2.contains("(_s2)"),
+        "{}",
+        page.2
+    );
+    let ts = page.3.as_deref().expect("a precompute job");
+    // The helpers travel in a function scope under a private name; the default `MAX` is the literal 100.
+    assert!(
+        ts.contains("const __ctxm_meter_")
+            && ts.contains("function clamp(")
+            && ts.contains("function stateOf("),
+        "{ts}"
+    );
+    assert!(ts.contains("clamp(v, 100)"), "{ts}");
+    // The Provider and the consumer themselves have no job: they are inlined.
+    for id in ["meter_", "fill_"] {
+        let c = out.iter().find(|(i, ..)| i.starts_with(id)).expect(id);
+        assert!(c.1.jobs.is_empty(), "{id}: {:?}", c.1.jobs);
     }
 }

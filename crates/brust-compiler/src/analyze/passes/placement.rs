@@ -395,6 +395,54 @@ pub(super) fn collect_slots(ir: &ComponentIR, f: &mut impl FnMut(&str, &[String]
     ir.derived.iter().for_each(|d| expr(&d.expr, f));
 }
 
+/// Every expression the server template prints (`Expr::Server`): the template's own and the derived locals'.
+pub(super) fn template_server_raws(ir: &ComponentIR, f: &mut dyn FnMut(&RawExpr)) {
+    fn expr(e: &Expr, f: &mut dyn FnMut(&RawExpr)) {
+        if let Expr::Server(crate::ir::ServerExpr(r)) = e {
+            f(r)
+        }
+    }
+    fn node(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
+        match n {
+            Node::Element {
+                attrs, children, ..
+            } => {
+                for a in attrs {
+                    if let Attr::Dynamic { value, .. }
+                    | Attr::Spread(value)
+                    | Attr::InnerHtml { value } = a
+                    {
+                        expr(value, f);
+                    }
+                }
+                children.iter().for_each(|c| node(c, f));
+            }
+            Node::Slot(e) => expr(e, f),
+            Node::If { cond, then, else_ } => {
+                expr(cond, f);
+                then.iter().chain(else_).for_each(|c| node(c, f));
+            }
+            Node::For {
+                source, key, body, ..
+            } => {
+                expr(source, f);
+                expr(key, f);
+                body.iter().for_each(|c| node(c, f));
+            }
+            Node::Component {
+                props, children, ..
+            } => {
+                props.iter().for_each(|(_, v)| expr(v, f));
+                children.iter().for_each(|c| node(c, f));
+            }
+            Node::Fragment(cs) => cs.iter().for_each(|c| node(c, f)),
+            Node::Text(_) | Node::Outlet => {}
+        }
+    }
+    node(&ir.template, f);
+    ir.derived.iter().for_each(|d| expr(&d.expr, f));
+}
+
 /// Identifiers of kind `Local` read directly (not inside a function or JSX).
 fn direct_locals(e: &RawExpr, out: &mut BTreeSet<String>) {
     match &e.kind {

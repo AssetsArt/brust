@@ -66,6 +66,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         handlers: Vec::new(),
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
         absent: BTreeSet::new(),
+        foreign: Default::default(),
     }
 }
 
@@ -89,6 +90,24 @@ pub fn contexts(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     let mut diags: Vec<Diagnostic> = Vec::new();
     w.frames_node(&mut template, &mut frames, &mut bubbled, &mut diags);
     ir.template = template;
+    // The Provider module's helpers the substituted values call, as module declarations of this component (S2).
+    for (alias, (cir, names)) in std::mem::take(&mut *w.foreign.borrow_mut()) {
+        let mut imports = BTreeSet::new();
+        let code = crate::lower::common::module_code(&cir, &names, &mut imports);
+        let exports = names.iter().cloned().collect::<Vec<_>>().join(", ");
+        ir.module_decls.push(crate::ir::ModuleDecl {
+            names: vec![alias.clone()],
+            source: format!("const {alias} = (() => {{\n{code}return {{ {exports} }}\n}})()"),
+            consts: Vec::new(),
+        });
+        ir.module_scope.push((
+            alias,
+            imports
+                .into_iter()
+                .map(|(local, source, imported)| (local, IdentKind::Import { source, imported }))
+                .collect(),
+        ));
+    }
     for (c, f) in &bubbled {
         let name = crate::ir::ctx_prop(c, f);
         if !ir.props.iter().any(|p| p.name == name) {
@@ -193,6 +212,10 @@ struct Walker<'s, 'c> {
     own_named: BTreeSet<String>,
     /// Keys this component's own call sites must not pass (`ComponentIR::absent_props`, F153c).
     absent: BTreeSet<String>,
+    /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
+    /// of its module scope in this component's jobs, the component, the names).
+    foreign:
+        std::cell::RefCell<std::collections::BTreeMap<String, (Rc<ComponentIR>, BTreeSet<String>)>>,
 }
 
 /// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
@@ -854,7 +877,7 @@ impl Walker<'_, '_> {
     fn subst(
         &self,
         raw: &RawExpr,
-        cir: &ComponentIR,
+        cir: &Rc<ComponentIR>,
         props: &[(String, Expr)],
         depth: u8,
     ) -> Result<RawExpr, String> {
@@ -898,10 +921,62 @@ impl Walker<'_, '_> {
                         .unwrap_or(&[])
                         .iter()
                         .find(|d| &d.name == name);
-                    match derived.map(|d| &d.expr) {
-                        Some(Expr::Raw(r)) => return self.subst(r, cir, props, depth + 1),
-                        _ => return Err(format!("`{name}` is a name of the Provider's module")),
+                    if let Some(Expr::Raw(r)) = derived.map(|d| &d.expr) {
+                        return self.subst(r, cir, props, depth + 1);
                     }
+                    // A module-level `const` of a primitive literal is that literal.
+                    if let Some(c) = cir
+                        .module_decls
+                        .iter()
+                        .flat_map(|d| &d.consts)
+                        .find(|c| &c.name == name && !c.mutated)
+                        && matches!(c.value.kind, RawKind::Lit(_))
+                    {
+                        return Ok(RawExpr {
+                            loc: raw.loc,
+                            kind: c.value.kind.clone(),
+                        });
+                    }
+                    if !cir.module_scope.iter().any(|(n, _)| n == name) {
+                        return Err(format!(
+                            "`{name}` is not a name the Provider's module declares"
+                        ));
+                    }
+                    if cir.source == self.ctx.path {
+                        // The same module: its declarations are this component's own.
+                        return Ok(raw.clone());
+                    }
+                    // Another module (a package's source): the helper runs in this component's jobs through a copy of the
+                    // module's declarations, kept apart in a function scope (no export, no rename).
+                    let mut imports = BTreeSet::new();
+                    let names: BTreeSet<String> = [name.clone()].into();
+                    crate::lower::common::module_code(cir, &names, &mut imports);
+                    if let Some((_, s, _)) = imports.iter().find(|(_, s, _)| s.starts_with('.')) {
+                        return Err(format!(
+                            "the Provider's module reads a relative import ({s})"
+                        ));
+                    }
+                    let alias = format!("__ctxm_{}", cir.id);
+                    self.foreign
+                        .borrow_mut()
+                        .entry(alias.clone())
+                        .or_insert_with(|| (cir.clone(), BTreeSet::new()))
+                        .1
+                        .insert(name.clone());
+                    return Ok(RawExpr {
+                        loc: raw.loc,
+                        kind: RawKind::Member {
+                            target: Box::new(RawExpr {
+                                loc: raw.loc,
+                                kind: RawKind::Ident {
+                                    name: alias,
+                                    kind: IdentKind::Local,
+                                },
+                            }),
+                            name: name.clone(),
+                            optional: false,
+                        },
+                    });
                 }
                 IdentKind::Global | IdentKind::Import { .. } => raw.kind.clone(),
                 _ => return Err(format!("`{name}` is state, a handler or a loop value")),
@@ -919,22 +994,10 @@ impl Walker<'_, '_> {
                 target: b(target)?,
                 index: b(index)?,
             },
-            RawKind::Call { callee, args } => {
-                // A helper of the Provider's module is not in scope here (the next step exposes it).
-                if matches!(
-                    &callee.kind,
-                    RawKind::Ident {
-                        kind: IdentKind::Local,
-                        ..
-                    }
-                ) {
-                    return Err("a call of a function of the Provider's module".into());
-                }
-                RawKind::Call {
-                    callee: b(callee)?,
-                    args: args.iter().map(go).collect::<Result<_, _>>()?,
-                }
-            }
+            RawKind::Call { callee, args } => RawKind::Call {
+                callee: b(callee)?,
+                args: args.iter().map(go).collect::<Result<_, _>>()?,
+            },
             RawKind::Binary { op, left, right } => RawKind::Binary {
                 op: *op,
                 left: b(left)?,

@@ -393,25 +393,6 @@ fn read_object_pattern(
             continue;
         }
         let default = p.default_value.as_ref().map(|d| r.expr(d));
-        if let Some(d) = &default {
-            // Props whose destructuring default is in effect (this pattern and any before it): a default reading
-            // one would see the raw prop, without its default.
-            let defaulted: HashSet<String> = out
-                .props
-                .iter()
-                .filter(|q| q.default.is_some())
-                .flat_map(|q| [q.name.clone(), q.local.clone()])
-                .collect();
-            if let Some((code, why)) = default_unprintable(d, &defaulted) {
-                out.fallback(
-                    code,
-                    format!("the default of the prop `{name}` is {why}, which the server template cannot evaluate"),
-                    ploc,
-                    "use a literal, an earlier prop, or a plain expression as the default",
-                );
-                continue;
-            }
-        }
         out.props.push(PropDecl {
             name,
             local: r.names.name(id.r#ref),
@@ -439,7 +420,7 @@ fn template_name(name: &str) -> bool {
 /// constant it does not fold). The page then renders without the default and no diagnostic says so. `Some((code,
 /// what))` names the first part that would be lost; an arrow stays (it is only ever a client value, and a
 /// function renders as nothing in React as well).
-fn default_unprintable(
+pub(crate) fn default_unprintable(
     e: &RawExpr,
     defaulted: &HashSet<String>,
 ) -> Option<(&'static str, &'static str)> {
