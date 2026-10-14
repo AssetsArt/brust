@@ -83,8 +83,8 @@ pub struct NameTable<'a> {
     absorbed: HashSet<i32>,
     /// The forwarded ref of a `forwardRef(function (props, ref) {…})` component (R34.63): the symbol of `ref`.
     forwarded_ref: Option<u32>,
-    /// How many reads of it were dropped as `ref={ref}` on a host element (any other read fails closed).
-    forwarded_ref_dropped: std::cell::Cell<u32>,
+    /// Where the reads of it that were dropped as `ref={ref}` on a host element are (any other read fails closed).
+    forwarded_ref_dropped: std::cell::RefCell<HashSet<i32>>,
     /// Module-level `const X = BASE.MEMBER` (never reassigned) with `BASE` imported from a package.
     member_aliases: HashMap<u32, MemberRef>,
     /// The component's polymorphic tag local (`Comp` of `const Comp = asChild ? Slot.Root : "a"`, R34.28).
@@ -265,7 +265,7 @@ impl<'a> NameTable<'a> {
             rest_escape: std::cell::Cell::new(None),
             absorbed: HashSet::new(),
             forwarded_ref: None,
-            forwarded_ref_dropped: std::cell::Cell::new(0),
+            forwarded_ref_dropped: std::cell::RefCell::new(HashSet::new()),
             member_aliases: HashMap::new(),
             poly: HashMap::new(),
             state: HashSet::new(),
@@ -316,19 +316,21 @@ impl<'a> NameTable<'a> {
         self.forwarded_ref.is_some() && self.forwarded_ref == Some(self.key(r))
     }
 
-    /// `ref={ref}` on a host element was dropped (the one allowed read of the forwarded ref).
-    pub fn note_forwarded_ref_dropped(&self) {
-        self.forwarded_ref_dropped
-            .set(self.forwarded_ref_dropped.get() + 1);
+    /// `ref={ref}` on a host element was dropped (the one allowed read of the forwarded ref), at `loc`.
+    pub fn note_forwarded_ref_dropped(&self, loc: i32) {
+        self.forwarded_ref_dropped.borrow_mut().insert(loc);
     }
 
-    /// Reads of the forwarded ref among `used` that were not dropped as `ref={ref}` (R34.64: fail closed).
-    pub fn forwarded_ref_escapes(&self, used: &[js_ast::Ref]) -> usize {
+    /// Reads of the forwarded ref among `used` (identifier, location) that were not dropped as `ref={ref}`
+    /// (R34.64: fail closed). Judged by location: two reads cannot cancel each other out.
+    pub fn forwarded_ref_escapes(&self, used: &[(js_ast::Ref, i32)]) -> usize {
         let Some(k) = self.forwarded_ref else {
             return 0;
         };
-        let n = used.iter().filter(|r| self.key(**r) == k).count();
-        n.saturating_sub(self.forwarded_ref_dropped.get() as usize)
+        let dropped = self.forwarded_ref_dropped.borrow();
+        used.iter()
+            .filter(|(r, at)| self.key(*r) == k && !dropped.contains(at))
+            .count()
     }
 
     /// `r` is a module-level `const` that aliases a member of a package import.
