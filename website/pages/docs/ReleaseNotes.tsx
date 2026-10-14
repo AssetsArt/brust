@@ -48,7 +48,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         </li>
         {/* source: PR #236 and #239 (S2 wave A PR 1a and 1c, plan 2026-10-14-shadcn-context-lowering) */}
         <li>
-          <strong>Context Providers compile.</strong> A component that provides a value with <code>createContext</code> (or Radix&rsquo;s <code>createContextScope</code>) and the components that read it now compile without React, when everything that crosses the Provider is plain data: literals, props, locals, constants, and calls to module helpers that brust can prove return a string, number or boolean. Anything else keeps the Provider as a React island, with a named reason in the build output. The Radix Progress pages still render as islands.
+          <strong>Context Providers compile.</strong> A component that provides a value with <code>createContext</code> (or Radix&rsquo;s <code>createContextScope</code>) and the components that read it now compile without React when the Provider&rsquo;s value is literal data and the children under it read only props, locals, constants, or module helpers that brust can prove return a string, number or boolean. Anything else keeps the Provider as a React island, with a named reason in the build output. The Radix Progress pages still render as islands.
         </li>
       </ul>
 
@@ -80,7 +80,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         </li>
         {/* source: PR #236 (lead ruling on Provider frame values) */}
         <li>
-          <strong>A context Provider whose value comes from props, state or a function call stays a React island.</strong> The value is read on the server and in the browser, so brust lowers a Provider only when its value is literal data.
+          <strong>A context Provider whose value comes from props, state or a function call stays a React island.</strong> brust lowers a Provider only when its value is literal data; any other value keeps the React behaviour exactly.
         </li>
       </ul>
 
