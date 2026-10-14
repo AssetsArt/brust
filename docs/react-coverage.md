@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 70 | 33 | 8 | 29 | 0 | 0 | 0 | 0 |
+| B Composition | 72 | 36 | 8 | 28 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 19 | 1 | 0 | 0 | 0 |
 | E v2 specifics | 43 | 15 | 10 | 12 | 5 | 1 | 0 | 0 |
-| **Total** | 221 | 93 | 43 | 78 | 6 | 1 | 0 | 0 |
+| **Total** | 223 | 96 | 43 | 77 | 6 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -115,13 +115,15 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-spread-child | spread props onto a component (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get) |
 | b-spread-known-shape | data-*, aria-*, boolean and style props through a child's rest spread | static | static | 0 | ok | — | shadcn S1.2 R34.15 (a): keys known at the call site expand at compile time; children from the spread are the element children |
 | b-spread-alias-known | HTML aliases at the call site into a child that writes React names after its spread | static | static | 0 | ok | — | shadcn S1.2 review F1: compile-time expansion merges on the HTML attribute too (class="x", for="a", once each) |
-| b-fed-child-local-list | a child with a job of its own in a list over a local array | react | react | ssr | ok | fallback:instance-list-path | ruling on challenge 4dc45c45 (F142): Row reads the row, so it is not row-invariant (R34.42); rows from the literal are R34.43 (PR 2). An island, never a build error (instance-list-path fallback) |
+| b-fed-child-local-list | a child with a job of its own in a list over a local array | static | static | 0 | ok | — | F142 R34.43: Row reads the row of a module const, so the manifest carries the rows (per-row-literal) and the server feeds one instance per row (was the instance-list-path fallback, challenge 4dc45c45) |
 | b-fed-child-row-invariant-const | a child with a job of its own, the same in every row, in a list over a module const (shadcn table) | static | static | 0 | ok | — | F142 R34.42: no prop reads the row, so the instance is fed once (static record) and its slot is read without a row index |
 | b-fed-child-row-invariant-inline | a child with a job of its own, the same in every row, in a list over an inline array (shadcn carousel) | static | static | 0 | ok | — | F142 R34.42: an inline array literal is the same case |
 | b-fed-child-row-invariant-props | a child with a job of its own, the same in every row, in a list over a props path | static | static | 0 | ok | — | F142 R34.42 (ruling Q1, one rule): fed once instead of once per row |
 | b-fed-child-row-invariant-xfor | a child with a job of its own, the same in every row, in a client-rendered row (x-for) over a props path | native | native | 0 | ok | — | F142 R34.42 (ruling on Mellow N1): fed once; the zero-row template the client clones carries the same job output (not __undefined) |
+| b-fed-child-row-reading-inline | a child with a job of its own reading each row of an inline array (and its index) | static | static | 0 | ok | — | F142 R34.43: rows from the literal; the instance reads __row and __idx |
+| b-fed-child-derived-list | a child with a job of its own reading each row of a list derived at render | react | react | ssr | ok | fallback:instance-list-path | F142 R34.44 / F152: the rows exist only after a render step (two-phase planning), instance-list-path fallback |
 | b-fed-child-state-list | a child with a job of its own in a list over state | react | react | ssr | ok | fallback:instance-list-path | F142 R34.44: rows the client re-creates get no job output (instance-list-path fallback) |
-| b-fed-child-useid-const-list | a child with useId values in a list over a module const | react | react | ssr | ok | fallback:instance-list-path | F142: ids differ per row, so the instance is not row-invariant; per-row literal rows are PR 2 (R34.43) |
+| b-fed-child-useid-const-list | a child with useId values in a list over a module const | static | static | 0 | ok | — | F142 R34.43: ids differ per row, so the instance is not row-invariant; the rows come from the literal and each row gets its own id suffix |
 | b-spread-event-handler | an event handler that reaches an element through a child's spread | native | native | 0 | ok | — | shadcn S1.3 R34.18 (F141): the parent hoists the handler as its own member (_hN) and the inline print binds it on the child's element (x-on-click); the child stays static |
 | b-spread-handler-row | a handler reading the row, through a child's spread in a list | native | native | 0 | ok | — | shadcn S1.3 R34.18: the row is client-rendered (x-for) and the binding names the row (x-on-click="_h1:it"), as a hand-written handler |
 | b-spread-handler-input | onChange through a text field's spread (shadcn Input) | native | native | 0 | ok | — | shadcn S1.3 R34.18: React's onChange on a text field is the input event (x-on-input) |
