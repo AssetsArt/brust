@@ -19,7 +19,8 @@ const USAGE = `usage:
   brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare|static] [--actions-only] [--strict] [--wasm-from-source] [--dev]
   brust dev [entry=routes.tsx] [--port N] [--workers N]    (Bun target: proxy + hot reload + inline TUI)
   brust dev [entry=routes.tsx] --target cloudflare [--out-dir dist] [--port N] [--wasm-from-source] [-- <wrangler args>]
-  brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]`
+  brust start [--port N] [--workers N] [--dist-dir dist] [--entry routes.tsx]
+  brust shadcn init [component ...] [--force] [--css <file>] [--base-color <name>] [--shadcn-version <x.y.z>]`
 
 export async function cliLoader(): Promise<CliData> {
   return {
@@ -141,10 +142,10 @@ export default function Cli({ blocks, panels }: CliData) {
             <td>
               <code>--force</code>
             </td>
-            <td>build</td>
+            <td>build, shadcn init</td>
             <td>
               {/* source: cli.ts:55 and :87; the out-dir rules are described above (out-dir-unsafe) */}
-              Writes into an out dir that is not empty and was not made by brust.
+              build: writes into an out dir that is not empty and was not made by brust. shadcn init: replaces an existing <code>components.json</code> and runs the theme step again.
             </td>
           </tr>
           <tr>
@@ -218,7 +219,16 @@ export default function Cli({ blocks, panels }: CliData) {
               Which built folder to serve and which routes module to load. Defaults <code>dist</code> and <code>routes.tsx</code>.
             </td>
           </tr>
-        </tbody>
+                  <tr>
+            <td>
+              <code>--css</code> <code>--base-color</code> <code>--shadcn-version</code>
+            </td>
+            <td>shadcn init</td>
+            <td>
+              The Tailwind entry CSS (default: the one top-level <code>app.css</code>-style file that imports <code>tailwindcss</code>), the shadcn base colour (default <code>neutral</code>) and an exact shadcn CLI version (default: the one brust tests). See <a href="/docs/guides/shadcn-setup">Set up shadcn/ui</a>.
+            </td>
+          </tr>
+</tbody>
       </table>
       {/* source: docs/actions.md:472 — a page-only build is not a flag: `[actions] base_url` in brust.toml and no actions file */}
       <Note>
