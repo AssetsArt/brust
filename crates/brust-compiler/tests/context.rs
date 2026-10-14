@@ -341,3 +341,18 @@ fn an_island_under_a_lowered_provider_keeps_the_page_react() {
         assert!(!is_react(&ir), "{f}: {:?} {:?}", ir.tier, ir.diagnostics);
     }
 }
+
+/// Mellow (lead ruling b): a module-level JSX const used as a child printed NOTHING (main's bug, widened by Providers).
+/// One guard at the shared drop point (a printed slot) falls back by name for plain wrappers and Providers alike.
+#[test]
+fn a_module_level_jsx_const_used_as_a_child_falls_back_by_name() {
+    for f in ["jsx-const-wrap.tsx", "jsx-const-provider.tsx"] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"jsx-const-child"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
+}

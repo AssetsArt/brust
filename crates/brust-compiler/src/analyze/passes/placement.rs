@@ -527,6 +527,32 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 }
 
 impl Placer<'_> {
+    /// The first module const `r` reads (through other module consts) whose value is, or builds, JSX.
+    fn jsx_const_read(&self, r: &RawExpr, depth: u8) -> Option<String> {
+        if depth > 4 {
+            return None;
+        }
+        let mut hit = None;
+        crate::lower::common::visit_idents(r, &mut |name, kind| {
+            if hit.is_some() || *kind != crate::ir::IdentKind::Local {
+                return;
+            }
+            if let Some(c) = self
+                .module_decls
+                .iter()
+                .flat_map(|d| &d.consts)
+                .find(|c| c.name == name)
+            {
+                if contains_jsx(&c.value) {
+                    hit = Some(name.to_string());
+                } else if let Some(n) = self.jsx_const_read(&c.value, depth + 1) {
+                    hit = Some(n);
+                }
+            }
+        });
+        hit
+    }
+
     /// `e` with the folding module consts it reads replaced by their values.
     /// L20: `styles.x` / `styles['x']` of a CSS Module import is the literal class. An unknown class is a
     /// build error at its source location. This is an explicit exception to R1.1b: the map is frozen.
@@ -648,6 +674,16 @@ impl Placer<'_> {
             && let Some(lit) = crate::analyze::const_fold::json_to_raw(v, r.loc)
         {
             return Expr::Server(crate::ir::ServerExpr(lit));
+        }
+        // A module-level JSX const read as a value (`const el = <b/>; {el}`) has no printed form on the server: the job
+        // would print nothing. Fail closed with a named code, for plain wrappers and Providers alike.
+        if let Some(name) = self.jsx_const_read(r, 0) {
+            self.diagnostics.push(Diagnostic::fallback(
+                "jsx-const-child",
+                format!("`{name}` is a module-level JSX element used as a value; the server template cannot print it"),
+                r.loc,
+                "render the element inline, or return it from a component",
+            ));
         }
         let deps = self.st.cx.deps(r, &self.loop_scope);
         self.next_slot += 1;

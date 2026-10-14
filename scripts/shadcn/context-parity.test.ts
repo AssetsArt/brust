@@ -8,7 +8,7 @@ import { FIXTURE, repo } from './paths.ts'
 
 const PAGES = ['ctx-progress-basic', 'ctx-progress-max', 'ctx-progress-indeterminate', 'ctx-progress-invalid']
 // F3: islands under a Provider keep the page React (the island hydrates, so scripts are expected and markup is React's own).
-const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross']
+const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider']
 const ROWS = join(FIXTURE, '.rows')
 const ENTRY = '.rows/ctx-parity-routes.tsx'
 const bin = join(repo, 'packages/brust/bin/brust')
@@ -91,7 +91,7 @@ for (const id of PAGES) {
 
 const plain = (h: string) => normalise(h.replace(/<!-- -->/g, ''))
 for (const id of ISLAND_PAGES) {
-  test(`${id}: an island under a Provider reads the Provider's value exactly as React does`, async () => {
+  test(`${id}: the page (island under a Provider, JSX const child) renders exactly as React does`, async () => {
     const mod = (await import(join(FIXTURE, 'repro', `${id}.tsx`))) as { default: () => unknown }
     const { renderToString } = await fromFixture<typeof import('react-dom/server')>('react-dom/server')
     const { createElement } = await fromFixture<typeof import('react')>('react')
@@ -101,7 +101,11 @@ for (const id of ISLAND_PAGES) {
     const html = plain(await r.text())
     expect(html).toContain(react)
     // The value React reads: the Provider's for the same-module island, the island module's own default for the other.
-    expect(html).toContain(id === 'ctx-island-same' ? 'from-panel' : 'default')
-    expect(html).not.toContain(id === 'ctx-island-same' ? '>default<' : '>from-panel<')
+    if (id.startsWith('ctx-island')) {
+      expect(html).toContain(id === 'ctx-island-same' ? 'from-panel' : 'default')
+      expect(html).not.toContain(id === 'ctx-island-same' ? '>default<' : '>from-panel<')
+    } else {
+      expect(html).toMatch(/<b[^>]*>hi<\/b>/) // the dropped child is there
+    }
   }, 60_000)
 }
