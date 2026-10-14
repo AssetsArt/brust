@@ -78,6 +78,10 @@ pub struct NameTable<'a> {
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
     /// the bare object as a value, or inside code printed as written (R34.14: fail closed).
     pub rest_escape: std::cell::Cell<Option<u32>>,
+    /// F162: where a body pattern's name is used by a statement BEFORE the pattern (a TDZ error in React).
+    pub use_before_pattern: std::cell::Cell<Option<u32>>,
+    /// A prop READ as a member (`props.loop`, `rest.range`) whose name the template cannot carry (first one: location, name, code, what).
+    pub prop_read_problem: std::cell::RefCell<Option<(u32, String, &'static str, &'static str)>>,
     /// Binding locations of the body statements `const { a, b = 1, ...rest } = props` that are read as the props
     /// pattern (R34.66): the same reads as a parameter pattern, so the statement itself is skipped.
     absorbed: HashSet<i32>,
@@ -199,7 +203,7 @@ impl<'a> NameTable<'a> {
         body.stmts(component.body.stmts.slice());
         let declared: HashSet<u32> = body.declared.iter().map(|r| self.key(*r)).collect();
         let mut candidates = Vec::new();
-        for stmt in component.body.stmts.slice() {
+        for (at, stmt) in component.body.stmts.slice().iter().enumerate() {
             let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
                 continue;
             };
@@ -228,6 +232,30 @@ impl<'a> NameTable<'a> {
                     !w.used.iter().any(|u| declared.contains(&self.key(*u)))
                 })
             });
+            // F162: a name of the pattern read by an EARLIER statement is a TDZ error in React (the pattern is not read
+            // yet); brust would render it (a bound, defined prop). A closure declared before counts too: fail closed.
+            let bound: HashSet<u32> = obj
+                .properties()
+                .iter()
+                .filter_map(|p| match p.value.data {
+                    B::BIdentifier(b) => Some(self.key(b.r#ref)),
+                    _ => None,
+                })
+                .collect();
+            let early = component.body.stmts.slice()[..at].iter().find_map(|s| {
+                let mut w = crate::analyze::expr::Walk::default();
+                w.stmts(std::slice::from_ref(s));
+                w.used_at
+                    .iter()
+                    .find(|(u, _)| bound.contains(&self.key(*u)))
+                    .map(|(_, loc)| (*loc).max(0) as u32)
+            });
+            if let Some(loc) = early {
+                if self.use_before_pattern.get().is_none() {
+                    self.use_before_pattern.set(Some(loc));
+                }
+                continue;
+            }
             if plain && defaults_ok {
                 candidates.push((d.binding.loc.start, obj));
             }
@@ -282,6 +310,8 @@ impl<'a> NameTable<'a> {
             rest: None,
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
+            use_before_pattern: std::cell::Cell::new(None),
+            prop_read_problem: std::cell::RefCell::new(None),
             absorbed: HashSet::new(),
             forwarded_ref: None,
             forwarded_ref_dropped: std::cell::RefCell::new(HashSet::new()),
@@ -708,5 +738,40 @@ fn literal_shape(e: &js_ast::Expr, depth: u32) -> bool {
                     .is_some_and(|v| literal_shape(v, depth + 1))
         }),
         _ => false,
+    }
+}
+
+/// Why a prop named `name` cannot be a plain template variable, as `(code, what)`; `None` = it can. A key that is not
+/// an identifier prints as an expression (`data-x` reads as a subtraction); a jinja keyword is a syntax error or the
+/// wrong value; `loop`, `range`, `namespace`, `caller` and `self` are names the template itself binds or calls (a loop
+/// variable, `Array.from` lowers to `range(...)`), so a prop of that name would shadow them.
+pub fn template_name_problem(name: &str) -> Option<(&'static str, &'static str)> {
+    const KEYWORDS: &[&str] = &[
+        "true", "false", "none", "True", "False", "None", "and", "or", "not", "in", "is", "if",
+        "else",
+    ];
+    const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
+    let mut cs = name.chars();
+    let ident = cs
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !ident {
+        Some((
+            "prop-quoted-key",
+            "is not a plain identifier, so it cannot name a template variable",
+        ))
+    } else if KEYWORDS.contains(&name) {
+        Some((
+            "prop-jinja-name",
+            "is a keyword of the server template language, so it cannot name a template variable",
+        ))
+    } else if TEMPLATE_OWN.contains(&name) {
+        Some((
+            "prop-jinja-name",
+            "is a name the server template uses itself (a loop variable or a built-in), so a prop of that name would shadow it",
+        ))
+    } else {
+        None
     }
 }

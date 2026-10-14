@@ -4,6 +4,7 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { dirname, resolve, sep } from 'node:path'
 import { BrustRouteError, type Route } from '../routes'
 import { BuildError } from './errors'
+import { installServerOnlyRuntime } from './server-only'
 
 /** `componentIssue` explains a Component the walk saw but could not map (named-only, outside the root, in node_modules). */
 export async function scanRoutes(
@@ -12,6 +13,7 @@ export async function scanRoutes(
 ): Promise<{ routes: Route[]; componentFile: Map<Function, string>; componentIssue: Map<Function, string> }> {
   // biome-ignore lint/suspicious/noExplicitAny: an arbitrary user module
   let mod: any
+  installServerOnlyRuntime() // `server-only` resolves to an empty module: a loader may import server-only code
   try {
     mod = await import(entryFile)
   } catch (e) {

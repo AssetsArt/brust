@@ -378,6 +378,15 @@
       "libraryComponents": 4
     },
     {
+      "blocker": "fallback:prop-jinja-name",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 2
+    },
+    {
       "blocker": "React.Children",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
