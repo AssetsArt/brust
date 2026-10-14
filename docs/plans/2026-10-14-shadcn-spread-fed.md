@@ -117,3 +117,9 @@ Accepted; R-numbers R34.83–R34.87 are confirmed for this lane (F149's plan sta
 - **Q2 `InputGroupButton`: a battery row in this lane**, no extra rule.
 - **Q3 Order: this lane next**, then the hydration-timing draft.
 - **Q4 Security pass: yes**, Mellow signs off the key-carrying proof (§8.1) as a gate, since it decides which request-time keys feed a server job.
+
+**Amendment 2026-10-14 (ruling on Guetta's blocker, option A):** the spread proof alone turns two island fallbacks into a **build error** in lowering (`nested-instance`, open F53: a fed grandchild's slot key is built from the child printer's own counters, and `instances[]` records only the root's direct children). Valid React must never stop building, so the rule cannot ship alone. The lane is widened, not split, because the two pieces only pay together:
+- **R34.96 Nested fed instances, non-loop.** One instance counter shared across the inline boundary (`lower/template.rs`), and the wrapper's instance records re-based onto the route root (`children.rs` substitutes the call-site props for the wrapper's props paths). If brust-core or the manifest form must change, the PR says so and Mellow reviews that part; the existing instance form is the first thing to prove.
+- **R34.97 Loops stay refused**, and any nested case the lane cannot lower **falls back to React at analysis time** (named code), never `nested-instance` as a build error. A test pins that no valid shadcn page or battery row turns into a build error.
+- **R34.98 Proof** stays the same: pagination and input-group served, HTML equal to React, 0 JS. F53 is closed for the non-loop case; the loop case stays open in the ledger.
+Mellow's security sign-off now also covers the re-based records (which props reach which job).
