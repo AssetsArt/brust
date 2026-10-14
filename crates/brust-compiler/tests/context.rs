@@ -296,3 +296,23 @@ fn a_context_with_the_same_local_name_in_another_module_is_another_context() {
     );
     assert!(is_react(&ir), "{:?}", ir.tier);
 }
+
+/// A context declared in a THIRD module and imported by both sides is not recognised across modules (v1): the Provider
+/// and the consumer stay React islands (as before this lane), the page stays static, and no value is ever substituted.
+#[test]
+fn a_context_declared_in_a_shared_module_stays_react() {
+    let all = compile_all("shared-ctx.tsx");
+    for (id, ir, jinja, _) in &all {
+        assert!(!jinja.contains("from-S"), "{id}: {jinja}");
+        if id.starts_with("panelS_") || id.starts_with("badgeS_") {
+            assert!(is_react(ir), "{id}: {:?}", ir.tier);
+        } else {
+            assert!(
+                !is_react(ir),
+                "the page stays static: {:?} {:?}",
+                ir.tier,
+                ir.diagnostics
+            );
+        }
+    }
+}
