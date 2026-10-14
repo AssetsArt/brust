@@ -379,6 +379,19 @@ const MARK: &str = "$brust";
 /// the only thing that makes the revive turn a prop back into elements.
 const X_KEY: &str = "$x";
 
+/// R34.69 (F158): `name` is a page or layout and takes request data as props, so the caller's lowered JSX
+/// (children or an element prop) is never revived for it; the caller renders with React instead.
+fn root_host_diag(diagnostics: &mut Vec<Diagnostic>, name: &str, loc: u32) {
+    diagnostics.push(Diagnostic::fallback(
+        "revive-host-route-root",
+        format!(
+            "<{name}> is a page or layout, whose props are request data; brust never revives JSX children or element props for it"
+        ),
+        loc,
+        "render it without JSX children, or move the shared part into a component that is not a route",
+    ));
+}
+
 /// Shadcn S1 (R34.23): the most JSON one island instance's lowered children may take.
 const MAX_CHILDREN_JSON: usize = 64 * 1024;
 
@@ -1085,6 +1098,7 @@ impl Walker<'_, '_> {
                 path: child.path.clone(),
                 tier: child.tier.clone(),
                 nested: None,
+                x: Vec::new(),
             });
         }
         let child_id = child.id.clone().unwrap_or_else(|| name.clone());
@@ -1095,6 +1109,17 @@ impl Walker<'_, '_> {
                 let mut literals = std::collections::BTreeMap::new();
                 let mut ok = true;
                 let mut element_props: Vec<(String, serde_json::Value)> = Vec::new();
+                // R34.69: a route component's props are request data; the revive never runs for it, so the
+                // caller may not hand it lowered JSX (children or an element prop).
+                // A route component is the default export of its file, so a named or same-file component of a
+                // route file is not one: compare ids, not files.
+                let root_host = child.id.as_deref().is_some_and(|id| {
+                    self.ctx
+                        .opts
+                        .route_roots
+                        .iter()
+                        .any(|p| component_id(p) == id)
+                });
                 for (k, v) in props.iter() {
                     // `$`-prefixed props are the compiler's own (`$x`, the revive switch): a call-site prop of
                     // that name, written or inlined from a literal spread, could make data revive as elements.
@@ -1114,6 +1139,10 @@ impl Walker<'_, '_> {
                         ..
                     }) = v
                     {
+                        if root_host {
+                            root_host_diag(&mut self.diagnostics, name, *loc);
+                            continue;
+                        }
                         let lowered = if slot_prop_ok(k) {
                             self.lower_children(std::slice::from_ref(&**el))
                         } else {
@@ -1195,9 +1224,19 @@ impl Walker<'_, '_> {
                         kind: raw_json(&names, *loc),
                     };
                     props.push((X_KEY.to_string(), Expr::Server(ServerExpr(raw))));
+                    if let Some(r) = self.refs.iter_mut().find(|r| r.name == *name) {
+                        for (k, _) in &element_props {
+                            if !r.x.contains(k) {
+                                r.x.push(k.clone());
+                            }
+                        }
+                        r.x.sort();
+                    }
                     literals.insert(X_KEY.to_string(), names);
                 }
-                if !children.is_empty() {
+                if !children.is_empty() && root_host {
+                    root_host_diag(&mut self.diagnostics, name, *loc);
+                } else if !children.is_empty() {
                     match self.lower_children(children) {
                         Ok((tree, nested)) => {
                             let raw = RawExpr {
@@ -1833,6 +1872,7 @@ impl Walker<'_, '_> {
                             path: child.path.clone(),
                             tier: child.tier.clone(),
                             nested: None,
+                            x: Vec::new(),
                         });
                     }
                     nested.push(id.clone());

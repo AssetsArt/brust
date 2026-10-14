@@ -53,6 +53,7 @@ pub(crate) struct CompileInputs {
     pub slot_values: Option<String>,
     pub css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     pub icon_svgs: Option<String>,
+    pub route_roots: Vec<String>,
     pub path_aliases: Option<String>,
 }
 
@@ -68,6 +69,7 @@ pub(crate) fn compile_tree_impl(
         slot_values,
         css_modules,
         icon_svgs,
+        route_roots,
         path_aliases,
     } = inputs;
     // `[{ "pattern": "@/*", "targets": ["./*"] }]`: `tsconfig` `paths` (R34.76).
@@ -103,6 +105,7 @@ pub(crate) fn compile_tree_impl(
         icon_svgs,
         icons_final,
         path_aliases,
+        route_roots: route_roots.into_iter().collect(),
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -142,6 +145,7 @@ pub(crate) fn compile_tree_impl(
 // One positional argument per option: that is the JS call (`packages/brust/native/index.d.ts`).
 #[allow(clippy::too_many_arguments)]
 #[napi]
+#[allow(clippy::too_many_arguments)]
 pub fn compile_tree(
     path: String,
     root: String,
@@ -152,6 +156,7 @@ pub fn compile_tree(
         std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     >,
     icon_svgs: Option<String>,
+    route_roots: Option<Vec<String>>,
     path_aliases: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
@@ -164,6 +169,7 @@ pub fn compile_tree(
             slot_values,
             css_modules: css_modules.unwrap_or_default(),
             icon_svgs,
+            route_roots: route_roots.unwrap_or_default(),
             path_aliases,
         },
     )

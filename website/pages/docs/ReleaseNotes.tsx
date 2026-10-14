@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-8', title: '2.0.0-alpha.8' },
       { id: 'alpha-7', title: '2.0.0-alpha.7' },
       { id: 'alpha-6', title: '2.0.0-alpha.6' },
       { id: 'earlier', title: 'Earlier versions' },
@@ -30,6 +31,26 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-8">2.0.0-alpha.8 · 14 October 2026</h2>
+      {/* source: PR #214 lane/revive-hardening (F158, R34.69–R34.75); the HTTP 500 was reproduced by Mellow on 2.0.0-alpha.6 and alpha.7 (React error #31 thrown by the SSR job) */}
+      <p>A fix release. Upgrade if your app uses 2.0.0-alpha.6 or alpha.7.</p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #214: nestedOf returned undefined for element-only lowered children, so the island had no revive code */}
+        <li>
+          <strong>A page no longer answers HTTP 500 when a React island gets plain HTML elements as children.</strong> In 2.0.0-alpha.6 and alpha.7, an island whose JSX children (or element-valued props) were only plain elements, such as <code>&lt;TooltipTrigger&gt;&lt;span&gt;…&lt;/span&gt;&lt;/TooltipTrigger&gt;</code>, made the server render fail with React error #31 and the whole page returned 500. Those children now render as React elements.
+        </li>
+      </ul>
+
+      <h3>Security</h3>
+      <ul>
+        {/* source: PR #214 (R34.69–R34.72); docs/plans/2026-10-14-shadcn-revive-hardening.md §2 threat model */}
+        <li>
+          <strong>Request data can no longer be turned into elements by the island revive.</strong> In 2.0.0-alpha.7, when one component was both a page or layout and a React island that received JSX children from another file, data returned by its loader could reach the code that rebuilds those children, so a loader value shaped like brust&rsquo;s internal markers could add elements to the page. React&rsquo;s escaping, the removal of <code>dangerouslySetInnerHTML</code> and the island&rsquo;s own component list still applied. Now a page or layout is never such a host (the caller falls back to React with <code>revive-host-route-root</code>), only names the compiler declared are rebuilt, and a server render rejects reserved <code>$</code> keys in a host&rsquo;s inputs.
+        </li>
+      </ul>
 
       <h2 id="alpha-7">2.0.0-alpha.7 · 14 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.6: #206–#212 (F142 PR1 and PR2, F138h, F153a, F157, F155, F153b part 1); docs/shadcn-coverage.json (64 of 64 pages build) */}

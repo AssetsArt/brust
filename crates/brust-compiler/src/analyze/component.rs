@@ -118,6 +118,10 @@ pub struct AnalyzeOptions {
     /// `tsconfig` `paths` aliases (R34.76): an import that matches one is rewritten to the relative import of the file it
     /// names; empty = every non-relative specifier is a package.
     pub path_aliases: Vec<crate::analyze::aliases::PathAlias>,
+    /// F158 (R34.69): the source files (relative to `root`, `/`-separated) whose default export is a route component,
+    /// a page or layout, whose props are request data. A component from one of them never receives lowered JSX: its caller
+    /// falls back to React (`revive-host-route-root`).
+    pub route_roots: std::collections::HashSet<String>,
 }
 
 /// Parses `source` as the module at `path` and runs the full analysis,

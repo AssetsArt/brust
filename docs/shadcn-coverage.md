@@ -100,7 +100,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | accordion | measured | static | 1 | 10 (9) | 94 | external-component, island-children, spread-props | built |
 | alert | measured | static | 0 | 4 (0) | 0 | — | built |
 | alert-dialog | measured | static | 1 | 22 (18) | 100 | external-component, island-children, slot-child-component, spread-props | built |
-| aspect-ratio | measured | static | 1 | 3 (2) | 73 | external-component, spread-props | built |
+| aspect-ratio | measured | static | 1 | 3 (2) | 74 | external-component, spread-props | built |
 | attachment | measured | static | 0 | 7 (0) | 0 | — | built |
 | avatar | measured | static | 2 | 7 (6) | 87 | external-component, spread-props | built |
 | badge | measured | static | 0 | 2 (0) | 0 | — | built |
@@ -115,13 +115,13 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | card | measured | static | 0 | 9 (0) | 0 | — | built |
 | carousel | measured | static | 1 | 9 (5) | 96 | control-flow, event-capture, external-component, hook-unsupported, member-tag, ref-shape, slot-dynamic, spread-props | built |
 | chart | measured | static | 1 | 9 (8) | 240 | control-flow, external-component, hook-shape, hook-unsupported, island-children, local-component, member-tag, use-id-in-render | built |
-| checkbox | measured | static | 2 | 6 (5) | 91 | external-component, spread-props | built |
+| checkbox | measured | static | 2 | 6 (5) | 92 | external-component, spread-props | built |
 | collapsible | measured | static | 1 | 8 (6) | 89 | external-component, spread-props | built |
 | combobox | measured | react | 1 | 20 (17) | 158 | external-component, island-children, jsx-expression, slot-dynamic, spread-props | built |
 | command | measured | static | 1 | 16 (14) | 104 | external-component, spread-props | built |
 | context-menu | measured | static | 1 | 13 (11) | 116 | external-component, island-children, spread-props | built |
 | dialog | measured | static | 1 | 23 (18) | 102 | external-component, island-children, spread-props | built |
-| direction | measured | static | 1 | 3 (2) | 69 | external-component, island-children | built |
+| direction | measured | static | 1 | 3 (2) | 70 | external-component, island-children | built |
 | drawer | measured | static | 1 | 20 (16) | 108 | external-component, island-children, spread-props | built |
 | dropdown-menu | measured | static | 1 | 18 (15) | 117 | external-component, island-children, spread-props | built |
 | empty | measured | static | 0 | 8 (0) | 0 | — | built |
@@ -133,7 +133,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | input-otp | measured | static | 1 | 6 (3) | 87 | body-shape, external-component, hook-unsupported, spread-props | built |
 | item | measured | static | 0 | 7 (0) | 0 | — | built |
 | kbd | measured | static | 0 | 3 (0) | 0 | — | built |
-| label | measured | static | 1 | 4 (2) | 84 | external-component, spread-props | built |
+| label | measured | static | 1 | 4 (2) | 85 | external-component, spread-props | built |
 | marker | measured | static | 0 | 3 (0) | 0 | — | built |
 | menubar | measured | static | 1 | 16 (14) | 116 | external-component, island-children, spread-props | built |
 | message | measured | static | 0 | 2 (0) | 0 | — | built |
@@ -158,7 +158,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | table | measured | static | 0 | 8 (0) | 0 | — | built |
 | tabs | measured | static | 1 | 9 (8) | 94 | external-component, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | — | built |
-| toggle | measured | static | 2 | 3 (2) | 86 | external-component, spread-props | built |
+| toggle | measured | static | 2 | 3 (2) | 87 | external-component, spread-props | built |
 | toggle-group | measured | static | 1 | 5 (4) | 93 | external-component, hook-unsupported, island-children, member-tag, spread-props | built |
 | tooltip | measured | static | 1 | 12 (10) | 105 | external-component, island-children, spread-props | built |
 

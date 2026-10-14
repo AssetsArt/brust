@@ -443,7 +443,7 @@
       "islands": 1,
       "components": 3,
       "reactComponents": 2,
-      "jsGzipKb": 73,
+      "jsGzipKb": 74,
       "codes": [
         "external-component",
         "spread-props"
@@ -627,7 +627,7 @@
       "islands": 2,
       "components": 6,
       "reactComponents": 5,
-      "jsGzipKb": 91,
+      "jsGzipKb": 92,
       "codes": [
         "external-component",
         "spread-props"
@@ -710,7 +710,7 @@
       "islands": 1,
       "components": 3,
       "reactComponents": 2,
-      "jsGzipKb": 69,
+      "jsGzipKb": 70,
       "codes": [
         "external-component",
         "island-children"
@@ -861,7 +861,7 @@
       "islands": 1,
       "components": 4,
       "reactComponents": 2,
-      "jsGzipKb": 84,
+      "jsGzipKb": 85,
       "codes": [
         "external-component",
         "spread-props"
@@ -1189,7 +1189,7 @@
       "islands": 2,
       "components": 3,
       "reactComponents": 2,
-      "jsGzipKb": 86,
+      "jsGzipKb": 87,
       "codes": [
         "external-component",
         "spread-props"
