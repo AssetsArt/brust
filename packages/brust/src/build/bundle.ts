@@ -369,15 +369,18 @@ export const reviveSource = (reg: string): string =>
   // The tree is compiler output, but props travel in page markup: read it as untrusted. A tag must be a plain element
   // name, a component must be in this island's registry (own keys only), and the raw-HTML prop is never revived.
   `const __props = (p: any): any => { const o: any = {}; if (p && typeof p === 'object') for (const k of Object.keys(p)) if (k !== '__proto__' && k !== 'dangerouslySetInnerHTML' && k !== 'children' && k !== 'ref' && k !== 'key') o[k] = p[k]; return o }\n` +
+  // `x` (on a component node) and `$x` (on the island's props) are the compiler's list of props that hold an element
+  // tree. Only those names are revived, and only when the prop is an own key of the copy; data is never revived.
+  `const __xs = (o: any, x: any): any => { if (Array.isArray(x)) for (const k of x) if (typeof k === 'string' && k.charAt(0) !== '$' && __own.call(o, k)) o[k] = __rv(o[k]); return o }\n` +
   `const __rv = (n: any): any => {\n` +
   `  if (n === null || typeof n !== 'object') return n\n` +
   `  const kids = Array.isArray(n.c) ? n.c.map(__rv) : []\n` +
   `  if (n.$brust === 'fr') return createElement(Fragment, null, ...kids)\n` +
   `  if (n.$brust === 'el') { if (typeof n.t !== 'string' || !/^[a-zA-Z][a-zA-Z0-9-]*$/.test(n.t)) throw new Error('brust: island children hold an invalid element name'); return createElement(n.t, __props(n.p), ...kids) }\n` +
-  `  if (n.$brust === 'cmp') { if (typeof n.id !== 'string' || !__own.call(__reg, n.id)) throw new Error('brust: island children name the component ' + String(n.id) + ', which this island does not import'); return createElement(__reg[n.id], __props(n.p), ...kids) }\n` +
+  `  if (n.$brust === 'cmp') { if (typeof n.id !== 'string' || !__own.call(__reg, n.id)) throw new Error('brust: island children name the component ' + String(n.id) + ', which this island does not import'); return createElement(__reg[n.id], __xs(__props(n.p), n.x), ...kids) }\n` +
   `  throw new Error('brust: island children hold an unknown node')\n` +
   `}\n` +
-  `const __mk = (C: any, props: any) => { const { children, ...rest } = props; return createElement(C, rest, ...(children === undefined ? [] : Array.isArray(children) ? children : [children]).map(__rv)) }\n`
+  `const __mk = (C: any, props: any) => { const { children, $x, ...rest } = props; __xs(rest, $x); return createElement(C, rest, ...(children === undefined ? [] : Array.isArray(children) ? children : [children]).map(__rv)) }\n`
 
 /** A helper component its module does not export (`ir.unexported`: `function SheetOverlay() {…}` rendered by an exported
  * `SheetContent`) that still renders as an island has nothing to import: the module is loaded with `export { Name }`

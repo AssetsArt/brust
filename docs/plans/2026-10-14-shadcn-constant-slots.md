@@ -1,6 +1,6 @@
 # shadcn S1 — lane `constant-slots` (draft for the lead's ruling)
 
-owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Guetta · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F152 (next free)
+owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Guetta · reviewer: Mellow · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F157 (next free)
 
 Author: Guetta. Status: **RULED 2026-10-14 (see §10); lane may start.** Base: origin/main fc7e2f91. Numbers are from `docs/shadcn-coverage.md` at that commit (62 of 64 pages built: 55 static, 1 native, 6 react; 2 refused). R-numbers continue after R34.48 (per-instance-jobs).
 
@@ -81,7 +81,7 @@ No change to the tiering rule, the registry, the 64 KB cap, `ChildRef.nested`, o
 - **R34.52 Element-valued props (§3.4)** with the `"x"` list, in both revive sites and the Cloudflare re-bundle (the S1.1 `exposePlugin` lesson: check every bundler).
 - **R34.53 Fail closed (§5).** Each remaining shape keeps `fallback:island-children` with its own message.
 - **R34.54 Battery + Chromium (§5).** `scripts/battery/rows.ts` rows `b-island-slots-*`; each builds AND hydrates in Chromium; HTML equality against the React build for the four fixture pages' lowered subtrees.
-- **R34.55 Proof and docs (§6).** `docs/shadcn-coverage.md`, `docs/react-coverage.md`, `m1-exit-report.md` regenerated; the PR names every row that moves and every row that does not; the F-row (F152) records the folder's users, the budgets, and the follow-ups (prop-path children, F148a).
+- **R34.55 Proof and docs (§6).** `docs/shadcn-coverage.md`, `docs/react-coverage.md`, `m1-exit-report.md` regenerated; the PR names every row that moves and every row that does not; the F-row (F157) records the folder's users, the budgets, and the follow-ups (prop-path children, F148a).
 
 ## 5. Fail-closed list and battery rows
 
