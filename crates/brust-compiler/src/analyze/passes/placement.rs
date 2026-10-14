@@ -108,6 +108,10 @@ struct Placer<'s> {
     path: String,
     text: &'s [u8],
     module_decls: Vec<crate::ir::ModuleDecl>,
+    /// F174: module functions proven to return a primitive (`ir.plain_fns`).
+    plain_fns: Vec<String>,
+    /// F174: the verdict on each derived value / module const already judged (a chain of derived values is deep and shared).
+    read_memo: std::cell::RefCell<std::collections::HashMap<String, Option<String>>>,
     slot_values: &'s std::collections::HashMap<String, serde_json::Value>,
     opts: &'s crate::analyze::component::AnalyzeOptions,
 }
@@ -245,6 +249,8 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         path: ctx.path.to_string(),
         text: ctx.text,
         module_decls: ir.module_decls.clone(),
+        plain_fns: ir.plain_fns.clone(),
+        read_memo: Default::default(),
         slot_values: &ctx.opts.slot_values,
         opts: ctx.opts,
     };
@@ -603,8 +609,44 @@ impl Placer<'_> {
                 // A body local the lowering prints: a derived value is judged by what it reads. Any other local (a module
                 // const that did not fold to a primitive, a module function) is not provable.
                 IdentKind::Local => match self.derived_raw.get(name) {
-                    Some(d) => self.child_read_problem(d, depth + 1),
-                    None => Some(name.clone()),
+                    Some(d) => {
+                        if let Some(v) = self.read_memo.borrow().get(name) {
+                            return v.clone();
+                        }
+                        // A derived value is judged from its own root: the depth bounds one expression, not a chain.
+                        // Fail closed while it is being judged: a name that reads itself is not provable.
+                        self.read_memo
+                            .borrow_mut()
+                            .insert(name.clone(), Some(name.clone()));
+                        let v = self.child_read_problem(d, 0);
+                        self.read_memo.borrow_mut().insert(name.clone(), v.clone());
+                        v
+                    }
+                    // F174: a module const that never changes, holds no element and reads only what a child may read
+                    // (a number, a string, an operator over them): its value is a plain value.
+                    None => match self
+                        .module_decls
+                        .iter()
+                        .flat_map(|d| &d.consts)
+                        .find(|c| &c.name == name)
+                    {
+                        Some(c)
+                            if !c.mutated
+                                && !contains_jsx(&c.value)
+                                && matches!(
+                                    c.value.kind,
+                                    RawKind::Lit(_)
+                                        | RawKind::Template { .. }
+                                        | RawKind::Binary { .. }
+                                        | RawKind::Unary { .. }
+                                        | RawKind::Cond { .. }
+                                ) =>
+                        {
+                            self.child_read_problem(&c.value, depth + 1)
+                                .map(|_| name.clone())
+                        }
+                        _ => Some(name.clone()),
+                    },
                 },
                 IdentKind::Import { .. } | IdentKind::Unknown => Some(name.clone()),
             },
@@ -629,6 +671,11 @@ impl Placer<'_> {
                         kind: IdentKind::Global,
                         ..
                     } => true,
+                    // F174: a module function proven to return a primitive; its arguments are judged below.
+                    RawKind::Ident {
+                        name,
+                        kind: IdentKind::Local,
+                    } => self.plain_fns.contains(name) && !self.derived_raw.contains_key(name),
                     RawKind::Member { target, name, .. } => {
                         matches!(
                             &target.kind,

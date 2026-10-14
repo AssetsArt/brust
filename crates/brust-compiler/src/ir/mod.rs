@@ -243,6 +243,9 @@ pub struct ComponentIR {
     /// consumer revived from its source would not share the Provider island's `createContext` (the published dist).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ctx_pkg: bool,
+    /// F174: module functions proven to return a primitive (`analyze::plain_fn`), callable under a lowered Provider.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plain_fns: Vec<String>,
     /// This component's rendered tree holds a React island (a React-tier child, or a static child that does): such a
     /// subtree hydrates standalone, so a lowered context Provider above it cannot reach it (S2, F3).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -374,6 +377,7 @@ impl ComponentIR {
             provides: Vec::new(),
             ctx_uses: Vec::new(),
             ctx_pkg: false,
+            plain_fns: Vec::new(),
             holds_island: false,
             unwritten_props: Vec::new(),
             repeats_children: false,

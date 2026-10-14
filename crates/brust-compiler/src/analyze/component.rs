@@ -499,6 +499,7 @@ fn read_function_as(
         ));
     }
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
+    ir.plain_fns = crate::analyze::plain_fn::plain_fns(ast, &*reader.names);
     check_printer_panic(ir);
     ir.props = body.props;
     ir.props_rest = body.props_rest;
