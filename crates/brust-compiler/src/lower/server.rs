@@ -113,6 +113,14 @@ fn plan(ir: &ComponentIR) -> Option<Plan<'_>> {
             }
         });
     }
+    // A destructuring default of a prop the job reads runs in the job (`props.p ?? default`): its imports and
+    // module-level names (a helper such as Radix's `defaultGetValueLabel`) travel with the job module (S2).
+    for p in &props {
+        if let Some(d) = f.prop_defaults.get(p) {
+            imports_in(d, &mut imports);
+            module_names_in(d, &f, &mut module_names);
+        }
+    }
     let module = module_code(ir, &module_names, &mut imports);
     Some(Plan {
         f,
@@ -315,9 +323,21 @@ pub fn eval_module(ir: &ComponentIR) -> Option<String> {
         .collect();
     let mut imports = BTreeSet::new();
     let mut module_names = BTreeSet::new();
+    let mut props = BTreeSet::new();
     for r in roots.iter().copied().chain(derived.iter().map(|d| d.1)) {
         imports_in(r, &mut imports);
         module_names_in(r, &f, &mut module_names);
+        super::common::visit_idents(r, &mut |name, kind| {
+            if *kind == IdentKind::Prop {
+                props.insert(name.to_string());
+            }
+        });
+    }
+    for p in &props {
+        if let Some(d) = f.prop_defaults.get(p) {
+            imports_in(d, &mut imports);
+            module_names_in(d, &f, &mut module_names);
+        }
     }
     let module = module_code(ir, &module_names, &mut imports);
     let mut out = format!(
