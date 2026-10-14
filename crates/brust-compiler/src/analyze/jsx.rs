@@ -858,7 +858,7 @@ fn read_union_attr(
         kind: RawKind::Lit(l),
     };
     match read_attr(r, name, v, ref_name)? {
-        Attr::Static { value, .. } if matches!(v.data, E::EBoolean(_)) && value.is_empty() => {
+        Attr::Static { .. } if matches!(v.data, E::EBoolean(_)) => {
             Some(lit(crate::ir::Literal::Bool(true)))
         }
         Attr::Static { value, .. } => Some(lit(crate::ir::Literal::Str(value))),
@@ -956,9 +956,15 @@ fn read_attr(
             name: name.into(),
             value: estring(s),
         },
+        // React writes `true` on an `aria-*` / `data-*` attribute as the string "true" (`aria-hidden`
+        // alone is `aria-hidden="true"`); on any other attribute it is the boolean form.
         E::EBoolean(b) if b.value => Attr::Static {
             name: name.into(),
-            value: String::new(),
+            value: if name.starts_with("aria-") || name.starts_with("data-") {
+                "true".into()
+            } else {
+                String::new()
+            },
         },
         _ => Attr::Dynamic {
             name: name.into(),

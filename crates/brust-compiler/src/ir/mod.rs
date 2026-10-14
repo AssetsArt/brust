@@ -283,6 +283,9 @@ pub struct ComponentIR {
     /// have no `instances` record (F149, R34.90).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub folded_instances: Vec<FoldedInstance>,
+    /// Fed child instances whose job runs inside `jobs[0]` (R34.96); empty when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fused: Vec<FusedInstance>,
     pub child_links: Vec<ChildLink>,
     /// Inlined child instances with a precompute job or `useId` values (S6 `children[].instances`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -388,6 +391,7 @@ impl ComponentIR {
             build_eval: vec![],
             build_eval_instances: vec![],
             folded_instances: vec![],
+            fused: vec![],
             child_links: vec![],
             instances: vec![],
             client_props: vec![],

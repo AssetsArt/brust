@@ -468,6 +468,16 @@ fn bind_nested(r: &RawExpr, f: &Facts<'_>) -> RawExpr {
 
 /// Prints `r` as a client **function** that binds its captures at each call
 /// (React's per-render closure semantics; a handler sees current state).
+/// The body of an arrow function written from printed JS: an object literal printed bare (`{ up: 1 }`) would
+/// parse as a block with a label, so it goes in parentheses.
+pub fn arrow_body(js: &str) -> String {
+    if js.trim_start().starts_with('{') {
+        format!("({js})")
+    } else {
+        js.to_string()
+    }
+}
+
 pub fn client_fn(r: &RawExpr, f: &Facts<'_>) -> String {
     match &r.kind {
         RawKind::Arrow {
