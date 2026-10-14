@@ -452,6 +452,7 @@ fn read_function_as(
             "write JSX, or keep the module in a React-tier component",
         ));
     }
+    reader.names.add_cond_consts(func.body.stmts.slice());
     let body = read_body(
         func,
         &mut reader,
