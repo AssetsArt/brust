@@ -1430,8 +1430,8 @@ enum JobInputs {
 struct ChildTpl {
     /// Index of the child component in `PlanIndex::comps`.
     child: usize,
-    /// `per-row:<list>`: the list; `None` = static.
-    rows: Option<Path>,
+    /// `per-row:<list>` or `per-row-literal`: the list; `None` = static.
+    rows: Option<inputs::Rows>,
     props: inputs::PropsMap,
     /// `__<childId>_<k>`.
     slot: String,
@@ -1471,7 +1471,10 @@ impl PlanIndex {
                     .ok_or_else(|| format!("component {id}: unknown child {}", ch.id))?;
                 let rows = match &ch.instances {
                     Instances::Static => None,
-                    Instances::PerRow(list) => Some(Path::parse(list)?),
+                    Instances::PerRow(list) => Some(inputs::Rows::Path(Path::parse(list)?)),
+                    Instances::PerRowLiteral => Some(inputs::Rows::Literal(Node::from(
+                        ch.rows.clone().unwrap_or(serde_json::Value::Null),
+                    ))),
                 };
                 let props =
                     inputs::PropsMap::child(&ch.props, &ch.literals, &ch.exprs, rows.clone())?;
@@ -1760,7 +1763,7 @@ pub fn collect_jobs<'a>(
                 slot: &ch.slot,
                 row,
             };
-            let rows = ch.rows.as_ref().map(|list| row_count(list, ctx));
+            let rows = ch.rows.as_ref().map(|list| list.count(ctx));
             for r in rows.map_or(0..1, |n| 0..n) {
                 let row = rows.map(|_| r);
                 let props = ch.props.eval(ctx, row)?;
@@ -1997,7 +2000,7 @@ pub(crate) fn seed_child_slots(
             let slot = match &ch.rows {
                 None => cell(&|| ch.use_id_instance.clone(), slots),
                 Some(list) => Node::arr(
-                    (0..row_count(list, ctx))
+                    (0..list.count(ctx))
                         .map(|r| cell(&|| format!("{}-{r}", ch.use_id_instance), slots))
                         .collect(),
                 ),
@@ -2742,6 +2745,38 @@ mod tests {
             ),
             json!({"_id0": "brust-r2-detailPage_c3.moveCard_d4_1-1-1", "_s1": "MOVE growl"})
         );
+    }
+
+    /// F142 R34.43: a `per-row-literal` child is planned once per row of the list it carries,
+    /// whatever the context holds, and its use-id cells follow the same rows.
+    #[test]
+    fn per_row_literal_children_plan_one_call_per_literal_row() {
+        let mut m = manifest();
+        let ch = &mut m.components.get_mut("detailPage_c3").unwrap().children[0];
+        ch.instances = Instances::PerRowLiteral;
+        ch.rows = Some(json!([{"name": "x"}, {"name": "y"}, {"name": "z"}]));
+        ch.props.clear();
+        ch.exprs = [("move".to_string(), "__row".to_string())].into();
+        m.components.get_mut("moveCard_d4").unwrap().use_id_slots = 1;
+        let ix = PlanIndex::new(&m).unwrap();
+        let mut ctx = n(json!({"pokemon": {"moves": [{"name": "only"}]}}));
+        let plans = collect_jobs(&ix, &chain(&["detailPage_c3"]), &ctx).unwrap();
+        let moves: Vec<_> = plans
+            .iter()
+            .filter(|p| p.call_id().starts_with("detailPage_c3/moveCard_d4"))
+            .map(|p| j(&p.inputs))
+            .collect();
+        assert_eq!(
+            moves,
+            [
+                json!({"move": {"name": "x"}}),
+                json!({"move": {"name": "y"}}),
+                json!({"move": {"name": "z"}})
+            ]
+        );
+        seed_child_slots(&ix, "r2", &chain(&["detailPage_c3"]), &mut ctx).unwrap();
+        let cells = at(&ctx, &["__children", "detailPage_c3", "__moveCard_d4_1"]);
+        assert_eq!(cells.as_arr().map(|a| a.0.len()), Some(3));
     }
 
     #[test]

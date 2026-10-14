@@ -1,12 +1,14 @@
 //! The component IR (spec §5). Plain Rust + serde: compiles without `bun_ast`.
 pub mod decls;
 pub mod expr;
+pub mod fold;
 pub mod template;
 #[cfg(test)]
 mod tests;
 
 pub use decls::*;
 pub use expr::*;
+pub use fold::{FoldEnv, V};
 pub use template::*;
 
 use serde::{Deserialize, Serialize};

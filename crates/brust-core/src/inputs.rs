@@ -202,6 +202,33 @@ pub fn child_props(
     PropsMap::new(props)?.eval(parent_ctx, idx)
 }
 
+/// The list a per-row child repeats over (`ChildRecord.instances`): a parent-context path, or
+/// a constant list the manifest carries (`per-row-literal` + `rows`, F142 R34.43).
+#[derive(Debug, Clone)]
+pub enum Rows {
+    Path(Path),
+    Literal(Node),
+}
+
+impl Rows {
+    fn list<'v>(&'v self, ctx: &'v Node) -> &'v Node {
+        match self {
+            Rows::Path(p) => p.get(ctx, None),
+            Rows::Literal(n) => n,
+        }
+    }
+
+    /// How many rows the list has in `ctx` (0 when it is not an array).
+    pub fn count(&self, ctx: &Node) -> usize {
+        self.list(ctx).as_arr().map_or(0, |a| a.0.len())
+    }
+
+    /// Row `i` of the list (`null` past the end).
+    pub fn row(&self, ctx: &Node, i: usize) -> Node {
+        self.list(ctx).index(i).cloned().unwrap_or(Node::Null)
+    }
+}
+
 /// A `props` map (`{ childProp: parent path }`) parsed once (at boot);
 /// [`PropsMap::eval`] is [`child_props`] without the parsing. A child record adds
 /// constant props and jinja expressions ([`PropsMap::child`], F105).
@@ -209,7 +236,7 @@ pub fn child_props(
 pub struct PropsMap {
     props: Vec<(String, Bound)>,
     /// A per-row child's list: the row item an expression reads as `__row`.
-    rows: Option<Path>,
+    rows: Option<Rows>,
 }
 
 #[derive(Debug, Clone)]
@@ -244,7 +271,7 @@ impl PropsMap {
         props: &BTreeMap<String, String>,
         literals: &BTreeMap<String, serde_json::Value>,
         exprs: &BTreeMap<String, String>,
-        rows: Option<Path>,
+        rows: Option<Rows>,
     ) -> Result<PropsMap, String> {
         let mut out = Vec::with_capacity(props.len() + literals.len() + exprs.len());
         for (name, src) in props {
@@ -297,11 +324,7 @@ impl PropsMap {
     fn scope(&self, parent_ctx: &Node, idx: Option<usize>) -> Value {
         let mut vars = vec![("__props", parent_ctx.to_value())];
         if let (Some(list), Some(i)) = (&self.rows, idx) {
-            let row = list
-                .get(parent_ctx, None)
-                .index(i)
-                .cloned()
-                .unwrap_or(Node::Null);
+            let row = list.row(parent_ctx, i);
             vars.push(("__row", row.to_value()));
             vars.push(("__idx", Value::from(i)));
         }
@@ -542,10 +565,22 @@ mod tests {
             &BTreeMap::new(),
             &BTreeMap::new(),
             &map(&[("label", "(__row.code | upper) ~ (__idx | js_string)")]),
-            Some(Path::parse("items").unwrap()),
+            Some(Rows::Path(Path::parse("items").unwrap())),
         )
         .unwrap();
         assert_eq!(pm.eval(&ctx, Some(1)).unwrap(), n(json!({"label": "Y1"})));
+        // A constant list the manifest carries (F142 R34.43): rows from the literal, not the context.
+        let pm = PropsMap::child(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &map(&[("label", "(__row.code | upper) ~ (__idx | js_string)")]),
+            Some(Rows::Literal(n(json!([{"code": "p"}, {"code": "q"}])))),
+        )
+        .unwrap();
+        assert_eq!(pm.eval(&ctx, Some(1)).unwrap(), n(json!({"label": "Q1"})));
+        let rows = Rows::Literal(n(json!([1, 2, 3])));
+        assert_eq!(rows.count(&ctx), 3);
+        assert_eq!(rows.row(&ctx, 5), Node::Null);
         // Distinct literals project to distinct inputs, so distinct job keys (R3.1).
         let a = PropsMap::child(
             &BTreeMap::new(),

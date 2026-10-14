@@ -25,6 +25,8 @@ export type ComponentIR = Record<string, any> & {
     props: Record<string, string | null>
     literals?: Record<string, unknown>
     exprs?: Record<string, string>
+    /** F142 R34.43: the rows of a constant enclosing list (`loops` is then `[null]`). */
+    rows_literal?: unknown[]
   }[]
   use_id_slots: number
   uses_outlet: boolean
