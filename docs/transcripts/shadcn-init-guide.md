@@ -79,3 +79,15 @@ warning spread-props components/ui/dialog.tsx:11:10 props are spread into the Re
 …
 [brust] built dist in 1208ms
 ```
+
+## F181 re-run: pinned dependencies (2026-10-15)
+
+Same command after F181: the four packages are installed at the versions above (`bun add radix-ui@1.8.1 …`). A real run in a scratch project (`@brust/core` 2.0.0-alpha.10 in package.json, `app.css` with `@import "tailwindcss"`, a JSONC `tsconfig.json`), `shadcn init button`:
+
+```
+✓ dependencies: done (radix-ui@1.8.1 lucide-react@1.57.0 class-variance-authority@0.7.1 tw-animate-css@1.4.0)
+✓ theme: done (shadcn@4.21.4 add index)
+✓ button: done
+```
+
+A second run printed `skipped` for components.json, tsconfig.json, dependencies, theme and button, and changed nothing. package.json afterwards held `"radix-ui": "1.8.1"`, `"lucide-react": "1.57.0"`, `"class-variance-authority": "0.7.1"`, `"tw-animate-css": "1.4.0"` (exact, no caret).

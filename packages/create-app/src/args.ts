@@ -4,8 +4,11 @@ import { isAbsolute, resolve } from 'node:path'
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/
 const MAX_NAME_LEN = 50
+// The same rule as `brust shadcn init` (R41.8): a component is a registry name or an https URL, checked before anything is written.
+const COMPONENT_RE = /^[a-z0-9][a-z0-9-]*$/
+const REGISTRY_URL_RE = /^https:\/\/[^\s,]+$/
 
-export const USAGE = 'usage: bun create @brust/app <name> [--template blank|pokedex] [--tailwind] [--dir <path>] [--yes] [--brust-dep <spec>] [--version]'
+export const USAGE = 'usage: bun create @brust/app <name> [--template blank|pokedex] [--tailwind] [--dir <path>] [--yes] [--brust-dep <spec>] [--shadcn[=button,card,...]] [--version]'
 
 export interface ParsedArgs {
   projectName: string
@@ -16,6 +19,8 @@ export interface ParsedArgs {
   /** `--tailwind` (L21): accepted and ignored since L28: the blank template uses Tailwind CSS v4 by default. */
   tailwind: boolean
   help: boolean
+  /** `--shadcn[=a,b]` (F181): after scaffolding, install and run `brust shadcn init` with these components (`[]` = set up only). */
+  shadcn?: string[]
   /** `--version` (F131): print the bare version and exit; no short form (see the note above). */
   version: boolean
 }
@@ -29,6 +34,7 @@ export function parseArgs(args: string[]): ParsedArgs {
   let tailwind = false
   let help = false
   let version = false
+  let shadcn: string[] | undefined
   const need = (flag: string, v: string | undefined): string => {
     if (!v) throw new Error(`create-app: ${flag} requires a value`)
     return v
@@ -47,6 +53,14 @@ export function parseArgs(args: string[]): ParsedArgs {
     else if (a.startsWith('--brust-dep=')) brustDep = need('--brust-dep', a.slice('--brust-dep='.length))
     else if (a === '--yes' || a === '-y') yes = true
     else if (a === '--tailwind') tailwind = true
+    else if (a === '--shadcn') shadcn = shadcn ?? []
+    else if (a.startsWith('--shadcn=')) {
+      const names = a.slice('--shadcn='.length).split(',').filter(Boolean)
+      for (const c of names) {
+        if (!COMPONENT_RE.test(c) && !REGISTRY_URL_RE.test(c)) throw new Error(`create-app: --shadcn component "${c}" must match ^[a-z0-9][a-z0-9-]*$ or be an https:// registry URL (without commas)`)
+      }
+      shadcn = [...(shadcn ?? []), ...names]
+    }
     else if (a.startsWith('-')) throw new Error(`create-app: unknown flag "${a}"`)
     else if (name === undefined) name = a
     else throw new Error(`create-app: unexpected positional argument "${a}"`)
@@ -60,5 +74,5 @@ export function parseArgs(args: string[]): ParsedArgs {
   }
   const cwd = process.cwd()
   const targetDir = dir ? (isAbsolute(dir) ? dir : resolve(cwd, dir)) : resolve(cwd, name)
-  return { projectName: name, targetDir, template, yes, brustDep, tailwind, help, version }
+  return { projectName: name, targetDir, template, yes, brustDep, tailwind, help, version, ...(shadcn && { shadcn }) }
 }
