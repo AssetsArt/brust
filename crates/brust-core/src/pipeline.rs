@@ -1060,7 +1060,7 @@ fn is_server_slot(k: &str) -> bool {
         || is_instance_dict(k)
 }
 
-/// `__<name>_<8 hex>_<digits>`: the key of a child instance's slot dict (`__` + the child's component id + its
+/// `__<name>_<8 hex>_<digits>` (the name may be empty): the key of a child instance's slot dict (`__` + the child's component id + its
 /// ordinal). The id's hash part is what tells it from a loader key such as `__typename` or `__a_1`.
 fn is_instance_dict(k: &str) -> bool {
     let Some(rest) = k.strip_prefix("__") else {
@@ -1069,11 +1069,11 @@ fn is_instance_dict(k: &str) -> bool {
     let Some((id, ordinal)) = rest.rsplit_once('_') else {
         return false;
     };
-    let Some((name, hash)) = id.rsplit_once('_') else {
+    // The name may be empty: a file stem with no ASCII alphanumerics (`หน้า.tsx`, `_.tsx`) gives the id `_<hash>`.
+    let Some((_, hash)) = id.rsplit_once('_') else {
         return false;
     };
-    !name.is_empty()
-        && !ordinal.is_empty()
+    !ordinal.is_empty()
         && ordinal.bytes().all(|b| b.is_ascii_digit())
         && hash.len() == 8
         && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
@@ -2979,8 +2979,8 @@ mod tests {
             j(&Node::map(ctx)),
             json!({"__a_1": {}, "__typename": "Pokemon", "_id": 7, "_session": "s", "_s": 1,
                    "_s1a": 2, "_idx": 3, "_f": 1, "_fjx": 2, "_foo_1__s1": 3,
-                   "__field_603ad356_": 1, "__field_603AD356_1": 2, "__field_603ad35_1": 3, "___603ad356_1": 4,
-                   "__field_603ad356_1x": 5, "__field_603ad356": 6, "who": "w"})
+                   "__field_603ad356_": 1, "__field_603AD356_1": 2, "__field_603ad35_1": 3, "__field_603ad356_1x": 5,
+                   "__field_603ad356": 6, "who": "w"})
         );
     }
 
