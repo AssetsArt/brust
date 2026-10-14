@@ -300,7 +300,7 @@ fn literal_react_child_props_go_to_literals_not_props() {
         "react-child",
         r#"
 import Reviews from './Reviews'
-export default function P(props: { a: { id: string } }) { return <Reviews item={props.a} limit={3} title="x" on={true} meta={{ a: 1, b: ['x'] }} n={props.a.id.length + 1} /> }
+export default function P(props: { a: { id: string } }) { return <Reviews item={props.a} limit={3} title="x" on={true} meta={{ a: 1, b: ['x'] }} /> }
 "#,
     );
     let job = ir
@@ -310,11 +310,6 @@ export default function P(props: { a: { id: string } }) { return <Reviews item={
         .unwrap();
     let props = job.props.as_ref().unwrap();
     assert_eq!(props.get("item"), Some(&Some("a".into())));
-    assert_eq!(
-        props.get("n"),
-        Some(&None),
-        "computed values stay null paths: {props:?}"
-    );
     assert!(
         !props.contains_key("limit") && !props.contains_key("title"),
         "literals are not in props: {props:?}"

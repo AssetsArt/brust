@@ -469,7 +469,9 @@ impl Walker<'_> {
             }
             Node::Text(_) | Node::Outlet => {}
             Node::Slot(e) => self.expr(e, out),
-            Node::If { cond, then, else_ } => {
+            Node::If {
+                cond, then, else_, ..
+            } => {
                 self.expr(cond, out);
                 self.nodes(then, out);
                 self.nodes(else_, out);
