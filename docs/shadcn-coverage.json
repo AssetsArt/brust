@@ -36,22 +36,22 @@
   },
   "blockers": [
     {
-      "blocker": "fallback:external-component",
-      "kind": "compiler code",
-      "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 41,
-      "analysisOnlyRows": 0,
-      "appComponents": 144,
-      "libraryComponents": 151
-    },
-    {
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 40,
       "analysisOnlyRows": 0,
       "appComponents": 140,
-      "libraryComponents": 183
+      "libraryComponents": 180
+    },
+    {
+      "blocker": "fallback:external-component",
+      "kind": "compiler code",
+      "classification": "survey truth (today's rule; R34.7 removes it)",
+      "measuredRows": 40,
+      "analysisOnlyRows": 0,
+      "appComponents": 143,
+      "libraryComponents": 151
     },
     {
       "blocker": "fallback:island-children",
@@ -132,7 +132,16 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 184
+      "libraryComponents": 36
+    },
+    {
+      "blocker": "fallback:prop-pattern",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 23
     },
     {
       "blocker": "fallback:local-component",
@@ -142,15 +151,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 20
-    },
-    {
-      "blocker": "fallback:prop-pattern",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 11
     },
     {
       "blocker": "fallback:browser-global",
@@ -432,11 +432,10 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 3,
-      "reactComponents": 2,
+      "components": 4,
+      "reactComponents": 1,
       "jsGzipKb": 74,
       "codes": [
-        "external-component",
         "spread-props"
       ]
     },

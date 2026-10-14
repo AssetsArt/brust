@@ -302,7 +302,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                     && let E::EIdentifier(id) = &value.data
                     && r.names.is_forwarded_ref(id.ref_)
                 {
-                    r.names.note_forwarded_ref_dropped();
+                    r.names.note_forwarded_ref_dropped(value.loc.start);
                     forwarded_ref = true;
                     continue;
                 }
@@ -465,7 +465,7 @@ fn read_attr(
         if let E::EIdentifier(id) = &value.data
             && r.names.is_forwarded_ref(id.ref_)
         {
-            r.names.note_forwarded_ref_dropped();
+            r.names.note_forwarded_ref_dropped(value.loc.start);
             return None;
         }
         if let E::EIdentifier(id) = &value.data {

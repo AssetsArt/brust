@@ -60,7 +60,7 @@ export default function Installation({ blocks, starters }: InstallationData) {
       </p>
       {/* source: packages/create-app/templates/blank/app.css:1 and package.json.tmpl:21 (L28, PR #180) */}
       <p>
-        The <code>blank</code> starter is styled with Tailwind CSS v4: an <code>app.css</code> at the root, with <code>tailwindcss</code>, <code>@tailwindcss/node</code> and <code>@tailwindcss/oxide</code> as dev dependencies.
+        The <code>blank</code> starter is styled with Tailwind CSS v4: an <code>app.css</code> at the root, with <code>tailwindcss</code>, <code>@tailwindcss/node</code> and <code>@tailwindcss/oxide</code> as dev dependencies. To use shadcn/ui components, follow <a href="/docs/guides/shadcn-setup">Set up shadcn/ui</a>.
       </p>
       <Frame title="Live demo" label="StarterPicker · native">
           <StarterPicker starters={starters} />
