@@ -3890,13 +3890,14 @@ impl Walker<'_, '_> {
         child: &Child,
     ) -> Vec<String> {
         let mut live: Vec<String> = Vec::new();
+        let mut cands: Vec<(String, bool)> = Vec::new();
         if !matches!(child.tier, Tier::Static) {
             return live;
         }
         for (i, (k, v)) in props.iter().enumerate() {
             if k == crate::ir::SPREAD_KEY
                 || matches!(v, Expr::ClientOnly { .. })
-                || live.contains(k)
+                || cands.iter().any(|(c, _)| c == k)
                 || !child.spread.lands(k)
                 || !self.reads_state(v)
                 || !live_key_ok(k)
@@ -3926,6 +3927,24 @@ impl Walker<'_, '_> {
                     _ => continue,
                 }
             }
+            cands.push((k.clone(), shadow));
+        }
+        // The parent binds these on the child's element in ITS scope. If the instance is linked anyway (another prop of
+        // it, bound by name or read from a row, is live), that element is the child's host and the directives would
+        // resolve in the child's scope: bind nothing, and refuse as before (2b-handlers review F1, C7). Handlers are
+        // either hoisted (no link) or refused, so they do not count here.
+        let keys: Vec<&String> = cands.iter().map(|(k, _)| k).collect();
+        let need = instance_needs_link(
+            &child.tier,
+            props
+                .iter()
+                .filter(|(k, v)| !keys.contains(&k) && !is_handler_prop(k, v))
+                .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
+        );
+        if need != LinkNeed::None {
+            return live;
+        }
+        for (k, shadow) in cands {
             if shadow {
                 self.shadowed.insert(k.clone());
             }
@@ -3933,7 +3952,7 @@ impl Walker<'_, '_> {
                 loc,
                 key: k.clone(),
             });
-            live.push(k.clone());
+            live.push(k);
         }
         let _ = name;
         live

@@ -404,3 +404,50 @@ fn what_a_hooks_state_and_ref_start_from_is_declared_before_them() {
         "{c}"
     );
 }
+
+/// No linked host carries a directive of the parent's: a host with `x-props-bind` is the child's scope, so an
+/// `x-bind-*` / `x-on-*` printed on the same tag would resolve in the child, not in the parent (review F1, C7).
+fn no_mixed_scope(jinja: &str) {
+    let html = render(jinja, serde_json::json!({}));
+    for tag in html.split('<').skip(1) {
+        let tag = tag.split('>').next().unwrap_or("");
+        assert!(
+            !(tag.contains("x-props-bind") && (tag.contains(" x-bind-") || tag.contains(" x-on-"))),
+            "a linked host carries the parent's directive: <{tag}>"
+        );
+    }
+}
+
+#[test]
+fn an_instance_that_is_linked_anyway_binds_no_live_forward() {
+    // `variant` is a prop the child binds by name and it reads state: the instance is linked, its element is the
+    // child's host, and `aria-pressed` would resolve in the child's scope (`_c1` is the child's `variant`). Main falls
+    // back; so do we.
+    let linked = page(
+        "import Btn from './Btn'",
+        &format!(
+            "{FLIP} return <div><Btn aria-pressed={{on}} variant={{on ? 'a' : 'b'}}>x</Btn><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    refused_any(&linked);
+    // Per row: a prop that reads only the row links the instance inside the list.
+    let row = page(
+        "import Btn from './Btn'",
+        "const [sel, setSel] = useState(''); return <div>{['a', 'b'].map((it) => <Btn key={it} aria-pressed={sel === it} variant={it} onClick={() => setSel(it)}>{it}</Btn>)}</div>",
+    );
+    refused_any(&row);
+    // The unlinked cases never mix scopes.
+    for o in [
+        page(
+            "import Btn from './Btn'",
+            &format!("{FLIP} return <Btn aria-pressed={{on}} onClick={{() => setOn(!on)}}>x</Btn>"),
+        ),
+        page(
+            "import Btn from './Btn'",
+            "const [sel, setSel] = useState(''); return <div>{['a', 'b'].map((it) => <Btn key={it} aria-pressed={sel === it} onClick={() => setSel(it)}>{it}</Btn>)}</div>",
+        ),
+    ] {
+        assert_eq!(o.tier, Tier::Native, "{:?}", o.diags);
+        no_mixed_scope(&o.jinja);
+    }
+}
