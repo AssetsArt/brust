@@ -438,14 +438,15 @@ fn a_providers_own_template_is_judged_by_the_same_predicate() {
     }
 }
 
-/// Lead ruling (c): the total allowlist runs ONLY under a lowered Provider frame. A plain wrapper keeps main's behaviour
-/// plus the reviewed guards: an element holder at the root of a child, or in its `&&` / `?:` value positions, falls back
-/// (imported and local); and the ordinary child reads `{LABELS[kind]}`, `{items.length}`, `{formatPrice(x)}` still LOWER.
-/// The same three under a Provider fall back by name (a helper's result and a data lookup are not provable yet: F174).
+/// F173 + F190: a plain wrapper is judged by the same total predicate as a Provider frame (`Placer::painted`). An element
+/// holder at the root of a child, in its `&&` / `?:` value positions, through a member, an index or an array, and a helper
+/// returning an element (imported or local) fall back; on main they printed nothing. The ordinary child reads
+/// `{LABELS[kind]}`, `{items.length}`, `{formatPrice(x)}` still LOWER, wrapper or Provider: the const map folds, and an
+/// imported helper is proven plain in its own module (`plain_fn::imported_plain_fn`).
 #[test]
-fn the_allowlist_is_scoped_to_provider_frames_and_plain_wrappers_keep_lowering() {
+fn plain_wrappers_are_judged_by_the_total_predicate_and_ordinary_reads_keep_lowering() {
     for kind in ["imp", "loc"] {
-        for shape in ["root", "and", "tern"] {
+        for shape in ["root", "and", "tern", "member", "index", "array", "call"] {
             let f = format!("plain-{kind}-{shape}.tsx");
             let (ir, _) = page(&f);
             assert!(
@@ -456,21 +457,63 @@ fn the_allowlist_is_scoped_to_provider_frames_and_plain_wrappers_keep_lowering()
             assert!(is_react(&ir), "{f}: {:?}", ir.tier);
         }
     }
-    let (ir, jinja) = page("trio-plain.tsx");
+    // A list over a module const (the scroll-area shape) lowers; one whose rows are elements falls back (main's guard).
+    let (ir, _) = page("plain-const-jsx-list.tsx");
     assert!(
-        !rules(&ir).contains(&"jsx-const-child") && !is_react(&ir),
-        "{:?} {:?}",
-        ir.tier,
-        ir.diagnostics
-    );
-    assert!(!jinja.is_empty());
-    let (ir, _) = page("trio-prov.tsx");
-    assert!(
-        rules(&ir).contains(&"jsx-const-child"),
+        rules(&ir).contains(&"jsx-const-child") && is_react(&ir),
         "{:?}",
         ir.diagnostics
     );
-    assert!(is_react(&ir), "{:?}", ir.tier);
+    for f in [
+        "trio-plain.tsx",
+        "trio-prov.tsx",
+        "plain-helper-ok.tsx",
+        "plain-const-list.tsx",
+        // Only `{child}` slots are judged under a plain wrapper: an unproven helper in an attribute or a component prop
+        // (`className={cn(...)}`) prints as React prints it and keeps lowering, as on main.
+        "plain-attr-helper.tsx",
+        // Local string helpers (a const arrow, `.replace(/re/, …)` on a parameter's field, a comparison or a template
+        // over its fields) are proven plain: the docs site's own pages keep lowering.
+        "plain-helper-string.tsx",
+        // Lead ruling on @57714ece: every allowlisted built-in method on an accepted read or on `new Date(…)`.
+        "plain-methods.tsx",
+        // `useState(1234.5)` then `n.toFixed(2)`: a primitive state keeps lowering (native page).
+        "plain-method-state-primitive.tsx",
+    ] {
+        let (ir, jinja) = page(f);
+        assert!(
+            !rules(&ir).contains(&"jsx-const-child") && !is_react(&ir),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+        assert!(!jinja.is_empty(), "{f}");
+    }
+}
+
+/// F173: an imported helper is plain only when its own module proves it by the PR 1c rules: an index or member read
+/// inside it, a `let` export (rebindable), a namespace member call, an import that does not resolve, and a proven
+/// helper called with an element holder as its argument all fall back by name.
+#[test]
+fn an_imported_helper_is_plain_only_when_its_module_proves_it() {
+    for f in [
+        "plain-helper-index.tsx",
+        "plain-helper-member.tsx",
+        "plain-helper-let.tsx",
+        "plain-helper-ns.tsx",
+        "plain-helper-unresolved.tsx",
+        "plain-helper-arg.tsx",
+        // A regular expression is plain only as a method's argument: a helper returning its argument would print it.
+        "plain-helper-regex.tsx",
+    ] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"jsx-const-child"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+    }
 }
 
 /// Mellow (scoping): a component PROP under a Provider frame is printed too (`<Badge icon={el}/>`), so it goes through the
@@ -602,5 +645,46 @@ fn a_helper_proven_to_return_a_primitive_may_be_read_under_a_provider() {
             panel.1.diagnostics
         );
         assert!(is_react(&panel.1), "{f}: {:?}", panel.1.tier);
+    }
+}
+
+/// Lead ruling on @57714ece: an allowlisted method is plain only on a built-in receiver. An object literal carrying its
+/// own method of that name (through a local, a member, an index or an array, or built by `Object.fromEntries`), a class instance, a shadowed `Date`, a reassigned method, a computed
+/// method name and an optional member or call all fall back by name.
+#[test]
+fn an_allowlisted_method_on_a_user_defined_receiver_falls_back() {
+    for f in [
+        "plain-method-override.tsx",
+        "plain-method-class.tsx",
+        "plain-method-date-shadow.tsx",
+        "plain-method-reassigned.tsx",
+        "plain-method-computed.tsx",
+        "plain-method-optional.tsx",
+        "plain-method-optional-call.tsx",
+        // Mellow F1: the receiver is a positive allowlist, so an object literal one indirection away refuses too.
+        "plain-method-via-member.tsx",
+        "plain-method-via-array-index.tsx",
+        "plain-method-via-literal-member.tsx",
+        "plain-method-via-local-array.tsx",
+        "plain-method-via-from-entries.tsx",
+        "plain-method-via-from-entries-local.tsx",
+        // A proven helper returning a method of its argument: the argument must be an accepted receiver too.
+        "plain-method-via-helper.tsx",
+        // Mellow F2: a list item is a receiver only when its list is (a local, an inline and a module const list).
+        "plain-method-loop-local.tsx",
+        "plain-method-loop-inline.tsx",
+        "plain-method-loop-module.tsx",
+        // Mellow F3: a state value is a receiver only when its initial value is primitive.
+        "plain-method-state-object.tsx",
+        "plain-method-state-prop.tsx",
+        "plain-method-state-lazy.tsx",
+    ] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"jsx-const-child"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
     }
 }

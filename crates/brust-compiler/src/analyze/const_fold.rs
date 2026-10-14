@@ -381,7 +381,7 @@ pub fn imported_call_const(
 
 /// The module-level name `export` refers to: `export const X`, `export { X as Y }` or
 /// `export default X`.
-fn exported_const_name(ast: &js_ast::Ast<'_>, export: &str) -> Option<String> {
+pub(crate) fn exported_const_name(ast: &js_ast::Ast<'_>, export: &str) -> Option<String> {
     let sym = |r: js_ast::Ref| {
         ast.symbols
             .as_slice()
