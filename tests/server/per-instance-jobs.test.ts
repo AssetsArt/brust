@@ -15,7 +15,9 @@ let proc: ReturnType<typeof Bun.spawn>
 let base = ''
 
 beforeAll(async () => {
-  const b = Bun.spawnSync([bin, 'build', entry, '--out-dir', dist], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  // This file proves per-instance feeding (F142), so the build keeps every instance a job: F149 would otherwise
+  // evaluate the table's constant class jobs at build and drop their records (tests/server/cn-fold.test.ts covers that).
+  const b = Bun.spawnSync([bin, 'build', entry, '--out-dir', dist], { cwd: app, env: { ...process.env, BRUST_BUILD_EVAL: '0' }, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}`)
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
   proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', dist, '--entry', entry], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })

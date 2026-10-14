@@ -186,10 +186,14 @@ impl Projection {
         }
         let mut out = MapInner::new();
         for (p, keys) in &self.kept {
-            // F149: an input the props do not have stays absent (JS `undefined`, as React passes an omitted prop),
-            // never `null`: `cva` reads an explicit `null` as "no variant" and skips its default.
-            let Some(value) = p.find(ctx, idx) else {
-                continue;
+            // F149/F151: a prop root the props do not have stays absent (JS `undefined`, as React passes an omitted
+            // prop), never `null`: `cva` reads an explicit `null` as "no variant" and skips its default. A deeper path
+            // keeps its objects with a `null` leaf, so a job reading `__store.cart.count` with no snapshot never
+            // reads a member of `undefined`.
+            let value = match p.find(ctx, idx) {
+                Some(v) => v,
+                None if keys.len() == 1 => continue,
+                None => p.get(ctx, idx),
             };
             let (last, prefix) = keys.split_last().expect("parsed path is non-empty");
             let mut node = &mut out;
@@ -558,12 +562,13 @@ mod tests {
 
     #[test]
     fn a_missing_input_stays_absent_and_an_explicit_null_stays_null() {
-        // F149: an omitted prop reaches the job as `undefined` (React's value), not `null`.
+        // F149/F151: an omitted prop reaches the job as `undefined` (React's value), not `null`; a deeper path
+        // keeps its objects and a `null` leaf (store reads, `brust-server` store_job_keys).
         let ctx = n(json!({"a": 1, "n": null, "o": {}}));
         let inputs: Vec<String> = ["a", "n", "gone", "o.x", "deep.y"].map(String::from).into();
         assert_eq!(
             project(&ctx, &inputs, None).unwrap(),
-            n(json!({"a": 1, "n": null}))
+            n(json!({"a": 1, "n": null, "o": {"x": null}, "deep": {"y": null}}))
         );
         // A child prop bound to a parent path the context lacks is not passed either.
         let props = [("x", "a"), ("y", "gone"), ("z", "n")]
