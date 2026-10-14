@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 49 | 35 | 12 | 2 | 0 | 0 | 0 | 0 |
-| B Composition | 97 | 49 | 8 | 40 | 0 | 0 | 0 | 0 |
+| B Composition | 104 | 56 | 8 | 40 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 52 | 17 | 10 | 21 | 3 | 1 | 0 | 0 |
-| **Total** | 257 | 112 | 43 | 98 | 3 | 1 | 0 | 0 |
+| **Total** | 264 | 119 | 43 | 98 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -138,6 +138,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-forwardref-ref-destructured | the second parameter is destructured | react | react | ssr | ok | fallback:forwardref-ref |  |
 | b-hoc | higher-order component | react | react | ssr | ok | fallback:default-export-shape |  |
 | b-spread-child | spread props onto a component (F31) | static | static | 0 | ok | — | shadcn S1.2 R34.15: each prop the child reads resolves through the spread (spread_get) |
+| b-props-quoted-key | a quoted hyphen key bound to a local in the props pattern | static | static | ssr | ok | — | F161 prop-quoted-key: the template read `data-x` as a subtraction and every render failed (500); the component is a React island now (the page stays static). Native support is a later F-row |
+| b-props-default-iife | a destructuring default that is an immediately-invoked function | static | static | ssr, ssr | ok | — | F161 prop-default-iife: the default printed as none, so the page rendered without it; the component is a React island now |
+| b-props-default-call | a destructuring default that calls a local function | static | static | ssr | ok | — | F161 prop-default-shape: a call outside the template subset printed as none; now React |
+| b-props-default-const | a destructuring default that reads a module constant | static | static | ssr | ok | — | F161 prop-default-shape: the constant printed as an unbound template variable (empty); now React |
+| b-props-default-jsx | a destructuring default that is a JSX element | static | static | ssr | ok | — | F161 prop-default-shape: JSX in a default printed as none; now React |
+| b-props-default-earlier | a destructuring default that reads an earlier prop which has its own default | static | static | ssr | ok | — | F161 prop-default-shape: the template read `a` without its default (X undefined! instead of x!); the component is a React island now |
+| b-props-default-printable | defaults the template prints exactly: literals, an earlier prop without a default, a supported call, a rename | static | static | 0 | ok | — | F161 control: the fail-closed rule does not touch a default the template can evaluate |
 | b-spread-known-shape | data-*, aria-*, boolean and style props through a child's rest spread | static | static | 0 | ok | — | shadcn S1.2 R34.15 (a): keys known at the call site expand at compile time; children from the spread are the element children |
 | b-spread-alias-known | HTML aliases at the call site into a child that writes React names after its spread | static | static | 0 | ok | — | shadcn S1.2 review F1: compile-time expansion merges on the HTML attribute too (class="x", for="a", once each) |
 | b-fed-child-local-list | a child with a job of its own in a list over a local array | static | static | 0 | ok | — | F142 R34.43: Row reads the row of a module const, so the manifest carries the rows (per-row-literal) and the server feeds one instance per row (was the instance-list-path fallback, challenge 4dc45c45) |
