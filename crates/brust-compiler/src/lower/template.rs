@@ -380,6 +380,21 @@ impl<'a, 'c> Printer<'a, 'c> {
     /// A placed value as a jinja expression.
     fn value(&self, e: &Expr) -> String {
         if self.blank {
+            // An inlined instance fed once (no row index, F142 R34.42) has the same job output in
+            // every row, so the row template a client-rendered list clones carries it too.
+            if let (
+                Expr::Precomputed {
+                    slot,
+                    per_item: None,
+                    state_dependent: false,
+                    ..
+                },
+                Some(i),
+            ) = (e, &self.inline)
+                && i.slot_loops.is_empty()
+            {
+                return self.slot_ref(slot, false);
+            }
             return UNDEFINED.into();
         }
         match e {
@@ -1728,6 +1743,17 @@ impl<'a, 'c> Printer<'a, 'c> {
                 });
                 d
             });
+        // A row-invariant instance (F142, R34.42) is fed once: its record has no loops, and its
+        // slot is read without the row index.
+        let invariant = ir
+            .instances
+            .iter()
+            .any(|r| r.child_id == id && r.k == k && r.loops.is_empty());
+        let (loops, slot_loops) = if invariant {
+            (String::new(), Vec::new())
+        } else {
+            (loops, slot_loops)
+        };
         let inline = Inline {
             segs,
             bind: bind.clone(),
