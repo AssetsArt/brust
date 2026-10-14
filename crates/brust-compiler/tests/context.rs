@@ -421,3 +421,60 @@ fn a_child_that_reads_anything_but_props_locals_and_primitives_falls_back() {
         );
     }
 }
+
+/// Mellow (Provider-own template): the Provider tag lowers to a Fragment, so the component's OWN template is judged by the
+/// same predicate as children passed to a component. An element holder read directly under the Provider element, imported
+/// or local, in every shape of the table, falls back.
+#[test]
+fn a_providers_own_template_is_judged_by_the_same_predicate() {
+    for shape in ["root", "and", "tern", "member", "index"] {
+        for kind in ["imp", "loc"] {
+            let all = compile_all(&format!("pown-{kind}-{shape}.tsx"));
+            let panel = all
+                .iter()
+                .find(|(id, ..)| id.starts_with("panel_"))
+                .expect("panel");
+            assert!(
+                rules(&panel.1).contains(&"jsx-const-child"),
+                "{kind}-{shape}: {:?}",
+                panel.1.diagnostics
+            );
+            assert!(is_react(&panel.1), "{kind}-{shape}: {:?}", panel.1.tier);
+        }
+    }
+}
+
+/// Lead ruling (c): the total allowlist runs ONLY under a lowered Provider frame. A plain wrapper keeps main's behaviour
+/// plus the reviewed guards: an element holder at the root of a child, or in its `&&` / `?:` value positions, falls back
+/// (imported and local); and the ordinary child reads `{LABELS[kind]}`, `{items.length}`, `{formatPrice(x)}` still LOWER.
+/// The same three under a Provider fall back by name (a helper's result and a data lookup are not provable yet: F174).
+#[test]
+fn the_allowlist_is_scoped_to_provider_frames_and_plain_wrappers_keep_lowering() {
+    for kind in ["imp", "loc"] {
+        for shape in ["root", "and", "tern"] {
+            let f = format!("plain-{kind}-{shape}.tsx");
+            let (ir, _) = page(&f);
+            assert!(
+                rules(&ir).contains(&"jsx-const-child"),
+                "{f}: {:?}",
+                ir.diagnostics
+            );
+            assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+        }
+    }
+    let (ir, jinja) = page("trio-plain.tsx");
+    assert!(
+        !rules(&ir).contains(&"jsx-const-child") && !is_react(&ir),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
+    assert!(!jinja.is_empty());
+    let (ir, _) = page("trio-prov.tsx");
+    assert!(
+        rules(&ir).contains(&"jsx-const-child"),
+        "{:?}",
+        ir.diagnostics
+    );
+    assert!(is_react(&ir), "{:?}", ir.tier);
+}

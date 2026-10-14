@@ -97,6 +97,8 @@ struct Placer<'s> {
     jsx_flagged: bool,
     /// > 0 while walking the children passed to a component: a child read there is judged by `child_read_problem`.
     component_children: u32,
+    /// > 0 under a lowered Provider frame (or in a Provider component's own template): judged by the allowlist.
+    provider_children: u32,
     /// Locations of `list-shape` fallbacks: the reader already named the construct there.
     list_shape_locs: BTreeSet<u32>,
     /// L2: module path, source text, module declarations and build-computed slot values.
@@ -224,7 +226,12 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         loop_scope: Vec::new(),
         diagnostics: Vec::new(),
         jsx_flagged: false,
+        // A Provider component's OWN template is printed as its children's content too (the Provider tag lowers to a
+        // Fragment), so every Slot of it is judged like a child passed to a component.
         component_children: 0,
+        // A Provider component's OWN template is printed under its own Provider element (the tag lowers to a Fragment),
+        // so every Slot of it is judged by the allowlist too.
+        provider_children: u32::from(!ir.provides.is_empty()),
         list_shape_locs: ir
             .diagnostics
             .iter()
@@ -530,6 +537,42 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 }
 
 impl Placer<'_> {
+    /// An imported binding whose VALUE can become the child: the expression itself, a branch of a conditional
+    /// (`on ? el : null`), the value side of `&&` / `||` / `??` (`on && el`), or an array element; or `ns.name` of a
+    /// namespace import. Not a callee, a member target, a test or a call argument: those never flow out as the printed
+    /// value (a helper's return value is the helper's business). `Some(name)` = the export cannot be resolved to a
+    /// folded primitive, so the child fails closed.
+    fn import_child_problem(&self, r: &RawExpr) -> Option<String> {
+        let proven = |source: &str, name: &str| {
+            crate::analyze::const_fold::imported_const(&self.path, source, name, self.opts, 0)
+                .is_some()
+        };
+        let sub = |x: &RawExpr| self.import_child_problem(x);
+        match &r.kind {
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Import { source, imported },
+            } => (imported != "*" && !proven(source, imported)).then(|| name.clone()),
+            RawKind::Member { target, name, .. } => match &target.kind {
+                RawKind::Ident {
+                    name: ns,
+                    kind: IdentKind::Import { source, imported },
+                } if imported == "*" => (!proven(source, name)).then(|| format!("{ns}.{name}")),
+                _ => None,
+            },
+            RawKind::Binary { op, left, right } => match op {
+                crate::ir::BinOp::And => sub(right),
+                crate::ir::BinOp::Or | crate::ir::BinOp::Nullish => {
+                    sub(left).or_else(|| sub(right))
+                }
+                _ => None,
+            },
+            RawKind::Cond { yes, no, .. } => sub(yes).or_else(|| sub(no)),
+            RawKind::Array(xs) => xs.iter().find_map(sub),
+            _ => None,
+        }
+    }
+
     /// The allowlist predicate over a child expression (already folded): `None` when EVERY identifier read anywhere in
     /// it is (1) a prop, (2) a component-local binding the lowering prints (a derived value, state, a loop binding) or
     /// (3) already folded to a primitive literal, or a global; otherwise `Some(name)` of the first read that is not.
@@ -1074,14 +1117,19 @@ impl Placer<'_> {
             }
             Node::Text(_) => {}
             Node::Slot(e) => {
-                // Lead ruling (allowlist): a child passed to a component is printed only when every identifier it reads,
-                // anywhere in the expression, is a prop, a printed local, or resolves to a primitive value. Anything else
-                // (an element object in a const, an import, a helper's result) would print as nothing on the server.
-                if self.component_children > 0
-                    && let Expr::Raw(r) = &*e
-                {
-                    let folded = self.fold(r);
-                    if let Some(name) = self.child_read_problem(&folded, 0) {
+                // Lead ruling (c): under a lowered Provider frame (those were whole islands on main, so a fallback is no
+                // regression) a child is printed only when every identifier it reads, anywhere, is a prop, a printed local
+                // or a primitive (the total allowlist). A plain wrapper keeps main's behaviour plus the reviewed guards:
+                // an element holder at the root of the child or in its conditional / array / namespace value positions.
+                if let Expr::Raw(r) = &*e {
+                    let found = if self.provider_children > 0 {
+                        self.child_read_problem(&self.fold(r), 0)
+                    } else if self.component_children > 0 {
+                        self.import_child_problem(r)
+                    } else {
+                        None
+                    };
+                    if let Some(name) = found {
                         self.diagnostics.push(Diagnostic::fallback(
                             "jsx-const-child",
                             format!("`{name}` is read as a child and brust cannot prove it is a plain value (a prop, a printed local or a primitive constant); the server template could print nothing for it"),
@@ -1164,8 +1212,11 @@ impl Placer<'_> {
                         *v = self.child_prop(&r);
                     }
                 }
+                let is_provider = self.st.provider_locs.contains(loc);
                 self.component_children += 1;
+                self.provider_children += u32::from(is_provider);
                 children.iter_mut().for_each(|c| self.node(c));
+                self.provider_children -= u32::from(is_provider);
                 self.component_children -= 1;
             }
             Node::Fragment(cs) => cs.iter_mut().for_each(|c| self.node(c)),

@@ -69,6 +69,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
         absent: BTreeSet::new(),
         holds_island: false,
+        provider_locs: Default::default(),
         foreign: Default::default(),
     }
 }
@@ -88,7 +89,11 @@ struct Frame {
 /// them like any prop. A consumer with no Provider in this template bubbles its need up: the component declares the
 /// hidden prop itself and its own call site fills it (a wrapper around a consumer stays a plain component); only a
 /// route component with an unfilled need falls back (`context-no-provider`).
-pub fn contexts(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
+pub fn contexts(
+    ir: &mut ComponentIR,
+    st: &mut PassState,
+    ctx: &PassCtx<'_>,
+) -> std::collections::BTreeSet<u32> {
     let mut w = walker(ir, st, ctx);
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     let mut frames: Vec<Frame> = Vec::new();
@@ -145,6 +150,7 @@ pub fn contexts(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         ));
     }
     ir.diagnostics.extend(diags);
+    w.provider_locs
 }
 
 pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
@@ -227,6 +233,8 @@ struct Walker<'s, 'c> {
     absent: BTreeSet<String>,
     /// S2 F3: a child of this template is a React island, or holds one.
     holds_island: bool,
+    /// S2: component instances that push a Provider frame.
+    provider_locs: std::collections::BTreeSet<u32>,
     /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
     /// of its module scope in this component's jobs, the component, the names).
     foreign: std::cell::RefCell<ForeignModules>,
@@ -901,6 +909,9 @@ impl Walker<'_, '_> {
                             "keep this component in React, or provide plain props-derived values",
                         )),
                     }
+                }
+                if pushed > 0 {
+                    self.provider_locs.insert(*loc);
                 }
                 children
                     .iter_mut()

@@ -136,15 +136,6 @@
       "libraryComponents": 23
     },
     {
-      "blocker": "fallback:jsx-const-child",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 14
-    },
-    {
       "blocker": "fallback:context-state",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -395,6 +386,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 6
+    },
+    {
+      "blocker": "fallback:jsx-const-child",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 5
     },
     {
       "blocker": "useImperativeHandle",
@@ -746,7 +746,6 @@
       "codes": [
         "external-component",
         "island-children",
-        "jsx-const-child",
         "jsx-expression",
         "spread-props"
       ]
