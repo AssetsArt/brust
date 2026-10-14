@@ -53,6 +53,36 @@ impl V {
         })
     }
 
+    /// The value as a JS literal, key order kept (F149: a folded `cva(...)` config re-emitted for
+    /// build evaluation); `None` when any part is `undefined` or a number JS would print otherwise.
+    pub fn to_js(&self) -> Option<String> {
+        Some(match self {
+            V::Undef => return None,
+            V::Null => "null".into(),
+            V::Bool(b) => b.to_string(),
+            V::Num(n) => js_num_str(*n)?,
+            V::Str(s) => crate::ir::expr::js_string(s),
+            V::Arr(a) => format!(
+                "[{}]",
+                a.iter()
+                    .map(V::to_js)
+                    .collect::<Option<Vec<_>>>()?
+                    .join(", ")
+            ),
+            V::Obj(o) => format!(
+                "{{ {} }}",
+                o.iter()
+                    .map(|(k, v)| Some(format!(
+                        "{}: {}",
+                        crate::ir::expr::js_string(k),
+                        v.to_js()?
+                    )))
+                    .collect::<Option<Vec<_>>>()?
+                    .join(", ")
+            ),
+        })
+    }
+
     /// JS truthiness.
     pub fn truthy(&self) -> bool {
         match self {

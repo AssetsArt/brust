@@ -1,0 +1,119 @@
+// F149 (plan 2026-10-14-shadcn-cn-fold, R34.93/R34.95) on started servers: the 27 shadcn pages with an inlined instance
+// that has a precompute job, built twice (class jobs folded at build, and BRUST_BUILD_EVAL=0, every instance a job).
+// Each page is served byte-identically both ways; with the fold, the 18 pages whose only jobs were class jobs plan no
+// job at all (the core's dev trace lists none), and alert, badge, button, card, table and label serve React's own markup
+// with the real `cn` / `class-variance-authority` (alert: an omitted cva variant reaches the job as undefined, ruling
+// 9b2a99a9). Run alone: `bun test --timeout 300000 tests/server/cn-fold.test.ts`.
+import { afterAll, beforeAll, expect, test } from 'bun:test'
+import { rmSync } from 'node:fs'
+import { join } from 'node:path'
+
+const app = join(import.meta.dir, '../fixtures/shadcn')
+const entry = 'cn-fold/routes.tsx'
+const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
+const TOKEN = 'cn-fold-proof'
+
+/** Every page of `cn-fold/routes.tsx`. */
+const PAGES = ['alert', 'attachment', 'badge', 'badge-aslink', 'breadcrumb', 'bubble', 'button', 'button-aschild', 'button-group', 'card', 'checkbox', 'empty', 'field', 'input', 'input-group', 'item', 'kbd', 'label', 'marker', 'message', 'native-select', 'pagination', 'skeleton', 'sonner', 'switch', 'table', 'textarea']
+/** The pages whose only jobs were class jobs (docs/plans/2026-10-14-shadcn-cn-fold.md §2). */
+const NO_WORKER = ['alert', 'attachment', 'badge', 'badge-aslink', 'bubble', 'button', 'button-aschild', 'card', 'empty', 'input', 'item', 'kbd', 'label', 'marker', 'message', 'skeleton', 'table', 'textarea']
+
+type Server = { base: string; proc: ReturnType<typeof Bun.spawn> }
+const servers: Server[] = []
+const dists = ['.rows/dist-cn-fold', '.rows/dist-cn-fold-ref']
+
+function build(out: string, env: Record<string, string>) {
+  const b = Bun.spawnSync([bin, 'build', entry, '--out-dir', out], { cwd: app, env: { ...process.env, ...env }, stdout: 'pipe', stderr: 'pipe' })
+  if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}`)
+}
+
+async function start(dist: string): Promise<Server> {
+  const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', BRUST_DEV_TOKEN: TOKEN }
+  const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', dist, '--entry', entry], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
+  const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
+  const dec = new TextDecoder()
+  let out = ''
+  while (!/\[brust\] ready/.test(out)) {
+    const { done, value } = await reader.read()
+    if (done) throw new Error(`brust start exited before ready:\n${out}`)
+    out += dec.decode(value, { stream: true })
+  }
+  void (async () => { for (;;) { const { done } = await reader.read(); if (done) return } })()
+  const s = { base: `http://${/listening on (\S+)/.exec(out)![1]}`, proc }
+  servers.push(s)
+  return s
+}
+
+let folded: Server
+let reference: Server
+beforeAll(async () => {
+  build(dists[0]!, {})
+  build(dists[1]!, { BRUST_BUILD_EVAL: '0' })
+  folded = await start(dists[0]!)
+  reference = await start(dists[1]!)
+}, 300_000)
+
+afterAll(async () => {
+  for (const s of servers) {
+    s.proc.kill('SIGINT')
+    if ((await Promise.race([s.proc.exited, Bun.sleep(5000).then(() => undefined)])) === undefined) { s.proc.kill('SIGKILL'); await s.proc.exited }
+  }
+  for (const d of dists) rmSync(join(app, d), { recursive: true, force: true })
+})
+
+/** The page and the jobs the core planned for it (its dev trace: `x-brust-dev`, only with the start token). */
+async function get(s: Server, page: string): Promise<{ html: string; jobs: number }> {
+  const r = await fetch(`${s.base}/${page}`, { headers: { 'x-brust-dev-token': TOKEN } })
+  expect(r.status).toBe(200)
+  const trace = JSON.parse(Buffer.from(r.headers.get('x-brust-dev') ?? '', 'base64').toString('utf8')) as { jobs: unknown[]; jobs_more: number }
+  return { html: await r.text(), jobs: trace.jobs.length + trace.jobs_more }
+}
+
+test('R34.93: every page is served byte-identically with the fold on and off', async () => {
+  for (const page of PAGES) {
+    const [a, b] = [await get(folded, page), await get(reference, page)]
+    expect({ page, html: a.html }).toEqual({ page, html: b.html })
+    expect(a.jobs, page).toBeLessThan(b.jobs) // every one of these pages lost at least one class job
+  }
+})
+
+test('R34.95: the 18 class-only pages plan no job: Rust answers them without a worker call', async () => {
+  for (const page of PAGES) {
+    const { jobs } = await get(folded, page)
+    expect({ page, workerJobs: jobs === 0 }).toEqual({ page, workerJobs: NO_WORKER.includes(page) })
+  }
+})
+
+/** React's server render of a fixture page, from the fixture (its own react, cn and class-variance-authority). */
+function react(page: string): string {
+  const code = `import { renderToStaticMarkup } from 'react-dom/server'; import { createElement } from 'react'; import Page from './pages/${page}'; process.stdout.write(renderToStaticMarkup(createElement(Page)))`
+  const r = Bun.spawnSync([process.execPath, '-e', code], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
+  if (r.exitCode !== 0) throw new Error(r.stderr.toString())
+  return r.stdout.toString()
+}
+
+/** The page markup of a served document, without brust's own runtime wiring (native hosts, `x-*` attributes). */
+function body(html: string, first: string): string {
+  const start = html.indexOf(first)
+  const close = html.indexOf('</body>')
+  const end = close < 0 ? html.length : close
+  return html
+    .slice(start, end)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '')
+    .replace(/<brust-host[^>]*>|<\/brust-host>/g, '')
+    .replace(/<!--\/?brust[^>]*-->/g, '')
+    .replace(/ x-[a-z-]+="[^"]*"| x-props='[^']*'| x-[a-z-]+(?=[ >])/g, '')
+    .trim()
+}
+
+test("R34.95: alert, badge, button, card, table and label serve React's markup with the real cn / cva", async () => {
+  for (const page of ['alert', 'badge', 'button', 'card', 'table', 'label']) {
+    const ours = await get(folded, page)
+    // React writes a void element as `<input …/>`, the template as `<input …>`: the same HTML.
+    const theirs = react(page).replace(/<(input|img|br|hr)([^>]*)\/>/g, '<$1$2>')
+    const first = theirs.slice(0, theirs.indexOf('>') + 1)
+    // The same HTML spelled two ways: React writes `'` as `&#x27;` and a boolean attribute as `disabled=""`.
+    const same = (h: string) => h.replaceAll('&#x27;', '&#39;').replace(/ ([a-z-]+)=""/g, ' $1')
+    expect({ page, html: same(body(ours.html, first.split(' ')[0]!)) }).toEqual({ page, html: same(theirs) })
+  }
+})

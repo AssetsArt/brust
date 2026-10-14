@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 149 | 87 | 8 | 54 | 0 | 0 | 0 | 0 |
+| B Composition | 151 | 88 | 8 | 55 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 55 | 19 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 315 | 154 | 43 | 114 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
+| **Total** | 329 | 167 | 43 | 115 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -146,6 +146,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-union-spread-impure-test | a spread of a conditional whose test calls a function fails closed | react | react | ssr | ok | fallback:spread-props | R34.66 part 3: a test the printer would repeat per key must be pure |
 | b-union-spread-component-handler | a conditional spread into a component with an `onClick` key fails closed | react | react | ssr | ok | fallback:spread-props | review F1: the hoisted handler would call undefined when the test is false; React attaches none |
 | b-union-spread-component-html | a conditional spread into a component with `dangerouslySetInnerHTML` fails closed (not an error) | react | react | ssr | ok | fallback:spread-props | review F1: valid React must stay a fallback, as before the union lane |
+| b-prop-default-module-const | a props default naming module constants (`o = DEFAULT_ORIENTATION`, `DEFAULT = Orientation.Horizontal`) is folded | static | static | 0 | ok | — | F153b (a): the server template prints the folded value; a written or non-literal constant keeps prop-default-shape |
+| b-prop-default-module-const-call | a props default that is a module constant computed by a call stays prop-default-shape | react | react | ssr | ok | fallback:prop-default-shape |  |
 | b-forwardref | forwardRef component (default export); `ref={ref}` on a host is dropped | static | static | 0 | ok | — | S3 R34.63: HTML has no ref, so the render is the same as React's for a caller that passes none |
 | b-forwardref-const | `const X = forwardRef(function (props, ref) {…})` exported by name, used by a parent | static | static | 0 | ok | — |  |
 | b-forwardref-arrow | forwardRef with an arrow callback and rest props | static | static | 0 | ok | — |  |
@@ -176,7 +178,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-props-body-iife | an immediately-invoked default in a body pattern | static | static | ssr | ok | — | F161 prop-default-iife, body pattern: the component is a React island now |
 | b-props-default-iife | a destructuring default that is an immediately-invoked function | static | static | ssr, ssr | ok | — | F161 prop-default-iife: the default printed as none, so the page rendered without it; the component is a React island now |
 | b-props-default-call | a destructuring default that calls a local function | static | static | ssr | ok | — | F161 prop-default-shape: a call outside the template subset printed as none; now React |
-| b-props-default-const | a destructuring default that reads a module constant | static | static | ssr | ok | — | F161 prop-default-shape: the constant printed as an unbound template variable (empty); now React |
+| b-props-default-const | a destructuring default that reads a module constant | static | static | 0 | ok | — | F161 prop-default-shape: the constant printed as an unbound template variable (empty); F153b (a): the constant is folded to its value, so the child is static |
 | b-props-default-jsx | a destructuring default that is a JSX element | static | static | ssr | ok | — | F161 prop-default-shape: JSX in a default printed as none; now React |
 | b-props-default-earlier | a destructuring default that reads an earlier prop which has its own default | static | static | ssr | ok | — | F161 prop-default-shape: the template read `a` without its default (X undefined! instead of x!); the component is a React island now |
 | b-props-default-printable | defaults the template prints exactly: literals, an earlier prop without a default, a supported call, a rename | static | static | 0 | ok | — | F161 control: the fail-closed rule does not touch a default the template can evaluate |
@@ -309,6 +311,18 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-lucide-icon-rest-spread | a lucide icon spread with the component's rest props | static | static | ssr | ok | — | R34.77: the rest lands on the inlined svg, after the icon's own attributes; parity in tests/server/icon-shapes.test.ts |
 | e-lucide-icon-rest-spread-size | a call site hands the spread icon a key the icon reads (size) | static | static | ssr | ok | — | R34.77: brustc alone leaves the icon an island; after `brust build` renders it the call site is refused (spread-props, page React): crates/brust-compiler/tests/icon_shapes.rs pins size, className, color |
 | e-lucide-icon-unknown-spread | a lucide icon spread with a computed object | react | react | ssr | ok | fallback:external-component, fallback:spread-props, warning:icon-dynamic-prop | R34.77: only the component's own props or rest spread onto an icon; any other spread keeps the island (icon-dynamic-prop) |
+| b-cn-fold-literal | a literal variant on a cva + cn component (shadcn Badge) | static | static | 0 | ok | — | F149 R34.88/R34.89: a candidate; `brust build` runs the job once and prints the class (R34.90) |
+| b-cn-fold-omitted | a cva + cn component with no props | static | static | 0 | ok | — | F149 R34.88: an omitted prop is an absent input |
+| b-cn-fold-module-const | a variant from a module const | static | static | 0 | ok | — | F149 R34.88: the call-site literal folds with the module consts (the constant folder) |
+| b-cn-fold-imported-cva | buttonVariants imported from a sibling that also imports radix-ui | static | static | 0 | ok | — | F149 R34.89 rule 3: the cva config is re-emitted folded for the evaluation, so radix-ui never loads at build |
+| b-cn-fold-lib-utils | the classic shadcn lib/utils cn (clsx + tailwind-merge) | static | static | 0 | ok | — | F149 R34.89 rule 4: a pure relative module whose imports are allowlisted is bundled whole |
+| b-cn-fold-pure-helper | a pure helper label(tone) from a relative module | static | static | 0 | ok | — | F149 ruling Q3: any constant-input instance job with allowed code, not only class composition |
+| b-cn-fold-prop-input | a variant from the page props | static | static | 0 | ok | — | F149 R34.92: the value differs per request, the job stays |
+| b-cn-fold-other-package | a child job that calls a package off the allowlist | static | static | 0 | ok | info:build-eval-instance | F149 R34.92 / ruling Q2: only cn, clsx, tailwind-merge and class-variance-authority run at build |
+| b-cn-fold-alias-import | cn imported through a tsconfig alias (@/lib/utils) | static | static | 0 | ok | info:build-eval-instance | F149 ruling Q5: with no tsconfig paths (brustc alone) the alias reads as a package; `brust build` resolves it once F159 lands |
+| b-cn-fold-useid | a child with useId and a cn class | static | static | 0 | ok | info:build-eval-instance | F149 R34.92: ids are per request |
+| b-cn-fold-row-reading | a cva component reading each row of a constant list | static | static | 0 | ok | — | F149 ruling Q4: per-row instances (per-row-literal) keep their job in v1 |
+| b-cn-fold-denied-global | a class computed from Date in the child module | static | static | 0 | ok | info:build-eval-instance | F149 R34.92: time differs between runs; the L2 denylist applies |
 | e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
 | e-member-named-alias | member of a renamed named import (`<D.Root>`) in a static parent | static | static | ssr | ok | fallback:external-component | S1.4 R34.35: resolved to the package member, an island (external-component), no member-tag |
 | e-member-namespace | member of a namespace import (`<P.Group>`) | static | static | ssr | ok | fallback:external-component |  |

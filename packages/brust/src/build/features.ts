@@ -30,9 +30,46 @@ export function featureOfAttr(attr: string): RuntimeFeature | null | undefined {
   }
 }
 
+/** The template with every jinja tag (`{{ … }}`, `{% … %}`, `{# … #}`) replaced by a space, string literals inside them
+ * read as strings: a printed value such as shadcn's `has-[>svg]:px-3` (a folded class, F149) holds a `>` or a quote that
+ * would otherwise end the element's tag early and hide the directives after it. A directive is never inside a jinja tag. */
+export function withoutJinja(template: string): string {
+  let out = ''
+  let i = 0
+  while (i < template.length) {
+    const open = template.indexOf('{', i)
+    const kind = open < 0 ? '' : template[open + 1]
+    if (open < 0) {
+      out += template.slice(i)
+      break
+    }
+    if (kind !== '{' && kind !== '%' && kind !== '#') {
+      out += template.slice(i, open + 1)
+      i = open + 1
+      continue
+    }
+    out += template.slice(i, open)
+    const close = kind === '{' ? '}}' : `${kind}}`
+    let j = open + 2
+    let quote = ''
+    for (; j < template.length; j++) {
+      const ch = template[j]!
+      if (quote) {
+        if (ch === '\\') j++
+        else if (ch === quote) quote = ''
+      } else if (kind !== '#' && (ch === '"' || ch === "'")) quote = ch
+      else if (template.startsWith(close, j)) break
+    }
+    out += ' '
+    i = j + close.length
+  }
+  return out
+}
+
 /** The `x-*` attribute names on the elements of a template (tags only: prose that mentions `x-for` binds nothing). */
 export function directiveAttrs(template: string): Set<string> {
   const out = new Set<string>()
+  template = withoutJinja(template)
   for (const tag of template.matchAll(/<[a-zA-Z][\w-]*((?:[^>"']|"[^"]*"|'[^']*')*)>/g))
     for (const a of tag[1]!.matchAll(/(?:^|\s)(x-[a-z][a-z0-9-]*)(?==|\s|$|\/)/g)) out.add(a[1]!)
   return out

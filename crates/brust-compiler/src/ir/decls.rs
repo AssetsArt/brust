@@ -223,6 +223,44 @@ pub struct BuildEvalSlot {
     pub col: u32,
 }
 
+/// An inlined instance whose child job reads only constants and allowed code (F149, R34.88-R34.89):
+/// the build runs the child's job module once with `inputs` and recompiles with the outputs
+/// (`AnalyzeOptions.slot_values`, keyed `<key>#<slot>`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct BuildEvalInstance {
+    /// `<parent source>@<call-site byte offset>`: stable across the recompile, unlike `k`.
+    pub key: String,
+    pub child_id: String,
+    pub k: u32,
+    /// The job's props: constant inputs only; an omitted prop is absent.
+    pub inputs: serde_json::Value,
+    /// The job's output slots, all of which must come back for the instance to fold.
+    pub outputs: Vec<String>,
+    /// Relative imports of the job module the evaluation replaces with a folded constant (rule 3).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stubs: Vec<EvalStub>,
+    pub line: u32,
+    pub col: u32,
+}
+
+/// An import of a job module that build evaluation serves from `code` instead of the module's file:
+/// the folded `const`s the job reads, re-emitted, so the module's other imports never load.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct EvalStub {
+    /// The specifier as the job module writes it (`./button`).
+    pub source: String,
+    pub code: String,
+}
+
+/// An inlined instance the build evaluated (F149, R34.90): its child's slots are these values.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct FoldedInstance {
+    pub child_id: String,
+    pub k: u32,
+    /// Slot name -> value, in the build's encoding (`const_fold::json_to_raw`).
+    pub values: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
 /// One `useStore(handle)` binding of the component (M3-F D7).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct StoreUse {

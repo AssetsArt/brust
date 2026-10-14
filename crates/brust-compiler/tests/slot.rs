@@ -238,9 +238,9 @@ fn a_prop_the_call_site_omits_is_undefined_for_the_childs_job() {
         Some("__undefined"),
         "{instances:?}"
     );
-    // The server hands an omitted prop as null, so the default applies to null as well.
+    // F151: the omitted prop reaches the job absent (brust-core), so the JS destructuring default applies.
     assert!(
-        child_job.contains("const size = props.size ?? (\"m\")"),
+        child_job.contains("const { size = (\"m\") } = props"),
         "{child_job}"
     );
 }

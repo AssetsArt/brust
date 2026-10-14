@@ -15,7 +15,8 @@ const CASES: [string, Record<string, unknown>[], 'react' | 'static'][] = [
   ['quoted', [{ 'data-x': '1', id: 'a' }, {}], 'react'],
   ['iife', [{ a: 'z' }, {}], 'react'],
   ['call', [{}, { a: 'q' }], 'react'],
-  ['const', [{}, { a: 'q' }], 'react'],
+  // F153b part 4 folds a module-constant default (`a = D`) to its literal: the template prints it, so it stays static.
+  ['const', [{}, { a: 'q' }], 'static'],
   ['earlier', [{}, { a: 'q' }], 'react'],
   ['jsx', [{}], 'react'],
   ['ok', [{ b: 'B' }, { a: 'Q', n: 5 }], 'static'],
@@ -31,7 +32,7 @@ test('each shape builds; the components that fall back render exactly like React
   const log = logs.join('\n')
   expect(log).toContain('prop-quoted-key')
   expect(log).toContain('prop-default-iife')
-  expect((log.match(/prop-default-shape/g) ?? []).length).toBe(4)
+  expect((log.match(/prop-default-shape/g) ?? []).length).toBe(3)
   // The component of each cards/<name>.tsx: its SSR job against React's render of the original source.
   for (const [name, propSets, tier] of CASES) {
     const ids = Object.entries<{ tier: string }>(manifest.components)

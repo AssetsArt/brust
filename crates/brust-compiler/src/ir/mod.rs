@@ -260,6 +260,13 @@ pub struct ComponentIR {
     /// Slots the build may evaluate once (L2); empty when none qualifies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub build_eval: Vec<BuildEvalSlot>,
+    /// Inlined instances whose child job the build may run once (F149, R34.88-R34.90); empty when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build_eval_instances: Vec<BuildEvalInstance>,
+    /// Inlined instances whose child job the build ran: their slots print as these literals and they
+    /// have no `instances` record (F149, R34.90).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folded_instances: Vec<FoldedInstance>,
     pub child_links: Vec<ChildLink>,
     /// Inlined child instances with a precompute job or `useId` values (S6 `children[].instances`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -359,6 +366,8 @@ impl ComponentIR {
             jobs: vec![],
             icon_requests: vec![],
             build_eval: vec![],
+            build_eval_instances: vec![],
+            folded_instances: vec![],
             child_links: vec![],
             instances: vec![],
             client_props: vec![],

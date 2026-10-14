@@ -290,6 +290,95 @@ pub fn imported_const(
     })
 }
 
+/// F149 rule 3: the exported `const imported` of the relative module `source` re-emitted as module
+/// code for build evaluation, when its initializer is a call of an import from one of `packages` whose
+/// arguments fold (`crate::ir::FoldEnv`, the module's own consts) to values JS prints exactly:
+/// `import { cva as __c0 } from "class-variance-authority"\nexport const buttonVariants = __c0(…)`.
+/// `Err` names why not. Nothing is run.
+pub fn imported_call_const(
+    from: &str,
+    source: &str,
+    imported: &str,
+    opts: &AnalyzeOptions,
+    packages: &[&str],
+) -> Result<String, String> {
+    let not = |why: &str| Err(format!("`{imported}` from `{source}` {why}"));
+    let Some(path) = resolve(from, source, opts) else {
+        return not("cannot be resolved");
+    };
+    let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
+        return not("cannot be read");
+    };
+    let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+        return not("cannot be parsed");
+    };
+    parsed.with_ast(|ast| {
+        let dummy = js_ast::G::Fn::default();
+        let mut names = NameTable::new(ast, &dummy);
+        let print = |js: Js<'_>, a: &Aliases| print_js_with(&parsed, ast, a, js);
+        let mut reader = Reader::new(&mut names, &print);
+        let (_, decls) = reader.module_scope(ast);
+        let Some(local) = exported_const_name(ast, imported) else {
+            return not("is not an exported `const`");
+        };
+        // The binding itself is a `const` holding a call result (`cva(...)` returns a function the
+        // module calls, which counts as a use that is not a read); the arguments may read only
+        // consts that are never written to.
+        let Some(value) = decls
+            .iter()
+            .flat_map(|d| d.consts.iter())
+            .find(|c| c.name == local)
+            .map(|c| c.value.clone())
+        else {
+            return not("is not a module `const`");
+        };
+        let consts: HashMap<String, RawExpr> = decls
+            .iter()
+            .flat_map(|d| d.consts.iter())
+            .filter(|c| !c.mutated)
+            .map(|c| (c.name.clone(), c.value.clone()))
+            .collect();
+        let RawKind::Call { callee, args } = &value.kind else {
+            return not("is not a call of an allowed package");
+        };
+        let RawKind::Ident {
+            kind:
+                IdentKind::Import {
+                    source: pkg,
+                    imported: func,
+                },
+            ..
+        } = &callee.kind
+        else {
+            return not("is not a call of an imported function");
+        };
+        if !packages.contains(&pkg.as_str()) {
+            return not(&format!(
+                "calls the package `{pkg}`, which is not allowed at build"
+            ));
+        }
+        let lookup = |n: &str| consts.get(n).cloned();
+        let mut env = crate::ir::FoldEnv::new(&lookup);
+        let mut printed = Vec::new();
+        for a in args {
+            match env.fold(a).ok().and_then(|v| v.to_js()) {
+                Some(js) => printed.push(js),
+                None => return not("has an argument that does not fold to a constant"),
+            }
+        }
+        let binding = match func.as_str() {
+            "default" => "__c0".to_string(),
+            "*" => return not("calls a namespace import"),
+            f => format!("{{ {f} as __c0 }}"),
+        };
+        Ok(format!(
+            "import {binding} from {}\nexport const {imported} = __c0({})\n",
+            crate::ir::expr::js_string(pkg),
+            printed.join(", ")
+        ))
+    })
+}
+
 /// The module-level name `export` refers to: `export const X`, `export { X as Y }` or
 /// `export default X`.
 fn exported_const_name(ast: &js_ast::Ast<'_>, export: &str) -> Option<String> {
