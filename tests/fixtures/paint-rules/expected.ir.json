@@ -29,6 +29,7 @@
       "default": null
     }
   ],
+  "repeats_children": true,
   "state": [
     {
       "name": "on",

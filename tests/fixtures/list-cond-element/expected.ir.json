@@ -10,6 +10,7 @@
       "default": null
     }
   ],
+  "repeats_children": true,
   "state": [],
   "derived": [],
   "effects": [],

@@ -237,6 +237,10 @@ pub struct ComponentIR {
     /// its props into a fed child whose job reads them, and a spread cannot feed a job input.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unwritten_props: Vec<String>,
+    /// The slot content this component is given is printed more than once: its template repeats in a list, or
+    /// passes its children on to a component that does (F169, transitive).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub repeats_children: bool,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -351,6 +355,7 @@ impl ComponentIR {
             alias_imports: vec![],
             absent_props: Vec::new(),
             unwritten_props: Vec::new(),
+            repeats_children: false,
             state: vec![],
             derived: vec![],
             effects: vec![],

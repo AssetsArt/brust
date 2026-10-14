@@ -68,9 +68,11 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
         absent: BTreeSet::new(),
         unwritten: BTreeSet::new(),
+        passes_to_repeater: false,
     };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
+    ir.repeats_children = w.passes_to_repeater || template_has_for(&template);
     w.resolve_row_only(std::slice::from_mut(&mut template), false);
     debug_assert!(
         w.row_only.is_empty(),
@@ -147,6 +149,8 @@ struct Walker<'s, 'c> {
     absent: BTreeSet<String>,
     /// Keys this component's own call sites must not write (`ComponentIR::unwritten_props`, F164).
     unwritten: BTreeSet<String>,
+    /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
+    passes_to_repeater: bool,
 }
 
 /// The largest constant list (JSON bytes) a per-row-literal instance carries in the manifest
@@ -190,6 +194,8 @@ struct Child {
     reads_children_value: bool,
     /// The compiled child has `useId` values (the server seeds them per instance, per row).
     use_id: bool,
+    /// A static child that is not fed itself but has fed children of its own (F164 re-base).
+    inner: Option<Inner>,
     /// The compiled child's template repeats something in a list (a `For`): slot content is printed once and pasted per row.
     has_for: bool,
     /// Keys the call site must not pass (`ComponentIR::absent_props`).
@@ -261,6 +267,31 @@ fn poly_has_runtime_spread(n: &Node) -> bool {
         Node::Component { children, .. } => children.iter().any(poly_has_runtime_spread),
         Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
     }
+}
+
+/// The fed children of a static, unfed child component (F164 re-base): its records are re-based onto the caller,
+/// which numbers and feeds them as its own.
+#[derive(Clone, Debug)]
+struct Inner {
+    records: Vec<InstanceRecord>,
+    refs: Vec<ChildRef>,
+    /// A fed child of it was evaluated at build (`folded_instances`): its slot lookup is local to that component.
+    folded: bool,
+}
+
+impl Inner {
+    fn of(ir: &ComponentIR) -> Option<Inner> {
+        let has = !ir.instances.is_empty() || !ir.folded_instances.is_empty();
+        (has && matches!(ir.tier, Tier::Static) && !crate::ir::is_fed(ir)).then(|| Inner {
+            records: ir.instances.clone(),
+            refs: ir.children.clone(),
+            folded: !ir.folded_instances.is_empty(),
+        })
+    }
+}
+
+fn inner_name(r: &ChildRef) -> &str {
+    &r.name
 }
 
 /// Whether `n` repeats anything in a list (`lower::template` pastes slot content once per row there).
@@ -815,6 +846,7 @@ impl Walker<'_, '_> {
             reads_children_value: false,
             use_id: false,
             has_for: false,
+            inner: None,
             absent: Vec::new(),
             job_eval: None,
             job_outputs: Vec::new(),
@@ -860,6 +892,7 @@ impl Walker<'_, '_> {
                     reads_children_value: false,
                     use_id: false,
                     has_for: false,
+                    inner: None,
                     absent: Vec::new(),
                     job_eval: None,
                     job_outputs: Vec::new(),
@@ -1021,6 +1054,7 @@ impl Walker<'_, '_> {
                         reads_children_value: false,
                         use_id: false,
                         has_for: false,
+                        inner: None,
                         absent: Vec::new(),
                         job_eval: None,
                         job_outputs: Vec::new(),
@@ -1069,6 +1103,7 @@ impl Walker<'_, '_> {
         let mut job_all = false;
         let mut use_id = false;
         let mut has_for = false;
+        let mut inner = None;
         let mut forwards_ref = false;
         let mut icon_spread = false;
         let mut reads_children_value = false;
@@ -1081,10 +1116,11 @@ impl Walker<'_, '_> {
                 forwards_ref = ir.forwards_ref;
                 icon_spread = ir.icon_spread;
                 absent = ir.absent_props.clone();
-                has_for = template_has_for(&ir.template);
+                has_for = ir.repeats_children || template_has_for(&ir.template);
                 reads_children_value =
                     matches!(ir.tier, Tier::Static | Tier::Native) && reads_children_as_value(&ir);
                 unwritten = ir.unwritten_props.clone();
+                inner = Inner::of(&ir);
                 job_all = ir.jobs.iter().any(|j| j.inputs.iter().any(|i| i == "*"));
                 job_roots = ir
                     .jobs
@@ -1177,12 +1213,109 @@ impl Walker<'_, '_> {
             icon_spread,
             reads_children_value,
             use_id,
+            inner,
             has_for,
             absent,
             job_eval,
             job_outputs,
             unwritten,
         }
+    }
+
+    /// Re-bases the fed children of a static component inlined here onto this component (F164): each record of the
+    /// wrapper becomes one of ours, numbered in template order, with the wrapper's prop paths replaced by what this
+    /// call site passes. `Err` = a shape it cannot bind (the caller falls back to React).
+    fn rebase(&mut self, inner: &Inner, props: &[(String, Expr)]) -> Result<(), String> {
+        if inner.folded {
+            return Err("one of its instances was evaluated at build".into());
+        }
+        if !self.loop_sources.is_empty() {
+            return Err("it sits in a list".into());
+        }
+        if props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY) {
+            return Err("props are spread into it".into());
+        }
+        let mut out = Vec::new();
+        for r in &inner.records {
+            if !r.loops.is_empty() || r.rows_literal.is_some() {
+                return Err("its child sits in a list".into());
+            }
+            if r.exprs
+                .values()
+                .any(|e| e != crate::lower::server_expr::UNDEFINED)
+            {
+                return Err("its child reads a computed value".into());
+            }
+            let mut rec = InstanceRecord {
+                child_id: r.child_id.clone(),
+                k: 0,
+                loops: Vec::new(),
+                props: Default::default(),
+                literals: r.literals.clone(),
+                exprs: r.exprs.clone(),
+                rows_literal: None,
+            };
+            for (n, path) in &r.props {
+                let Some(path) = path else {
+                    return Err(format!("its child's prop `{n}` has no binding"));
+                };
+                let end = path.find(['.', '[']).unwrap_or(path.len());
+                let (root, rest) = path.split_at(end);
+                if root == "__store" || root == "children" && rest.is_empty() && false {
+                    rec.props.insert(n.clone(), Some(path.clone()));
+                    continue;
+                }
+                if root == "children" {
+                    return Err("its child reads `children`".into());
+                }
+                let given = props.iter().rev().find(|(k, _)| k == root).map(|(_, v)| v);
+                let Some(v) = given else {
+                    rec.exprs
+                        .insert(n.clone(), crate::lower::server_expr::UNDEFINED.to_string());
+                    continue;
+                };
+                if matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v) {
+                    return Err(format!("`{root}` is a function or changes on the client"));
+                }
+                if let Some(p) = self.prop_path(v) {
+                    rec.props.insert(n.clone(), Some(format!("{p}{rest}")));
+                } else if !rest.is_empty() {
+                    return Err(format!(
+                        "`{root}` is not a props path and its child reads inside it"
+                    ));
+                } else if let Some(j) = match v {
+                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
+                    _ => None,
+                } {
+                    rec.literals.insert(n.clone(), j);
+                } else if let Some(e) = self.instance_expr(v) {
+                    rec.exprs.insert(n.clone(), e);
+                } else {
+                    return Err(format!(
+                        "`{root}` is not a path, a literal or a template expression"
+                    ));
+                }
+            }
+            out.push(rec);
+        }
+        for mut rec in out {
+            let k = self
+                .instance_counts
+                .entry(rec.child_id.clone())
+                .or_insert(0);
+            *k += 1;
+            rec.k = *k;
+            self.instances.push(rec);
+        }
+        for r in &inner.refs {
+            if r.id.is_some() && !self.refs.iter().any(|x| x.id == r.id) {
+                self.refs.push(ChildRef {
+                    name: format!("{}.{}", inner_name(r), self.refs.len()),
+                    ..r.clone()
+                });
+            }
+        }
+        Ok(())
     }
 
     /// A spread of this component's own props into a fed child (F164, R34.83): fine when no input root of the child's
@@ -1790,19 +1923,6 @@ impl Walker<'_, '_> {
                         "map over a list that comes from props (a loader), or keep the page a React island",
                     ));
                 }
-                if child.fed && !self.ctx.is_root {
-                    // F53 (R34.97): this component is inlined into its callers, and the server feeds only the
-                    // route component's own instances: the grandchild's slot key and record do not exist yet.
-                    // An island, never the `nested-instance` build error of the lowering.
-                    self.diagnostics.push(Diagnostic::fallback(
-                        "nested-instance",
-                        format!(
-                            "<{name}> has a job or useId and sits inside a component that is inlined into its callers, which the server cannot feed per instance"
-                        ),
-                        *loc,
-                        "use it directly in the route component, or keep this component interactive with React",
-                    ));
-                }
                 if child.fed && !row_invariant && self.loop_sources.len() > 1 {
                     self.diagnostics.push(Diagnostic::fallback(
                         "nested-instance",
@@ -1946,6 +2066,21 @@ impl Walker<'_, '_> {
         // After this node's own link id: `_pN` follow document order.
         let fed_before = self.instances.len();
         children.iter_mut().for_each(|c| self.node(c));
+        if let Some(inner) = &child.inner
+            && let Err(why) = self.rebase(inner, props)
+        {
+            self.diagnostics.push(Diagnostic::fallback(
+                "nested-instance",
+                format!(
+                    "<{name}> contains a child with a job or useId, which the server cannot feed through it: {why}"
+                ),
+                *loc,
+                "use the child directly in the route component, or keep this component interactive with React",
+            ));
+        }
+        if child.has_for && !matches!(child.tier, Tier::React { .. }) && !children.is_empty() {
+            self.passes_to_repeater = true;
+        }
         if child.has_for
             && !matches!(child.tier, Tier::React { .. })
             && self.instances.len() > fed_before
