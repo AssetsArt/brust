@@ -701,10 +701,18 @@ impl Placer<'_> {
                 // F173: a regular expression literal is an object, so it is allowed only as the argument of a method
                 // (`s.replace(/x/, '')`); a helper could return it.
                 let method = matches!(callee.kind, RawKind::Member { .. });
+                let helper = matches!(
+                    callee.kind,
+                    RawKind::Ident {
+                        kind: IdentKind::Local | IdentKind::Import { .. },
+                        ..
+                    }
+                );
                 args.iter().find_map(|a| match &a.kind {
                     RawKind::Opaque { why, .. } if method && why == "ERegExp" => None,
-                    // A helper may call a method of its argument: never one a user-defined object brings (ruling).
-                    _ if self.user_object(a, 0) => Some("an object with its own methods".into()),
+                    // A helper may call a method of its argument and return the result: the argument must be a receiver
+                    // the allowlist accepts (Mellow F1). A global's argument is coerced (`String(x)`, `Math.round(x)`).
+                    _ if helper => self.receiver_problem(a, depth + 1),
                     _ => go(a),
                 })
             }
@@ -720,15 +728,117 @@ impl Placer<'_> {
         }
     }
 
-    /// F173 (lead ruling on @57714ece): why the value an allowlisted method is called on is not a built-in string,
-    /// number, array or `Date`. An accepted read is fine, and so is `new Date(…)` of the unbound global `Date` whose
-    /// every read is accepted; a user-defined object (an object literal, directly or through a local) never is, so an
-    /// override of the method's name returning an element cannot print.
+    /// F173 (lead ruling on @57714ece, Mellow F1): why the value an allowlisted method is called on may not be a
+    /// built-in string, number, array or `Date`. A POSITIVE allowlist, so no object literal can sit anywhere in the chain
+    /// and bring its own method of that name: a literal or untagged template; a prop, state, store or loop binding; a
+    /// derived local judged by this same rule; a primitive module const; member / index chains on those roots; a call of
+    /// an allowlisted method on such a receiver (`n.toFixed(2).padStart(6)`), of `String` / `Number` / `Math.*`; and
+    /// `new Date(…)` of the unbound global `Date` whose every read is accepted. Anything else refuses.
     fn receiver_problem(&self, r: &RawExpr, depth: u8) -> Option<String> {
-        if self.user_object(r, 0) {
-            return Some("an object with its own methods".into());
+        if depth > 8 {
+            return Some("an expression nested deeper than 8".into());
         }
+        let go = |x: &RawExpr| self.receiver_problem(x, depth + 1);
+        let judged = |x: &RawExpr| self.child_read_problem(x, depth + 1);
+        let not = || Some("a value that may carry its own methods".to_string());
         match &r.kind {
+            RawKind::Lit(_) => None,
+            RawKind::Template { .. } | RawKind::Unary { .. } => judged(r),
+            RawKind::Binary { op, left, right } => match op {
+                // These return one of their operands.
+                crate::ir::BinOp::And | crate::ir::BinOp::Or | crate::ir::BinOp::Nullish => {
+                    go(left).or_else(|| go(right))
+                }
+                // The rest return a number, a string or a boolean.
+                _ => judged(r),
+            },
+            RawKind::Cond { test, yes, no } => judged(test).or_else(|| go(yes)).or_else(|| go(no)),
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Prop
+                | IdentKind::State
+                | IdentKind::Store { .. }
+                | IdentKind::LoopBinding => None,
+                IdentKind::Local => match self.derived_raw.get(name) {
+                    Some(d) => {
+                        let key = format!("receiver {name}");
+                        if let Some(v) = self.read_memo.borrow().get(&key) {
+                            return v.clone();
+                        }
+                        // Fail closed while it is being judged (a name that reads itself).
+                        self.read_memo
+                            .borrow_mut()
+                            .insert(key.clone(), Some(name.clone()));
+                        let v = self.receiver_problem(d, 0).map(|_| name.clone());
+                        self.read_memo.borrow_mut().insert(key, v.clone());
+                        v
+                    }
+                    None => match self
+                        .module_decls
+                        .iter()
+                        .flat_map(|d| &d.consts)
+                        .find(|c| &c.name == name)
+                    {
+                        Some(c)
+                            if !c.mutated
+                                && !contains_jsx(&c.value)
+                                && matches!(
+                                    c.value.kind,
+                                    RawKind::Lit(_)
+                                        | RawKind::Template { .. }
+                                        | RawKind::Binary { .. }
+                                        | RawKind::Unary { .. }
+                                        | RawKind::Cond { .. }
+                                ) =>
+                        {
+                            self.receiver_problem(&c.value, depth + 1)
+                                .map(|_| name.clone())
+                        }
+                        _ => Some(name.clone()),
+                    },
+                },
+                IdentKind::Setter
+                | IdentKind::Global
+                | IdentKind::Import { .. }
+                | IdentKind::Unknown => Some(name.clone()),
+            },
+            RawKind::Member {
+                target, optional, ..
+            } => {
+                if *optional {
+                    return not();
+                }
+                go(target)
+            }
+            RawKind::Index { target, index } => go(target).or_else(|| judged(index)),
+            RawKind::Call { callee, args } => {
+                let ok = match &callee.kind {
+                    // `String(x)` / `Number(x)`: the unbound globals.
+                    RawKind::Ident {
+                        name,
+                        kind: IdentKind::Global,
+                    } => matches!(name.as_str(), "String" | "Number"),
+                    RawKind::Member {
+                        target,
+                        name,
+                        optional: false,
+                    } => match &target.kind {
+                        // `Math.*` only: never `Object.*`, `Array.*` or another global's member.
+                        RawKind::Ident {
+                            name: g,
+                            kind: IdentKind::Global,
+                        } => g == "Math",
+                        _ => plain_method(name) && go(target).is_none(),
+                    },
+                    _ => false,
+                };
+                if !ok {
+                    return not();
+                }
+                args.iter().find_map(|a| match &a.kind {
+                    RawKind::Opaque { why, .. } if why == "ERegExp" => None,
+                    _ => judged(a),
+                })
+            }
             RawKind::Opaque {
                 source,
                 why,
@@ -738,50 +848,21 @@ impl Placer<'_> {
                     if name == "Date" {
                         (*kind != IdentKind::Global).then(|| name.clone())
                     } else {
-                        self.child_read_problem(
-                            &RawExpr {
-                                loc: r.loc,
-                                kind: RawKind::Ident {
-                                    name: name.clone(),
-                                    kind: kind.clone(),
-                                },
+                        judged(&RawExpr {
+                            loc: r.loc,
+                            kind: RawKind::Ident {
+                                name: name.clone(),
+                                kind: kind.clone(),
                             },
-                            depth,
-                        )
+                        })
                     }
                 })
             }
-            _ => self.child_read_problem(r, depth),
-        }
-    }
-
-    /// The value is (or may be, through a branch or a local) an object literal: it can carry its own methods.
-    fn user_object(&self, r: &RawExpr, depth: u8) -> bool {
-        if depth > 8 {
-            return true;
-        }
-        let go = |x: &RawExpr| self.user_object(x, depth + 1);
-        match &r.kind {
-            RawKind::Object(_) => true,
-            RawKind::Ident {
-                name,
-                kind: IdentKind::Local,
-            } => match self.derived_raw.get(name) {
-                Some(d) => go(d),
-                None => self
-                    .module_decls
-                    .iter()
-                    .flat_map(|d| &d.consts)
-                    .find(|c| &c.name == name)
-                    .is_some_and(|c| go(&c.value)),
-            },
-            RawKind::Cond { yes, no, .. } => go(yes) || go(no),
-            RawKind::Binary {
-                op: crate::ir::BinOp::And | crate::ir::BinOp::Or | crate::ir::BinOp::Nullish,
-                left,
-                right,
-            } => go(left) || go(right),
-            _ => false,
+            RawKind::Object(_)
+            | RawKind::Array(_)
+            | RawKind::Arrow { .. }
+            | RawKind::Jsx(_)
+            | RawKind::Opaque { .. } => not(),
         }
     }
 

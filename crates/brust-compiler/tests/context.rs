@@ -647,7 +647,7 @@ fn a_helper_proven_to_return_a_primitive_may_be_read_under_a_provider() {
 }
 
 /// Lead ruling on @57714ece: an allowlisted method is plain only on a built-in receiver. An object literal carrying its
-/// own method of that name (through a local), a class instance, a shadowed `Date`, a reassigned method, a computed
+/// own method of that name (through a local, a member, an index or an array, or built by `Object.fromEntries`), a class instance, a shadowed `Date`, a reassigned method, a computed
 /// method name and an optional member or call all fall back by name.
 #[test]
 fn an_allowlisted_method_on_a_user_defined_receiver_falls_back() {
@@ -659,6 +659,15 @@ fn an_allowlisted_method_on_a_user_defined_receiver_falls_back() {
         "plain-method-computed.tsx",
         "plain-method-optional.tsx",
         "plain-method-optional-call.tsx",
+        // Mellow F1: the receiver is a positive allowlist, so an object literal one indirection away refuses too.
+        "plain-method-via-member.tsx",
+        "plain-method-via-array-index.tsx",
+        "plain-method-via-literal-member.tsx",
+        "plain-method-via-local-array.tsx",
+        "plain-method-via-from-entries.tsx",
+        "plain-method-via-from-entries-local.tsx",
+        // A proven helper returning a method of its argument: the argument must be an accepted receiver too.
+        "plain-method-via-helper.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(
