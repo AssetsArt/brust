@@ -182,7 +182,7 @@ fn a_row_invariant_instance_in_a_client_rendered_row_keeps_its_value_in_the_row_
     assert!(o.instances[0].loops.is_empty(), "{:?}", o.instances);
     let template = &o.jinja[o.jinja.find("{% else %}").expect("a zero-row template")..];
     assert!(template.contains(" hidden"), "{template}");
-    let class = "{% if __cell_d2903ca3_1[\"_s1\"] | present %} class=\"{{ __cell_d2903ca3_1[\"_s1\"] | attr_str | e }}\"{% endif %}";
+    let class = "{% if __cell_d2903ca3_1[\"_s1\"] | present_plain %} class=\"{{ __cell_d2903ca3_1[\"_s1\"] | attr_str | e }}\"{% endif %}";
     assert!(template.contains(class), "{template}");
     assert!(!template.contains("class=\"{{ __undefined"), "{template}");
     // The server rows read the same slot, once.

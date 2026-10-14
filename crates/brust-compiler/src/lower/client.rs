@@ -199,9 +199,21 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
                         helpers.insert("__attr");
                         format!("__attr({js})")
                     }
+                    Paint::AttrStr => {
+                        helpers.insert("__attrs");
+                        format!("__attrs({js})")
+                    }
+                    Paint::AttrOver => {
+                        helpers.insert("__attro");
+                        format!("__attro({js})")
+                    }
                     Paint::Style => {
                         helpers.insert("__css");
                         format!("__css({js})")
+                    }
+                    Paint::Bool => {
+                        helpers.insert("__bool");
+                        format!("__bool({js})")
                     }
                     Paint::Raw => js,
                 };
@@ -338,8 +350,14 @@ fn helper(name: &str) -> &'static str {
         "__text" => {
             "const __text = (v) => (typeof v === \"boolean\" ? \"\" : Array.isArray(v) ? v.map(__text).join(\"\") : v)"
         }
-        // x-bind: false removes the attribute, like null.
-        "__attr" => "const __attr = (v) => (v === false ? null : v)",
+        // x-bind: a boolean removes the attribute, like null (React omits true and false on a plain attribute).
+        "__attr" => "const __attr = (v) => (typeof v === \"boolean\" ? null : v)",
+        // boolean attributes: truthy sets it, falsy (0, "", null) removes it, as React does.
+        "__bool" => "const __bool = (v) => !!v",
+        // aria-*, data-*, draggable, ...: React writes the booleans as the strings.
+        "__attrs" => "const __attrs = (v) => (typeof v === \"boolean\" ? String(v) : v)",
+        // download, capture: true is the empty value, false removes it.
+        "__attro" => "const __attro = (v) => (v === true ? \"\" : v === false ? null : v)",
         // x-bind-style of a style object: brust-jinja's style_obj_to_css rule.
         "__css" => concat!(
             "const __unitless = new Set([\"zIndex\", \"opacity\", \"flex\", \"flexGrow\", \"flexShrink\", \"fontWeight\", \"lineHeight\", \"order\", \"zoom\"])\n",

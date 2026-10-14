@@ -46,6 +46,11 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("js_string", |v: Value| js_string(&v));
     env.add_filter("attr_str", |v: Value| attr_string(&v));
     env.add_filter("present", |v: Value| present(&v));
+    env.add_filter("present_plain", |v: Value| present_plain(&v));
+    env.add_filter("present_str", |v: Value| present_str(&v));
+    env.add_filter("bool_true", |v: Value| {
+        v.kind() == ValueKind::Bool && v.is_true()
+    });
     env.add_filter("truthy", |v: Value| truthy(&v));
     env.add_filter("url_ok", |v: Value| safe_url(&attr_string(&v)));
     env.add_filter("json_attr", json_attr);
@@ -203,6 +208,16 @@ pub fn truthy(v: &Value) -> bool {
         ValueKind::String => v.as_str().is_some_and(|s| !s.is_empty()),
         _ => true,
     }
+}
+
+/// Whether a `Plain` attribute with this value is rendered: React omits `null`, `undefined` and every boolean there.
+pub fn present_plain(v: &Value) -> bool {
+    !(v.is_undefined() || v.is_none() || v.kind() == ValueKind::Bool)
+}
+
+/// Whether a `Stringify` attribute with this value is rendered: only `null` and `undefined` are not (`false` → `"false"`).
+pub fn present_str(v: &Value) -> bool {
+    !(v.is_undefined() || v.is_none())
 }
 
 /// Whether an attribute with this value is rendered at all.
@@ -674,28 +689,84 @@ const SVG_KEBAB: &[&str] = &[
     "writingMode",
 ];
 
-/// HTML boolean attributes: rendered present/absent, never `="false"`.
+/// HTML boolean attributes: rendered present/absent, never `="false"`. React's own list (ReactDOM's property table
+/// for `BOOLEAN` and the property-only booleans `checked` and `selected`), lowercase; `tests` compare it with react-dom.
 pub const BOOLEAN_ATTRS: &[&str] = &[
-    "disabled",
-    "checked",
-    "selected",
-    "readonly",
-    "required",
-    "hidden",
-    "open",
-    "multiple",
+    "allowfullscreen",
+    "async",
     "autofocus",
     "autoplay",
+    "checked",
     "controls",
-    "loop",
-    "muted",
+    "default",
     "defer",
-    "async",
+    "disabled",
+    "disablepictureinpicture",
+    "disableremoteplayback",
+    "formnovalidate",
+    "hidden",
+    "inert",
+    "itemscope",
+    "loop",
+    "multiple",
+    "muted",
+    "nomodule",
     "novalidate",
+    "open",
+    "playsinline",
+    "readonly",
+    "required",
+    "reversed",
+    "scoped",
+    "seamless",
+    "selected",
 ];
 
+/// Attributes React writes `true` as `""` and `false` as nothing, and any other value as a string.
+pub const OVERLOADED_ATTRS: &[&str] = &["capture", "download"];
+
+/// Attributes React writes a boolean as the string `"true"` / `"false"` (the "booleanish string" attributes), besides
+/// every `aria-*` and `data-*`.
+pub const STRINGIFY_ATTRS: &[&str] = &[
+    "autoreverse",
+    "contenteditable",
+    "draggable",
+    "externalresourcesrequired",
+    "focusable",
+    "preservealpha",
+    "spellcheck",
+    "value",
+];
+
+/// What React does with a boolean value (`true`/`false`) on an attribute.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttrKind {
+    /// `true` → present with `""`, `false` (and any falsy value) → absent.
+    Boolean,
+    /// `true` → `""`, `false` → absent, any other present value → its string.
+    Overloaded,
+    /// `true` → `"true"`, `false` → `"false"`.
+    Stringify,
+    /// Any other attribute: a boolean prints nothing (React warns and omits it).
+    Plain,
+}
+
+/// The kind of an HTML attribute name (case-insensitive).
+pub fn attr_kind(html_name: &str) -> AttrKind {
+    let n = html_name.to_ascii_lowercase();
+    if n.starts_with("aria-") || n.starts_with("data-") || STRINGIFY_ATTRS.contains(&n.as_str()) {
+        AttrKind::Stringify
+    } else if BOOLEAN_ATTRS.contains(&n.as_str()) {
+        AttrKind::Boolean
+    } else if OVERLOADED_ATTRS.contains(&n.as_str()) {
+        AttrKind::Overloaded
+    } else {
+        AttrKind::Plain
+    }
+}
+
 pub fn is_boolean_attr(html_name: &str) -> bool {
-    BOOLEAN_ATTRS.contains(&html_name.to_ascii_lowercase().as_str())
+    attr_kind(html_name) == AttrKind::Boolean
 }
 
 /// React style properties whose numbers are unitless.
@@ -1207,6 +1278,22 @@ mod tests {
             assert_eq!(attr_name(react), html);
         }
         assert!(is_boolean_attr("disabled") && !is_boolean_attr("value"));
+        // F196: what React does with a boolean value, by attribute
+        for (n, k) in [
+            ("aria-checked", AttrKind::Stringify),
+            ("data-state", AttrKind::Stringify),
+            ("draggable", AttrKind::Stringify),
+            ("spellcheck", AttrKind::Stringify),
+            ("value", AttrKind::Stringify),
+            ("hidden", AttrKind::Boolean),
+            ("PlaysInline", AttrKind::Boolean),
+            ("inert", AttrKind::Boolean),
+            ("download", AttrKind::Overloaded),
+            ("title", AttrKind::Plain),
+            ("class", AttrKind::Plain),
+        ] {
+            assert_eq!(attr_kind(n), k, "{n}");
+        }
     }
 
     #[test]
