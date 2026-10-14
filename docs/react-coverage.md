@@ -105,7 +105,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-children-state | island children that read parent state | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — state in the children keeps the parent on React (fallback:island-children) |
 | b-island-children-handler | island children with an event handler | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a handler cannot travel as JSON |
 | b-island-children-prop | island children that read a prop | react | react | ssr | ok | fallback:island-children | R34.23: out of v1 — prop-path children are a named follow-up (F138e); fail closed |
-| b-island-children-renderprop | render-prop children of an island | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a function child |
+| b-island-children-renderprop | render-prop children of an island | react | react | ssr | ok | fallback:island-children, fallback:jsx-const-child | R34.23: fail closed — a function child |
 | b-island-children-html | dangerouslySetInnerHTML inside island children | react | react | ssr | ok | fallback:island-children | R34.26(c) ruling: a raw HTML sink inside lowered children fails closed in v1 |
 | b-island-children-cond | conditional island children | react | react | ssr | ok | fallback:island-children | R34.23: fail closed — a condition on a prop (a constant condition lowers: b-island-slots-cond-const) |
 | b-island-children-spread | spread in island children | react | react | ssr | ok | fallback:island-children, fallback:spread-props | R34.23: fail closed — an unknown spread |
@@ -175,7 +175,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-jsx-const-child-provider | a module-level JSX const used as a child of a Provider component | react | react | ssr | ok | fallback:jsx-const-child | Mellow jsx-const-child: the same drop point, widened by Providers (an empty section) |
 | b-jsx-const-child-imported | an imported JSX const used as a child of a wrapper | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: an imported binding in child position is printed only when it provably is not JSX (jsx-const-child) |
 | b-jsx-const-child-imported-provider | an imported JSX const used as a child of a Provider component | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: the same, widened by Providers (on main the Provider was an island and React rendered el) |
-| b-jsx-const-child-imported-cond | an imported JSX const in a conditional child (&& and ?:) under a Provider component | react | react | ssr | ok | fallback:jsx-const-child | Mellow final delta: the guard walks every identifier of the child expression, not only its root |
+| b-jsx-const-child-allowlist | a child under a Provider that reads an element holder through a member, index, ?:, && and a template | react | react | ssr | ok | fallback:jsx-const-child | lead ruling (allowlist): every identifier a child reads, anywhere in the expression, must be a prop, a printed local or a primitive; the guard is exhaustive over the expression grammar |
 | b-jsx-const-child-unreadable | a child that is an import the compiler cannot resolve | react | react | ssr | ok | fallback:jsx-const-child | lead ruling a: an import it cannot read or resolve fails closed |
 | b-jsx-const-child-imported-plain | an imported plain value used as a child (control) | static | static | 0 | ok | — | control: a folded primitive import still lowers |
 | b-jsx-const-child-shadowed | a prop that shadows an imported JSX const name (control) | static | static | 0 | ok | — | control: the child is the prop, not the import; it lowers |
@@ -306,7 +306,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | d-taint-unique | experimental_taintUniqueValue | react | react | ssr | ok | fallback:hook-unsupported |  |
 | d-lazy-component | lazy component without Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:local-component |  |
 | d-memo-state | default export memo(function …) with state | react | react | ssr | ok | fallback:default-export-shape | fail-closed: an inline function inside the default export is the default-export-shape fallback (memo(Named) is b-memo) |
-| d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | fallback:member-tag, fallback:jsx-expression |  |
+| d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | fallback:member-tag, fallback:jsx-const-child, fallback:jsx-expression |  |
 | d-createportal | createPortal | react | react | ssr | ok | fallback:browser-global |  |
 | d-flushsync | flushSync in a handler | react | native | 0 | ok | — | known gap: F115: compiles native but the client chunk imports react-dom (a native chunk must contain no react import); it should fall back to react |
 | d-preconnect | preconnect in render | react | react | ssr | ok | fallback:body-shape |  |

@@ -390,3 +390,34 @@ fn an_imported_child_is_printed_only_when_it_provably_is_not_jsx() {
         );
     }
 }
+
+/// Lead ruling (allowlist): a child passed to a component under a Provider is printed only when EVERY identifier it reads,
+/// anywhere in the expression, is a prop, a printed local or a primitive constant. Table-driven over the shapes found so
+/// far (root, `&&`, `?:`, `??`, member, index, `?.`, computed key, template literal), each with the element holder
+/// IMPORTED and LOCAL: every one falls back. The control children (a prop, a primitive import, a primitive local) lower.
+#[test]
+fn a_child_that_reads_anything_but_props_locals_and_primitives_falls_back() {
+    for shape in [
+        "root", "and", "tern", "nullish", "member", "index", "opt", "computed", "template",
+    ] {
+        for kind in ["imp", "loc"] {
+            let f = format!("{kind}-m-{shape}.tsx");
+            let (ir, _) = page(&f);
+            assert!(
+                rules(&ir).contains(&"jsx-const-child"),
+                "{f}: {:?}",
+                ir.diagnostics
+            );
+            assert!(is_react(&ir), "{f}: {:?}", ir.tier);
+        }
+    }
+    for f in ["imp-plain.tsx", "imp-shadow.tsx"] {
+        let (ir, _) = page(f);
+        assert!(
+            !rules(&ir).contains(&"jsx-const-child") && !is_react(&ir),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+    }
+}

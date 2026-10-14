@@ -95,6 +95,8 @@ struct Placer<'s> {
     loop_scope: Vec<String>,
     diagnostics: Vec<Diagnostic>,
     jsx_flagged: bool,
+    /// > 0 while walking the children passed to a component: a child read there is judged by `child_read_problem`.
+    component_children: u32,
     /// Locations of `list-shape` fallbacks: the reader already named the construct there.
     list_shape_locs: BTreeSet<u32>,
     /// L2: module path, source text, module declarations and build-computed slot values.
@@ -222,6 +224,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         loop_scope: Vec::new(),
         diagnostics: Vec::new(),
         jsx_flagged: false,
+        component_children: 0,
         list_shape_locs: ir
             .diagnostics
             .iter()
@@ -527,39 +530,94 @@ pub fn contains_jsx(e: &RawExpr) -> bool {
 }
 
 impl Placer<'_> {
-    /// An imported binding whose VALUE can become the child: the expression itself, a branch of a conditional
-    /// (`on ? el : null`), the value side of `&&` / `||` / `??` (`on && el`), or an array element; or `ns.name` of a
-    /// namespace import. Not a callee, a member target, a test or a call argument: those never flow out as the printed
-    /// value (a helper's return value is the helper's business). `Some(name)` = the export cannot be resolved to a
-    /// folded primitive, so the child fails closed.
-    fn import_child_problem(&self, r: &RawExpr) -> Option<String> {
-        let proven = |source: &str, name: &str| {
-            crate::analyze::const_fold::imported_const(&self.path, source, name, self.opts, 0)
-                .is_some()
-        };
-        let sub = |x: &RawExpr| self.import_child_problem(x);
+    /// The allowlist predicate over a child expression (already folded): `None` when EVERY identifier read anywhere in
+    /// it is (1) a prop, (2) a component-local binding the lowering prints (a derived value, state, a loop binding) or
+    /// (3) already folded to a primitive literal, or a global; otherwise `Some(name)` of the first read that is not.
+    /// The match is exhaustive over `RawKind` and `IdentKind` with no wildcard: a new expression or identifier kind is a
+    /// compile error here, not a silent hole.
+    fn child_read_problem(&self, r: &RawExpr, depth: u8) -> Option<String> {
+        if depth > 8 {
+            return Some("an expression nested deeper than 8".into());
+        }
+        let go = |x: &RawExpr| self.child_read_problem(x, depth + 1);
         match &r.kind {
-            RawKind::Ident {
-                name,
-                kind: IdentKind::Import { source, imported },
-            } => (imported != "*" && !proven(source, imported)).then(|| name.clone()),
+            RawKind::Lit(_) => None,
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Prop
+                | IdentKind::State
+                | IdentKind::Setter
+                | IdentKind::LoopBinding
+                | IdentKind::Global
+                | IdentKind::Store { .. } => None,
+                // A body local the lowering prints: a derived value is judged by what it reads. Any other local (a module
+                // const that did not fold to a primitive, a module function) is not provable.
+                IdentKind::Local => match self.derived_raw.get(name) {
+                    Some(d) => self.child_read_problem(d, depth + 1),
+                    None => Some(name.clone()),
+                },
+                IdentKind::Import { .. } | IdentKind::Unknown => Some(name.clone()),
+            },
             RawKind::Member { target, name, .. } => match &target.kind {
+                // `ns.name` of a namespace import: the member is the value; it must resolve to a primitive.
                 RawKind::Ident {
                     name: ns,
                     kind: IdentKind::Import { source, imported },
-                } if imported == "*" => (!proven(source, name)).then(|| format!("{ns}.{name}")),
-                _ => None,
+                } if imported == "*" => crate::analyze::const_fold::imported_const(
+                    &self.path, source, name, self.opts, 0,
+                )
+                .is_none()
+                .then(|| format!("{ns}.{name}")),
+                _ => go(target),
             },
-            RawKind::Binary { op, left, right } => match op {
-                crate::ir::BinOp::And => sub(right),
-                crate::ir::BinOp::Or | crate::ir::BinOp::Nullish => {
-                    sub(left).or_else(|| sub(right))
+            RawKind::Index { target, index } => go(target).or_else(|| go(index)),
+            RawKind::Call { callee, args } => {
+                // A call is plain only when its callee is a global (`Math.round`, `String`) or a string / array method
+                // on a plain value; a helper's result is not provable (it may return an element).
+                let callee_ok = match &callee.kind {
+                    RawKind::Ident {
+                        kind: IdentKind::Global,
+                        ..
+                    } => true,
+                    RawKind::Member { target, name, .. } => {
+                        matches!(
+                            &target.kind,
+                            RawKind::Ident {
+                                kind: IdentKind::Global,
+                                ..
+                            }
+                        ) || (go(target).is_none() && plain_method(name))
+                    }
+                    RawKind::Lit(_)
+                    | RawKind::Ident { .. }
+                    | RawKind::Index { .. }
+                    | RawKind::Call { .. }
+                    | RawKind::Binary { .. }
+                    | RawKind::Unary { .. }
+                    | RawKind::Cond { .. }
+                    | RawKind::Template { .. }
+                    | RawKind::Array(_)
+                    | RawKind::Object(_)
+                    | RawKind::Arrow { .. }
+                    | RawKind::Jsx(_)
+                    | RawKind::Opaque { .. } => false,
+                };
+                if !callee_ok {
+                    return Some(match &callee.kind {
+                        RawKind::Ident { name, .. } => name.clone(),
+                        _ => "a call".to_string(),
+                    });
                 }
-                _ => None,
-            },
-            RawKind::Cond { yes, no, .. } => sub(yes).or_else(|| sub(no)),
-            RawKind::Array(xs) => xs.iter().find_map(sub),
-            _ => None,
+                args.iter().find_map(go)
+            }
+            RawKind::Binary { left, right, .. } => go(left).or_else(|| go(right)),
+            RawKind::Unary { value, .. } => go(value),
+            RawKind::Cond { test, yes, no } => go(test).or_else(|| go(yes)).or_else(|| go(no)),
+            RawKind::Template { parts, .. } => parts.iter().find_map(|(p, _)| go(p)),
+            RawKind::Array(xs) => xs.iter().find_map(go),
+            RawKind::Object(ps) => ps.iter().find_map(|(_, v)| go(v)),
+            RawKind::Arrow { .. } => Some("a function".into()),
+            RawKind::Jsx(_) => Some("an element".into()),
+            RawKind::Opaque { source, .. } => Some(source.clone()),
         }
     }
 
@@ -1016,17 +1074,21 @@ impl Placer<'_> {
             }
             Node::Text(_) => {}
             Node::Slot(e) => {
-                // A child that is an imported binding (or a member of a namespace import) is printed only when it
-                // provably is not JSX (lead ruling a): the server would print an element object as nothing.
-                if let Expr::Raw(r) = &*e
-                    && let Some(name) = self.import_child_problem(r)
+                // Lead ruling (allowlist): a child passed to a component is printed only when every identifier it reads,
+                // anywhere in the expression, is a prop, a printed local, or resolves to a primitive value. Anything else
+                // (an element object in a const, an import, a helper's result) would print as nothing on the server.
+                if self.component_children > 0
+                    && let Expr::Raw(r) = &*e
                 {
-                    self.diagnostics.push(Diagnostic::fallback(
-                        "jsx-const-child",
-                        format!("`{name}` is an imported value used as a child, and brust cannot prove it is not a JSX element; the server template could print nothing for it"),
-                        r.loc,
-                        "render the element inline, import a plain value, or keep this component in React",
-                    ));
+                    let folded = self.fold(r);
+                    if let Some(name) = self.child_read_problem(&folded, 0) {
+                        self.diagnostics.push(Diagnostic::fallback(
+                            "jsx-const-child",
+                            format!("`{name}` is read as a child and brust cannot prove it is a plain value (a prop, a printed local or a primitive constant); the server template could print nothing for it"),
+                            r.loc,
+                            "render the element inline, pass a prop, or keep this component in React",
+                        ));
+                    }
                 }
                 self.expr(e)
             }
@@ -1102,7 +1164,9 @@ impl Placer<'_> {
                         *v = self.child_prop(&r);
                     }
                 }
+                self.component_children += 1;
                 children.iter_mut().for_each(|c| self.node(c));
+                self.component_children -= 1;
             }
             Node::Fragment(cs) => cs.iter_mut().for_each(|c| self.node(c)),
         }
@@ -1152,4 +1216,19 @@ fn collect_raw(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
         Node::Fragment(cs) => cs.iter().for_each(|c| collect_raw(c, f)),
         Node::Text(_) | Node::Outlet => {}
     }
+}
+
+/// The string / array methods the server template prints (`lower::server_expr::call`): their result is a plain value.
+fn plain_method(name: &str) -> bool {
+    matches!(
+        name,
+        "toUpperCase"
+            | "toLowerCase"
+            | "trim"
+            | "slice"
+            | "startsWith"
+            | "endsWith"
+            | "includes"
+            | "join"
+    )
 }

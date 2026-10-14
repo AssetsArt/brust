@@ -136,6 +136,15 @@
       "libraryComponents": 23
     },
     {
+      "blocker": "fallback:jsx-const-child",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 14
+    },
+    {
       "blocker": "fallback:context-state",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -737,6 +746,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "jsx-const-child",
         "jsx-expression",
         "spread-props"
       ]

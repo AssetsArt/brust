@@ -1,16 +1,18 @@
 import { createContext } from 'react'
-import { el } from './lib/els'
+
+const el = <b>hi</b>
 
 const Ctx = createContext<{ label: string }>({ label: 'd' })
 
 function Panel({ label, children }: { label: string; children?: React.ReactNode }) {
   return (
     <Ctx.Provider value={{ label }}>
-      <section data-l={label}>{children}</section>
+      <section>{children}</section>
     </Ctx.Provider>
   )
 }
 
-export default function Page({ on }: { on?: boolean }) {
-  return <Panel label="x">{on ? el : null}</Panel>
+export default function Page() {
+  const on = true
+  return <Panel label="x">{on && el}</Panel>
 }

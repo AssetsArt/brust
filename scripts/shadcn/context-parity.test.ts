@@ -8,7 +8,9 @@ import { FIXTURE, repo } from './paths.ts'
 
 const PAGES = ['ctx-progress-basic', 'ctx-progress-max', 'ctx-progress-indeterminate', 'ctx-progress-invalid']
 // F3: islands under a Provider keep the page React (the island hydrates, so scripts are expected and markup is React's own).
-const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns', 'ctx-imp-cond-and', 'ctx-imp-cond-tern']
+const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns',
+  'ctx-imp-m-and', 'ctx-imp-m-computed', 'ctx-imp-m-index', 'ctx-imp-m-member', 'ctx-imp-m-nullish', 'ctx-imp-m-opt', 'ctx-imp-m-root', 'ctx-imp-m-template', 'ctx-imp-m-tern', 'ctx-loc-m-and', 'ctx-loc-m-computed', 'ctx-loc-m-index', 'ctx-loc-m-member', 'ctx-loc-m-nullish', 'ctx-loc-m-opt', 'ctx-loc-m-root', 'ctx-loc-m-template', 'ctx-loc-m-tern',
+]
 // Imported plain value: stays a static page (no script), and renders like React.
 const PLAIN_PAGES = ['ctx-imp-plain']
 const ROWS = join(FIXTURE, '.rows')
@@ -107,7 +109,8 @@ for (const id of ISLAND_PAGES) {
       expect(html).toContain(id === 'ctx-island-same' ? 'from-panel' : 'default')
       expect(html).not.toContain(id === 'ctx-island-same' ? '>default<' : '>from-panel<')
     } else {
-      expect(html).toMatch(/<b[^>]*>hi<\/b>/) // the dropped child is there
+      // The dropped child is there. A template literal of an element is React's own "[object Object]" text.
+      expect(html).toMatch(id.endsWith('-template') ? /\[object Object\]/ : /<b[^>]*>hi<\/b>/)
     }
   }, 60_000)
 }
