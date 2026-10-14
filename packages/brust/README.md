@@ -56,6 +56,8 @@ Server-only code never reaches a browser bundle (`error server-only-in-client <i
 server_only = ["lib/server", "@acme/db"]   # import prefixes, or paths relative to the app root
 ```
 
+The `server-only` marker package is honoured the same way: a browser build that reaches `import 'server-only'` (any depth, islands included) fails with `server-only-in-client` whether or not the package throws, and on the server side (route scan, jobs, actions, the Worker) it resolves to an empty module, so a loader may import a module guarded by it.
+
 Loaders and precompute jobs may use all of it (they run in Bun). In the browser `@brust/core`
 resolves to a side-effect-free entry (`cache`, route helpers, verdicts; `cache.invalidate` throws).
 

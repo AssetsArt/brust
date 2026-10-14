@@ -14,6 +14,7 @@ import type { BunPlugin } from 'bun'
 import type { Compiled } from './compile'
 import { cssPlugin } from './css'
 import { BuildError } from './errors'
+import { isServerOnlyMarker, serverOnlyEmptyPlugin } from './server-only'
 import { RUNTIME_FEATURES } from './features'
 import { packageDirOf } from './pkg-src'
 
@@ -134,6 +135,7 @@ const BROWSER_POLYFILLS = new Set([
  * also checked by the file it resolves to (Bun's resolver honours tsconfig `paths`, so an alias
  * cannot bypass the `*.server.*` / path rules). */
 function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean {
+  if (isServerOnlyMarker(spec)) return true // `import 'server-only'`: the marker never reaches a browser bundle, whether or not the package throws
   if (spec.startsWith('node:') || spec.startsWith('bun:') || spec === 'bun') return true
   const from = dirname(ctx.sourceOf.get(importer) ?? importer)
   const bare = spec.split('/')[0]!
@@ -538,7 +540,7 @@ const ACTIONS_EXTERNALS = [...JOBS_EXTERNALS, 'elysia', 'elysia/*', '@elysia/*']
 /** `dist/actions.js` (M3-F E1): the actions entry for the worker (`target: 'bun'`). No `define`: Elysia
  * and app code read NODE_ENV at runtime (run.ts sets production). */
 export async function buildActions(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [cssPlugin(cssMaps), workerStorePlugin] })
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps), workerStorePlugin] })
   if (!res.success) throw new BuildError('bundle', `actions: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'actions.js'), await res.outputs[0]!.text())
   return 'actions.js'
@@ -547,7 +549,7 @@ export async function buildActions(dist: string, entry: string, cssMaps: Map<str
 /** `dist/cache-adapter.js` (cache adapters R8): a custom adapter module for the worker (`target: 'bun'`), with
  * the actions externals so it shares the app's dependencies. */
 export async function buildCacheAdapter(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [cssPlugin(cssMaps)] })
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps)] })
   if (!res.success) throw new BuildError('bundle', `cache adapter: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'cache-adapter.js'), await res.outputs[0]!.text())
   return 'cache-adapter.js'
@@ -609,7 +611,7 @@ export async function buildJobs(
     format: 'esm',
     define: PRODUCTION,
     external: JOBS_EXTERNALS,
-    plugins: [cssPlugin(cssMaps), workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS), exposePlugin(compiled)],
+    plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps), workerStorePlugin, sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS), exposePlugin(compiled)],
   })
   if (!res.success) throw new BuildError('bundle', `jobs: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'jobs.js'), await res.outputs[0]!.text())
