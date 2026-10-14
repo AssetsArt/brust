@@ -1,0 +1,12 @@
+import { useState } from 'react'
+
+export default function Count() {
+  const [n, setN] = useState(0)
+  return (
+    <main>
+      <button type="button" onClick={() => setN(n + 1)}>
+        clicked {n}
+      </button>
+    </main>
+  )
+}

@@ -4,6 +4,8 @@
 // once (130 / 143); a signal before every worker registered exits 0 at once (nothing is being
 // served yet, and the server's drain only starts once it accepts). A worker that dies (error,
 // process.exit, OOM) → drain → exit 1: M2 does not respawn, the supervisor restarts the process.
+// F165: a build whose manifest says `needs_workers: false` (no loader, job, actions app or cache
+// adapter) spawns none; the server then serves at once and a stray worker call answers 503.
 // Nothing here returns on its own: a started server keeps the process alive and a drained one
 // does not end it, so every exit is an explicit `process.exit`.
 import { existsSync, readFileSync } from 'node:fs'
@@ -32,6 +34,13 @@ export interface RunManifest {
   actions_remote?: { prefix: string } | null
   /** `[cache]`: the server's L2 settings (the workers load the adapter itself). */
   cache?: { adapter: string; getTimeoutMs: number; maxBodyBytes: number; namespace: string; buildId: string } | null
+  /** F165: `false` = no route can call a worker; absent (older manifests) = the pool is needed. */
+  needs_workers?: boolean
+}
+
+/** F165 (R40.1): the pool size `run` spawns: none only when the build said no request needs one. */
+export function workerCount(cfg: BrustConfig, m: RunManifest): number {
+  return m.needs_workers === false ? 0 : cfg.workers
 }
 
 /** Pure: the napi `StartOptions`. No actions/cors/cache → exactly the pre-actions keys. */
@@ -40,7 +49,7 @@ export function startOptions(cfg: BrustConfig, distDir: string, m: RunManifest, 
     host: cfg.host,
     port: cfg.port,
     distDir,
-    workers: cfg.workers,
+    workers: workerCount(cfg, m),
     callTimeoutMs: cfg.callTimeoutMs,
     ...(cfg.maxLoaderResponseBytes !== undefined && cfg.maxLoaderResponseBytes !== DEFAULT_MAX_LOADER_RESPONSE_BYTES ? { maxLoaderResponseBytes: cfg.maxLoaderResponseBytes } : {}),
     workerThreads: cfg.ioThreads,
@@ -134,8 +143,9 @@ export async function run(opts: RunOptions = {}): Promise<void> {
       .finally(() => exit(failed ? 1 : code))
   }
 
+  const workers = workerCount(cfg, m)
   const url = new URL('./worker.ts', import.meta.url)
-  for (let i = 0; i < cfg.workers; i++) {
+  for (let i = 0; i < workers; i++) {
     // The response buffer is owned HERE, for the process lifetime: the Rust dispatcher keeps a raw
     // pointer into it, so it must not be freed with the worker (crates/brust-napi dispatch.rs).
     const sab = new SharedArrayBuffer(cfg.slotBytes * cfg.renderSlots)
@@ -180,7 +190,7 @@ export async function run(opts: RunOptions = {}): Promise<void> {
     fail(`workers not ready: ${String((e as Error).message ?? e)} (BRUST_BOOT_TIMEOUT_MS=${cfg.bootTimeoutMs})`)
   }
   ready = true
-  console.log(`[brust] ready (${cfg.workers} worker${cfg.workers === 1 ? '' : 's'})`)
+  console.log(`[brust] ready (${workers} worker${workers === 1 ? '' : 's'})`)
   if (opts.onReady) {
     let code = 1
     try {
