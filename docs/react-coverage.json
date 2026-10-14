@@ -89,7 +89,7 @@
         "react"
       ],
       "diagnostics": [
-        "fallback:hook-unsupported"
+        "fallback:context-escape"
       ],
       "shapes": [
         {
@@ -98,7 +98,7 @@
           "expected": "react",
           "observed": "react",
           "diagnostics": [
-            "fallback:hook-unsupported"
+            "fallback:context-escape"
           ]
         }
       ],
@@ -857,6 +857,7 @@
         "react"
       ],
       "diagnostics": [
+        "fallback:context-value",
         "fallback:member-tag",
         "fallback:jsx-expression"
       ],
@@ -867,7 +868,7 @@
           "expected": "react",
           "observed": "react",
           "diagnostics": [
-            "fallback:member-tag"
+            "fallback:context-value"
           ]
         },
         {

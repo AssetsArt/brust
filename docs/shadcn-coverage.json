@@ -12,13 +12,13 @@
     "measured": 64,
     "analysisOnly": 0,
     "tier": {
-      "static": 61,
+      "static": 58,
       "native": 1,
-      "react": 2
+      "react": 5
     },
     "islands": 38,
     "pagesWithNoJs": 25,
-    "pagesWithNoWorker": 21,
+    "pagesWithNoWorker": 20,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -42,7 +42,7 @@
       "classification": "survey truth (today's rule; R34.7 removes it)",
       "measuredRows": 38,
       "analysisOnlyRows": 0,
-      "appComponents": 142,
+      "appComponents": 137,
       "libraryComponents": 151
     },
     {
@@ -51,7 +51,7 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 33,
       "analysisOnlyRows": 0,
-      "appComponents": 129,
+      "appComponents": 125,
       "libraryComponents": 180
     },
     {
@@ -60,35 +60,44 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 32,
       "analysisOnlyRows": 0,
-      "appComponents": 90,
-      "libraryComponents": 188
+      "appComponents": 89,
+      "libraryComponents": 176
     },
     {
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 20,
+      "measuredRows": 19,
       "analysisOnlyRows": 0,
-      "appComponents": 22,
-      "libraryComponents": 69
+      "appComponents": 20,
+      "libraryComponents": 55
     },
     {
-      "blocker": "fallback:hook-unsupported",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 6,
-      "analysisOnlyRows": 0,
-      "appComponents": 12,
-      "libraryComponents": 187
-    },
-    {
-      "blocker": "fallback:member-tag",
+      "blocker": "fallback:jsx-const-child",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 4,
       "analysisOnlyRows": 0,
       "appComponents": 4,
-      "libraryComponents": 19
+      "libraryComponents": 13
+    },
+    {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:hook-unsupported",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 3,
+      "analysisOnlyRows": 0,
+      "appComponents": 3,
+      "libraryComponents": 154
     },
     {
       "blocker": "fallback:control-flow",
@@ -98,6 +107,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 8,
       "libraryComponents": 36
+    },
+    {
+      "blocker": "fallback:context-island",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 3,
+      "analysisOnlyRows": 0,
+      "appComponents": 5,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:child-component",
@@ -127,7 +145,7 @@
       "libraryComponents": 5
     },
     {
-      "blocker": "fallback:nested-instance",
+      "blocker": "fallback:slot-dynamic",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
@@ -163,22 +181,22 @@
       "libraryComponents": 23
     },
     {
+      "blocker": "fallback:context-state",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 10
+    },
+    {
       "blocker": "fallback:local-component",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 20
-    },
-    {
-      "blocker": "fallback:browser-global",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 9
+      "libraryComponents": 5
     },
     {
       "blocker": "fallback:ref-shape",
@@ -190,7 +208,25 @@
       "libraryComponents": 5
     },
     {
+      "blocker": "fallback:context-value",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 1
+    },
+    {
       "blocker": "fallback:event-capture",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:instance-prop-path",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -214,15 +250,6 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 0
-    },
-    {
-      "blocker": "fallback:slot-dynamic",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
       "libraryComponents": 0
     },
     {
@@ -334,6 +361,15 @@
       "libraryComponents": 27
     },
     {
+      "blocker": "fallback:context-scope",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 25
+    },
+    {
       "blocker": "isValidElement",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
@@ -341,6 +377,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 22
+    },
+    {
+      "blocker": "fallback:member-tag",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 18
     },
     {
       "blocker": "createPortal / Portal",
@@ -361,6 +406,15 @@
       "libraryComponents": 14
     },
     {
+      "blocker": "fallback:browser-global",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 9
+    },
+    {
       "blocker": "fallback:let-var",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -376,7 +430,7 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 8
+      "libraryComponents": 6
     },
     {
       "blocker": "useImperativeHandle",
@@ -386,15 +440,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 5
-    },
-    {
-      "blocker": "fallback:prop-default-shape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 4
     },
     {
       "blocker": "fallback:prop-quoted-key",
@@ -433,6 +478,24 @@
       "libraryComponents": 2
     },
     {
+      "blocker": "fallback:context-escape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 1
+    },
+    {
+      "blocker": "fallback:prop-default-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 1
+    },
+    {
       "blocker": "fallback:raw-text-child",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -448,8 +511,8 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 10,
-      "reactComponents": 9,
+      "components": 11,
+      "reactComponents": 8,
       "jsGzipKb": 94,
       "workerCalls": 1,
       "codes": [
@@ -514,13 +577,15 @@
       "basis": "measured",
       "tier": "static",
       "islands": 2,
-      "components": 7,
-      "reactComponents": 6,
+      "components": 8,
+      "reactComponents": 5,
       "jsGzipKb": 87,
       "workerCalls": 2,
       "codes": [
         "external-component",
+        "instance-prop-path",
         "island-prop",
+        "nested-instance",
         "spread-props"
       ]
     },
@@ -651,11 +716,12 @@
       "jsGzipKb": 97,
       "workerCalls": 1,
       "codes": [
+        "context-state",
         "control-flow",
         "event-capture",
         "external-component",
         "hook-unsupported",
-        "member-tag",
+        "jsx-const-child",
         "ref-shape",
         "spread-handler"
       ]
@@ -673,10 +739,9 @@
         "control-flow",
         "external-component",
         "hook-shape",
-        "hook-unsupported",
         "island-prop",
+        "jsx-const-child",
         "local-component",
-        "member-tag",
         "use-id-in-render"
       ]
     },
@@ -698,13 +763,14 @@
     {
       "id": "collapsible",
       "basis": "measured",
-      "tier": "static",
+      "tier": "react",
       "islands": 1,
-      "components": 8,
-      "reactComponents": 6,
-      "jsGzipKb": 90,
+      "components": 9,
+      "reactComponents": 5,
+      "jsGzipKb": 89,
       "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "spread-props"
       ]
@@ -762,16 +828,19 @@
     {
       "id": "dialog",
       "basis": "measured",
-      "tier": "static",
+      "tier": "react",
       "islands": 1,
-      "components": 24,
+      "components": 25,
       "reactComponents": 16,
-      "jsGzipKb": 103,
+      "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "island-children",
         "island-prop",
+        "nested-instance",
+        "slot-dynamic",
         "spread-props"
       ]
     },
@@ -1065,8 +1134,8 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 4,
-      "reactComponents": 3,
+      "components": 5,
+      "reactComponents": 2,
       "jsGzipKb": 85,
       "workerCalls": 1,
       "codes": [
@@ -1151,13 +1220,14 @@
     {
       "id": "sheet",
       "basis": "measured",
-      "tier": "static",
+      "tier": "react",
       "islands": 1,
-      "components": 20,
-      "reactComponents": 16,
+      "components": 21,
+      "reactComponents": 15,
       "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "island-children",
         "island-prop",
@@ -1172,16 +1242,15 @@
       "components": 14,
       "reactComponents": 6,
       "jsGzipKb": 117,
-      "workerCalls": 0,
+      "workerCalls": 1,
       "codes": [
-        "browser-global",
+        "context-value",
         "control-flow",
         "external-component",
         "hook-shape",
-        "hook-unsupported",
         "island-children",
+        "jsx-const-child",
         "linked-prop-precompute",
-        "member-tag",
         "spread-handler",
         "spread-props"
       ]
@@ -1320,10 +1389,8 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "hook-unsupported",
-        "island-children",
         "island-prop",
-        "member-tag",
+        "jsx-const-child",
         "spread-props"
       ]
     },

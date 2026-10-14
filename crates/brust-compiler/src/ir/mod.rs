@@ -233,6 +233,20 @@ pub struct ComponentIR {
     /// A literal `false` is fine; a call site that spreads its own props on passes the requirement up.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub absent_props: Vec<String>,
+    /// S2 context lowering: what this component's Provider element hands to its children (see `ProvideDecl`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provides: Vec<ProvideDecl>,
+    /// The context fields this component reads, each as a hidden prop (see `CtxUse`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctx_uses: Vec<CtxUse>,
+    /// `ctx_uses` reach a context read in a package source (this component's own, or a descendant's it passes on): such a
+    /// consumer revived from its source would not share the Provider island's `createContext` (the published dist).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ctx_pkg: bool,
+    /// This component's rendered tree holds a React island (a React-tier child, or a static child that does): such a
+    /// subtree hydrates standalone, so a lowered context Provider above it cannot reach it (S2, F3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub holds_island: bool,
     /// Keys a call site must not write at all, not even as a literal `false` (F164, R34.83): this component spreads
     /// its props into a fed child whose job reads them, and a spread cannot feed a job input.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -357,6 +371,10 @@ impl ComponentIR {
             icon_spread: false,
             alias_imports: vec![],
             absent_props: Vec::new(),
+            provides: Vec::new(),
+            ctx_uses: Vec::new(),
+            ctx_pkg: false,
+            holds_island: false,
             unwritten_props: Vec::new(),
             repeats_children: false,
             state: vec![],
