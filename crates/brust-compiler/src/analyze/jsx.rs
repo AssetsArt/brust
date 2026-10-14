@@ -1090,6 +1090,15 @@ fn list_arm_key(r: &mut Reader<'_, '_>, e: &js_ast::Expr) -> Option<RawExpr> {
     }
 }
 
+/// An identifier or a `.member` chain over one: reading it twice has no effect.
+fn pure_path(e: &js_ast::Expr) -> bool {
+    match &e.data {
+        E::EIdentifier(_) | E::EImportIdentifier(_) => true,
+        E::EDot(d) => pure_path(&d.target),
+        _ => false,
+    }
+}
+
 pub fn is_jsx(e: &js_ast::Expr) -> bool {
     jsx_call(e).is_some()
 }
@@ -1107,6 +1116,47 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
                 cond,
                 then,
                 else_: Vec::new(),
+            });
+        }
+        // `a ?? <X/>` and `a || <X/>` over a plain read (shadcn S1, R34.78): a condition in disguise.
+        // `a` is read twice (the test and the slot), so only a side-effect-free path qualifies.
+        E::EBinary(b)
+            if matches!(b.op, OpCode::BinNullishCoalescing | OpCode::BinLogicalOr)
+                && is_jsx(&b.right)
+                && pure_path(&b.left) =>
+        {
+            let left = r.expr(&b.left);
+            let cond = if b.op == OpCode::BinLogicalOr {
+                Expr::Raw(left.clone())
+            } else {
+                // `(a ?? undefined) !== undefined`: the template's nullish read treats a missing
+                // prop, `null` and `undefined` alike (a bare `a != null` would not see a missing prop).
+                let undef = |loc| RawExpr {
+                    loc,
+                    kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                };
+                Expr::Raw(RawExpr {
+                    loc: left.loc,
+                    kind: RawKind::Binary {
+                        op: crate::ir::BinOp::StrictNe,
+                        left: Box::new(RawExpr {
+                            loc: left.loc,
+                            kind: RawKind::Binary {
+                                op: crate::ir::BinOp::Nullish,
+                                left: Box::new(left.clone()),
+                                right: Box::new(undef(left.loc)),
+                            },
+                        }),
+                        right: Box::new(undef(left.loc)),
+                    },
+                })
+            };
+            let mut else_ = Vec::new();
+            read_child(r, &b.right, &mut else_);
+            out.push(Node::If {
+                cond,
+                then: vec![Node::Slot(Expr::Raw(left))],
+                else_,
             });
         }
         E::EIf(i) if is_jsx(&i.yes) || is_jsx(&i.no) => {

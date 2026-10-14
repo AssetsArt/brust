@@ -24,7 +24,7 @@ test('the committed JSON equals a fresh run and agrees with the markdown', () =>
 test('the analysis is deterministic: a second compile of every page gives the same rows', () => {
   const again = pageNames().map((id) => analysePage(id))
   expect(again).toEqual(rows.map(({ build: _b, ...r }) => r))
-})
+}, 60_000) // two full compiles of every fixture page: 5 s (bun's default) is too tight even on an idle host
 
 test('every fixture page is a row, and every row has a tier', () => {
   expect(rows.map((r) => r.id)).toEqual(pageNames())

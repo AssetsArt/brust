@@ -156,7 +156,7 @@ fn derived_chain_slot_feeds_a_template_read() {
 fn jsx_in_an_expression_falls_back() {
     let ir = analyze(
         "J.tsx",
-        "export default function J({ a }: any) { return <p>{a ?? <b/>}</p> }",
+        "export default function J({ a }: any) { return <p>{a() ?? <b/>}</p> }",
     );
     assert!(ir.diagnostics.iter().any(|d| d.rule == "jsx-expression"));
 }
