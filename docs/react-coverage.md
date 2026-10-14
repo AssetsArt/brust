@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 195 | 105 | 9 | 81 | 0 | 0 | 0 | 0 |
+| B Composition | 197 | 106 | 9 | 82 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 373 | 183 | 44 | 142 | 3 | 1 | 0 | 0 |
+| **Total** | 375 | 184 | 44 | 143 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -194,6 +194,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-plain-wrapper-index-array | an imported element read through an index and wrapped in an array, under a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173: the index and array shapes of the same drop (jsx-const-child) |
 | b-plain-wrapper-helper-jsx | an imported helper returning an element, called as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F190: the helper is not proven plain in its module, so the child falls back by name (jsx-const-child) |
 | b-plain-wrapper-helper-proven | imported helpers proven to return a primitive (a template, a method of a number or string), under a plain wrapper | static | static | precompute | ok | — | F173 control: plain_fn rules read in the helper module (its consts, primitive-returning methods); the child lowers |
+| b-plain-wrapper-methods | built-in number, string and Date methods (toLocaleString, toFixed, padStart, new Date(x).toISOString, …) as children of a plain wrapper | static | static | precompute | ok | — | F173 lead ruling on @57714ece: an allowlisted built-in method on an accepted read or new Date(…) of the unbound global; served == React in scripts/shadcn/context-parity.test.ts (ctx-plain-methods) |
+| b-plain-wrapper-method-override | an object literal with its own toString, called as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173 lead ruling: a user-defined receiver may override the method (an element would print nothing), so it falls back (jsx-const-child) |
 | b-context-prop-under-provider | a component prop holding an element holder under a Provider frame | react | react | ssr | ok | fallback:jsx-const-child | Mellow scoping: the predicate runs at Placer::painted, the single print point (a prop is printed too) |
 | b-context-provider-field-element | a Provider value field holding an element holder | static | static | ssr | ok | — | Mellow: a Provider value field that holds an element would reach the consumer as a hidden prop and print as nothing; the Provider stays an island (context-state), the page stays static |
 | b-context-frame-prop | a Provider whose value reads a prop fed an element holder at the call site | react | react | ssr | ok | fallback:context-no-provider, fallback:context-value | Mellow: a frame value must be a literal (no prop read, no call); the page renders with React |

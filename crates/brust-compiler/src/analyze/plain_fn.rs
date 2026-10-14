@@ -30,18 +30,31 @@ const GLOBAL_CALLS: &[&str] = &[
     "isNaN",
     "isFinite",
 ];
-/// F173: methods that return a string, number or boolean on the string, number or array they are called on.
-const PRIMITIVE_METHODS: &[&str] = &[
+/// F173 (lead ruling on @57714ece): built-in methods that return a string, number or boolean when called on the
+/// string, number, array or `Date` they are built into. The receiver rule (never a user-defined object) is the caller's.
+pub const PRIMITIVE_METHODS: &[&str] = &[
+    "toString",
+    "toLocaleString",
+    "toLocaleDateString",
+    "toLocaleTimeString",
+    "toISOString",
+    "toDateString",
+    "toTimeString",
     "toFixed",
+    "toPrecision",
+    "padStart",
+    "padEnd",
     "toUpperCase",
     "toLowerCase",
     "trim",
+    "trimStart",
+    "trimEnd",
+    "replace",
+    "replaceAll",
     "startsWith",
     "endsWith",
     "includes",
     "join",
-    "replace",
-    "replaceAll",
 ];
 const MATH_CALLS: &[&str] = &[
     "abs", "ceil", "floor", "round", "trunc", "sign", "min", "max", "pow", "sqrt", "cbrt", "log",

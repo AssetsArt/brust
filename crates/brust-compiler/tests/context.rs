@@ -475,6 +475,8 @@ fn plain_wrappers_are_judged_by_the_total_predicate_and_ordinary_reads_keep_lowe
         // Local string helpers (a const arrow, `.replace(/re/, …)` on a parameter's field, a comparison or a template
         // over its fields) are proven plain: the docs site's own pages keep lowering.
         "plain-helper-string.tsx",
+        // Lead ruling on @57714ece: every allowlisted built-in method on an accepted read or on `new Date(…)`.
+        "plain-methods.tsx",
     ] {
         let (ir, jinja) = page(f);
         assert!(
@@ -641,5 +643,29 @@ fn a_helper_proven_to_return_a_primitive_may_be_read_under_a_provider() {
             panel.1.diagnostics
         );
         assert!(is_react(&panel.1), "{f}: {:?}", panel.1.tier);
+    }
+}
+
+/// Lead ruling on @57714ece: an allowlisted method is plain only on a built-in receiver. An object literal carrying its
+/// own method of that name (through a local), a class instance, a shadowed `Date`, a reassigned method, a computed
+/// method name and an optional member or call all fall back by name.
+#[test]
+fn an_allowlisted_method_on_a_user_defined_receiver_falls_back() {
+    for f in [
+        "plain-method-override.tsx",
+        "plain-method-class.tsx",
+        "plain-method-date-shadow.tsx",
+        "plain-method-reassigned.tsx",
+        "plain-method-computed.tsx",
+        "plain-method-optional.tsx",
+        "plain-method-optional-call.tsx",
+    ] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"jsx-const-child"),
+            "{f}: {:?}",
+            ir.diagnostics
+        );
+        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
     }
 }

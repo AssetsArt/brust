@@ -663,14 +663,20 @@ impl Placer<'_> {
                             ok
                         })
                     }
-                    RawKind::Member { target, name, .. } => {
+                    RawKind::Member {
+                        target,
+                        name,
+                        optional,
+                    } => {
                         matches!(
                             &target.kind,
                             RawKind::Ident {
                                 kind: IdentKind::Global,
                                 ..
                             }
-                        ) || (go(target).is_none() && plain_method(name))
+                        ) || (!*optional
+                            && plain_method(name)
+                            && self.receiver_problem(target, depth + 1).is_none())
                     }
                     RawKind::Lit(_)
                     | RawKind::Ident { .. }
@@ -697,6 +703,8 @@ impl Placer<'_> {
                 let method = matches!(callee.kind, RawKind::Member { .. });
                 args.iter().find_map(|a| match &a.kind {
                     RawKind::Opaque { why, .. } if method && why == "ERegExp" => None,
+                    // A helper may call a method of its argument: never one a user-defined object brings (ruling).
+                    _ if self.user_object(a, 0) => Some("an object with its own methods".into()),
                     _ => go(a),
                 })
             }
@@ -709,6 +717,71 @@ impl Placer<'_> {
             RawKind::Arrow { .. } => Some("a function".into()),
             RawKind::Jsx(_) => Some("an element".into()),
             RawKind::Opaque { source, .. } => Some(source.clone()),
+        }
+    }
+
+    /// F173 (lead ruling on @57714ece): why the value an allowlisted method is called on is not a built-in string,
+    /// number, array or `Date`. An accepted read is fine, and so is `new Date(…)` of the unbound global `Date` whose
+    /// every read is accepted; a user-defined object (an object literal, directly or through a local) never is, so an
+    /// override of the method's name returning an element cannot print.
+    fn receiver_problem(&self, r: &RawExpr, depth: u8) -> Option<String> {
+        if self.user_object(r, 0) {
+            return Some("an object with its own methods".into());
+        }
+        match &r.kind {
+            RawKind::Opaque {
+                source,
+                why,
+                captures,
+            } if why == "ENew" && source.starts_with("new Date(") => {
+                captures.iter().find_map(|(name, kind)| {
+                    if name == "Date" {
+                        (*kind != IdentKind::Global).then(|| name.clone())
+                    } else {
+                        self.child_read_problem(
+                            &RawExpr {
+                                loc: r.loc,
+                                kind: RawKind::Ident {
+                                    name: name.clone(),
+                                    kind: kind.clone(),
+                                },
+                            },
+                            depth,
+                        )
+                    }
+                })
+            }
+            _ => self.child_read_problem(r, depth),
+        }
+    }
+
+    /// The value is (or may be, through a branch or a local) an object literal: it can carry its own methods.
+    fn user_object(&self, r: &RawExpr, depth: u8) -> bool {
+        if depth > 8 {
+            return true;
+        }
+        let go = |x: &RawExpr| self.user_object(x, depth + 1);
+        match &r.kind {
+            RawKind::Object(_) => true,
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Local,
+            } => match self.derived_raw.get(name) {
+                Some(d) => go(d),
+                None => self
+                    .module_decls
+                    .iter()
+                    .flat_map(|d| &d.consts)
+                    .find(|c| &c.name == name)
+                    .is_some_and(|c| go(&c.value)),
+            },
+            RawKind::Cond { yes, no, .. } => go(yes) || go(no),
+            RawKind::Binary {
+                op: crate::ir::BinOp::And | crate::ir::BinOp::Or | crate::ir::BinOp::Nullish,
+                left,
+                right,
+            } => go(left) || go(right),
+            _ => false,
         }
     }
 
@@ -1324,21 +1397,8 @@ fn collect_raw(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
     }
 }
 
-/// The string / array methods the server template prints (`lower::server_expr::call`): their result is a plain value.
+/// The built-in methods whose result is a plain value on a built-in receiver (`Placer::receiver_problem`): main's string
+/// / array set (`slice` included) and the F173 allowlist (`plain_fn::PRIMITIVE_METHODS`).
 fn plain_method(name: &str) -> bool {
-    matches!(
-        name,
-        "toUpperCase"
-            | "toLowerCase"
-            | "trim"
-            | "slice"
-            | "startsWith"
-            | "endsWith"
-            | "includes"
-            | "join"
-            // F173: string results, as in `plain_fn::PRIMITIVE_METHODS`.
-            | "toFixed"
-            | "replace"
-            | "replaceAll"
-    )
+    name == "slice" || crate::analyze::plain_fn::PRIMITIVE_METHODS.contains(&name)
 }
