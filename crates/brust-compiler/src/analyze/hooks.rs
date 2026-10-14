@@ -383,12 +383,12 @@ fn read_object_pattern(
         // F161 (R39.1): a prop is a template variable named by its key, so a key that is not a plain identifier
         // (`'data-x': dx`) prints as `data-x`, which jinja reads as a subtraction: every render fails. Fail closed;
         // native support for quoted keys is a later F-row.
-        if !template_name(&name) {
+        if let Some((code, what)) = crate::analyze::names::template_name_problem(&name) {
             out.fallback(
-                "prop-quoted-key",
-                format!("the props key `{name}` is not a plain identifier, so it cannot name a template variable"),
+                code,
+                format!("the props key `{name}` {what}"),
                 ploc,
-                "rename the key to a plain identifier at the call sites, or keep this component in React",
+                "rename the prop at the call sites, or keep this component in React",
             );
             continue;
         }
@@ -400,19 +400,6 @@ fn read_object_pattern(
             default,
         });
     }
-}
-
-/// A prop name the template can read as a plain variable (`name`, `_a1`; no jinja word).
-fn template_name(name: &str) -> bool {
-    const WORDS: &[&str] = &[
-        "true", "false", "none", "True", "False", "None", "and", "or", "not", "in", "is", "if",
-        "else",
-    ];
-    let mut cs = name.chars();
-    cs.next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && !WORDS.contains(&name)
 }
 
 /// F161 (R39.1): the server template prints a destructuring default with `lower::server_expr`, which turns
