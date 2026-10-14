@@ -209,3 +209,14 @@ fn a_console_only_if_is_left_out_and_any_other_if_still_falls_back() {
     let (ir, _) = page("real-if.tsx");
     assert!(is_react(&ir), "{:?}", ir.tier);
 }
+
+/// A wrapper that forwards its `...rest` into the Provider component (the shadcn shape): the Provider's value reads the
+/// props the rest carries (`max`), a prop the wrapper names and does not forward (`value`) is the Provider's default.
+#[test]
+fn a_rest_spread_into_the_provider_carries_the_props_the_wrapper_does_not_name() {
+    let (ir, jinja) = page("rest-wrapper.tsx");
+    assert!(!is_react(&ir), "{:?} {:?}", ir.tier, ir.diagnostics);
+    // The page's inlined Wrap: max=5 from the call site through the rest, value=0 (the default).
+    assert!(jinja.contains("(5)") && jinja.contains("(0)"), "{jinja}");
+    assert!(!jinja.contains("__ctx_"), "{jinja}");
+}

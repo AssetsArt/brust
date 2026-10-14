@@ -890,27 +890,87 @@ impl Walker<'_, '_> {
             RawKind::Lit(_) => raw.kind.clone(),
             RawKind::Ident { name, kind } => match kind {
                 IdentKind::Prop if name != "*" => {
-                    if let Some((_, e)) = props.iter().rev().find(|(k, _)| k == name) {
+                    // Spreads at the call site: the caller's own props object or its `...rest` carries every prop it
+                    // does not name (R34.14: `rest.k` is prop `k`); any other spread is not read here.
+                    let mut carried = false;
+                    for (k, e) in props {
+                        if k != crate::ir::SPREAD_KEY {
+                            continue;
+                        }
                         match e {
-                            Expr::Raw(r) => return Ok(r.clone()),
+                            Expr::Raw(RawExpr {
+                                kind:
+                                    RawKind::Ident {
+                                        name: src,
+                                        kind: IdentKind::Prop,
+                                    },
+                                ..
+                            }) if src == "*" || src == crate::ir::REST_PROPS => {
+                                carried |= !self.own_named.iter().any(|n| n == name);
+                            }
                             _ => {
-                                return Err(format!("the prop `{name}` is not a plain expression"));
+                                return Err(format!(
+                                    "the prop `{name}` may come from a spread of unknown keys"
+                                ));
                             }
                         }
                     }
-                    if props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY) {
-                        return Err(format!(
-                            "the prop `{name}` may come from a spread of unknown keys"
-                        ));
-                    }
-                    match cir
+                    let explicit = props.iter().rev().find(|(k, _)| k == name).map(|(_, e)| e);
+                    let default = match cir
                         .props
                         .iter()
                         .find(|p| &p.name == name)
                         .and_then(|p| p.default.as_ref())
                     {
-                        Some(d) => return self.subst(d, cir, props, depth + 1),
-                        None => RawKind::Lit(crate::ir::Literal::Undefined),
+                        Some(d) => self.subst(d, cir, props, depth + 1)?,
+                        None => RawExpr {
+                            loc: raw.loc,
+                            kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                        },
+                    };
+                    if carried {
+                        if explicit.is_some() {
+                            return Err(format!(
+                                "the prop `{name}` is given and a spread after it may carry it too"
+                            ));
+                        }
+                        // The caller's own prop `name`; the Provider's default applies when it is undefined.
+                        let read = RawExpr {
+                            loc: raw.loc,
+                            kind: RawKind::Ident {
+                                name: name.clone(),
+                                kind: IdentKind::Prop,
+                            },
+                        };
+                        let undefined = RawExpr {
+                            loc: raw.loc,
+                            kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                        };
+                        if matches!(default.kind, RawKind::Lit(crate::ir::Literal::Undefined)) {
+                            return Ok(read);
+                        }
+                        return Ok(RawExpr {
+                            loc: raw.loc,
+                            kind: RawKind::Cond {
+                                test: Box::new(RawExpr {
+                                    loc: raw.loc,
+                                    kind: RawKind::Binary {
+                                        op: crate::ir::BinOp::StrictEq,
+                                        left: Box::new(read.clone()),
+                                        right: Box::new(undefined),
+                                    },
+                                }),
+                                yes: Box::new(default),
+                                no: Box::new(read),
+                            },
+                        });
+                    }
+                    match explicit {
+                        Some(Expr::Raw(r)) => return Ok(r.clone()),
+                        Some(_) => {
+                            return Err(format!("the prop `{name}` is not a plain expression"));
+                        }
+                        None => return Ok(default),
                     }
                 }
                 IdentKind::Local => {
