@@ -1,14 +1,13 @@
-//! R34.96 PR 2b (lowering half): a fed child fused into its parent's job. The analysis half writes
-//! `ir.fused`; here it is written by hand on a real compiled parent (the record of the child removed,
-//! the renamed outputs added to the parent's job), lowered, and the job module RUN with bun: the parent's
-//! job calls the child's job with the bound inputs, and the template reads the child's slots from the
-//! parent's output under the renamed keys.
+//! R34.96 PR 2b: a fed child fused into its parent's job. The analysis writes `ir.fused`; the parent is
+//! lowered and its job module RUN with bun: it calls the child's job with the bound inputs, and the
+//! template reads the child's slots from the parent's output under the renamed keys (root, inside a
+//! caller's instance dict, folded by the build), with `Undefined` left out and `null` kept.
 use brust_compiler::analyze::component::AnalyzeOptions;
-use brust_compiler::ir::{ComponentIR, FusedInput, FusedInstance, Node};
+use brust_compiler::ir::{ComponentIR, FusedInput};
 use brust_compiler::lower::{DEFAULT_RUNTIME_IMPORT, LowerCtx, lower};
 use brust_compiler::parse::run_on_compiler_thread;
 use brust_compiler::pipeline::compile_tree;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const LINK: &str = r##"const cx = (...a: any[]) => a.filter((x) => x).join(' ')
@@ -20,7 +19,23 @@ export function Link({ className, size = 'icon', isActive }: any) {
 const NEXT: &str = r#"import { Link } from './link'
 const cx = (...a: any[]) => a.filter((x) => x).join(' ')
 export default function Next({ className, active }: any) {
-  return <nav className={cx('next', className)}><Link className={className} size="default" isActive={active} /></nav>
+  return <nav><Link className={cx('next', className)} size="default" isActive={active} /></nav>
+}
+"#;
+
+/// Next without `isActive`: the analysis binds that root `Undefined`.
+const NEXT_BARE: &str = r#"import { Link } from './link'
+const cx = (...a: any[]) => a.filter((x) => x).join(' ')
+export default function Next({ className }: any) {
+  return <nav><Link className={cx('next', className)} size="default" /></nav>
+}
+"#;
+
+/// Next passing an explicit `null`: a literal that stays `null`.
+const NEXT_NULL: &str = r#"import { Link } from './link'
+const cx = (...a: any[]) => a.filter((x) => x).join(' ')
+export default function Next({ className }: any) {
+  return <nav><Link className={cx('next', className)} size="default" isActive={null} /></nav>
 }
 "#;
 
@@ -47,62 +62,6 @@ fn compile(root: &Path, entry: &str) -> HashMap<String, ComponentIR> {
             .map(|l| (l.ir.id.clone(), (*l.ir).clone()))
             .collect()
     })
-}
-
-fn call_loc(n: &Node, child: &str) -> Option<u32> {
-    match n {
-        Node::Component { loc, name, .. } if name == child => Some(*loc),
-        Node::Element { children, .. } | Node::Fragment(children) => {
-            children.iter().find_map(|c| call_loc(c, child))
-        }
-        Node::Component { children, .. } => children.iter().find_map(|c| call_loc(c, child)),
-        _ => None,
-    }
-}
-
-/// `next`'s IR as the analysis half would write it: Link fused (className = Next's own `_s1`, the
-/// `cn(...)` of its `<nav>`, standing in for a `cn(...)` at the call site, which today makes Next React;
-/// size a literal; isActive as given), its record gone, its slots renamed into Next's job.
-fn fuse(next: &mut ComponentIR, link: &ComponentIR, is_active: FusedInput) {
-    let loc = call_loc(&next.template, "Link").expect("Link call site");
-    let outputs: BTreeMap<String, String> = link.jobs[0]
-        .outputs
-        .iter()
-        .map(|s| (s.clone(), format!("_fLink_1_{s}")))
-        .collect();
-    let own = next.jobs[0]
-        .outputs
-        .first()
-        .cloned()
-        .expect("Next's own slot");
-    let mut inputs = BTreeMap::new();
-    for root in &link.jobs[0].inputs {
-        let v = match root.as_str() {
-            "className" => FusedInput::Slot { name: own.clone() },
-            "size" => FusedInput::Literal {
-                value: serde_json::json!("default"),
-            },
-            "isActive" => is_active.clone(),
-            other => panic!("unexpected Link job input {other}"),
-        };
-        inputs.insert(root.clone(), v);
-    }
-    if matches!(is_active, FusedInput::Prop { .. })
-        && !next.jobs[0].inputs.contains(&"active".into())
-    {
-        next.jobs[0].inputs.push("active".into());
-    }
-    next.jobs[0].outputs.extend(outputs.values().cloned());
-    next.instances.retain(|r| r.child_id != link.id);
-    next.fused = vec![FusedInstance {
-        child_id: link.id.clone(),
-        loc,
-        ordinal: 1,
-        inputs,
-        outputs,
-        eval_refused: None,
-        stubs: vec![],
-    }];
 }
 
 fn lowered(
@@ -166,10 +125,11 @@ struct Tree {
     link_ts: String,
 }
 
-fn tree() -> Tree {
+/// Compiles `next` (with Link) as the analysis writes it: Link fused into Next's job.
+fn tree_of(next_src: &str) -> Tree {
     let dir = tmp();
     std::fs::write(dir.join("link.tsx"), LINK).unwrap();
-    std::fs::write(dir.join("next.tsx"), NEXT).unwrap();
+    std::fs::write(dir.join("next.tsx"), next_src).unwrap();
     let by_id = compile(&dir, "next.tsx");
     let next = by_id
         .values()
@@ -182,16 +142,18 @@ fn tree() -> Tree {
         .unwrap()
         .clone();
     assert_eq!(
-        next.instances.len(),
+        next.fused.len(),
         1,
-        "Link is Next's fed child today: {:?} {:?} {:?} | link {:?} {:?}",
+        "Link fused into Next: {:?} {:?} {:?}",
         next.tier,
         next.jobs,
-        next.children,
-        link.tier,
-        link.jobs
+        next.instances
     );
-    assert_eq!(next.jobs.len(), 1, "Next has its own precompute job");
+    assert!(
+        next.instances.is_empty(),
+        "a fused child has no record: {:?}",
+        next.instances
+    );
     let link_ts = lowered(&link, &by_id).server_ts.expect("Link's job module");
     Tree {
         dir,
@@ -202,18 +164,23 @@ fn tree() -> Tree {
     }
 }
 
+fn tree() -> Tree {
+    tree_of(NEXT)
+}
+
+/// The output of Next's job that carries Link's `_s1` (its class).
+fn link_class(t: &Tree, out: &serde_json::Value) -> String {
+    let key = &t.next.fused[0].outputs["_s1"];
+    out[key]
+        .as_str()
+        .unwrap_or_else(|| panic!("{key} in {out}"))
+        .to_string()
+}
+
 #[test]
 fn the_parent_job_runs_the_child_job_and_the_template_reads_its_renamed_slots() {
     let t = tree();
-    let mut next = t.next.clone();
-    fuse(
-        &mut next,
-        &t.link,
-        FusedInput::Prop {
-            path: "active".into(),
-        },
-    );
-    let art = lowered(&next, &t.by_id);
+    let art = lowered(&t.next, &t.by_id);
     let ts = art.server_ts.unwrap();
     assert!(
         ts.contains(&format!("from \"brust-job:{}\"", t.link.id)),
@@ -226,15 +193,11 @@ fn the_parent_job_runs_the_child_job_and_the_template_reads_its_renamed_slots() 
         &t.link_ts,
         "{ className: 'x', active: true }",
     );
-    let class = out["_fLink_1__s1"].as_str().or_else(|| {
-        out.as_object()?
-            .iter()
-            .find(|(k, v)| {
-                k.starts_with("_fLink_1_") && v.as_str().is_some_and(|s| s.starts_with("link"))
-            })
-            .and_then(|(_, v)| v.as_str())
-    });
-    assert_eq!(class, Some("link on default next x"), "{out}");
+    assert_eq!(
+        link_class(&t, &out),
+        "link on default next x",
+        "{out}\n{ts}"
+    );
     // The page renders from the parent's output alone: no `__<link>_1` dict exists any more.
     let html = render(&art.jinja, &out);
     assert!(
@@ -252,48 +215,40 @@ fn the_parent_job_runs_the_child_job_and_the_template_reads_its_renamed_slots() 
 
 #[test]
 fn an_undefined_input_is_left_out_so_the_default_applies_and_a_null_literal_stays_null() {
-    let t = tree();
-    // isActive not passed: the key is left out, Link's own default/absent handling applies (A3).
-    let mut next = t.next.clone();
-    fuse(&mut next, &t.link, FusedInput::Undefined);
-    let ts = lowered(&next, &t.by_id).server_ts.unwrap();
+    // isActive not passed: the key is left out, so Link sees it absent (A3).
+    let t = tree_of(NEXT_BARE);
+    assert_eq!(t.next.fused[0].inputs["isActive"], FusedInput::Undefined);
+    let ts = lowered(&t.next, &t.by_id).server_ts.unwrap();
     assert!(!ts.contains("\"isActive\""), "{ts}");
     let out = run_job(&t.dir, &ts, &t.link.id, &t.link_ts, "{ className: 'x' }");
-    assert!(out.to_string().contains("link off default next x"), "{out}");
+    assert_eq!(link_class(&t, &out), "link off default next x", "{out}");
     // An explicit null stays null (React keeps `null`).
-    let mut next = t.next.clone();
-    fuse(
-        &mut next,
-        &t.link,
+    let t = tree_of(NEXT_NULL);
+    assert_eq!(
+        t.next.fused[0].inputs["isActive"],
         FusedInput::Literal {
-            value: serde_json::Value::Null,
-        },
+            value: serde_json::Value::Null
+        }
     );
-    let ts = lowered(&next, &t.by_id).server_ts.unwrap();
+    let ts = lowered(&t.next, &t.by_id).server_ts.unwrap();
     let out = run_job(&t.dir, &ts, &t.link.id, &t.link_ts, "{ className: 'x' }");
-    assert!(
-        out.to_string().contains("link null default next x"),
-        "{out}"
-    );
+    assert_eq!(link_class(&t, &out), "link null default next x", "{out}");
 }
 
 #[test]
 fn a_prop_path_and_a_hostile_key_print_as_data_never_code() {
     let t = tree();
     let mut next = t.next.clone();
-    fuse(
-        &mut next,
-        &t.link,
+    next.fused[0].inputs.insert(
+        "isActive".into(),
         FusedInput::Prop {
             path: "cfg.flags[0].on".into(),
         },
     );
     let ts = lowered(&next, &t.by_id).server_ts.unwrap();
     assert!(ts.contains(r#"props["cfg"]["flags"][0]["on"]"#), "{ts}");
-    let mut next = t.next.clone();
-    fuse(
-        &mut next,
-        &t.link,
+    next.fused[0].inputs.insert(
+        "isActive".into(),
         FusedInput::Prop {
             path: "a\"]);process.exit(1);//".into(),
         },
@@ -302,7 +257,7 @@ fn a_prop_path_and_a_hostile_key_print_as_data_never_code() {
     // The keys are data: the props object that has them feeds the value through.
     let props = r#"{ className: 'x', 'a"]);process': { 'exit(1);//': true } }"#;
     let out = run_job(&t.dir, &ts, &t.link.id, &t.link_ts, props);
-    assert!(out.to_string().contains("link on default next x"), "{out}");
+    assert_eq!(link_class(&t, &out), "link on default next x", "{out}");
 }
 
 const APP: &str = r#"import Next from './next'
@@ -311,27 +266,33 @@ export default function App() {
 }
 "#;
 
-/// The caller of a fused parent: (App's IR, every IR by id with Next fused).
+/// Next inlined in a caller, compiled as one tree: App's IR and every IR by id.
 fn app_tree(t: &Tree) -> (ComponentIR, HashMap<String, ComponentIR>) {
     std::fs::write(t.dir.join("App.tsx"), APP).unwrap();
-    // Analysis only: lowering App today stops at `nested-instance` (Link is fed inside an inlined Next),
-    // which is what fusion removes.
-    let opts = AnalyzeOptions {
-        root: t.dir.clone(),
-        ..Default::default()
-    };
-    let app = run_on_compiler_thread(move || {
-        brust_compiler::analyze::component::analyze_file("App.tsx", &opts).unwrap()
-    });
-    let mut by_id = t.by_id.clone();
-    fuse(
-        by_id.get_mut(&t.next.id).unwrap(),
-        &t.link,
-        FusedInput::Prop {
-            path: "active".into(),
-        },
+    let by_id = compile(&t.dir, "App.tsx");
+    let app = by_id
+        .values()
+        .find(|c| c.source.ends_with("App.tsx"))
+        .unwrap()
+        .clone();
+    assert_eq!(
+        by_id[&t.next.id].fused.len(),
+        1,
+        "Link fused in Next under App too"
     );
     (app, by_id)
+}
+
+/// Next's job output for App's instance (`className: "x", active: true`).
+fn next_out(t: &Tree, by_id: &HashMap<String, ComponentIR>) -> serde_json::Value {
+    let ts = lowered(&by_id[&t.next.id], by_id).server_ts.unwrap();
+    run_job(
+        &t.dir,
+        &ts,
+        &t.link.id,
+        &t.link_ts,
+        "{ className: 'x', active: true }",
+    )
 }
 
 #[test]
@@ -343,15 +304,7 @@ fn inside_a_caller_the_fused_slots_are_read_from_the_parent_instance_dict() {
         .iter()
         .find(|r| r.child_id == t.next.id)
         .unwrap_or_else(|| panic!("App feeds Next: {:?} {:?}", app.tier, app.instances));
-    let next = &by_id[&t.next.id];
-    let ts = lowered(next, &by_id).server_ts.unwrap();
-    let out = run_job(
-        &t.dir,
-        &ts,
-        &t.link.id,
-        &t.link_ts,
-        "{ className: 'x', active: true }",
-    );
+    let out = next_out(&t, &by_id);
     let art = lowered(&app, &by_id);
     assert!(art.diagnostics.is_empty(), "{:?}", art.diagnostics);
     let html = render(
@@ -363,22 +316,14 @@ fn inside_a_caller_the_fused_slots_are_read_from_the_parent_instance_dict() {
         "{html}\n{}",
         art.jinja
     );
-    assert!(html.contains("<nav class=\"next x\">"), "{html}");
+    assert!(html.contains("<nav>"), "{html}");
 }
 
 #[test]
 fn a_folded_parent_prints_the_fused_slots_as_literals() {
     let t = tree();
     let (mut app, by_id) = app_tree(&t);
-    let next = &by_id[&t.next.id];
-    let ts = lowered(next, &by_id).server_ts.unwrap();
-    let out = run_job(
-        &t.dir,
-        &ts,
-        &t.link.id,
-        &t.link_ts,
-        "{ className: 'x', active: true }",
-    );
+    let out = next_out(&t, &by_id);
     // What the build's recompile writes (F149): the record dropped, every output a literal.
     let k = app
         .instances
@@ -409,7 +354,6 @@ fn a_folded_parent_prints_the_fused_slots_as_literals() {
         "{html}\n{}",
         art.jinja
     );
-    assert!(html.contains("<nav class=\"next x\">"), "{html}");
 }
 
 #[test]
@@ -421,7 +365,6 @@ fn a_parent_runs_at_build_only_if_every_fused_child_may() {
         ..Default::default()
     };
     let mut next = t.next.clone();
-    fuse(&mut next, &t.link, FusedInput::Undefined);
     let path = t.dir.join("next.tsx").to_string_lossy().to_string();
     let ok = instance_job(&next, &path, &opts);
     next.fused[0].eval_refused = Some("its job reads `Date`, which differs between runs".into());
