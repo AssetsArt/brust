@@ -117,7 +117,9 @@ fn body_reads(n: &Node, st: &PassState, item: &str, out: &mut ItemRead) {
             children.iter().for_each(|c| body_reads(c, st, item, out));
         }
         Node::Slot(e) => raw_reads(e, st, item, out),
-        Node::If { cond, then, else_ } => {
+        Node::If {
+            cond, then, else_, ..
+        } => {
             raw_reads(cond, st, item, out);
             then.iter()
                 .chain(else_)

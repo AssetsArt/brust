@@ -963,7 +963,9 @@ fn template_slots(n: &Node, out: &mut Vec<Expr>) {
             children.iter().for_each(|c| template_slots(c, out));
         }
         Node::Slot(x) => e(x),
-        Node::If { cond, then, else_ } => {
+        Node::If {
+            cond, then, else_, ..
+        } => {
             e(cond);
             then.iter()
                 .chain(else_)

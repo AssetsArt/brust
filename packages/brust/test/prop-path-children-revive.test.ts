@@ -63,8 +63,9 @@ test('request data shaped like the compiler\'s nodes is never walked (R34.117)',
       expect(text).not.toContain('x</') // no fragment or element revived
       // As an attribute value: omitted.
       expect(render(el('p', { 'data-x': v('$p0') }, []), { $p0: e }), JSON.stringify(e)).toBe('<section><p></p></section>')
-      // As a condition: false.
-      expect(render({ $brust: 'if', k: '$p0', c: ['yes'], e: ['no'] }, { $p0: e })).not.toContain('yes')
+      // As a condition: its truthiness only, as in React; the value itself is never read into or revived.
+      const asCondition = render({ $brust: 'if', k: '$p0', c: ['yes'], e: ['no'] }, { $p0: e })
+      expect(asCondition, JSON.stringify(e)).toBe(e ? '<section>yes</section>' : '<section>no</section>')
     }
     expect(({} as { polluted?: boolean }).polluted).toBeUndefined()
     // A `style` object from data is never applied: an object is not a primitive.
@@ -94,15 +95,39 @@ test('the hole names are the compiler\'s: anything else throws or renders nothin
   }
 })
 
-test('a condition takes the branch by the truthiness of a primitive; an object is false', async () => {
+test('a condition renders what React renders, for every kind of value and both forms (F1)', async () => {
   const render = await load()
+  const react = await import('react')
+  const server = (await import('react-dom/server')) as unknown as { renderToString(el: unknown): string }
   try {
-    const t = (value: unknown) => render({ $brust: 'if', k: '$p0', c: ['yes'], e: ['no'] }, { $p0: value })
-    for (const [value, yes] of [['x', true], ['', false], [1, true], [0, false], [Number.NaN, false], [true, true], [false, false], [null, false], [{}, false], [[], false]] as const) {
-      expect(t(value), String(value)).toContain(yes ? 'yes' : 'no')
+    const values: unknown[] = ['x', '', 'a b', 1, 0, -0, Number.NaN, true, false, null, undefined, {}, { a: 1 }, [], [0], { $brust: 'el', t: 'script' }]
+    const yes = react.createElement('u', null, 'yes')
+    const section = (child: unknown) => server.renderToString(react.createElement('section', null, child)).replaceAll('<!-- -->', '')
+    for (const value of values) {
+      const tag = `${typeof value} ${Object.is(value, -0) ? '-0' : JSON.stringify(value) ?? String(value)}`
+      // `{v && <u>yes</u>}` (the node carries `a`): a falsy number is text, an empty string nothing.
+      expect(render({ $brust: 'if', k: '$p0', c: [{ $brust: 'el', t: 'u', p: {}, c: ['yes'] }], e: [], a: true }, { $p0: value }), `&& ${tag}`).toBe(section(value && yes))
+      // `{v ? <u>yes</u> : null}`: nothing for every falsy value, 0 included.
+      expect(render({ $brust: 'if', k: '$p0', c: [{ $brust: 'el', t: 'u', p: {}, c: ['yes'] }], e: [] }, { $p0: value }), `?: ${tag}`).toBe(section(value ? yes : null))
+      // With an else arm.
+      expect(render({ $brust: 'if', k: '$p0', c: ['yes'], e: ['no'] }, { $p0: value }), `else ${tag}`).toBe(section(value ? 'yes' : 'no'))
     }
-    // A missing branch renders nothing.
-    expect(render({ $brust: 'if', k: '$p0', c: ['yes'] }, { $p0: '' })).toBe('<section></section>')
+  } finally {
+    rmSync(file, { force: true })
+  }
+})
+
+test('a text hole renders what React renders for a string, a number and an array of them (F1)', async () => {
+  const render = await load()
+  const react = await import('react')
+  const server = (await import('react-dom/server')) as unknown as { renderToString(el: unknown): string }
+  try {
+    const section = (child: unknown) => server.renderToString(react.createElement('section', null, child)).replaceAll('<!-- -->', '')
+    for (const value of ['a', '', 'x </b>', 3, 0, true, false, null, undefined, ['a', 'b'], ['a', 2, 'c'], []]) {
+      expect(render([{ $brust: 'v', k: '$p0' }], { $p0: value }), JSON.stringify(value) ?? 'undefined').toBe(section(value))
+    }
+    // An array of arrays or objects is not React-equivalent (it throws there): only the primitives are kept.
+    expect(render([{ $brust: 'v', k: '$p0' }], { $p0: ['a', { $brust: 'el', t: 'script' }, ['b']] })).toBe('<section>a</section>')
   } finally {
     rmSync(file, { force: true })
   }

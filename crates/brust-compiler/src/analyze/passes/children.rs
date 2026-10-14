@@ -1304,9 +1304,9 @@ impl Walker<'_, '_> {
                 }) || children.iter().any(|c| self.body_directive(c))
             }
             Node::Slot(e) => self.reads_state(e),
-            Node::If { cond, then, else_ } => {
-                self.reads_state(cond) || then.iter().chain(else_).any(|c| self.body_directive(c))
-            }
+            Node::If {
+                cond, then, else_, ..
+            } => self.reads_state(cond) || then.iter().chain(else_).any(|c| self.body_directive(c)),
             Node::For { source, body, .. } => {
                 self.source_reactive(source) || body.iter().any(|c| self.body_directive(c))
             }
@@ -1429,7 +1429,17 @@ impl Walker<'_, '_> {
         // can set. Children that are not a constant tree are the same fallback a React wrapper gave.
         let mut ch_nested: Option<Vec<String>> = None;
         if !matches!(child.tier, Tier::React { .. }) && child.job_roots.contains(CH_PROP) {
-            if props.iter().any(|(k, _)| k == CH_PROP) {
+            if props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY) {
+                // R34.121: `__ch` is the call site's alone. A spread could carry one from request data into a
+                // tree the revive walks, so a wrapper whose island renders `{children}` takes no spread, by this
+                // rule and not only by the per-instance rule of `check_spread`.
+                self.diagnostics.push(Diagnostic::fallback(
+                    "spread-props",
+                    format!("props are spread into <{name}>, whose island renders `{{children}}`: the tree for it comes from the call site only"),
+                    *loc,
+                    "pass these props explicitly",
+                ));
+            } else if props.iter().any(|(k, _)| k == CH_PROP) {
                 self.diagnostics.push(Diagnostic::fallback(
                     "island-prop",
                     format!("the prop `{CH_PROP}` of <{name}> is reserved by brust"),
@@ -2277,9 +2287,6 @@ impl Walker<'_, '_> {
         let Some(n) = self.holes.as_ref().map(Vec::len) else {
             return Err("props are not available here".into());
         };
-        if n >= MAX_HOLES {
-            return Err(format!("more than {MAX_HOLES} values read from props"));
-        }
         let loc = self.raw_of(e).map(|r| r.loc).unwrap_or(0);
         // The same value read twice is one hole.
         if let Some(prefix) = self
@@ -2307,6 +2314,9 @@ impl Walker<'_, '_> {
                     return Ok(k.clone());
                 }
             }
+        }
+        if n >= MAX_HOLES {
+            return Err(format!("more than {MAX_HOLES} values read from props"));
         }
         let (key, expr) = if element {
             // The caller's tree is a compile-time constant bound by the wrapper's call site. A route
@@ -2621,7 +2631,12 @@ impl Walker<'_, '_> {
                     }
                     out.push(node);
                 }
-                Node::If { cond, then, else_ } => {
+                Node::If {
+                    cond,
+                    then,
+                    else_,
+                    and,
+                } => {
                     match self.fold_expr(cond, env) {
                         Ok(c) => {
                             let branch = if c.truthy() { then } else { else_ };
@@ -2639,7 +2654,12 @@ impl Walker<'_, '_> {
                             };
                             let yes = self.lower_nodes(then, nested, env, bytes, lists)?;
                             let no = self.lower_nodes(else_, nested, env, bytes, lists)?;
-                            out.push(json!({ MARK: "if", "k": key, "c": yes, "e": no }));
+                            let mut node = json!({ MARK: "if", "k": key, "c": yes, "e": no });
+                            // `cond && <X/>`: React renders a falsy number (0) as text there.
+                            if *and {
+                                node["a"] = json!(true);
+                            }
+                            out.push(node);
                         }
                     }
                 }

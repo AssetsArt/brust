@@ -412,7 +412,9 @@ impl<'a, 'f> Render<'a, 'f> {
                 children.iter().for_each(|c| self.node(c));
             }
             Node::Slot(e) => self.expr(e),
-            Node::If { cond, then, else_ } => {
+            Node::If {
+                cond, then, else_, ..
+            } => {
                 self.expr(cond);
                 then.iter().chain(else_).for_each(|c| self.node(c));
             }

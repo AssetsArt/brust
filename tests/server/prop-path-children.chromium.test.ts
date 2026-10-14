@@ -38,13 +38,13 @@ afterAll(async () => {
   rmSync(join(app, 'dist'), { recursive: true, force: true })
 })
 
-async function open(path: string) {
+async function open(path: string, islands = 3) {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
   await page.goto(`${base}${path}`, { waitUntil: 'domcontentloaded' })
-  await page.waitForFunction(() => document.querySelectorAll('brust-island[data-hydrated="1"]').length === 3, null, { timeout: 15_000 })
+  await page.waitForFunction((n) => document.querySelectorAll('brust-island[data-hydrated="1"]').length === n, islands, { timeout: 15_000 })
   return { page, errors }
 }
 
@@ -65,11 +65,16 @@ test('hydrates, opens, and renders the holes (text, attribute, condition, caller
   expect(await note.getAttribute('data-note')).toBe('T "q" \'a\' </script><b>x</b> & done')
   expect(await page.locator('[data-testid="disc-one"] [data-testid="shown"]').textContent()).toBe('shown')
   expect(await page.locator('[data-testid="inner-one"]').textContent()).toBe('inner one')
+  // F1: an object prop is truthy and renders its branch; `count && <u/>` with 0 renders the text 0, as React does.
+  expect(await page.locator('[data-testid="disc-one"] [data-testid="who"]').count()).toBe(1)
+  expect(await page.locator('[data-testid="disc-one"] [data-testid="count"]').count()).toBe(0)
+  expect((await page.locator('[data-testid="disc-one"] [data-testid="body"]').innerText()).replaceAll(/\s+/g, ' ')).toMatch(/shown\s*who\s*0\s*inner one/)
   // The second wrapper has no `shown` and no children.
   await page.getByText('Toggle two').click()
   await page.waitForSelector('[data-testid="disc-two"][data-state="open"]')
   expect(await page.locator('[data-testid="disc-two"] [data-testid="shown"]').count()).toBe(0)
   expect(await page.locator('[data-testid="disc-two"] [data-testid="note"]').textContent()).toBe('plain')
+  expect(await page.locator('[data-testid="disc-two"] [data-testid="body"]').innerText()).toBe('plain')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
@@ -87,4 +92,22 @@ test('request data shaped like the compiler\'s nodes renders as nothing', async 
   expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined()
   expect(errors).toEqual([])
   await page.close()
+}, 60_000)
+
+test('a runtime spread cannot supply the tree of a wrapper\'s island (R34.121, F2)', async () => {
+  for (const path of ['/spread', '/spread-kids']) {
+    // The caller falls back to React (a plain island): the loader's __ch is just an ignored prop there.
+    const html = await (await fetch(`${base}${path}`)).text()
+    // The loader data is in the page as an inert, escaped attribute (the plain island's props), never as markup.
+    expect(html, path).not.toContain('<script>window')
+    expect(html, path).not.toContain('<script>1')
+    const { page, errors } = await open(path, 1)
+    expect(await page.locator('script', { hasText: '__pwned' }).count(), path).toBe(0)
+    expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned), path).toBeUndefined()
+    await page.getByText('Toggle s').click()
+    await page.waitForSelector('[data-testid="disc-s"][data-state="open"]')
+    expect(await page.locator('[data-testid="disc-s"] script').count(), path).toBe(0)
+    expect(errors, path).toEqual([])
+    await page.close()
+  }
 }, 60_000)

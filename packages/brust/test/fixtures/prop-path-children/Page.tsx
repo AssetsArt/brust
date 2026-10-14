@@ -2,11 +2,11 @@ import Frame from './Frame'
 import { Body, Disclosure, Trigger } from './ui'
 
 // A route component: its props are request data (the loader). Strings fill the holes; the object `hostile` is never walked.
-export default function Page({ title, hostile }: { title: string; hostile: string }) {
+export default function Page({ title, hostile, who, count }: { title: string; hostile: string; who?: { name: string }; count?: number }) {
   return (
     <main>
       <h1>prop-path children</h1>
-      <Frame label="one" note={title} shown>
+      <Frame label="one" note={title} shown who={who} count={count}>
         <b data-testid="inner-one">inner one</b>
       </Frame>
       <Frame label="two" note={hostile} />

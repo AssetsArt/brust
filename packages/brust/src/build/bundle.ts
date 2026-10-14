@@ -432,9 +432,10 @@ export const reviveSource = (reg: string): string =>
   // The tree is compiler output, but props travel in page markup: read it as untrusted. A tag must be a plain element
   // name, a component must be in this island's registry (own keys only), and the raw-HTML prop is never revived.
   // `hv` holds the island's hole values (F148a, R34.116): the props the compiler declared (`$p<N>` primitives, `$c<N>`
-  // trees). A value node reads one and renders it only when it is a string or a finite number (an attribute: also a boolean);
+  // trees). A value node reads one and renders it only when it is a string or a finite number (an attribute: also a boolean; text: also an array of them);
   // anything else renders nothing, and is never walked, so request data can fill a leaf but never shape the tree.
-  `const __prim = (hv: any, k: any, bool: boolean): any => { if (hv == null || typeof k !== 'string' || !/^[$]p[0-9]+$/.test(k) || !__own.call(hv, k)) return undefined; const x = hv[k]; return typeof x === 'string' || (typeof x === 'number' && Number.isFinite(x)) || (bool && typeof x === 'boolean') ? x : undefined }\n` +
+  `const __hole = (hv: any, k: any): any => hv == null || typeof k !== 'string' || !/^[$]p[0-9]+$/.test(k) || !__own.call(hv, k) ? undefined : hv[k]\n` +
+  `const __prim = (hv: any, k: any, bool: boolean): any => { const x = __hole(hv, k); return typeof x === 'string' || (typeof x === 'number' && Number.isFinite(x)) || (bool && typeof x === 'boolean') ? x : undefined }\n` +
   `const __props = (p: any, hv: any): any => { const o: any = {}; if (p && typeof p === 'object') for (const k of Object.keys(p)) if (k !== '__proto__' && k !== 'dangerouslySetInnerHTML' && k !== 'children' && k !== 'ref' && k !== 'key') { const v = p[k]; if (v !== null && typeof v === 'object' && v.$brust === 'v') { const x = __prim(hv, v.k, true); if (x !== undefined) o[k] = x } else o[k] = v } return o }\n` +
   // `x` (on a component node) and `$x` (on the island's props) are the compiler's list of props that hold an element
   // tree. Only those names are revived, and only when the prop is an own key of the copy; data is never revived.
@@ -442,8 +443,12 @@ export const reviveSource = (reg: string): string =>
   `const __kids = (c: any, hv: any): any[] => Array.isArray(c) ? c.map((k: any) => __rv(k, hv)) : []\n` +
   `const __rv = (n: any, hv: any): any => {\n` +
   `  if (n === null || typeof n !== 'object') return n\n` +
-  `  if (n.$brust === 'v') { const x = __prim(hv, n.k, false); return x === undefined ? null : x }\n` +
-  `  if (n.$brust === 'if') return createElement(Fragment, null, ...__kids(__prim(hv, n.k, true) ? n.c : n.e, hv))\n` +
+  // A text leaf is a string or a finite number; an array of them (React renders each) keeps those items. Anything else
+  // renders nothing and is never walked.
+  `  if (n.$brust === 'v') { const x = __hole(hv, n.k); if (Array.isArray(x)) return createElement(Fragment, null, ...x.filter((e: any) => typeof e === 'string' || (typeof e === 'number' && Number.isFinite(e)))); const p = __prim(hv, n.k, false); return p === undefined ? null : p }\n` +
+  // A condition is the truthiness of the declared own hole, as in React, without reading into the value. `a` is the
+  // `cond && <X/>` form: React renders a falsy number there (0) as text.
+  `  if (n.$brust === 'if') { const x = __hole(hv, n.k); return createElement(Fragment, null, ...(!x && n.a === true && typeof x === 'number' ? [x] : __kids(x ? n.c : n.e, hv))) }\n` +
   // The caller's tree: compile-time, bound by the wrapper's call site. It holds no hole of its own, so it is revived
   // with none (a tree that named one would render nothing, and cannot recurse).
   `  if (n.$brust === 'slot') return typeof n.k === 'string' && /^[$]c[0-9]+$/.test(n.k) && hv != null && __own.call(hv, n.k) ? __rv(hv[n.k], null) : null\n` +

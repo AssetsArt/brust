@@ -164,7 +164,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | toggle | measured | static | 2 | 3 (2) | 87 | 2 | external-component, island-prop, spread-props | built |
 | toggle-group | measured | static | 1 | 5 (4) | 93 | 1 | external-component, hook-unsupported, island-children, island-prop, member-tag, spread-props | built |
-| tooltip | measured | static | 1 | 12 (10) | 105 | 1 | external-component, island-children, island-prop, spread-props | built |
+| tooltip | measured | static | 1 | 12 (10) | 106 | 1 | external-component, island-children, island-prop, spread-props | built |
 
 ## App components that block
 

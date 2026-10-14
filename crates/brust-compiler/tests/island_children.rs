@@ -199,6 +199,8 @@ fn props_read_by_the_children_are_holes_of_the_island() {
     assert_eq!(items[1]["k"], "$p2");
     assert_eq!(items[1]["c"][0]["t"], "u");
     assert_eq!(items[1]["e"], serde_json::json!([]));
+    // `cond && <X/>`: React renders a falsy number as text there, so the node says which form it is.
+    assert_eq!(items[1]["a"], true);
     // The same prop read twice is one hole.
     assert_eq!(
         items[2]["p"]["disabled"],
@@ -280,6 +282,18 @@ fn holes_that_are_not_primitives_or_trees_the_compiler_wrote_fall_back() {
     falls_back("nonpath.tsx", "island-prop", "expression over props");
     // `__ch` is the compiler's own prop.
     falls_back("wrapreserved.tsx", "island-prop", "reserved");
+    // R34.121: a spread into a wrapper whose island renders `{children}` could carry a `__ch` from request data
+    // into a tree the revive walks. Refused by name, with children or without.
+    falls_back(
+        "wrapspread.tsx",
+        "spread-props",
+        "comes from the call site only",
+    );
+    falls_back(
+        "wrapspreadkids.tsx",
+        "spread-props",
+        "comes from the call site only",
+    );
 }
 
 #[test]
@@ -348,4 +362,16 @@ fn a_wrapper_that_is_also_a_route_file_never_takes_a_tree_for_children() {
     let d = rule(frame, "island-children").expect("a route file takes no tree");
     assert!(d.message.contains("request data"), "{}", d.message);
     assert!(is_react(frame), "{:?}", frame.tier);
+}
+
+#[test]
+fn the_ternary_form_of_a_condition_has_no_and_flag() {
+    let (root, _) = page("condtern.tsx");
+    let tree = ssr_job(&root)
+        .literals
+        .get("children")
+        .expect("tree")
+        .clone();
+    assert_eq!(tree["$brust"], "if", "{tree}");
+    assert!(tree.get("a").is_none(), "{tree}");
 }
