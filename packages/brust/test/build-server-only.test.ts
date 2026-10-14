@@ -3,7 +3,7 @@
 // an empty module so a legitimate loader-only use builds and runs.
 import { afterAll, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { runBuild } from '../src/build'
 
 const SECRET = 'sk_live_LEAKED_TOKEN_123'
@@ -118,7 +118,10 @@ test('T6: a static page whose server-side job reads the module builds and ships 
     'routes.tsx': ROUTES,
   })
   await build(dir)
-  expect(leaked(join(dir, 'dist', 'client').replace(/dist\/client$/, '')).filter((f) => f.includes('/client/'))).toEqual([])
+  // Non-vacuous: the scan finds the secret where it belongs (the server-side jobs bundle), and nowhere in the browser files.
+  const hits = leaked(dir)
+  expect(hits.some((f) => f.endsWith(`${sep}jobs.js`))).toBe(true)
+  expect(hits.filter((f) => f.includes(`${sep}client${sep}`))).toEqual([])
 })
 
 const FIX = join(import.meta.dir, 'fixtures')
@@ -138,6 +141,20 @@ test('T5: the Cloudflare target refuses the island import, and a loader-only use
   const r2 = brustCf(ok, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', join(ok, 'dist')])
   expect(r2.err).not.toContain('cannot be imported from a Client Component')
   expect(r2.code).toBe(0)
-  // The Worker is server code: it may carry the value, the browser assets may not.
-  expect(leaked(join(ok, 'dist', 'cf', 'assets').replace(/\/cf\/assets$/, '')).filter((f) => f.includes('/assets/'))).toEqual([])
+  // Non-vacuous: the Worker (server code) carries the value, the browser assets do not.
+  const hits = leaked(ok)
+  expect(hits.some((f) => f.includes(`${sep}cf${sep}worker${sep}`))).toBe(true)
+  expect(hits.filter((f) => f.includes(`${sep}assets${sep}`))).toEqual([])
 }, 120000)
+
+test('N1: a relative path or an alias that resolves into node_modules/server-only is the marker too', async () => {
+  const dir = app('n1', {
+    'lib/secret.ts': `import '../node_modules/server-only/index.js'\nexport const SECRET = '${SECRET}'\nexport function label() { return 'v' + SECRET.length }\n`,
+    'Tip.tsx': TIP,
+    'Page.tsx': PAGE,
+    'routes.tsx': ROUTES,
+  }, 'empty')
+  const e = await refusal(dir)
+  expect(e?.message).toContain('lib/secret.ts imports ../node_modules/server-only/index.js')
+  expect(leaked(dir)).toEqual([])
+})

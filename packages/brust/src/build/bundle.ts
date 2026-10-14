@@ -152,6 +152,10 @@ function isServerOnly(spec: string, importer: string, ctx: BrowserCtx): boolean 
     return false // unresolvable: Bun reports it
   }
   if (/\.server\.[^/]*$/.test(basename(file))) return true
+  // Any other name (an alias, a relative path) that resolves INTO the `server-only` package is the marker too.
+  try {
+    if (/[\\/]node_modules[\\/]server-only[\\/]/.test(realpathSync(file))) return true
+  } catch {}
   try {
     if (ctx.serverFiles?.includes(realpathSync(file))) return true
   } catch {}
