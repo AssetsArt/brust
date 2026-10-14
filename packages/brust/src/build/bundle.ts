@@ -383,7 +383,29 @@ export function nestedOf(compiled: Map<string, Compiled>, id: string, routeRoots
       }
     }
   }
+  // F148a (R34.121): a wrapper whose island renders `{children}` (a `$c` hole) is handed a tree by each call site; the
+  // components those trees name are revived by the island inside the wrapper, so its chunk and job import them.
+  for (const w of compiled.values()) {
+    if (!(w.ir.children ?? []).some((r) => r.id === id && (r.holes ?? []).some((h) => h.startsWith('$c')))) continue
+    for (const c of compiled.values()) {
+      for (const ref of c.ir.children ?? []) {
+        if (ref.id === w.id && ref.nested) {
+          out ??= new Set()
+          for (const n of ref.nested) out.add(n)
+        }
+      }
+    }
+  }
   return out && [...out].sort()
+}
+
+/** F148a (R34.120): the island props the compiler wrote for the values its children read from props (`$p<N>`: a
+ * primitive, `$c<N>`: a tree a wrapper's call site bound), at any call site of the island `id`. The only `$` keys,
+ * besides `$x`, its revive accepts. */
+export function holesOf(compiled: Map<string, Compiled>, id: string): string[] {
+  const out = new Set<string>()
+  for (const c of compiled.values()) for (const ref of c.ir.children ?? []) if (ref.id === id) for (const k of ref.holes ?? []) out.add(k)
+  return [...out].sort()
 }
 
 /** F158 (R34.71): the element-prop names (`$x`) the compiler wrote at any call site of the island `id`: the only names
@@ -409,25 +431,43 @@ export const reviveSource = (reg: string): string =>
   `const __own = Object.prototype.hasOwnProperty\n` +
   // The tree is compiler output, but props travel in page markup: read it as untrusted. A tag must be a plain element
   // name, a component must be in this island's registry (own keys only), and the raw-HTML prop is never revived.
-  `const __props = (p: any): any => { const o: any = {}; if (p && typeof p === 'object') for (const k of Object.keys(p)) if (k !== '__proto__' && k !== 'dangerouslySetInnerHTML' && k !== 'children' && k !== 'ref' && k !== 'key') o[k] = p[k]; return o }\n` +
+  // `hv` holds the island's hole values (F148a, R34.116): the props the compiler declared (`$p<N>` primitives, `$c<N>`
+  // trees). A value node reads one and renders it only when it is a string or a finite number (an attribute: also a boolean; text: also an array of them);
+  // anything else renders nothing, and is never walked, so request data can fill a leaf but never shape the tree.
+  `const __hole = (hv: any, k: any): any => hv == null || typeof k !== 'string' || !/^[$]p[0-9]+$/.test(k) || !__own.call(hv, k) ? undefined : hv[k]\n` +
+  `const __prim = (hv: any, k: any, bool: boolean): any => { const x = __hole(hv, k); return typeof x === 'string' || (typeof x === 'number' && Number.isFinite(x)) || (bool && typeof x === 'boolean') ? x : undefined }\n` +
+  `const __props = (p: any, hv: any): any => { const o: any = {}; if (p && typeof p === 'object') for (const k of Object.keys(p)) if (k !== '__proto__' && k !== 'dangerouslySetInnerHTML' && k !== 'children' && k !== 'ref' && k !== 'key') { const v = p[k]; if (v !== null && typeof v === 'object' && v.$brust === 'v') { const x = __prim(hv, v.k, true); if (x !== undefined) o[k] = x } else o[k] = v } return o }\n` +
   // `x` (on a component node) and `$x` (on the island's props) are the compiler's list of props that hold an element
   // tree. Only those names are revived, and only when the prop is an own key of the copy; data is never revived.
-  `const __xs = (o: any, x: any): any => { if (Array.isArray(x)) for (const k of x) if (typeof k === 'string' && k.charAt(0) !== '$' && __own.call(o, k)) o[k] = __rv(o[k]); return o }\n` +
-  `const __rv = (n: any): any => {\n` +
+  `const __xs = (o: any, x: any, hv: any): any => { if (Array.isArray(x)) for (const k of x) if (typeof k === 'string' && k.charAt(0) !== '$' && __own.call(o, k)) o[k] = __rv(o[k], hv); return o }\n` +
+  `const __kids = (c: any, hv: any): any[] => Array.isArray(c) ? c.map((k: any) => __rv(k, hv)) : []\n` +
+  `const __rv = (n: any, hv: any): any => {\n` +
   `  if (n === null || typeof n !== 'object') return n\n` +
-  `  const kids = Array.isArray(n.c) ? n.c.map(__rv) : []\n` +
+  // A text leaf is a string or a finite number; an array of them (React renders each) keeps those items. Anything else
+  // renders nothing and is never walked.
+  `  if (n.$brust === 'v') { const x = __hole(hv, n.k); if (Array.isArray(x)) return createElement(Fragment, null, ...x.filter((e: any) => typeof e === 'string' || (typeof e === 'number' && Number.isFinite(e)))); const p = __prim(hv, n.k, false); return p === undefined ? null : p }\n` +
+  // A condition is the truthiness of the declared own hole, as in React, without reading into the value. `a` is the
+  // `cond && <X/>` form: React renders a falsy number there (0) as text.
+  `  if (n.$brust === 'if') { const x = __hole(hv, n.k); return createElement(Fragment, null, ...(!x && n.a === true && typeof x === 'number' ? [x] : __kids(x ? n.c : n.e, hv))) }\n` +
+  // The caller's tree: compile-time, bound by the wrapper's call site. It holds no hole of its own, so it is revived
+  // with none (a tree that named one would render nothing, and cannot recurse).
+  `  if (n.$brust === 'slot') return typeof n.k === 'string' && /^[$]c[0-9]+$/.test(n.k) && hv != null && __own.call(hv, n.k) ? __rv(hv[n.k], null) : null\n` +
+  `  const kids = __kids(n.c, hv)\n` +
   `  if (n.$brust === 'fr') return createElement(Fragment, null, ...kids)\n` +
-  `  if (n.$brust === 'el') { if (typeof n.t !== 'string' || !/^[a-zA-Z][a-zA-Z0-9-]*$/.test(n.t)) throw new Error('brust: island children hold an invalid element name'); return createElement(n.t, __props(n.p), ...kids) }\n` +
-  `  if (n.$brust === 'cmp') { if (typeof n.id !== 'string' || !__own.call(__reg, n.id)) throw new Error('brust: island children name the component ' + String(n.id) + ', which this island does not import'); return createElement(__reg[n.id], __xs(__props(n.p), n.x), ...kids) }\n` +
+  `  if (n.$brust === 'el') { if (typeof n.t !== 'string' || !/^[a-zA-Z][a-zA-Z0-9-]*$/.test(n.t)) throw new Error('brust: island children hold an invalid element name'); return createElement(n.t, __props(n.p, hv), ...kids) }\n` +
+  `  if (n.$brust === 'cmp') { if (typeof n.id !== 'string' || !__own.call(__reg, n.id)) throw new Error('brust: island children name the component ' + String(n.id) + ', which this island does not import'); return createElement(__reg[n.id], __xs(__props(n.p, hv), n.x, hv), ...kids) }\n` +
   `  throw new Error('brust: island children hold an unknown node')\n` +
   `}\n` +
   // `X` is the host's compiler-declared element-prop names (R34.71): a `$x` from the props can only select among them.
-  // A `$`-key other than `$x` is never the compiler's (R34.72): it throws instead of rendering (a 500, not a revive).
-  `const __mk = (C: any, props: any, X: string[] = []) => {\n` +
-  `  for (const k of Object.keys(props)) if (k.charAt(0) === '$' && k !== '$x') throw new Error('brust: island props hold the reserved key ' + k)\n` +
+  // `H` is its declared hole names (R34.120). A `$`-key that is neither `$x` nor in `H` is never the compiler's (R34.72):
+  // it throws instead of rendering (a 500, not a revive). Hole props are the revive's, not the component's.
+  `const __mk = (C: any, props: any, X: string[] = [], H: string[] = []) => {\n` +
+  `  for (const k of Object.keys(props)) if (k.charAt(0) === '$' && k !== '$x' && !H.includes(k)) throw new Error('brust: island props hold the reserved key ' + k)\n` +
   `  const { children, $x, ...rest } = props\n` +
-  `  __xs(rest, Array.isArray($x) ? $x.filter((k: any) => X.includes(k)) : undefined)\n` +
-  `  return createElement(C, rest, ...(children === undefined ? [] : Array.isArray(children) ? children : [children]).map(__rv))\n` +
+  `  const hv: any = Object.create(null)\n` +
+  `  for (const k of H) if (__own.call(rest, k)) { hv[k] = rest[k]; delete rest[k] }\n` +
+  `  __xs(rest, Array.isArray($x) ? $x.filter((k: any) => X.includes(k)) : undefined, hv)\n` +
+  `  return createElement(C, rest, ...(children === undefined ? [] : Array.isArray(children) ? children : [children]).map((k: any) => __rv(k, hv)))\n` +
   `}\n`
 
 /** A helper component its module does not export (`ir.unexported`: `function SheetOverlay() {…}` rendered by an exported
@@ -459,7 +499,7 @@ export function exposePlugin(compiled: Map<string, Compiled>): BunPlugin {
 export function islandShim(c: Compiled, compiled?: Map<string, Compiled>, routeRoots?: ReadonlySet<string>): string {
   const clientOnly = c.ir.tier?.React?.client_only === true
   const nested = compiled && nestedOf(compiled, c.id, routeRoots)
-  const element = nested ? `__mk(Comp, props, ${JSON.stringify(xOf(compiled!, c.id))})` : 'createElement(Comp, props)'
+  const element = nested ? `__mk(Comp, props, ${JSON.stringify(xOf(compiled!, c.id))}, ${JSON.stringify(holesOf(compiled!, c.id))})` : 'createElement(Comp, props)'
   const [api, mount] = clientOnly
     ? ['createRoot', `createRoot(host, { identifierPrefix: ${JSON.stringify(c.id)} }).render(${element})`]
     : ['hydrateRoot', `hydrateRoot(host, ${element}, { identifierPrefix: ${JSON.stringify(c.id)} })`]
@@ -618,7 +658,7 @@ export async function buildJobs(
       imports.push(componentImport(c, `C${n}`))
       // Ruling 2bf3775a (R1): the island's component id prefixes React's useId on BOTH sides
       // (the shim's hydrateRoot passes the same prefix), so ids differ across islands.
-      fns.push(`ssr: (props: any) => renderToString(${hosts.has(c.id) ? `__mk(C${n}, props, ${JSON.stringify(xOf(compiled, c.id))})` : `createElement(C${n}, props)`}, { identifierPrefix: ${JSON.stringify(c.id)} })`)
+      fns.push(`ssr: (props: any) => renderToString(${hosts.has(c.id) ? `__mk(C${n}, props, ${JSON.stringify(xOf(compiled, c.id))}, ${JSON.stringify(holesOf(compiled, c.id))})` : `createElement(C${n}, props)`}, { identifierPrefix: ${JSON.stringify(c.id)} })`)
     }
     if (fns.length > 0) entries.push(`  ${JSON.stringify(c.id)}: { ${fns.join(', ')} },`)
     n++

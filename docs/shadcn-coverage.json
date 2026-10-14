@@ -28,9 +28,9 @@
       "packages": 76,
       "components": 561,
       "exported": 334,
-      "static": 1,
+      "static": 0,
       "native": 0,
-      "react": 283,
+      "react": 284,
       "unresolved": 0,
       "error": 50
     }
@@ -55,13 +55,22 @@
       "libraryComponents": 180
     },
     {
+      "blocker": "fallback:island-prop",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 32,
+      "analysisOnlyRows": 0,
+      "appComponents": 90,
+      "libraryComponents": 188
+    },
+    {
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 25,
+      "measuredRows": 20,
       "analysisOnlyRows": 0,
-      "appComponents": 33,
-      "libraryComponents": 73
+      "appComponents": 22,
+      "libraryComponents": 69
     },
     {
       "blocker": "fallback:hook-unsupported",
@@ -89,15 +98,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 8,
       "libraryComponents": 36
-    },
-    {
-      "blocker": "fallback:island-prop",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 2,
-      "analysisOnlyRows": 0,
-      "appComponents": 2,
-      "libraryComponents": 35
     },
     {
       "blocker": "fallback:child-component",
@@ -455,6 +455,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -481,6 +482,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "slot-child-component",
         "spread-props"
       ]
@@ -518,6 +520,7 @@
       "workerCalls": 2,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -645,7 +648,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 5,
-      "jsGzipKb": 96,
+      "jsGzipKb": 97,
       "workerCalls": 1,
       "codes": [
         "control-flow",
@@ -671,7 +674,7 @@
         "external-component",
         "hook-shape",
         "hook-unsupported",
-        "island-children",
+        "island-prop",
         "local-component",
         "member-tag",
         "use-id-in-render"
@@ -688,6 +691,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -698,7 +702,7 @@
       "islands": 1,
       "components": 8,
       "reactComponents": 6,
-      "jsGzipKb": 89,
+      "jsGzipKb": 90,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -710,13 +714,14 @@
       "basis": "measured",
       "tier": "react",
       "islands": 1,
-      "components": 20,
+      "components": 22,
       "reactComponents": 16,
       "jsGzipKb": 157,
       "workerCalls": 1,
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "jsx-expression",
         "nested-instance",
         "slot-dynamic",
@@ -734,6 +739,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -749,6 +755,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -764,6 +771,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -778,7 +786,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "island-children"
+        "island-prop"
       ]
     },
     {
@@ -793,6 +801,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -803,11 +812,12 @@
       "islands": 1,
       "components": 18,
       "reactComponents": 15,
-      "jsGzipKb": 117,
+      "jsGzipKb": 118,
       "workerCalls": 1,
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -862,6 +872,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -900,6 +911,7 @@
         "body-shape",
         "external-component",
         "hook-unsupported",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -954,11 +966,12 @@
       "islands": 1,
       "components": 16,
       "reactComponents": 14,
-      "jsGzipKb": 116,
+      "jsGzipKb": 117,
       "workerCalls": 1,
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -985,6 +998,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "jsx-expression",
         "spread-props"
       ]
@@ -1013,7 +1027,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1042,6 +1056,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1057,6 +1072,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1071,6 +1087,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1081,11 +1098,11 @@
       "islands": 1,
       "components": 7,
       "reactComponents": 6,
-      "jsGzipKb": 103,
+      "jsGzipKb": 104,
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1100,7 +1117,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
-        "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1116,6 +1133,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1142,6 +1160,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1152,7 +1171,7 @@
       "islands": 1,
       "components": 14,
       "reactComponents": 6,
-      "jsGzipKb": 116,
+      "jsGzipKb": 117,
       "workerCalls": 0,
       "codes": [
         "browser-global",
@@ -1190,6 +1209,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "nested-instance",
         "spread-props"
       ]
@@ -1233,6 +1253,7 @@
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1258,6 +1279,7 @@
       "workerCalls": 1,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1283,6 +1305,7 @@
       "workerCalls": 2,
       "codes": [
         "external-component",
+        "island-prop",
         "spread-props"
       ]
     },
@@ -1299,6 +1322,7 @@
         "external-component",
         "hook-unsupported",
         "island-children",
+        "island-prop",
         "member-tag",
         "spread-props"
       ]
@@ -1310,11 +1334,12 @@
       "islands": 1,
       "components": 12,
       "reactComponents": 10,
-      "jsGzipKb": 105,
+      "jsGzipKb": 106,
       "workerCalls": 1,
       "codes": [
         "external-component",
         "island-children",
+        "island-prop",
         "spread-props"
       ]
     }

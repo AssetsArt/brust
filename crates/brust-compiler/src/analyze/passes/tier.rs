@@ -157,7 +157,9 @@ fn visit_exprs(n: &Node, f: &mut impl FnMut(&Expr)) {
             children.iter().for_each(|c| visit_exprs(c, f));
         }
         Node::Slot(e) => f(e),
-        Node::If { cond, then, else_ } => {
+        Node::If {
+            cond, then, else_, ..
+        } => {
             f(cond);
             then.iter().chain(else_).for_each(|c| visit_exprs(c, f));
         }

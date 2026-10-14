@@ -1282,11 +1282,14 @@ impl<'a, 'c> Printer<'a, 'c> {
 
     fn if_node(&mut self, n: &Node, s: &Node) {
         let (
-            Node::If { cond, then, else_ },
+            Node::If {
+                cond, then, else_, ..
+            },
             Node::If {
                 cond: sc,
                 then: st,
                 else_: se,
+                ..
             },
         ) = (n, s)
         else {

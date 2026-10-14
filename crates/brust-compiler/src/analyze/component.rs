@@ -758,6 +758,7 @@ fn arm(raw: RawExpr) -> Vec<Node> {
                 cond: Expr::Raw(*test),
                 then: arm(*yes),
                 else_: arm(*no),
+                and: false,
             }]
         }
         RawKind::Binary {
@@ -768,6 +769,7 @@ fn arm(raw: RawExpr) -> Vec<Node> {
             cond: Expr::Raw(*left),
             then: arm(*right),
             else_: vec![],
+            and: true,
         }],
         kind => vec![Node::Slot(Expr::Raw(RawExpr { loc: raw.loc, kind }))],
     }

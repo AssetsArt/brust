@@ -67,6 +67,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         handlers: Vec::new(),
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
         absent: BTreeSet::new(),
+        holes: None,
         unwritten: BTreeSet::new(),
         passes_to_repeater: false,
         own_fed: crate::ir::is_fed(ir),
@@ -181,6 +182,9 @@ struct Walker<'s, 'c> {
     own_named: BTreeSet<String>,
     /// Keys this component's own call sites must not pass (`ComponentIR::absent_props`, F153c).
     absent: BTreeSet<String>,
+    /// F148a: while the children or element props of a React island lower, the props the tree reads from this
+    /// component's own props (R34.116): the hole's island prop name (`$p<N>`, `$c<N>`) and the expression it takes.
+    holes: Option<Vec<(String, Expr)>>,
     /// Keys this component's own call sites must not write (`ComponentIR::unwritten_props`, F164).
     unwritten: BTreeSet<String>,
     /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
@@ -572,6 +576,32 @@ const ICON_OWN_PROPS: &[&str] = &[
     "key",
     "style",
 ];
+
+/// F148a (R34.120): at most this many values a lowered tree reads from props, per island.
+const MAX_HOLES: usize = 64;
+
+/// F148a (R34.121): the prop a wrapper's call site binds to the constant tree of its children, for the island
+/// inside the wrapper that renders `{children}`. Reserved: no call site may pass it.
+const CH_PROP: &str = "__ch";
+
+/// F148a (R34.118): a name a prop-path value may not take on an element or a component: an object, a handler, or
+/// a prop the revive reads itself.
+fn hole_name_ok(k: &str) -> bool {
+    !matches!(
+        k,
+        "children" | "ref" | "key" | "dangerouslySetInnerHTML" | "style" | "__proto__"
+    ) && !k.starts_with('$')
+        && crate::analyze::jsx::event_name(k).is_none()
+}
+
+/// A folded constant carries no marker key: it would read back as one of the compiler's nodes (R34.26 (d)).
+fn marker_free(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Object(o) => !o.contains_key(MARK) && o.values().all(marker_free),
+        serde_json::Value::Array(a) => a.iter().all(marker_free),
+        _ => true,
+    }
+}
 
 /// A prop name an element may travel under (R34.52): never one the revive strips or reads itself.
 fn slot_prop_ok(k: &str) -> bool {
@@ -1657,9 +1687,9 @@ impl Walker<'_, '_> {
                 }) || children.iter().any(|c| self.body_directive(c))
             }
             Node::Slot(e) => self.reads_state(e),
-            Node::If { cond, then, else_ } => {
-                self.reads_state(cond) || then.iter().chain(else_).any(|c| self.body_directive(c))
-            }
+            Node::If {
+                cond, then, else_, ..
+            } => self.reads_state(cond) || then.iter().chain(else_).any(|c| self.body_directive(c)),
             Node::For { source, body, .. } => {
                 self.source_reactive(source) || body.iter().any(|c| self.body_directive(c))
             }
@@ -1777,6 +1807,48 @@ impl Walker<'_, '_> {
         }
         let (hoisted, unbound) = self.forward_handlers(name, *loc, props, &child);
         self.check_children_read(name, children, &child, *loc);
+        // F148a (R34.121): the island inside this wrapper renders its `{children}`: the call site hands the
+        // wrapper the constant tree of them as the reserved prop `__ch`, which only a compiler-written call
+        // can set. Children that are not a constant tree are the same fallback a React wrapper gave.
+        let mut ch_nested: Option<Vec<String>> = None;
+        if !matches!(child.tier, Tier::React { .. }) && child.job_roots.contains(CH_PROP) {
+            if props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY) {
+                // R34.121: `__ch` is the call site's alone. A spread could carry one from request data into a
+                // tree the revive walks, so a wrapper whose island renders `{children}` takes no spread, by this
+                // rule and not only by the per-instance rule of `check_spread`.
+                self.diagnostics.push(Diagnostic::fallback(
+                    "spread-props",
+                    format!("props are spread into <{name}>, whose island renders `{{children}}`: the tree for it comes from the call site only"),
+                    *loc,
+                    "pass these props explicitly",
+                ));
+            } else if props.iter().any(|(k, _)| k == CH_PROP) {
+                self.diagnostics.push(Diagnostic::fallback(
+                    "island-prop",
+                    format!("the prop `{CH_PROP}` of <{name}> is reserved by brust"),
+                    *loc,
+                    "rename the prop",
+                ));
+            } else if !children.is_empty() {
+                self.holes = None;
+                match self.lower_children(children) {
+                    Ok((tree, nested)) => {
+                        let raw = RawExpr {
+                            loc: *loc,
+                            kind: raw_json(&tree, *loc),
+                        };
+                        props.push((CH_PROP.into(), Expr::Server(ServerExpr(raw))));
+                        ch_nested = Some(nested);
+                    }
+                    Err(why) => self.diagnostics.push(Diagnostic::fallback(
+                        "island-children",
+                        format!("the children of <{name}> reach a React island inside it and cannot be lowered: {why}"),
+                        *loc,
+                        "render the children inside the island component, or pass constant markup",
+                    )),
+                }
+            }
+        }
         self.check_spread(name, props, &child, *loc, &hoisted, &unbound);
         // A hoisted handler is the parent's own member: not a prop of the instance.
         let kept: Vec<(String, Expr)> = props
@@ -1805,7 +1877,11 @@ impl Walker<'_, '_> {
                 tier: child.tier.clone(),
                 nested: None,
                 x: Vec::new(),
+                holes: Vec::new(),
             });
+        }
+        if let Some(nested) = ch_nested {
+            self.note_nested(name, nested);
         }
         let child_id = child.id.clone().unwrap_or_else(|| name.clone());
         match &child.tier {
@@ -1815,6 +1891,8 @@ impl Walker<'_, '_> {
                 let mut literals = std::collections::BTreeMap::new();
                 let mut ok = true;
                 let mut element_props: Vec<(String, serde_json::Value)> = Vec::new();
+                // F148a: the values the lowered children and element props read from this component's props.
+                self.holes = Some(Vec::new());
                 // R34.69: a route component's props are request data; the revive never runs for it, so the
                 // caller may not hand it lowered JSX (children or an element prop).
                 // A route component is the default export of its file, so a named or same-file component of a
@@ -1849,11 +1927,17 @@ impl Walker<'_, '_> {
                             root_host_diag(&mut self.diagnostics, name, *loc);
                             continue;
                         }
+                        let mark = self.holes.as_ref().map_or(0, Vec::len);
                         let lowered = if slot_prop_ok(k) {
                             self.lower_children(std::slice::from_ref(&**el))
                         } else {
                             Err("a prop name the revive reserves".to_string())
                         };
+                        if lowered.is_err()
+                            && let Some(h) = self.holes.as_mut()
+                        {
+                            h.truncate(mark);
+                        }
                         match lowered {
                             Ok((tree, nested)) => {
                                 literals.insert(k.clone(), tree.clone());
@@ -1904,9 +1988,22 @@ impl Walker<'_, '_> {
                         Some(j) => {
                             literals.insert(k.clone(), j);
                         }
-                        None => {
-                            prop_map.insert(k.clone(), self.prop_path(v));
-                        }
+                        None => match self.prop_path(v) {
+                            Some(path) => {
+                                prop_map.insert(k.clone(), Some(path));
+                            }
+                            None => {
+                                // The server hands an island a props path or a JSON value (the manifest refuses
+                                // anything else with `ssr-prop-not-a-path`); valid React is never a build error.
+                                ok = false;
+                                self.diagnostics.push(island_err(
+                                    "island-prop",
+                                    format!("prop `{k}` of the React island <{name}> is an expression over props, which the server cannot hand to the island"),
+                                    *loc,
+                                    "pass a prop as it is, or a JSON value; the component renders with React meanwhile",
+                                ));
+                            }
+                        },
                     }
                 }
                 if !element_props.is_empty() {
@@ -1943,7 +2040,14 @@ impl Walker<'_, '_> {
                 if !children.is_empty() && root_host {
                     root_host_diag(&mut self.diagnostics, name, *loc);
                 } else if !children.is_empty() {
-                    match self.lower_children(children) {
+                    let mark = self.holes.as_ref().map_or(0, Vec::len);
+                    let lowered = self.lower_children(children);
+                    if lowered.is_err()
+                        && let Some(h) = self.holes.as_mut()
+                    {
+                        h.truncate(mark);
+                    }
+                    match lowered {
                         Ok((tree, nested)) => {
                             let raw = RawExpr {
                                 loc: *loc,
@@ -1967,6 +2071,24 @@ impl Walker<'_, '_> {
                             *loc,
                             "render the children inside the island component, or pass constant markup",
                         )),
+                    }
+                }
+                // F148a (R34.120): each value the trees read from props is one more island prop, filled by the
+                // same path as a scalar prop-path prop; the revive reads only the names listed on the ref.
+                for (key, expr) in self.holes.take().unwrap_or_default() {
+                    inputs.extend(self.paths_of(&expr));
+                    let path = if key.starts_with("$c") {
+                        Some(CH_PROP.to_string())
+                    } else {
+                        self.prop_path(&expr)
+                    };
+                    prop_map.insert(key.clone(), path);
+                    props.push((key.clone(), expr));
+                    if let Some(r) = self.refs.iter_mut().find(|r| r.name == *name)
+                        && !r.holes.contains(&key)
+                    {
+                        r.holes.push(key);
+                        r.holes.sort();
                     }
                 }
                 if ok && self.lists.iter().any(|(_, stateful)| *stateful) {
@@ -2567,6 +2689,88 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// F148a (R34.116-R34.120): the island prop that carries a value the lowered tree reads from this
+    /// component's own props, and the marker node name for it. `element` is `{children}`: the caller's
+    /// constant tree (`$c<N>`, bound by the call site as the prop `__ch`); otherwise a plain props path of
+    /// a named prop (`$p<N>`), which the revive renders only when it is a primitive. `Err` is the reason
+    /// the value cannot be a hole.
+    fn add_hole(&mut self, e: &Expr, element: bool) -> Result<String, String> {
+        let Some(n) = self.holes.as_ref().map(Vec::len) else {
+            return Err("props are not available here".into());
+        };
+        let loc = self.raw_of(e).map(|r| r.loc).unwrap_or(0);
+        // The same value read twice is one hole.
+        if let Some(prefix) = self
+            .holes
+            .as_ref()
+            .map(|_| if element { "$c" } else { "$p" })
+        {
+            let want = if element {
+                Some(CH_PROP.to_string())
+            } else {
+                self.prop_path(e)
+            };
+            if want.is_some() {
+                let same = self.holes.as_ref().into_iter().flatten().find(|(k, x)| {
+                    k.starts_with(prefix)
+                        && match x {
+                            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => match &r.kind {
+                                RawKind::Ident { name, .. } if element => name == CH_PROP,
+                                _ => !element && self.prop_path(x) == want,
+                            },
+                            _ => false,
+                        }
+                });
+                if let Some((k, _)) = same {
+                    return Ok(k.clone());
+                }
+            }
+        }
+        if n >= MAX_HOLES {
+            return Err(format!("more than {MAX_HOLES} values read from props"));
+        }
+        let (key, expr) = if element {
+            // The caller's tree is a compile-time constant bound by the wrapper's call site. A route
+            // component has no call site: its props are request data (R34.69), so it never has one.
+            let route_file = self.ctx.opts.route_roots.iter().any(|p| p == self.ctx.path);
+            if self.ctx.is_root || route_file {
+                return Err("`children` of a route component is request data, not a tree".into());
+            }
+            let raw = RawExpr {
+                loc,
+                kind: RawKind::Ident {
+                    name: CH_PROP.into(),
+                    kind: IdentKind::Prop,
+                },
+            };
+            (format!("$c{n}"), Expr::Server(ServerExpr(raw)))
+        } else {
+            if self.deps_of(e).reactive() {
+                return Err("it reads state or a store".into());
+            }
+            let Some(path) = self.prop_path(e) else {
+                return Err("it is not a plain props path".into());
+            };
+            let root = path.split('.').next().unwrap_or("");
+            if path.contains("[idx]") || !self.own_named.contains(root) {
+                return Err("it is not a named prop of this component".into());
+            }
+            (format!("$p{n}"), e.clone())
+        };
+        if let Some(h) = self.holes.as_mut() {
+            h.push((key.clone(), expr));
+        }
+        Ok(key)
+    }
+
+    /// `e` is the bare `{children}` prop of this component.
+    fn is_children_prop(&self, e: &Expr) -> bool {
+        matches!(
+            self.raw_of(e),
+            Some(RawExpr { kind: RawKind::Ident { name, kind: IdentKind::Prop }, .. }) if name == "children"
+        )
+    }
+
     /// The expression as the folder reads it: a slot reads back as the expression it came from.
     fn raw_of(&self, e: &Expr) -> Option<RawExpr> {
         match e {
@@ -2610,6 +2814,23 @@ impl Walker<'_, '_> {
                     Ok(V::Undef | V::Null | V::Bool(_)) => {}
                     Ok(_) => return Err("an array or object rendered as a child".into()),
                     Err(why) => {
+                        // F148a: `{children}` is the caller's constant tree; any other plain props path
+                        // is a value the revive renders as a primitive (R34.116, R34.117).
+                        if self.holes.is_some() {
+                            let element = self.is_children_prop(e);
+                            match self.add_hole(e, element) {
+                                Ok(key) => {
+                                    let kind = if element { "slot" } else { "v" };
+                                    out.push(json!({ MARK: kind, "k": key }));
+                                    continue;
+                                }
+                                Err(r) => {
+                                    return Err(format!(
+                                        "an expression that is not a constant ({why}; not a hole: {r})"
+                                    ));
+                                }
+                            }
+                        }
                         return Err(format!("an expression that is not a constant ({why})"));
                     }
                 },
@@ -2644,8 +2865,13 @@ impl Walker<'_, '_> {
                             Attr::Dynamic { name, value } => match self.fold_expr(value, env) {
                                 Ok(V::Null | V::Undef) => {}
                                 Ok(v) => match v.to_json() {
-                                    Some(j) => {
+                                    Some(j) if marker_free(&j) => {
                                         p.insert(name.clone(), j);
+                                    }
+                                    Some(_) => {
+                                        return Err(format!(
+                                            "attribute `{name}` holds the key `{MARK}`, which brust reserves"
+                                        ));
                                     }
                                     None => {
                                         return Err(format!(
@@ -2654,6 +2880,27 @@ impl Walker<'_, '_> {
                                     }
                                 },
                                 Err(why) => {
+                                    if self.holes.is_some() {
+                                        if !hole_name_ok(name) {
+                                            return Err(format!(
+                                                "attribute `{name}` is not a constant ({why}; not a hole: `{name}` cannot take a value from props)"
+                                            ));
+                                        }
+                                        match self.add_hole(value, false) {
+                                            Ok(key) => {
+                                                p.insert(
+                                                    name.clone(),
+                                                    json!({ MARK: "v", "k": key }),
+                                                );
+                                                continue;
+                                            }
+                                            Err(r) => {
+                                                return Err(format!(
+                                                    "attribute `{name}` is not a constant ({why}; not a hole: {r})"
+                                                ));
+                                            }
+                                        }
+                                    }
                                     return Err(format!(
                                         "attribute `{name}` is not a constant ({why})"
                                     ));
@@ -2728,8 +2975,13 @@ impl Walker<'_, '_> {
                         match self.fold_expr(v, env) {
                             Ok(V::Null | V::Undef) => {}
                             Ok(v) => match v.to_json() {
-                                Some(j) => {
+                                Some(j) if marker_free(&j) => {
                                     p.insert(k.clone(), j);
+                                }
+                                Some(_) => {
+                                    return Err(format!(
+                                        "prop `{k}` of <{name}> holds the key `{MARK}`, which brust reserves"
+                                    ));
                                 }
                                 None => {
                                     return Err(format!(
@@ -2738,6 +2990,24 @@ impl Walker<'_, '_> {
                                 }
                             },
                             Err(why) => {
+                                if self.holes.is_some() {
+                                    if !hole_name_ok(k) {
+                                        return Err(format!(
+                                            "prop `{k}` of <{name}> is not a constant ({why}; not a hole: `{k}` cannot take a value from props)"
+                                        ));
+                                    }
+                                    match self.add_hole(v, false) {
+                                        Ok(key) => {
+                                            p.insert(k.clone(), json!({ MARK: "v", "k": key }));
+                                            continue;
+                                        }
+                                        Err(r) => {
+                                            return Err(format!(
+                                                "prop `{k}` of <{name}> is not a constant ({why}; not a hole: {r})"
+                                            ));
+                                        }
+                                    }
+                                }
                                 return Err(format!(
                                     "prop `{k}` of <{name}> is not a constant ({why})"
                                 ));
@@ -2762,6 +3032,7 @@ impl Walker<'_, '_> {
                             tier: child.tier.clone(),
                             nested: None,
                             x: Vec::new(),
+                            holes: Vec::new(),
                         });
                     }
                     nested.push(id.clone());
@@ -2771,12 +3042,37 @@ impl Walker<'_, '_> {
                     }
                     out.push(node);
                 }
-                Node::If { cond, then, else_ } => {
-                    let c = self
-                        .fold_expr(cond, env)
-                        .map_err(|why| format!("a condition that is not a constant ({why})"))?;
-                    let branch = if c.truthy() { then } else { else_ };
-                    out.extend(self.lower_nodes(branch, nested, env, bytes, lists)?);
+                Node::If {
+                    cond,
+                    then,
+                    else_,
+                    and,
+                } => {
+                    match self.fold_expr(cond, env) {
+                        Ok(c) => {
+                            let branch = if c.truthy() { then } else { else_ };
+                            out.extend(self.lower_nodes(branch, nested, env, bytes, lists)?);
+                        }
+                        Err(why) => {
+                            // F148a (R34.122): a condition over a plain prop is a marker node; the revive takes
+                            // the branch by the truthiness of a primitive.
+                            let key = if self.holes.is_some() {
+                                self.add_hole(cond, false).map_err(|r| {
+                                format!("a condition that is not a constant ({why}; not a hole: {r})")
+                            })?
+                            } else {
+                                return Err(format!("a condition that is not a constant ({why})"));
+                            };
+                            let yes = self.lower_nodes(then, nested, env, bytes, lists)?;
+                            let no = self.lower_nodes(else_, nested, env, bytes, lists)?;
+                            let mut node = json!({ MARK: "if", "k": key, "c": yes, "e": no });
+                            // `cond && <X/>`: React renders a falsy number (0) as text there.
+                            if *and {
+                                node["a"] = json!(true);
+                            }
+                            out.push(node);
+                        }
+                    }
                 }
                 Node::For {
                     source,

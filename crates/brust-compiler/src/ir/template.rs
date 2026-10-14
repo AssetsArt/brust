@@ -34,6 +34,10 @@ pub enum Node {
         cond: Expr,
         then: Vec<Node>,
         else_: Vec<Node>,
+        /// The `cond && <X/>` form (no else): React renders a falsy number (`0`) as text there, where
+        /// `cond ? <X/> : null` renders nothing. Only the island-children lowering reads it (F148a).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        and: bool,
     },
     For {
         source: Expr,
