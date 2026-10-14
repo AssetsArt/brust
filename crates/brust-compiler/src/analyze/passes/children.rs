@@ -1069,7 +1069,8 @@ impl Walker<'_, '_> {
             ));
         }
         let (hoisted, unbound) = self.forward_handlers(name, *loc, props, &child);
-        self.check_spread(name, children, props, &child, *loc, &hoisted, &unbound);
+        self.check_children_read(name, children, &child, *loc);
+        self.check_spread(name, props, &child, *loc, &hoisted, &unbound);
         // A hoisted handler is the parent's own member: not a prop of the instance.
         let kept: Vec<(String, Expr)> = props
             .iter()
@@ -2033,10 +2034,21 @@ impl Walker<'_, '_> {
     /// likewise a spread passed to a React island or to a child the server feeds per instance.
     /// An event handler the parent binds itself (`hoisted`) is not refused; one that lands in the
     /// spread but cannot be bound (`unbound`, R34.19) is, with its own code.
+    /// R34.78: a static or native child that tests `children` as a value cannot be inlined with children given.
+    fn check_children_read(&mut self, name: &str, given: &[Node], child: &Child, loc: u32) {
+        if child.reads_children_value && !given.is_empty() {
+            self.diagnostics.push(Diagnostic::fallback(
+                "children-read",
+                format!("<{name}> reads `children` as a value, which an inlined instance with children cannot answer"),
+                loc,
+                "render `{children}` only, or keep the component interactive with React",
+            ));
+        }
+    }
+
     fn check_spread(
         &mut self,
         name: &str,
-        children_given: &[Node],
         props: &[(String, Expr)],
         child: &Child,
         loc: u32,
@@ -2062,15 +2074,6 @@ impl Walker<'_, '_> {
             self.diagnostics.push(refuse(format!(
                 "props are spread into <{name}>, which the server feeds per instance (a job or useId)"
             )));
-            return;
-        }
-        if child.reads_children_value && !children_given.is_empty() {
-            self.diagnostics.push(Diagnostic::fallback(
-                "children-read",
-                format!("<{name}> reads `children` as a value, which an inlined instance with children cannot answer"),
-                loc,
-                "render `{children}` only, or keep the component interactive with React",
-            ));
             return;
         }
         if child.icon_spread {

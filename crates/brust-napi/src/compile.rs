@@ -46,17 +46,30 @@ fn diag(d: &Diagnostic) -> NapiDiagnostic {
     }
 }
 
+/// What the build hands `compile_tree` besides the file: everything optional, JSON where it is structured.
+#[derive(Default)]
+pub(crate) struct CompileInputs {
+    pub server_only: Vec<String>,
+    pub slot_values: Option<String>,
+    pub css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    pub icon_svgs: Option<String>,
+    pub path_aliases: Option<String>,
+}
+
 /// `compile_tree` on the compiler thread; `path` is relative to `root` so ids are stable.
 pub(crate) fn compile_tree_impl(
     path: &str,
     root: &str,
     runtime_import: &str,
-    server_only: Vec<String>,
-    slot_values: Option<String>,
-    css_modules: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
-    icon_svgs: Option<String>,
-    path_aliases: Option<String>,
+    inputs: CompileInputs,
 ) -> CompiledTree {
+    let CompileInputs {
+        server_only,
+        slot_values,
+        css_modules,
+        icon_svgs,
+        path_aliases,
+    } = inputs;
     // `[{ "pattern": "@/*", "targets": ["./*"] }]`: `tsconfig` `paths` (R34.76).
     let path_aliases: Vec<brust_compiler::analyze::aliases::PathAlias> = path_aliases
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -126,6 +139,8 @@ pub(crate) fn compile_tree_impl(
 
 /// Compiles `path` (relative to `root`) and every child it reaches through lowering. `css_modules` (L20): the class
 /// map of each `*.module.css`, keyed by its path relative to `root`; `styles.x` folds to the literal class.
+// One positional argument per option: that is the JS call (`packages/brust/native/index.d.ts`).
+#[allow(clippy::too_many_arguments)]
 #[napi]
 pub fn compile_tree(
     path: String,
@@ -144,11 +159,13 @@ pub fn compile_tree(
         &path,
         &root,
         &runtime_import,
-        server_only,
-        slot_values,
-        css_modules.unwrap_or_default(),
-        icon_svgs,
-        path_aliases,
+        CompileInputs {
+            server_only,
+            slot_values,
+            css_modules: css_modules.unwrap_or_default(),
+            icon_svgs,
+            path_aliases,
+        },
     )
 }
 
@@ -161,11 +178,7 @@ mod tests {
             "tests/fixtures/outlet-layout/input.tsx",
             root,
             "brust/runtime-dom",
-            vec![],
-            None,
             Default::default(),
-            None,
-            None,
         );
         assert!(t.error.is_none(), "{:?}", t.error);
         let c = &t.components[0];
@@ -182,11 +195,7 @@ mod tests {
             "tests/fixtures/server-leak/input.tsx",
             root,
             "brust/runtime-dom",
-            vec![],
-            None,
             Default::default(),
-            None,
-            None,
         );
         assert_eq!(t.error.as_ref().map(|d| d.class.as_str()), Some("error"));
     }
