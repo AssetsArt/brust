@@ -29,9 +29,9 @@
       "exported": 334,
       "static": 1,
       "native": 0,
-      "react": 283,
+      "react": 282,
       "unresolved": 0,
-      "error": 50
+      "error": 51
     }
   },
   "blockers": [
@@ -51,7 +51,7 @@
       "measuredRows": 41,
       "analysisOnlyRows": 0,
       "appComponents": 141,
-      "libraryComponents": 183
+      "libraryComponents": 180
     },
     {
       "blocker": "fallback:island-children",
@@ -69,7 +69,7 @@
       "measuredRows": 6,
       "analysisOnlyRows": 0,
       "appComponents": 12,
-      "libraryComponents": 187
+      "libraryComponents": 186
     },
     {
       "blocker": "fallback:member-tag",
@@ -87,7 +87,7 @@
       "measuredRows": 3,
       "analysisOnlyRows": 0,
       "appComponents": 8,
-      "libraryComponents": 36
+      "libraryComponents": 35
     },
     {
       "blocker": "fallback:jsx-expression",
@@ -141,7 +141,16 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 184
+      "libraryComponents": 27
+    },
+    {
+      "blocker": "fallback:prop-pattern",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 24
     },
     {
       "blocker": "fallback:local-component",
@@ -151,15 +160,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 20
-    },
-    {
-      "blocker": "fallback:prop-pattern",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 11
     },
     {
       "blocker": "fallback:browser-global",
@@ -385,6 +385,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 2
+    },
+    {
+      "blocker": "error:request-state-in-render",
+      "kind": "compile error",
+      "classification": "survey truth (compiler refusal)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 1
     },
     {
       "blocker": "fallback:raw-text-child",
