@@ -20,7 +20,8 @@ use crate::ir::{
     Tier, VOID,
 };
 use brust_jinja::{
-    attr_name, escape_attr, is_boolean_attr, is_refused_attr, is_url_attr, safe_url,
+    AttrKind, attr_kind, attr_name, escape_attr, is_boolean_attr, is_refused_attr, is_url_attr,
+    safe_url,
 };
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
@@ -847,7 +848,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                     self.refuse(&html, tag);
                     return;
                 }
-                if value.is_empty() && is_boolean_attr(&html) {
+                if value.is_empty() && empty_url_dropped(&html, tag) {
+                    // `<img src="">`: React writes nothing.
+                } else if value.is_empty() && is_boolean_attr(&html) {
                     open.push_str(&format!(" {html}"));
                 } else {
                     open.push_str(&format!(" {html}=\"{}\"", text(value)));
@@ -902,18 +905,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                     open.push_str(&format!(
                         "{{% if ({v}) | present %}} style=\"{{{{ ({v}) | style_css | e }}}}\"{{% endif %}}"
                     ));
-                } else if is_boolean_attr(&html) {
-                    open.push_str(&format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"));
-                } else if is_url_attr(&html) {
-                    // Server side of the runtime's URL rule: an unsafe scheme
-                    // is not rendered (XSS through a `javascript:` prop).
-                    open.push_str(&format!(
-                        "{{% if ({v} | present) and ({v} | url_ok) %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
-                    ));
                 } else {
-                    open.push_str(&format!(
-                        "{{% if {v} | present %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
-                    ));
+                    open.push_str(&dynamic_attr(&html, &v, tag));
                 }
                 if model.is_some() && (html == "value" || html == "checked") {
                     return;
@@ -921,10 +914,13 @@ impl<'a, 'c> Printer<'a, 'c> {
                 if let Some(b) = self.reactive(raw, value) {
                     let paint = if html == "style" {
                         Paint::Style
-                    } else if is_boolean_attr(&html) {
-                        Paint::Raw
                     } else {
-                        Paint::Attr
+                        match attr_kind(&html) {
+                            AttrKind::Boolean => Paint::Bool,
+                            AttrKind::Stringify => Paint::AttrStr,
+                            AttrKind::Overloaded => Paint::AttrOver,
+                            AttrKind::Plain => Paint::Attr,
+                        }
                     };
                     let d = self.value_member(raw.unwrap(), b, paint);
                     open.push_str(&format!(" x-bind-{html}=\"{d}\""));
@@ -1258,16 +1254,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             open.push_str(&format!(
                 "{{% if ({v}) | present %}} style=\"{{{{ ({v}) | style_css | e }}}}\"{{% endif %}}"
             ));
-        } else if is_boolean_attr(&html) {
-            open.push_str(&format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"));
-        } else if is_url_attr(&html) {
-            open.push_str(&format!(
-                "{{% if ({v} | present) and ({v} | url_ok) %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
-            ));
         } else {
-            open.push_str(&format!(
-                "{{% if {v} | present %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
-            ));
+            open.push_str(&dynamic_attr(&html, v, tag));
         }
     }
 
@@ -2269,5 +2257,48 @@ fn static_text(e: &Expr) -> Option<String> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+/// React omits `src=""` and `href=""` on every element but `<a>`.
+fn empty_url_dropped(html: &str, tag: &str) -> bool {
+    matches!(html, "src" | "href") && tag != "a"
+}
+
+/// A dynamic attribute on the server, by what React does with its value (`brust_jinja::attr_kind`): a boolean attribute
+/// prints when truthy; `aria-*`, `data-*` and the other "booleanish string" attributes print `"true"`/`"false"`; `download`
+/// and `capture` print `""` for `true`; any other attribute omits a boolean (a custom element, `custom`, keeps `true`).
+/// A URL attribute also needs a safe scheme (the runtime's rule).
+fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
+    let custom = tag.contains('-');
+    let mut url = if is_url_attr(html) {
+        format!(" and ({v} | url_ok)")
+    } else {
+        String::new()
+    };
+    // React drops an empty `src` / `href` (it would load the page again), except on an anchor.
+    if empty_url_dropped(html, tag) {
+        url.push_str(&format!(" and ({v} | attr_str) != \"\""));
+    }
+    match attr_kind(html) {
+        AttrKind::Boolean => format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"),
+        AttrKind::Overloaded => format!(
+            "{{% if ({v}) | bool_true %}} {html}=\"\"{{% elif ({v}) | present %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
+        ),
+        AttrKind::Stringify => format!(
+            "{{% if ({v} | present_str){url} %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
+        ),
+        AttrKind::Plain => {
+            let present = if custom { "present" } else { "present_plain" };
+            if url.is_empty() {
+                format!(
+                    "{{% if {v} | {present} %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
+                )
+            } else {
+                format!(
+                    "{{% if ({v} | {present}){url} %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
+                )
+            }
+        }
     }
 }
