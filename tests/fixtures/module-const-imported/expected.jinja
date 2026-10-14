@@ -1,2 +1,2 @@
 {# brust v2 · input_4b23bc30 · do not edit #}
-<section{% if ("" ~ "row" ~ " list") | present %} title="{{ ("" ~ "row" ~ " list") | attr_str | e }}"{% endif %}><ul>{% for r in _s1 %}<li>{{ r.name | e }}</li>{% endfor %}</ul><p>limit {{ 3 | e }}</p></section>
+<section{% if ("" ~ "row" ~ " list") | present_plain %} title="{{ ("" ~ "row" ~ " list") | attr_str | e }}"{% endif %}><ul>{% for r in _s1 %}<li>{{ r.name | e }}</li>{% endfor %}</ul><p>limit {{ 3 | e }}</p></section>

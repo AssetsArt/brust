@@ -24,6 +24,8 @@ BINDERS.push({
         return
       }
       if (v == null || v === false) { el.removeAttribute(name); return }
+      // React writes no `src=""` / `href=""` (it would load the page again); an anchor keeps its empty href.
+      if (v === '' && (name === 'src' || name === 'href') && el.tagName !== 'A') { el.removeAttribute(name); return }
       if (URL_ATTRS.has(name) && !safeUrl(String(v))) { warnOnce(`b:${inst.name}:${name}`, `${attr} in ${inst.name}: unsafe URL refused`); return }
       el.setAttribute(name, String(v))
     })

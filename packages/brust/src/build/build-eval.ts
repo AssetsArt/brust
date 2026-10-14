@@ -249,6 +249,7 @@ async function evaluateInstances(
   const imports: string[] = []
   /** Component id -> its staged job module; written once, with the stubs its own imports are served by. */
   const staged = new Map<string, string>()
+  const jobFiles = new Set<string>() // the only importers of `brust-job:` (F186)
   const stageJob = (c: Compiled, served: { source: string; code: string }[]) => {
     if (staged.has(c.id)) return
     const file = join(dist, '.stage', 'eval', `${c.id}.job.ts`)
@@ -266,6 +267,7 @@ async function evaluateInstances(
       stubs.set(realpathSync(file), map)
     }
     staged.set(c.id, file)
+    jobFiles.add(file).add(realpathSync(file))
   }
   for (const c of compiled.values()) {
     for (const inst of c.ir.build_eval_instances ?? []) {
@@ -296,7 +298,7 @@ async function evaluateInstances(
     target: 'bun',
     format: 'esm',
     define: PRODUCTION,
-    plugins: [jobImportPlugin((id) => staged.get(id)), stubPlugin(stubs), sourceDirPlugin(sourceOf, appRoot)],
+    plugins: [jobImportPlugin((id) => staged.get(id), (importer) => jobFiles.has(importer)), stubPlugin(stubs), sourceDirPlugin(sourceOf, appRoot)],
   })
   if (!res.success) {
     log(`warning build-eval the instance jobs could not be bundled for build evaluation, they stay per-request jobs: ${res.logs.map(String).join(' | ').split('\n')[0]}`)
