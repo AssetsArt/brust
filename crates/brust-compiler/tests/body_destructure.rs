@@ -128,3 +128,22 @@ fn the_pattern_is_not_absorbed_when_the_first_parameter_is_already_a_pattern() {
     );
     assert!(has(&ir, "body-shape"), "{:?}", ir.diagnostics);
 }
+
+#[test]
+fn a_default_that_reads_a_body_local_stays_body_shape() {
+    // Review F1: the absorbed statement is skipped and its defaults are read before the body's bindings exist, so a
+    // default naming a body local would print an unbound name. Parameter patterns cannot do this.
+    for body in [
+        "const d = props.k + '!'; const { a = d } = props; return <p>{a}</p>",
+        "const d = 'x'; const { a = d } = props; return <p>{a}</p>",
+        "const d = 1; const { a = () => d } = props; return <p>{String(a)}</p>",
+    ] {
+        let ir = comp(body);
+        assert!(has(&ir, "body-shape"), "{body}: {:?}", ir.diagnostics);
+    }
+    // A default that reads only a module constant (or a literal) is still absorbed.
+    let ir = analyze(
+        "const D = 'z'\nexport default function C(props: any) { const { a = D } = props; return <p>{a}</p> }",
+    );
+    assert!(!has(&ir, "body-shape"), "{:?}", ir.diagnostics);
+}

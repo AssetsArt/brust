@@ -186,6 +186,12 @@ impl<'a> NameTable<'a> {
         let Some(props) = self.props_ident else {
             return;
         };
+        // A default is read before the body's own bindings exist (the statement is skipped, the template binds no
+        // local for it): one that reads a binding declared in the body would print a bare, unbound name. Such a
+        // pattern stays `body-shape` (review F1).
+        let mut body = crate::analyze::expr::Walk::default();
+        body.stmts(component.body.stmts.slice());
+        let declared: HashSet<u32> = body.declared.iter().map(|r| self.key(*r)).collect();
         let mut candidates = Vec::new();
         for stmt in component.body.stmts.slice() {
             let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
@@ -209,7 +215,14 @@ impl<'a> NameTable<'a> {
                     && (p.flags.contains(js_ast::flags::Property::IsSpread)
                         || matches!(&p.key.data, js_ast::expr::Data::EString(_)))
             });
-            if plain {
+            let defaults_ok = obj.properties().iter().all(|p| {
+                p.default_value.as_ref().is_none_or(|dv| {
+                    let mut w = crate::analyze::expr::Walk::default();
+                    w.expr(dv);
+                    !w.used.iter().any(|u| declared.contains(&self.key(*u)))
+                })
+            });
+            if plain && defaults_ok {
                 candidates.push((d.binding.loc.start, obj));
             }
         }
