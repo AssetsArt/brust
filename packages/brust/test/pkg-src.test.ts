@@ -189,7 +189,7 @@ test('P1: a bundle of several sources is entered through a barrel written from t
   const entry = r.scopes['']?.bundle
   expect(r.refused).toEqual({})
   expect(entry).toMatch(/\/src\/index\.ts$/)
-  expect(readFileSync(join(root, entry!), 'utf8')).toBe(`export { useThing } from './thing'\nexport { useThingReducer } from './thing-reducer'\n`)
+  expect(readFileSync(join(root, entry!), 'utf8')).toBe(`export { useThing } from "./thing"\nexport { useThingReducer } from "./thing-reducer"\n`)
 })
 
 test('P1 bounds: an alias, an unexplained source, a doubly declared name, a default or a star export are refused', () => {
@@ -227,4 +227,45 @@ test('P2 bounds: any other alias difference stays a refusal (pinned)', () => {
   // The alias name is not hidden when the source USES it as an ordinary name too.
   const uses = ALIAS_SRC.replace('return <i />', 'return <i title={String(Provider)} />')
   expect(integrityGaps([{ path: 'src/a.tsx', text: uses }], aliasDist('Inner as unstable_Provider')).join()).toContain('name `Provider`')
+})
+
+// (`..` and `//` never reach the barrel: the map path is normalized first, and a path that leaves the package is refused before.)
+test('P1 hostile map paths: a path with anything but plain path characters is refused, never printed into the barrel', () => {
+  const root = app()
+  const hostile = [
+    "src/a'b",
+    'src/a"b',
+    'src/a\nb',
+    'src/a\\b',
+    'src/a*/b',
+    'src/a`b',
+    'src/a${1}b',
+    String.raw`src/a\u0041b`,
+    'src/a b',
+    'src/\u00e9',
+  ]
+  for (const [i, bad] of hostile.entries()) {
+    const name = `hostile-${i}`
+    const dist = distOf([HOOK, REDUCER], clause('useThing, useThingReducer'))
+    pkg(root, name, { [`${bad}-thing.tsx`]: HOOK, 'src/thing-reducer.tsx': REDUCER }, { dist })
+    const r = preparePackageSources(root, [name])
+    expect([JSON.stringify(bad), r.scopes['']?.[name], typeof r.refused['']?.[name]]).toEqual([JSON.stringify(bad), undefined, 'string'])
+  }
+})
+
+test('source paths: hostile, doubled-slash and absolute map paths are refused at the source; a legit nested path is accepted', () => {
+  const root = app()
+  const refusedWith = (name: string, path: string) => {
+    pkg(root, name, { 'src/leaf.tsx': LEAF }, { mapSources: [path] })
+    return `${name}: ${refusedFor(root, name)}`
+  }
+  expect(refusedWith('inject', "../src/a';\nimport 'evil-pkg.tsx")).toContain('has characters other than')
+  expect(refusedWith('slashes', '..//src//leaf.tsx')).toContain('has characters other than')
+  expect(refusedWith('absolute', '/etc/leaf.tsx')).toContain('outside the package')
+  expect(refusedWith('space', '../src/le af.tsx')).toContain('has characters other than')
+  expect(refusedWith('backtick', '../src/le`af.tsx')).toContain('has characters other than')
+  const ok = join(root, 'ok-dir')
+  pkg(root, 'nested', { 'src/deep/er/leaf.tsx': LEAF })
+  expect(preparePackageSources(root, ['nested']).scopes['']?.nested).toMatch(/\/src\/deep\/er\/leaf\.tsx$/)
+  void ok
 })

@@ -286,12 +286,16 @@ function barrelOf(files: { path: string; text: string }[], published: string): {
     used.add(owners[0]!.path)
   }
   if (files.some((f) => !used.has(f.path))) return undefined
+  // The barrel's specifiers are source-map paths (package-controlled text): only plain path characters, no `..` segment,
+  // never absolute; and each is printed as a JSON string, so nothing in it can end the string or the statement.
+  const plainPath = (p: string) => /^[A-Za-z0-9_@./-]+$/.test(p) && !p.startsWith('/') && !p.split('/').some((seg) => seg === '..' || seg === '')
+  if (files.some((f) => !plainPath(f.path))) return undefined
   const dir = posix.dirname(files[0]!.path)
   const path = posix.join(dir, 'index.ts')
   if (files.some((f) => f.path === path)) return undefined
   const lines = [...used].map((src) => {
     const rel = posix.relative(dir, src).replace(/\.tsx?$/, '')
-    return `export { ${names.filter((n) => owner.get(n) === src).join(', ')} } from '${rel.startsWith('.') ? rel : `./${rel}`}'`
+    return `export { ${names.filter((n) => owner.get(n) === src).join(', ')} } from ${JSON.stringify(rel.startsWith('.') ? rel : `./${rel}`)}`
   })
   return { path, text: `${lines.join('\n')}\n` }
 }
@@ -321,7 +325,11 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
     const text = contents[k]
     if (typeof s !== 'string' || typeof text !== 'string') continue
     const abs = posix.normalize(posix.join(relative(dir, dirname(mapFile)).split(sep).join('/'), s))
-    if (abs.startsWith('..') || posix.isAbsolute(abs) || /^[a-z]+:/i.test(s)) return { ok: false, reason: `the source ${s} lies outside the package` }
+    if (abs.startsWith('..') || posix.isAbsolute(abs) || posix.isAbsolute(s) || /^[a-z]+:/i.test(s)) return { ok: false, reason: `the source ${s} lies outside the package` }
+    // Map paths are package-controlled text and become file names, the entry path and import specifiers the compiler
+    // prints: only plain path characters, no `//`, no `..` segment left after normalizing (Mellow, wave A step 0).
+    if (!/^[A-Za-z0-9_@./-]+$/.test(s) || s.includes('//') || !/^[A-Za-z0-9_@][A-Za-z0-9_@./-]*$/.test(abs) || abs.split('/').includes('..'))
+      return { ok: false, reason: `the source path ${JSON.stringify(s).slice(0, 80)} has characters other than letters, digits and _ @ . / -` }
     if (!/\.tsx?$/.test(abs)) continue
     files.push({ path: abs, text })
   }
