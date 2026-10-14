@@ -1,8 +1,8 @@
 # shadcn S1 — lane `island-prop-demotion` (draft for the lead's ruling)
 
-owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: TBD (lead assigns) · reviewer: TBD · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F138g (proposed)
+owner: 22499151-e133-4508-b358-d7fa4d2851c3 (Detoro) · authority: in-loop · implementer: Tiësto · reviewer: Afrojack (Mellow signs off the security-relevant SSR path, risk 4) · gates: Illenium · flow: lane → PR → CI → lead merges · ledger row: F138h
 
-Author: Tiësto. Status: **DRAFT, awaiting ruling; no lane starts before the lead rules.** Base: origin/main 700955bd. Numbers are from `docs/shadcn-coverage.md` at that commit. R-numbers continue after R34.55 (constant-slots). The lead ruled (constant-slots §10 Q4) that `island-prop` demotes the host to React instead of failing the build, as its own small lane.
+Author: Tiësto. Status: **RULED 2026-10-14 (see §10); lane may start.** Base: origin/main 700955bd. Numbers are from `docs/shadcn-coverage.md` at that commit. R-numbers continue after R34.55 (constant-slots). The lead ruled (constant-slots §10 Q4) that `island-prop` demotes the host to React instead of failing the build, as its own small lane.
 
 ## 1. What the diagnostic is today
 
@@ -45,7 +45,7 @@ This is the same move F142 made for `instance-list-path` (hard error → fallbac
 - **R34.57 No false island.** A host that is React renders its component children with React: no `Ssr` job is created for them, no `island-prop` is evaluated against their props beyond the line above. (Today the `ok = false` path already skips the job; the lane adds a test that a React host with a function prop to a child emits no job and builds.)
 - **R34.58 The refused rows build.** `calendar` and `form` build (`Outcome: built`), end `react` with the island count the generator measures, and appear in the Measured table (62 → 64 of 64 built; Analysis-only becomes empty). The "refused" columns and the ranked blocker #20 (`error:island-prop`) disappear from the generated scoreboard; the generator's `island-prop`-only assertion in `scripts/shadcn/run.test.ts` is replaced by "no row is refused".
 - **R34.59 Battery rows** (§5): the three `error` rows become `react` rows (no `knownGap`); a row per host tier shows the demotion.
-- **R34.60 Proof and docs.** `docs/shadcn-coverage.md` and `docs/react-coverage.md` regenerated (twice identical); the `<Profiler>` API line in `docs/react-coverage.md` is regenerated from its rows (its status may move from partial); `docs/plans/m1a-followups.md` gets F138g.
+- **R34.60 Proof and docs.** `docs/shadcn-coverage.md` and `docs/react-coverage.md` regenerated (twice identical); the `<Profiler>` API line in `docs/react-coverage.md` is regenerated from its rows (its status may move from partial); `docs/plans/m1a-followups.md` gets F138h.
 
 ## 5. Fail-closed list and battery rows
 
@@ -73,7 +73,7 @@ There is nothing left to refuse: every case becomes a React host. The rows pin t
 
 ## 7. Boundary and gates
 
-Boundary: `crates/brust-compiler/src/analyze/passes/children.rs` (the two `island_err` sites) and its tests (`crates/brust-compiler/tests/children.rs` `function_and_reactive_props_to_an_island_are_errors`, which asserts `Error` today), `scripts/battery/rows.ts` + `docs/react-coverage.md` + `docs/react-coverage.json` + `docs/plans/m1-exit-report.md` (regenerated), `scripts/shadcn/run.test.ts` + `docs/shadcn-coverage.md` (the refused-rows assertions and regeneration), `docs/plans/m1a-followups.md` (F138g). It does not touch `lower/*`, `packages/brust` or `brust-core`.
+Boundary: `crates/brust-compiler/src/analyze/passes/children.rs` (the two `island_err` sites) and its tests (`crates/brust-compiler/tests/children.rs` `function_and_reactive_props_to_an_island_are_errors`, which asserts `Error` today), `scripts/battery/rows.ts` + `docs/react-coverage.md` + `docs/react-coverage.json` + `docs/plans/m1-exit-report.md` (regenerated), `scripts/shadcn/run.test.ts` + `docs/shadcn-coverage.md` (the refused-rows assertions and regeneration), `docs/plans/m1a-followups.md` (F138h). It does not touch `lower/*`, `packages/brust` or `brust-core`.
 Gates (targeted): `cargo test -p brust-compiler`, clippy `-D warnings` (CI form), fmt; the battery script; `bun test scripts/shadcn scripts/battery`; the shadcn generator twice identical; a served-page check of `calendar` and `form` (`brust build` + `brust start` + fetch 200, as local-component's `slot-parity` does: a page can build and still be refused by the server). Heavy runs announced on the task first.
 
 ## 8. Risks
@@ -90,3 +90,15 @@ Gates (targeted): `cargo test -p brust-compiler`, clippy `-D warnings` (CI form)
 - **Q3 Battery expectation of the three rows.** They go `error` → `react` with no `knownGap`. OK?
 - **Q4 Scoreboard.** With no refused rows the Analysis-only table and ranked blocker #20 disappear from the generated doc. Keep an empty "Analysis-only (0 of 64 pages refused)" section so the generator shape is stable, or drop it? Recommended: keep it (fewer generator changes).
 - **Q5 Order.** Independent of constant-slots (different lines of `children.rs`, `rows.ts`); the second to be ready merges `origin/main` in and regenerates the two docs, as for the last lanes.
+
+## 10. Lead ruling (2026-10-14)
+
+Accepted as written; the probe's finding (both refusals are `island-prop` raised on a host that is already React) is the reason this is a bug fix more than a semantics change. Ledger row is **F138h** (F138g is member-tag). Rulings on §9:
+
+- **Q1 Fallback in both cases: yes.** One rule, no pass reordering.
+- **Q2 No strict option.**
+- **Q3 The three battery rows go `error` → `react`, no `knownGap`.**
+- **Q4 Keep the empty "Analysis-only (0 of 64 pages refused)" section** so the generator shape is stable.
+- **Q5 Independent of constant-slots; readiness-order merge** (the later lane merges `origin/main` in and regenerates the generated docs; the lead integrates).
+
+Additional ruling: the served-page check of `calendar` and `form` (`brust build` + `brust start` + fetch 200) is a gate. R-numbers: this plan keeps R34.56–R34.60; the package-leaf plan starts at R34.61.
