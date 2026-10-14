@@ -2,7 +2,7 @@
 //! the IR — `defineBehavior(id, factory)` returning the members the template's
 //! directives name.
 use super::common::{
-    DerivedShape, Facts, client_fn, client_js, import_lines, imports_in, module_code,
+    DerivedShape, Facts, arrow_body, client_fn, client_js, import_lines, imports_in, module_code,
     module_names_in, store_client_js, visit_idents, visit_verbatim_captures,
 };
 use super::{Member, MemberDef, Paint};
@@ -121,7 +121,11 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
         let line = match shape {
             DerivedShape::Value => {
                 uses_computed = true;
-                format!("const {} = computed(() => {})", d.name, client_js(raw, &f))
+                format!(
+                    "const {} = computed(() => {})",
+                    d.name,
+                    arrow_body(&client_js(raw, &f))
+                )
             }
             DerivedShape::Function => format!("const {} = {}", d.name, client_fn(raw, &f)),
         };
@@ -203,23 +207,36 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
                 };
                 if bindings.is_empty() {
                     uses_computed = true;
-                    format!("const {} = computed(() => {js})", m.name)
+                    format!("const {} = computed(() => {})", m.name, arrow_body(&js))
                 } else {
-                    format!("const {} = ({}) => {js}", m.name, bindings.join(", "))
+                    format!(
+                        "const {} = ({}) => {}",
+                        m.name,
+                        bindings.join(", "),
+                        arrow_body(&js)
+                    )
                 }
             }
             MemberDef::List { raw, bindings } if bindings.is_empty() => {
                 uses_computed = true;
-                format!("const {} = computed(() => {})", m.name, client_js(raw, &f))
+                format!(
+                    "const {} = computed(() => {})",
+                    m.name,
+                    arrow_body(&client_js(raw, &f))
+                )
             }
             MemberDef::List { raw, bindings } => format!(
                 "const {} = ({}) => {}",
                 m.name,
                 bindings.join(", "),
-                client_js(raw, &f)
+                arrow_body(&client_js(raw, &f))
             ),
             MemberDef::Key { raw, item } => {
-                format!("const {} = ({item}) => {}", m.name, client_js(raw, &f))
+                format!(
+                    "const {} = ({item}) => {}",
+                    m.name,
+                    arrow_body(&client_js(raw, &f))
+                )
             }
             MemberDef::Link { props, bindings } => {
                 let fields: Vec<String> = props

@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 159 | 88 | 8 | 63 | 0 | 0 | 0 | 0 |
+| B Composition | 160 | 88 | 9 | 63 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 337 | 166 | 43 | 124 | 3 | 1 | 0 | 0 |
+| **Total** | 338 | 166 | 44 | 124 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -114,6 +114,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-holes-wrapper-children | a static wrapper that renders {children} inside its island | static | static | 0 | ok | — | F148a (R34.121): the caller's constant tree is bound at the call site (the reserved prop __ch); a call without children binds none |
 | b-island-holes-attr-cond | attributes and a condition read from props inside island children | static | static | ssr | ok | — | F148a (R34.118): attribute holes are primitives; a javascript: URL keeps React 19.3's guard (packages/brust/test/prop-path-children-revive.test.ts) |
 | b-island-prop-expr | an island prop that is an expression over props | react | react | ssr | ok | fallback:island-prop | F148a: the server hands an island a props path or a JSON value; anything else is fallback:island-prop, not the ssr-prop-not-a-path build error (the direction page hit it once its wrapper stopped being React) |
+| b-local-object-const-handler | a local object-literal const read by a handler and the template | native | native | 0 | ok | — | F178: the chunk printed `computed(() => { up: 2, down: -1 })`, a block with labels, and `brust build` failed on valid React; an arrow body that starts with `{` is parenthesised (served in tests/server/object-literal-arrow.chromium.test.ts) |
 | b-island-holes-style | a style read from props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.118, F170): an object-valued attribute is never a hole; fallback:island-children |
 | b-island-holes-list | a list over props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.122, F171): a list over request data needs structure from data; fallback:island-children |
 | b-island-holes-route-children | {children} of a route component inside an island | react | react | ssr | ok | fallback:island-children | F148a (R34.121): a route component has no call site to bind a tree; its children are request data; fallback:island-children |
