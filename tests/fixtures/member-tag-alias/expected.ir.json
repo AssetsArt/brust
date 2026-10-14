@@ -3,6 +3,7 @@
   "source": "tests/fixtures/member-tag-alias/input.tsx",
   "tier": "Static",
   "props": [],
+  "holds_island": true,
   "state": [],
   "derived": [],
   "effects": [],
