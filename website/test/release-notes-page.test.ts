@@ -29,8 +29,9 @@ test('the page is in the Guide right after Installation, and answers 200 with it
   expect(html).toContain('href="/docs/release-notes"')
 })
 
-test('every published version has an entry and 2.0.0-alpha.6 comes first', () => {
-  const at = (v: string) => html.indexOf(`2.0.0-alpha.${v}`)
+test('every published version has an entry and 2.0.0-alpha.7 comes first', () => {
+  // the site header also prints the current version, so locate each entry by its own heading / list item
+  const at = (v: string) => Math.max(html.indexOf(`id="alpha-${v}"`), html.indexOf(`<strong>2.0.0-alpha.${v}</strong>`))
   for (const v of ['1', '2', '3', '4', '5', '6', '7']) expect([v, at(v) > 0]).toEqual([v, true])
   expect(at('7')).toBeLessThan(at('6'))
   expect(at('6')).toBeLessThan(at('5'))
