@@ -50,6 +50,9 @@ fn reading_the_forwarded_ref_any_other_way_is_a_fallback() {
         "return <div ref={(n) => { if (ref) (ref as any).current = n }} />",
         "const r = ref; return <div />",
         "return <div data-x={String(ref)} />",
+        // N1: a dropped `ref={ref}` never pays for a read elsewhere, however many hosts carry it.
+        "const r = ref; return <div><i ref={ref} /><b ref={ref} /></div>",
+        "return <div><i ref={ref} /><b data-x={String(ref)} /></div>",
     ] {
         let ir = analyze(&format!(
             "import {{ forwardRef, useImperativeHandle }} from 'react'\nexport default forwardRef<any, any>(function F(props, ref) {{ {body} }})"

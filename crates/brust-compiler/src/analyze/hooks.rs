@@ -332,67 +332,92 @@ fn read_props(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, out: &mut BodyDecls)
                 name,
                 ts_type: None,
                 default: None,
-            })
-        }
-        B::BObject(obj) => {
-            // Props whose destructuring default is in effect: a later default reading one would see the raw prop.
-            let mut defaulted: HashSet<String> = HashSet::new();
-            for p in obj.properties() {
-                let ploc = loc_of(&p.key);
-                if p.flags.contains(js_ast::flags::Property::IsSpread) {
-                    match p.value.data {
-                        B::BIdentifier(id) => out.props_rest = Some(r.names.name(id.r#ref)),
-                        _ => pattern(out, ploc, "a pattern after `...`"),
-                    }
-                    continue;
-                }
-                let E::EString(key) = &p.key.data else {
-                    pattern(out, ploc, "a computed key");
-                    continue;
-                };
-                let B::BIdentifier(id) = p.value.data else {
-                    pattern(out, ploc, "a nested pattern");
-                    continue;
-                };
-                let name = crate::analyze::expr::estring(key);
-                // F161 (R39.1): a prop is a template variable named by its key, so a key that is not a plain
-                // identifier (`'data-x': dx`) prints as `data-x`, which jinja reads as a subtraction: every render
-                // fails. Fail closed; native support for quoted keys is a later F-row.
-                if !template_name(&name) {
-                    out.fallback(
-                        "prop-quoted-key",
-                        format!("the props key `{name}` is not a plain identifier, so it cannot name a template variable"),
-                        ploc,
-                        "rename the key to a plain identifier at the call sites, or keep this component in React",
-                    );
-                    continue;
-                }
-                let default = p.default_value.as_ref().map(|d| r.expr(d));
-                if let Some(d) = &default
-                    && let Some((code, why)) = default_unprintable(d, &defaulted)
+            });
+            // `const { a, ...rest } = props` in the body reads like a parameter pattern (R34.66).
+            let whole = out.props.len() - 1;
+            for stmt in func.body.stmts.slice() {
+                if let S::SLocal(l) = &stmt.data
+                    && let Some(d) = l.decls.first()
+                    && r.names.is_absorbed(d.binding.loc.start)
+                    && let B::BObject(obj) = d.binding.data
                 {
-                    out.fallback(
-                        code,
-                        format!("the default of the prop `{name}` is {why}, which the server template cannot evaluate"),
-                        ploc,
-                        "use a literal, an earlier prop, or a plain expression as the default",
-                    );
-                    continue;
+                    read_object_pattern(&obj, r, out, &pattern);
                 }
-                let local = r.names.name(id.r#ref);
-                if default.is_some() {
-                    defaulted.insert(name.clone());
-                    defaulted.insert(local.clone());
-                }
-                out.props.push(PropDecl {
-                    name,
-                    local,
-                    ts_type: None,
-                    default,
-                });
+            }
+            // the plain `props` binding is not a prop named `props`: a rest must not leave a key of that name out
+            if out.props_rest.is_some() {
+                out.props.remove(whole);
             }
         }
+        B::BObject(obj) => read_object_pattern(&obj, r, out, &pattern),
         B::BArray(_) | B::BMissing(_) => pattern(out, loc, "an array pattern"),
+    }
+}
+
+/// The props of one object pattern (a parameter, or a body `const { … } = props`): plain keys with their defaults
+/// and a trailing `...rest`; anything else is a `prop-pattern` fallback.
+fn read_object_pattern(
+    obj: &js_ast::B::Object,
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    pattern: &dyn Fn(&mut BodyDecls, u32, &str),
+) {
+    for p in obj.properties() {
+        let ploc = loc_of(&p.key);
+        if p.flags.contains(js_ast::flags::Property::IsSpread) {
+            match p.value.data {
+                B::BIdentifier(id) => out.props_rest = Some(r.names.name(id.r#ref)),
+                _ => pattern(out, ploc, "a pattern after `...`"),
+            }
+            continue;
+        }
+        let E::EString(key) = &p.key.data else {
+            pattern(out, ploc, "a computed key");
+            continue;
+        };
+        let B::BIdentifier(id) = p.value.data else {
+            pattern(out, ploc, "a nested pattern");
+            continue;
+        };
+        let name = crate::analyze::expr::estring(key);
+        // F161 (R39.1): a prop is a template variable named by its key, so a key that is not a plain identifier
+        // (`'data-x': dx`) prints as `data-x`, which jinja reads as a subtraction: every render fails. Fail closed;
+        // native support for quoted keys is a later F-row.
+        if !template_name(&name) {
+            out.fallback(
+                "prop-quoted-key",
+                format!("the props key `{name}` is not a plain identifier, so it cannot name a template variable"),
+                ploc,
+                "rename the key to a plain identifier at the call sites, or keep this component in React",
+            );
+            continue;
+        }
+        let default = p.default_value.as_ref().map(|d| r.expr(d));
+        if let Some(d) = &default {
+            // Props whose destructuring default is in effect (this pattern and any before it): a default reading
+            // one would see the raw prop, without its default.
+            let defaulted: HashSet<String> = out
+                .props
+                .iter()
+                .filter(|q| q.default.is_some())
+                .flat_map(|q| [q.name.clone(), q.local.clone()])
+                .collect();
+            if let Some((code, why)) = default_unprintable(d, &defaulted) {
+                out.fallback(
+                    code,
+                    format!("the default of the prop `{name}` is {why}, which the server template cannot evaluate"),
+                    ploc,
+                    "use a literal, an earlier prop, or a plain expression as the default",
+                );
+                continue;
+            }
+        }
+        out.props.push(PropDecl {
+            name,
+            local: r.names.name(id.r#ref),
+            ts_type: None,
+            default,
+        });
     }
 }
 
@@ -573,6 +598,10 @@ fn read_stmts(
         }
         match &stmt.data {
             S::SLocal(local) => {
+                // Read as the props pattern (names.rs `absorb_body_patterns`): nothing else to read here.
+                if local.decls.len() == 1 && r.names.is_absorbed(local.decls[0].binding.loc.start) {
+                    continue;
+                }
                 if !matches!(local.kind, js_ast::S::Kind::KConst) {
                     out.fallback(
                         "let-var",

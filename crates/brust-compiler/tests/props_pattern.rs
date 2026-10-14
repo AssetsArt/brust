@@ -74,7 +74,7 @@ fn a_default_the_template_cannot_evaluate_falls_back() {
 /// Defaults the template prints correctly keep their tier: literals, an earlier prop, supported calls, an arrow, a rename.
 #[test]
 fn printable_defaults_and_renames_still_compile() {
-    for f in ["ok-default.tsx", "p3.tsx", "p5ok.tsx"] {
+    for f in ["ok-default.tsx", "p3.tsx", "p5ok.tsx", "bp-ok.tsx"] {
         let (ir, _) = compile(f);
         assert!(
             !is_react(&ir) && rules(&ir).is_empty(),

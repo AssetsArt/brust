@@ -51,7 +51,7 @@
       "measuredRows": 41,
       "analysisOnlyRows": 0,
       "appComponents": 141,
-      "libraryComponents": 183
+      "libraryComponents": 180
     },
     {
       "blocker": "fallback:island-children",
@@ -141,7 +141,16 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 184
+      "libraryComponents": 36
+    },
+    {
+      "blocker": "fallback:prop-pattern",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 23
     },
     {
       "blocker": "fallback:local-component",
@@ -153,13 +162,13 @@
       "libraryComponents": 20
     },
     {
-      "blocker": "fallback:prop-pattern",
+      "blocker": "fallback:prop-default-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 11
+      "libraryComponents": 10
     },
     {
       "blocker": "fallback:browser-global",
@@ -169,15 +178,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 9
-    },
-    {
-      "blocker": "fallback:prop-default-shape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 6
     },
     {
       "blocker": "fallback:ref-shape",
@@ -384,7 +384,7 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 2
+      "libraryComponents": 4
     },
     {
       "blocker": "React.Children",
