@@ -153,23 +153,15 @@ fn a_fed_child_in_nested_lists_is_a_fallback_not_an_error() {
 }
 
 #[test]
-fn a_prop_the_manifest_cannot_bind_is_a_fallback_not_a_build_error() {
-    // `tone` is the output of this page's own job: the server cannot feed it to Cell's job (two-phase planning).
+fn a_prop_that_is_another_jobs_output_is_fused_into_the_route_components_job() {
+    // `tone` is the output of this page's own job: the child's job runs inside it (R34.96, was the
+    // `instance-prop-path` fallback of PR 1).
     let t = lower(
         "import Cell from '../per-instance-jobs/Cell'\nimport { label } from '../per-instance-jobs/label'\nexport default function P(props: { x: string }) { return <Cell tone={label(props.x)}>x</Cell> }",
     );
     let p = named(&t, "p_");
-    assert!(is_react(p), "{:?}", p.tier);
-    assert!(
-        p.fallbacks.contains(&"instance-prop-path".to_string()),
-        "{:?}",
-        p.fallbacks
-    );
+    assert!(!is_react(p), "{:?} {:?}", p.tier, p.fallbacks);
 }
-
-// Review r1 (Mellow, F1): the lowering's `nested-instance` errors are unreachable from analysis. Three more shapes
-// of valid React that reached them: children with a job passed to a component that repeats them (D), and an island
-// with a per-row prop in two lists (E) or in a component inlined into its callers (F).
 
 #[test]
 fn children_with_a_job_passed_to_a_component_that_repeats_them_fall_back() {
@@ -288,4 +280,85 @@ fn plain_children_through_the_same_chain_stay_compiled() {
         "import Outer from './Outer'\nexport default function P() { return <Outer><b>x</b></Outer> }",
     );
     assert!(!is_react(named(&t, "p_")), "{:?}", named(&t, "p_").tier);
+}
+
+// R34.96 (PR 2b, analysis half): a fed child of a component with a job of its own runs inside that job.
+
+fn fused_of(
+    src: &str,
+    wrapper: &str,
+) -> (
+    Vec<brust_compiler::ir::FusedInstance>,
+    Vec<String>,
+    usize,
+    Vec<String>,
+) {
+    let s = src.as_bytes().to_vec();
+    let path = "crates/brust-compiler/tests/fixtures/nested-fed/P.tsx".to_string();
+    let wrapper = wrapper.to_string();
+    run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            &path,
+            Some(s),
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .expect("compiles");
+        let w = tree
+            .iter()
+            .find(|l| l.ir.id.starts_with(&wrapper))
+            .expect("wrapper");
+        let out =
+            w.ir.jobs
+                .first()
+                .map(|j| j.outputs.clone())
+                .unwrap_or_default();
+        let fb = tree[0]
+            .ir
+            .diagnostics
+            .iter()
+            .filter(|d| d.class == DiagClass::Fallback)
+            .map(|d| d.rule.clone())
+            .collect();
+        (w.ir.fused.clone(), out, w.ir.instances.len(), fb)
+    })
+}
+
+#[test]
+fn a_child_fed_by_a_slot_of_its_wrapper_is_fused() {
+    use brust_compiler::ir::FusedInput;
+    let (fused, outputs, records, fb) = fused_of(
+        "import F from './Fusing'\nexport default function P() { return <div><F x=\"a\" /></div> }",
+        "fusing_",
+    );
+    assert_eq!(fused.len(), 1, "{fb:?}");
+    let f = &fused[0];
+    assert_eq!(f.ordinal, 1);
+    assert!(
+        matches!(f.inputs["tone"], FusedInput::Slot { .. }),
+        "{:?}",
+        f.inputs
+    );
+    assert!(matches!(f.inputs.get("children"), None), "{:?}", f.inputs);
+    assert_eq!(records, 0, "a fused child has no record");
+    for o in f.outputs.values() {
+        assert!(
+            outputs.contains(o),
+            "{o} not an output of the wrapper's job: {outputs:?}"
+        );
+    }
+    assert!(fb.is_empty(), "{fb:?}");
+}
+
+#[test]
+fn a_spread_of_the_wrappers_rest_into_the_fused_child_is_allowed_by_the_spread_rule() {
+    let (fused, _, records, fb) = fused_of(
+        "import F from './FusingSpread'\nexport default function P() { return <div><F x=\"a\" /></div> }",
+        "fusingSpread_",
+    );
+    assert_eq!(fused.len(), 1, "{fb:?}");
+    assert_eq!(records, 0);
 }

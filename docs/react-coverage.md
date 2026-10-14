@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 149 | 82 | 8 | 59 | 0 | 0 | 0 | 0 |
+| B Composition | 149 | 83 | 8 | 58 | 0 | 0 | 0 | 0 |
 | C Hooks | 30 | 2 | 12 | 16 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 327 | 161 | 43 | 119 | 3 | 1 | 0 | 0 |
+| **Total** | 327 | 162 | 43 | 118 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -176,7 +176,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-spread-alias-known | HTML aliases at the call site into a child that writes React names after its spread | static | static | 0 | ok | — | shadcn S1.2 review F1: compile-time expansion merges on the HTML attribute too (class="x", for="a", once each) |
 | b-fed-child-in-wrapper | a wrapper component rendering a child with a job of its own (shadcn PaginationNext over PaginationLink) | static | static | 0 | ok | — | F164 R34.97: the grandchild's job has no slot key inside an inlined wrapper (F53), so PR 1 made the wrapper the React island (nested-instance fallback); PR 2a re-bases the wrapper's child onto the caller (R34.96 static-wrapper case) and the page is static |
 | b-fed-child-nested-lists | a child with a job of its own inside two nested lists over props | react | react | ssr | ok | fallback:nested-instance | F164 R34.97: the server feeds one list level per instance; nested lists were the nested-instance build error of the manifest, now a fallback |
-| b-fed-child-prop-is-a-job-output | a prop of a child with a job of its own is computed by a call (className={cn(…)}) | react | react | ssr | ok | fallback:instance-prop-path | F164 R34.97: the value is another job's output, which the single-phase planner cannot bind; it was the instance-prop-path build error of the manifest, now a fallback |
+| b-fed-child-prop-is-a-job-output | a prop of a child with a job of its own is computed by a call (className={cn(…)}) | static | static | precompute | ok | — | F164 R34.96 (PR 2b): the value is another job's output, which the single-phase planner cannot bind (was the instance-prop-path build error, then the PR 1 fallback); the child's job now runs INSIDE the page's own job (fused) |
 | b-fed-children-repeated-by-list | children with a job of their own passed to a component that repeats them in a list | react | react | ssr | ok | fallback:nested-instance | F164 R34.97 (review r1 D): slot content is printed once and pasted per row, so a job inside it would repeat; it was the lowering nested-instance error |
 | b-island-per-row-in-two-lists | a React island with a per-row prop inside two lists | react | react | ssr | ok | fallback:nested-instance | F164 R34.97 (review r1 E): the server hands an island job one array indexed by ONE list; it was the lowering nested-instance error |
 | b-island-per-row-in-inlined-component | a static wrapper mapping a React island over its own rows | static | static | ssr | ok | — | F164 R34.97 (review r1 F): a row of an inlined component has no slot key for the island job, so the wrapper is the island; it was the lowering nested-instance error |
