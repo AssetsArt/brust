@@ -29,9 +29,9 @@
       "exported": 334,
       "static": 1,
       "native": 0,
-      "react": 282,
+      "react": 283,
       "unresolved": 0,
-      "error": 51
+      "error": 50
     }
   },
   "blockers": [
@@ -69,7 +69,7 @@
       "measuredRows": 6,
       "analysisOnlyRows": 0,
       "appComponents": 12,
-      "libraryComponents": 186
+      "libraryComponents": 187
     },
     {
       "blocker": "fallback:member-tag",
@@ -87,7 +87,7 @@
       "measuredRows": 3,
       "analysisOnlyRows": 0,
       "appComponents": 8,
-      "libraryComponents": 35
+      "libraryComponents": 36
     },
     {
       "blocker": "fallback:jsx-expression",
@@ -141,7 +141,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 27
+      "libraryComponents": 36
     },
     {
       "blocker": "fallback:prop-pattern",
@@ -150,7 +150,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 24
+      "libraryComponents": 23
     },
     {
       "blocker": "fallback:local-component",
@@ -385,15 +385,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 2
-    },
-    {
-      "blocker": "error:request-state-in-render",
-      "kind": "compile error",
-      "classification": "survey truth (compiler refusal)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 1
     },
     {
       "blocker": "fallback:raw-text-child",
