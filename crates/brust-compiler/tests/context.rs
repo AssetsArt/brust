@@ -477,6 +477,8 @@ fn plain_wrappers_are_judged_by_the_total_predicate_and_ordinary_reads_keep_lowe
         "plain-helper-string.tsx",
         // Lead ruling on @57714ece: every allowlisted built-in method on an accepted read or on `new Date(…)`.
         "plain-methods.tsx",
+        // `useState(1234.5)` then `n.toFixed(2)`: a primitive state keeps lowering (native page).
+        "plain-method-state-primitive.tsx",
     ] {
         let (ir, jinja) = page(f);
         assert!(
@@ -672,6 +674,10 @@ fn an_allowlisted_method_on_a_user_defined_receiver_falls_back() {
         "plain-method-loop-local.tsx",
         "plain-method-loop-inline.tsx",
         "plain-method-loop-module.tsx",
+        // Mellow F3: a state value is a receiver only when its initial value is primitive.
+        "plain-method-state-object.tsx",
+        "plain-method-state-prop.tsx",
+        "plain-method-state-lazy.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(

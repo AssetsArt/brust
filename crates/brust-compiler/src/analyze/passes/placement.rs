@@ -118,6 +118,8 @@ struct Placer<'s> {
     module_decls: Vec<crate::ir::ModuleDecl>,
     /// F174: module functions proven to return a primitive (`ir.plain_fns`).
     plain_fns: Vec<String>,
+    /// F173 (Mellow F3): each state's initial value as written; a state is a method receiver only when it starts primitive.
+    state_inits: HashMap<String, RawExpr>,
     /// F174: the verdict on each derived value / module const already judged (a chain of derived values is deep and shared).
     read_memo: std::cell::RefCell<std::collections::HashMap<String, Option<String>>>,
     slot_values: &'s std::collections::HashMap<String, serde_json::Value>,
@@ -259,6 +261,14 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         text: ctx.text,
         module_decls: ir.module_decls.clone(),
         plain_fns: ir.plain_fns.clone(),
+        state_inits: ir
+            .state
+            .iter()
+            .filter_map(|s| match &s.init {
+                Expr::Raw(r) => Some((s.name.clone(), r.clone())),
+                _ => None,
+            })
+            .collect(),
         read_memo: Default::default(),
         slot_values: &ctx.opts.slot_values,
         opts: ctx.opts,
@@ -758,7 +768,28 @@ impl Placer<'_> {
             },
             RawKind::Cond { test, yes, no } => judged(test).or_else(|| go(yes)).or_else(|| go(no)),
             RawKind::Ident { name, kind } => match kind {
-                IdentKind::Prop | IdentKind::State | IdentKind::Store { .. } => None,
+                IdentKind::Prop | IdentKind::Store { .. } => None,
+                // Mellow F3: a state value is a receiver only when its `useState` initial value is primitive (a literal, a
+                // template, an operator over judged reads). An object, a prop, a lazy initializer, refuse; what a setter
+                // writes later is out of model (ledger N2).
+                IdentKind::State => match self.state_inits.get(name).map(|i| &i.kind) {
+                    Some(RawKind::Lit(_)) => None,
+                    Some(RawKind::Template { .. } | RawKind::Unary { .. }) => {
+                        judged(&self.state_inits[name]).map(|_| name.clone())
+                    }
+                    // `&&` / `||` / `??` return an operand; the other operators return a primitive.
+                    Some(RawKind::Binary { op, .. })
+                        if !matches!(
+                            op,
+                            crate::ir::BinOp::And
+                                | crate::ir::BinOp::Or
+                                | crate::ir::BinOp::Nullish
+                        ) =>
+                    {
+                        judged(&self.state_inits[name]).map(|_| name.clone())
+                    }
+                    _ => Some(name.clone()),
+                },
                 // Mellow F2: a list item carries what its list holds (`[{ toString: fmt }].map((r) => r.toString())`).
                 IdentKind::LoopBinding => match self
                     .lists
