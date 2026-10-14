@@ -109,10 +109,10 @@ export default function IconsAndPackages({ blocks }: PackagesData) {
         The server renders it in the worker and the browser hydrates it from a chunk that imports the export. Each package export is one island, however many pages use it. The package must be installed in your project, as it is for any
         other import.
       </p>
-      {/* source: crates/brust-compiler/src/analyze/passes/children.rs:553-590 (island-prop is an error for a function or a value read from state or a store, and for an island in a list that changes with state; island-children is a fallback for JSX children that are not a constant tree; constant children travel to the island as JSON, R34.21) */}
+      {/* source: crates/brust-compiler/src/analyze/passes/children.rs:553-590 (island-prop is a fallback for a function or a value read from state or a store, and for an island in a list that changes with state: the host renders with React, R34.56; island-children is a fallback for JSX children that are not a constant tree; constant children travel to the island as JSON, R34.21) */}
       <p>
-        A package component takes the same props as any island: plain JSON values, either literals or values from your props. A function or a value that changes with state is refused, and so are JSX children that read state, hold a handler, or are not a constant
-        (constant markup between the tags is handed to the island as JSON); render those inside a React component of your own instead.
+        A package component takes the same props as any island: plain JSON values, either literals or values from your props. A function or a value that changes with state makes the component that passes it render with React instead (it cannot be handed to an island as JSON), and so do JSX children that read state, hold a handler, or are not a constant
+        (constant markup between the tags is handed to the island as JSON). To keep the parent native, render those inside a React component of your own.
       </p>
       {/* source: packages/brust/test/e2e-external-island.test.ts and tests/server/external-island.chromium.test.ts — a tiny local package in a static parent and in a native parent: built, server-rendered, hydrated in Chromium with no console error */}
       <CodeBlock code={blocks.warn.code} lang={blocks.warn.lang} cwd={blocks.warn.cwd} html={blocks.warn.html} />
