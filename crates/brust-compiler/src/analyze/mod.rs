@@ -1,3 +1,4 @@
+pub mod aliases;
 pub mod component;
 pub mod const_fold;
 pub mod exports;

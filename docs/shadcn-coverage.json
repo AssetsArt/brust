@@ -16,8 +16,8 @@
       "native": 1,
       "react": 2
     },
-    "islands": 50,
-    "pagesWithNoJs": 18,
+    "islands": 46,
+    "pagesWithNoJs": 21,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -90,15 +90,6 @@
       "libraryComponents": 36
     },
     {
-      "blocker": "fallback:jsx-expression",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 3,
-      "analysisOnlyRows": 0,
-      "appComponents": 3,
-      "libraryComponents": 6
-    },
-    {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -109,6 +100,15 @@
     },
     {
       "blocker": "fallback:child-component",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 6
+    },
+    {
+      "blocker": "fallback:jsx-expression",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
@@ -504,12 +504,12 @@
       "id": "breadcrumb",
       "basis": "measured",
       "tier": "static",
-      "islands": 2,
+      "islands": 0,
       "components": 7,
-      "reactComponents": 1,
-      "jsGzipKb": 85,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
       "codes": [
-        "jsx-expression"
+        "external-component"
       ]
     },
     {
@@ -536,13 +536,11 @@
       "id": "button-alias",
       "basis": "measured",
       "tier": "static",
-      "islands": 1,
+      "islands": 0,
       "components": 2,
-      "reactComponents": 1,
-      "jsGzipKb": 85,
-      "codes": [
-        "external-component"
-      ]
+      "reactComponents": 0,
+      "jsGzipKb": 0,
+      "codes": []
     },
     {
       "id": "button-aschild",
@@ -1130,10 +1128,10 @@
       "id": "spinner",
       "basis": "measured",
       "tier": "static",
-      "islands": 1,
-      "components": 3,
-      "reactComponents": 2,
-      "jsGzipKb": 82,
+      "islands": 0,
+      "components": 2,
+      "reactComponents": 0,
+      "jsGzipKb": 0,
       "codes": [
         "external-component",
         "spread-props"

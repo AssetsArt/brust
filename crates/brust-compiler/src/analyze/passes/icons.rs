@@ -38,6 +38,8 @@ struct Cx<'a> {
     providers: Vec<Option<BTreeMap<String, serde_json::Value>>>,
     /// Icons left as components (not rendered yet, or not renderable).
     unresolved: usize,
+    /// An icon was inlined with a runtime spread of the component's props (R34.77).
+    spread_icon: bool,
 }
 
 pub fn inline(ir: &mut ComponentIR, ctx: &PassCtx<'_>) {
@@ -53,11 +55,13 @@ pub fn inline(ir: &mut ComponentIR, ctx: &PassCtx<'_>) {
         diagnostics: Vec::new(),
         providers: Vec::new(),
         unresolved: 0,
+        spread_icon: false,
     };
     let mut t = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     visit(&mut t, &mut cx);
     ir.template = t;
     ir.icon_requests = cx.requests;
+    ir.icon_spread |= cx.spread_icon;
     ir.diagnostics.extend(cx.diagnostics);
 }
 
@@ -101,6 +105,15 @@ fn literal(e: &Expr, cx: &Cx<'_>) -> Option<serde_json::Value> {
         _ => None,
     })
     .json_literal()
+}
+
+/// `{...props}` or `{...rest}`: the component's own props object (or its rest), nothing computed.
+fn is_own_props_spread(e: &Expr) -> bool {
+    let (Expr::Raw(r) | Expr::Server(crate::ir::ServerExpr(r))) = e else {
+        return false;
+    };
+    matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop }
+        if name == "*" || name == crate::ir::REST_PROPS)
 }
 
 fn provider(n: &mut Node, cx: &mut Cx<'_>) {
@@ -170,7 +183,14 @@ fn icon(n: &mut Node, cx: &mut Cx<'_>) {
     }
     let mut lits: BTreeMap<String, serde_json::Value> = BTreeMap::new();
     let mut dynamic: Vec<String> = Vec::new();
+    let mut spread: Option<Expr> = None;
     for (k, v) in props.iter() {
+        // `{...props}` / `{...rest}` of this component's own props: the rendered `<svg>` takes them last, as
+        // lucide-react does (`{ ...defaults, ...rest }`). Any other spread keeps the island (R34.77).
+        if k == crate::ir::SPREAD_KEY && spread.is_none() && is_own_props_spread(v) {
+            spread = Some(v.clone());
+            continue;
+        }
         match literal(v, cx) {
             Some(j) => {
                 lits.insert(k.clone(), j);
@@ -196,8 +216,16 @@ fn icon(n: &mut Node, cx: &mut Cx<'_>) {
     }
     let key = format!("{}@{loc}", cx.path);
     if let Some(m) = cx.svgs.get(&key)
-        && let Some(el) = parse_svg(&m.svg, &m.base, loc, props, &dynamic)
+        && let Some(mut el) = parse_svg(&m.svg, &m.base, loc, props, &dynamic)
     {
+        if let Some(sp) = spread {
+            let Node::Element { attrs, .. } = &mut el else {
+                cx.unresolved += 1;
+                return;
+            };
+            attrs.push(Attr::Spread(sp));
+            cx.spread_icon = true;
+        }
         *n = el;
         return;
     }

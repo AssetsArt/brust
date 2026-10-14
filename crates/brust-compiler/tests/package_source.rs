@@ -1,6 +1,7 @@
 //! F153c (R34.61, R34.65): a bare import whose package source the build wrote (`.brust/pkg-src`, the
 //! `AnalyzeOptions::packages` map) compiles like app code; `Primitive.<tag>` of the Radix factory is the host element;
 //! anything that cannot be proven keeps the React island of the published export.
+use brust_compiler::analyze::aliases::PathAlias;
 use brust_compiler::analyze::component::{AnalyzeOptions, PackageSources};
 use brust_compiler::ir::{ComponentIR, Tier};
 use brust_compiler::lower::DEFAULT_RUNTIME_IMPORT;
@@ -19,6 +20,7 @@ const BARREL_DIR: &str = ".brust/pkg-src/barrel@1.0.0-00000004";
 struct App {
     root: PathBuf,
     packages: PackageSources,
+    aliases: Vec<PathAlias>,
 }
 
 impl App {
@@ -31,6 +33,7 @@ impl App {
         App {
             root,
             packages: PackageSources::default(),
+            aliases: vec![],
         }
     }
 
@@ -87,6 +90,7 @@ impl App {
         let opts = AnalyzeOptions {
             root: self.root.clone(),
             packages: self.packages.clone(),
+            path_aliases: self.aliases.clone(),
             ..Default::default()
         };
         run_on_compiler_thread(move || {
@@ -140,6 +144,38 @@ fn a_package_component_compiles_from_its_written_source() {
     assert!(!rules(ir).contains(&"external-component".to_string()));
     assert!(jinja.contains("leaf</span>"), "{jinja}");
     assert!(tree.iter().all(|(_, ir, _)| ir.external.is_none()));
+}
+
+/// The app's `tsconfig` `paths` (R34.76) belong to the app: a package's own `@/lib/x` is not the app's `lib/x`.
+#[test]
+fn the_apps_path_aliases_do_not_rewrite_a_package_source() {
+    let mut app = App::new();
+    app.file(
+        "lib/x.tsx",
+        "export function X() { return <i>from-app</i> }\n",
+    )
+    .file(
+        &format!("{LEAF_DIR}/src/leaf.tsx"),
+        "import { X } from '@/lib/x'\nexport function Leaf() { return <b><X /></b> }\n",
+    )
+    .file(
+        &format!("{LEAF_DIR}/src/lib/x.tsx"),
+        "export function X() { return <i>from-package</i> }\n",
+    )
+    .map("", "leafy", &format!("{LEAF_DIR}/src/leaf.tsx"))
+    .map(LEAF_DIR, "@/lib/x", &format!("{LEAF_DIR}/src/lib/x.tsx"));
+    app.aliases = vec![PathAlias {
+        pattern: "@/*".into(),
+        targets: vec!["*".into()],
+    }];
+    let tree = app.compile("import { Leaf } from 'leafy'\nexport default function App() { return <div><Leaf /></div> }");
+    let (_, _, jinja) = root_of(&tree);
+    assert!(!jinja.contains("from-app"), "{jinja}");
+    assert!(
+        tree.iter().all(|(src, _, _)| src != "lib/x.tsx"),
+        "the app's lib/x compiled into a package's tree: {:?}",
+        tree.iter().map(|t| &t.0).collect::<Vec<_>>()
+    );
 }
 
 #[test]
