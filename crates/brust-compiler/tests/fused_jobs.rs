@@ -456,3 +456,23 @@ fn a_react_parent_keeps_no_fused_child() {
     );
     assert!(next.fused.is_empty(), "{:?}", next.fused);
 }
+
+/// Review r1 (Afrojack): the parent's own `children` is markup, never a job input, so a child fed it
+/// is not fused (the job would read it as absent); without the guard it was `Prop { path: "children" }`.
+#[test]
+fn a_child_fed_the_parents_children_is_not_fused() {
+    let dir = tmp();
+    std::fs::write(dir.join("link.tsx"), LINK).unwrap();
+    std::fs::write(
+        dir.join("next.tsx"),
+        NEXT.replace("active }: any", "children }: any")
+            .replace("isActive={active}", "isActive={children}"),
+    )
+    .unwrap();
+    let by_id = compile(&dir, "next.tsx");
+    let next = by_id
+        .values()
+        .find(|c| c.source.ends_with("next.tsx"))
+        .unwrap();
+    assert!(next.fused.is_empty(), "{:?}", next.fused);
+}

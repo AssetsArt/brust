@@ -1453,6 +1453,11 @@ impl Walker<'_, '_> {
                         return false;
                     }
                     if let Some(path) = self.prop_path(v) {
+                        // This component's own `children` is markup, never a job input: the fused job
+                        // would read it as absent (review r1, Afrojack). Whole-component fallback (T2).
+                        if path.split(['.', '[']).next() == Some("children") {
+                            return false;
+                        }
                         FusedInput::Prop { path }
                     } else if let Some(value) = match v {
                         Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {

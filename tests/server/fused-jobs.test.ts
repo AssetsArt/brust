@@ -63,8 +63,9 @@ async function get(s: Server, page: string): Promise<string> {
 test('no component of these pages is React (each was an island before fusion)', () => {
   for (const dist of dists) {
     const m = JSON.parse(readFileSync(join(app, dist, 'manifest.json'), 'utf8'))
-    const comps = Object.values(m.components) as { tier: string }[]
-    expect({ dist, react: comps.filter((c) => c.tier === 'react').length }).toEqual({ dist, react: 0 })
+    // The children-label pin (below) may fall back: only the five shadcn pages' components count.
+    const comps = Object.entries(m.components).filter(([id]) => !id.startsWith('childrenLabel')) as [string, { tier: string }][]
+    expect({ dist, react: comps.filter(([, c]) => c.tier === 'react').map(([id]) => id) }).toEqual({ dist, react: [] })
   }
 })
 
@@ -73,8 +74,8 @@ test('every page is served byte-identically with the fused jobs evaluated at bui
 })
 
 /** React's server render of a fixture page, from the fixture (its own react, cn, class-variance-authority, radix-ui). */
-function react(page: string): string {
-  const code = `import { renderToStaticMarkup } from 'react-dom/server'; import { createElement } from 'react'; import Page from './pages/${page}'; process.stdout.write(renderToStaticMarkup(createElement(Page)))`
+function react(page: string, from = `./pages/${page}`): string {
+  const code = `import { renderToStaticMarkup } from 'react-dom/server'; import { createElement } from 'react'; import Page from '${from}'; process.stdout.write(renderToStaticMarkup(createElement(Page)))`
   const r = Bun.spawnSync([process.execPath, '-e', code], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   if (r.exitCode !== 0) throw new Error(r.stderr.toString())
   return r.stdout.toString()
@@ -109,4 +110,12 @@ test("every page serves React's markup, folded and per request", async () => {
   }
   if (process.env.FUSED_DUMP) Bun.write(process.env.FUSED_DUMP, JSON.stringify(bad))
   expect(bad.map((b) => `${b.page} (${b.how})`)).toEqual([])
+})
+
+test("review r1 pin: a child fed the parent's own children is not fused and serves React's markup", async () => {
+  const theirs = react('children-label', './fused/children-label')
+  expect(theirs).toContain('class="cell on"')
+  // The parent falls back to a React island: compare the markup inside its host element.
+  const same = (h: string) => h.replace(/>\s+</g, '><').replace(/<brust-island[^>]*>|<\/brust-island>/g, '')
+  for (const s of [folded, perRequest]) expect(same(body(await get(s, 'children-label'), '<table'))).toBe(same(theirs))
 })
