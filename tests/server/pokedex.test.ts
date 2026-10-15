@@ -116,8 +116,30 @@ test('catch-all is a static document: 404, 0 Bun calls on the first request, no 
   expect(html).not.toContain('<script')
   expect(html).not.toContain('brust-island')
   expect(await srv.stats()).toMatchObject({ loader_calls: b.loader_calls, job_calls: b.job_calls })
-  const css = await fetch(`${srv.base}/public/app.css`)
-  expect(css.status).toBe(200); expect(css.headers.get('content-type')).toContain('text/css')
+  const fav = await fetch(`${srv.base}/public/favicon.svg`)
+  expect(fav.status).toBe(200)
+})
+
+test('global CSS: app.css is imported, not prebuilt: every page (the 404 included) links the hashed stylesheet exactly once, never /public/app.css', async () => {
+  const hrefs = new Set<string>()
+  for (const p of ['/', '/pokedex', '/pokemon/pikachu', '/type-chart', '/unified', '/nope/really']) {
+    const { html } = await get(p)
+    const links = [...html.matchAll(/<link [^>]*rel="stylesheet"[^>]*href="(\/_brust\/client\/app-[0-9a-f]{10}\.css)"/g)].map((m) => m[1]!)
+    expect([p, links.length]).toEqual([p, 1])
+    expect([p, /\/public\/app\.css/.test(html)]).toEqual([p, false])
+    hrefs.add(links[0]!)
+  }
+  expect(hrefs.size).toBe(1) // the same file on every page
+  const css = await fetch(`${srv.base}${[...hrefs][0]}`)
+  expect(css.status).toBe(200)
+  expect(css.headers.get('content-type')).toContain('text/css')
+  expect(css.headers.get('cache-control')).toContain('immutable')
+  const text = await css.text()
+  // the pokedex's own tokens (app.css @theme) and a custom variant (data-mode dark), not just Tailwind's defaults
+  expect(text).toContain('--color-brand-500:')
+  expect(text).toContain('.bg-brand-500{')
+  expect(text).toContain('[data-mode=dark]')
+  expect((await fetch(`${srv.base}/public/app.css`)).status).toBe(404)
 })
 
 test('cookie mode=light reaches the first paint', async () => {

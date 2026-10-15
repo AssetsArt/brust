@@ -45,6 +45,9 @@ const R = `import { useState } from 'react'\n`
 const RADIX_PRIMITIVE = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/primitive.tsx'), 'utf8')
 const RADIX_LABEL = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/label.tsx'), 'utf8')
 const PKG_PRIMITIVE: StubPackage = { files: { 'src/primitive.tsx': RADIX_PRIMITIVE } }
+// The state Providers the native-provider rows use (2c-2): one source, shared with the compiler's tests.
+const NATIVE_PROV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Prov.tsx'), 'utf8')
+
 const PKG_LEAF = `import * as React from 'react'\nimport { Primitive } from '@radix-ui/react-primitive'\nexport const Root = React.forwardRef(function Root(props: any, forwardedRef: any) { return <Primitive.div {...props} ref={forwardedRef} /> })`
 const SLOT_BTN = `import { Slot } from 'radix-ui'\nexport default function Btn({ asChild = false, variant = 'default', className, ...props }: any) { const Comp = asChild ? Slot.Root : 'button'; return <Comp data-slot="btn" data-variant={variant} className={'base ' + (className ?? '')} {...props} /> }`
 // F149: shadcn's Badge (cva + cn).
@@ -1060,6 +1063,10 @@ export const rows: Row[] = [
     snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
     packages: { leafy: { files: { 'src/leaf.tsx': `import * as React from 'react'\nfunction attrs(): any { return { role: 'note' } }\nexport const Root = React.forwardRef(function Root(props: any, ref: any) { return <div {...attrs()} {...props} ref={ref} /> })` } } },
     note: 'F153c fail closed: spread-props in the source, so the island of the published export' },
+  { id: 'b-absent-prop-default', category: 'B', authoring: 'a native child whose defaulted prop the call site omits (`<Ch />`, `defaultOpen = false`), in a static page', expect: 'static', jobs: 0,
+    snippet: `import Ch from './Ch'\nexport default function C() { return <main><Ch /><Ch defaultOpen={null} /></main> }`,
+    files: { 'Ch.tsx': `import { useState } from 'react'\nexport default function Ch({ defaultOpen = false }: any) { const [open, setOpen] = useState(defaultOpen); return <button aria-expanded={open} onClick={() => setOpen(!open)}>x</button> }` },
+    note: 'F234: an omitted prop is left out of the x-props seed (the default applies on the client as on the server); an explicit null stays null' },
   { id: 'b-pkg-namespace-barrel', category: 'B', authoring: 'a component reached through a package barrel (`export * as X from`)', expect: 'static', jobs: 0,
     snippet: `import { Leafy } from 'barrel'\nexport default function C() { return <section><Leafy.Root>x</Leafy.Root></section> }`,
     packages: { barrel: { files: { 'src/index.ts': `export * as Leafy from 'leafy'` } }, leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
@@ -1471,4 +1478,37 @@ export const rows: Row[] = [
     snippet: `import Child from './Child'\nasync function act() { 'use server' }\nexport default function C() { return <Child act={act} /> }`,
     files: { 'Child.tsx': `export default function Child({ act }: any) { return <button onClick={() => act()}>go</button> }` } },
 
+  { id: 'c-useid-in-attribute', category: 'C', authoring: 'useId() called in attribute values of the returned tree', expect: 'native', jobs: 0,
+    snippet: `import { useId, useState } from 'react'\nexport default function C({ label }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}><label htmlFor={useId()}>{label}</label><input id={useId()} /><span>{n}</span></div> }`,
+    note: 'R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return' },
+  { id: 'c-useid-in-conditional', category: 'C', authoring: 'useId() called in a branch of the returned tree', expect: 'react',
+    snippet: `import { useId, useState } from 'react'\nexport default function C({ label }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}>{n ? <input id={useId()} /> : null}<span>{label}</span></div> }`,
+    note: 'R34.120: a hook in a conditional position stays refused (hook-in-expression)' },
+  { id: 'c-native-provider-state', category: 'C', authoring: 'a Provider whose value is state, with markup and consumers as its content', expect: 'static', jobs: 0,
+    snippet: `import { P, PTrigger, PBody } from './Prov'\nexport default function C() { return <main><P><PTrigger>One</PTrigger><PBody><p>one body</p></PBody></P></main> }`,
+    files: { 'Prov.tsx': NATIVE_PROV },
+    note: 'R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island' },
+  { id: 'c-native-provider-two-sites', category: 'C', authoring: 'two call sites of a state Provider with different text', expect: 'static', jobs: 0,
+    snippet: `import { P, PTrigger, PBody } from './Prov'\nexport default function C() { return <main><P><PTrigger>One</PTrigger><PBody><p>one body</p></PBody></P><P><PTrigger>Two</PTrigger><PBody><p>two body, other text</p></PBody></P></main> }`,
+    files: { 'Prov.tsx': NATIVE_PROV },
+    note: 'R34.124: one clone per call site (own jinja and ids), one shared factory module for the equal chunks' },
+  { id: 'c-native-provider-handler-in-content', category: 'C', authoring: 'a page handler written in the content of a state Provider', expect: 'react',
+    snippet: `import { useState } from 'react'\nimport { P, PTrigger } from './Prov'\nexport default function C() { const [n, setN] = useState(0); return <main><P><PTrigger>go</PTrigger><button onClick={() => setN(n + 1)}>{n}</button></P></main> }`,
+    files: { 'Prov.tsx': NATIVE_PROV },
+    note: 'R34.125: a page-owned handler in the content cannot move into the clone (specialise-unsupported; the island keeps it)' },
+  { id: 'c-native-provider-caller-prop', category: 'C', authoring: 'a prop of the calling component read in the content of a state Provider', expect: 'static', jobs: 1,
+    snippet: `import { P, PTrigger } from './Prov'\nexport default function C({ title }: { title: string }) { return <main><P><PTrigger>{title}</PTrigger></P></main> }`,
+    files: { 'Prov.tsx': NATIVE_PROV },
+    note: 'R34.123 (S2): a name of the rendering component would read the clone\'s own members; the Provider stays the island' },
+  { id: 'c-native-provider-outer-frame', category: 'C', authoring: 'a consumer of an outer Provider inside another Provider\'s content', expect: 'static', jobs: 1,
+    snippet: `import { P, PTrigger, Q, QTrigger } from './Prov'\nexport default function C() { return <main><P><Q><PTrigger>outer reader</PTrigger><QTrigger>inner</QTrigger></Q></P></main> }`,
+    files: { 'Prov.tsx': NATIVE_PROV },
+    note: 'A1: the outer frame\'s expressions would be read against the inner clone\'s members' },
+  { id: 'c-native-provider-ctx-in-effect', category: 'C', authoring: 'a consumer that reads the context inside an effect', expect: 'static', jobs: 1,
+    snippet: `import { P, PEffect } from './Prov'\nexport default function C() { return <main><P><PEffect>note</PEffect></P></main> }`,
+    files: { 'Prov.tsx': NATIVE_PROV },
+    note: 'context-escape: a context local is not a value in code printed as written' },
+  { id: 'c-handler-binding-named-a', category: 'C', authoring: 'a handler that reads a component binding named a', expect: 'native', jobs: 0,
+    snippet: `import { useRef, useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); const a = useRef<HTMLButtonElement>(null); return <button ref={a} onClick={() => { setN(n + 1); console.log(a.current) }}>{n}</button> }`,
+    note: 'F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array' },
 ]

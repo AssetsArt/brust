@@ -4,7 +4,7 @@ const __attr = (v) => (typeof v === "boolean" ? null : v)
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("input_e0292c7b", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const on = signal(false)
-  const _h1 = (...a) => (() => on.set(!on()))(...a)
+  const _h1 = (...__args) => (() => on.set(!on()))(...__args)
   const _c1 = computed(() => __attr(on() ? "on_fx" : "off_fx"))
   const _c2 = computed(() => __text(on() ? "on" : "off"))
   return { on, _h1, _c1, _c2 }
