@@ -295,6 +295,8 @@ test('a registry URL whose item is already installed is skipped on a second run;
   const first = await init(d, { components: [url] })
   expect(first.calls.at(-1)!.some((a) => a.endsWith('acme-card-0.json'))).toBe(true)
   expect(first.lines.join('\n')).toContain('third-party code')
+  expect(first.lines.join('\n')).toContain('registryDependencies') // F249: the unvetted boundary is in the warning
+  expect(first.lines.join('\n')).toContain('npm packages')
   mkdirSync(join(d, 'components/ui'), { recursive: true })
   writeFileSync(join(d, 'components/ui/acme-card.tsx'), 'export {}')
   const second = await init(d, { components: [url] })
