@@ -48,6 +48,19 @@ impl ModuleCache {
         out
     }
 
+    /// F188: records the package export that `key`'s component is written as in app code. The first spelling wins; the
+    /// component's other readers keep their `Rc` (the field is read by the build, from `done()`). Not `Done` (an import
+    /// cycle reaching the component while it compiles) is a no-op on purpose: the build then keeps the source import.
+    pub fn set_dist(&mut self, key: &str, dist: crate::ir::ExternalRef) {
+        if let Some(Entry::Done(ir)) = self.map.get_mut(key)
+            && ir.dist.is_none()
+        {
+            let mut next = (**ir).clone();
+            next.dist = Some(dist);
+            *ir = Rc::new(next);
+        }
+    }
+
     /// Marks `key` as the component the run was asked for.
     pub fn set_root(&mut self, key: String) {
         self.root = Some(key);

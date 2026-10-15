@@ -200,6 +200,11 @@ pub struct ComponentIR {
     /// `package_<specifier>_<export>` made filename-safe, not a file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external: Option<ExternalRef>,
+    /// Set on a component compiled from a package source and written in app code as a package import (F188): the
+    /// published export a React island or a revive hook imports instead of the source (R34.62), so every user of a
+    /// package shares the dist's one module instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dist: Option<ExternalRef>,
     /// The name a React island imports this component by from `source`; absent for the default export.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export: Option<String>,
@@ -279,6 +284,10 @@ pub struct ComponentIR {
     /// passes its children on to a component that does (F169, transitive).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub repeats_children: bool,
+    /// This component hands its own `{children}` to a component that prints them under a native host element (F214,
+    /// transitive): directives in the slot content its caller gives would be bound by that host, not by the caller.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hosts_children: bool,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -389,6 +398,7 @@ impl ComponentIR {
             id,
             source,
             external: None,
+            dist: None,
             export: None,
             unexported: false,
             tier: Tier::Pending,
@@ -411,6 +421,7 @@ impl ComponentIR {
             shadowed_props: Vec::new(),
             live_forwards: Vec::new(),
             repeats_children: false,
+            hosts_children: false,
             state: vec![],
             derived: vec![],
             effects: vec![],
