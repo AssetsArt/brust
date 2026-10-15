@@ -29,7 +29,7 @@ const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix',
   'ctx-top-param-default', 'ctx-top-param-pattern', 'ctx-top-pattern-binding', 'ctx-top-comma', 'ctx-top-state-element', 'ctx-top-loop-element',
   // F215: a module-level statement that changes a module binding is not in the copied code (main printed "a" for "a,b"
   // and "x" for "y"); the page is React now.
-  'ctx-side-push', 'ctx-side-closure', 'ctx-side-init', 'ctx-side-writer', 'ctx-side-iife', 'ctx-side-method', 'ctx-side-import',
+  'ctx-side-push', 'ctx-side-closure', 'ctx-side-init', 'ctx-side-writer', 'ctx-side-iife', 'ctx-side-method', 'ctx-side-import', 'ctx-side-param', 'ctx-side-import-call', 'ctx-side-pattern',
   'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call', 'ctx-hid-provfed', 'ctx-hid-bare',
 ]
 // Imported plain value: stays a static page (no script), and renders like React.
@@ -149,7 +149,7 @@ for (const id of ISLAND_PAGES) {
       expect(html).not.toContain('forged')
     } else if (id.startsWith('ctx-side-')) {
       // The value React computes after the module's own statements ran.
-      expect(html).toMatch(id === 'ctx-side-closure' ? /<section ?>y<\/section>/ : /<section ?>a,b<\/section>/)
+      expect(html).toMatch(id === 'ctx-side-closure' ? /<section ?>y<\/section>/ : id === 'ctx-side-param' ? /<section ?>b<\/section>/ : /<section ?>a,b<\/section>/)
     } else if (id.startsWith('ctx-plain-helper-') || /^ctx-plain-method-(computed|optional)/.test(id) || id === 'ctx-top-imp-object') {
       // React's own markup is the check (`toContain(react)` above): the helper's value, not an element.
     } else {

@@ -793,6 +793,14 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
         "side-handed-writer.tsx",
         // Mellow F2: a statement that changes an imported module's object; the import is read.
         "side-import.tsx",
+        // Round 2 (Mellow F3): a declaration calling an app import, directly or through a module function.
+        "side-import-call.tsx",
+        "side-app-caller.tsx",
+        // Mellow F4: a write through a callback's parameter to a module object handed in a literal or as the receiver.
+        "side-param-write.tsx",
+        "side-param-array.tsx",
+        // Mellow F5: a destructuring default that runs a writer.
+        "side-pattern-default.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(
@@ -815,6 +823,8 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
         "side-unread.tsx",
         "side-callables-pure.tsx",
         "side-class-pure.tsx",
+        // Round 2: a package handed a callback that writes through its own parameter and calls app code (trusted, N1).
+        "side-package-callback.tsx",
     ] {
         let (ir, jinja) = page(f);
         assert!(

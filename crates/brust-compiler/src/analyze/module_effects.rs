@@ -60,7 +60,10 @@ pub fn module_effect(
     ast: &js_ast::Ast<'_>,
     names: &NameTable<'_>,
     text: &[u8],
+    path: &str,
 ) -> Option<(u32, String)> {
+    // Inside a package source the build wrote, a relative import is the package's own code (trusted like the package).
+    let in_package = crate::analyze::modules::is_package_source(path);
     let key = |r: js_ast::Ref| names.key_of(r);
     // Every module binding, and which of them are functions (a function handed to a call is not filled).
     let mut module: HashSet<u32> = HashSet::new();
@@ -171,6 +174,43 @@ pub fn module_effect(
             module.contains(&k)
         }
     };
+    // Round 2 (Mellow F3): an import of app code (a relative or aliased specifier) may change its own module's state,
+    // which this component can read; a bare package specifier is trusted (ledger N1).
+    let app_import = |r: js_ast::Ref| {
+        !in_package
+            && names
+                .import_of(r)
+                .is_some_and(|(src, _)| app_specifier(src))
+    };
+    let calls_app = |c: &js_ast::Expr| {
+        let target = match &c.data {
+            E::ECall(call) => &call.target,
+            E::ENew(n) => &n.target,
+            _ => return false,
+        };
+        match &target.data {
+            E::EImportIdentifier(id) => app_import(id.ref_),
+            E::EDot(d) => chain_root(&d.target).is_some_and(app_import),
+            _ => false,
+        }
+    };
+    // Round 2 (Mellow F4): a HANDED writer may change what it was handed or app state: it writes or calls a mutating
+    // method through a root that is not a local it declares (a parameter, an outer name, `this`), calls app code, or names
+    // a handed writer. Handing one to a call that is not a package's is not inert (`[cfg].forEach((o) => { o.v = 'b' })`).
+    let handed = |w: &Walk, handed_writers: &HashSet<u32>| {
+        let outer = |r: &js_ast::Ref| w.params.contains(r) || !w.declared.contains(r);
+        w.opaque_write
+            || w.member_written.iter().any(outer)
+            || w.member_writes.iter().any(|(r, _)| outer(r))
+            || w.used.iter().any(|r| handed_writers.contains(&key(*r)))
+            || w.calls.iter().any(|c| {
+                calls_app(c)
+                    || matches!(&c.data, E::ECall(call) if matches!(&call.target.data, E::EDot(d)
+                        if MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+                            && !crate::analyze::plain_fn::fresh(&d.target)
+                            && chain_root(&d.target).is_none_or(|r| outer(&r))))
+            })
+    };
     let writes = |w: &Walk, writers: &HashSet<u32>| {
         let roots = w
             .assigned
@@ -202,6 +242,7 @@ pub fn module_effect(
                 }
             })
     };
+    let mut handed_writers: HashSet<u32> = HashSet::new();
     let mut writers: HashSet<u32> = HashSet::new();
     loop {
         let before = writers.len();
@@ -214,12 +255,29 @@ pub fn module_effect(
             break;
         }
     }
+    handed_writers.extend(writers.iter().copied());
+    loop {
+        let before = handed_writers.len();
+        for (ks, w) in &walks {
+            if !ks.iter().all(|k| handed_writers.contains(k)) && handed(w, &handed_writers) {
+                handed_writers.extend(ks.iter().copied());
+            }
+        }
+        if handed_writers.len() == before {
+            break;
+        }
+    }
     let walk_writes = |n: &dyn Fn(&mut Walk)| {
         let mut w = Walk::default();
         n(&mut w);
         writes(&w, &writers)
     };
     let call_writes = |e: &js_ast::Expr| walk_writes(&|w| w.expr(e));
+    let call_hands = |e: &js_ast::Expr| {
+        let mut w = Walk::default();
+        w.expr(e);
+        handed(&w, &handed_writers)
+    };
     let inert = |e: &js_ast::Expr| {
         Inert {
             names,
@@ -229,6 +287,8 @@ pub fn module_effect(
             writers: &writers,
             code: &code,
             call_writes: &call_writes,
+            call_hands: &call_hands,
+            app_import: &app_import,
         }
         .expr(e, 0)
     };
@@ -253,8 +313,11 @@ pub fn module_effect(
                     }
                     "a class whose code may change a module binding"
                 }
+                // Mellow F5: a binding pattern's defaults and computed keys run at declaration too.
                 S::SLocal(l) => {
-                    if l.decls.iter().all(|d| d.value.as_ref().is_none_or(&inert)) {
+                    if l.decls.iter().all(|d| {
+                        d.value.as_ref().is_none_or(&inert) && pattern_all(&d.binding, &inert)
+                    }) {
                         continue;
                     }
                     "a declaration whose value runs code that may change a module binding"
@@ -292,6 +355,10 @@ struct Inert<'a, 'n> {
     code: &'a HashSet<u32>,
     /// The writer rule over all the code of one expression (`writers` is its fixpoint over module bindings).
     call_writes: &'a dyn Fn(&js_ast::Expr) -> bool,
+    /// The handed-writer rule over all the code of one expression.
+    call_hands: &'a dyn Fn(&js_ast::Expr) -> bool,
+    /// An import of app code (Mellow F3).
+    app_import: &'a dyn Fn(js_ast::Ref) -> bool,
 }
 
 impl Inert<'_, '_> {
@@ -342,9 +409,25 @@ impl Inert<'_, '_> {
             // Round 1 (Mellow F1, Afrojack F1): whatever a call is handed or called on may run (an IIFE, a callback, a
             // function in an array, a writer named in it): no code in the call and no binding it names may be a writer.
             E::ECall(_) | E::ENew(_) if (self.call_writes)(e) => false,
+            // Round 2 (Mellow F4): a call that is not a package's may run code it is handed or called on; none of it may
+            // write through what it was handed or call app code.
+            E::ECall(c) if !self.package_rooted(&c.target) && (self.call_hands)(e) => false,
+            E::ENew(n) if !self.package_rooted(&n.target) && (self.call_hands)(e) => false,
             E::ECall(c) => self.call(&c.target, c.args.iter(), depth),
             E::ENew(n) => self.call(&n.target, n.args.iter(), depth),
             _ => false,
+        }
+    }
+
+    /// A callee that is a package's own code (a bare-specifier import, or a member of one).
+    fn package_rooted(&self, target: &js_ast::Expr) -> bool {
+        let mut e = target;
+        loop {
+            match &e.data {
+                E::EDot(d) => e = &d.target,
+                E::EImportIdentifier(id) => return !(self.app_import)(id.ref_),
+                _ => return false,
+            }
         }
     }
 
@@ -385,7 +468,8 @@ impl Inert<'_, '_> {
         };
         let callee_ok = match &target.data {
             E::EIdentifier(id) => module_code_ok(self.names.key_of(id.ref_)),
-            E::EImportIdentifier(_) => true,
+            // Mellow F3: app code may change its own module's state; a package's is trusted (ledger N1).
+            E::EImportIdentifier(id) => !(self.app_import)(id.ref_),
             // A mutating method changes its receiver, unless that is a fresh copy (`[…].slice().sort()`); a method of a
             // module object or class runs its code.
             E::EDot(d) => {
@@ -393,7 +477,8 @@ impl Inert<'_, '_> {
                     || crate::analyze::plain_fn::fresh(&d.target))
                     && chain_root(&d.target).is_none_or(|r| {
                         let k = self.names.key_of(r);
-                        !self.code.contains(&k) || !self.writers.contains(&k)
+                        (!self.code.contains(&k) || !self.writers.contains(&k))
+                            && !(self.app_import)(r)
                     })
                     && self.expr(&d.target, depth + 1)
             }
@@ -415,5 +500,29 @@ impl Inert<'_, '_> {
                     });
                 !hands_object && self.expr(a, depth + 1)
             })
+    }
+}
+
+/// Mellow F3: a specifier that names app code: relative, absolute, or a path alias (`@/`, `~/`, `#`). The compiler does
+/// not resolve aliases here, so these spellings are treated as app code (fail closed); any other is a package.
+fn app_specifier(src: &str) -> bool {
+    src.starts_with('.')
+        || src.starts_with('/')
+        || src.starts_with("@/")
+        || src.starts_with("~/")
+        || src.starts_with('#')
+}
+
+/// Mellow F5: `f` holds for every expression a binding pattern evaluates: defaults and keys, at any depth.
+fn pattern_all(b: &js_ast::Binding, f: &dyn Fn(&js_ast::Expr) -> bool) -> bool {
+    match b.data {
+        js_ast::b::B::BArray(arr) => arr
+            .items()
+            .iter()
+            .all(|item| item.default_value.as_ref().is_none_or(f) && pattern_all(&item.binding, f)),
+        js_ast::b::B::BObject(obj) => obj.properties().iter().all(|p| {
+            f(&p.key) && p.default_value.as_ref().is_none_or(f) && pattern_all(&p.value, f)
+        }),
+        js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => true,
     }
 }

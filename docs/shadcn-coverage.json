@@ -352,6 +352,15 @@
       "libraryComponents": 45
     },
     {
+      "blocker": "fallback:module-side-effect",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 35
+    },
+    {
       "blocker": "Presence",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
@@ -404,15 +413,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 14
-    },
-    {
-      "blocker": "fallback:module-side-effect",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 13
     },
     {
       "blocker": "fallback:browser-global",
