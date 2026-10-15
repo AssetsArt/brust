@@ -22,6 +22,8 @@ pub struct BodyDecls {
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (R34.14).
     pub props_rest: Option<String>,
+    /// The whole-props parameter's local when a `...rest` removed its prop (`ComponentIR::props_whole`).
+    pub props_whole: Option<String>,
     /// The polymorphic tag `const Comp = asChild ? Slot.Root : "host"` (R34.28).
     pub poly: Option<PolyTag>,
     pub state: Vec<StateDecl>,
@@ -354,7 +356,8 @@ fn read_props(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, out: &mut BodyDecls)
             }
             // the plain `props` binding is not a prop named `props`: a rest must not leave a key of that name out
             if out.props_rest.is_some() {
-                out.props.remove(whole);
+                let gone = out.props.remove(whole);
+                out.props_whole = Some(gone.local);
             }
         }
         B::BObject(obj) => read_object_pattern(&obj, r, out, &pattern),
@@ -1603,6 +1606,9 @@ fn read_hook(
 ) {
     let imported = hm.foreign;
     let (hook, vloc) = (site.hook, site.vloc);
+    // Where the call's arguments are declared: just ahead of the hook's own declarations (which sit at `vloc`), so the
+    // chunk, which prints in this order, has them before a state or a derived value the hook seeds from them.
+    let ploc = vloc.saturating_sub(1);
     let path = hm.parsed.path();
     let fail = |out: &mut BodyDecls, rule: &str, why: String| {
         out.fallback(rule, why, vloc, HOOK_REMEDY);
@@ -1899,10 +1905,12 @@ fn read_hook(
                     Some(alias) => alias,
                     None => {
                         let name = gen_of(&hnames, *p);
-                        let expr = match call_arg {
+                        let mut expr = match call_arg {
                             Some(a) => r.expr(a),
                             None => undefined_at(vloc),
                         };
+                        // Declared at the call site, before what the hook declares: the chunk prints in this order.
+                        relocate(&mut expr, ploc);
                         out.derived.push(DerivedDecl {
                             name: name.clone(),
                             expr: Expr::Raw(expr),
@@ -1952,10 +1960,11 @@ fn read_hook(
                         .rev()
                         .find(|(k, _)| *k == m.key)
                         .map(|(_, v)| *v);
-                    let raw = match value {
+                    let mut raw = match value {
                         Some(v) => r.expr(v),
                         None => undefined_at(vloc),
                     };
+                    relocate(&mut raw, ploc);
                     match (m.default, value.and_then(|a| ident_alias(r.names, a))) {
                         (None, Some(alias)) => param_aliases.push((m.local, alias)),
                         (None, None) => {
@@ -2010,22 +2019,21 @@ fn read_hook(
         hnames.set_alias(p, a);
     }
 
-    let start = Marks::of(out);
-    let reason_before = out.react_reason.clone();
-    let saved = std::mem::take(&mut out.classified_hooks);
-    out.inline.stack.push(key);
-    let returned = {
+    // The call's defaulted arguments are declared before the hook's own (and before the mark below, which points what
+    // the hook declares at the call site): `name === undefined ? default : name`, once the aliases above are set.
+    {
         let print = |js: Js<'_>, a: &Aliases| print_js_with(hm.parsed, hm.ast, a, js);
         let mut hr = Reader::new(&mut hnames, &print);
-        for (name, raw, default) in defaulted {
-            let d = hr.expr(&default);
+        for (name, raw, default) in defaulted.drain(..) {
+            let mut d = hr.expr(&default);
+            relocate(&mut d, ploc);
             out.derived.push(DerivedDecl {
                 name,
                 expr: Expr::Raw(RawExpr {
-                    loc: vloc,
+                    loc: ploc,
                     kind: RawKind::Cond {
                         test: Box::new(RawExpr {
-                            loc: vloc,
+                            loc: ploc,
                             kind: RawKind::Binary {
                                 op: crate::ir::BinOp::StrictEq,
                                 left: Box::new(raw.clone()),
@@ -2038,6 +2046,15 @@ fn read_hook(
                 }),
             });
         }
+        out.diagnostics.append(&mut hr.diagnostics);
+    }
+    let start = Marks::of(out);
+    let reason_before = out.react_reason.clone();
+    let saved = std::mem::take(&mut out.classified_hooks);
+    out.inline.stack.push(key);
+    let returned = {
+        let print = |js: Js<'_>, a: &Aliases| print_js_with(hm.parsed, hm.ast, a, js);
+        let mut hr = Reader::new(&mut hnames, &print);
         for (h, stmt, f) in &helpers {
             let e = hr.function_decl(stmt, f);
             out.derived.push(DerivedDecl {

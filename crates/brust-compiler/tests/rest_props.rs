@@ -102,7 +102,7 @@ fn has(o: &Out, class: DiagClass, rule: &str) -> bool {
 const STATE: &str = "import { useState } from 'react'\n";
 
 #[test]
-fn a_state_value_into_a_spread_keeps_the_parent_on_react() {
+fn a_state_value_into_a_spread_is_bound_by_the_parent_but_a_merging_key_keeps_react() {
     // An event handler is bound by the parent since S1.3 (tests/spread_handlers.rs).
     let f = lower(
         "P.tsx",
@@ -112,13 +112,26 @@ fn a_state_value_into_a_spread_keeps_the_parent_on_react() {
     );
     assert_eq!(f.tier, Tier::Native, "{:?}", f.diags);
     assert!(f.jinja.contains(" x-on-click=\"_h1\""), "{}", f.jinja);
+    // A state value that lands in the spread is bound by the parent too (2b-handlers, R34.18 extended): the
+    // attribute a hand-written `<div title={n}>` would carry, and the child stays unlinked.
     let s = lower(
         "P.tsx",
         &format!(
             "{STATE}import Card from './Card'\nexport default function P() {{ const [n, setN] = useState(0); return <div><button onClick={{() => setN(n + 1)}}>+</button><Card title={{n}} /></div> }}"
         ),
     );
-    assert!(matches!(s.tier, Tier::React { .. }), "{:?}", s.diags);
+    assert_eq!(s.tier, Tier::Native, "{:?}", s.diags);
+    let html = render(&s.jinja, serde_json::json!({}));
+    assert!(html.contains(" x-bind-title="), "{html}");
+    assert!(!html.contains("x-props-bind"), "{html}");
+    // `style` merges (the child may set its own): it is not bound through a spread, and the parent stays on React.
+    let c = lower(
+        "P.tsx",
+        &format!(
+            "{STATE}import Card from './Card'\nexport default function P() {{ const [n, setN] = useState(0); return <div><button onClick={{() => setN(n + 1)}}>+</button><Card style={{{{ color: n > 0 ? 'red' : 'blue' }}}} /></div> }}"
+        ),
+    );
+    assert!(matches!(c.tier, Tier::React { .. }), "{:?}", c.diags);
     // A state value the child binds by name is the ordinary linked-prop path: native.
     let named = lower(
         "P.tsx",

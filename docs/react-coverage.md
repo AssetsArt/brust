@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 204 | 109 | 10 | 85 | 0 | 0 | 0 | 0 |
-| C Hooks | 35 | 2 | 13 | 20 | 0 | 0 | 0 | 0 |
+| B Composition | 206 | 109 | 12 | 85 | 0 | 0 | 0 | 0 |
+| C Hooks | 38 | 2 | 14 | 22 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 387 | 187 | 46 | 150 | 3 | 1 | 0 | 0 |
+| **Total** | 392 | 187 | 49 | 152 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -118,6 +118,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-attr-boolean-as-string | aria-*, data-*, draggable and spellCheck given a boolean prop | static | static | 0 | ok | — | F196: React writes true/false on these as the strings "true"/"false"; the template used to drop false (an aria-checked switch lost its attribute). Matrix: crates/brust-compiler/tests/attr_boolean_parity.rs against tests/fixtures/attr-parity/react.json |
 | b-attr-boolean-omitted-or-empty | a boolean attribute, download and a plain attribute given a boolean prop | static | static | 0 | ok | — | F196: false omits hidden/download, true prints ""; a plain attribute (title) prints nothing for either boolean, as React does |
 | b-synthetic-event-methods | a handler that calls isPropagationStopped, isDefaultPrevented and persist | native | native | 0 | ok | — | F195: a DOM event has none of these; the runtime adds them to the event a handler receives (packages/runtime-dom/src/directives/on.ts). Served in tests/server/event-aria.chromium.test.ts |
+| b-attr-boolean-client-update | a boolean attribute outside the old 8 (loop, inert, muted) changed by state | native | native | 0 | ok | — | F201: x-bind-* knew 8 of React's 28 boolean names (a state-driven loop/inert printed loop="true"); its sets are now generated from the brust-jinja table (scripts/gen-attr-kinds.ts). Served in tests/server/bind-parity.chromium.test.ts |
+| b-svg-anchor-empty-href | an SVG <a> whose href changes to an empty string | native | native | 0 | ok | — | F202: the runtime dropped href="" on an SVG <a> (tagName is lowercase there); React keeps it on any <a> |
 | b-island-holes-style | a style read from props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.118, F170): an object-valued attribute is never a hole; fallback:island-children |
 | b-island-holes-list | a list over props inside island children | react | react | ssr | ok | fallback:island-children | F148a (R34.122, F171): a list over request data needs structure from data; fallback:island-children |
 | b-island-holes-route-children | {children} of a route component inside an island | react | react | ssr | ok | fallback:island-children | F148a (R34.121): a route component has no call site to bind a tree; its children are request data; fallback:island-children |
@@ -309,6 +311,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-relax-helper-reads-const | custom hook calling a module function that reads a module const | react | react | ssr | ok | fallback:hook-shape | R34.105: only a plain, self-contained module function travels with the hook |
 | c-hook-relax-dev-block-visible | custom hook whose flagged block writes the document | react | react | ssr | ok | fallback:hook-shape | R34.105: a flagged block is left out only when all it does is log |
 | c-hook-relax-alias-unknown-key | custom hook calling a module const read off React by an unknown key | react | react | ssr | ok | fallback:hook-unsupported | R34.105: the key must fold to a hook React exports |
+| c-live-forward | a live prop through a static child's spread, with a handler | native | native | 0 | ok | — | R34.18 extended (2b-handlers): the parent binds the live value on the child element; the child stays unlinked |
+| c-live-forward-two-spreads | a live prop through a child that spreads the same rest on two elements | react | react | ssr | ok | fallback:spread-props | R34.18 extended: a live value needs ONE element to bind on |
+| c-live-forward-class | a live className through a static child's spread | react | react | ssr | ok | fallback:spread-handler | R34.18 extended: class and style merge, they are not bound through a spread |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
 | c-usetransition | useTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usesyncexternalstore | useSyncExternalStore | react | react | ssr | ok | fallback:hook-unsupported |  |

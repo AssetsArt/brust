@@ -92,8 +92,11 @@ impl<'a> Facts<'a> {
             .iter()
             .map(|p| (p.name.clone(), p.local.clone()))
             .collect();
-        // A non-destructured parameter is read as the root `*`.
-        if let [only] = ir.props.as_slice()
+        // The whole props object is read as the root `*`: the parameter a `...rest` pattern left no prop for, or a
+        // non-destructured parameter (the only prop, named as its local).
+        if let Some(w) = &ir.props_whole {
+            prop_locals.insert("*".into(), w.clone());
+        } else if let [only] = ir.props.as_slice()
             && only.name == only.local
             && !prop_locals.contains_key("*")
         {

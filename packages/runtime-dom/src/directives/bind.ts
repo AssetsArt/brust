@@ -1,10 +1,10 @@
 import { BINDERS, parsed, read, warnOnce } from '../core-api'
+import { BOOLEAN, OVERLOADED, STRINGIFY } from '../attr-kinds'
 
 // Attributes that execute or load code from a string; a bound value must never reach them as-is.
 const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'poster', 'data', 'xlink:href', 'ping'])
 // Scheme allowlist on the parsed URL (relative URLs resolve to http): new URL() applies the browser's tab/newline/control-char stripping.
 const safeUrl = (v: string): boolean => { try { return ['http:', 'https:', 'mailto:', 'tel:'].includes(new URL(v, 'http://x').protocol) } catch { return false } }
-const BOOLEAN = new Set(['disabled', 'checked', 'selected', 'readonly', 'required', 'hidden', 'open', 'multiple'])
 BINDERS.push({
   match: (a) => a.startsWith('x-bind-'),
   bind: ({ inst, el, attr, raw, scope }) => {
@@ -23,9 +23,12 @@ BINDERS.push({
         if (on) el.setAttribute(name, '') ; else el.removeAttribute(name)
         return
       }
-      if (v == null || v === false) { el.removeAttribute(name); return }
+      // aria-*, data-* and the booleanish strings print `true`/`false`; download/capture print `true` as ``; on any other attribute React omits a boolean.
+      if (name.startsWith('aria-') || name.startsWith('data-') || STRINGIFY.has(name)) { if (v == null) el.removeAttribute(name); else el.setAttribute(name, String(v)); return }
+      if (OVERLOADED.has(name) && typeof v === 'boolean') { if (v) el.setAttribute(name, ''); else el.removeAttribute(name); return }
+      if (v == null || typeof v === 'boolean') { el.removeAttribute(name); return }
       // React writes no `src=""` / `href=""` (it would load the page again); an anchor keeps its empty href.
-      if (v === '' && (name === 'src' || name === 'href') && el.tagName !== 'A') { el.removeAttribute(name); return }
+      if (v === '' && (name === 'src' || name === 'href') && el.localName !== 'a') { el.removeAttribute(name); return }
       if (URL_ATTRS.has(name) && !safeUrl(String(v))) { warnOnce(`b:${inst.name}:${name}`, `${attr} in ${inst.name}: unsafe URL refused`); return }
       el.setAttribute(name, String(v))
     })
