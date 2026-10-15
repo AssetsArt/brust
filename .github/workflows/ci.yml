@@ -247,6 +247,8 @@ jobs:
       # F155 (R37): one React and one react-dom per target (Bun, Cloudflare client + Worker, static), staged-import
       # resolution, and the symlinked-root cases. Was not wired into CI when it landed.
       - run: cd packages/brust && bun test --timeout 180000 test/esm-resolve.test.ts
+      # F197: helpers imported from packages proven through .brust/pkg-src (builds with bin/brust and serves the page).
+      - run: cd packages/brust && bun test --timeout 180000 test/package-helpers.test.ts
       # F148a (R34.124): the hostile-input set for the island revive, with the build tests of the lowered children it guards
       # (build-island-children, build-island-slots and build-props-pattern were not run here before).
       - run: cd packages/brust && bun test --timeout 180000 test/prop-path-children-revive.test.ts test/build-prop-path-children.test.ts test/build-island-children.test.ts test/build-island-slots.test.ts test/build-props-pattern.test.ts
