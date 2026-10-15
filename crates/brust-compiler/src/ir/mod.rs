@@ -8,7 +8,7 @@ mod tests;
 
 pub use decls::*;
 pub use expr::*;
-pub use fold::{FoldEnv, V};
+pub use fold::{FoldEnv, V, is_js_space};
 pub use template::*;
 
 use serde::{Deserialize, Serialize};
@@ -213,6 +213,10 @@ pub struct ComponentIR {
     /// the identifier `REST_PROPS` of kind `Prop`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub props_rest: Option<String>,
+    /// The parameter that holds the whole props object (`function C(props)`), when the body destructures it with a
+    /// `...rest` (so no prop is named after it): a verbatim body naming it (`props.disabled`) binds that name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub props_whole: Option<String>,
     /// The polymorphic tag `const Comp = flag ? Slot.Root : "host"` of this component (R34.28).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poly: Option<PolyTag>,
@@ -254,6 +258,16 @@ pub struct ComponentIR {
     /// its props into a fed child whose job reads them, and a spread cannot feed a job input.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unwritten_props: Vec<String>,
+    /// Keys a call site must not write (2b-handlers, R34.18 extended): this component binds a live value to the key on a
+    /// static child's element, ahead of a spread of its own rest, and a call site that writes the key would override it
+    /// in React (last wins) where the one shared chunk cannot tell.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadowed_props: Vec<String>,
+    /// Live props the parent binds itself on a static child's element (2b-handlers): the prop `key` of the component
+    /// node at `loc`, printed in this component's scope like an attribute written there (handlers: see
+    /// [`HandlerDecl::forwarded`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub live_forwards: Vec<Forwarded>,
     /// The slot content this component is given is printed more than once: its template repeats in a list, or
     /// passes its children on to a component that does (F169, transitive).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -369,6 +383,7 @@ impl ComponentIR {
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,
+            props_whole: None,
             poly: None,
             forwards_ref: false,
             icon_spread: false,
@@ -380,6 +395,8 @@ impl ComponentIR {
             plain_fns: Vec::new(),
             holds_island: false,
             unwritten_props: Vec::new(),
+            shadowed_props: Vec::new(),
+            live_forwards: Vec::new(),
             repeats_children: false,
             state: vec![],
             derived: vec![],

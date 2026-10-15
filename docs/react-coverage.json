@@ -859,6 +859,7 @@
       "diagnostics": [
         "fallback:context-value",
         "fallback:member-tag",
+        "fallback:jsx-const-child",
         "fallback:jsx-expression"
       ],
       "shapes": [
@@ -878,6 +879,7 @@
           "observed": "react",
           "diagnostics": [
             "fallback:member-tag",
+            "fallback:jsx-const-child",
             "fallback:jsx-expression"
           ]
         }

@@ -16,9 +16,9 @@
       "native": 1,
       "react": 6
     },
-    "islands": 38,
+    "islands": 36,
     "pagesWithNoJs": 25,
-    "pagesWithNoWorker": 20,
+    "pagesWithNoWorker": 21,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -40,27 +40,27 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 38,
+      "measuredRows": 37,
       "analysisOnlyRows": 0,
-      "appComponents": 136,
+      "appComponents": 135,
       "libraryComponents": 151
     },
     {
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 33,
+      "measuredRows": 32,
       "analysisOnlyRows": 0,
-      "appComponents": 124,
+      "appComponents": 123,
       "libraryComponents": 180
     },
     {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 32,
+      "measuredRows": 31,
       "analysisOnlyRows": 0,
-      "appComponents": 88,
+      "appComponents": 87,
       "libraryComponents": 176
     },
     {
@@ -76,10 +76,10 @@
       "blocker": "fallback:jsx-const-child",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
+      "measuredRows": 5,
       "analysisOnlyRows": 0,
-      "appComponents": 4,
-      "libraryComponents": 13
+      "appComponents": 5,
+      "libraryComponents": 25
     },
     {
       "blocker": "fallback:context-island",
@@ -142,7 +142,7 @@
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 5
+      "libraryComponents": 4
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -788,6 +788,7 @@
         "external-component",
         "island-children",
         "island-prop",
+        "jsx-const-child",
         "jsx-expression",
         "nested-instance",
         "slot-dynamic",
@@ -1368,16 +1369,12 @@
       "id": "toggle",
       "basis": "measured",
       "tier": "static",
-      "islands": 2,
-      "components": 3,
-      "reactComponents": 2,
-      "jsGzipKb": 87,
-      "workerCalls": 2,
-      "codes": [
-        "external-component",
-        "island-prop",
-        "spread-props"
-      ]
+      "islands": 0,
+      "components": 4,
+      "reactComponents": 0,
+      "jsGzipKb": 5,
+      "workerCalls": 0,
+      "codes": []
     },
     {
       "id": "toggle-group",
