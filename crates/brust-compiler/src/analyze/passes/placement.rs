@@ -949,11 +949,28 @@ impl Placer<'_> {
             RawKind::Lit(_) => None,
             RawKind::Ident { name, kind } => match kind {
                 IdentKind::Prop
-                | IdentKind::State
                 | IdentKind::Setter
-                | IdentKind::LoopBinding
                 | IdentKind::Global
                 | IdentKind::Store { .. } => None,
+                // Mellow F2: a state starts as its `useState` initial value (a lazy initializer by what it builds); what a
+                // setter writes later is out of model (ledger). No recorded initial value refuses.
+                IdentKind::State => match self.state_inits.get(name) {
+                    Some(init) => go(init).map(|_| name.clone()),
+                    None => Some(name.clone()),
+                },
+                // Mellow F2: a list item carries what its list holds; the index is a number. No source refuses.
+                IdentKind::LoopBinding => match self
+                    .lists
+                    .iter()
+                    .rev()
+                    .find(|l| &l.item == name || l.index.as_ref() == Some(name))
+                {
+                    Some(l) if l.index.as_ref() == Some(name) => None,
+                    Some(List {
+                        source: Some(src), ..
+                    }) => go(src).map(|_| name.clone()),
+                    _ => Some(name.clone()),
+                },
                 IdentKind::Local => {
                     // A `useId` value is a string.
                     if self.ids.contains(name) {

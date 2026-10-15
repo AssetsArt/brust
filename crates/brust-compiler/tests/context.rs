@@ -528,6 +528,16 @@ fn an_element_holder_falls_back_with_no_wrapper_and_as_a_prop() {
         "prop-loc-callback.tsx",
         // An element-free helper handed an element to store.
         "prop-loc-put.tsx",
+        "prop-loc-push.tsx",
+        // Mellow round 1: a parameter default, a destructured module binding, the comma operator; a state started with
+        // an element, a loop over a list of elements.
+        "top-param-default.tsx",
+        "top-param-pattern.tsx",
+        "top-pattern-binding.tsx",
+        "top-hoisted-var.tsx",
+        "top-comma.tsx",
+        "top-state-element.tsx",
+        "top-loop-element.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(

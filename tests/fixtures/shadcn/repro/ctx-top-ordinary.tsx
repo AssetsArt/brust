@@ -15,6 +15,10 @@ function Box({ style }: { style?: Record<string, string> }) {
   return <i style={style} />
 }
 
+function suffix(s = '!') {
+  return s
+}
+
 export default function Page({ kind = 'a', price = 5, title = 'hi' }: { kind: string; price: number; title: string }) {
   const items = ['a', 'b']
   const name = title.toUpperCase()
@@ -25,6 +29,8 @@ export default function Page({ kind = 'a', price = 5, title = 'hi' }: { kind: st
       {items.length}
       {formatPrice(price)}
       {name}
+      {suffix()}
+      <ul>{items.map((x, i) => <li key={i}>{x}{i}</li>)}</ul>
       <Badge icon={title} label={formatPrice(price)} />
       <Badge icon={LABELS[kind]} label={cn('a', title)} />
       <Badge label={isValid(kind) ? kind : 'none'} />

@@ -21,6 +21,10 @@ function total(xs: number[]): number {
   return xs.reduce((a, b) => a + b, 0)
 }
 
+function suffix(s = '!') {
+  return s
+}
+
 // An app function that only inspects the handler it is given.
 function kindOf(f: unknown) {
   return typeof f
@@ -34,6 +38,7 @@ export default function Page({ kind, price, title }: { kind: string; price: numb
   const items = ['a', 'b']
   const id = useId()
   const [n, setN] = useState(0)
+  const [label] = useState('ready')
   const onPick = useCallback(() => setN(n + 1), [n])
   const seen = useRef(0)
   const name = title.toUpperCase()
@@ -45,6 +50,10 @@ export default function Page({ kind, price, title }: { kind: string; price: numb
       {formatPrice(price)}
       {name}
       {total(SIZES)}
+      {label}
+      {n}
+      {suffix()}
+      <ul>{items.map((x, i) => <li key={i}>{x}{i}</li>)}</ul>
       <Badge icon={title} label={formatPrice(price)} />
       <Badge icon={LABELS[kind]} label={cn('a', title)} />
       <Badge label={isValid(kind) ? kind : 'none'} />

@@ -24,6 +24,9 @@ const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix',
   // that holds elements falls back too (accepted loss).
   'ctx-top-imp-root', 'ctx-top-imp-and', 'ctx-top-imp-tern', 'ctx-top-imp-member', 'ctx-top-imp-index', 'ctx-top-imp-array', 'ctx-top-imp-call', 'ctx-top-loc-root', 'ctx-top-loc-and', 'ctx-top-loc-tern', 'ctx-top-loc-member', 'ctx-top-loc-index', 'ctx-top-loc-array', 'ctx-top-loc-call',
   'ctx-prop-imp-root', 'ctx-prop-imp-and', 'ctx-prop-imp-tern', 'ctx-prop-imp-member', 'ctx-prop-imp-index', 'ctx-prop-imp-array', 'ctx-prop-imp-call', 'ctx-prop-loc-root', 'ctx-prop-loc-and', 'ctx-prop-loc-tern', 'ctx-prop-loc-member', 'ctx-prop-loc-index', 'ctx-prop-loc-array', 'ctx-prop-loc-call', 'ctx-prop-loc-indirect', 'ctx-prop-loc-via-import', 'ctx-prop-loc-react', 'ctx-top-imp-object',
+  // Mellow round 1: a parameter default, a destructured module binding, the comma operator, a state started with an element and
+  // a loop over a list of elements.
+  'ctx-top-param-default', 'ctx-top-param-pattern', 'ctx-top-pattern-binding', 'ctx-top-comma', 'ctx-top-state-element', 'ctx-top-loop-element',
   'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call', 'ctx-hid-provfed', 'ctx-hid-bare',
 ]
 // Imported plain value: stays a static page (no script), and renders like React.

@@ -333,21 +333,21 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
     out
 }
 
-/// F173 (plain wrappers): the export `imported` of the RELATIVE module `source` (seen from `from`) is a function that
-/// module proves plain by the same rules (`plain_fns`, read in its own module: its consts, its helpers). An import is a
-/// read-only binding, so the importer cannot rebind it; the exporting module's own reassignments are refused there.
-/// Anything that does not resolve, read or parse is not proven.
 /// An expression whose value is a primitive whatever it reads: a literal, an untagged template, a unary operator, or
-/// a binary operator other than `&&`, `||`, `??` and an assignment.
+/// a binary operator other than `&&`, `||`, `??`, the comma and an assignment.
 fn primitive_value(e: &js_ast::Expr) -> bool {
     match &e.data {
         E::EString(_) | E::ENumber(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_) => true,
         E::ETemplate(t) => t.tag.is_none(),
         E::EUnary(_) => true,
         E::EBinary(b) => {
+            // `&&`, `||`, `??` and the comma operator give an operand (Mellow F1c).
             !matches!(
                 b.op,
-                OpCode::BinLogicalAnd | OpCode::BinLogicalOr | OpCode::BinNullishCoalescing
+                OpCode::BinLogicalAnd
+                    | OpCode::BinLogicalOr
+                    | OpCode::BinNullishCoalescing
+                    | OpCode::BinComma
             ) && matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None)
         }
         _ => false,
@@ -379,13 +379,16 @@ fn fresh(e: &js_ast::Expr) -> bool {
 /// F199: names of the module's functions, const arrows and consts that cannot hand out a React element. A greatest
 /// "filled" / least "free" fixpoint over symbols (`key_of`; a cycle is never proven free):
 ///
-/// * free: the declaration writes no JSX, is never reassigned and never filled, does not read the global `React`, and
-///   every module name it reads is free and every import it reads is not `element_import`; a const whose value is a
-///   primitive whatever it reads (`const A = B + 1`) is free outright;
-/// * filled (an object that may come to hold an element): written through a member (`slots.icon = …`) or by a mutating
-///   method, handed to a call that is not a read-only global unless the callee is a free module function and no other
-///   argument may carry an element, or what a filled binding was made from (`const s = slots`); a write through a root
-///   that is not a name (`get().icon = …`) leaves no non-primitive const free.
+/// * free: the whole declaration (a function's parameters and defaults included) writes no JSX, is never reassigned and
+///   never filled, and every name it reads is declared inside it, a free module binding, an import that is not
+///   `element_import`, or a global other than `React`; a module binding the walk does not model (a pattern, `let`, a
+///   class) is never free; a const whose value is a primitive whatever it reads (`const A = B + 1`) is free outright;
+/// * filled (an object that may come to hold an element): written through a member with a value that may carry one
+///   (`slots.icon = el`; `items.length = 1` does not), changed by a
+///   mutating method given an argument that may carry an element, handed to a call that is not a read-only global
+///   unless the callee is a free module function or a React export that builds no element and no other argument may
+///   carry an element, or what a filled binding was made from (`const s = slots`); a write through a root that is not a
+///   name (`get().icon = …`, `get().push(…)`) leaves no non-primitive const free.
 ///
 /// Weaker than `plain_fns` (it may return an object or a function); only a value printed with no wrapper is judged by it.
 pub fn element_free_fns(
@@ -428,21 +431,17 @@ pub fn element_free_fns(
     let key = |r: js_ast::Ref| names.key_of(r);
     let assigned: HashSet<u32> = module.assigned.iter().map(|r| key(*r)).collect();
     // Written through a member or changed by a method: filled whatever else holds.
-    let mut base: HashSet<u32> = module.member_written.iter().map(|r| key(*r)).collect();
+    let base: HashSet<u32> = module.member_written.iter().map(|r| key(*r)).collect();
     let mut opaque_write = module.opaque_write;
     for c in &module.calls {
         let E::ECall(call) = &c.data else { continue };
+        // A mutating method on a root that is not a name; sorting a fresh copy (`[…].slice().sort()`) changes nothing.
         if let E::EDot(d) = &call.target.data
             && MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+            && chain_root(&d.target).is_none()
+            && !fresh(&d.target)
         {
-            match chain_root(&d.target) {
-                Some(r) => {
-                    base.insert(key(r));
-                }
-                // Sorting a fresh copy (`[…].slice().sort()`) changes no binding; any other root is unknown.
-                None if !fresh(&d.target) => opaque_write = true,
-                None => {}
-            }
+            opaque_write = true;
         }
     }
     // (name, symbol, the walk of its declaration); `None` = never provable (`let`, a class, a pattern).
@@ -453,8 +452,9 @@ pub fn element_free_fns(
             match &stmt.data {
                 S::SFunction(f) => {
                     if let Some(n) = &f.func.name {
+                        // The whole function: parameters and their defaults as well as the body (Mellow F1a).
                         let mut w = Walk::default();
-                        w.stmts(f.func.body.stmts.slice());
+                        w.stmt(stmt);
                         decls.push((names.name(n.ref_), key(n.ref_), Some(w)));
                     }
                 }
@@ -477,6 +477,13 @@ pub fn element_free_fns(
                                     w
                                 });
                             decls.push((names.name(id.r#ref), key(id.r#ref), w));
+                        } else {
+                            // A pattern (`const { home } = icons`) is a module binding that is never free (Mellow F1b).
+                            let mut w = Walk::default();
+                            w.declare_binding(&d.binding);
+                            for r in w.declared {
+                                decls.push((names.name(r), key(r), None));
+                            }
                         }
                     }
                 }
@@ -508,6 +515,8 @@ pub fn element_free_fns(
                 if free.contains(k) || assigned.contains(k) || filled.contains(k) {
                     continue;
                 }
+                // Every name it reads is declared inside it, a free module binding, an import that holds no element, or
+                // a global other than `React`; anything else (a binding the walk does not model) is not free.
                 let reads_ok = w.used.iter().all(|r| {
                     if let Some((source, imported)) = names.import_of(*r) {
                         return !element_import(source, imported);
@@ -516,7 +525,11 @@ pub fn element_free_fns(
                     if module_keys.contains(&rk) {
                         return free.contains(&rk);
                     }
-                    names.name(*r) != "React"
+                    if w.declared.iter().any(|d| key(*d) == rk) {
+                        return true;
+                    }
+                    matches!(names.kind_of(*r).1, crate::ir::IdentKind::Global)
+                        && names.name(*r) != "React"
                 });
                 if !jsx_in(w) && reads_ok {
                     free.insert(*k);
@@ -553,12 +566,23 @@ pub fn element_free_fns(
             if read_only {
                 continue;
             }
-            // A free module function writes no element into an argument unless another argument carries one in: one
-            // that writes JSX or reads anything but a free module name.
+            // A free module function, or a React export that builds no element (`useState`, `useMemo`), writes no
+            // element into an argument unless another argument carries one in: one that writes JSX or reads anything
+            // but a free module name.
+            let react_reader = |r: js_ast::Ref| {
+                names.import_of(r).is_some_and(|(source, imported)| {
+                    (source == "react"
+                        || source.starts_with("react/")
+                        || source.starts_with("preact"))
+                        && !element_import(source, imported)
+                })
+            };
             let free_callee = match &call.target.data {
                 E::EIdentifier(id) => {
-                    module_keys.contains(&key(id.ref_)) && free.contains(&key(id.ref_))
+                    (module_keys.contains(&key(id.ref_)) && free.contains(&key(id.ref_)))
+                        || react_reader(id.ref_)
                 }
+                E::EImportIdentifier(id) => react_reader(id.ref_),
                 _ => false,
             };
             let args: Vec<&js_ast::Expr> = call
@@ -578,12 +602,33 @@ pub fn element_free_fns(
                         !(module_keys.contains(&rk) && free.contains(&rk))
                     })
             };
+            // A method that changes its receiver (`items.push(x)`) fills it when an argument may carry an element in.
+            if let E::EDot(d) = &call.target.data
+                && MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+                && let Some(r) = chain_root(&d.target)
+                && args.iter().any(|a| carries(a))
+            {
+                next.insert(key(r));
+            }
             for (i, a) in args.iter().enumerate() {
                 let Some(r) = chain_root(a) else { continue };
                 let others_carry = args.iter().enumerate().any(|(j, b)| j != i && carries(b));
                 if !free_callee || others_carry {
                     next.insert(key(r));
                 }
+            }
+        }
+        // Written through a member: filled when the value written may carry an element in (`ITEMS.length = 1` does not).
+        for (r, v) in &module.member_writes {
+            let mut w = Walk::default();
+            w.expr(v);
+            let carries = jsx_in(&w)
+                || w.used.iter().any(|u| {
+                    let uk = key(*u);
+                    !(module_keys.contains(&uk) && free.contains(&uk))
+                });
+            if carries {
+                next.insert(key(*r));
             }
         }
         // What a binding was made from is filled with it (`const s = slots; s.icon = …`).
@@ -674,6 +719,10 @@ pub fn module_may_hold_element(
         })
 }
 
+/// F173 (plain wrappers): the export `imported` of the RELATIVE module `source` (seen from `from`) is a function that
+/// module proves plain by the same rules (`plain_fns`, read in its own module: its consts, its helpers). An import is a
+/// read-only binding, so the importer cannot rebind it; the exporting module's own reassignments are refused there.
+/// Anything that does not resolve, read or parse is not proven.
 pub fn imported_plain_fn(
     from: &str,
     source: &str,

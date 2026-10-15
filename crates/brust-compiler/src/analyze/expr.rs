@@ -705,8 +705,10 @@ pub struct Walk {
     /// Identifiers written by an assignment or `++`/`--` (the left side's own bindings, not
     /// a member target's object).
     pub assigned: Vec<js_ast::Ref>,
-    /// The root identifiers of member / index assignment targets (`x.a = …`, `x[k] += …`): an object written through.
+    /// The root identifiers of other member / index writes (`x.a++`, `delete x.a`, `[x.a] = …`): an object written through.
     pub member_written: Vec<js_ast::Ref>,
+    /// `(root, value)` of each `x.a = value` / `x[k] op= value` assignment (not in `member_written`).
+    pub member_writes: Vec<(js_ast::Ref, js_ast::Expr)>,
     /// A member / index assignment whose chain does not start at an identifier (`get().a = …`): what it writes is unknown.
     pub opaque_write: bool,
     /// `(binding, read)`: a binding declared or assigned from a value that reads `read` (`const s = slots`,
@@ -923,7 +925,13 @@ impl Walk {
             }
             E::EBinary(b) => {
                 if !matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None) {
-                    self.assign_target(&b.left);
+                    // `x.a = v` / `x[k] += v`: the value written is kept, so a caller can tell what it may carry.
+                    match (&b.left.data, chain_root(&b.left)) {
+                        (E::EDot(_) | E::EIndex(_), Some(r)) => {
+                            self.member_writes.push((r, b.right))
+                        }
+                        _ => self.assign_target(&b.left),
+                    }
                 }
                 self.expr(&b.left);
                 let u0 = self.used.len();

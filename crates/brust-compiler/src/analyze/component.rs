@@ -510,6 +510,8 @@ fn read_function_as(
         "jsxs",
         "jsxDEV",
         "Children",
+        "createPortal",
+        "h",
         "*",
         "default",
     ];
