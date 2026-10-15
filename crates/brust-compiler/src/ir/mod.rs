@@ -298,6 +298,10 @@ pub struct ComponentIR {
     /// lucide icons the build should render to inline SVG (L23); empty when none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub icon_requests: Vec<IconRequest>,
+    /// F197: bare specifiers whose package source the build should write (`.brust/pkg-src`) so a helper imported from
+    /// them can be proven plain on the next compile; empty when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub package_requests: Vec<String>,
     /// Slots the build may evaluate once (L2); empty when none qualifies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub build_eval: Vec<BuildEvalSlot>,
@@ -419,6 +423,7 @@ impl ComponentIR {
             uses_outlet: false,
             jobs: vec![],
             icon_requests: vec![],
+            package_requests: vec![],
             build_eval: vec![],
             build_eval_instances: vec![],
             folded_instances: vec![],
