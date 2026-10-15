@@ -67,6 +67,23 @@ impl<'r, 'a> Reader<'r, 'a> {
         }
     }
 
+    /// A call argument. B3: the forwarded ref handed on whole (`useComposedRefs(forwardedRef, …)`, `composeRefs(ref)`) is
+    /// `null`: a native component is never given a ref (a call site that passes `ref` already falls back,
+    /// `forwardref-ref`), which is what React hands a `forwardRef` render function when its caller passes none. Any
+    /// other read of it (a member, an operand, a binding) stays a fallback.
+    pub fn arg(&mut self, a: &js_ast::Expr) -> RawExpr {
+        if let E::EIdentifier(id) = &a.data
+            && self.names.is_forwarded_ref(id.ref_)
+        {
+            self.names.note_forwarded_ref_dropped(a.loc.start);
+            return RawExpr {
+                loc: loc_of(a),
+                kind: RawKind::Lit(Literal::Null),
+            };
+        }
+        self.expr(a)
+    }
+
     pub fn expr(&mut self, e: &js_ast::Expr) -> RawExpr {
         let loc = loc_of(e);
         let kind = match &e.data {
@@ -172,13 +189,22 @@ impl<'r, 'a> Reader<'r, 'a> {
                     let is_map = matches!(&c.target.data,
                         E::EDot(d) if d.name.slice() == b"map")
                         && c.args.len() == 1;
+                    let user_fn = matches!(
+                        &callee.kind,
+                        RawKind::Ident {
+                            kind: IdentKind::Import { .. } | IdentKind::Local,
+                            ..
+                        }
+                    );
                     let mut args = Vec::with_capacity(c.args.len());
                     for a in c.args.iter() {
                         if matches!(a.data, E::ESpread(_)) {
                             return self.opaque(e, "spread argument");
                         }
                         self.map_callback = is_map && matches!(a.data, E::EArrow(_));
-                        args.push(self.expr(a));
+                        // B3: only for a function of the app or a package (evaluated in JS, where the ref IS `null`), never
+                        // a builtin the server prints its own way (`String(ref)`).
+                        args.push(if user_fn { self.arg(a) } else { self.expr(a) });
                         self.map_callback = false;
                     }
                     RawKind::Call {

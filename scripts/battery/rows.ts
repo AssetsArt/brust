@@ -1471,4 +1471,15 @@ export const rows: Row[] = [
     snippet: `import Child from './Child'\nasync function act() { 'use server' }\nexport default function C() { return <Child act={act} /> }`,
     files: { 'Child.tsx': `export default function Child({ act }: any) { return <button onClick={() => act()}>go</button> }` } },
 
+  { id: 'c-hook-rest-param', category: 'C', authoring: 'custom hook with a ...rest parameter whose body calls an exported function of its module', expect: 'native', jobs: 0,
+    snippet: `import { useState, useRef } from 'react'\nimport { useComposedRefs } from './compose'\nexport default function C() { const [n, setN] = useState(0); const a = useRef<any>(null); const b = useRef<any>(null); const set = useComposedRefs(a, b); return <button onClick={() => { setN(n + 1); set(null) }}>{n}</button> }`,
+    files: { 'compose.ts': `import * as React from 'react'\nfunction setRef(ref: any, value: any) { if (typeof ref === 'function') return ref(value); else if (ref !== null && ref !== undefined) ref.current = value }\nexport function composeRefs(...refs: any[]) { return (node: any) => { refs.forEach((r) => setRef(r, node)) } }\nexport function useComposedRefs(...refs: any[]) { return React.useCallback(composeRefs(...refs), refs) }` },
+    note: 'B2: a rest parameter is the array of the remaining arguments; an exported function the hook calls is imported by the component; `return useCallback(…)` is read under a generated name' },
+  { id: 'c-forwarded-ref-to-hook', category: 'C', authoring: 'the forwardRef ref handed whole to a custom hook', expect: 'native', jobs: 0,
+    snippet: `import * as React from 'react'\nimport { useState, useRef } from 'react'\nimport { useComposedRefs } from './compose'\nexport default React.forwardRef<any, any>(function C(props, forwardedRef) { const [n, setN] = useState(0); const a = useRef<any>(null); const set = useComposedRefs(forwardedRef, a); return <button onClick={() => { setN(n + 1); set(null) }}>{n}</button> })`,
+    files: { 'compose.ts': `import * as React from 'react'\nfunction setRef(ref: any, value: any) { if (typeof ref === 'function') return ref(value); else if (ref !== null && ref !== undefined) ref.current = value }\nexport function composeRefs(...refs: any[]) { return (node: any) => { refs.forEach((r) => setRef(r, node)) } }\nexport function useComposedRefs(...refs: any[]) { return React.useCallback(composeRefs(...refs), refs) }` },
+    note: 'B3: the forwarded ref handed whole to a hook is null (a native component is never given a ref)' },
+  { id: 'c-forwarded-ref-member', category: 'C', authoring: 'the forwardRef ref read as a member (ref.current)', expect: 'react',
+    snippet: `import * as React from 'react'\nexport default React.forwardRef<any, any>(function C(props, ref) { return <div data-x={String(ref.current)} /> })`,
+    note: 'B3: any read of the forwarded ref other than ref={ref} or a whole argument still needs React (forwardref-ref)' },
 ]

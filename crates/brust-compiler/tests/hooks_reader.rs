@@ -613,3 +613,54 @@ fn a_foreign_hooks_global_does_not_bind_to_the_component_modules_names() {
     assert!(fallbacks(&ok).is_empty(), "{:?}", ok.diagnostics);
     assert_eq!(ok.tier, Tier::Native);
 }
+
+const COMPOSE: &str = "import * as React from 'react'\nfunction setRef(ref: any, value: any) { if (typeof ref === 'function') return ref(value); else if (ref !== null && ref !== undefined) ref.current = value }\nexport function composeRefs(...refs: any[]) { return (node: any) => { refs.forEach((r) => setRef(r, node)) } }\nexport function useComposedRefs(...refs: any[]) { return React.useCallback(composeRefs(...refs), refs) }\n";
+
+// B2: a custom hook's `...rest` parameter is the array of the call site's remaining arguments.
+#[test]
+fn a_rest_parameter_of_a_custom_hook_is_bound_to_the_remaining_arguments() {
+    let ir = project(
+        &[
+            ("compose.ts", COMPOSE),
+            (
+                "C.tsx",
+                "import { useState, useRef } from 'react'\nimport { useComposedRefs } from './compose'\nexport default function C() { const [n, setN] = useState(0); const a = useRef(null); const b = useRef(null); const set = useComposedRefs(a, b); return <button onClick={() => { setN(n + 1); set(null) }}>{n}</button> }",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(fallbacks(&ir).is_empty(), "{:?}", ir.diagnostics);
+    assert_eq!(ir.tier, Tier::Native);
+}
+
+// B3: the forwarded ref handed whole to a hook is `null`; any other read of it still needs React.
+#[test]
+fn the_forwarded_ref_handed_to_a_hook_is_null() {
+    let ok = project(
+        &[
+            ("compose.ts", COMPOSE),
+            (
+                "C.tsx",
+                "import * as React from 'react'\nimport { useState, useRef } from 'react'\nimport { useComposedRefs } from './compose'\nexport default React.forwardRef<any, any>(function C(props, forwardedRef) { const [n, setN] = useState(0); const a = useRef(null); const set = useComposedRefs(forwardedRef, a); return <button onClick={() => { setN(n + 1); set(null) }}>{n}</button> })",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(fallbacks(&ok).is_empty(), "{:?}", ok.diagnostics);
+    assert_eq!(ok.tier, Tier::Native);
+    let bad = project(
+        &[
+            ("compose.ts", COMPOSE),
+            (
+                "C.tsx",
+                "import * as React from 'react'\nimport { useState, useRef } from 'react'\nimport { useComposedRefs } from './compose'\nexport default React.forwardRef<any, any>(function C(props, forwardedRef) { const [n, setN] = useState(0); const a = useRef(null); const set = useComposedRefs(forwardedRef.current, a); return <button onClick={() => { setN(n + 1); set(null) }}>{n}</button> })",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(
+        bad.diagnostics.iter().any(|d| d.rule == "forwardref-ref"),
+        "{:?}",
+        bad.diagnostics
+    );
+}

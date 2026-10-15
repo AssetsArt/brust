@@ -660,7 +660,7 @@ fn read_stmts(
                 });
             }
             S::SReturn(ret) => {
-                returned = Some(ret.value.map(|v| r.expr(&v)));
+                returned = Some(ret.value.map(|v| returned_value(&v, r, out)));
             }
             // S2 (R34.104): `if (cond) { console.error(…) }` only logs (Radix's dev validation of its props): it is not
             // part of the render, so it is left out; any other effect of a branch keeps the control-flow fallback.
@@ -694,6 +694,113 @@ fn read_stmts(
         }
     }
     returned
+}
+
+/// The value a `return` hands out. B2: inside a custom hook, `return React.useCallback(…)` (Radix's `useComposedRefs`)
+/// is the same hook as `const x = useCallback(…); return x`: the call is read under a generated name that the return
+/// then reads. Any other returned expression is read as it is.
+fn returned_value(v: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) -> RawExpr {
+    if !out.inline.stack.is_empty()
+        && let Some((hook, call, true)) = hook_call(v, r.names)
+        && matches!(
+            hook.as_str(),
+            "useMemo" | "useCallback" | "useRef" | "useId"
+        )
+        && !out.classified_hooks.contains(&call_addr(call))
+    {
+        out.classified_hooks.insert(call_addr(call));
+        let mut n = 1;
+        let name = loop {
+            // Not `use…`: the name must not read as a hook call where the caller invokes the result.
+            let name = format!("ret{n}_{}", clean_name(&hook));
+            if out.inline.taken.insert(name.clone()) {
+                break name;
+            }
+            n += 1;
+        };
+        let vloc = loc_of(v);
+        let args: Vec<js_ast::Expr> = call.args.to_vec();
+        simple_hook(r, out, &hook, Some(name.clone()), &args, vloc);
+        return RawExpr {
+            loc: vloc,
+            kind: RawKind::Ident {
+                name,
+                kind: IdentKind::Local,
+            },
+        };
+    }
+    r.expr(v)
+}
+
+/// `const name = useMemo | useCallback | useRef | useId(…)`, and `return useX(…)` of a custom hook (the result bound to
+/// a generated name): the hooks whose result is one named value.
+fn simple_hook(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    hook: &str,
+    ident: Option<String>,
+    args: &[js_ast::Expr],
+    vloc: u32,
+) {
+    match hook {
+        "useMemo" => {
+            let Some(name) = ident else {
+                return hook_binding_shape(out, "useMemo", vloc);
+            };
+            match args.first().map(|a| (a, &a.data)) {
+                Some((_, E::EArrow(a))) if expr_body(a).is_some() => {
+                    let body = expr_body(a).unwrap_or_default();
+                    let expr = r.expr(&body);
+                    out.derived.push(DerivedDecl {
+                        name,
+                        expr: Expr::Raw(expr),
+                    });
+                }
+                _ => out.fallback(
+                    "hook-shape",
+                    "useMemo needs an arrow returning an expression".into(),
+                    vloc,
+                    "write useMemo(() => expr, deps), or compute it as a const",
+                ),
+            }
+        }
+        "useCallback" => {
+            let Some(name) = ident else {
+                return hook_binding_shape(out, "useCallback", vloc);
+            };
+            let body = match args.first() {
+                Some(a) => r.expr(a),
+                None => undefined_at(vloc),
+            };
+            out.handlers.push(HandlerDecl {
+                name,
+                body,
+                item_scoped: Vec::new(),
+                forwarded: None,
+            });
+        }
+        "useRef" => {
+            let Some(name) = ident else {
+                return hook_binding_shape(out, "useRef", vloc);
+            };
+            let init = match args.first() {
+                Some(a) => r.expr(a),
+                None => undefined_at(vloc),
+            };
+            out.refs.push(RefDecl {
+                name,
+                init: Expr::Raw(init),
+            });
+        }
+        "useId" => {
+            let Some(name) = ident else {
+                return hook_binding_shape(out, "useId", vloc);
+            };
+            out.uses_id = true;
+            out.id_bindings.push(name);
+        }
+        _ => {}
+    }
 }
 
 /// Hook calls anywhere but as a classified top-level statement: inside an
@@ -1076,61 +1183,8 @@ fn read_decl(
                     init: Expr::Raw(init),
                 });
             }
-            (true, "useMemo") => {
-                let Some(name) = ident else {
-                    return hook_binding_shape(out, "useMemo", vloc);
-                };
-                match args.first().map(|a| (a, &a.data)) {
-                    Some((_, E::EArrow(a))) if expr_body(a).is_some() => {
-                        let body = expr_body(a).unwrap_or_default();
-                        let expr = r.expr(&body);
-                        out.derived.push(DerivedDecl {
-                            name,
-                            expr: Expr::Raw(expr),
-                        });
-                    }
-                    _ => out.fallback(
-                        "hook-shape",
-                        "useMemo needs an arrow returning an expression".into(),
-                        vloc,
-                        "write useMemo(() => expr, deps), or compute it as a const",
-                    ),
-                }
-            }
-            (true, "useCallback") => {
-                let Some(name) = ident else {
-                    return hook_binding_shape(out, "useCallback", vloc);
-                };
-                let body = match args.first() {
-                    Some(a) => r.expr(a),
-                    None => undefined_at(vloc),
-                };
-                out.handlers.push(HandlerDecl {
-                    name,
-                    body,
-                    item_scoped: Vec::new(),
-                    forwarded: None,
-                });
-            }
-            (true, "useRef") => {
-                let Some(name) = ident else {
-                    return hook_binding_shape(out, "useRef", vloc);
-                };
-                let init = match args.first() {
-                    Some(a) => r.expr(a),
-                    None => undefined_at(vloc),
-                };
-                out.refs.push(RefDecl {
-                    name,
-                    init: Expr::Raw(init),
-                });
-            }
-            (true, "useId") => {
-                let Some(name) = ident else {
-                    return hook_binding_shape(out, "useId", vloc);
-                };
-                out.uses_id = true;
-                out.id_bindings.push(name);
+            (true, "useMemo" | "useCallback" | "useRef" | "useId") => {
+                simple_hook(r, out, &hook, ident, &args, vloc)
             }
             _ => out.fallback(
                 "hook-unsupported",
@@ -1425,7 +1479,7 @@ fn inline_hook(
         let Some(func) = local_fn(m.ast, r.names, target) else {
             return false;
         };
-        read_hook(r, out, m, func, site);
+        read_hook(r, out, m, func, site, None);
         return true;
     };
     let Some(opts) = m.opts else {
@@ -1439,6 +1493,9 @@ fn inline_hook(
         return false;
     };
     let (path, imported) = follow_reexports(opts, path, imported);
+    // B2: the specifier the component's own module imports the hook by; only then can a name the hook's module exports
+    // be imported from the same place (a hook reached through another hook's module has no specifier of the component's).
+    let spec = (!m.foreign).then(|| source.clone());
     let hook = site.hook;
     let bytes = match std::fs::read(opts.root.join(&path)) {
         Ok(b) => b,
@@ -1472,7 +1529,7 @@ fn inline_hook(
             foreign: true,
         };
         match exported_fn(ast, &imported) {
-            Some(func) => read_hook(r, out, hm, func, site),
+            Some(func) => read_hook(r, out, hm, func, site, spec.as_deref()),
             None => out.fallback(
                 "hook-unsupported",
                 format!("custom hook {hook}: {path} exports no function declaration `{imported}`"),
@@ -1603,6 +1660,7 @@ fn read_hook(
     hm: Module<'_, '_>,
     func: &js_ast::G::Fn,
     site: &Site<'_>,
+    spec: Option<&str>,
 ) {
     let imported = hm.foreign;
     let (hook, vloc) = (site.hook, site.vloc);
@@ -1651,7 +1709,14 @@ fn read_hook(
     let mut params = Vec::new();
     let mut slots: Vec<Slot> = Vec::new();
     for arg in func.args.slice() {
+        let last = std::ptr::eq(arg, &func.args.slice()[func.args.len() - 1]);
         match arg.binding.data {
+            B::BIdentifier(id)
+                if arg.default.is_none() && func.flags.contains(F::HasRestArg) && last =>
+            {
+                params.push(id.r#ref);
+                slots.push(Slot::Rest(id.r#ref));
+            }
             B::BIdentifier(id) if arg.default.is_none() && !func.flags.contains(F::HasRestArg) => {
                 params.push(id.r#ref);
                 slots.push(Slot::Whole(id.r#ref));
@@ -1691,7 +1756,7 @@ fn read_hook(
             }
         }
     }
-    if site.call.args.len() > func.args.len() {
+    if site.call.args.len() > func.args.len() && !slots.iter().any(|s| matches!(s, Slot::Rest(_))) {
         return fail(
             out,
             "hook-shape",
@@ -1796,6 +1861,7 @@ fn read_hook(
             _ => {}
         }
     }
+    let mut import_aliases: Vec<(js_ast::Ref, Alias)> = Vec::new();
     for u in &w.used {
         if hnames.is_jsx_runtime(*u)
             || w.declared.iter().any(|d| hnames.same(*d, *u))
@@ -1815,6 +1881,38 @@ fn read_hook(
         {
             if !helpers.iter().any(|(h, _, _)| hnames.same(*h, *u)) {
                 helpers.push((*u, stmt, f));
+            }
+            continue;
+        }
+        // B2: a function the hook's module EXPORTS (`composeRefs` beside `useComposedRefs`) is imported by the
+        // component from the same specifier, under a generated name; it is a call target, never inlined.
+        if imported
+            && !matches!(kind, IdentKind::Global)
+            && let Some(spec) = spec
+            && exported_fn(hm.ast, &spelled).is_some()
+        {
+            if !import_aliases.iter().any(|(s, _)| hnames.same(*s, *u)) {
+                let mut g = 1;
+                let local = loop {
+                    let l = format!("{}_import{g}", clean_name(&spelled));
+                    if out.inline.taken.insert(l.clone()) {
+                        break l;
+                    }
+                    g += 1;
+                };
+                import_aliases.push((
+                    *u,
+                    Alias {
+                        print: local.clone(),
+                        kind: Some((
+                            local,
+                            IdentKind::Import {
+                                source: spec.to_string(),
+                                imported: spelled.clone(),
+                            },
+                        )),
+                    },
+                ));
             }
             continue;
         }
@@ -1906,7 +2004,7 @@ fn read_hook(
                     None => {
                         let name = gen_of(&hnames, *p);
                         let mut expr = match call_arg {
-                            Some(a) => r.expr(a),
+                            Some(a) => r.arg(a),
                             None => undefined_at(vloc),
                         };
                         // Declared at the call site, before what the hook declares: the chunk prints in this order.
@@ -1922,6 +2020,26 @@ fn read_hook(
                     }
                 };
                 param_aliases.push((*p, alias));
+            }
+            Slot::Rest(p) => {
+                let items: Vec<RawExpr> = site.call.args.iter().skip(i).map(|a| r.arg(a)).collect();
+                let mut expr = RawExpr {
+                    loc: vloc,
+                    kind: RawKind::Array(items),
+                };
+                relocate(&mut expr, ploc);
+                let name = gen_of(&hnames, *p);
+                out.derived.push(DerivedDecl {
+                    name: name.clone(),
+                    expr: Expr::Raw(expr),
+                });
+                param_aliases.push((
+                    *p,
+                    Alias {
+                        print: name,
+                        kind: None,
+                    },
+                ));
             }
             Slot::Object(members) => {
                 // Destructuring `undefined` throws; the call site must hand over an object literal of plain keys.
@@ -2015,7 +2133,7 @@ fn read_hook(
             hnames.set_alias(*l, Alias { print, kind: None });
         }
     }
-    for (p, a) in param_aliases {
+    for (p, a) in param_aliases.into_iter().chain(import_aliases) {
         hnames.set_alias(p, a);
     }
 
@@ -2153,6 +2271,8 @@ fn self_contained(f: &js_ast::G::Fn, names: &NameTable<'_>) -> bool {
 /// An argument that is a plain identifier is the caller's own binding.
 fn ident_alias(names: &NameTable<'_>, a: &js_ast::Expr) -> Option<Alias> {
     match &a.data {
+        // B3: the forwarded ref handed to a hook is `null` (`Reader::arg`), not the component's binding.
+        E::EIdentifier(js_ast::E::Identifier { ref_, .. }) if names.is_forwarded_ref(*ref_) => None,
         E::EIdentifier(js_ast::E::Identifier { ref_, .. })
         | E::EImportIdentifier(js_ast::E::ImportIdentifier { ref_, .. }) => Some(Alias {
             print: names.name(*ref_),
@@ -2165,6 +2285,8 @@ fn ident_alias(names: &NameTable<'_>, a: &js_ast::Expr) -> Option<Alias> {
 /// A custom hook's parameter: a plain identifier, or an object pattern of plain keys.
 enum Slot {
     Whole(js_ast::Ref),
+    /// B2: `...rest` of the hook's parameters, bound to an array of the call site's remaining arguments.
+    Rest(js_ast::Ref),
     Object(Vec<Member>),
 }
 

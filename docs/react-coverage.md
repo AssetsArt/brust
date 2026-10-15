@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 215 | 112 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 41 | 2 | 15 | 24 | 0 | 0 | 0 | 0 |
+| C Hooks | 44 | 2 | 17 | 25 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 404 | 189 | 52 | 159 | 3 | 1 | 0 | 0 |
+| **Total** | 407 | 189 | 54 | 160 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -344,6 +344,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-use-context | use(context) | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: use |
 | c-useformstatus | useFormStatus read in the component | react | react | ssr | ok | fallback:hook-unsupported | react-dom hook, outside the supported set |
 | c-useformstatus-child | useFormStatus in a child inside a static <form> | react | static | ssr | ok | — | known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react |
+| c-hook-rest-param | custom hook with a ...rest parameter whose body calls an exported function of its module | native | native | 0 | ok | — | B2: a rest parameter is the array of the remaining arguments; an exported function the hook calls is imported by the component; `return useCallback(…)` is read under a generated name |
+| c-forwarded-ref-to-hook | the forwardRef ref handed whole to a custom hook | native | native | 0 | ok | — | B3: the forwarded ref handed whole to a hook is null (a native component is never given a ref) |
+| c-forwarded-ref-member | the forwardRef ref read as a member (ref.current) | react | react | ssr | ok | fallback:forwardref-ref | B3: any read of the forwarded ref other than ref={ref} or a whole argument still needs React (forwardref-ref) |
 
 ## D. API surface
 
