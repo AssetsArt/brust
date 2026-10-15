@@ -660,6 +660,10 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
+    // `{open && children}`, a condition on it, an attribute from it: only the markup of the children can be answered.
+    if reads_children_as_value(ir) {
+        return Err("the component reads its children as a value, not only as markup".into());
+    }
     match count(&ir.template) {
         0 => Ok(()),
         1 => {
