@@ -607,8 +607,9 @@ fn read_function_as(
     ir.id_bindings = body.id_bindings;
     ir.stores = body.stores;
     ir.diagnostics.extend(body.diagnostics);
-    // S2: a Provider whose values cannot be expressed at the call site (state, a handler, a loop value) is not
-    // compiled yet (a native provider is a later step): the component stays a React island, as before.
+    // S2: a Provider whose values cannot be expressed at the call site (state, a handler, a loop value) is a React
+    // island of its own. A call site that can specialise it (R34.122) builds a clone of its pre-pass IR with this
+    // diagnostic removed and never reaches the island; every other call site keeps the island, as before.
     if let Some((loc, why)) = crate::analyze::context::provider_problem(ir) {
         ir.diagnostics.push(Diagnostic::fallback(
             "context-state",

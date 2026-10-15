@@ -104,89 +104,106 @@ pub fn scan(table: &NameTable<'_>, ast: &js_ast::Ast<'_>) -> Contexts {
 /// Why one of this component's Provider values cannot be expressed in the scope that renders it (state, a setter, a
 /// handler or arrow, JSX, a loop value, a store, a name of the body that is not a derived value or a module name).
 pub fn provider_problem(ir: &crate::ir::ComponentIR) -> Option<(u32, String)> {
-    use crate::ir::{Expr, IdentKind, RawExpr, RawKind};
-    fn bad(ir: &crate::ir::ComponentIR, r: &RawExpr, depth: u8) -> Option<String> {
-        bad_in(ir, r, depth, false)
-    }
-    /// `callee`: the identifier is the function being called (a helper of the Provider's module is fine there).
-    fn bad_in(ir: &crate::ir::ComponentIR, r: &RawExpr, depth: u8, callee: bool) -> Option<String> {
-        if depth > 8 {
-            return Some("a chain of derived values deeper than 8".into());
-        }
-        fn first<'a>(
-            ir: &crate::ir::ComponentIR,
-            xs: impl Iterator<Item = &'a RawExpr>,
-            depth: u8,
-        ) -> Option<String> {
-            xs.into_iter().find_map(|x| bad(ir, x, depth))
-        }
-        match &r.kind {
-            RawKind::Lit(_) => None,
-            RawKind::Ident { name, kind } => match kind {
-                IdentKind::Prop | IdentKind::Global => None,
-                // F-fix (Mellow): an imported binding read as a VALUE may be an element (`value={{ icon: el }}`), which the
-                // consumer would print as nothing; only a called helper is fine.
-                IdentKind::Import { .. } if callee => None,
-                IdentKind::Import { .. } => Some(format!("`{name}`, an import read as a value")),
-                IdentKind::Local => {
-                    if let Some(d) = ir.derived.iter().find(|d| &d.name == name) {
-                        return match &d.expr {
-                            Expr::Raw(e) => bad(ir, e, depth + 1),
-                            _ => Some(format!("`{name}`, which is not a plain expression")),
-                        };
-                    }
-                    // A module const is judged by its value (a JSX element, an import or a call there is not a plain value).
-                    if let Some(c) = ir
-                        .module_decls
-                        .iter()
-                        .flat_map(|d| &d.consts)
-                        .find(|c| &c.name == name)
-                    {
-                        return bad(ir, &c.value, depth + 1)
-                            .map(|w| format!("`{name}`, a module const holding {w}"));
-                    }
-                    if callee && ir.module_scope.iter().any(|(n, _)| n == name) {
-                        None
-                    } else if ir.module_scope.iter().any(|(n, _)| n == name) {
-                        Some(format!("`{name}`, a module function read as a value"))
-                    } else {
-                        Some(format!("`{name}`, a local of the component"))
-                    }
-                }
-                _ => Some(format!(
-                    "`{name}`, which is state, a handler or a loop value"
-                )),
-            },
-            RawKind::Member { target, .. } => bad(ir, target, depth),
-            RawKind::Index { target, index } => {
-                bad(ir, target, depth).or_else(|| bad(ir, index, depth))
-            }
-            RawKind::Call { callee, args } => {
-                bad_in(ir, callee, depth, true).or_else(|| first(ir, args.iter(), depth))
-            }
-            RawKind::Binary { left, right, .. } => {
-                bad(ir, left, depth).or_else(|| bad(ir, right, depth))
-            }
-            RawKind::Unary { value, .. } => bad(ir, value, depth),
-            RawKind::Cond { test, yes, no } => bad(ir, test, depth)
-                .or_else(|| bad(ir, yes, depth))
-                .or_else(|| bad(ir, no, depth)),
-            RawKind::Template { parts, .. } => first(ir, parts.iter().map(|(p, _)| p), depth),
-            RawKind::Array(xs) => first(ir, xs.iter(), depth),
-            RawKind::Object(ps) => first(ir, ps.iter().map(|(_, v)| v), depth),
-            RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
-                Some("a function or an expression outside the subset".into())
-            }
-        }
-    }
+    provider_problem_in(ir, false)
+}
+
+/// R34.116: what a NATIVE Provider cannot hand out. State, a setter, a derived value over state, a handler and an arrow
+/// are members of its own instance and are fine; JSX, a loop value, a store, an import read as a value, a module
+/// function read as a value and verbatim code outside the subset are not.
+pub fn native_provider_problem(ir: &crate::ir::ComponentIR) -> Option<(u32, String)> {
+    provider_problem_in(ir, true)
+}
+
+/// Whether every field of every Provider this component renders is a plain value of its call site (S2, §3.2): such a
+/// frame is substituted at the call site. Any other (and not refused) frame is a native frame (R34.116).
+pub fn frames_are_plain(ir: &crate::ir::ComponentIR) -> bool {
+    provider_problem_in(ir, false).is_none()
+}
+
+fn provider_problem_in(ir: &crate::ir::ComponentIR, native: bool) -> Option<(u32, String)> {
     for p in &ir.provides {
         for (k, v) in &p.fields {
-            if let Some(why) = bad(ir, v, 0) {
+            if let Some(why) = field_bad(ir, v, 0, false, native) {
                 return Some((v.loc, format!("`{k}` reading {why}")));
             }
         }
     }
     None
+}
+
+/// Why `r` is not an acceptable Provider field value (`None`: fine). `callee`: the identifier is the function being
+/// called (a helper of the Provider's module is fine there). `native`: members of the Provider's own instance are fine.
+fn field_bad(
+    ir: &crate::ir::ComponentIR,
+    r: &crate::ir::RawExpr,
+    depth: u8,
+    callee: bool,
+    native: bool,
+) -> Option<String> {
+    use crate::ir::{Expr, IdentKind, RawKind};
+    if depth > 8 {
+        return Some("a chain of derived values deeper than 8".into());
+    }
+    let bad = |x: &crate::ir::RawExpr| field_bad(ir, x, depth, false, native);
+    match &r.kind {
+        RawKind::Lit(_) => None,
+        RawKind::Ident { name, kind } => match kind {
+            IdentKind::Prop | IdentKind::Global => None,
+            // F-fix (Mellow): an imported binding read as a VALUE may be an element (`value={{ icon: el }}`), which the
+            // consumer would print as nothing; only a called helper is fine.
+            IdentKind::Import { .. } if callee => None,
+            IdentKind::Import { .. } => Some(format!("`{name}`, an import read as a value")),
+            IdentKind::State | IdentKind::Setter if native => None,
+            IdentKind::Local => {
+                if let Some(d) = ir.derived.iter().find(|d| &d.name == name) {
+                    return match &d.expr {
+                        Expr::Raw(e) => field_bad(ir, e, depth + 1, false, native),
+                        _ => Some(format!("`{name}`, which is not a plain expression")),
+                    };
+                }
+                // A handler (`useCallback`) is a member of the instance: a native frame hands it out.
+                if native && ir.handlers.iter().any(|h| &h.name == name) {
+                    return None;
+                }
+                // A module const is judged by its value (a JSX element, an import or a call there is not a plain value).
+                if let Some(c) = ir
+                    .module_decls
+                    .iter()
+                    .flat_map(|d| &d.consts)
+                    .find(|c| &c.name == name)
+                {
+                    return field_bad(ir, &c.value, depth + 1, false, native)
+                        .map(|w| format!("`{name}`, a module const holding {w}"));
+                }
+                if callee && ir.module_scope.iter().any(|(n, _)| n == name) {
+                    None
+                } else if ir.module_scope.iter().any(|(n, _)| n == name) {
+                    Some(format!("`{name}`, a module function read as a value"))
+                } else {
+                    Some(format!("`{name}`, a local of the component"))
+                }
+            }
+            _ => Some(format!(
+                "`{name}`, which is state, a handler or a loop value"
+            )),
+        },
+        RawKind::Member { target, .. } => bad(target),
+        RawKind::Index { target, index } => bad(target).or_else(|| bad(index)),
+        RawKind::Call { callee, args } => {
+            field_bad(ir, callee, depth, true, native).or_else(|| args.iter().find_map(bad))
+        }
+        RawKind::Binary { left, right, .. } => bad(left).or_else(|| bad(right)),
+        RawKind::Unary { value, .. } => bad(value),
+        RawKind::Cond { test, yes, no } => bad(test).or_else(|| bad(yes)).or_else(|| bad(no)),
+        RawKind::Template { parts, .. } => parts.iter().find_map(|(p, _)| bad(p)),
+        RawKind::Array(xs) => xs.iter().find_map(bad),
+        RawKind::Object(ps) => ps.iter().find_map(|(_, v)| bad(v)),
+        // An arrow is a handler member of the instance in a native frame.
+        RawKind::Arrow { .. } if native => None,
+        RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
+            Some("a function or an expression outside the subset".into())
+        }
+    }
 }
 
 /// F1 (Mellow): a context field becomes part of an identifier (`__ctx_<ctx>_<field>`) in the job module and the
