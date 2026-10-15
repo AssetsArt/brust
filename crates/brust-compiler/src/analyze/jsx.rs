@@ -1050,7 +1050,8 @@ pub(crate) fn event_name(attr: &str) -> Option<String> {
 }
 
 /// A handler bound to a local name (a `useCallback` or a local function) keeps
-/// that name; anything else is hoisted to `_hN` in encounter order.
+/// that name; anything else is hoisted to `_hN` in encounter order, skipping every
+/// name the module spells (F147: a user's own `_h2` stays theirs).
 fn hoist_handler(r: &mut Reader<'_, '_>, value: &js_ast::Expr) -> String {
     let body = r.expr(value);
     if let RawKind::Ident {
@@ -1060,7 +1061,14 @@ fn hoist_handler(r: &mut Reader<'_, '_>, value: &js_ast::Expr) -> String {
     {
         return name.clone();
     }
-    let name = format!("_h{}", r.pending_handlers.len() + 1);
+    let mut n = r.pending_handlers.len() + 1;
+    let name = loop {
+        let name = format!("_h{n}");
+        if !r.names.spells(&name) && !r.pending_handlers.iter().any(|h| h.name == name) {
+            break name;
+        }
+        n += 1;
+    };
     r.pending_handlers.push(HandlerDecl {
         name: name.clone(),
         body,

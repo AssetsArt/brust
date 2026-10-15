@@ -4187,7 +4187,9 @@ impl Walker<'_, '_> {
         for k in &want {
             let body = self.st.prop_raws[&(loc, k.clone())].clone();
             let mut n = self.st.handler_names.len() + 1;
-            while self.st.handler_names.contains(&format!("_h{n}")) {
+            while self.st.handler_names.contains(&format!("_h{n}"))
+                || self.st.reserved.contains(&format!("_h{n}"))
+            {
                 n += 1;
             }
             let hname = format!("_h{n}");
