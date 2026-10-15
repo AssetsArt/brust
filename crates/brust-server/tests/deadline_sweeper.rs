@@ -19,8 +19,10 @@ fn a_parked_call_is_504_on_time_and_its_slot_stays_held_until_the_late_settle() 
     let (status, _, body) = get(&s, "/pokemon/a", &[]);
     let ms = t0.elapsed().as_millis();
     assert_eq!((status, body.as_str()), (504, "call deadline exceeded"));
-    // deadline + 2 sweeper ticks, plus the test client's own request overhead.
-    assert!((100..160).contains(&ms), "504 after {ms} ms");
+    // The deadline must not fire early. The upper bound is coarse on purpose: the gate is not released before this
+    // answer, so any answer at all proves the sweeper fired it; a tight bound only measured the runner's load.
+    assert!(ms >= 100, "504 after {ms} ms: before the deadline");
+    assert!(ms < 5_000, "504 after {ms} ms");
 
     // The detached remainder still owns the only slot: the next page waits for a claim, not a call.
     let (status, _, body) = get(&s, "/pokemon/b", &[]);

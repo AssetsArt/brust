@@ -155,20 +155,32 @@ test('watchLoop: reading a directory (atime) is not a change; a file written in 
   try {
     mkdirSync(join(dir, 'public'))
     writeFileSync(join(dir, 'public', 'a.css'), 'a')
-    let runs = 0
-    const loop = watchLoop({ root: dir, ignored: () => false, debounceMs: 20, run: async () => void runs++ })
-    await Bun.sleep(500) // FSEvents may still deliver the setup writes
+    let seen: string[] = []
+    const loop = watchLoop({ root: dir, ignored: () => false, debounceMs: 20, run: async (changed) => void seen.push(...changed) })
+    const until = async (what: string, f: () => boolean) => {
+      for (const t0 = Date.now(); !f(); ) {
+        if (Date.now() - t0 > 30_000) throw new Error(`timed out: ${what}`)
+        await Bun.sleep(10)
+      }
+    }
+    // The watcher arms asynchronously and FSEvents may still deliver the setup writes late. A sentinel written after
+    // the setup is seen only once the watcher is armed, and events arrive in order, so the setup noise is behind it.
+    for (let i = 0; !seen.includes('public/arm.txt'); i++) {
+      writeFileSync(join(dir, 'public', 'arm.txt'), String(i))
+      await Bun.sleep(50)
+    }
     await loop.idle()
-    runs = 0
+    // The sentinel's own late events are noise from here on: only other files count.
+    const real = () => [...new Set(seen)].filter((f) => f !== 'public/arm.txt')
+    seen = []
     readdirSync(join(dir, 'public'))
     readFileSync(join(dir, 'public', 'a.css'))
-    await Bun.sleep(300)
-    expect(runs).toBe(0)
+    await Bun.sleep(300) // an absence check: a longer wait only makes it stricter
+    expect(real()).toEqual([])
     writeFileSync(join(dir, 'public', 'a.css'), 'b')
-    // Wait for the write to be seen (FSEvents latency varies under load), then for the run to finish.
-    for (const t0 = Date.now(); runs < 1 && Date.now() - t0 < 30_000; ) await Bun.sleep(10)
+    await until('the write to be seen', () => seen.includes('public/a.css'))
     await loop.idle()
-    expect(runs).toBe(1)
+    expect(real()).toEqual(['public/a.css'])
     loop.close()
   } finally {
     rmSync(dir, { recursive: true, force: true })
