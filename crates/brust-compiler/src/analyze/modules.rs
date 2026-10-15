@@ -129,6 +129,61 @@ pub fn compile(
     }
 }
 
+/// R34.123: compiles `export` of the module at `path` as a specialisation of it: the component's own pre-pass IR is
+/// handed to `splice`, which puts the call site's content into it, and the result goes through the whole pass pipeline
+/// as a component of its own under `key` (a synthetic cache key, not a path). The component is the same function of the
+/// same module, so everything it resolves (imports, local components, module scope) resolves as it does for the
+/// original.
+pub fn compile_specialised(
+    path: &str,
+    export: &Export,
+    key: String,
+    opts: &AnalyzeOptions,
+    modules: &RefCell<ModuleCache>,
+    splice: &mut dyn FnMut(&mut ComponentIR) -> Result<(), String>,
+) -> Result<Rc<ComponentIR>, String> {
+    if let Some(Entry::Done(ir)) = modules.borrow().get(&key) {
+        return Ok(ir.clone());
+    }
+    let path = &normalize(path);
+    let source =
+        std::fs::read(opts.root.join(path)).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let parsed =
+        crate::parse::parse_tsx(path, source).map_err(|e| format!("{path}: {}", e.message))?;
+    let mut ir = match export {
+        Export::Default => analyze_component_in(&parsed, Some(opts)).map_err(|d| d.message)?,
+        Export::Named(name) => {
+            use crate::analyze::exports::{Binding, find};
+            let local = match parsed.with_ast(|ast| find(ast, name)) {
+                Binding::Fn(l) | Binding::Local(l) => l,
+                _ => return Err(format!("{path} has no function declaration `{name}`")),
+            };
+            let mut ir = analyze_named_component_in(&parsed, &local, Some(opts))
+                .ok_or_else(|| format!("{path} has no function declaration `{local}`"))?;
+            ir.id = crate::ir::named_component_id(path, name);
+            ir.export = Some(name.clone());
+            ir
+        }
+    };
+    splice(&mut ir)?;
+    let local = |name: &str| analyze_named_component_in(&parsed, name, Some(opts));
+    let ctx = PassCtx {
+        text: parsed.text(),
+        opts,
+        path,
+        modules,
+        local: &local,
+        is_root: false,
+        specialised: true,
+    };
+    run_passes(&mut ir, &ctx);
+    finish_diagnostics(&mut ir, parsed.text());
+    ir.alias_imports = parsed.alias_imports();
+    let ir = Rc::new(ir);
+    modules.borrow_mut().insert(key, Entry::Done(ir.clone()));
+    Ok(ir)
+}
+
 fn compile_uncached(
     path: &str,
     export: &Export,
@@ -193,6 +248,7 @@ fn compile_uncached(
         modules,
         local: &local,
         is_root: modules.borrow().is_root(&cache_key(path, export)),
+        specialised: false,
     };
     run_passes(&mut ir, &ctx);
     finish_diagnostics(&mut ir, parsed.text());

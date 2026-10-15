@@ -161,8 +161,12 @@ fn field_bad(
                         _ => Some(format!("`{name}`, which is not a plain expression")),
                     };
                 }
-                // A handler (`useCallback`) is a member of the instance: a native frame hands it out.
-                if native && ir.handlers.iter().any(|h| &h.name == name) {
+                // A handler (`useCallback`), a `useId` value or a ref cell is a member of the instance: a native frame
+                // hands it out.
+                if native
+                    && (ir.handlers.iter().any(|h| &h.name == name)
+                        || ir.id_bindings.iter().any(|i| i == name))
+                {
                     return None;
                 }
                 // A module const is judged by its value (a JSX element, an import or a call there is not a plain value).
