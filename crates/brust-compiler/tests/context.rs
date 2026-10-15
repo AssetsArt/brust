@@ -518,6 +518,9 @@ fn an_element_holder_falls_back_with_no_wrapper_and_as_a_prop() {
         "prop-loc-react.tsx",
         // A spread of an element into an object literal copies its fields.
         "prop-spread-object.tsx",
+        // A module object another function fills with an element.
+        "prop-loc-mutated.tsx",
+        "prop-loc-assign.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(

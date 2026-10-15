@@ -960,23 +960,15 @@ impl Placer<'_> {
                     self.read_memo
                         .borrow_mut()
                         .insert(key.clone(), Some(name.clone()));
-                    let module_const = self
-                        .module_decls
-                        .iter()
-                        .flat_map(|d| &d.consts)
-                        .find(|c| &c.name == name);
-                    let v = match (self.derived_raw.get(name), module_const) {
-                        (Some(d), _) => self.element_problem(d, 0),
-                        (None, _)
-                            if self.plain_fns.contains(name)
-                                || self.element_free_fns.contains(name) =>
+                    let v = match self.derived_raw.get(name) {
+                        Some(d) => self.element_problem(d, 0),
+                        // A module function or const: element-free by its own module walk (JSX, reads, filled objects).
+                        None if self.plain_fns.contains(name)
+                            || self.element_free_fns.contains(name) =>
                         {
                             None
                         }
-                        (None, Some(c)) if !contains_jsx(&c.value) => {
-                            self.element_problem(&c.value, 0).map(|_| name.clone())
-                        }
-                        (None, _) => Some(name.clone()),
+                        None => Some(name.clone()),
                     };
                     self.read_memo.borrow_mut().insert(key, v.clone());
                     v
@@ -1293,7 +1285,8 @@ impl Placer<'_> {
         // Lead ruling (c), the single print point: EVERY expression printed under a lowered Provider frame or in a
         // Provider component's own template (a child, an own slot, a component prop, an attribute, a condition or a
         // loop body) goes through the total allowlist, so no print path can skip it. F173: under a plain wrapper, every
-        // `{child}` slot printed in the children passed to it (at any depth) goes through the same predicate.
+        // `{child}` slot printed in the children passed to it (at any depth) goes through the same predicate. F198 + F199:
+        // with no wrapper, every `{child}` slot and every prop passed to a component goes through `element_problem`.
         let problem = if self.frame_value {
             None
         } else if self.provider_children > 0 || (self.component_children > 0 && self.slot_content) {

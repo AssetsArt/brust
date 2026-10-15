@@ -338,19 +338,92 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
 /// read-only binding, so the importer cannot rebind it; the exporting module's own reassignments are refused there.
 /// Anything that does not resolve, read or parse is not proven.
 /// F199: names of the module's functions, const arrows and consts that cannot hand out a React element, a least
-/// fixpoint (a cycle is never proven): the declaration writes no JSX, is never reassigned, does not read the global
+/// fixpoint (a cycle is never proven): the declaration writes no JSX, is never reassigned or filled (an object written
+/// through, changed by a method, or passed to a call), does not read the global
 /// `React`, and every module name it reads is itself element-free and every import it reads is not `element_import`.
 /// Weaker than `plain_fns` (it may return an object or a function); only a component prop is judged by it.
 pub fn element_free_fns(
     ast: &js_ast::Ast<'_>,
     names: &NameTable<'_>,
-    element_import: &dyn Fn(&str) -> bool,
+    element_import: &dyn Fn(&str, &str) -> bool,
 ) -> Vec<String> {
     let mut module = crate::analyze::expr::Walk::default();
     for part in ast.parts.iter() {
         module.stmts(part.stmts.slice());
     }
     let assigned: HashSet<String> = module.assigned.iter().map(|r| names.name(*r)).collect();
+    // An object another function could fill with an element: written through a member (`slots.icon = …`), the receiver
+    // of a method that changes it (`push`, `set`, …), or handed to any call as an argument (`Object.assign(slots, …)`).
+    const MUTATING: &[&str] = &[
+        "push",
+        "unshift",
+        "splice",
+        "fill",
+        "copyWithin",
+        "sort",
+        "reverse",
+        "set",
+        "add",
+    ];
+    const READ_ONLY_FNS: &[&str] = &[
+        "String",
+        "Number",
+        "Boolean",
+        "parseInt",
+        "parseFloat",
+        "isNaN",
+        "isFinite",
+    ];
+    const READ_ONLY_STATICS: &[(&str, &str)] = &[
+        ("Object", "keys"),
+        ("Object", "values"),
+        ("Object", "entries"),
+        ("Array", "isArray"),
+        ("JSON", "stringify"),
+    ];
+    let mut filled: HashSet<String> = module
+        .member_written
+        .iter()
+        .map(|r| names.name(*r))
+        .collect();
+    for c in &module.calls {
+        let E::ECall(call) = &c.data else { continue };
+        if let E::EDot(d) = &call.target.data
+            && MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+            && let Some(r) = crate::analyze::expr::chain_root(&d.target)
+        {
+            filled.insert(names.name(r));
+        }
+        // A global that only reads its arguments (`Object.values(map)`, `String(x)`) does not fill them.
+        let global = |r: js_ast::Ref, n: &str| {
+            names.name(r) == n && matches!(names.kind_of(r).1, crate::ir::IdentKind::Global)
+        };
+        let read_only = match &call.target.data {
+            E::EIdentifier(id) => READ_ONLY_FNS.iter().any(|n| global(id.ref_, n)),
+            E::EDot(d) => match &d.target.data {
+                E::EIdentifier(id) => {
+                    let m = String::from_utf8_lossy(d.name.slice());
+                    READ_ONLY_STATICS
+                        .iter()
+                        .any(|(o, f)| global(id.ref_, o) && *f == m.as_ref())
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if read_only {
+            continue;
+        }
+        for a in call.args.iter() {
+            let a = match &a.data {
+                E::ESpread(sp) => &sp.value,
+                _ => a,
+            };
+            if let Some(r) = crate::analyze::expr::chain_root(a) {
+                filled.insert(names.name(r));
+            }
+        }
+    }
     // (name, the walk of its declaration); `None` = a module name that is never provable (`let`, a class, a pattern).
     let mut decls: Vec<(String, Option<crate::analyze::expr::Walk>)> = Vec::new();
     for part in ast.parts.iter() {
@@ -393,7 +466,7 @@ pub fn element_free_fns(
         let before = free.len();
         for (name, w) in &decls {
             let Some(w) = w else { continue };
-            if free.contains(name) || assigned.contains(name) {
+            if free.contains(name) || assigned.contains(name) || filled.contains(name) {
                 continue;
             }
             let jsx = w
@@ -401,8 +474,8 @@ pub fn element_free_fns(
                 .iter()
                 .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element));
             let reads_ok = w.used.iter().all(|r| {
-                if let Some((source, _)) = names.import_of(*r) {
-                    return !element_import(source);
+                if let Some((source, imported)) = names.import_of(*r) {
+                    return !element_import(source, imported);
                 }
                 let n = names.name(*r);
                 if module_names.contains(n.as_str()) {

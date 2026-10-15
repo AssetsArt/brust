@@ -3,7 +3,8 @@ import { formatPrice } from './lib/fmt'
 import { cn } from './lib/helpers'
 
 const LABELS: Record<string, string> = { a: 'A', b: 'B' }
-const ORIENTATIONS = ['a', 'b']
+const KINDS = { a: 'a', b: 'b' } as const
+const ORIENTATIONS = Object.values(KINDS)
 function isValid(o: string) {
   return ORIENTATIONS.includes(o)
 }

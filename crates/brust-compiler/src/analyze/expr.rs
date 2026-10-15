@@ -676,6 +676,17 @@ pub(crate) fn data_name(d: &E) -> &'static str {
     }
 }
 
+/// The identifier a member / index chain starts from (`a` of `a.b[c].d`).
+pub fn chain_root(e: &js_ast::Expr) -> Option<js_ast::Ref> {
+    match &e.data {
+        E::EIdentifier(id) => Some(id.ref_),
+        E::EImportIdentifier(id) => Some(id.ref_),
+        E::EDot(d) => chain_root(&d.target),
+        E::EIndex(i) => chain_root(&i.target),
+        _ => None,
+    }
+}
+
 /// Collects declared bindings and used identifier refs below a function body.
 /// A small structural walk; the React Compiler is not used for this.
 #[derive(Default)]
@@ -694,6 +705,8 @@ pub struct Walk {
     /// Identifiers written by an assignment or `++`/`--` (the left side's own bindings, not
     /// a member target's object).
     pub assigned: Vec<js_ast::Ref>,
+    /// The root identifiers of member / index assignment targets (`x.a = …`, `x[k] += …`): an object written through.
+    pub member_written: Vec<js_ast::Ref>,
 }
 
 impl Walk {
@@ -709,6 +722,11 @@ impl Walk {
                 .for_each(|v| self.assign_target(v)),
             E::ESpread(sp) => self.assign_target(&sp.value),
             E::EBinary(b) if matches!(b.op, OpCode::BinAssign) => self.assign_target(&b.left),
+            E::EDot(_) | E::EIndex(_) => {
+                if let Some(r) = chain_root(e) {
+                    self.member_written.push(r);
+                }
+            }
             _ => {}
         }
     }
