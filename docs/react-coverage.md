@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 202 | 108 | 12 | 82 | 0 | 0 | 0 | 0 |
+| B Composition | 206 | 109 | 12 | 85 | 0 | 0 | 0 | 0 |
 | C Hooks | 41 | 2 | 15 | 24 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 391 | 186 | 50 | 151 | 3 | 1 | 0 | 0 |
+| **Total** | 395 | 187 | 50 | 154 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -66,7 +66,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-spread-reserved-x | x-* attributes inside a spread (F94) | static | static | 0 | ok | warning:reserved-attr | F94 + shadcn S1.2: never printed, reserved-attr warning |
 | a-nullish-element | `prop ?? <X/>` as a child | static | static | 0 | ok | — | R34.78: a plain read ?? an element is a condition (a missing prop and null both fall back, 0 and "" are kept); parity in tests/server/icon-shapes.test.ts |
 | a-or-element | `prop \|\| <X/>` as a child | static | static | 0 | ok | — | R34.78: JS truthiness: "" and 0 fall back |
-| a-nullish-element-call | `f() ?? <X/>` (not a plain read) | react | react | ssr | ok | fallback:jsx-expression | R34.78: fail closed — a call would be evaluated twice; stays jsx-expression |
+| a-nullish-element-call | `f() ?? <X/>` (not a plain read) | react | react | ssr | ok | fallback:jsx-const-child, fallback:jsx-expression | R34.78: fail closed — a call would be evaluated twice; stays jsx-expression |
 | a-form-onsubmit | <form onSubmit> | native | native | 0 | ok | — |  |
 | a-form-action | <form action={fn}> | react | static | precompute | ok | — | known gap: F115: a function action becomes a precompute value that the url_ok guard drops, so the form renders without an action and submits nowhere; it should fall back to react |
 | a-input-controlled | controlled <input> | native | native | 0 | ok | — |  |
@@ -198,6 +198,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-plain-wrapper-member | an imported element read through a member, as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173 (pre-existing on main: the child printed nothing): a plain wrapper is judged by the total predicate (jsx-const-child); served and compared with React in scripts/shadcn/context-parity.test.ts |
 | b-plain-wrapper-index-array | an imported element read through an index and wrapped in an array, under a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173: the index and array shapes of the same drop (jsx-const-child) |
 | b-plain-wrapper-helper-jsx | an imported helper returning an element, called as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F190: the helper is not proven plain in its module, so the child falls back by name (jsx-const-child) |
+| b-top-element-member | an imported element read through a member, printed as a child with no wrapper | react | react | ssr | ok | fallback:jsx-const-child | F198 (wrong output on main: the template printed the element's internals): a child with no wrapper is judged by the element predicate (jsx-const-child); served and compared with React in scripts/shadcn/context-parity.test.ts |
+| b-top-element-helper | a module helper that calls another helper returning an element, printed as a child with no wrapper | react | react | ssr | ok | fallback:jsx-const-child | F198: a module function is element-free only when it writes no JSX and every module name it reads is element-free (a least fixpoint) |
+| b-prop-element-member | an imported element read through a member, passed as a prop the child prints | react | react | ssr | ok | fallback:jsx-const-child | F199 (wrong output on main: the child printed the element's internals): a component prop is judged by the element predicate (jsx-const-child) |
+| b-prop-plain-helpers | component props from a package helper, an element-free module helper and an object spread | static | static | precompute | ok | — | F199: only what can be an element refuses; a package export is not judged (accepted limit), an element-free module helper and an object literal judged by what it reads keep lowering |
 | b-plain-wrapper-helper-proven | imported helpers proven to return a primitive (a template, a method of a number or string), under a plain wrapper | static | static | precompute | ok | — | F173 control: plain_fn rules read in the helper module (its consts, primitive-returning methods); the child lowers |
 | b-plain-wrapper-methods | built-in number, string and Date methods (toLocaleString, toFixed, padStart, new Date(x).toISOString, …) as children of a plain wrapper | static | static | precompute | ok | — | F173 lead ruling on @57714ece: an allowlisted built-in method on an accepted read or new Date(…) of the unbound global; served == React in scripts/shadcn/context-parity.test.ts (ctx-plain-methods) |
 | b-plain-wrapper-method-override | an object literal with its own toString, called as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173 lead ruling: a user-defined receiver may override the method (an element would print nothing), so it falls back (jsx-const-child) |
@@ -357,7 +361,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | d-lazy-component | lazy component without Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:local-component |  |
 | d-memo-state | default export memo(function …) with state | react | react | ssr | ok | fallback:default-export-shape | fail-closed: an inline function inside the default export is the default-export-shape fallback (memo(Named) is b-memo) |
 | d-createcontext-consumer | createContext with a Consumer | react | react | ssr | ok | fallback:member-tag, fallback:jsx-const-child, fallback:jsx-expression |  |
-| d-createportal | createPortal | react | react | ssr | ok | fallback:browser-global |  |
+| d-createportal | createPortal | react | react | ssr | ok | fallback:jsx-const-child, fallback:browser-global |  |
 | d-flushsync | flushSync in a handler | react | native | 0 | ok | — | known gap: F115: compiles native but the client chunk imports react-dom (a native chunk must contain no react import); it should fall back to react |
 | d-preconnect | preconnect in render | react | react | ssr | ok | fallback:body-shape |  |
 | d-prefetchdns | prefetchDNS in render | react | react | ssr | ok | fallback:body-shape |  |

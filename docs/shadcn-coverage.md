@@ -40,7 +40,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 123 | 180 | `spread-props` diagnostic (docs/react-coverage.md) |
 | 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 31 | 0 | 87 | 176 | `island-prop` diagnostic (docs/react-coverage.md) |
 | 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 19 | 0 | 20 | 55 | `island-children` diagnostic (docs/react-coverage.md) |
-| 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 5 | 0 | 5 | 25 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
+| 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 7 | 29 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:context-island | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 6 | 0 | `context-island` diagnostic (docs/react-coverage.md) |
 | 7 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 0 | `nested-instance` diagnostic (docs/react-coverage.md) |
 | 8 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 154 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
@@ -149,7 +149,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | marker | measured | static | 0 | 3 (0) | 0 | 0 | — | built |
 | menubar | measured | static | 1 | 16 (14) | 117 | 1 | external-component, island-children, island-prop, spread-props | built |
 | message | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
-| message-scroller | measured | static | 1 | 13 (12) | 94 | 1 | external-component, island-children, island-prop, jsx-expression, spread-props | built |
+| message-scroller | measured | static | 1 | 13 (12) | 94 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, spread-props | built |
 | native-select | measured | static | 0 | 3 (0) | 0 | 1 | external-component | built |
 | navigation-menu | measured | static | 1 | 15 (14) | 99 | 1 | external-component, island-prop, spread-props | built |
 | pagination | measured | static | 0 | 8 (0) | 0 | 3 | external-component | built |
@@ -265,7 +265,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/menubar.tsx#menubarSeparator | external-component, island-prop, spread-props | 1 |
 | components/ui/menubar.tsx#menubarTrigger | external-component, island-prop, spread-props | 1 |
 | components/ui/message-scroller.tsx#messageScroller | external-component, island-prop, spread-props | 1 |
-| components/ui/message-scroller.tsx#messageScrollerButton | external-component, island-children, island-prop, jsx-expression, spread-props | 1 |
+| components/ui/message-scroller.tsx#messageScrollerButton | external-component, island-children, island-prop, jsx-const-child, jsx-expression, spread-props | 1 |
 | components/ui/message-scroller.tsx#messageScrollerContent | external-component, island-prop, spread-props | 1 |
 | components/ui/message-scroller.tsx#messageScrollerItem | external-component, island-prop, spread-props | 1 |
 | components/ui/message-scroller.tsx#messageScrollerProvider | external-component, island-prop, spread-props | 1 |
@@ -319,7 +319,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/tabs.tsx#tabsList | external-component, island-prop, spread-props | 1 |
 | components/ui/tabs.tsx#tabsTrigger | external-component, island-prop, spread-props | 1 |
 | components/ui/toggle-group.tsx#toggleGroup | external-component, island-prop, jsx-const-child, spread-props | 1 |
-| components/ui/toggle-group.tsx#toggleGroupItem | external-component, island-prop, spread-props | 1 |
+| components/ui/toggle-group.tsx#toggleGroupItem | external-component, island-prop, jsx-const-child, spread-props | 1 |
 | components/ui/tooltip.tsx#tooltip | external-component, spread-props | 1 |
 | components/ui/tooltip.tsx#tooltipContent | external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/tooltip.tsx#tooltipTrigger | external-component, spread-props | 1 |
@@ -1074,7 +1074,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/cartesian/XAxis.tsx | XAxisSettingsDispatcher | function | not exported | rest-props spread |
 | webpack:/Recharts/src/cartesian/YAxis.tsx | YAxisImpl | function | not exported | isValidElement, rest-props spread, useLayoutEffect, useRef |
 | webpack:/Recharts/src/cartesian/YAxis.tsx | YAxisSettingsDispatcher | function | not exported | rest-props spread |
-| webpack:/Recharts/src/cartesian/ZAxis.tsx | ZAxis | function | react (fallback:island-prop) | — |
+| webpack:/Recharts/src/cartesian/ZAxis.tsx | ZAxis | function | react (fallback:island-prop, fallback:jsx-const-child) | — |
 | webpack:/Recharts/src/chart/AreaChart.tsx | AreaChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
 | webpack:/Recharts/src/chart/BarChart.tsx | BarChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
 | webpack:/Recharts/src/chart/CartesianChart.tsx | CartesianChart | forwardRef | react (fallback:child-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, Context.Provider / *Provider, rest-props spread |
@@ -1082,10 +1082,10 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/chart/ComposedChart.tsx | ComposedChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
 | webpack:/Recharts/src/chart/FunnelChart.tsx | FunnelChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
 | webpack:/Recharts/src/chart/LineChart.tsx | LineChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
-| webpack:/Recharts/src/chart/PieChart.tsx | PieChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
+| webpack:/Recharts/src/chart/PieChart.tsx | PieChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
 | webpack:/Recharts/src/chart/PolarChart.tsx | PolarChart | forwardRef | react (fallback:body-shape, fallback:child-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, Context.Provider / *Provider, rest-props spread |
-| webpack:/Recharts/src/chart/RadarChart.tsx | RadarChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
-| webpack:/Recharts/src/chart/RadialBarChart.tsx | RadialBarChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
+| webpack:/Recharts/src/chart/RadarChart.tsx | RadarChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
+| webpack:/Recharts/src/chart/RadialBarChart.tsx | RadialBarChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
 | webpack:/Recharts/src/chart/RechartsWrapper.tsx | ResponsiveDiv | forwardRef | not exported | forwardRef, rest-props spread, useEffect, useState, useRef, useMemo / useCallback |
 | webpack:/Recharts/src/chart/RechartsWrapper.tsx | ReadSizeOnceDiv | forwardRef | not exported | forwardRef, rest-props spread, useState, useMemo / useCallback |
 | webpack:/Recharts/src/chart/RechartsWrapper.tsx | StaticDiv | forwardRef | not exported | forwardRef, rest-props spread |
