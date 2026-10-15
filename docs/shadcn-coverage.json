@@ -79,7 +79,7 @@
       "measuredRows": 6,
       "analysisOnlyRows": 0,
       "appComponents": 7,
-      "libraryComponents": 38
+      "libraryComponents": 31
     },
     {
       "blocker": "fallback:hook-unsupported",

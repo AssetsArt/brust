@@ -337,6 +337,45 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
 /// module proves plain by the same rules (`plain_fns`, read in its own module: its consts, its helpers). An import is a
 /// read-only binding, so the importer cannot rebind it; the exporting module's own reassignments are refused there.
 /// Anything that does not resolve, read or parse is not proven.
+/// An expression whose value is a primitive whatever it reads: a literal, an untagged template, a unary operator, or
+/// a binary operator other than `&&`, `||`, `??` and an assignment.
+fn primitive_value(e: &js_ast::Expr) -> bool {
+    match &e.data {
+        E::EString(_) | E::ENumber(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_) => true,
+        E::ETemplate(t) => t.tag.is_none(),
+        E::EUnary(_) => true,
+        E::EBinary(b) => {
+            !matches!(
+                b.op,
+                OpCode::BinLogicalAnd | OpCode::BinLogicalOr | OpCode::BinNullishCoalescing
+            ) && matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None)
+        }
+        _ => false,
+    }
+}
+
+/// A new array or object no binding holds yet: a literal, or the result of a method that returns a copy.
+fn fresh(e: &js_ast::Expr) -> bool {
+    const COPYING: &[&str] = &[
+        "slice",
+        "concat",
+        "map",
+        "filter",
+        "flat",
+        "flatMap",
+        "toSorted",
+        "toReversed",
+        "toSpliced",
+        "with",
+    ];
+    match &e.data {
+        E::EArray(_) | E::EObject(_) => true,
+        E::ECall(c) => matches!(&c.target.data, E::EDot(d)
+            if COPYING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())),
+        _ => false,
+    }
+}
+
 /// F199: names of the module's functions, const arrows and consts that cannot hand out a React element, a least
 /// fixpoint (a cycle is never proven): the declaration writes no JSX, is never reassigned or filled (an object written
 /// through, changed by a method, or passed to a call), does not read the global
@@ -397,7 +436,9 @@ pub fn element_free_fns(
                 Some(r) => {
                     filled.insert(names.key_of(r));
                 }
-                None => opaque_write = true,
+                // Sorting a fresh copy (`[…].slice().sort()`) changes no binding; any other root is unknown.
+                None if !fresh(&d.target) => opaque_write = true,
+                None => {}
             }
         }
         // A global that only reads its arguments (`Object.values(map)`, `String(x)`) does not fill them.
@@ -444,6 +485,7 @@ pub fn element_free_fns(
     }
     // (name, the walk of its declaration); `None` = a module name that is never provable (`let`, a class, a pattern).
     let mut decls: Vec<(String, u32, Option<crate::analyze::expr::Walk>)> = Vec::new();
+    let mut always: HashSet<u32> = HashSet::new();
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
             match &stmt.data {
@@ -458,16 +500,7 @@ pub fn element_free_fns(
                     for d in l.decls.iter() {
                         if let B::BIdentifier(id) = d.binding.data {
                             // A write through an unknown root may fill any const that is not a primitive.
-                            let primitive = d.value.as_ref().is_some_and(|v| {
-                                matches!(
-                                    v.data,
-                                    E::EString(_)
-                                        | E::ENumber(_)
-                                        | E::EBoolean(_)
-                                        | E::ENull(_)
-                                        | E::EUndefined(_)
-                                )
-                            });
+                            let primitive = d.value.as_ref().is_some_and(primitive_value);
                             let w = (matches!(l.kind, js_ast::S::Kind::KConst)
                                 && (primitive || !opaque_write))
                                 .then_some(d.value.as_ref())
@@ -477,6 +510,10 @@ pub fn element_free_fns(
                                     w.expr(v);
                                     w
                                 });
+                            if primitive && matches!(l.kind, js_ast::S::Kind::KConst) {
+                                // Its value is a primitive whatever it reads (`const A = B + 1`): free outright.
+                                always.insert(names.key_of(id.r#ref));
+                            }
                             decls.push((names.name(id.r#ref), names.key_of(id.r#ref), w));
                         }
                     }
@@ -491,7 +528,11 @@ pub fn element_free_fns(
         }
     }
     let module_keys: HashSet<u32> = decls.iter().map(|(_, k, _)| *k).collect();
-    let mut free: HashSet<u32> = HashSet::new();
+    let mut free: HashSet<u32> = always
+        .iter()
+        .copied()
+        .filter(|k| !assigned.contains(k))
+        .collect();
     loop {
         let before = free.len();
         for (_, key, w) in &decls {
@@ -529,9 +570,10 @@ pub fn element_free_fns(
 }
 
 /// F199: the app module `source` names (relative to `from`, after `tsconfig` aliases) may hand out a React element: it
-/// writes JSX (the parser imports `react/jsx-runtime` for it), imports React or a renderer, names `createElement` /
-/// `cloneElement`, or imports another app module that may (to depth 4). Fail closed: a module that does not resolve,
-/// read or parse may. `false` for a package specifier (not an app module).
+/// writes JSX (a call the parser marks `was_jsx_element`), imports React or a renderer, names `createElement` /
+/// `cloneElement`, or imports another app module that may (to depth 4). Fail closed: a JavaScript module the compiler
+/// does not read, or one that does not read or parse, may; a specifier that names no file at all does not (the build
+/// cannot bundle it). `false` for a package specifier (not an app module).
 pub fn module_may_hold_element(
     from: &str,
     source: &str,
@@ -545,7 +587,21 @@ pub fn module_may_hold_element(
         return true;
     }
     let Some(path) = crate::analyze::modules::resolve(from, source, opts) else {
-        return true;
+        // Not a `.ts` / `.tsx` module: a JavaScript one the compiler does not read may build an element (fail closed);
+        // nothing at all is a module the build cannot bundle, and an asset (`.json`, `.css`) holds no element.
+        let dir = from.rfind('/').map_or("", |i| &from[..i]);
+        let joined = crate::analyze::modules::normalize(&if dir.is_empty() {
+            source.to_string()
+        } else {
+            format!("{dir}/{source}")
+        });
+        const JS: &[&str] = &[".js", ".jsx", ".mjs", ".cjs"];
+        let exact = JS.iter().any(|e| joined.ends_with(e)) && opts.root.join(&joined).is_file();
+        return exact
+            || JS.iter().any(|e| {
+                opts.root.join(format!("{joined}{e}")).is_file()
+                    || opts.root.join(format!("{joined}/index{e}")).is_file()
+            });
     };
     let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
         return true;

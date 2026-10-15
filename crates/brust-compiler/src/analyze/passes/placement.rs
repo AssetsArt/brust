@@ -992,10 +992,15 @@ impl Placer<'_> {
             RawKind::Member { target, .. } => go(target),
             RawKind::Index { target, index } => go(target).or_else(|| go(index)),
             RawKind::Call { callee, args } => go(callee).or_else(|| args.iter().find_map(go)),
-            RawKind::Binary { left, right, .. } => go(left).or_else(|| go(right)),
-            RawKind::Unary { value, .. } => go(value),
-            RawKind::Cond { test, yes, no } => go(test).or_else(|| go(yes)).or_else(|| go(no)),
-            RawKind::Template { parts, .. } => parts.iter().find_map(|(p, _)| go(p)),
+            // `&&`, `||` and `??` give one of their operands; every other operator, and an untagged template, gives a
+            // primitive. A condition's test is never the value.
+            RawKind::Binary {
+                op: crate::ir::BinOp::And | crate::ir::BinOp::Or | crate::ir::BinOp::Nullish,
+                left,
+                right,
+            } => go(left).or_else(|| go(right)),
+            RawKind::Binary { .. } | RawKind::Unary { .. } | RawKind::Template { .. } => None,
+            RawKind::Cond { yes, no, .. } => go(yes).or_else(|| go(no)),
             RawKind::Array(xs) => xs.iter().find_map(go),
             RawKind::Object(ps) => ps.iter().find_map(|(_, v)| go(v)),
             // A function, or code the reader keeps verbatim, builds an element only from JSX in it (an arrow's expression
@@ -1593,7 +1598,8 @@ impl Placer<'_> {
                         let r = r.clone();
                         self.st.prop_raws.insert((*loc, k.clone()), r.clone());
                         self.frame_value = k.starts_with("__ctx_");
-                        self.component_prop = true;
+                        // `ref` and `key` are React's own: never a value the child prints.
+                        self.component_prop = k != "ref" && k != "key";
                         *v = self.child_prop(&r);
                         self.component_prop = false;
                         self.frame_value = false;

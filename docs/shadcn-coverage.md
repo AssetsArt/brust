@@ -40,7 +40,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 33 | 0 | 126 | 180 | `spread-props` diagnostic (docs/react-coverage.md) |
 | 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 88 | 176 | `island-prop` diagnostic (docs/react-coverage.md) |
 | 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 19 | 0 | 20 | 55 | `island-children` diagnostic (docs/react-coverage.md) |
-| 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 7 | 38 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
+| 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 7 | 31 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 154 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 7 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 36 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 8 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 0 | `nested-instance` diagnostic (docs/react-coverage.md) |
@@ -680,7 +680,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/navigation-menu.tsx | NavigationMenuList | forwardRef | react (fallback:external-component, fallback:island-children, fallback:jsx-const-child, fallback:member-tag) | forwardRef, useContext / use*Context, Slot / asChild, Primitive.*, rest-props spread |
 | src/navigation-menu.tsx | NavigationMenuItem | forwardRef | react (fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:spread-props) | forwardRef, Context.Provider / *Provider, Primitive.*, rest-props spread, useRef, useMemo / useCallback, useId |
 | src/navigation-menu.tsx | NavigationMenuTrigger | forwardRef | react (fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:member-tag, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread, useRef |
-| src/navigation-menu.tsx | NavigationMenuLink | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:spread-props) | forwardRef, Slot / asChild, Primitive.*, rest-props spread, addEventListener |
+| src/navigation-menu.tsx | NavigationMenuLink | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, Slot / asChild, Primitive.*, rest-props spread, addEventListener |
 | src/navigation-menu.tsx | NavigationMenuIndicator | forwardRef | react (fallback:context-scope, fallback:jsx-expression) | forwardRef, useContext / use*Context, createPortal / Portal, Presence, rest-props spread |
 | src/navigation-menu.tsx | NavigationMenuIndicatorImpl | forwardRef | not exported | forwardRef, useContext / use*Context, Primitive.*, rest-props spread, useEffect, useState |
 | src/navigation-menu.tsx | NavigationMenuContent | forwardRef | react (fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:prop-pattern, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Presence, rest-props spread |
@@ -1076,13 +1076,13 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/cartesian/YAxis.tsx | YAxisImpl | function | not exported | isValidElement, rest-props spread, useLayoutEffect, useRef |
 | webpack:/Recharts/src/cartesian/YAxis.tsx | YAxisSettingsDispatcher | function | not exported | rest-props spread |
 | webpack:/Recharts/src/cartesian/ZAxis.tsx | ZAxis | function | react (fallback:island-prop, fallback:jsx-const-child) | — |
-| webpack:/Recharts/src/chart/AreaChart.tsx | AreaChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
-| webpack:/Recharts/src/chart/BarChart.tsx | BarChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
+| webpack:/Recharts/src/chart/AreaChart.tsx | AreaChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
+| webpack:/Recharts/src/chart/BarChart.tsx | BarChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
 | webpack:/Recharts/src/chart/CartesianChart.tsx | CartesianChart | forwardRef | react (fallback:child-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, Context.Provider / *Provider, rest-props spread |
 | webpack:/Recharts/src/chart/CategoricalChart.tsx | CategoricalChart | forwardRef | react (fallback:control-flow, fallback:forwardref-ref, fallback:prop-pattern) | forwardRef, Context.Provider / *Provider |
-| webpack:/Recharts/src/chart/ComposedChart.tsx | ComposedChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
-| webpack:/Recharts/src/chart/FunnelChart.tsx | FunnelChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
-| webpack:/Recharts/src/chart/LineChart.tsx | LineChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
+| webpack:/Recharts/src/chart/ComposedChart.tsx | ComposedChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
+| webpack:/Recharts/src/chart/FunnelChart.tsx | FunnelChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
+| webpack:/Recharts/src/chart/LineChart.tsx | LineChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
 | webpack:/Recharts/src/chart/PieChart.tsx | PieChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
 | webpack:/Recharts/src/chart/PolarChart.tsx | PolarChart | forwardRef | react (fallback:body-shape, fallback:child-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, Context.Provider / *Provider, rest-props spread |
 | webpack:/Recharts/src/chart/RadarChart.tsx | RadarChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
@@ -1099,7 +1099,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/chart/Sankey.tsx | AllNodeElements | function | not exported | — |
 | webpack:/Recharts/src/chart/Sankey.tsx | SankeyImpl | function | not exported | useMemo / useCallback |
 | webpack:/Recharts/src/chart/Sankey.tsx | Sankey | function | react (fallback:body-shape, fallback:child-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:jsx-expression, fallback:member-tag, fallback:spread-props) | Context.Provider / *Provider, rest-props spread, useState |
-| webpack:/Recharts/src/chart/ScatterChart.tsx | ScatterChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child) | forwardRef |
+| webpack:/Recharts/src/chart/ScatterChart.tsx | ScatterChart | forwardRef | react (fallback:forwardref-ref, fallback:island-prop) | forwardRef |
 | webpack:/Recharts/src/chart/SunburstChart.tsx | SetSunburstTooltipEntrySettings | memo | not exported | — |
 | webpack:/Recharts/src/chart/SunburstChart.tsx | SunburstChartImpl | other | not exported | — |
 | webpack:/Recharts/src/chart/SunburstChart.tsx | SunburstChart | function | react | Context.Provider / *Provider, rest-props spread, useState |

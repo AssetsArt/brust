@@ -166,7 +166,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-forwardref-const | `const X = forwardRef(function (props, ref) {…})` exported by name, used by a parent | static | static | 0 | ok | — |  |
 | b-forwardref-arrow | forwardRef with an arrow callback and rest props | static | static | 0 | ok | — |  |
 | b-forwardref-alias-export | `const X = forwardRef(…)` then `export { X, X as Root }` | static | static | 0 | ok | — |  |
-| b-forwardref-callsite-ref | a call site passes `ref` to a forwardRef component | react | react | ssr | ok | fallback:forwardref-ref, fallback:jsx-const-child, fallback:ref-in-render | R34.64: forwardref-ref on the caller |
+| b-forwardref-callsite-ref | a call site passes `ref` to a forwardRef component | react | react | ssr | ok | fallback:forwardref-ref, fallback:ref-in-render | R34.64: forwardref-ref on the caller |
 | b-forwardref-ref-read | the forwarded ref is read (`useImperativeHandle`) | react | react | ssr | ok | fallback:forwardref-ref, fallback:hook-unsupported |  |
 | b-forwardref-ref-passed | the forwarded ref is passed on to a child component | react | react | ssr | ok | fallback:forwardref-ref |  |
 | b-forwardref-ref-destructured | the second parameter is destructured | react | react | ssr | ok | fallback:forwardref-ref |  |
@@ -280,7 +280,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-pkg-primitive-aschild | Primitive.button asChild with one host child, written in the app | static | static | 0 | ok | — | F153c R34.65: asChild on a Primitive tag merges into the one host child (the R34.28 Button rule) |
 | b-pkg-aschild-through-spread | asChild passed to a package leaf that spreads it into Primitive | react | react | ssr | ok | fallback:slot-dynamic | F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles |
 | b-pkg-aschild-dynamic | a dynamic asChild on a package leaf | react | react | ssr | ok | fallback:slot-dynamic | F153c fail closed: slot-dynamic |
-| b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | react | react | ssr | ok | fallback:forwardref-ref, fallback:jsx-const-child, fallback:ref-in-render | F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none) |
+| b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | react | react | ssr | ok | fallback:forwardref-ref, fallback:ref-in-render | F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none) |
 | b-pkg-ref-read | a package leaf that reads its forwarded ref | static | static | ssr | ok | fallback:external-component | F153c fail closed: the leaf needs React (forwardref-ref), so the app keeps the island of the published export |
 | b-pkg-no-map | a package that publishes no source map | static | static | ssr | ok | fallback:external-component | F153c G1: no sourcesContent, no analysis: the island of the published export (external-component, reason named) |
 | b-pkg-drift | a package whose published JS was not built from its map | static | static | ssr | ok | fallback:external-component | F153c R34.62: the integrity check fails: the island of the published export |
