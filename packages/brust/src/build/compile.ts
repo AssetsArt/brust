@@ -70,6 +70,8 @@ export interface Compiled {
   /** Build-time evaluation module (L2): one thunk per `ir.build_eval` slot. */
   evalTs?: string
   clientJs?: string
+  /** Modules the chunk imports that other chunks share (R34.124): `<name>.js` beside it. */
+  clientModules?: { name: string; code: string }[]
   /** The compiler's diagnostics for this component (`dev.json`, L14). */
   diagnostics?: { class: string; rule: string; message: string; line: number; col: number; remediation: string }[]
 }
@@ -198,6 +200,7 @@ export function compileApp(opts: {
       serverTs: c.serverTs,
       evalTs: c.evalTs,
       clientJs: c.clientJs,
+      clientModules: c.clientModules?.length ? c.clientModules : undefined,
       diagnostics: c.diagnostics.map((d) => ({ class: d.class, rule: d.rule, message: d.message, line: d.line, col: d.col, remediation: d.remediation })),
     })
   }
