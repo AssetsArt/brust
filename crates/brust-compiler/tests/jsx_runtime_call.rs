@@ -74,3 +74,34 @@ fn ordinary_jsx_and_unrelated_names_do_not() {
         "import { jsx } from './mine'\nexport default function C() { return <p>{jsx('a')}</p> }"
     ));
 }
+
+#[test]
+fn value_indirect_spellings_fall_back() {
+    // F156: the builder read as a value, then called through another spelling.
+    assert!(flagged(
+        "import { jsx } from 'react/jsx-runtime'\nconst h = jsx\nexport default function C() { return h('p', {}) }"
+    ));
+    assert!(flagged(
+        "import { jsx } from 'react/jsx-runtime'\nexport default function C() { return (0, jsx)('p', {}) }"
+    ));
+    assert!(flagged(
+        "import { jsxs } from 'react/jsx-runtime'\nconst call = (f: any) => f('p', { children: [] })\nexport default function C() { return call(jsxs) }"
+    ));
+    assert!(flagged(
+        "import * as R from 'react/jsx-runtime'\nconst h = R.jsx\nexport default function C() { return h('p', {}) }"
+    ));
+    assert!(flagged(
+        "import * as R from 'react/jsx-runtime'\nexport default function C() { return (0, R.jsx)('p', {}) }"
+    ));
+    assert!(flagged(
+        "import R from 'react/jsx-runtime'\nconst { jsx: h } = R\nexport default function C() { return h('p', {}) }"
+    ));
+}
+
+#[test]
+fn ordinary_jsx_next_to_an_unused_runtime_import_does_not() {
+    // The parser's own JSX calls are not reads of the import.
+    assert!(!flagged(
+        "import { jsx } from 'react/jsx-runtime'\nexport default function C() { return <p>x</p> }"
+    ));
+}

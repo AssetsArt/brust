@@ -62,6 +62,7 @@ fn tag_ref(tag: &js_ast::Expr) -> Option<js_ast::Ref> {
 /// Returns the location of the first one.
 pub fn jsx_runtime_call(
     calls: &[js_ast::Expr],
+    used_at: &[(js_ast::Ref, i32)],
     names: &crate::analyze::names::NameTable<'_>,
 ) -> Option<u32> {
     const RUNTIMES: [&str; 2] = ["react/jsx-runtime", "react/jsx-dev-runtime"];
@@ -91,7 +92,12 @@ pub fn jsx_runtime_call(
             return Some(loc_of(c));
         }
     }
-    None
+    // F156: a builder, or the namespace / default import that carries one, read as a value anywhere else
+    // (`const h = jsx; h(…)`, `(0, jsx)(…)`, `call(R.jsx)`) can build an element through any spelling: fail closed.
+    used_at
+        .iter()
+        .find(|(r, _)| import(*r).is_some_and(|(_, i)| FNS.contains(&i) || i == "*" || i == "default"))
+        .map(|(_, at)| (*at).max(0) as u32)
 }
 
 fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
