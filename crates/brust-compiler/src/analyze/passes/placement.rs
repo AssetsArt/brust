@@ -107,6 +107,11 @@ struct Placer<'s> {
     /// only those are judged: an element read there prints nothing, while an attribute or a component prop prints it the
     /// way React does (`String(value)`) or hands it to the child, as on main.
     slot_content: bool,
+    /// F199: set while placing the value of a prop passed to a component: the child may print it as content.
+    component_prop: bool,
+    /// F198 + F199: the component already falls back to React (a rule before placement made it so): its template is never
+    /// printed by the server, so `element_problem` is not asked (it would only repeat the fallback).
+    react_already: bool,
     /// Set while placing a frame value the compiler itself injected (`__ctx_*` hidden props): its expression comes from
     /// the Provider's own value fields, already judged by `provider_problem`.
     frame_value: bool,
@@ -118,6 +123,10 @@ struct Placer<'s> {
     module_decls: Vec<crate::ir::ModuleDecl>,
     /// F174: module functions proven to return a primitive (`ir.plain_fns`).
     plain_fns: Vec<String>,
+    /// F199: module functions and consts proven unable to hand out an element (`ir.element_free_fns`).
+    element_free_fns: Vec<String>,
+    /// F199: each handler's body (`ir.handlers`), judged by `element_problem` when a value reads the handler.
+    handler_bodies: HashMap<String, RawExpr>,
     /// F173 (Mellow F3): each state's initial value as written; a state is a method receiver only when it starts primitive.
     state_inits: HashMap<String, RawExpr>,
     /// F174: the verdict on each derived value / module const already judged (a chain of derived values is deep and shared).
@@ -251,6 +260,11 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         provider_children: u32::from(!ir.provides.is_empty()),
         frame_value: false,
         slot_content: false,
+        component_prop: false,
+        react_already: ir.diagnostics.iter().any(|d| {
+            d.class == crate::ir::DiagClass::Fallback
+                && !super::tier::CHILD_ONLY.contains(&d.rule.as_str())
+        }),
         list_shape_locs: ir
             .diagnostics
             .iter()
@@ -261,6 +275,12 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         text: ctx.text,
         module_decls: ir.module_decls.clone(),
         plain_fns: ir.plain_fns.clone(),
+        element_free_fns: ir.element_free_fns.clone(),
+        handler_bodies: ir
+            .handlers
+            .iter()
+            .map(|h| (h.name.clone(), h.body.clone()))
+            .collect(),
         state_inits: ir
             .state
             .iter()
@@ -911,6 +931,138 @@ impl Placer<'_> {
         }
     }
 
+    /// F198 + F199: why a value (already folded) printed as a `{child}` with no wrapper or Provider above it, or passed as
+    /// a prop to a component (which may print it as content), may be a React element: the server would print its
+    /// internals (`{'key': None, 'props': …}`). It asks only "can this be an element", so values React prints as text
+    /// keep lowering (`{cached(id)}`, `className={cn(…)}`, `onClick={composeEventHandlers(…)}`). Every app-side element
+    /// source refuses: JSX, a module const that holds or reads one, a module function or const not proven element-free
+    /// (`plain_fn::element_free_fns`), an app module that may hold one (`plain_fn::module_may_hold_element`), a derived
+    /// local judged by this same rule, any other local and an unknown name; an arrow or verbatim code is judged by the
+    /// JSX in it and every name it captures. A package export is not judged (accepted limit). The match is exhaustive,
+    /// with no wildcard.
+    fn element_problem(&self, r: &RawExpr, depth: u8) -> Option<String> {
+        if depth > 8 {
+            return Some("an expression nested deeper than 8".into());
+        }
+        let go = |x: &RawExpr| self.element_problem(x, depth + 1);
+        match &r.kind {
+            RawKind::Lit(_) => None,
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Prop
+                | IdentKind::Setter
+                | IdentKind::Global
+                | IdentKind::Store { .. } => None,
+                // Mellow F2: a state starts as its `useState` initial value (a lazy initializer by what it builds); what a
+                // setter writes later is out of model (ledger). No recorded initial value refuses.
+                IdentKind::State => match self.state_inits.get(name) {
+                    Some(init) => go(init).map(|_| name.clone()),
+                    None => Some(name.clone()),
+                },
+                // Mellow F2: a list item carries what its list holds; the index is a number. No source refuses.
+                IdentKind::LoopBinding => match self
+                    .lists
+                    .iter()
+                    .rev()
+                    .find(|l| &l.item == name || l.index.as_ref() == Some(name))
+                {
+                    Some(l) if l.index.as_ref() == Some(name) => None,
+                    Some(List {
+                        source: Some(src), ..
+                    }) => go(src).map(|_| name.clone()),
+                    _ => Some(name.clone()),
+                },
+                IdentKind::Local => {
+                    // A `useId` value is a string.
+                    if self.ids.contains(name) {
+                        return None;
+                    }
+                    let key = format!("element {name}");
+                    if let Some(v) = self.read_memo.borrow().get(&key) {
+                        return v.clone();
+                    }
+                    // Fail closed while it is being judged: a name that reads itself is not provable.
+                    self.read_memo
+                        .borrow_mut()
+                        .insert(key.clone(), Some(name.clone()));
+                    let v = match self.derived_raw.get(name).or(self.handler_bodies.get(name)) {
+                        // A derived value, or a handler (an arrow): judged by what it is built from.
+                        Some(d) => self.element_problem(d, 0),
+                        // A module function or const: element-free by its own module walk (JSX, reads, filled objects).
+                        None if self.plain_fns.contains(name)
+                            || self.element_free_fns.contains(name) =>
+                        {
+                            None
+                        }
+                        None => Some(name.clone()),
+                    };
+                    self.read_memo.borrow_mut().insert(key, v.clone());
+                    v
+                }
+                IdentKind::Import { source, .. } => {
+                    let key = format!("element-module {source}");
+                    let known = self.read_memo.borrow().get(&key).cloned();
+                    known
+                        .unwrap_or_else(|| {
+                            let v = crate::analyze::plain_fn::module_may_hold_element(
+                                &self.path, source, self.opts, 0,
+                            )
+                            .then(|| name.clone());
+                            self.read_memo.borrow_mut().insert(key, v.clone());
+                            v
+                        })
+                        .map(|_| name.clone())
+                }
+                IdentKind::Unknown => Some(name.clone()),
+            },
+            RawKind::Member { target, .. } => go(target),
+            RawKind::Index { target, index } => go(target).or_else(|| go(index)),
+            RawKind::Call { callee, args } => {
+                // A function handed to a package export (`composeEventHandlers(…, () => …)`) is the package's to call:
+                // package exports are not judged, so neither is what they call. An app function's argument is.
+                let package = matches!(
+                    &chain_root_raw(callee).kind,
+                    RawKind::Ident { kind: IdentKind::Import { source, .. }, .. }
+                        if !source.starts_with("./") && !source.starts_with("../")
+                );
+                go(callee).or_else(|| {
+                    args.iter()
+                        .filter(|a| !(package && self.is_function(a, 0)))
+                        .find_map(go)
+                })
+            }
+            // `&&`, `||` and `??` give one of their operands; every other operator, and an untagged template, gives a
+            // primitive. A condition's test is never the value.
+            RawKind::Binary {
+                op: crate::ir::BinOp::And | crate::ir::BinOp::Or | crate::ir::BinOp::Nullish,
+                left,
+                right,
+            } => go(left).or_else(|| go(right)),
+            RawKind::Binary { .. } | RawKind::Unary { .. } | RawKind::Template { .. } => None,
+            RawKind::Cond { yes, no, .. } => go(yes).or_else(|| go(no)),
+            RawKind::Array(xs) => xs.iter().find_map(go),
+            RawKind::Object(ps) => ps.iter().find_map(|(_, v)| go(v)),
+            // A function, or code the reader keeps verbatim, builds an element only from JSX in it (an arrow's expression
+            // body, or an Opaque marked `contains-jsx`) or from a name it reads: it is judged by every name it captures.
+            RawKind::Arrow { captures, .. } | RawKind::Opaque { captures, .. } => {
+                if contains_jsx(r)
+                    || matches!(&r.kind, RawKind::Opaque { why, .. } if why == "contains-jsx")
+                {
+                    return Some("an element".into());
+                }
+                captures.iter().find_map(|(name, kind)| {
+                    go(&RawExpr {
+                        loc: r.loc,
+                        kind: RawKind::Ident {
+                            name: name.clone(),
+                            kind: kind.clone(),
+                        },
+                    })
+                })
+            }
+            RawKind::Jsx(_) => Some("an element".into()),
+        }
+    }
+
     /// The first module const `r` reads (through other module consts) whose value is, or builds, JSX.
     fn jsx_const_read(&self, r: &RawExpr, depth: u8) -> Option<String> {
         if depth > 4 {
@@ -1176,19 +1328,41 @@ impl Placer<'_> {
         // Lead ruling (c), the single print point: EVERY expression printed under a lowered Provider frame or in a
         // Provider component's own template (a child, an own slot, a component prop, an attribute, a condition or a
         // loop body) goes through the total allowlist, so no print path can skip it. F173: under a plain wrapper, every
-        // `{child}` slot printed in the children passed to it (at any depth) goes through the same predicate.
-        if (self.provider_children > 0 || (self.component_children > 0 && self.slot_content))
-            && !self.frame_value
-            && let Some(name) = self.child_read_problem(&self.fold(r), 0)
-        {
+        // `{child}` slot printed in the children passed to it (at any depth) goes through the same predicate. F198 + F199:
+        // with no wrapper, every `{child}` slot and every prop passed to a component goes through `element_problem`.
+        let problem = if self.frame_value {
+            None
+        } else if self.provider_children > 0 || (self.component_children > 0 && self.slot_content) {
+            self.child_read_problem(&self.fold(r), 0)
+        } else if (self.slot_content || self.component_prop) && !self.react_already {
+            self.element_problem(&self.fold(r), 0)
+        } else {
+            None
+        };
+        if let Some(name) = problem {
             let under = if self.provider_children > 0 {
                 "under a context Provider"
-            } else {
+            } else if self.component_prop {
+                "as a prop of a component"
+            } else if self.component_children > 0 {
                 "as a child of a component"
+            } else {
+                "as a child"
+            };
+            let message = if self.provider_children == 0
+                && (self.component_prop || self.component_children == 0)
+            {
+                format!(
+                    "`{name}` is read {under} and brust cannot prove it is not a React element; the server template could print the element's internals"
+                )
+            } else {
+                format!(
+                    "`{name}` is read {under} and brust cannot prove it is a plain value (a prop, a printed local, a primitive constant or a helper proven to return one); the server template could print nothing for it"
+                )
             };
             self.diagnostics.push(Diagnostic::fallback(
                 "jsx-const-child",
-                format!("`{name}` is read {under} and brust cannot prove it is a plain value (a prop, a printed local, a primitive constant or a helper proven to return one); the server template could print nothing for it"),
+                message,
                 r.loc,
                 "render the element inline, pass a prop, or keep this component in React",
             ));
@@ -1462,7 +1636,10 @@ impl Placer<'_> {
                         let r = r.clone();
                         self.st.prop_raws.insert((*loc, k.clone()), r.clone());
                         self.frame_value = k.starts_with("__ctx_");
+                        // `ref` and `key` are React's own: never a value the child prints.
+                        self.component_prop = k != "ref" && k != "key";
                         *v = self.child_prop(&r);
+                        self.component_prop = false;
                         self.frame_value = false;
                     }
                 }
@@ -1475,6 +1652,14 @@ impl Placer<'_> {
             }
             Node::Fragment(cs) => cs.iter_mut().for_each(|c| self.node(c)),
         }
+    }
+}
+
+/// The expression a member / index chain starts from (`a` of `a.b[c].d`).
+fn chain_root_raw(e: &RawExpr) -> &RawExpr {
+    match &e.kind {
+        RawKind::Member { target, .. } | RawKind::Index { target, .. } => chain_root_raw(target),
+        _ => e,
     }
 }
 

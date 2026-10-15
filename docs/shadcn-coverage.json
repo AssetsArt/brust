@@ -76,10 +76,10 @@
       "blocker": "fallback:jsx-const-child",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 5,
+      "measuredRows": 6,
       "analysisOnlyRows": 0,
-      "appComponents": 5,
-      "libraryComponents": 25
+      "appComponents": 7,
+      "libraryComponents": 29
     },
     {
       "blocker": "fallback:context-island",
@@ -1069,6 +1069,7 @@
         "external-component",
         "island-children",
         "island-prop",
+        "jsx-const-child",
         "jsx-expression",
         "spread-props"
       ]
