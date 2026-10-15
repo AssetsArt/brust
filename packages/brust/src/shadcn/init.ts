@@ -2,9 +2,9 @@
 // shadcn's own `init` does not detect brust, so this writes what `add` needs (components.json, the `@/*` path),
 // installs the four packages the components import, and runs ONE pinned shadcn CLI for the theme and the components.
 // Every child process is spawned from an argv array, never through a shell; the runner is injected for tests.
-import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
-import { type ObjectNode, raw, readObject } from './jsonc'
+import { type Member, type ObjectNode, raw, readObject } from './jsonc'
 
 /** The shadcn CLI version this command runs (R41.6). A release that moves it re-runs the transcript. */
 export const SHADCN_VERSION = '4.21.4'
@@ -61,21 +61,98 @@ function linkUnder(root: string, rel: string): boolean {
   return false
 }
 
-/** Where the shadcn CLI writes, project-relative: the alias directories of `components.json` (`@/x` → `x`; the defaults
- *  when we are writing it or it has none), `lib/utils.ts`, the Tailwind CSS entry (when the theme step runs) and one file per plain component name. */
-function cliTargets(componentsText: string | undefined, css: string | undefined, components: string[]): string[] {
-  const alias = (k: string, d: string): string => {
+/** `compilerOptions.paths` (pattern → first target) and `baseUrl` of a tsconfig text; empty when it cannot be read. */
+function tsPaths(text: string | undefined): { base: string; map: Array<[string, string]> } {
+  const none = { base: '', map: [] as Array<[string, string]> }
+  if (text === undefined) return none
+  try {
+    const co = readObject(text).members.find((m) => m.key === 'compilerOptions')?.object
+    const str = (m: Member | undefined): string => (m ? (/"([^"\\]*)"/.exec(raw(text, m))?.[1] ?? '') : '')
+    const base = str(co?.members.find((m) => m.key === 'baseUrl'))
+    const map = (co?.members.find((m) => m.key === 'paths')?.object?.members ?? []).map((m): [string, string] => [m.key, str(m)])
+    return { base, map }
+  } catch {
+    return none
+  }
+}
+
+/** A project-relative path for an import alias (`@/hooks` → `hooks`) by the tsconfig `paths`, or undefined when no entry
+ *  matches or the result is not a plain path inside the project (absolute, `..`, a drive, a backslash). */
+function resolveAlias(alias: string, base: string, map: Array<[string, string]>): string | undefined {
+  let best: { rank: number; target: string } | undefined
+  for (const [key, target] of map) {
+    const star = key.indexOf('*')
+    let rest: string | undefined
+    if (star < 0) rest = key === alias ? '' : undefined
+    else if (alias.length >= key.length - 1 && alias.startsWith(key.slice(0, star)) && alias.endsWith(key.slice(star + 1))) rest = alias.slice(star, alias.length - (key.length - star - 1))
+    if (rest === undefined || target === '') continue
+    const rank = star < 0 ? Number.MAX_SAFE_INTEGER : star
+    if (!best || rank > best.rank) best = { rank, target: star < 0 ? target : target.replace('*', rest) }
+  }
+  if (!best) return undefined
+  const segs = `${base}/${best.target}`.split('/').filter((x) => x !== '' && x !== '.')
+  if (segs.some((x) => x === '..' || x.includes('\\') || x.includes(':')) || best.target.startsWith('/') || base.startsWith('/')) return undefined
+  return segs.join('/')
+}
+
+/** F193: every path the shadcn CLI may write, project-relative, or an error. The CLI follows symlinks, so the caller
+ *  refuses when one is, or sits under, a symlink. Fails closed: an alias that cannot be resolved by the tsconfig `paths`
+ *  (`@/*` → `./*` is assumed when the tsconfig has no entry: it is what this command asks for) is an error, not a skipped check. */
+function cliTargets(
+  componentsText: string | undefined,
+  tsText: string | undefined,
+  css: string | undefined,
+  components: string[],
+): { paths: string[]; dirs: string[] } | { error: string } {
+  let aliases: Record<string, string> = { components: '@/components', utils: '@/lib/utils', ui: '@/components/ui', lib: '@/lib', hooks: '@/hooks' }
+  if (componentsText !== undefined) {
     try {
-      const a = (JSON.parse(componentsText ?? '{}') as { aliases?: Record<string, unknown> }).aliases?.[k]
-      return typeof a === 'string' && a.startsWith('@/') && !a.split('/').includes('..') ? a.slice(2) : d
+      const a = (JSON.parse(componentsText) as { aliases?: unknown }).aliases
+      if (a !== undefined) {
+        if (typeof a !== 'object' || a === null || Array.isArray(a)) return { error: 'components.json "aliases" is not an object' }
+        aliases = {}
+        for (const [k, v] of Object.entries(a)) {
+          if (typeof v !== 'string') return { error: `components.json alias ${JSON.stringify(k)} is not a string` }
+          aliases[k] = v
+        }
+      }
     } catch {
-      return d
+      return { error: 'components.json is not valid JSON, so the shadcn CLI target paths cannot be checked' }
     }
   }
-  const ui = alias('ui', 'components/ui')
-  const lib = alias('lib', 'lib')
-  const utils = alias('utils', 'lib/utils')
-  return [ui, alias('components', 'components'), lib, `${utils}.ts`, ...(css === undefined ? [] : [css]), ...components.filter((c) => COMPONENT.test(c)).map((c) => `${ui}/${c}.tsx`)]
+  const { base, map } = tsPaths(tsText)
+  // `@/*` → `./*` is the mapping this command adds or asks for; an existing entry (e.g. `./src/*`) wins.
+  if (!map.some(([k]) => k === '@/*')) map.push(['@/*', './*'])
+  const paths: string[] = []
+  const dirs: string[] = []
+  const roots: Record<string, string> = {}
+  for (const [k, v] of Object.entries(aliases)) {
+    const rel = resolveAlias(v, base, map)
+    if (rel === undefined || rel === '') return { error: `alias ${JSON.stringify(k)} (${JSON.stringify(v)}) in components.json does not resolve to a path inside the project by the tsconfig "paths"; the shadcn CLI target cannot be checked` }
+    roots[k] = rel
+    if (k === 'utils') paths.push(rel, `${rel}.ts`)
+    else {
+      paths.push(rel)
+      dirs.push(rel)
+    }
+  }
+  const ui = roots.ui ?? 'components/ui'
+  return { paths: [...paths, 'package.json', ...(css === undefined ? [] : [css]), ...components.filter((c) => COMPONENT.test(c)).map((c) => `${ui}/${c}.tsx`)], dirs }
+}
+
+/** Where a path or directory entry the CLI could write through is a symlink; undefined when clean. */
+function cliLink(root: string, t: { paths: string[]; dirs: string[] }): string | undefined {
+  const hit = t.paths.find((p) => linkUnder(root, p))
+  if (hit !== undefined) return hit
+  // dependency files of a registry item (hooks, lib helpers) land in these directories: no entry may be a link
+  for (const d of t.dirs) {
+    try {
+      for (const e of readdirSync(join(root, d))) if (isLink(join(root, d, e))) return `${d}/${e}`
+    } catch {
+      // the directory does not exist yet (the CLI creates it): nothing to follow
+    }
+  }
+  return undefined
 }
 
 /** The name a registry URL installs: its last path segment without `.json`; undefined when it is not a plain name. */
@@ -210,8 +287,14 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   // links, so refuse before spawning it when one of its target paths is, or sits under, a symlink.
   const writing = !existsSync(cj) || o.force
   const themeRuns = o.force || !readFileSync(join(root, entry.css), 'utf8').includes('shadcn/tailwind.css')
-  const targets = cliTargets(writing ? undefined : readFileSync(cj, 'utf8'), themeRuns ? entry.css : undefined, o.components)
-  const hit = targets.find((t) => linkUnder(root, t))
+  const targets = cliTargets(
+    writing ? undefined : readFileSync(cj, 'utf8'),
+    existsSync(tsPath) ? readFileSync(tsPath, 'utf8') : undefined,
+    themeRuns ? entry.css : undefined,
+    o.components,
+  )
+  if ('error' in targets) return fail2(targets.error)
+  const hit = cliLink(root, targets)
   if (hit !== undefined) return fail2(`${hit} is, or is inside, a symbolic link; the shadcn CLI would write through it. Replace the link with a real directory or file, then run again`)
 
   const report = (name: string, step: Step, why = ''): void => out(`${step === 'done' ? '✓' : step === 'skipped' ? '-' : '✗'} ${name}: ${step}${why ? ` (${why})` : ''}`)

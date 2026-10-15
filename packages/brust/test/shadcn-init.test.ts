@@ -343,3 +343,78 @@ test('the CLI target check follows the aliases of an existing components.json (F
   writeFileSync(join(clean, 'components.json'), JSON.stringify({ aliases: { ui: '@/src/kit' } }))
   expect((await init(clean)).code).toBe(0)
 })
+
+// F193 round 2 (Mellow F1): the CLI writes through hooks, registryDependency files, non-`@/` aliases and package.json too.
+function outsideDir(): string {
+  const o = realpathSync(mkdtempSync(join(tmpdir(), 'brust-shadcn-outside-')))
+  dirs.push(o)
+  return o
+}
+
+test('F193 control: a clean project runs the CLI', async () => {
+  const r = await init(project(), { components: ['button'] })
+  expect(r.code).toBe(0)
+  expect(r.calls.length).toBeGreaterThan(0)
+})
+
+test('F193 (a): a symlinked hooks directory is refused before the CLI is spawned', async () => {
+  const outside = outsideDir()
+  const d = project()
+  symlinkSync(outside, join(d, 'hooks'))
+  const r = await init(d, { components: ['sidebar'] })
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(readdirSync(outside)).toEqual([])
+})
+
+test('F193 (b): a symlinked file inside an alias directory (a registryDependency such as use-mobile) is refused', async () => {
+  const outside = outsideDir()
+  const d = project()
+  mkdirSync(join(d, 'hooks'))
+  symlinkSync(join(outside, 'use-mobile.ts'), join(d, 'hooks/use-mobile.ts'))
+  const r = await init(d, { components: ['sidebar'] })
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(readdirSync(outside)).toEqual([])
+})
+
+test('F193 (c): a non-@/ alias is resolved by the tsconfig paths, and refused when it cannot be resolved', async () => {
+  const outside = outsideDir()
+  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~kit/*": ["./src/kit/*"] } } }' })
+  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~kit/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  mkdirSync(join(d, 'src/kit'), { recursive: true })
+  symlinkSync(outside, join(d, 'src/kit/ui'))
+  const linked = await init(d)
+  expect(linked.code).toBe(2)
+  expect(linked.calls).toEqual([])
+  // an alias with no tsconfig path: fail closed
+  const e = project()
+  writeFileSync(join(e, 'components.json'), JSON.stringify({ aliases: { ui: '~nowhere/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  const r = await init(e)
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(r.lines.join('\n')).toContain('does not resolve')
+  // an alias that escapes the project
+  writeFileSync(join(e, 'components.json'), JSON.stringify({ aliases: { ui: '@/../outside', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  expect((await init(e)).code).toBe(2)
+  expect(readdirSync(outside)).toEqual([])
+})
+
+test('F193 (d): a symlinked package.json is refused before the CLI is spawned', async () => {
+  const outside = outsideDir()
+  const d = project({ pkg: null })
+  writeFileSync(join(outside, 'package.json'), JSON.stringify({ name: 'a', dependencies: { '@brust/core': '^2.0.0' } }))
+  symlinkSync(join(outside, 'package.json'), join(d, 'package.json'))
+  const r = await init(d, { components: ['button'] })
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(JSON.parse(readFileSync(join(outside, 'package.json'), 'utf8')).name).toBe('a')
+})
+
+test('F193: a custom alias with an unreadable components.json is refused (fail closed)', async () => {
+  const d = project()
+  writeFileSync(join(d, 'components.json'), '{ not json')
+  const r = await init(d)
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+})
