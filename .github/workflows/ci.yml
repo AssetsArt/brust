@@ -255,6 +255,10 @@ jobs:
       - run: cd packages/brust && bun test test/cli.test.ts
       - run: cd packages/brust && bun test test/attr-parity-react.test.ts
       - run: cd packages/brust && bun test test/shadcn-init.test.ts
+      # F226/F227: tsconfig extends/paths folding for the init target check.
+      - run: cd packages/brust && bun test test/shadcn-init-extends.test.ts
+      # F228: registry URL item vetting; starts a local Bun.serve, so it runs alone.
+      - run: cd packages/brust && bun test test/shadcn-init-registry.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-child-literals.test.ts
       - run: cd packages/brust && bun test test/build-store.test.ts
