@@ -99,3 +99,23 @@ test('local Cloudflare state never reaches the template; the D1 files do', () =>
   expect(out).toContain('migrations/0001_team.sql')
   expect(out).toContain('wrangler.jsonc')
 })
+
+test('global CSS: the scaffold has app.css at the root, imported by the layout and the 404; no prebuilt public/app.css or styles/; the Tailwind pins equal blank', () => {
+  const to = join(tmp(), 'out')
+  syncTemplate({ from: FROM, to, overlay: OVERLAY })
+  expect(existsSync(join(to, 'app.css'))).toBe(true)
+  expect(existsSync(join(to, 'public/app.css'))).toBe(false)
+  expect(existsSync(join(to, 'styles'))).toBe(false)
+  expect(readFileSync(join(to, 'app.css'), 'utf8')).toMatch(/^@import "tailwindcss";/)
+  for (const f of ['components/AppLayout.tsx', 'pages/NotFoundPage.tsx']) {
+    const text = readFileSync(join(to, f), 'utf8')
+    expect([f, text.includes("import '../app.css'")]).toEqual([f, true])
+    expect([f, text.includes('rel="stylesheet"')]).toEqual([f, false])
+  }
+  const pkg = JSON.parse(readFileSync(join(to, 'package.json.tmpl'), 'utf8').replace('__BRUST_DEP__', '"x"'))
+  const blank = JSON.parse(readFileSync(join(import.meta.dir, '../templates/blank/package.json.tmpl'), 'utf8').replace('__BRUST_DEP__', '"x"'))
+  for (const k of ['tailwindcss', '@tailwindcss/node', '@tailwindcss/oxide']) expect([k, pkg.devDependencies[k]]).toEqual([k, blank.devDependencies[k]])
+  const readme = readFileSync(join(to, 'README.md.tmpl'), 'utf8')
+  expect(readme).not.toContain('public/app.css')
+  expect(readme).not.toContain('@tailwindcss/cli')
+})

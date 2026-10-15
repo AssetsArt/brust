@@ -45,13 +45,11 @@ then `bun run deploy:cf`.
 Preview note: a team change refreshes cached team pages only in the isolate that served the action; other isolates catch up
 within the route `ttl` (60 s for `/pokemon/*`, 1 h for `/type-chart`) until the cross-isolate invalidation lands.
 
-## Regenerating the stylesheet (never hand-edit `public/app.css`)
+## Styling
 
-```bash
-bunx @tailwindcss/cli@4 -i styles/app.css -o public/app.css --minify
-```
-
-(Tailwind must resolve from the input's directory: install `tailwindcss` in the project first.)
+`app.css` (Tailwind CSS v4, CSS-first: no `tailwind.config`) is imported by `components/AppLayout.tsx` and by the 404 page, which renders its
+own `<html>`. Edit `app.css`; brust builds it into one minified, content-hashed file and links it in `<head>`. There is no prebuilt
+stylesheet and no `<link>` to write. `brust dev` swaps the stylesheet in place, without a reload.
 
 ## Docs
 
