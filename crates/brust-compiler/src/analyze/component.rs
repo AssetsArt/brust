@@ -467,7 +467,7 @@ fn read_function_as(
     }
     // R34.67 (G2): a hand-written call to the JSX runtime builds an element the reader cannot see
     // through; read as an expression it would print an element object. Fail closed.
-    if let Some(loc) = crate::analyze::jsx::jsx_runtime_call(&w.calls, reader.names) {
+    if let Some(loc) = crate::analyze::jsx::jsx_runtime_call(&w.calls, &w.used_at, reader.names) {
         ir.diagnostics.push(Diagnostic::fallback(
             "jsx-runtime-call",
             "a hand-written call to React's JSX runtime (`jsx(…)`) is not read as an element; the component renders as a React island",
@@ -499,6 +499,11 @@ fn read_function_as(
         ));
     }
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
+    ir.bound_names = reader
+        .names
+        .spellings()
+        .chain(reader.names.print_aliases().values().cloned())
+        .collect();
     ir.plain_fns = crate::analyze::plain_fn::plain_fns(ast, &*reader.names);
     // F215 allowlist: a module `const` is accepted when the folder folds it or `plain_fn` proves it plain.
     let folded = {

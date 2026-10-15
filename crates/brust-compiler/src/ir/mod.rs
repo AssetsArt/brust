@@ -263,6 +263,10 @@ pub struct ComponentIR {
     /// readable in a prop passed to a component.
     #[serde(skip)]
     pub element_free_fns: Vec<String>,
+    /// F147: every name the module spells (its symbols, and the names inlined hook locals print as): a generated
+    /// handler name never takes one.
+    #[serde(skip)]
+    pub bound_names: std::collections::HashSet<String>,
     /// F215: the first module-level statement that runs for its effect (`analyze::module_effects`): its start and what it is.
     #[serde(skip)]
     pub module_effect: Option<(u32, String)>,
@@ -420,6 +424,7 @@ impl ComponentIR {
             ctx_pkg: false,
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),
+            bound_names: Default::default(),
             module_effect: None,
             holds_island: false,
             unwritten_props: Vec::new(),
