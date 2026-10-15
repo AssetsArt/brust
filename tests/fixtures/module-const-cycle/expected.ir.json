@@ -1,7 +1,12 @@
 {
   "id": "input_4dcb8095",
   "source": "tests/fixtures/module-const-cycle/input.tsx",
-  "tier": "Static",
+  "tier": {
+    "React": {
+      "reason": "this module has a declaration the compiler cannot prove runs nothing (only `const`s it folds or proves plain, and functions); the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
+      "client_only": false
+    }
+  },
   "props": [],
   "state": [],
   "derived": [],
@@ -34,21 +39,19 @@
   },
   "jobs": [
     {
-      "kind": "Precompute",
-      "inputs": [],
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*",
+        "__store"
+      ],
       "outputs": [
-        "_s1"
+        "_ssr_input_4dcb8095"
       ],
       "per_item": null
-    }
-  ],
-  "build_eval": [
-    {
-      "key": "tests/fixtures/module-const-cycle/input.tsx@79",
-      "slot": "_s1",
-      "build_time": false,
-      "line": 5,
-      "col": 14
     }
   ],
   "child_links": [],
@@ -58,5 +61,15 @@
   "needs_worker": true,
   "cache": null,
   "children": [],
-  "diagnostics": []
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "module-side-effect",
+      "message": "this module has a declaration the compiler cannot prove runs nothing (only `const`s it folds or proves plain, and functions); the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
+      "loc": 79,
+      "line": 5,
+      "col": 14,
+      "remediation": "keep module scope to imports, functions and constants (move other code into the function that needs it), or keep this component in React"
+    }
+  ]
 }

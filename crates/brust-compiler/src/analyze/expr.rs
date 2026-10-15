@@ -714,9 +714,6 @@ pub struct Walk {
     /// `(binding, read)`: a binding declared or assigned from a value that reads `read` (`const s = slots`,
     /// `s = { a: slots }`), so writing through the binding may write into `read`.
     pub flows: Vec<(js_ast::Ref, js_ast::Ref)>,
-    /// F215 round 2 (Mellow F4): the parameters of every function and arrow reached (also in `declared`): what a
-    /// callable was handed, so a write through one may reach a caller's object.
-    pub params: Vec<js_ast::Ref>,
 }
 
 impl Walk {
@@ -797,7 +794,6 @@ impl Walk {
             self.declared.push(name.ref_);
         }
         for arg in f.args.slice() {
-            binding_refs(&arg.binding, &mut self.params);
             self.declare_binding(&arg.binding);
             if let Some(d) = &arg.default {
                 self.expr(d);
@@ -964,7 +960,6 @@ impl Walk {
             }
             E::EArrow(a) => {
                 for arg in a.args.slice() {
-                    binding_refs(&arg.binding, &mut self.params);
                     self.declare_binding(&arg.binding);
                     if let Some(d) = &arg.default {
                         self.expr(d);

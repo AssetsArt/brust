@@ -801,6 +801,22 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
         "side-param-array.tsx",
         // Mellow F5: a destructuring default that runs a writer.
         "side-pattern-default.tsx",
+        // Mellow x1 (the allowlist ruling): an implicit call, a template coercing a module object whose toString writes.
+        "side-coerce.tsx",
+        // Mellow n10, n14, n15: a write through `this` in an object method, a static class method, a writer reached by a
+        // parameter default.
+        "side-this-method.tsx",
+        "side-static-method.tsx",
+        "side-param-default.tsx",
+        // F215 allowlist (lead ruling b0dff21e): a function that writes a module binding makes its module unclean even
+        // when nothing calls it at load time.
+        "side-writer-uncalled.tsx",
+        // A load-time call of this module's own code (`fmt('a')`, `reg.pick('x')`): only package code and read-only globals
+        // may run at load time.
+        "side-own-call.tsx",
+        // The invariant (lead ruling b0dff21e): no accepted value holds code that writes a module binding, so a package
+        // handed a writing callback is refused.
+        "side-package-writer.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(
@@ -810,13 +826,6 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
             ir.diagnostics
         );
     }
-    // A writer nothing calls at module time is not an effect (declaring a function runs nothing).
-    let (ir, _) = page("side-writer-uncalled.tsx");
-    assert!(
-        !rules(&ir).contains(&"module-side-effect"),
-        "{:?}",
-        ir.diagnostics
-    );
     // Callable values that write nothing (an arrow const called, a class, an object method) keep lowering.
     for f in [
         "side-none.tsx",

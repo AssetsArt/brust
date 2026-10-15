@@ -3,7 +3,7 @@
   "source": "tests/fixtures/module-const-mutated-foreach/input.tsx",
   "tier": {
     "React": {
-      "reason": "this module has a module-level expression statement; the code brust compiles copies the module's declarations but not that statement, so a value read from a module binding could differ from React's",
+      "reason": "this module has a module-level expression statement; the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
       "client_only": false
     }
   },
@@ -115,11 +115,11 @@
     {
       "class": "Fallback",
       "rule": "module-side-effect",
-      "message": "this module has a module-level expression statement; the code brust compiles copies the module's declarations but not that statement, so a value read from a module binding could differ from React's",
+      "message": "this module has a module-level expression statement; the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
       "loc": 146,
       "line": 9,
       "col": 8,
-      "remediation": "move the statement into the function that needs it, or keep this component in React"
+      "remediation": "keep module scope to imports, functions and constants (move other code into the function that needs it), or keep this component in React"
     }
   ]
 }

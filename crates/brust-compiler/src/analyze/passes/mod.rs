@@ -117,16 +117,15 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);
     captures::captures(ir, &mut st, ctx);
-    // F215: the code brust copies out of the module (jobs, the client chunk, build evaluation) carries its
-    // declarations, never a statement that changes them; a component that reads a module binding of such a module
-    // falls back. Round 1 (Mellow F2): an import counts too, since the statement may change the imported module's
-    // objects (`add('b')` filling `items` of './store'), and the job or chunk imports that module without running it.
+    // F215 (lead rulings b0dff21e, e2962f7f): the code brust copies out of THIS module (jobs, the client chunk, build
+    // evaluation) carries its declarations, never code that runs when it loads; an app module it imports is imported for
+    // real, so its own load-time code runs. A component falls back when its own module is not clean
+    // (`module_effects::module_effect`) and it reads a module binding or an import (this module's load-time code may
+    // change the imported module's objects), or its client chunk copies module locals or imports.
     if let Some((at, what)) = ir.module_effect.clone() {
         let read = st
             .painted
             .iter()
-            // An imported value that folds at build is read from its module's declarations, which this module's
-            // statement may have changed: it is a read too.
             .find(|p| {
                 (!p.deps.module_locals.is_empty() && !p.folds_module) || !p.deps.imports.is_empty()
             })
@@ -138,10 +137,10 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
             ir.diagnostics.push(crate::ir::Diagnostic::fallback(
                 "module-side-effect",
                 format!(
-                    "this module has {what}; the code brust compiles copies the module's declarations but not that statement, so a value read from a module binding could differ from React's"
+                    "this module has {what}; the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's"
                 ),
                 loc,
-                "move the statement into the function that needs it, or keep this component in React",
+                "keep module scope to imports, functions and constants (move other code into the function that needs it), or keep this component in React",
             ));
         }
     }

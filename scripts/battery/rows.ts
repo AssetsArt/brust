@@ -991,10 +991,10 @@ export const rows: Row[] = [
     snippet: `import { Badge } from './badge'\nconst ROWS = [{ v: 'secondary' }, { v: 'outline' }]\nexport default function C() { return <div>{ROWS.map((r) => <Badge key={r.v} variant={r.v}>x</Badge>)}</div> }`,
     files: { 'badge.tsx': CN_BADGE },
     note: 'F149 ruling Q4: per-row instances (per-row-literal) keep their job in v1' },
-  { id: 'b-cn-fold-denied-global', category: 'E', authoring: 'a class computed from Date in the child module', expect: 'static', jobs: 0, buildEval: 0, evalWhy: '`Date`',
+  { id: 'b-cn-fold-denied-global', category: 'E', authoring: 'a class computed from Date in the child module', expect: 'static', jobs: 1, buildEval: 0,
     snippet: `import { Chip } from './chip'\nexport default function C() { return <div><Chip /></div> }`,
     files: { 'chip.tsx': `import { cn } from 'cn'\nconst stamp = Date.now() > 0 ? 'a' : 'b'\nexport function Chip({ className }: any) { return <i className={cn(stamp, className)} /> }` },
-    note: 'F149 R34.92: time differs between runs; the L2 denylist applies' },
+    note: 'F149 R34.92: time differs between runs. F215 allowlist: `Date.now()` at load time is not an accepted const, so the chip module is not clean and Chip renders as a React island (its SSR job); nothing is build-evaluated' },
 
   // ---- shadcn S3 package source (F153c, R34.61/R34.62/R34.65): stub packages compiled from their source map ----
   { id: 'b-pkg-leaf-pure', category: 'B', authoring: 'a package forwardRef component over Radix Primitive.div, compiled from its source', expect: 'static', jobs: 0,

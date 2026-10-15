@@ -1,8 +1,8 @@
 const xs = ['a']
+// Callables that write nothing, declared and not called at load time: accepted (functions and an object of functions).
 const fmt = (v: string) => v.toUpperCase()
-const L = fmt('a')
 const reg = { pick(v: string) { return v } }
-const P2 = reg.pick('x')
+export { fmt, reg }
 export default function Page() {
-  return <section>{xs.join(',')}{L}{P2}</section>
+  return <section>{xs.join(',')}</section>
 }

@@ -29,7 +29,7 @@ const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix',
   'ctx-top-param-default', 'ctx-top-param-pattern', 'ctx-top-pattern-binding', 'ctx-top-comma', 'ctx-top-state-element', 'ctx-top-loop-element',
   // F215: a module-level statement that changes a module binding is not in the copied code (main printed "a" for "a,b"
   // and "x" for "y"); the page is React now.
-  'ctx-side-push', 'ctx-side-closure', 'ctx-side-init', 'ctx-side-writer', 'ctx-side-iife', 'ctx-side-method', 'ctx-side-import', 'ctx-side-param', 'ctx-side-import-call', 'ctx-side-pattern',
+  'ctx-side-push', 'ctx-side-closure', 'ctx-side-init', 'ctx-side-writer', 'ctx-side-iife', 'ctx-side-method', 'ctx-side-import', 'ctx-side-param', 'ctx-side-import-call', 'ctx-side-pattern', 'ctx-side-coerce',
   'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call', 'ctx-hid-provfed', 'ctx-hid-bare',
 ]
 // Imported plain value: stays a static page (no script), and renders like React.
