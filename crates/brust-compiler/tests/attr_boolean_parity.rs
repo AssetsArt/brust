@@ -262,3 +262,25 @@ fn a_custom_element_attribute_prints_as_react_does() {
         bad.join("\n")
     );
 }
+
+/// The Overloaded print (custom elements, `download`) keeps the URL scheme check: a `javascript:` value on a custom
+/// element's `href` / `src` is not printed, a safe one is; `true` still prints the empty value.
+#[test]
+fn a_custom_element_url_attribute_keeps_the_scheme_check() {
+    for name in ["href", "src"] {
+        let jinja = jinja_of(format!(
+            "export default function T(props: any) {{ return <x-y {name}={{props.v}} /> }}"
+        ));
+        let p = |v: serde_json::Value| render(&jinja, serde_json::json!({ "v": v }));
+        assert_eq!(attrs_of(&p(serde_json::json!("javascript:alert(1)"))), "");
+        assert_eq!(attrs_of(&p(serde_json::json!(" JavaScript:alert(1)"))), "");
+        assert_eq!(
+            attrs_of(&p(serde_json::json!("https://a.dev/x"))),
+            format!("{name}=\"https://a.dev/x\"")
+        );
+        assert_eq!(
+            attrs_of(&p(serde_json::json!(true))),
+            format!("{name}=\"\"")
+        );
+    }
+}

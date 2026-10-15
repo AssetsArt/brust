@@ -2340,7 +2340,7 @@ fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
     match attr_kind_of(html, tag) {
         AttrKind::Boolean => format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"),
         AttrKind::Overloaded => format!(
-            "{{% if ({v}) | bool_true %}} {html}=\"\"{{% elif ({v}) | present %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
+            "{{% if ({v}) | bool_true %}} {html}=\"\"{{% elif ({v}) | present{url} %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
         ),
         AttrKind::Stringify => format!(
             "{{% if ({v} | present_str){url} %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
