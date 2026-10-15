@@ -543,8 +543,8 @@ fn template_has_for(n: &Node) -> bool {
 /// The `source` of a `Component` node that names a specialised clone (its `imported` is the module-cache key).
 const SPEC_SOURCE: &str = "\u{0}spec";
 
-/// A stable 32-bit mix of the call site (module and location): the placeholder of a clone's id until the build
-/// content-addresses it (R34.124).
+/// A stable 32-bit mix of the call site (module and location): the suffix of a clone's id. Ids are per call site
+/// (R34.124); equal chunks share a factory module, not an id.
 fn spec_hash(path: &str, loc: u32) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
     for b in path.bytes().chain(loc.to_le_bytes()) {
