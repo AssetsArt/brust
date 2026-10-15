@@ -214,3 +214,51 @@ fn an_empty_src_or_href_is_dropped_except_on_an_anchor() {
         }
     }
 }
+
+fn custom_fixture() -> BTreeMap<String, BTreeMap<String, String>> {
+    serde_json::from_str(
+        &std::fs::read_to_string(repo().join("tests/fixtures/attr-parity/react-custom.json"))
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+/// F213: React passes every attribute of a custom element (a tag with `-`) through as given: `true` is `""`, `false`,
+/// `null` and `undefined` omit it, anything else is its string. Dynamic and literal, as the server paints it.
+#[test]
+fn a_custom_element_attribute_prints_as_react_does() {
+    let react = custom_fixture();
+    let mut bad = Vec::new();
+    for (name, row) in &react {
+        let jinja = jinja_of(format!(
+            "export default function T(props: any) {{ return <x-y {name}={{props.v}} /> }}"
+        ));
+        for (v, want) in row {
+            let props = match value_of(v) {
+                Some(val) => serde_json::json!({ "v": val }),
+                None => serde_json::json!({}),
+            };
+            let got = attrs_of(&render(&jinja, props));
+            let want = react_attrs(want);
+            if got != want {
+                bad.push(format!("{name}={{{v}}}: React `{want}`, compiled `{got}`"));
+            }
+        }
+        for (lit, key) in [("{true}", "true"), ("{false}", "false")] {
+            let jinja = jinja_of(format!(
+                "export default function T() {{ return <x-y {name}={lit} /> }}"
+            ));
+            let got = attrs_of(&render(&jinja, serde_json::json!({})));
+            let want = react_attrs(&row[key]);
+            if got != want {
+                bad.push(format!("{name}={lit}: React `{want}`, compiled `{got}`"));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} mismatches:\n{}",
+        bad.len(),
+        bad.join("\n")
+    );
+}

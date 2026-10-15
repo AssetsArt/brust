@@ -27,6 +27,8 @@ export default function Probe({ start }: { start: boolean }) {
         data-on={on}
         download={on}
       />
+      {/* @ts-expect-error a custom element is not in the React types */}
+      <x-y data-testid="ce" disabled={on} aria-busy={on} foo={on} download={on} />
       <svg width="10" height="10">
         <a data-testid="svga" href={on ? '/x' : ''}>
           <circle r="2" />

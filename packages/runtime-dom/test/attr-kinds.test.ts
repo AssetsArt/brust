@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { defineBehavior, mount, unmount } from '../src'
 import { BOOLEAN, OVERLOADED, STRINGIFY } from '../src/attr-kinds'
-import { generate, table } from '../../../scripts/gen-attr-kinds'
+import { checkNames, generate, table } from '../../../scripts/gen-attr-kinds'
 
 beforeEach(() => { unmount(); document.body.innerHTML = '' })
 
@@ -53,4 +53,30 @@ test('src="" and href="" are dropped except on an anchor, SVG <a> included (F202
   expect(document.getElementById('l')!.hasAttribute('href')).toBe(false)
   expect(document.getElementById('a')!.getAttribute('href')).toBe('')
   expect(document.getElementById('s')!.getAttribute('href')).toBe('')
+})
+
+test('the generator refuses a name outside ^[a-z][a-z0-9-]*$ (F212)', () => {
+  expect(checkNames('T', ['loop', 'aria-busy', 'x1'])).toEqual(['loop', 'aria-busy', 'x1'])
+  for (const bad of ["a'b", 'a b', 'A', '1a', '', 'a\\b', 'a;b', "a'); alert(1); ('"]) expect(() => checkNames('T', [bad])).toThrow('outside')
+  // and the real tables pass it
+  expect(() => generate()).not.toThrow()
+})
+
+const custom = JSON.parse(readFileSync(join(root, 'tests/fixtures/attr-parity/react-custom.json'), 'utf8')) as Record<string, Record<string, string>>
+
+test('x-bind-<attr> on a custom element equals react-dom: every attribute passes through, true is "" (F213)', () => {
+  const bad: string[] = []
+  for (const n of Object.keys(custom).filter((k) => k !== 'value')) {
+    for (const [label, v] of Object.entries(VALUES)) {
+      unmount()
+      defineBehavior('c', () => ({ v }))
+      document.body.innerHTML = `<div x-data="c"><x-y x-bind-${n.toLowerCase()}="v"></x-y></div>`
+      mount()
+      const el = document.querySelector('x-y')!
+      const want = document.createElement('div'); want.innerHTML = `<x-y ${custom[n]![label]}></x-y>`
+      const attrs = (e: Element) => JSON.stringify(Object.fromEntries([...e.attributes].filter((a) => !a.name.startsWith('x-')).map((a) => [a.name, a.value])))
+      if (attrs(want.firstElementChild!) !== attrs(el)) bad.push(`${n}=${label}: react ${attrs(want.firstElementChild!)} got ${attrs(el)}`)
+    }
+  }
+  expect(bad).toEqual([])
 })

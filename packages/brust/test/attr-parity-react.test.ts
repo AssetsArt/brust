@@ -25,3 +25,12 @@ test('React omits an empty src/href except on an anchor (the compiler rule in lo
     console.error = warn
   }
 })
+
+test('tests/fixtures/attr-parity/react-custom.json is what react-dom/server prints for a custom element now (F213)', () => {
+  const file = JSON.parse(readFileSync(join(import.meta.dir, '../../../tests/fixtures/attr-parity/react-custom.json'), 'utf8'))
+  expect(render(true)).toEqual(file)
+  // the rule: every attribute passes through; true is "", false/null/undefined omit, anything else is its string
+  expect(file.loop.true).toBe('loop=""')
+  expect(file['aria-hidden'].false).toBe('')
+  expect(file.foo['0']).toBe('foo="0"')
+})
