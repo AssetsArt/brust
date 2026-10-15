@@ -119,6 +119,7 @@ dependencies = [
 name = "brust-compiler"
 version = "0.0.0"
 dependencies = [
+ "brust-core",
  "brust-jinja",
  "bstr",
  "bun_alloc",
