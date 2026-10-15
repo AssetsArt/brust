@@ -38,6 +38,7 @@ pub fn unsafe_to_fold(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u
         writing: false,
         lit_objects: HashMap::new(),
         lit_prims: HashSet::new(),
+        data: HashSet::new(),
     };
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
@@ -45,10 +46,13 @@ pub fn unsafe_to_fold(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u
                 && matches!(l.kind, js_ast::S::Kind::KConst)
             {
                 for d in l.decls.iter() {
-                    if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
-                        && matches!(v.data, E::EObject(_))
-                    {
-                        s.lit_objects.insert(id.r#ref.inner_index(), *v);
+                    if let (B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value) {
+                        if matches!(v.data, E::EObject(_)) {
+                            s.lit_objects.insert(id.r#ref.inner_index(), *v);
+                        }
+                        if is_data(v, 0) {
+                            s.data.insert(id.r#ref.inner_index());
+                        }
                     }
                 }
             }
@@ -102,6 +106,29 @@ struct Scan<'x, 'a> {
     /// Module-level `const`s holding a primitive literal (or reading one from a literal object): a use of one that
     /// lands anywhere carries no object, so it is never an escape.
     lit_prims: HashSet<u32>,
+    /// F205: module-level `const`s whose value is plain data (`is_data`): no function anywhere in it, so a built-in
+    /// method from `plain_fn::PRIMITIVE_METHODS` called on any part of it runs no author code and changes nothing.
+    data: HashSet<u32>,
+}
+
+/// F205: a tree of primitive literals, array literals (no spread or hole) and object literals (plain `key: value`
+/// properties with a literal key; no spread, accessor, method or computed key, no `__proto__`).
+fn is_data(e: &js_ast::Expr, depth: u32) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match &e.data {
+        E::ENumber(_) | E::EString(_) | E::EBoolean(_) | E::ENull(_) => true,
+        E::EArray(a) => a.items.iter().all(|x| is_data(x, depth + 1)),
+        E::EObject(o) => o.properties.iter().all(|p| {
+            matches!(p.kind, js_ast::G::PropertyKind::Normal)
+                && !p.flags.contains(js_ast::flags::Property::IsComputed)
+                && !p.flags.contains(js_ast::flags::Property::IsMethod)
+                && matches!(p.key.as_ref().map(|k| &k.data), Some(E::EString(s)) if s.slice8() != b"__proto__")
+                && p.value.as_ref().is_some_and(|v| is_data(v, depth + 1))
+        }),
+        _ => false,
+    }
 }
 
 fn is_primitive(e: &js_ast::Expr) -> bool {
@@ -211,6 +238,22 @@ impl Scan<'_, '_> {
             }
             _ => {}
         }
+    }
+
+    /// F205: binding `r` holds only parts of plain-data consts: one itself, or a callback parameter whose every source
+    /// does.
+    fn data_rooted(&self, r: u32, depth: u32) -> bool {
+        if self.data.contains(&r) {
+            return true;
+        }
+        if depth > 8 {
+            return false;
+        }
+        let mut from = self.aliases.iter().filter(|(p, _)| *p == r).peekable();
+        from.peek().is_some()
+            && from.all(|(_, roots)| {
+                !roots.is_empty() && roots.iter().all(|x| self.data_rooted(*x, depth + 1))
+            })
     }
 
     fn is_named(&self, e: &js_ast::Expr, name: &str) -> bool {
@@ -420,6 +463,21 @@ impl Scan<'_, '_> {
             {
                 let into = esc && d.name.slice() != b"keys";
                 c.args.iter().for_each(|a| self.expr(a, into));
+                return;
+            }
+        }
+        // F205: a built-in primitive method called on a part of plain data (`ITEMS.map((i) => i.label.toUpperCase())`)
+        // reads it: every root of the receiver is a plain-data const, directly or as a callback parameter over one.
+        if let E::EDot(d) = &c.target.data
+            && crate::analyze::plain_fn::PRIMITIVE_METHODS
+                .contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
+            && !self.writing
+        {
+            let mut roots = Vec::new();
+            self.roots(&d.target, &mut roots);
+            if !roots.is_empty() && roots.iter().all(|r| self.data_rooted(*r, 0)) {
+                self.expr(&d.target, false);
+                c.args.iter().for_each(|a| self.expr(a, true));
                 return;
             }
         }

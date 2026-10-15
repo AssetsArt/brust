@@ -763,6 +763,66 @@ fn an_allowlisted_method_on_a_user_defined_receiver_falls_back() {
     }
 }
 
+/// F205: narrowings of the plain-wrapper receiver rule, each with a proof. A state whose `?:` / `&&` / `||` / `??` init is
+/// primitive-typed in every branch; an item field of a module-const or literal array whose every value is a primitive
+/// literal (nested lists too); `filter(pred)` with a read-only `pred` over an accepted list; `new Date(x)` through a local.
+#[test]
+fn f205_proven_receivers_lower() {
+    let mut bad = Vec::new();
+    for f in [
+        "f205-state-cond.tsx",
+        "f205-state-logical.tsx",
+        "f205-module-items.tsx",
+        "f205-module-nested.tsx",
+        "f205-inline-strings.tsx",
+        "f205-prop-filter.tsx",
+        "f205-module-filter.tsx",
+        "f205-date-local.tsx",
+        "f205-date-local-nested.tsx",
+    ] {
+        let (ir, jinja) = page(f);
+        if rules(&ir).contains(&"jsx-const-child") || is_react(&ir) || jinja.is_empty() {
+            bad.push(format!("{f}: {:?}", ir.diagnostics));
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// F205 hostile probes: each breaks one step of a proof above and falls back by name.
+#[test]
+fn f205_unproven_receivers_fall_back() {
+    for f in [
+        // An object in one branch; a prop operand (a prop init stays refused, Mellow F3).
+        "f205-x-state-cond-object.tsx",
+        "f205-x-state-logical-prop.tsx",
+        // A field that is an object, missing on one element, shadowed by a later duplicate key, only on `__proto__`,
+        // a const written at module level, the element itself (an object), an index out of range, a non-literal leaf.
+        "f205-x-module-leaf-object.tsx",
+        "f205-x-module-missing-key.tsx",
+        "f205-x-module-duplicate-key.tsx",
+        "f205-x-module-proto.tsx",
+        "f205-x-module-mutated.tsx",
+        "f205-x-module-item-object.tsx",
+        "f205-x-module-index-range.tsx",
+        "f205-x-local-leaf.tsx",
+        // A predicate that calls, assigns, is not an arrow, or converts an operand (`valueOf` may run author code).
+        "f205-x-filter-call.tsx",
+        "f205-x-filter-assign.tsx",
+        "f205-x-filter-prop-pred.tsx",
+        "f205-x-filter-coerce.tsx",
+        // A const holding a function is not plain data: its own `toString` may write it (`this.s = …`).
+        "f205-x-data-method.tsx",
+    ] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"jsx-const-child") && is_react(&ir),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+    }
+}
+
 /// F215: a precompute job, the client chunk and the build evaluation copy a module's declarations, never a statement
 /// that changes them (`xs.push('b')` at the top level printed "a" where React prints "a,b"). A component that reads a
 /// module binding of a module with such a statement falls back by name; a module without one, or a component that
