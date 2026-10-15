@@ -227,17 +227,42 @@ pub fn module_effect(
             }
         }
     }
+    // Mellow V1 (delta b3932298): a module-owned array or object (a module binding that is not a function, a value taken
+    // from package code or a primitive), and every function whose code reads one or names such a function: handed to
+    // package code, the package could call it and change the object it returns (`later(() => cfg)`).
+    let objects: HashSet<u32> = module
+        .iter()
+        .copied()
+        .filter(|k| !handable.contains(k))
+        .collect();
+    let mut object_readers: HashSet<u32> = HashSet::new();
+    loop {
+        let before = object_readers.len();
+        for (k, w) in &walks {
+            if !object_readers.contains(k)
+                && w.used.iter().any(|r| {
+                    let r = key(*r);
+                    objects.contains(&r) || object_readers.contains(&r)
+                })
+            {
+                object_readers.insert(*k);
+            }
+        }
+        if object_readers.len() == before {
+            break;
+        }
+    }
+    let gives_object = |k: u32| objects.contains(&k) || object_readers.contains(&k);
     fn hands_module_object(
         a: &js_ast::Expr,
         names: &NameTable<'_>,
-        module: &HashSet<u32>,
-        handable: &HashSet<u32>,
+        gives_object: &dyn Fn(u32) -> bool,
         depth: u8,
     ) -> bool {
         if depth > 16 {
             return true;
         }
-        let go = |x: &js_ast::Expr| hands_module_object(x, names, module, handable, depth + 1);
+        let go = |x: &js_ast::Expr| hands_module_object(x, names, gives_object, depth + 1);
         match &a.data {
             E::EArray(arr) => arr.items.iter().any(|x| match &x.data {
                 E::ESpread(sp) => go(&sp.value),
@@ -248,13 +273,16 @@ pub fn module_effect(
                 .iter()
                 .any(|p| p.value.as_ref().is_some_and(&go)),
             E::ESpread(sp) => go(&sp.value),
-            _ => chain_root(a).is_some_and(|r| {
-                let k = names.key_of(r);
-                module.contains(&k) && !handable.contains(&k)
-            }),
+            // A function handed on hands whatever module object its code reads.
+            E::EArrow(_) | E::EFunction(_) => {
+                let mut w = Walk::default();
+                w.expr(a);
+                w.used.iter().any(|r| gives_object(names.key_of(*r)))
+            }
+            _ => chain_root(a).is_some_and(|r| gives_object(names.key_of(r))),
         }
     }
-    let hands = |a: &js_ast::Expr| hands_module_object(a, names, &module, &handable, 0);
+    let hands = |a: &js_ast::Expr| hands_module_object(a, names, &gives_object, 0);
     let code_writes = |w: &Walk| writes(w, &writers);
     let values = Values {
         names,
@@ -481,7 +509,16 @@ impl Values<'_, '_> {
                 w.expr(e);
                 !code_writes(&w)
             }
-            E::EDot(d) => package_rooted(e) || go(&d.target),
+            // Mellow V2: a member read rooted at an app import may run an app getter at load time; naming the import runs
+            // nothing.
+            E::EDot(d) => {
+                package_rooted(e)
+                    || (!chain_root(e).is_some_and(|r| {
+                        names
+                            .import_of(r)
+                            .is_some_and(|(src, _)| app_specifier(src))
+                    }) && go(&d.target))
+            }
             E::EArray(a) => a
                 .items
                 .iter()
@@ -497,7 +534,7 @@ impl Values<'_, '_> {
                 (c.was_jsx_element || package_rooted(&c.target) || read_only_global(&c.target, names))
                     && (c.was_jsx_element || go(&c.target))
                     // Package code handed a module array or object could change it.
-                    && (!package_rooted(&c.target) || !c.args.iter().any(hands))
+                    && (!package_rooted(&c.target) || react_stores_fn(&c.target, names) || !c.args.iter().any(hands))
                     && (!read_only_global(&c.target, names)
                         || !c.args.iter().any(|a| matches!(a.data, E::EArrow(_) | E::EFunction(_))))
                     && c.args.iter().all(|a| !matches!(a.data, E::ESpread(_)) && go(a))
@@ -520,5 +557,31 @@ fn plain_pattern(b: &js_ast::Binding) -> bool {
                 && plain_pattern(&p.value)
         }),
         js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => true,
+    }
+}
+
+/// Mellow V1 scope: React's own `forwardRef` / `memo` (imported from `react`) store the function they are handed and never
+/// call it at load time, so handing them a render function that reads a module object hands the object to nobody.
+fn react_stores_fn(target: &js_ast::Expr, names: &NameTable<'_>) -> bool {
+    let react = |r: js_ast::Ref| names.import_of(r).is_some_and(|(src, _)| src == "react");
+    match &target.data {
+        E::EDot(d) => {
+            matches!(d.name.slice(), b"forwardRef" | b"memo")
+                && match &d.target.data {
+                    // A namespace (`* as React`) or default (`React`) import of 'react'.
+                    E::EIdentifier(id) => react(id.ref_),
+                    E::EImportIdentifier(id) => react(id.ref_),
+                    _ => false,
+                }
+        }
+        _ => match &target.data {
+            E::EImportIdentifier(id) => {
+                react(id.ref_)
+                    && names
+                        .import_of(id.ref_)
+                        .is_some_and(|(_, imp)| imp == "forwardRef" || imp == "memo")
+            }
+            _ => false,
+        },
     }
 }

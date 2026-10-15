@@ -817,6 +817,15 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
         // The invariant (lead ruling b0dff21e): no accepted value holds code that writes a module binding, so a package
         // handed a writing callback is refused.
         "side-package-writer.tsx",
+        // Mellow V1 (delta b3932298): package code handed a function that returns a module object (a literal arrow or a
+        // module function); V2: a member read of an app import, which may run an app getter at load time.
+        "side-later.tsx",
+        "side-later-fn.tsx",
+        "side-app-getter.tsx",
+        "side-local-forwardref.tsx",
+        // Lead ruling c2f61a77: the exemption is by symbol only; an app re-export or a local alias of forwardRef gets none.
+        "side-app-forwardref.tsx",
+        "side-alias-forwardref.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(
@@ -834,6 +843,10 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
         "side-class-pure.tsx",
         // Round 2: a package handed a callback that writes through its own parameter and calls app code (trusted, N1).
         "side-package-callback.tsx",
+        // Lead ruling c2f61a77: React's forwardRef / memo (by symbol: named, namespace or default import of 'react') handed a
+        // render function that reads a module array; they store it and never call it at load time.
+        "side-react-forwardref.tsx",
+        "side-react-memo.tsx",
     ] {
         let (ir, jinja) = page(f);
         assert!(
