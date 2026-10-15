@@ -201,3 +201,74 @@ PR 2b-handlers: `analyze/passes/children.rs` (`check_spread`, `forward_handlers`
 
 - **Lead:** shape C accepted, conditional on Mellow's review. Q1 YES, resolved at compile time from each call site (rule 3), no runtime `in`. Q2 YES (live `className`/`style` stay refused, named). Q3 YES (F196 merged, #244).
 - **Mellow (security/soundness):** SOUND WITH CONDITIONS C1-C7, all folded into the rules above (C1 rule 3, C2 rule 1, C3 rule 2, C4 rule 4, C5 section 4, C6 rule 4 and tests, C7 section 5.5). Status: **ACCEPTED, CODE AFTER 2b-hooks LANDS.**
+
+## Amendment 2026-10-15b — PR 2c: a native Provider (state-valued frames) and Presence, for shadcn `collapsible` (DESIGN NOTE, no code)
+
+Author: Tiësto · task `context-lowering-2c` · seeds: §3.2–3.5, Mellow's C1 on the 1d review ("a linked consumer's props are re-evaluated in the browser: a non-literal frame value must be precomputed or fail closed"), the S1.3/R34.18 hoisting and the 2b-handlers shape C. Everything marked **measured** was run on origin/main a94593e1 (napi built from it); nothing here is implemented.
+
+### 1. What stops `collapsible` today (measured, `compileTree` as `brust build` runs it)
+
+Page 89 KB / 1 island. Per component, the first blocker:
+
+| Component (Radix 1.2.1, from source maps) | Tier today | First blocker |
+|---|---|---|
+| `Collapsible` (Provider + `useControllableState` + `useId` + `useCallback`) | React | `hook useId is called inside an expression` (`contentId={useId()}` in a JSX prop); behind it `context-state` (`provider_problem`: a Provider handing out state/handler) |
+| `CollapsibleTrigger` (consumer; `onClick={composeEventHandlers(props.onClick, context.onOpenToggle)}`) | Native (!) | compiles, but as its own host; the page then fails `slot-native` for `asChild` on a stateful component, and `context-island` while the Provider is React |
+| `CollapsibleContent` (consumer; `<Presence present={forceMount \|\| context.open}>{({present}) => <Impl present={present}/>}</Presence>`) | React | render prop (`island-prop`, B7), `Presence` is not followed (`the export is not declared in a form the compiler follows`) |
+| `CollapsibleContentImpl` (consumer; `useState`, 4 refs, `useEffect`+rAF, `useLayoutEffect`+`getBoundingClientRect`, `hidden`, `{isOpen && children}`) | not exported | refs read in render (`heightRef.current`, B4 shape), composed refs (B1/B2) |
+
+Presence itself (`react-presence` 1.1.11, source read): a state machine through `useReducer` (`useStateMachine`), two layout effects and a passive one, a **callback ref** that calls `setNode`, `getComputedStyle`, `CSS.escape`, animation events, `React.Children.only`, `React.cloneElement(child, { ref })`, `getElementRef` through property descriptors. With a **function child** (as Collapsible uses it) `forceMount` is true: the child is always rendered and only the `present` argument follows the machine.
+
+### 2. Finding that changes the design: who owns a directive printed inside another host's region (measured, wrong output on main)
+
+A native child's slot content is printed inside that child's host element, and the runtime binds every directive by the **nearest** `x-data` ancestor (runtime README: "nested hosts are bound by their own instance"). So page state read in slot content of a native child binds to the **child's** instance. Repro, no Radix, no context: a native page with `useState(on)` rendering `<Box><p>{on ? 'yes' : 'no'}</p></Box>`, `Box` native with its own state and `{children}`. The compiler prints no diagnostic and emits `<div x-data="box_…"><p x-text="_c1">`; run in happy-dom with the exact chunks: first-paint mismatch warning (`"no" vs "0"`), the text becomes Box's `_c1`, and a click on the page's button never reaches it. A page handler in slot content calls Box's `_h1` the same way. This is risk 2 of §8, which §8 said to fail closed (`context-page-state`) and which was never implemented. It is on main today (task note on `context-lowering-2c`; recommended as its own small fail-closed PR first).
+
+**Ownership rule (O1, general, replaces `context-page-state`).** Every expression the template prints as a directive has an *owner* component (the component whose scope its names are resolved in; after a frame substitution the owner is the Provider whose member it names). A directive may be printed only where the nearest enclosing host element **is** its owner's host. A directive whose owner is P found under a native child host of P (slot content, or a consumer inlined into it) is refused at the call site with the named fallback `slot-owner` (the caller of the child stays on React; the child itself is unaffected). Static content (no directive) is unaffected, which is why every existing page passes.
+
+This single rule is also the soundness condition of the native Provider: a consumer's directives are owned by the Provider after substitution, and they sit inside the Provider's host, so they pass; a **page**-owned directive in the same slot is refused.
+
+### 3. The native Provider (R34.116–R34.121)
+
+**R34.116 State-valued frames.** A frame field is an expression of the **Provider's own scope** (not of the call site, as §3.2 for constant frames): a member of its instance = state, a derived value, a handler (`useCallback`/arrow over its setters), a prop, a `useId` slot. Such a Provider is Native (it has state) and its host element is the element its template returns (Collapsible: the `Primitive.div`). `provider_problem` no longer refuses state/handler members; it still refuses elements, loop values and stores (`context-state` shrinks to those). Constant frames keep the §3.2 call-site substitution unchanged.
+
+**R34.117 Static consumers under a native Provider are inlined into the Provider's host region.** `context.open` becomes the Provider's member (`open()` in the chunk, `open` in the jinja scope); `aria-expanded`, `data-state`, `aria-controls`, `disabled`, `x-if` for `{isOpen && children}` become directives owned by the Provider (O1: they pass). A consumer handler (`context.onOpenToggle`, alone or through `composeEventHandlers(props.onClick, fn)` with an absent or static user handler, R34.110) becomes `x-on-click` calling the Provider's handler member, the same hoisting S1.3/shape C already do for a static child's spread; `asChild` on the consumer (shadcn's `<CollapsibleTrigger asChild><Button/></CollapsibleTrigger>`) merges that directive into the child element, so `check_poly`'s `slot-native` becomes `slot-owner`-style: allowed iff every merged handler/binding is owned by the enclosing native Provider, else refused by name. `Trigger` thereby stops being its own host (it is Static after substitution).
+
+**R34.118 No host between consumer and Provider.** A consumer must have no other native host element between itself and its Provider's host element in the lowered tree (otherwise the runtime would bind it, or resolve `x-props-bind`, to the wrong instance). The compiler checks it on the lowering stack (it holds the host chain); a violation is `context-hop`, the call site stays on React.
+
+**R34.119 Native consumers and Mellow's C1.** A consumer with its own state, refs or effects (`CollapsibleContentImpl`) is a nested host and receives the frame through `x-props-bind` to a `computed` member `_pN` of the Provider (the shipped linking). That computed is **evaluated in the browser, in the Provider's chunk**, so every frame field it reads must be client-closed. Rule: a frame field consumed by a native consumer must pass the existing `client_ok` test of `lower/template.rs` (names of the Provider's state/derived/props/handlers that are present in its chunk; no `Expr::Server`, no props-only precompute slot, no module helper not carried into the chunk by 4a); otherwise `context-client` (the call site stays on React). Fields that are constants are inlined as literals. Static consumers need the same test because their directive expressions are printed into the same chunk. Functions travel through `x-props-bind` unchanged (tested); the consumer calls the Provider's setter, never a copy. No path evaluates a frame field anywhere but the Provider's template (server first paint) and the Provider's chunk (browser).
+
+**R34.120 `useId()` inside an expression (general).** A hook call in a JSX attribute value (or any expression position) that runs unconditionally on every render is hoisted to a statement before the return, in source order (`contentId={useId()}` ⇒ `const _id = useId()`), for the hooks the compiler already reads. Conditional or looped positions stay refused (`hook-in-expression`). Small, general, independent of Radix; first step.
+
+**R34.121 `useControllableState` + the toggle callback.** Already shipped (2b-hooks); `onOpenToggle={useCallback(() => setOpen(p => !p), [setOpen])}` is a handler member (the `useCallback` is read today).
+
+### 4. Presence — three ways, one recommendation
+
+- **P1 compile as written.** Needs, besides the PR 3 gaps (B1 callback ref, B2 rest-hook, B7 render prop): `React.Children.only`, `cloneElement(child, { ref })` with a composed ref, `useReducer` through a custom hook (`useStateMachine`), `getElementRef` (property descriptors on the element: not expressible), and following the package's export. That is five more general gaps for one component, one of which (descriptor reads on a React element) has no meaning without a React element tree. Not recommended for this lane.
+- **P2 the ruled design (R34.107): a runtime feature `presence`** (`x-presence="member"`, ≤1.5 KB gzip, loaded only by pages that use it), recognised **structurally** from `@radix-ui/react-presence` (integrity-checked package, exact export shape), covering both the element child and the function child (`{({present}) => <Impl present={present}/>}`: the argument is bound to the feature's `present` signal). This is a **third structural recogniser** and a runtime feature that stands in for library code, so it needs Detoro's explicit ruling against the "no port" line he drew for BubbleInput (that case compiled; this one does not, per P1).
+- **P3 stage it.** Land the native Provider, the static consumers (`Trigger`) and an un-animated `Content` first: with a function child `present` follows `context.open`, and with no exit animation (shadcn's `collapsible-content` has none) `isPresent` equals `open`, so Presence reduces to `present = open`. Accept P3 only if it is **proven**, not assumed: the recogniser would fold `Presence` to its child with `present := the present prop` **iff the page ships no exit animation for it** (decidable only at run time: `getComputedStyle(node).animationName`), so a build-time fold is unsound for a user who animates `[data-state=closed]`. Therefore P3 is not available without the runtime half.
+
+**Recommendation: P2, narrowly**, because it is the only sound one; shadcn's `accordion` (wave B W3) and `checkbox`'s Indicator need the same feature, and it keeps first paint equal to React (Presence with a function child renders the child always, `hidden` handles the closed state; the feature only delays the `present` flip until the exit animation ends). If Detoro rejects a third recogniser, `collapsible` Content stays an island and the page keeps its `Trigger`/`Root` compiled around it (O1/R34.116–R34.119 still land and are measured on that mixed page).
+
+### 5. Fail-closed list (additions)
+
+`slot-owner` (a directive owned by P under a native child host of P), `context-hop` (a native host between consumer and Provider host), `context-client` (a frame field a native consumer reads is not client-closed), `hook-in-expression` (conditional/looped hook in an expression), plus the §5 rows. Each: valid React never becomes a build error; the caller falls back to React with the name.
+
+### 6. Order and proof
+
+1. **`slot-owner` guard** (O1 as a refusal only; no frame work). Independent bug fix; battery rows: native-in-native with page state in slot, page handler in slot, loop value in slot, static slot (passes), nested three deep.
+2. **R34.120** hoist `useId()` in expressions (+ rows).
+3. **Step 0 (hand-written analog, before any frame code):** React `createContext` disclosure (state + toggle callback + `useId`, a static Trigger with an `asChild`-style merge, an Impl-like native consumer with a ref and an effect) written by hand in the shape R34.116–R34.119 would print; mounted in `packages/runtime-dom` (happy-dom): click, `data-state`, `aria-expanded`, `x-if` content, nested native consumer through `x-props-bind`, and the mismatch case of §2 to prove the guard is needed. Reported as a task note.
+4. **R34.116–R34.119** in `children.rs`/`context.rs`/`lower/{template,client}.rs`; the analog fixture first (Cargo + served-vs-React), then the Radix page.
+5. **Presence** per the ruling on §4.
+
+Proof for the PR: `collapsible` page 89 KB → measured (stop rule R34.115: >~10 KB gzip stops the lane), 0 islands if P2 is ruled, served == React (`context-parity` page added) and a Chromium test (`tests/server/collapsible.chromium.test.ts`: click toggles `data-state`/`aria-expanded`/`hidden`, content text mounts, a hostile `id`/class value stays text, an exit animation keeps the content until `animationend`, wired in `ci.yml`). Mutation checks on `slot-owner`, `context-hop`, `context-client`.
+
+Boundary: `analyze/{context,hooks}.rs`, `analyze/passes/children.rs`, `analyze/component.rs`, `lower/{template,client}.rs`, `ir/`, tests, battery rows, `scripts/shadcn` scoreboard, generated docs; for Presence also `packages/runtime-dom/src/features/presence.ts`, `packages/brust/src/build/{pkg-src,bundle,manifest}.ts`. Not `placement.rs` (B4 waits for `element-drop-fixes`).
+
+### 7. Questions
+
+- **Q1 (Detoro)** Land the `slot-owner` guard first as its own PR (new ledger number, task name needed), independent of Radix? Recommended: yes.
+- **Q2 (Detoro)** Presence: P2 (third structural recogniser + runtime feature), or collapsible Content stays an island? Recommended: P2, with the integrity check and a fixture that a changed package shape islands.
+- **Q3 (Mellow)** Is O1 sound as the single binding rule (owner = the component whose scope resolves the names after substitution; nearest host must be the owner's)? Specifically hostile inputs: a consumer inlined into a *different* Provider's region of the same context name (nesting), `asChild` merging a page handler into a consumer element, and `x-for` rows inside a Provider host.
+- **Q4 (Mellow)** Is R34.119 (client-closed fields only, no re-evaluation anywhere else) enough for C1, or must a frame field be restricted to *names* (no operators) for native consumers?
+- **Q5 (Detoro)** `asChild` + handlers (R34.117) widens `check_poly`: accepted as part of this lane, or a separate task?
