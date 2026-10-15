@@ -30,6 +30,8 @@ enum Place {
 pub struct Painted {
     pub loc: u32,
     pub deps: Deps,
+    /// F215: once module consts fold (a proven read-only const, evaluated at build), the value reads no module binding.
+    pub folds_module: bool,
 }
 
 /// A precomputed slot's source and deps.
@@ -1386,9 +1388,17 @@ impl Placer<'_> {
             ));
         }
         let deps = self.st.cx.deps(r, &self.loop_scope);
+        let folds_module = !deps.module_locals.is_empty()
+            && self
+                .st
+                .cx
+                .deps(&self.fold(r), &self.loop_scope)
+                .module_locals
+                .is_empty();
         self.st.painted.push(Painted {
             loc: r.loc,
             deps: deps.clone(),
+            folds_module,
         });
         if deps.reactive() {
             // The client re-evaluates it (§3.2 rule 3: its props are seeds).

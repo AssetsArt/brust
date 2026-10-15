@@ -3,6 +3,7 @@
   "source": "tests/fixtures/module-const-child-job/input.tsx",
   "tier": "Static",
   "props": [],
+  "holds_island": true,
   "state": [],
   "derived": [],
   "effects": [],
@@ -24,7 +25,12 @@
             "props": [],
             "children": [],
             "link": null,
-            "tier": "Static"
+            "tier": {
+              "React": {
+                "reason": "this module has a declaration the compiler cannot prove runs nothing (only `const`s it folds or proves plain, and functions); the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
+                "client_only": false
+              }
+            }
           }
         }
       ],
@@ -32,40 +38,42 @@
       "ref_name": null
     }
   },
-  "jobs": [],
-  "build_eval_instances": [
+  "jobs": [
     {
-      "key": "tests/fixtures/module-const-child-job/input.tsx@346",
-      "child_id": "panel_6cae9645",
-      "k": 1,
-      "inputs": {},
-      "outputs": [
-        "_s1"
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
       ],
-      "line": 24,
-      "col": 7
+      "outputs": [
+        "_ssr_panel_6cae9645"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
     }
   ],
   "child_links": [],
-  "instances": [
-    {
-      "child_id": "panel_6cae9645",
-      "k": 1,
-      "loops": [],
-      "props": {}
-    }
-  ],
   "client_props": [],
   "client_imports": [],
   "client_module_locals": [],
-  "needs_worker": false,
+  "needs_worker": true,
   "cache": null,
   "children": [
     {
       "name": "Panel",
       "id": "panel_6cae9645",
       "path": "tests/fixtures/module-const-child-job/input.tsx",
-      "tier": "Static"
+      "tier": {
+        "React": {
+          "reason": "this module has a declaration the compiler cannot prove runs nothing (only `const`s it folds or proves plain, and functions); the code brust compiles copies the module's declarations but not code that runs when it loads, so a value read from a module binding could differ from React's",
+          "client_only": false
+        }
+      }
     }
   ],
   "diagnostics": []

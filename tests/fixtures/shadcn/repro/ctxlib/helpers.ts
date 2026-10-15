@@ -14,7 +14,6 @@ export function label(k: string) {
 export function pick(o: { name: string }) {
   return o.name
 }
-export let swapped = (n: number) => n
 export function later(n: number) {
   return n
 }
