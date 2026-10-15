@@ -16,6 +16,12 @@ struct Out {
 
 /// The page (`default export`) of `tests/fixtures/slot-owner/<file>`.
 fn page(file: &str) -> Out {
+    component(file, &file.trim_end_matches(".tsx").replace('-', ""))
+}
+
+/// The component whose id starts with `prefix` (case-insensitive) in the tree of the fixture.
+fn component(file: &str, prefix: &str) -> Out {
+    let prefix = prefix.to_lowercase();
     let path = format!("crates/brust-compiler/tests/fixtures/slot-owner/{file}");
     run_on_compiler_thread(move || {
         let tree = compile_tree(
@@ -30,15 +36,8 @@ fn page(file: &str) -> Out {
         .unwrap();
         let node = tree
             .iter()
-            .find(|n| {
-                n.ir.id.to_lowercase().starts_with(
-                    &file
-                        .trim_end_matches(".tsx")
-                        .replace('-', "")
-                        .to_lowercase(),
-                )
-            })
-            .expect("the page");
+            .find(|n| n.ir.id.to_lowercase().starts_with(&prefix))
+            .expect("the component");
         Out {
             tier: node.ir.tier.clone(),
             rules: node
@@ -132,4 +131,18 @@ fn children_the_child_never_prints_are_not_refused() {
 #[test]
 fn a_wrapper_that_prints_children_outside_the_native_child_stays_lowered() {
     kept("wrapped-static.tsx");
+}
+
+/// Mellow F1 (round 1): slot content that reads a PROP the client changes (its component is linked by a caller passing
+/// state) is the same bypass as reading state: one predicate covers every arm.
+#[test]
+fn a_prop_the_client_changes_in_the_slot_of_a_native_child_is_refused() {
+    let o = component("linked-prop.tsx", "mid");
+    assert!(
+        o.rules.iter().any(|r| r == "slot-owner"),
+        "{:?} {:?}",
+        o.tier,
+        o.rules
+    );
+    assert!(matches!(o.tier, Tier::React { .. }), "{:?}", o.tier);
 }

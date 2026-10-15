@@ -19,7 +19,7 @@ let browser: Browser
 
 beforeAll(async () => {
   mkdirSync(join(FIXTURE, '.rows'), { recursive: true })
-  writeFileSync(join(FIXTURE, ENTRY), `import { defineRoutes } from "@brust/core/routes"\nimport SlotPage from "../repro/slot-owner"\nexport const routes = defineRoutes([\n  { path: "/slot", Component: SlotPage },\n])\n`)
+  writeFileSync(join(FIXTURE, ENTRY), `import { defineRoutes } from "@brust/core/routes"\nimport SlotPage from "../repro/slot-owner"\nimport MidPage from "../repro/slot-owner-prop"\nexport const routes = defineRoutes([\n  { path: "/slot", Component: SlotPage },\n  { path: "/mid", Component: MidPage },\n])\n`)
   const b = Bun.spawnSync([process.execPath, bin, 'build', ENTRY, '--out-dir', OUT], { cwd: FIXTURE, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}${b.stdout.toString()}`)
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
@@ -46,12 +46,12 @@ afterAll(async () => {
 })
 
 
-async function open() {
+async function open(path = '/slot') {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
-  await page.goto(`${base}/slot`, { waitUntil: 'load' })
+  await page.goto(`${base}${path}`, { waitUntil: 'load' })
   await page.waitForFunction(() => document.querySelector('[data-testid=box]') !== null)
   await page.waitForTimeout(500)
   return { page, errors }
@@ -73,6 +73,15 @@ test('a click on the child counts on the child only', async () => {
   await page.getByTestId('p').click()
   expect(await page.getByTestId('box').getAttribute('data-n')).toBe('1')
   expect(await page.getByTestId('p').textContent()).toBe('no')
+  expect(errors).toEqual([])
+  await page.close()
+})
+
+test('a prop the client changes, read in the slot of a native child, follows the page (Mellow F1)', async () => {
+  const { page, errors } = await open('/mid')
+  expect(await page.getByTestId('p').textContent()).toBe('no')
+  await page.getByRole('button', { name: 'flip' }).click()
+  expect(await page.getByTestId('p').textContent()).toBe('yes')
   expect(errors).toEqual([])
   await page.close()
 })

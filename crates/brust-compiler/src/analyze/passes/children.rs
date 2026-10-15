@@ -2453,20 +2453,22 @@ impl Walker<'_, '_> {
                     Attr::Dynamic { value, .. }
                     | Attr::InnerHtml { value }
                     | Attr::Spread(value)
-                        if self.reads_state(value) =>
+                        if self.source_reactive(value) =>
                     {
-                        Some("an attribute that reads state")
+                        Some("an attribute that changes on the client")
                     }
                     _ => None,
                 })
                 .or_else(|| children.iter().find_map(|c| self.owned_directive(c))),
-            Node::Slot(e) if self.reads_state(e) => Some("text that reads state"),
+            // The caller's own `{children}` passed on is that caller's content, judged where it is given.
+            Node::Slot(_) if template_reads_children(n) => None,
+            Node::Slot(e) if self.source_reactive(e) => Some("text that changes on the client"),
             Node::Slot(_) | Node::Text(_) | Node::Outlet => None,
             Node::If {
                 cond, then, else_, ..
             } => {
-                if self.reads_state(cond) {
-                    Some("a condition that reads state")
+                if self.source_reactive(cond) {
+                    Some("a condition that changes on the client")
                 } else {
                     then.iter()
                         .chain(else_)

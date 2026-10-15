@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
 | B Composition | 202 | 108 | 12 | 82 | 0 | 0 | 0 | 0 |
-| C Hooks | 40 | 2 | 15 | 23 | 0 | 0 | 0 | 0 |
+| C Hooks | 41 | 2 | 15 | 24 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 390 | 186 | 50 | 150 | 3 | 1 | 0 | 0 |
+| **Total** | 391 | 186 | 50 | 151 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -311,6 +311,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-forward-two-spreads | a live prop through a child that spreads the same rest on two elements | react | react | ssr | ok | fallback:spread-props | R34.18 extended: a live value needs ONE element to bind on |
 | c-live-forward-class | a live className through a static child's spread | react | react | ssr | ok | fallback:spread-handler | R34.18 extended: class and style merge, they are not bound through a spread |
 | c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
+| c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
 | c-usetransition | useTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
