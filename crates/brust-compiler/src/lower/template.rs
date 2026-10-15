@@ -72,6 +72,8 @@ pub struct Inline {
     /// Its slots are read from the parent's slot dict (`slots`, empty when the parent is the route
     /// component and its slots are top-level variables) and the parent's `folded` values.
     pub rename: std::collections::BTreeMap<String, String>,
+    /// Props the call site writes with a value only the client has (a function): given, so not absent (F234).
+    pub client_only: Vec<String>,
 }
 
 /// The child element of a Radix-`Slot`-style call (`<Button asChild><a href="/x">Go</a></Button>`),
@@ -771,8 +773,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                 Some(i) => match i.get(p) {
                     Some(PropBinding::Expr(e)) => e.clone(),
                     // F234: a prop the call site omits is undefined, and `json_attr` leaves the key out: the chunk's
-                    // destructuring default applies to it as in React (`null` would keep null).
-                    None => UNDEFINED.into(),
+                    // destructuring default applies to it as in React (`null` would keep null). A written value only
+                    // the client has (a function, through `x-props-bind`) keeps its `null` placeholder.
+                    None if !i.client_only.contains(p) => UNDEFINED.into(),
                     _ => "none".into(),
                 },
             }
@@ -1123,6 +1126,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 as_child: None,
                 folded: None,
                 rename: Default::default(),
+                client_only: Vec::new(),
             };
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
@@ -1759,6 +1763,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             _ => None,
         };
         let mut segs = Vec::new();
+        let mut client_only = Vec::new();
         for (pname, v) in props.iter() {
             if pname == crate::ir::SPREAD_KEY {
                 segs.extend(self.spread_segs(v));
@@ -1797,6 +1802,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
             }
             if matches!(v, Expr::ClientOnly { .. }) {
+                client_only.push(pname.clone());
                 continue;
             }
             segs.push(Seg::Named(pname.clone(), PropBinding::Expr(self.value(v))));
@@ -1877,6 +1883,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     as_child,
                     folded,
                     rename,
+                    client_only,
                 }
             }
             None => Inline {
@@ -1893,6 +1900,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     .find(|f| f.child_id == id && f.k == k)
                     .map(|f| f.values.clone()),
                 rename: Default::default(),
+                client_only,
             },
         };
         let Some(mut p) = Printer::new(child_ir, self.ctx, Some(inline), self.loop_var) else {
