@@ -259,6 +259,72 @@ impl<'r, 'a> Reader<'r, 'a> {
                 }
                 RawKind::Array(items)
             }
+            // B5: `{ ...a, k: v, ...b }` is `Object.assign({}, a, { k: v }, b)`: each spread is a plain read of `a` / `b`
+            // (`...props.style` of the `...rest` object reads the prop `style`), so the object stays structured
+            // instead of printing the rest object as written.
+            E::EObject(o)
+                if o.properties
+                    .iter()
+                    .any(|p| matches!(p.kind, js_ast::G::PropertyKind::Spread)) =>
+            {
+                let mut args = vec![RawExpr {
+                    loc,
+                    kind: RawKind::Object(Vec::new()),
+                }];
+                let mut seg: Vec<(String, RawExpr)> = Vec::new();
+                for p in o.properties.iter() {
+                    if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
+                        let Some(value) = &p.value else {
+                            return self.opaque(e, "object spread shape");
+                        };
+                        if !seg.is_empty() {
+                            args.push(RawExpr {
+                                loc,
+                                kind: RawKind::Object(std::mem::take(&mut seg)),
+                            });
+                        }
+                        args.push(self.expr(value));
+                        continue;
+                    }
+                    let (Some(key), Some(value)) = (&p.key, &p.value) else {
+                        return self.opaque(e, "object property shape");
+                    };
+                    if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
+                        || p.flags.contains(js_ast::flags::Property::IsComputed)
+                    {
+                        return self.opaque(e, "object spread, accessor or computed key");
+                    }
+                    let name = match &key.data {
+                        E::EString(s) => estring(s),
+                        E::ENumber(n) => format_num(n.value()),
+                        _ => return self.opaque(e, "object key"),
+                    };
+                    seg.push((name, self.expr(value)));
+                }
+                if !seg.is_empty() {
+                    args.push(RawExpr {
+                        loc,
+                        kind: RawKind::Object(seg),
+                    });
+                }
+                RawKind::Call {
+                    callee: Box::new(RawExpr {
+                        loc,
+                        kind: RawKind::Member {
+                            target: Box::new(RawExpr {
+                                loc,
+                                kind: RawKind::Ident {
+                                    name: "Object".into(),
+                                    kind: IdentKind::Global,
+                                },
+                            }),
+                            name: "assign".into(),
+                            optional: false,
+                        },
+                    }),
+                    args,
+                }
+            }
             E::EObject(o) => {
                 let mut props = Vec::with_capacity(o.properties.len());
                 for p in o.properties.iter() {

@@ -76,9 +76,9 @@
       "blocker": "fallback:jsx-const-child",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 6,
+      "measuredRows": 7,
       "analysisOnlyRows": 0,
-      "appComponents": 7,
+      "appComponents": 8,
       "libraryComponents": 29
     },
     {
@@ -118,16 +118,16 @@
       "libraryComponents": 36
     },
     {
-      "blocker": "fallback:child-component",
+      "blocker": "fallback:jsx-expression",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 2,
+      "measuredRows": 3,
       "analysisOnlyRows": 0,
-      "appComponents": 2,
+      "appComponents": 3,
       "libraryComponents": 6
     },
     {
-      "blocker": "fallback:jsx-expression",
+      "blocker": "fallback:child-component",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
@@ -170,15 +170,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 36
-    },
-    {
-      "blocker": "fallback:prop-pattern",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 23
     },
     {
       "blocker": "fallback:context-state",
@@ -395,6 +386,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 18
+    },
+    {
+      "blocker": "fallback:prop-pattern",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 16
     },
     {
       "blocker": "createPortal / Portal",
@@ -700,7 +700,8 @@
       "codes": [
         "external-component",
         "island-prop",
-        "prop-pattern",
+        "jsx-const-child",
+        "jsx-expression",
         "spread-props"
       ]
     },

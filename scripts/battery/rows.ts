@@ -1488,4 +1488,10 @@ export const rows: Row[] = [
   { id: 'c-callback-ref-in-list', category: 'C', authoring: 'ref={fn} on an element inside a list', expect: 'react',
     snippet: `import { useCallback, useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); const rec = useCallback((node: any) => { console.log(node) }, []); return <ul onClick={() => setN(n + 1)}>{[1, 2].map((x) => <li key={x} ref={rec}>{x}</li>)}</ul> }`,
     note: 'B1: a callback ref inside a list stays ref-shape' },
+  { id: 'c-object-spread-rest-key', category: 'C', authoring: 'an object literal spreading a ...rest key', expect: 'native', jobs: 1,
+    snippet: `import { useState } from 'react'\nexport default function C({ label, ...props }: any) { const [n, setN] = useState(0); const size = { width: n * 10 }; return <div onClick={() => setN(n + 1)}><input aria-label={label} style={{ ...props.style, ...size, position: 'absolute' }} /></div> }`,
+    note: 'B5: ...rest.key in an object literal reads that prop and spreads it (Object.assign), instead of reading the rest object as a value' },
+  { id: 'c-object-spread-rest-whole', category: 'C', authoring: 'an object literal spreading the whole ...rest object', expect: 'react',
+    snippet: `import { useState } from 'react'\nexport default function C({ label, ...props }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}><input aria-label={label} style={{ ...props, position: 'absolute' }} /></div> }`,
+    note: 'B5: the whole rest object read as a value stays prop-pattern' },
 ]

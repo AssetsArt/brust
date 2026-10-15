@@ -40,42 +40,42 @@ One line per thing that keeps a row or a library component off the static/native
 | 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 123 | 180 | `spread-props` diagnostic (docs/react-coverage.md) |
 | 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 31 | 0 | 87 | 176 | `island-prop` diagnostic (docs/react-coverage.md) |
 | 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 19 | 0 | 20 | 55 | `island-children` diagnostic (docs/react-coverage.md) |
-| 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 7 | 29 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
+| 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 7 | 0 | 8 | 29 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:context-island | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 6 | 0 | `context-island` diagnostic (docs/react-coverage.md) |
 | 7 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 0 | `nested-instance` diagnostic (docs/react-coverage.md) |
 | 8 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 154 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 9 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 36 | `control-flow` diagnostic (docs/react-coverage.md) |
-| 10 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `child-component` diagnostic (docs/react-coverage.md) |
-| 11 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `jsx-expression` diagnostic (docs/react-coverage.md) |
+| 10 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 6 | `jsx-expression` diagnostic (docs/react-coverage.md) |
+| 11 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `child-component` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 5 | `hook-shape` diagnostic (docs/react-coverage.md) |
 | 13 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
 | 14 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
 | 15 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 36 | `body-shape` diagnostic (docs/react-coverage.md) |
-| 16 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 23 | `prop-pattern` diagnostic (docs/react-coverage.md) |
-| 17 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 10 | `context-state` diagnostic (docs/react-coverage.md) |
-| 18 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `local-component` diagnostic (docs/react-coverage.md) |
-| 19 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `ref-shape` diagnostic (docs/react-coverage.md) |
-| 20 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
-| 21 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
-| 22 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
-| 23 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
-| 24 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
-| 25 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
-| 26 | rest-props spread | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 398 | b-spread-child / a-spread-host: fallback:spread-props |
-| 27 | forwardRef | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 286 | b-forwardref: fallback:default-export-shape |
-| 28 | fallback:forwardref-ref | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 189 | `forwardref-ref` diagnostic (docs/react-coverage.md) |
-| 29 | useContext / use*Context | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 187 | c-usecontext: fallback:hook-unsupported |
-| 30 | Context.Provider / *Provider | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 137 | fallback:member-tag |
-| 31 | Primitive.* | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 113 | fallback:member-tag |
-| 32 | composeRefs | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 77 | ref shapes other than ref={x}: fallback:ref-shape |
-| 33 | Slot / asChild | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 58 | no battery row: cloneElement-based |
-| 34 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 54 | `module-side-effect` diagnostic (docs/react-coverage.md) |
-| 35 | error:unresolved-import (published .js/.mjs module is not followed) | compile error | survey truth (compiler refusal) | 0 | 0 | 0 | 50 | the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy) |
-| 36 | DOM globals (document / window) | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 45 | fallback:browser-global in render |
-| 37 | Presence | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 27 | external component |
-| 38 | fallback:context-scope | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 25 | `context-scope` diagnostic (docs/react-coverage.md) |
-| 39 | isValidElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 22 | no battery row: not analysable |
-| 40 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 18 | `member-tag` diagnostic (docs/react-coverage.md) |
+| 16 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 10 | `context-state` diagnostic (docs/react-coverage.md) |
+| 17 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `local-component` diagnostic (docs/react-coverage.md) |
+| 18 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `ref-shape` diagnostic (docs/react-coverage.md) |
+| 19 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
+| 20 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
+| 21 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
+| 22 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
+| 23 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
+| 24 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
+| 25 | rest-props spread | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 398 | b-spread-child / a-spread-host: fallback:spread-props |
+| 26 | forwardRef | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 286 | b-forwardref: fallback:default-export-shape |
+| 27 | fallback:forwardref-ref | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 189 | `forwardref-ref` diagnostic (docs/react-coverage.md) |
+| 28 | useContext / use*Context | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 187 | c-usecontext: fallback:hook-unsupported |
+| 29 | Context.Provider / *Provider | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 137 | fallback:member-tag |
+| 30 | Primitive.* | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 113 | fallback:member-tag |
+| 31 | composeRefs | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 77 | ref shapes other than ref={x}: fallback:ref-shape |
+| 32 | Slot / asChild | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 58 | no battery row: cloneElement-based |
+| 33 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 54 | `module-side-effect` diagnostic (docs/react-coverage.md) |
+| 34 | error:unresolved-import (published .js/.mjs module is not followed) | compile error | survey truth (compiler refusal) | 0 | 0 | 0 | 50 | the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy) |
+| 35 | DOM globals (document / window) | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 45 | fallback:browser-global in render |
+| 36 | Presence | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 27 | external component |
+| 37 | fallback:context-scope | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 25 | `context-scope` diagnostic (docs/react-coverage.md) |
+| 38 | isValidElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 22 | no battery row: not analysable |
+| 39 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 18 | `member-tag` diagnostic (docs/react-coverage.md) |
+| 40 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 16 | `prop-pattern` diagnostic (docs/react-coverage.md) |
 | 41 | createPortal / Portal | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 15 | d-createportal: fallback:browser-global |
 | 42 | cloneElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 14 | d-clone-element: fallback:hook-unsupported |
 | 43 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `browser-global` diagnostic (docs/react-coverage.md) |
@@ -124,7 +124,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | button-alias | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | button-aschild | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | button-group | measured | static | 0 | 7 (0) | 0 | 1 | — | built |
-| calendar | measured | static | 1 | 3 (2) | 107 | 1 | external-component, island-prop, prop-pattern, spread-props | built |
+| calendar | measured | static | 1 | 3 (2) | 107 | 1 | external-component, island-prop, jsx-const-child, jsx-expression, spread-props | built |
 | card | measured | static | 0 | 9 (0) | 0 | 0 | — | built |
 | carousel | measured | static | 1 | 9 (5) | 97 | 1 | context-state, control-flow, event-capture, external-component, hook-unsupported, jsx-const-child, ref-shape, spread-handler | built |
 | chart | measured | static | 1 | 9 (8) | 240 | 1 | control-flow, external-component, hook-shape, island-prop, jsx-const-child, local-component, use-id-in-render | built |
@@ -199,7 +199,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/avatar.tsx#avatarFallback | instance-prop-path, nested-instance | 1 |
 | components/ui/avatar.tsx#avatarImage | external-component, island-prop, spread-props | 1 |
 | components/ui/breadcrumb.tsx#breadcrumbSeparator | external-component | 1 |
-| components/ui/calendar.tsx#calendar | external-component, island-prop, prop-pattern, spread-props | 1 |
+| components/ui/calendar.tsx#calendar | external-component, island-prop, jsx-const-child, jsx-expression, spread-props | 1 |
 | components/ui/carousel.tsx#carousel | context-state, event-capture, hook-unsupported, jsx-const-child | 1 |
 | components/ui/carousel.tsx#carouselContent | control-flow, ref-shape | 1 |
 | components/ui/carousel.tsx#carouselItem | control-flow | 1 |
@@ -501,7 +501,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/checkbox.tsx | CheckboxTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, addEventListener |
 | src/checkbox.tsx | Checkbox | forwardRef | not exported | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/checkbox.tsx | CheckboxIndicator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, Presence, rest-props spread |
-| src/checkbox.tsx | CheckboxBubbleInput | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:prop-pattern, fallback:ref-in-render, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
+| src/checkbox.tsx | CheckboxBubbleInput | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:ref-in-render, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
 
 ### @radix-ui/react-collapsible 1.2.1
 
@@ -731,8 +731,8 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 |---|---|---|---|---|
 | src/popper.tsx | Popper | function | not exported | Context.Provider / *Provider, useState |
 | src/popper.tsx | PopperAnchor | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, useMemo / useCallback |
-| src/popper.tsx | PopperContent | forwardRef | react (fallback:body-shape, fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:prop-pattern, fallback:ref-shape, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, composeRefs, Primitive.*, rest-props spread, useLayoutEffect, useState, DOM globals (document / window) |
-| src/popper.tsx | PopperArrow | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-prop, fallback:prop-pattern, fallback:ref-shape, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread |
+| src/popper.tsx | PopperContent | forwardRef | react (fallback:body-shape, fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:ref-shape, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, composeRefs, Primitive.*, rest-props spread, useLayoutEffect, useState, DOM globals (document / window) |
+| src/popper.tsx | PopperArrow | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-prop, fallback:ref-shape, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread |
 
 ### @radix-ui/react-portal 1.2.0
 
@@ -767,7 +767,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/radio.tsx | RadioTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread |
 | src/radio.tsx | Radio | forwardRef | not exported | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/radio.tsx | RadioIndicator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, Presence, rest-props spread |
-| src/radio.tsx | RadioBubbleInput | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:prop-pattern, fallback:ref-in-render, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
+| src/radio.tsx | RadioBubbleInput | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:ref-in-render, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
 
 ### @radix-ui/react-roving-focus 1.2.1
 
@@ -813,7 +813,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/select.tsx | SelectContentImpl | forwardRef | not exported | forwardRef, useContext / use*Context, Context.Provider / *Provider, composeRefs, Slot / asChild, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
 | src/select.tsx | SelectItemAlignedPosition | forwardRef | not exported | forwardRef, useContext / use*Context, Context.Provider / *Provider, composeRefs, Primitive.*, rest-props spread, useLayoutEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window) |
 | src/select.tsx | SelectPopperPosition | forwardRef | not exported | forwardRef, useContext / use*Context, Context.Provider / *Provider, rest-props spread |
-| src/select.tsx | SelectViewport | forwardRef | react (fallback:browser-global, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:member-tag, fallback:module-side-effect, fallback:prop-pattern, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread, useRef, DOM globals (document / window) |
+| src/select.tsx | SelectViewport | forwardRef | react (fallback:browser-global, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:member-tag, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread, useRef, DOM globals (document / window) |
 | src/select.tsx | SelectGroup | forwardRef | react (fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:module-side-effect, fallback:spread-props) | forwardRef, Context.Provider / *Provider, Primitive.*, rest-props spread, useId |
 | src/select.tsx | SelectLabel | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |
 | src/select.tsx | SelectItem | forwardRef | react (fallback:browser-global, fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:member-tag, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, composeRefs, Primitive.*, rest-props spread, useState, useRef, useMemo / useCallback, useId, DOM globals (document / window) |
@@ -824,7 +824,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/select.tsx | SelectScrollButtonImpl | forwardRef | not exported | forwardRef, useContext / use*Context, Primitive.*, rest-props spread, useLayoutEffect, useEffect, useRef, useMemo / useCallback, DOM globals (document / window) |
 | src/select.tsx | SelectSeparator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:spread-props) | forwardRef, Primitive.*, rest-props spread |
 | src/select.tsx | SelectArrow | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread |
-| src/select.tsx | SelectBubbleInput | forwardRef | react (fallback:body-shape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:module-side-effect, fallback:prop-pattern, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
+| src/select.tsx | SelectBubbleInput | forwardRef | react (fallback:body-shape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
 
 ### @radix-ui/react-separator 1.2.0
 
@@ -855,7 +855,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/switch.tsx | SwitchTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, addEventListener |
 | src/switch.tsx | Switch | forwardRef | not exported | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/switch.tsx | SwitchThumb | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |
-| src/switch.tsx | SwitchBubbleInput | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:prop-pattern, fallback:ref-in-render, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
+| src/switch.tsx | SwitchBubbleInput | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:ref-in-render, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
 
 ### @radix-ui/react-tabs 1.2.1
 
