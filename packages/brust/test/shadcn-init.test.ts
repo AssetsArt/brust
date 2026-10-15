@@ -22,6 +22,7 @@ const TSCONFIG = `{
   "exclude": ["dist"],
 }
 `
+const ITEM = JSON.stringify({ name: 'acme-card', type: 'registry:ui', files: [{ path: 'registry/acme/ui/acme-card.tsx', type: 'registry:ui' }] })
 const THEME = '@import "tailwindcss";\n@import "tw-animate-css";\n@import "shadcn/tailwind.css";\n'
 
 function project(over: { pkg?: object | null; tsconfig?: string | null; css?: string | null } = {}): string {
@@ -52,6 +53,7 @@ async function init(root: string, args: { components?: string[]; fail?: string }
       return fail !== undefined && argv.includes(fail) ? 7 : 0
     },
     out: (s) => lines.push(s),
+    fetchItem: async () => ITEM, // F228: a URL item is fetched and checked before the CLI runs; no network in tests
     ...rest,
   } as Parameters<typeof shadcnInit>[0])
   return { calls, lines, code }
@@ -203,7 +205,12 @@ test('names are validated before anything is written or spawned; URLs must be ht
   const d = project()
   const ok = await init(d, { components: ['https://ui.example.dev/r/styles/new-york-v4/button.json', 'dialog'] })
   expect(ok.code).toBe(0)
-  expect(ok.calls.at(-1)).toEqual(['bun', 'x', `shadcn@${SHADCN_VERSION}`, 'add', 'https://ui.example.dev/r/styles/new-york-v4/button.json', 'dialog', '-y'])
+  // F228: the CLI is given the item that was checked (a local copy), not the URL
+  const last = ok.calls.at(-1)!
+  expect(last.slice(0, 4)).toEqual(['bun', 'x', `shadcn@${SHADCN_VERSION}`, 'add'])
+  expect(last[4]).toMatch(/brust-shadcn-item-[^/]+\/button-0\.json$/)
+  expect(last.slice(5)).toEqual(['dialog', '-y'])
+  expect(existsSync(last[4]!)).toBe(false) // removed after the CLI ran
 })
 
 test('every spawned argv is an array of plain strings, never a shell line (R41.8)', async () => {
@@ -286,14 +293,14 @@ test('a registry URL whose item is already installed is skipped on a second run;
   const d = project()
   const url = 'https://ui.example.dev/r/acme-card.json'
   const first = await init(d, { components: [url] })
-  expect(first.calls.at(-1)).toContain(url)
+  expect(first.calls.at(-1)!.some((a) => a.endsWith('acme-card-0.json'))).toBe(true)
   expect(first.lines.join('\n')).toContain('third-party code')
   mkdirSync(join(d, 'components/ui'), { recursive: true })
   writeFileSync(join(d, 'components/ui/acme-card.tsx'), 'export {}')
   const second = await init(d, { components: [url] })
   expect(second.calls.some((c) => c.includes(url))).toBe(false)
   expect(second.lines.join('\n')).toContain('already in components')
-  expect((await init(d, { components: [url], force: true })).calls.at(-1)).toContain(url)
+  expect((await init(d, { components: [url], force: true })).calls.at(-1)!.some((a) => a.endsWith('acme-card-0.json'))).toBe(true)
 })
 
 test('a symlinked tsconfig.json that already has "@/*" is not refused and is left alone (F192)', async () => {

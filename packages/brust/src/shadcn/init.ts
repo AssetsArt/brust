@@ -2,9 +2,11 @@
 // shadcn's own `init` does not detect brust, so this writes what `add` needs (components.json, the `@/*` path),
 // installs the four packages the components import, and runs ONE pinned shadcn CLI for the theme and the components.
 // Every child process is spawned from an argv array, never through a shell; the runner is injected for tests.
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { type Member, type ObjectNode, raw, readObject } from './jsonc'
+import { fetchRegistryItem, vetItem } from './registry'
 
 /** The shadcn CLI version this command runs (R41.6). A release that moves it re-runs the transcript. */
 export const SHADCN_VERSION = '4.21.4'
@@ -35,6 +37,8 @@ export interface InitOptions {
   shadcnVersion?: string
   run: Runner
   out: (line: string) => void
+  /** F228: fetches the JSON of a registry URL item (default: `fetchRegistryItem`, https only); injected for tests. */
+  fetchItem?: (url: string) => Promise<string>
 }
 
 const COMPONENT = /^[a-z0-9][a-z0-9-]*$/
@@ -436,6 +440,35 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   if (hit && 'link' in hit) return fail2(`${hit.link} is, or is inside, a symbolic link; the shadcn CLI would write through it. Replace the link with a real directory or file, then run again`)
   if (hit) return fail2(`${hit.tooMany} holds more than ${SCAN_LIMIT} entries, so it cannot be checked for symbolic links before the shadcn CLI writes into it; point the alias at a smaller directory, then run again`)
 
+  // A component whose file is already in components/ui is not added again (idempotent). A registry URL is judged by
+  // the item name in its path (`.../acme-card.json` → `acme-card`), looked up in components/ui and components.
+  const present = (c: string): boolean => {
+    const name = REGISTRY_URL.test(c) ? urlItemName(c) : c
+    if (name === undefined) return false
+    return existsSync(join(root, 'components/ui', `${name}.tsx`)) || (name !== c && existsSync(join(root, 'components', `${name}.tsx`)))
+  }
+  const todo = o.components.filter((c) => o.force || !present(c))
+
+  // F228: a registry URL item declares its own file targets, known only once it is fetched. Fetch it now, before the CLI
+  // runs, and refuse when a target is outside the project or is, or sits under, a symlink. The CLI is then given the file
+  // checked here (not the URL), so the item cannot change between the check and the write.
+  const fetchItem = o.fetchItem ?? ((url: string) => fetchRegistryItem(url))
+  const vetted = new Map<string, string>()
+  for (const c of todo) {
+    if (!REGISTRY_URL.test(c) || vetted.has(c)) continue
+    let text: string
+    try {
+      text = await fetchItem(c)
+    } catch (e) {
+      return fail2(`registry item ${c} was not fetched (${(e as Error).message}), so its file targets cannot be checked; nothing was added`)
+    }
+    const v = vetItem(text, entry.css)
+    if ('error' in v) return fail2(`registry item ${c} ${v.error}; nothing was added`)
+    const bad = v.paths.find((p) => linkUnder(root, p))
+    if (bad !== undefined) return fail2(`registry item ${c} would write ${bad}, which is, or is inside, a symbolic link; the shadcn CLI would write through it. Replace the link with a real file or directory, then run again`)
+    vetted.set(c, text)
+  }
+
   const report = (name: string, step: Step, why = ''): void => out(`${step === 'done' ? '✓' : step === 'skipped' ? '-' : '✗'} ${name}: ${step}${why ? ` (${why})` : ''}`)
   const stop = (name: string, code: number): number => {
     report(name, 'failed', `exit ${code}`)
@@ -482,19 +515,24 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
     if (code !== 0) return stop('shadcn add index', code)
     report('theme', 'done', `shadcn@${version} add index`)
   }
-  // A component whose file is already in components/ui is not added again (idempotent). A registry URL is judged by
-  // the item name in its path (`.../acme-card.json` → `acme-card`), looked up in components/ui and components.
-  const present = (c: string): boolean => {
-    const name = REGISTRY_URL.test(c) ? urlItemName(c) : c
-    if (name === undefined) return false
-    return existsSync(join(root, 'components/ui', `${name}.tsx`)) || (name !== c && existsSync(join(root, 'components', `${name}.tsx`)))
-  }
-  const todo = o.components.filter((c) => o.force || !present(c))
   for (const c of o.components) if (!todo.includes(c)) report(c, 'skipped', REGISTRY_URL.test(c) ? 'its item is already in components; --force adds it again' : 'components/ui already has it')
   for (const c of todo) if (REGISTRY_URL.test(c)) out(`warning shadcn-init ${c} is third-party code: it is written into your project and runs in your build and in the browser. Read it before you ship`)
   if (todo.length > 0) {
-    const code = await o.run(shadcn('add', ...todo, '-y'), root)
-    if (code !== 0) return stop(`shadcn add ${todo.join(' ')}`, code)
+    // a URL item is added from the copy that was checked above
+    const dir = vetted.size > 0 ? mkdtempSync(join(tmpdir(), 'brust-shadcn-item-')) : undefined
+    try {
+      const args = todo.map((c, i) => {
+        const text = vetted.get(c)
+        if (text === undefined || dir === undefined) return c
+        const file = join(dir, `${urlItemName(c) ?? 'item'}-${i}.json`)
+        writeFileSync(file, text)
+        return file
+      })
+      const code = await o.run(shadcn('add', ...args, '-y'), root)
+      if (code !== 0) return stop(`shadcn add ${todo.join(' ')}`, code)
+    } finally {
+      if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
+    }
     for (const c of todo) report(c, 'done')
   }
 
