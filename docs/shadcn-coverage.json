@@ -388,6 +388,15 @@
       "libraryComponents": 22
     },
     {
+      "blocker": "fallback:context-escape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 21
+    },
+    {
       "blocker": "fallback:member-tag",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -485,15 +494,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 2
-    },
-    {
-      "blocker": "fallback:context-escape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 1
     },
     {
       "blocker": "fallback:prop-default-shape",

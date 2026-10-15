@@ -211,6 +211,10 @@ pub struct ComponentIR {
     /// `export` names a function nothing exports (a helper component of its module): the build exposes it for the island.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unexported: bool,
+    /// R34.122: a clone of a component made for one call site, with the call site's content spliced in. Its chunk
+    /// shares one factory module with every clone whose chunk is equal (R34.124).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub specialised: bool,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (shadcn S1.2, R34.14): the props minus every
@@ -259,6 +263,10 @@ pub struct ComponentIR {
     /// readable in a prop passed to a component.
     #[serde(skip)]
     pub element_free_fns: Vec<String>,
+    /// F147: every name the module spells (its symbols, and the names inlined hook locals print as): a generated
+    /// handler name never takes one.
+    #[serde(skip)]
+    pub bound_names: std::collections::HashSet<String>,
     /// F215: the first module-level statement that runs for its effect (`analyze::module_effects`): its start and what it is.
     #[serde(skip)]
     pub module_effect: Option<(u32, String)>,
@@ -401,6 +409,7 @@ impl ComponentIR {
             dist: None,
             export: None,
             unexported: false,
+            specialised: false,
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,
@@ -415,6 +424,7 @@ impl ComponentIR {
             ctx_pkg: false,
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),
+            bound_names: Default::default(),
             module_effect: None,
             holds_island: false,
             unwritten_props: Vec::new(),

@@ -44,6 +44,9 @@ pub struct Facts<'a> {
     pub prop_defaults: HashMap<String, RawExpr>,
     /// `useStore` bindings by handle (M3-F D7).
     pub stores: HashMap<String, &'a StoreUse>,
+    /// F232: the rest parameter of the wrapper a handler body is called through (`(...rest) => (BODY)(...rest)`), a
+    /// name that occurs nowhere in the component's IR, so no name the component binds or reads can be captured by it.
+    pub rest: String,
 }
 
 const FUNCTION_WHYS: &[&str] = &[
@@ -116,6 +119,7 @@ impl<'a> Facts<'a> {
                 .filter_map(|p| p.default.clone().map(|d| (p.name.clone(), d)))
                 .collect(),
             stores: ir.stores.iter().map(|u| (u.handle.clone(), u)).collect(),
+            rest: fresh_name(ir, "__args"),
         }
     }
 
@@ -481,13 +485,31 @@ pub fn arrow_body(js: &str) -> String {
     }
 }
 
+/// A name built on `base` that occurs nowhere in `ir`'s serialised form (every name the component declares, reads or
+/// captures, and every verbatim source it carries, appears there), so a generated binding of that name can neither
+/// capture nor shadow anything the component means.
+pub fn fresh_name(ir: &ComponentIR, base: &str) -> String {
+    let text = serde_json::to_string(ir).unwrap_or_default();
+    let mut name = base.to_string();
+    let mut n = 0;
+    while text.contains(&name) {
+        n += 1;
+        name = format!("{base}{n}");
+    }
+    name
+}
+
 pub fn client_fn(r: &RawExpr, f: &Facts<'_>) -> String {
     match &r.kind {
         RawKind::Arrow {
             body: ArrowBody::Expr(_),
             ..
         } => client_js(r, f),
-        _ => format!("(...a) => ({})(...a)", client_js(r, f)),
+        _ => format!(
+            "(...{rest}) => ({})(...{rest})",
+            client_js(r, f),
+            rest = f.rest
+        ),
     }
 }
 

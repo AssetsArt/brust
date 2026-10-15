@@ -159,7 +159,7 @@ pub fn classify(
     match closure {
         Some(_) => Verdict::BuildTime,
         None => {
-            let relative = |s: &String| s.starts_with("./") || s.starts_with("../");
+            let relative = |s: &String| crate::analyze::modules::is_relative_spec(s);
             let known = deps
                 .globals
                 .iter()
@@ -221,7 +221,7 @@ pub fn module_is_pure(from: &str, source: &str, opts: &AnalyzeOptions, packages:
                 if packages.contains(&spec.as_str()) {
                     continue;
                 }
-                if !(spec.starts_with("./") || spec.starts_with("../")) {
+                if !crate::analyze::modules::is_relative_spec(&spec) {
                     return None;
                 }
                 rels.push(spec);
@@ -338,7 +338,7 @@ pub fn instance_job(
         if INSTANCE_PACKAGES.contains(&source) {
             continue;
         }
-        if !(source.starts_with("./") || source.starts_with("../")) {
+        if !crate::analyze::modules::is_relative_spec(source) {
             return Err(format!(
                 "its job imports the package `{source}`, which is not allowed at build"
             ));

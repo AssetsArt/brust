@@ -1,5 +1,5 @@
 // docs/shadcn-coverage.json: the numbers of docs/shadcn-coverage.md as data, for the docs site (website/pages/docs/Shadcn.tsx).
-// Deterministic like the markdown (no clock, no host); client JS is gzip KB rounded to 1 KB, `0` exact for a page with none.
+// Deterministic like the markdown (no clock, no host); client JS is gzip KiB (1024 bytes) rounded to 1 KiB (the `jsGzipKb` keys keep their name: the website page reads them), `0` exact for a page with none.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppRow } from './app.ts'
