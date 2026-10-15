@@ -125,6 +125,8 @@ struct Placer<'s> {
     plain_fns: Vec<String>,
     /// F199: module functions and consts proven unable to hand out an element (`ir.element_free_fns`).
     element_free_fns: Vec<String>,
+    /// F199: each handler's body (`ir.handlers`), judged by `element_problem` when a value reads the handler.
+    handler_bodies: HashMap<String, RawExpr>,
     /// F173 (Mellow F3): each state's initial value as written; a state is a method receiver only when it starts primitive.
     state_inits: HashMap<String, RawExpr>,
     /// F174: the verdict on each derived value / module const already judged (a chain of derived values is deep and shared).
@@ -274,6 +276,11 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         module_decls: ir.module_decls.clone(),
         plain_fns: ir.plain_fns.clone(),
         element_free_fns: ir.element_free_fns.clone(),
+        handler_bodies: ir
+            .handlers
+            .iter()
+            .map(|h| (h.name.clone(), h.body.clone()))
+            .collect(),
         state_inits: ir
             .state
             .iter()
@@ -960,7 +967,8 @@ impl Placer<'_> {
                     self.read_memo
                         .borrow_mut()
                         .insert(key.clone(), Some(name.clone()));
-                    let v = match self.derived_raw.get(name) {
+                    let v = match self.derived_raw.get(name).or(self.handler_bodies.get(name)) {
+                        // A derived value, or a handler (an arrow): judged by what it is built from.
                         Some(d) => self.element_problem(d, 0),
                         // A module function or const: element-free by its own module walk (JSX, reads, filled objects).
                         None if self.plain_fns.contains(name)
@@ -991,7 +999,20 @@ impl Placer<'_> {
             },
             RawKind::Member { target, .. } => go(target),
             RawKind::Index { target, index } => go(target).or_else(|| go(index)),
-            RawKind::Call { callee, args } => go(callee).or_else(|| args.iter().find_map(go)),
+            RawKind::Call { callee, args } => {
+                // A function handed to a package export (`composeEventHandlers(…, () => …)`) is the package's to call:
+                // package exports are not judged, so neither is what they call. An app function's argument is.
+                let package = matches!(
+                    &chain_root_raw(callee).kind,
+                    RawKind::Ident { kind: IdentKind::Import { source, .. }, .. }
+                        if !source.starts_with("./") && !source.starts_with("../")
+                );
+                go(callee).or_else(|| {
+                    args.iter()
+                        .filter(|a| !(package && self.is_function(a, 0)))
+                        .find_map(go)
+                })
+            }
             // `&&`, `||` and `??` give one of their operands; every other operator, and an untagged template, gives a
             // primitive. A condition's test is never the value.
             RawKind::Binary {
@@ -1614,6 +1635,14 @@ impl Placer<'_> {
             }
             Node::Fragment(cs) => cs.iter_mut().for_each(|c| self.node(c)),
         }
+    }
+}
+
+/// The expression a member / index chain starts from (`a` of `a.b[c].d`).
+fn chain_root_raw(e: &RawExpr) -> &RawExpr {
+    match &e.kind {
+        RawKind::Member { target, .. } | RawKind::Index { target, .. } => chain_root_raw(target),
+        _ => e,
     }
 }
 

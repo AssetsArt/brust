@@ -12,13 +12,13 @@
     "measured": 64,
     "analysisOnly": 0,
     "tier": {
-      "static": 59,
+      "static": 57,
       "native": 1,
-      "react": 4
+      "react": 6
     },
-    "islands": 38,
+    "islands": 36,
     "pagesWithNoJs": 25,
-    "pagesWithNoWorker": 20,
+    "pagesWithNoWorker": 21,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -40,27 +40,27 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 38,
+      "measuredRows": 37,
       "analysisOnlyRows": 0,
-      "appComponents": 139,
+      "appComponents": 135,
       "libraryComponents": 151
     },
     {
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 33,
+      "measuredRows": 32,
       "analysisOnlyRows": 0,
-      "appComponents": 126,
+      "appComponents": 123,
       "libraryComponents": 180
     },
     {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 32,
+      "measuredRows": 31,
       "analysisOnlyRows": 0,
-      "appComponents": 88,
+      "appComponents": 87,
       "libraryComponents": 176
     },
     {
@@ -79,7 +79,25 @@
       "measuredRows": 6,
       "analysisOnlyRows": 0,
       "appComponents": 7,
-      "libraryComponents": 31
+      "libraryComponents": 29
+    },
+    {
+      "blocker": "fallback:context-island",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 6,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:hook-unsupported",
@@ -98,15 +116,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 8,
       "libraryComponents": 36
-    },
-    {
-      "blocker": "fallback:nested-instance",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 3,
-      "analysisOnlyRows": 0,
-      "appComponents": 3,
-      "libraryComponents": 0
     },
     {
       "blocker": "fallback:child-component",
@@ -136,7 +145,7 @@
       "libraryComponents": 4
     },
     {
-      "blocker": "fallback:context-island",
+      "blocker": "fallback:slot-dynamic",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
@@ -241,15 +250,6 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 0
-    },
-    {
-      "blocker": "fallback:slot-dynamic",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
       "libraryComponents": 0
     },
     {
@@ -829,16 +829,19 @@
     {
       "id": "dialog",
       "basis": "measured",
-      "tier": "static",
+      "tier": "react",
       "islands": 1,
-      "components": 24,
+      "components": 25,
       "reactComponents": 16,
-      "jsGzipKb": 104,
+      "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "island-children",
         "island-prop",
+        "nested-instance",
+        "slot-dynamic",
         "spread-props"
       ]
     },
@@ -1220,13 +1223,14 @@
     {
       "id": "sheet",
       "basis": "measured",
-      "tier": "static",
+      "tier": "react",
       "islands": 1,
-      "components": 20,
-      "reactComponents": 16,
+      "components": 21,
+      "reactComponents": 15,
       "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "island-children",
         "island-prop",
@@ -1366,16 +1370,12 @@
       "id": "toggle",
       "basis": "measured",
       "tier": "static",
-      "islands": 2,
-      "components": 3,
-      "reactComponents": 2,
-      "jsGzipKb": 87,
-      "workerCalls": 2,
-      "codes": [
-        "external-component",
-        "island-prop",
-        "spread-props"
-      ]
+      "islands": 0,
+      "components": 4,
+      "reactComponents": 0,
+      "jsGzipKb": 5,
+      "workerCalls": 0,
+      "codes": []
     },
     {
       "id": "toggle-group",

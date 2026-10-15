@@ -524,6 +524,8 @@ fn an_element_holder_falls_back_with_no_wrapper_and_as_a_prop() {
         // … through an alias, or through a root that is not a name.
         "prop-loc-alias.tsx",
         "prop-loc-opaque-write.tsx",
+        // An app function called with a callback that returns an element.
+        "prop-loc-callback.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(

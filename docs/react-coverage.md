@@ -341,7 +341,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
 | d-createcontext | createContext provider | react | react | ssr | ok | fallback:context-value |  |
 | d-clone-element | cloneElement | react | react | ssr | ok | fallback:hook-unsupported |  |
-| d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-const-child, fallback:jsx-expression |  |
+| d-children-map | Children.map | react | react | ssr | ok | fallback:jsx-expression |  |
 | d-suspense-static | <Suspense> around static content | static | static | ssr | ok | fallback:external-component | spec §3 react tier: Suspense is a React island; since R34.52 its constant `fallback` element travels as an element prop, so the page is static (shadcn S1, constant-slots) |
 | d-fragment-keyed | <Fragment key> inside a list | static | static | 0 | ok | — |  |
 | d-activity | <Activity mode> | react | react | ssr | ok | fallback:external-component, fallback:island-prop | F148a: `mode` is an expression over props, which the server cannot hand to the island (fallback:island-prop). It read as static before only because the battery compiles without building: `brust build` failed it with ssr-prop-not-a-path (F60). With a plain prop or a literal mode it is a static page with the React built-in as an island (R34.21) |
