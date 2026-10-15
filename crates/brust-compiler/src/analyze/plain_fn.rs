@@ -351,7 +351,8 @@ pub fn element_free_fns(
     for part in ast.parts.iter() {
         module.stmts(part.stmts.slice());
     }
-    let assigned: HashSet<String> = module.assigned.iter().map(|r| names.name(*r)).collect();
+    // Bindings by symbol (`key_of`), not by spelling: a parameter `orientation` is not the component's local of that name.
+    let assigned: HashSet<u32> = module.assigned.iter().map(|r| names.key_of(*r)).collect();
     // An object another function could fill with an element: written through a member (`slots.icon = …`), the receiver
     // of a method that changes it (`push`, `set`, …), or handed to any call as an argument (`Object.assign(slots, …)`).
     const MUTATING: &[&str] = &[
@@ -381,18 +382,23 @@ pub fn element_free_fns(
         ("Array", "isArray"),
         ("JSON", "stringify"),
     ];
-    let mut filled: HashSet<String> = module
+    let mut opaque_write = module.opaque_write;
+    let mut filled: HashSet<u32> = module
         .member_written
         .iter()
-        .map(|r| names.name(*r))
+        .map(|r| names.key_of(*r))
         .collect();
     for c in &module.calls {
         let E::ECall(call) = &c.data else { continue };
         if let E::EDot(d) = &call.target.data
             && MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
-            && let Some(r) = crate::analyze::expr::chain_root(&d.target)
         {
-            filled.insert(names.name(r));
+            match crate::analyze::expr::chain_root(&d.target) {
+                Some(r) => {
+                    filled.insert(names.key_of(r));
+                }
+                None => opaque_write = true,
+            }
         }
         // A global that only reads its arguments (`Object.values(map)`, `String(x)`) does not fill them.
         let global = |r: js_ast::Ref, n: &str| {
@@ -420,12 +426,24 @@ pub fn element_free_fns(
                 _ => a,
             };
             if let Some(r) = crate::analyze::expr::chain_root(a) {
-                filled.insert(names.name(r));
+                filled.insert(names.key_of(r));
             }
         }
     }
+    // What a binding was made from is filled with it (`const s = slots; s.icon = …`), to a fixpoint.
+    loop {
+        let before = filled.len();
+        for (t, u) in &module.flows {
+            if filled.contains(&names.key_of(*t)) {
+                filled.insert(names.key_of(*u));
+            }
+        }
+        if filled.len() == before {
+            break;
+        }
+    }
     // (name, the walk of its declaration); `None` = a module name that is never provable (`let`, a class, a pattern).
-    let mut decls: Vec<(String, Option<crate::analyze::expr::Walk>)> = Vec::new();
+    let mut decls: Vec<(String, u32, Option<crate::analyze::expr::Walk>)> = Vec::new();
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
             match &stmt.data {
@@ -433,13 +451,25 @@ pub fn element_free_fns(
                     if let Some(n) = &f.func.name {
                         let mut w = crate::analyze::expr::Walk::default();
                         w.stmts(f.func.body.stmts.slice());
-                        decls.push((names.name(n.ref_), Some(w)));
+                        decls.push((names.name(n.ref_), names.key_of(n.ref_), Some(w)));
                     }
                 }
                 S::SLocal(l) => {
                     for d in l.decls.iter() {
                         if let B::BIdentifier(id) = d.binding.data {
-                            let w = (matches!(l.kind, js_ast::S::Kind::KConst))
+                            // A write through an unknown root may fill any const that is not a primitive.
+                            let primitive = d.value.as_ref().is_some_and(|v| {
+                                matches!(
+                                    v.data,
+                                    E::EString(_)
+                                        | E::ENumber(_)
+                                        | E::EBoolean(_)
+                                        | E::ENull(_)
+                                        | E::EUndefined(_)
+                                )
+                            });
+                            let w = (matches!(l.kind, js_ast::S::Kind::KConst)
+                                && (primitive || !opaque_write))
                                 .then_some(d.value.as_ref())
                                 .flatten()
                                 .map(|v| {
@@ -447,26 +477,26 @@ pub fn element_free_fns(
                                     w.expr(v);
                                     w
                                 });
-                            decls.push((names.name(id.r#ref), w));
+                            decls.push((names.name(id.r#ref), names.key_of(id.r#ref), w));
                         }
                     }
                 }
                 S::SClass(c) => {
                     if let Some(n) = &c.class.class_name {
-                        decls.push((names.name(n.ref_), None));
+                        decls.push((names.name(n.ref_), names.key_of(n.ref_), None));
                     }
                 }
                 _ => {}
             }
         }
     }
-    let module_names: HashSet<&str> = decls.iter().map(|(n, _)| n.as_str()).collect();
-    let mut free: HashSet<String> = HashSet::new();
+    let module_keys: HashSet<u32> = decls.iter().map(|(_, k, _)| *k).collect();
+    let mut free: HashSet<u32> = HashSet::new();
     loop {
         let before = free.len();
-        for (name, w) in &decls {
+        for (_, key, w) in &decls {
             let Some(w) = w else { continue };
-            if free.contains(name) || assigned.contains(name) || filled.contains(name) {
+            if free.contains(key) || assigned.contains(key) || filled.contains(key) {
                 continue;
             }
             let jsx = w
@@ -477,21 +507,25 @@ pub fn element_free_fns(
                 if let Some((source, imported)) = names.import_of(*r) {
                     return !element_import(source, imported);
                 }
-                let n = names.name(*r);
-                if module_names.contains(n.as_str()) {
-                    return free.contains(&n);
+                let k = names.key_of(*r);
+                if module_keys.contains(&k) {
+                    return free.contains(&k);
                 }
-                n != "React"
+                names.name(*r) != "React"
             });
             if !jsx && reads_ok {
-                free.insert(name.clone());
+                free.insert(*key);
             }
         }
         if free.len() == before {
             break;
         }
     }
-    free.into_iter().collect()
+    decls
+        .into_iter()
+        .filter(|(_, k, _)| free.contains(k))
+        .map(|(n, ..)| n)
+        .collect()
 }
 
 /// F199: the app module `source` names (relative to `from`, after `tsconfig` aliases) may hand out a React element: it

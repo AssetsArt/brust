@@ -521,6 +521,9 @@ fn an_element_holder_falls_back_with_no_wrapper_and_as_a_prop() {
         // A module object another function fills with an element.
         "prop-loc-mutated.tsx",
         "prop-loc-assign.tsx",
+        // … through an alias, or through a root that is not a name.
+        "prop-loc-alias.tsx",
+        "prop-loc-opaque-write.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(

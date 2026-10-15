@@ -5,8 +5,9 @@ import { cn } from './lib/helpers'
 const LABELS: Record<string, string> = { a: 'A', b: 'B' }
 const KINDS = { a: 'a', b: 'b' } as const
 const ORIENTATIONS = Object.values(KINDS)
-function isValid(o: string) {
-  return ORIENTATIONS.includes(o)
+// The parameter shares a name with the page's own `kind` (radix Separator's `orientation`): bindings are symbols.
+function isValid(kind: string) {
+  return ORIENTATIONS.includes(kind)
 }
 
 function Badge({ icon, label }: { icon?: React.ReactNode; label?: string }) {

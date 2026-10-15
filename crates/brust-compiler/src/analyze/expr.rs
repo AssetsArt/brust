@@ -707,6 +707,11 @@ pub struct Walk {
     pub assigned: Vec<js_ast::Ref>,
     /// The root identifiers of member / index assignment targets (`x.a = …`, `x[k] += …`): an object written through.
     pub member_written: Vec<js_ast::Ref>,
+    /// A member / index assignment whose chain does not start at an identifier (`get().a = …`): what it writes is unknown.
+    pub opaque_write: bool,
+    /// `(binding, read)`: a binding declared or assigned from a value that reads `read` (`const s = slots`,
+    /// `s = { a: slots }`), so writing through the binding may write into `read`.
+    pub flows: Vec<(js_ast::Ref, js_ast::Ref)>,
 }
 
 impl Walk {
@@ -722,11 +727,10 @@ impl Walk {
                 .for_each(|v| self.assign_target(v)),
             E::ESpread(sp) => self.assign_target(&sp.value),
             E::EBinary(b) if matches!(b.op, OpCode::BinAssign) => self.assign_target(&b.left),
-            E::EDot(_) | E::EIndex(_) => {
-                if let Some(r) = chain_root(e) {
-                    self.member_written.push(r);
-                }
-            }
+            E::EDot(_) | E::EIndex(_) => match chain_root(e) {
+                Some(r) => self.member_written.push(r),
+                None => self.opaque_write = true,
+            },
             _ => {}
         }
     }
@@ -808,9 +812,17 @@ impl Walk {
             S::SExpr(x) => self.expr(&x.value),
             S::SLocal(l) => {
                 for d in l.decls.iter() {
+                    let d0 = self.declared.len();
                     self.declare_binding(&d.binding);
+                    let d1 = self.declared.len();
                     if let Some(v) = &d.value {
+                        let u0 = self.used.len();
                         self.expr(v);
+                        for t in d0..d1 {
+                            for u in u0..self.used.len() {
+                                self.flows.push((self.declared[t], self.used[u]));
+                            }
+                        }
                     }
                 }
             }
@@ -914,7 +926,15 @@ impl Walk {
                     self.assign_target(&b.left);
                 }
                 self.expr(&b.left);
+                let u0 = self.used.len();
                 self.expr(&b.right);
+                if !matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None)
+                    && let Some(t) = chain_root(&b.left)
+                {
+                    for u in u0..self.used.len() {
+                        self.flows.push((t, self.used[u]));
+                    }
+                }
             }
             E::ENew(n) => {
                 self.expr(&n.target);
