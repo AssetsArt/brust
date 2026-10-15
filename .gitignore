@@ -15,3 +15,4 @@ tests/fixtures/shadcn/dist/
 
 # F153c: package sources the build writes
 **/.brust/pkg-src/
+**/.brust/resolve-cache-*.json

@@ -1622,7 +1622,7 @@ impl Walker<'_, '_> {
             return self.local_child(name, loc);
         };
         let Some(path) = resolve(ctx.path, source, ctx.opts) else {
-            if source.starts_with("./") || source.starts_with("../") {
+            if crate::analyze::modules::is_relative_spec(source) {
                 self.diagnostics.push(Diagnostic::error(
                     "unresolved-import",
                     format!("cannot resolve component <{name}> from {source}"),
