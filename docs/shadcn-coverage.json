@@ -12,9 +12,9 @@
     "measured": 64,
     "analysisOnly": 0,
     "tier": {
-      "static": 57,
+      "static": 59,
       "native": 1,
-      "react": 6
+      "react": 4
     },
     "islands": 38,
     "pagesWithNoJs": 25,
@@ -42,7 +42,7 @@
       "classification": "survey truth (today's rule; R34.7 removes it)",
       "measuredRows": 38,
       "analysisOnlyRows": 0,
-      "appComponents": 136,
+      "appComponents": 139,
       "libraryComponents": 151
     },
     {
@@ -51,7 +51,7 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 33,
       "analysisOnlyRows": 0,
-      "appComponents": 124,
+      "appComponents": 126,
       "libraryComponents": 180
     },
     {
@@ -76,28 +76,10 @@
       "blocker": "fallback:jsx-const-child",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 5,
+      "measuredRows": 6,
       "analysisOnlyRows": 0,
-      "appComponents": 5,
-      "libraryComponents": 25
-    },
-    {
-      "blocker": "fallback:context-island",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
-      "analysisOnlyRows": 0,
-      "appComponents": 6,
-      "libraryComponents": 0
-    },
-    {
-      "blocker": "fallback:nested-instance",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
-      "analysisOnlyRows": 0,
-      "appComponents": 4,
-      "libraryComponents": 0
+      "appComponents": 7,
+      "libraryComponents": 37
     },
     {
       "blocker": "fallback:hook-unsupported",
@@ -116,6 +98,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 8,
       "libraryComponents": 36
+    },
+    {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 3,
+      "analysisOnlyRows": 0,
+      "appComponents": 3,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:child-component",
@@ -145,7 +136,7 @@
       "libraryComponents": 4
     },
     {
-      "blocker": "fallback:slot-dynamic",
+      "blocker": "fallback:context-island",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
@@ -250,6 +241,15 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 2,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:slot-dynamic",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
       "libraryComponents": 0
     },
     {
@@ -829,19 +829,16 @@
     {
       "id": "dialog",
       "basis": "measured",
-      "tier": "react",
+      "tier": "static",
       "islands": 1,
-      "components": 25,
+      "components": 24,
       "reactComponents": 16,
-      "jsGzipKb": 101,
+      "jsGzipKb": 103,
       "workerCalls": 1,
       "codes": [
-        "context-island",
         "external-component",
         "island-children",
         "island-prop",
-        "nested-instance",
-        "slot-dynamic",
         "spread-props"
       ]
     },
@@ -1069,6 +1066,7 @@
         "external-component",
         "island-children",
         "island-prop",
+        "jsx-const-child",
         "jsx-expression",
         "spread-props"
       ]
@@ -1222,14 +1220,13 @@
     {
       "id": "sheet",
       "basis": "measured",
-      "tier": "react",
+      "tier": "static",
       "islands": 1,
-      "components": 21,
-      "reactComponents": 15,
+      "components": 20,
+      "reactComponents": 16,
       "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
-        "context-island",
         "external-component",
         "island-children",
         "island-prop",

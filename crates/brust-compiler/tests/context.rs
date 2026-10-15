@@ -491,6 +491,60 @@ fn plain_wrappers_are_judged_by_the_total_predicate_and_ordinary_reads_keep_lowe
     }
 }
 
+/// F198 + F199: the same element holders printed with no wrapper (`<section>{icons.home}</section>`) or passed as a prop
+/// the child prints (`<Badge icon={icons.home} />`) fall back by name, as under a wrapper; on main they printed the
+/// element's internals (`{'key': None, 'props': …}`). Ordinary reads at the top level and in props keep lowering.
+#[test]
+fn an_element_holder_falls_back_with_no_wrapper_and_as_a_prop() {
+    for at in ["top", "prop"] {
+        for kind in ["imp", "loc"] {
+            for shape in ["root", "and", "tern", "member", "index", "array", "call"] {
+                let f = format!("{at}-{kind}-{shape}.tsx");
+                let (ir, _) = page(&f);
+                assert!(
+                    rules(&ir).contains(&"jsx-const-child") && is_react(&ir),
+                    "{f}: {:?} {:?}",
+                    ir.tier,
+                    ir.diagnostics
+                );
+            }
+        }
+    }
+    // A prop helper is judged through what it reads: another helper that writes JSX, an app module holding elements,
+    // React's `createElement`.
+    for f in [
+        "prop-loc-indirect.tsx",
+        "prop-loc-via-import.tsx",
+        "prop-loc-react.tsx",
+        // A spread of an element into an object literal copies its fields.
+        "prop-spread-object.tsx",
+    ] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"jsx-const-child") && is_react(&ir),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+    }
+    // Accepted lowering loss, as under a wrapper: a member of an imported object is not provable (objects never cross a
+    // module boundary by R1.1b, so another importer could rebind the field).
+    let (ir, _) = page("top-imp-object.tsx");
+    assert!(
+        rules(&ir).contains(&"jsx-const-child") && is_react(&ir),
+        "{:?}",
+        ir.diagnostics
+    );
+    let (ir, jinja) = page("top-ordinary.tsx");
+    assert!(
+        !rules(&ir).contains(&"jsx-const-child") && !is_react(&ir),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
+    assert!(!jinja.is_empty());
+}
+
 /// F173: an imported helper is plain only when its own module proves it by the PR 1c rules: an index or member read
 /// inside it, a `let` export (rebindable), a namespace member call, an import that does not resolve, and a proven
 /// helper called with an element holder as its argument all fall back by name.

@@ -19,12 +19,19 @@ const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix',
   // Lead ruling on @57714ece: an allowlisted method on a user-defined receiver (a class instance, a shadowed Date, a
   // reassigned method), a computed name or an optional call keeps the page React.
   'ctx-plain-method-class', 'ctx-plain-method-date-shadow', 'ctx-plain-method-reassigned', 'ctx-plain-method-computed', 'ctx-plain-method-optional', 'ctx-plain-method-optional-call',
+  // F198 + F199: the same element holders with no wrapper, and passed as a prop the child prints, printed the element's
+  // internals on main (`{'key': None, 'props': …}`); the page is React now. A member of an imported object of a module
+  // that holds elements falls back too (accepted loss).
+  'ctx-top-imp-root', 'ctx-top-imp-and', 'ctx-top-imp-tern', 'ctx-top-imp-member', 'ctx-top-imp-index', 'ctx-top-imp-array', 'ctx-top-imp-call', 'ctx-top-loc-root', 'ctx-top-loc-and', 'ctx-top-loc-tern', 'ctx-top-loc-member', 'ctx-top-loc-index', 'ctx-top-loc-array', 'ctx-top-loc-call',
+  'ctx-prop-imp-root', 'ctx-prop-imp-and', 'ctx-prop-imp-tern', 'ctx-prop-imp-member', 'ctx-prop-imp-index', 'ctx-prop-imp-array', 'ctx-prop-imp-call', 'ctx-prop-loc-root', 'ctx-prop-loc-and', 'ctx-prop-loc-tern', 'ctx-prop-loc-member', 'ctx-prop-loc-index', 'ctx-prop-loc-array', 'ctx-prop-loc-call', 'ctx-prop-loc-indirect', 'ctx-prop-loc-via-import', 'ctx-prop-loc-react', 'ctx-top-imp-object',
   'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call', 'ctx-hid-provfed', 'ctx-hid-bare',
 ]
 // Imported plain value: stays a static page (no script), and renders like React.
 // F173: the ordinary reads (a const map, .length, an imported helper proven plain in its module) lower under a wrapper AND
 // under a Provider (ctx-trio-prov was React until F173 proved formatPrice).
-const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper', 'ctx-plain-helper-string', 'ctx-plain-methods']
+// F198 + F199: ordinary reads with no wrapper and in props (a const map, a helper, `cn(…)`, an element-free local helper,
+// an object spread) keep lowering.
+const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper', 'ctx-plain-helper-string', 'ctx-plain-methods', 'ctx-top-ordinary']
 const ROWS = join(FIXTURE, '.rows')
 const ENTRY = '.rows/ctx-parity-routes.tsx'
 const bin = join(repo, 'packages/brust/bin/brust')
@@ -134,7 +141,7 @@ for (const id of ISLAND_PAGES) {
     } else if (id.startsWith('ctx-hid-')) {
       expect(html).toContain('lit') // React reads the context value, never the forged prop
       expect(html).not.toContain('forged')
-    } else if (id.startsWith('ctx-plain-helper-') || /^ctx-plain-method-(computed|optional)/.test(id)) {
+    } else if (id.startsWith('ctx-plain-helper-') || /^ctx-plain-method-(computed|optional)/.test(id) || id === 'ctx-top-imp-object') {
       // React's own markup is the check (`toContain(react)` above): the helper's value, not an element.
     } else {
       // The dropped child is there. A template literal of an element is React's own "[object Object]" text.

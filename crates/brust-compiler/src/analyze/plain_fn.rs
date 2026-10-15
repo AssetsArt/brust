@@ -337,6 +337,139 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
 /// module proves plain by the same rules (`plain_fns`, read in its own module: its consts, its helpers). An import is a
 /// read-only binding, so the importer cannot rebind it; the exporting module's own reassignments are refused there.
 /// Anything that does not resolve, read or parse is not proven.
+/// F199: names of the module's functions, const arrows and consts that cannot hand out a React element, a least
+/// fixpoint (a cycle is never proven): the declaration writes no JSX, is never reassigned, does not read the global
+/// `React`, and every module name it reads is itself element-free and every import it reads is not `element_import`.
+/// Weaker than `plain_fns` (it may return an object or a function); only a component prop is judged by it.
+pub fn element_free_fns(
+    ast: &js_ast::Ast<'_>,
+    names: &NameTable<'_>,
+    element_import: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut module = crate::analyze::expr::Walk::default();
+    for part in ast.parts.iter() {
+        module.stmts(part.stmts.slice());
+    }
+    let assigned: HashSet<String> = module.assigned.iter().map(|r| names.name(*r)).collect();
+    // (name, the walk of its declaration); `None` = a module name that is never provable (`let`, a class, a pattern).
+    let mut decls: Vec<(String, Option<crate::analyze::expr::Walk>)> = Vec::new();
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            match &stmt.data {
+                S::SFunction(f) => {
+                    if let Some(n) = &f.func.name {
+                        let mut w = crate::analyze::expr::Walk::default();
+                        w.stmts(f.func.body.stmts.slice());
+                        decls.push((names.name(n.ref_), Some(w)));
+                    }
+                }
+                S::SLocal(l) => {
+                    for d in l.decls.iter() {
+                        if let B::BIdentifier(id) = d.binding.data {
+                            let w = (matches!(l.kind, js_ast::S::Kind::KConst))
+                                .then_some(d.value.as_ref())
+                                .flatten()
+                                .map(|v| {
+                                    let mut w = crate::analyze::expr::Walk::default();
+                                    w.expr(v);
+                                    w
+                                });
+                            decls.push((names.name(id.r#ref), w));
+                        }
+                    }
+                }
+                S::SClass(c) => {
+                    if let Some(n) = &c.class.class_name {
+                        decls.push((names.name(n.ref_), None));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let module_names: HashSet<&str> = decls.iter().map(|(n, _)| n.as_str()).collect();
+    let mut free: HashSet<String> = HashSet::new();
+    loop {
+        let before = free.len();
+        for (name, w) in &decls {
+            let Some(w) = w else { continue };
+            if free.contains(name) || assigned.contains(name) {
+                continue;
+            }
+            let jsx = w
+                .calls
+                .iter()
+                .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element));
+            let reads_ok = w.used.iter().all(|r| {
+                if let Some((source, _)) = names.import_of(*r) {
+                    return !element_import(source);
+                }
+                let n = names.name(*r);
+                if module_names.contains(n.as_str()) {
+                    return free.contains(&n);
+                }
+                n != "React"
+            });
+            if !jsx && reads_ok {
+                free.insert(name.clone());
+            }
+        }
+        if free.len() == before {
+            break;
+        }
+    }
+    free.into_iter().collect()
+}
+
+/// F199: the app module `source` names (relative to `from`, after `tsconfig` aliases) may hand out a React element: it
+/// writes JSX (the parser imports `react/jsx-runtime` for it), imports React or a renderer, names `createElement` /
+/// `cloneElement`, or imports another app module that may (to depth 4). Fail closed: a module that does not resolve,
+/// read or parse may. `false` for a package specifier (not an app module).
+pub fn module_may_hold_element(
+    from: &str,
+    source: &str,
+    opts: &crate::analyze::component::AnalyzeOptions,
+    depth: u8,
+) -> bool {
+    if !(source.starts_with("./") || source.starts_with("../")) {
+        return false;
+    }
+    if depth > 4 {
+        return true;
+    }
+    let Some(path) = crate::analyze::modules::resolve(from, source, opts) else {
+        return true;
+    };
+    let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
+        return true;
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    if text.contains("createElement") || text.contains("cloneElement") {
+        return true;
+    }
+    let Ok(parsed) = crate::parse::parse_tsx(&path, bytes.clone()) else {
+        return true;
+    };
+    // JSX lowers to `jsx(…)` calls marked as elements; a hand-written runtime call imports `react/jsx-runtime`.
+    let writes_jsx = parsed.with_ast(|ast| {
+        let mut w = crate::analyze::expr::Walk::default();
+        for part in ast.parts.iter() {
+            w.stmts(part.stmts.slice());
+        }
+        w.calls
+            .iter()
+            .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element))
+    });
+    writes_jsx
+        || parsed.import_paths().iter().any(|p| {
+            p == "react"
+                || p.starts_with("react/")
+                || p.starts_with("react-dom")
+                || p.starts_with("preact")
+                || module_may_hold_element(&path, p, opts, depth + 1)
+        })
+}
+
 pub fn imported_plain_fn(
     from: &str,
     source: &str,
