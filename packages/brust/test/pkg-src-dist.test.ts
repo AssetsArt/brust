@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { componentImport, sourceDirPlugin } from '../src/build/bundle'
 import type { Compiled } from '../src/build/compile'
+import { PRODUCTION } from '../src/build/bundle'
 import { resolveNative } from '../src/build/esm-resolve'
 import { preparePackageSources } from '../src/build/pkg-src'
 
@@ -92,14 +93,14 @@ test('F188: the Provider island and a revived consumer share one module instance
 })
 
 /** Independent oracle: a REAL file in the app that imports `spec`, built by the same bundler for the same target. */
-async function nativePick(root: string, spec: string, target: 'bun' | 'browser'): Promise<string> {
+async function nativePick(root: string, spec: string, target: 'bun' | 'browser', define: Record<string, string>): Promise<string> {
   const f = join(root, `native-${target}-${spec.replace(/\W/g, '_')}.ts`)
   writeFileSync(f, `import ${JSON.stringify(spec)}\n`)
   let got = ''
   await Bun.build({
     entrypoints: [f],
     target,
-    write: false,
+    define,
     plugins: [{ name: 'o', setup: (b) => void b.onLoad({ filter: /node_modules/ }, (a) => ((got = a.path), { contents: '', loader: 'js' })) }],
   })
   return got
@@ -136,12 +137,34 @@ for (const target of ['bun', 'browser'] as const) {
       specs.push(spec)
     }
     for (const spec of specs) {
-      const want = await nativePick(root, spec, target)
+      const want = await nativePick(root, spec, target, PRODUCTION)
       expect(want, `${spec}: the oracle found nothing`).not.toBe('')
-      expect(resolveNative(spec, root, target), spec).toBe(want)
+      expect(resolveNative(spec, root, target, PRODUCTION), spec).toBe(want)
     }
+    // And once without any define, as the first version of this test ran.
+    for (const spec of specs) expect(resolveNative(spec, root, target), `${spec} (no define)`).toBe(await nativePick(root, spec, target, {}))
     // An unresolvable specifier falls back to the runtime answer (which throws its own error).
-    expect(() => resolveNative("not-installed", root, target)).toThrow()
+    expect(() => resolveNative('not-installed', root, target, PRODUCTION)).toThrow()
+  })
+}
+
+// The ruling's extra case: a package exposing `development` AND `production`/`default`. Bun's bundler flips the pick with
+// NODE_ENV, so the probe must carry the build's define, per mode (`brust build` is production, `brust dev` development).
+for (const target of ['bun', 'browser'] as const) {
+  test(`F189: a development/production package resolves per mode as the bundler does (target ${target})`, async () => {
+    const root = tmp()
+    put(join(root, 'node_modules/modal/package.json'), JSON.stringify({ name: 'modal', exports: { development: './dev.js', production: './prod.js', default: './def.js' } }))
+    for (const f of ['dev.js', 'prod.js', 'def.js']) put(join(root, 'node_modules/modal', f), '')
+    const modes = { production: { 'process.env.NODE_ENV': '"production"' }, development: { 'process.env.NODE_ENV': '"development"' } }
+    const picks: Record<string, string> = {}
+    for (const [mode, define] of Object.entries(modes)) {
+      const want = await nativePick(root, 'modal', target, define)
+      expect(resolveNative('modal', root, target, define), mode).toBe(want)
+      picks[mode] = want
+    }
+    // The two modes differ (else this proves nothing), and the production build never gets the development export.
+    expect(picks.production).not.toBe(picks.development)
+    expect(picks.production).not.toContain('dev.js')
   })
 }
 

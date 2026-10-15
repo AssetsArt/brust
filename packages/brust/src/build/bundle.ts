@@ -79,11 +79,11 @@ export function sourceDirPlugin(sourceOf: SourceOf, appRoot: string, external: s
       b.onResolve({ filter: /^[^./]/ }, (a) => {
         // A package source imported as itself (a React component revived from it): its bare imports are the package's.
         const own = sourceOf.has(a.importer) ? undefined : packageDirOf(a.importer)
-        if (own !== undefined && !matchesExternal(a.path, external)) return { path: resolveNative(a.path, own, target) }
+        if (own !== undefined && !matchesExternal(a.path, external)) return { path: resolveNative(a.path, own, target, PRODUCTION) }
         if (!sourceOf.has(a.importer) || matchesExternal(a.path, external)) return undefined
         // F153c: an artifact compiled from a package's source imports what that package sees.
         const pkg = packageDirOf(sourceOf.get(a.importer)!)
-        if (pkg !== undefined) return { path: resolveNative(a.path, pkg, target) }
+        if (pkg !== undefined) return { path: resolveNative(a.path, pkg, target, PRODUCTION) }
         // A package the staged file can see from where it sits resolves natively: the bundler then picks the package's ESM
         // entry (`module` / `exports.import`) and tree-shakes it. `Bun.resolveSync` answers with the CJS `main`, which
         // bundles the whole package (recharts: +85 KB gzip on the chart page). Packages only the app root sees (a staged

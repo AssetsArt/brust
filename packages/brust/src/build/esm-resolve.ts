@@ -12,13 +12,14 @@ export type ResolveTarget = 'bun' | 'browser'
 
 const cache = new Map<string, string>()
 
-// argv: [target, entry, spec]; prints the resolved path.
+// argv: [target, entry, spec, define JSON]; prints the resolved path. The define is the build's own: `NODE_ENV` flips Bun's
+// `development` condition, so a probe without it picks another file than the build does.
 const PROBE = `
-const [target, entry, spec] = process.argv.slice(1)
+const [target, entry, spec, define] = process.argv.slice(1)
 const source = 'import ' + JSON.stringify(spec) + '\\n'
 let found
 await Bun.build({
-  entrypoints: [entry], target, write: false, files: { [entry]: source },
+  entrypoints: [entry], target, write: false, define: JSON.parse(define), files: { [entry]: source },
   plugins: [{ name: 'o', setup(b) { b.onLoad({ filter: /./ }, (a) => {
     if (a.path === entry) return { contents: source, loader: 'ts' }
     found ??= a.path
@@ -29,11 +30,12 @@ if (found) process.stdout.write(found)
 `
 
 /** `spec` as the bundler of `target` resolves it from the directory `from`. */
-export function resolveNative(spec: string, from: string, target: ResolveTarget): string {
-  const key = `${target}\0${from}\0${spec}`
+export function resolveNative(spec: string, from: string, target: ResolveTarget, define: Record<string, string> = {}): string {
+  const defs = JSON.stringify(define)
+  const key = `${target}\0${from}\0${spec}\0${defs}`
   const hit = cache.get(key)
   if (hit !== undefined) return hit
-  const r = Bun.spawnSync([process.execPath, '-e', PROBE, target, join(from, '__brust_resolve__.ts'), spec], { cwd: from, stdout: 'pipe', stderr: 'pipe' })
+  const r = Bun.spawnSync([process.execPath, '-e', PROBE, target, join(from, '__brust_resolve__.ts'), spec, defs], { cwd: from, stdout: 'pipe', stderr: 'pipe' })
   const out = r.exitCode === 0 ? r.stdout.toString() : ''
   const path = out !== '' ? out : Bun.resolveSync(spec, from)
   cache.set(key, path)
