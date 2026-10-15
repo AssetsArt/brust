@@ -770,6 +770,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                 None => p.clone(),
                 Some(i) => match i.get(p) {
                     Some(PropBinding::Expr(e)) => e.clone(),
+                    // F234: a prop the call site omits is undefined, and `json_attr` leaves the key out: the chunk's
+                    // destructuring default applies to it as in React (`null` would keep null).
+                    None => UNDEFINED.into(),
                     _ => "none".into(),
                 },
             }
@@ -2055,8 +2058,10 @@ impl SeedNode {
     fn jinja(&self, base: &str) -> String {
         match self {
             SeedNode::Whole => base.to_string(),
+            // F234: an absent (or null) value stays what it is, never a `{}` the chunk would read as given; `json_attr`
+            // leaves an undefined key out.
             SeedNode::Fields(f) => format!(
-                "{{{}}}",
+                "({{{}}} if {base} is defined and {base} is not none else {base})",
                 f.iter()
                     .map(|(k, n)| {
                         // `list.length` is not a key of the seeded JSON: seed the count only,

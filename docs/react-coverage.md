@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
-| B Composition | 215 | 112 | 14 | 89 | 0 | 0 | 0 | 0 |
+| B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
 | C Hooks | 41 | 2 | 15 | 24 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 404 | 189 | 52 | 159 | 3 | 1 | 0 | 0 |
+| **Total** | 405 | 190 | 52 | 159 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -297,6 +297,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-pkg-drift | a package whose published JS was not built from its map | static | static | ssr | ok | fallback:external-component | F153c R34.62: the integrity check fails: the island of the published export |
 | b-pkg-primitive-changed | a Primitive factory of another shape | static | static | ssr | ok | fallback:external-component | F153c R34.65 ruling Q1: no structural match, no host: the island of the published export |
 | b-pkg-dynamic-spread | a package leaf spreading an object computed by a call | static | static | ssr | ok | fallback:external-component | F153c fail closed: spread-props in the source, so the island of the published export |
+| b-absent-prop-default | a native child whose defaulted prop the call site omits (`<Ch />`, `defaultOpen = false`), in a static page | static | static | 0 | ok | — | F234: an omitted prop is left out of the x-props seed (the default applies on the client as on the server); an explicit null stays null |
 | b-pkg-namespace-barrel | a component reached through a package barrel (`export * as X from`) | static | static | 0 | ok | — | F153c: the `radix-ui` barrel shape (`export * as Label from '@radix-ui/react-label'`) is followed to the member |
 
 ## C. Hooks
