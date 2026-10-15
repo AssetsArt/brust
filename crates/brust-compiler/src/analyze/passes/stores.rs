@@ -277,7 +277,7 @@ pub fn check_jobs(ir: &mut ComponentIR, ctx: &PassCtx<'_>) {
 }
 
 fn is_relative(source: &str) -> bool {
-    source.starts_with("./") || source.starts_with("../")
+    crate::analyze::modules::is_relative_spec(source)
 }
 
 /// `true` when `(source, export)` names a `defineStore` handle (relative imports only; a
@@ -586,7 +586,7 @@ fn store_of(source: &str, export: &str, ctx: &PassCtx<'_>) -> Result<StoreRef, U
         reason: "the store is defined in the component's own module".into(),
         own_module: true,
     };
-    if !(source.starts_with("./") || source.starts_with("../")) {
+    if !crate::analyze::modules::is_relative_spec(source) {
         return Err(err(format!(
             "the handle is imported from the package {source}"
         )));

@@ -200,11 +200,18 @@ fn compile_uncached(
     Ok(ir)
 }
 
+/// Whether `spec` names a file relative to its importer: `./x`, `../x`, and the bare `.` and `..` (a directory's index).
+/// The one place the compiler tells a relative import from a package (F218): a bare `.`/`..` was read as a package name
+/// by some passes and as nothing by others.
+pub fn is_relative_spec(spec: &str) -> bool {
+    spec == "." || spec == ".." || spec.starts_with("./") || spec.starts_with("../")
+}
+
 /// The module a relative import names, as a path relative to the root:
 /// `<rel>`, `<rel>.tsx`, `<rel>.ts`, `<rel>/index.tsx`, `<rel>/index.ts`, first that exists.
 /// `None` for a package import or when nothing exists.
 pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String> {
-    if !(rel.starts_with("./") || rel.starts_with("../")) {
+    if !is_relative_spec(rel) {
         return None;
     }
     let dir = match parent.rfind('/') {
@@ -217,13 +224,22 @@ pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String>
         format!("{dir}/{rel}")
     });
     let mut candidates = Vec::new();
-    if joined.ends_with(".tsx") || joined.ends_with(".ts") {
-        candidates.push(joined.clone());
+    // `.` and `..` name a directory: only its index can answer (`../a.tsx` for `..` from `a/b.tsx` would be a file).
+    let dir_only = rel == "." || rel == "..";
+    if !dir_only {
+        if joined.ends_with(".tsx") || joined.ends_with(".ts") {
+            candidates.push(joined.clone());
+        }
+        candidates.push(format!("{joined}.tsx"));
+        candidates.push(format!("{joined}.ts"));
     }
-    candidates.push(format!("{joined}.tsx"));
-    candidates.push(format!("{joined}.ts"));
-    candidates.push(format!("{joined}/index.tsx"));
-    candidates.push(format!("{joined}/index.ts"));
+    let base = if joined.is_empty() || joined == "." {
+        String::new()
+    } else {
+        format!("{joined}/")
+    };
+    candidates.push(format!("{base}index.tsx"));
+    candidates.push(format!("{base}index.ts"));
     candidates.into_iter().find(|c| opts.root.join(c).is_file())
 }
 
@@ -281,7 +297,7 @@ pub fn resolve_module(parent: &str, spec: &str, opts: &AnalyzeOptions) -> Option
 /// L20: the key of the CSS module `rel` names, relative to the module at `parent`: a path relative to the
 /// root, `/`-separated, as `AnalyzeOptions::css_modules` is keyed. `None` for a package import.
 pub fn css_module_key(parent: &str, rel: &str) -> Option<String> {
-    if !(rel.starts_with("./") || rel.starts_with("../")) {
+    if !is_relative_spec(rel) {
         return None;
     }
     let dir = parent.rfind('/').map_or("", |i| &parent[..i]);
@@ -336,7 +352,45 @@ fn opaque_island(path: &str, name: &str) -> ComponentIR {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize;
+    use super::{is_relative_spec, normalize, resolve};
+    use crate::analyze::component::AnalyzeOptions;
+
+    // F218: one predicate for "relative", and `.` / `..` resolve to the directory index on the same path as `./x`.
+    #[test]
+    fn dot_specifiers_are_relative_and_name_a_directory_index() {
+        for s in [".", "..", "./a", "../a"] {
+            assert!(is_relative_spec(s), "{s}");
+        }
+        for s in ["", "a", ".a", "..a", ".hidden/x", "react", "@s/p", "/abs"] {
+            assert!(!is_relative_spec(s), "{s}");
+        }
+        let root = std::env::temp_dir().join(format!("brust-f218-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        for f in ["index.tsx", "a/index.tsx", "a/b/c.tsx", "a.tsx"] {
+            std::fs::write(root.join(f), "").unwrap();
+        }
+        let opts = AnalyzeOptions {
+            root: root.clone(),
+            ..Default::default()
+        };
+        // `.` from a/b/c.tsx is a/b: no index there, and never the sibling FILE a/b.tsx or a.tsx.
+        assert_eq!(resolve("a/b/c.tsx", ".", &opts), None);
+        // `..` from a/b/c.tsx is a/: its index, not a.tsx.
+        assert_eq!(
+            resolve("a/b/c.tsx", "..", &opts).as_deref(),
+            Some("a/index.tsx")
+        );
+        // `.` from the root file is the root index.
+        assert_eq!(resolve("x.tsx", ".", &opts).as_deref(), Some("index.tsx"));
+        assert_eq!(
+            resolve("a/b/c.tsx", "../../a", &opts).as_deref(),
+            Some("a.tsx")
+        );
+        // a bare package name is still not relative
+        assert_eq!(resolve("a/b/c.tsx", "react", &opts), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn normalizes_relative_segments() {
