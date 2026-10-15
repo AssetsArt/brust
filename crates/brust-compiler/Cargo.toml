@@ -34,6 +34,7 @@ mimalloc = { version = "0.1", optional = true }
 
 [dev-dependencies]
 brust-jinja.workspace = true
+brust-core.workspace = true
 
 [lints]
 workspace = true
