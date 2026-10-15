@@ -89,18 +89,31 @@ const TAG: &str = "export function tag(n: number): string {\n  return `#${n.toFi
 
 #[test]
 fn a_package_helper_proven_plain_lowers_under_a_wrapper() {
-    // Directly, and through a barrel re-export (`export { tag } from './tag'`, `export *`).
-    for index in [
-        TAG,
-        "export { tag } from './tag'\n",
-        "export * from './tag'\n",
-    ] {
+    // Directly, through a named re-export, and through a chain of them (renamed on the way), within 4 hops.
+    let chains: &[&[(&str, &str)]] = &[
+        &[("index.ts", TAG)],
+        &[
+            ("index.ts", "export { tag } from './tag'\n"),
+            ("tag.ts", TAG),
+        ],
+        &[
+            ("index.ts", "export { tag } from './a'\n"),
+            ("a.ts", "export { label as tag } from './b'\n"),
+            ("b.ts", "export { label } from './c'\n"),
+            ("c.ts", "export { label } from './d'\n"),
+            (
+                "d.ts",
+                "export function label(n: number): string {\n  return `#${n.toFixed(0)}`\n}\n",
+            ),
+        ],
+    ];
+    for files in chains {
         let mut app = App::new();
-        app.package(&[("index.ts", index), ("tag.ts", TAG)]);
+        app.package(files);
         let ir = app.page("import { tag } from 'fmtz'", "tag(3)");
         assert!(
             !falls_back(&ir),
-            "{index}: {:?} {:?}",
+            "{files:?}: {:?} {:?}",
             ir.tier,
             ir.diagnostics
         );
@@ -148,11 +161,52 @@ fn a_package_helper_that_is_not_provable_falls_back() {
                 "export function tag(n: number) {\n  return String(console.log(n))\n}\n",
             )],
         ),
-        // A barrel whose re-export ends at a helper that builds an element.
+        // Lead ruling: a hop re-exporting a helper that is not plain, a reassigned export at the end of a chain, a star
+        // export, a re-exported `default`, a chain longer than 4 hops.
+        (
+            "barrel-reassigned",
+            &[
+                ("index.ts", "export { tag } from './a'\n"),
+                (
+                    "a.ts",
+                    "export function tag(n: number) {\n  return String(n)\n}\n// @ts-ignore\ntag = () => 'x'\n",
+                ),
+            ],
+        ),
+        (
+            "star",
+            &[("index.ts", "export * from './tag'\n"), ("tag.ts", TAG)],
+        ),
+        // A hop that leaves the written package (an app module the integrity check never saw).
+        (
+            "leaves-package",
+            &[("index.ts", "export { tag } from '../../../../lib/tag'\n")],
+        ),
+        (
+            "default",
+            &[
+                ("index.ts", "export { default as tag } from './tag'\n"),
+                (
+                    "tag.ts",
+                    "export default function tag(n: number): string {\n  return String(n)\n}\n",
+                ),
+            ],
+        ),
+        (
+            "too-deep",
+            &[
+                ("index.ts", "export { tag } from './a'\n"),
+                ("a.ts", "export { tag } from './b'\n"),
+                ("b.ts", "export { tag } from './c'\n"),
+                ("c.ts", "export { tag } from './d'\n"),
+                ("d.ts", "export { tag } from './e'\n"),
+                ("e.ts", TAG),
+            ],
+        ),
         (
             "barrel-jsx",
             &[
-                ("index.ts", "export * from './a'\n"),
+                ("index.ts", "export { tag } from './a'\n"),
                 ("a.ts", "export { tag } from './b'\n"),
                 (
                     "b.tsx",
@@ -168,6 +222,7 @@ fn a_package_helper_that_is_not_provable_falls_back() {
     ];
     for (why, files) in cases {
         let mut app = App::new();
+        app.file("lib/tag.ts", TAG);
         app.package(files);
         let ir = app.page(
             "import { tag, icon } from 'fmtz'",

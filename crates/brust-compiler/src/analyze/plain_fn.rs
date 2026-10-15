@@ -719,6 +719,79 @@ pub fn module_may_hold_element(
         })
 }
 
+/// F197 (lead ruling): the package module and name that declare the export `name` of the package module `path`. A local
+/// export ends the chain; otherwise only a named re-export (`export { x as name } from './y'`) is followed, at most 4
+/// hops, and every hop must be a package source the build wrote (it passed the integrity check). `export *`, a namespace
+/// re-export and a re-exported `default` fail closed.
+fn follow_reexports(
+    path: &str,
+    name: &str,
+    opts: &crate::analyze::component::AnalyzeOptions,
+    depth: u8,
+) -> Option<(String, String)> {
+    let bytes = std::fs::read(opts.root.join(path)).ok()?;
+    let parsed = crate::parse::parse_tsx(path, bytes).ok()?;
+    // Ok(None): declared here; Ok(Some(spec, original)): a named re-export; Err: anything else.
+    let step = parsed.with_ast(|ast| {
+        let dummy = js_ast::G::Fn::default();
+        let names = NameTable::new(ast, &dummy);
+        if local_export(ast, &names, name).is_some() {
+            return Ok(None);
+        }
+        let records = ast.import_records.as_slice();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                if let S::SExportFrom(f) = &stmt.data {
+                    for item in f.items.slice() {
+                        if item.alias.slice() == name.as_bytes() {
+                            let original =
+                                String::from_utf8_lossy(item.original_name.slice()).into_owned();
+                            let spec = records
+                                .get(f.import_record_index as usize)
+                                .map(|r| String::from_utf8_lossy(r.path.text).into_owned());
+                            return match spec {
+                                Some(spec) if original != "default" => Ok(Some((spec, original))),
+                                _ => Err(()),
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        Err(())
+    });
+    match step.ok()? {
+        None => Some((path.to_string(), name.to_string())),
+        Some((spec, original)) => {
+            if depth >= 4 {
+                return None;
+            }
+            let next = crate::analyze::modules::resolve_module(path, &spec, opts)?;
+            if !crate::analyze::modules::is_package_source(&next) {
+                return None;
+            }
+            follow_reexports(&next, &original, opts, depth + 1)
+        }
+    }
+}
+
+/// The local name of the module's own export `name`: `export function name`, or `export { f as name }` /
+/// `export const name` naming a module binding.
+fn local_export(ast: &js_ast::Ast<'_>, names: &NameTable<'_>, name: &str) -> Option<String> {
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            if let S::SFunction(f) = &stmt.data
+                && f.func.flags.contains(js_ast::flags::Function::IsExport)
+                && let Some(n) = &f.func.name
+                && names.name(n.ref_) == name
+            {
+                return Some(name.to_string());
+            }
+        }
+    }
+    crate::analyze::const_fold::exported_const_name(ast, name)
+}
+
 /// F173 (plain wrappers) + F197: the export `imported` of the module `source` (seen from `from`: a relative module or a
 /// package source the build wrote) is a function its declaring module proves plain by the same rules (`plain_fns`, read
 /// in its own module: its consts, its helpers). An import is a
@@ -731,19 +804,19 @@ pub fn imported_plain_fn(
     opts: &crate::analyze::component::AnalyzeOptions,
 ) -> bool {
     // F197: a relative module, or a package source the build wrote under `.brust/pkg-src` (F153c; `resolve_package`
-    // refuses anything else), followed through barrels (`export { f } from`, `export *`) to the module that declares
-    // the export, where the same rules prove it. A package that was not written, or a chain that cannot be followed,
-    // proves nothing.
+    // refuses anything else). In a package the export is followed through named re-exports to the module that declares
+    // it (`follow_reexports`), where the same rules prove it. A package that was not written, or a chain that cannot
+    // be followed, proves nothing.
     let Some(entry) = crate::analyze::modules::resolve_module(from, source, opts) else {
         return false;
     };
-    let (path, export) = crate::analyze::exports::declared_in(
-        &entry,
-        &crate::analyze::modules::Export::Named(imported.to_string()),
-        opts,
-    );
-    let crate::analyze::modules::Export::Named(imported) = export else {
-        return false;
+    let (path, imported) = if crate::analyze::modules::is_package_source(&entry) {
+        match follow_reexports(&entry, imported, opts, 0) {
+            Some(found) => found,
+            None => return false,
+        }
+    } else {
+        (entry, imported.to_string())
     };
     let imported = imported.as_str();
     let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
@@ -756,21 +829,7 @@ pub fn imported_plain_fn(
         let dummy = js_ast::G::Fn::default();
         let names = NameTable::new(ast, &dummy);
         // `export function f` (the declaration itself), or `export { f }` / `export { f as g }` naming a module function.
-        let mut local = None;
-        for part in ast.parts.iter() {
-            for stmt in part.stmts.slice() {
-                if let S::SFunction(f) = &stmt.data
-                    && f.func.flags.contains(js_ast::flags::Function::IsExport)
-                    && let Some(n) = &f.func.name
-                    && names.name(n.ref_) == imported
-                {
-                    local = Some(imported.to_string());
-                }
-            }
-        }
-        let Some(local) =
-            local.or_else(|| crate::analyze::const_fold::exported_const_name(ast, imported))
-        else {
+        let Some(local) = local_export(ast, &names, imported) else {
             return false;
         };
         plain_fns(ast, &names).contains(&local)
