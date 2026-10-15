@@ -822,3 +822,106 @@ fn f205_unproven_receivers_fall_back() {
         );
     }
 }
+
+/// F215: a precompute job, the client chunk and the build evaluation copy a module's declarations, never a statement
+/// that changes them (`xs.push('b')` at the top level printed "a" where React prints "a,b"). A component that reads a
+/// module binding of a module with such a statement falls back by name; a module without one, or a component that
+/// reads none of its bindings, keeps lowering.
+#[test]
+fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
+    for f in [
+        "side-push.tsx",
+        "side-closure.tsx",
+        "side-init.tsx",
+        "side-writer.tsx",
+        // A package call handed a module object it may change.
+        "side-arg.tsx",
+        // A `displayName` the module also reads.
+        "side-display-read.tsx",
+        // Round 1 (Mellow F1, Afrojack F1): code runs at module time through any callable value: an IIFE, a callback,
+        // a class static block, static field and constructor, an object method, an arrow const, a getter, a function in
+        // an array, a writer handed to a call.
+        "side-iife.tsx",
+        "side-callback.tsx",
+        "side-class-static.tsx",
+        "side-class-field.tsx",
+        "side-class-ctor.tsx",
+        "side-object-method.tsx",
+        "side-arrow.tsx",
+        "side-getter.tsx",
+        "side-array-fn.tsx",
+        "side-handed-writer.tsx",
+        // Mellow F2: a statement that changes an imported module's object; the import is read.
+        "side-import.tsx",
+        // Round 2 (Mellow F3): a declaration calling an app import, directly or through a module function.
+        "side-import-call.tsx",
+        "side-app-caller.tsx",
+        // Mellow F4: a write through a callback's parameter to a module object handed in a literal or as the receiver.
+        "side-param-write.tsx",
+        "side-param-array.tsx",
+        // Mellow F5: a destructuring default that runs a writer.
+        "side-pattern-default.tsx",
+        // Mellow x1 (the allowlist ruling): an implicit call, a template coercing a module object whose toString writes.
+        "side-coerce.tsx",
+        // Mellow n10, n14, n15: a write through `this` in an object method, a static class method, a writer reached by a
+        // parameter default.
+        "side-this-method.tsx",
+        "side-static-method.tsx",
+        "side-param-default.tsx",
+        // F215 allowlist (lead ruling b0dff21e): a function that writes a module binding makes its module unclean even
+        // when nothing calls it at load time.
+        "side-writer-uncalled.tsx",
+        // A load-time call of this module's own code (`fmt('a')`, `reg.pick('x')`): only package code and read-only globals
+        // may run at load time.
+        "side-own-call.tsx",
+        // The invariant (lead ruling b0dff21e): no accepted value holds code that writes a module binding, so a package
+        // handed a writing callback is refused.
+        "side-package-writer.tsx",
+        // Mellow V1 (delta b3932298): package code handed a function that returns a module object (a literal arrow or a
+        // module function); V2: a member read of an app import, which may run an app getter at load time.
+        "side-later.tsx",
+        "side-later-fn.tsx",
+        "side-app-getter.tsx",
+        "side-local-forwardref.tsx",
+        // Lead ruling c2f61a77: the exemption is by symbol only; an app re-export or a local alias of forwardRef gets none.
+        "side-app-forwardref.tsx",
+        "side-alias-forwardref.tsx",
+        // Mellow V3 (delta 7f6ce3e0): package code handed an app-imported object, directly or through a closure.
+        "side-app-object-handed.tsx",
+        "side-app-object-closure.tsx",
+        // … and a package handed a callback that calls app code (`wrap((e) => { e.value = formatPrice(1) })`).
+        "side-package-callback.tsx",
+        // Lead ruling b76d738c: an app re-export of brust's cache gets no exemption.
+        "side-app-cache.tsx",
+    ] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"module-side-effect") && is_react(&ir),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+    }
+    // Callable values that write nothing (an arrow const called, a class, an object method) keep lowering.
+    for f in [
+        "side-none.tsx",
+        "side-unread.tsx",
+        "side-callables-pure.tsx",
+        "side-class-pure.tsx",
+        // Lead ruling c2f61a77: React's forwardRef / memo (by symbol: named, namespace or default import of 'react') handed a
+        // render function that reads a module array; they store it and never call it at load time.
+        "side-react-forwardref.tsx",
+        "side-react-memo.tsx",
+        // Lead ruling b76d738c: brust's own cache (by symbol) stores the component, called only at render.
+        "side-brust-cache.tsx",
+    ] {
+        let (ir, jinja) = page(f);
+        assert!(
+            !rules(&ir).contains(&"module-side-effect") && !is_react(&ir),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+        assert!(!jinja.is_empty(), "{f}");
+    }
+}

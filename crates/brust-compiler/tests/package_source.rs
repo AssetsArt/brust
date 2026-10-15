@@ -564,3 +564,85 @@ fn a_package_source_consumer_under_the_packages_provider_island_keeps_the_caller
     );
     assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
 }
+
+/// F188 (R34.62): a component compiled from a package source and written in app code as a package import also carries
+/// the published export, which a React island or a revive hook imports instead of the map source.
+#[test]
+fn a_package_component_written_in_app_code_carries_its_published_export() {
+    let mut app = App::new();
+    app.file(&format!("{LEAF_DIR}/src/leaf.tsx"), LEAF).map(
+        "",
+        "leafy",
+        &format!("{LEAF_DIR}/src/leaf.tsx"),
+    );
+    let tree = app.compile("import { Leaf } from 'leafy'\nexport default function App() { return <div><Leaf /></div> }");
+    let dist_of = |end: &str| {
+        let (_, ir, _) = tree.iter().find(|(s, ..)| s.ends_with(end)).unwrap();
+        ir.dist.clone()
+    };
+    let leaf = dist_of("leaf.tsx").expect("leaf has a published spelling");
+    assert_eq!(
+        (
+            leaf.source.as_str(),
+            leaf.export.as_str(),
+            leaf.member.len()
+        ),
+        ("leafy", "Leaf", 0)
+    );
+    assert!(
+        dist_of("App.tsx").is_none(),
+        "app code is not a package export"
+    );
+}
+
+#[test]
+fn a_member_of_a_namespace_export_keeps_the_member_path() {
+    let mut app = App::new();
+    app.file(
+        &format!("{LEAF_DIR}/src/leaf.tsx"),
+        &format!("{LEAF}export {{ Leaf as Root }}\n"),
+    )
+    .file(
+        &format!("{BARREL_DIR}/src/index.ts"),
+        "export * as Leafy from 'leafy'\n",
+    )
+    .map("", "barrel", &format!("{BARREL_DIR}/src/index.ts"))
+    .map(BARREL_DIR, "leafy", &format!("{LEAF_DIR}/src/leaf.tsx"));
+    let tree = app.compile("import { Leafy } from 'barrel'\nexport default function App() { return <div><Leafy.Root /></div> }");
+    let leaf = tree
+        .iter()
+        .find(|(s, ..)| s.ends_with("leaf.tsx"))
+        .and_then(|(_, ir, _)| ir.dist.clone())
+        .expect("the member has a published spelling");
+    assert_eq!(
+        (
+            leaf.source.as_str(),
+            leaf.export.as_str(),
+            leaf.member.clone()
+        ),
+        ("barrel", "Leafy", vec!["Root".to_string()])
+    );
+}
+
+/// A component only another package source reaches has no spelling an app could import: the build keeps its source.
+#[test]
+fn a_component_only_a_package_reaches_has_no_published_export() {
+    let mut app = App::new();
+    app.file(
+        &format!("{LEAF_DIR}/src/leaf.tsx"),
+        "import { Inner } from './inner'\nexport function Leaf() { return <p><Inner /></p> }\n",
+    )
+    .file(
+        &format!("{LEAF_DIR}/src/inner.tsx"),
+        "export function Inner() { return <i>in</i> }\n",
+    )
+    .map("", "leafy", &format!("{LEAF_DIR}/src/leaf.tsx"));
+    let tree = app.compile("import { Leaf } from 'leafy'\nexport default function App() { return <div><Leaf /></div> }");
+    let has = |end: &str| {
+        tree.iter()
+            .find(|(s, ..)| s.ends_with(end))
+            .map(|(_, ir, _)| ir.dist.is_some())
+    };
+    assert_eq!(has("leaf.tsx"), Some(true));
+    assert_eq!(has("inner.tsx"), Some(false));
+}

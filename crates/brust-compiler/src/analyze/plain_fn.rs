@@ -355,7 +355,7 @@ fn primitive_value(e: &js_ast::Expr) -> bool {
 }
 
 /// A new array or object no binding holds yet: a literal, or the result of a method that returns a copy.
-fn fresh(e: &js_ast::Expr) -> bool {
+pub(crate) fn fresh(e: &js_ast::Expr) -> bool {
     const COPYING: &[&str] = &[
         "slice",
         "concat",

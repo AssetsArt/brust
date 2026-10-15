@@ -1464,10 +1464,12 @@ fn store_render_checks_walk_function_values() {
 /// statement `const a = Number('1'), b = cart.count()` and imports the handle with it.
 #[test]
 fn store_handle_in_job_imports() {
+    // F215 round 2 (Mellow F3): a module-level call of app code (`cart.count()` of './cart') is a module effect first,
+    // so the component falls back `module-side-effect` before the store rule; still React, still no job import.
     refused_lowered(
         "const a = Number('1'), b = cart.count()",
         "return <p>{a}</p>",
-        "store-handle-in-render",
+        "module-side-effect",
     );
     // Through a namespace import of a module that exports a store.
     let root = std::env::temp_dir().join(format!("brustc-store-ns-{}", std::process::id()));
@@ -1478,12 +1480,7 @@ fn store_handle_in_job_imports() {
     let src = "import * as st from './stores'\nconst a = Number('1'), b = st.cart.count()\nexport default function C() { return <p>{a}</p> }\n";
     let (ir, a) = lower_artifacts(root.clone(), "C.tsx".into(), src.into());
     let _ = std::fs::remove_dir_all(&root);
-    assert_eq!(
-        rules(&ir),
-        ["store-handle-in-render"],
-        "{:?}",
-        ir.diagnostics
-    );
+    assert_eq!(rules(&ir), ["module-side-effect"], "{:?}", ir.diagnostics);
     assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
     assert!(a.server_ts.is_none(), "{:?}", a.server_ts);
 }

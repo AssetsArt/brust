@@ -334,6 +334,15 @@
       "libraryComponents": 58
     },
     {
+      "blocker": "fallback:module-side-effect",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 54
+    },
+    {
       "blocker": "error:unresolved-import (published .js/.mjs module is not followed)",
       "kind": "compile error",
       "classification": "survey truth (compiler refusal)",

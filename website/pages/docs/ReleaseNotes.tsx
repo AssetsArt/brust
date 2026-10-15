@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-15', title: '2.0.0-alpha.15' },
       { id: 'alpha-14', title: '2.0.0-alpha.14' },
       { id: 'alpha-13', title: '2.0.0-alpha.13' },
       { id: 'alpha-12', title: '2.0.0-alpha.12' },
@@ -37,6 +38,38 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-15">2.0.0-alpha.15 · 15 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.14: #253–#258 (F200/F203, F198/F199, F197, F214, F188/F189, F215/F219) */}
+      <p>Four fixes for pages whose server HTML could differ from React, plus components from packages that compile in more places.</p>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #258 (F215, found by Mellow), allowlist + invariant ruled on the task */}
+        <li>
+          <strong>Code that runs when a module loads is no longer skipped on the server.</strong> If a component&rsquo;s file changed a value at the top level (<code>items.push(&quot;b&quot;)</code>, or a call that registers something), the server could render the value as it was before that line ran. Such a component now renders with React. Files that only declare values, components and functions are unaffected. Values wrapped in React&rsquo;s <code>forwardRef</code>, <code>memo</code> or <code>cache</code>, or in brust&rsquo;s <code>cache</code>, keep compiling.
+        </li>
+        {/* source: PR #256 (F214) */}
+        <li>
+          <strong>Children that show the parent&rsquo;s state update again.</strong> When a component passed children that read its own state to a child component that brust compiles to native code, the children did not update when the state changed. Such a component now renders with React.
+        </li>
+        {/* source: PR #254 (F198, F199) */}
+        <li>
+          <strong>Elements are no longer dropped from the server HTML.</strong> An element placed directly in a component&rsquo;s output, or an element passed as a prop, could be missing or wrong in the server-rendered page. brust now renders these itself only when it can prove the result, and otherwise renders with React.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #255 (F197) */}
+        <li>
+          <strong>Helpers imported from packages compile as children.</strong> A call such as <code>{'{'}formatDate(d){'}'}</code>, where <code>formatDate</code> comes from an npm package, compiles again when brust can prove from the package&rsquo;s source that the helper returns a string, number or boolean, including through re-exports in the package. In alpha.14 these rendered with React.
+        </li>
+        {/* source: PR #257 (F188, F189) */}
+        <li>
+          <strong>Package components that render as React islands use the package&rsquo;s published files.</strong> They were bundled from the package&rsquo;s source maps since alpha.12. The build now resolves packages with the same conditions as Bun&rsquo;s bundler, including production builds, and a context Provider and the components that read it always share one copy of the package.
+        </li>
+      </ul>
 
       <h2 id="alpha-14">2.0.0-alpha.14 · 15 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.13: #247–#251 (wave A 2b-hooks and 2b-handlers, F173/F190, F204, F201–F202, F206–F209) */}

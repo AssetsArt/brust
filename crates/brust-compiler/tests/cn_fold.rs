@@ -302,7 +302,17 @@ fn fail_closed_cases_keep_the_job() {
     );
     assert!(tree[0].0.build_eval_instances.is_empty());
     let why = infos(&tree[0].0);
-    assert!(why.iter().any(|m| m.contains("`Date`")), "{why:?}");
+    // F215 allowlist: the child's module is not clean (a load-time call / a `let`), so it falls back
+    // `module-side-effect` before build evaluation is asked; either way nothing is evaluated.
+    assert!(
+        why.iter().any(|m| m.contains("`Date`"))
+            || tree.iter().any(|t| t
+                .0
+                .diagnostics
+                .iter()
+                .any(|d| d.rule == "module-side-effect")),
+        "{why:?}"
+    );
 
     // A relative module that is neither pure nor a foldable const.
     let mut a = App::new();
@@ -316,7 +326,17 @@ fn fail_closed_cases_keep_the_job() {
     );
     assert!(tree[0].0.build_eval_instances.is_empty());
     let why = infos(&tree[0].0);
-    assert!(why.iter().any(|m| m.contains("./state")), "{why:?}");
+    // F215 allowlist: the child's module is not clean (a load-time call / a `let`), so it falls back
+    // `module-side-effect` before build evaluation is asked; either way nothing is evaluated.
+    assert!(
+        why.iter().any(|m| m.contains("./state"))
+            || tree.iter().any(|t| t
+                .0
+                .diagnostics
+                .iter()
+                .any(|d| d.rule == "module-side-effect")),
+        "{why:?}"
+    );
 
     // A child with useId values.
     let mut a = App::new();
