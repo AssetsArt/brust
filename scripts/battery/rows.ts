@@ -1477,4 +1477,13 @@ export const rows: Row[] = [
   { id: 'c-useid-in-conditional', category: 'C', authoring: 'useId() called in a branch of the returned tree', expect: 'react',
     snippet: `import { useId, useState } from 'react'\nexport default function C({ label }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}>{n ? <input id={useId()} /> : null}<span>{label}</span></div> }`,
     note: 'R34.120: a hook in a conditional position stays refused (hook-in-expression)' },
+  { id: 'c-useid-comma-call', category: 'C', authoring: 'useId called through a comma (`(0, useId)()`, bundler output)', expect: 'static', jobs: 0,
+    snippet: `import { useId } from 'react'\nexport default function C() { const id = (0, useId)(); return <label htmlFor={id}>x<input id={id} /></label> }`,
+    note: 'F237: the comma spelling is the hook (was a per-request job calling useId outside a render)' },
+  { id: 'c-useid-in-key', category: 'C', authoring: 'useId() called in an element key', expect: 'react',
+    snippet: `import { useId } from 'react'\nexport default function C() { return <p><i key={useId()}>x</i></p> }`,
+    note: 'F235: the JSX runtime evaluates key after the props, so the hook is refused there (hook-in-expression)' },
+  { id: 'c-useid-logical-assign', category: 'C', authoring: 'useId() on the right side of `??=` in the returned tree', expect: 'react',
+    snippet: `import { useId } from 'react'\nexport default function C() { const o: any = {}; return <p id={(o.id ??= useId())}>x</p> }`,
+    note: 'F236: the right side of ||=, &&=, ??= runs conditionally, so the hook is refused there (hook-in-expression)' },
 ]
