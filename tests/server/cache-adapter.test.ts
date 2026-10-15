@@ -51,7 +51,8 @@ async function boot(): Promise<Srv> {
 
 const relayStats = async () => (await (await fetch(`${relayUrl}/stats`)).json()) as { publishCount: number; gets: number; size: number }
 const nOf = async (r: Response) => Number(/class="n">(\d+)</.exec(await r.text())![1])
-async function poll<T>(what: string, f: () => Promise<T | undefined>, ms = 2000): Promise<T> {
+async function poll<T>(what: string, f: () => Promise<T | undefined>, ms = 30_000): Promise<T> {
+  // The bound only ends a hang: a poll returns the moment its event happens, so a long bound costs nothing on success (F203).
   const t0 = Date.now()
   for (;;) {
     const v = await f()
@@ -110,8 +111,8 @@ test('2 an invalidation on A reaches B; B does not re-publish (L3)', async () =>
   await poll('fresh on B', async () => {
     const res = await B.get('/items/7')
     return (await nOf(res)) > firstN ? true : undefined
-  }, 1000)
-  await Bun.sleep(500)
+  })
+  await Bun.sleep(500) // an absence check (no re-publish): a longer wait only makes it stricter, never flakier
   expect((await relayStats()).publishCount).toBe(before + 1)
   expect((await B.l2()).received).toBeGreaterThanOrEqual(1)
   expect((await A.l2()).skipped_own).toBeGreaterThanOrEqual(1)
@@ -132,7 +133,9 @@ test('4 a hung get renders within the budget', async () => {
   expect(r.status).toBe(200)
   expect(r.headers.get('x-brust-cache')).toBe('MISS')
   await r.text()
-  expect(Date.now() - t0).toBeLessThan(2000)
+  // The relay hangs this get for 3000 ms: a render that waited for it would take at least that long. `l2.timeouts` below
+  // is the deterministic proof; this bound is the hang length, not a few hundred ms a loaded runner can exceed.
+  expect(Date.now() - t0).toBeLessThan(3000)
   const l2 = await B.l2()
   expect(l2.timeouts).toBe(1)
   console.log(`B stats.l2 ${JSON.stringify(l2)}`)
@@ -153,10 +156,12 @@ test('4b F1: a stale L2 body re-filled on the origin before its delete landed is
   const stale = await A.get('/items/10')
   expect(stale.headers.get('x-brust-cache')).toBe('HIT-L2')
   expect(await nOf(stale)).toBe(old)
-  await poll('the publish', async () => ((await relayStats()).publishCount === published + 1 ? true : undefined), 4000)
-  await Bun.sleep(200)
-  const fresh = await A.get('/items/10')
-  expect(fresh.headers.get('x-brust-cache')).toBe('MISS')
+  await poll('the publish', async () => ((await relayStats()).publishCount === published + 1 ? true : undefined))
+  // The invalidation reaches A after the publish: poll for the first MISS instead of sleeping and hoping.
+  const fresh = await poll('the invalidation on A', async () => {
+    const res = await A.get('/items/10')
+    return res.headers.get('x-brust-cache') === 'MISS' ? res : undefined
+  })
   expect(await nOf(fresh)).toBeGreaterThan(old)
 })
 

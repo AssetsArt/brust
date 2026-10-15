@@ -16,14 +16,23 @@ fn claim_timeout_is_503_all_workers_busy_and_static_still_answers() {
         ..Default::default()
     };
     let s = start(cfg).expect("start");
-    s.register_worker(Box::new(FakeBunHandle(fake)));
+    s.register_worker(Box::new(FakeBunHandle(fake.clone())));
 
     // Occupies the only slot forever; the thread is detached on purpose.
     let s2 = s.clone();
     std::thread::spawn(move || {
         let _ = get(&s2, "/pokemon/a", &[]);
     });
-    std::thread::sleep(Duration::from_millis(50));
+    // Wait until the worker has received that call (it then holds the only claim); a fixed sleep let the second
+    // request win the claim on a loaded runner (F200). The deadline only bounds a hang, it is not a timing assumption.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while fake.counts().0 == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the first request never reached the worker"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
 
     let t0 = Instant::now();
     let (status, _, body) = get(&s, "/pokemon/b", &[]);

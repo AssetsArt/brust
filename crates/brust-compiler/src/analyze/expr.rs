@@ -676,6 +676,17 @@ pub(crate) fn data_name(d: &E) -> &'static str {
     }
 }
 
+/// The identifier a member / index chain starts from (`a` of `a.b[c].d`).
+pub fn chain_root(e: &js_ast::Expr) -> Option<js_ast::Ref> {
+    match &e.data {
+        E::EIdentifier(id) => Some(id.ref_),
+        E::EImportIdentifier(id) => Some(id.ref_),
+        E::EDot(d) => chain_root(&d.target),
+        E::EIndex(i) => chain_root(&i.target),
+        _ => None,
+    }
+}
+
 /// Collects declared bindings and used identifier refs below a function body.
 /// A small structural walk; the React Compiler is not used for this.
 #[derive(Default)]
@@ -694,6 +705,15 @@ pub struct Walk {
     /// Identifiers written by an assignment or `++`/`--` (the left side's own bindings, not
     /// a member target's object).
     pub assigned: Vec<js_ast::Ref>,
+    /// The root identifiers of other member / index writes (`x.a++`, `delete x.a`, `[x.a] = …`): an object written through.
+    pub member_written: Vec<js_ast::Ref>,
+    /// `(root, value)` of each `x.a = value` / `x[k] op= value` assignment (not in `member_written`).
+    pub member_writes: Vec<(js_ast::Ref, js_ast::Expr)>,
+    /// A member / index assignment whose chain does not start at an identifier (`get().a = …`): what it writes is unknown.
+    pub opaque_write: bool,
+    /// `(binding, read)`: a binding declared or assigned from a value that reads `read` (`const s = slots`,
+    /// `s = { a: slots }`), so writing through the binding may write into `read`.
+    pub flows: Vec<(js_ast::Ref, js_ast::Ref)>,
 }
 
 impl Walk {
@@ -709,6 +729,10 @@ impl Walk {
                 .for_each(|v| self.assign_target(v)),
             E::ESpread(sp) => self.assign_target(&sp.value),
             E::EBinary(b) if matches!(b.op, OpCode::BinAssign) => self.assign_target(&b.left),
+            E::EDot(_) | E::EIndex(_) => match chain_root(e) {
+                Some(r) => self.member_written.push(r),
+                None => self.opaque_write = true,
+            },
             _ => {}
         }
     }
@@ -790,9 +814,17 @@ impl Walk {
             S::SExpr(x) => self.expr(&x.value),
             S::SLocal(l) => {
                 for d in l.decls.iter() {
+                    let d0 = self.declared.len();
                     self.declare_binding(&d.binding);
+                    let d1 = self.declared.len();
                     if let Some(v) = &d.value {
+                        let u0 = self.used.len();
                         self.expr(v);
+                        for t in d0..d1 {
+                            for u in u0..self.used.len() {
+                                self.flows.push((self.declared[t], self.used[u]));
+                            }
+                        }
                     }
                 }
             }
@@ -893,10 +925,24 @@ impl Walk {
             }
             E::EBinary(b) => {
                 if !matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None) {
-                    self.assign_target(&b.left);
+                    // `x.a = v` / `x[k] += v`: the value written is kept, so a caller can tell what it may carry.
+                    match (&b.left.data, chain_root(&b.left)) {
+                        (E::EDot(_) | E::EIndex(_), Some(r)) => {
+                            self.member_writes.push((r, b.right))
+                        }
+                        _ => self.assign_target(&b.left),
+                    }
                 }
                 self.expr(&b.left);
+                let u0 = self.used.len();
                 self.expr(&b.right);
+                if !matches!(b.op.binary_assign_target(), js_ast::AssignTarget::None)
+                    && let Some(t) = chain_root(&b.left)
+                {
+                    for u in u0..self.used.len() {
+                        self.flows.push((t, self.used[u]));
+                    }
+                }
             }
             E::ENew(n) => {
                 self.expr(&n.target);

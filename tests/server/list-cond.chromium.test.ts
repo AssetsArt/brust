@@ -45,7 +45,7 @@ test('mixed null-link and linked rows render, reorder and toggle without a conso
   await page.goto(base, { waitUntil: 'load' })
   const rows = () => page.locator('li:not([hidden]) a').allTextContents()
   expect(await rows()).toEqual(['Beta'])                      // server paint: only the linked row
-  await page.waitForTimeout(300)                                // let the client chunk mount
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))) // module scripts ran before 'load'; two frames let their mount settle (no fixed wait)
   expect(await rows()).toEqual(['Beta'])
   await page.getByTestId('toggle').click()                    // Alpha gains a link
   await page.waitForFunction(() => document.querySelectorAll('li:not([hidden]) a').length === 2)
