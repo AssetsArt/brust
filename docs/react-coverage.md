@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 210 | 111 | 13 | 86 | 0 | 0 | 0 | 0 |
-| C Hooks | 38 | 2 | 14 | 22 | 0 | 0 | 0 | 0 |
+| A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
+| B Composition | 214 | 112 | 13 | 89 | 0 | 0 | 0 | 0 |
+| C Hooks | 41 | 2 | 15 | 24 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 396 | 189 | 50 | 153 | 3 | 1 | 0 | 0 |
+| **Total** | 403 | 189 | 51 | 159 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -32,7 +32,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-classname-template | className template literal | static | static | 0 | ok | — | spec §6.2 template literal |
 | a-style-object | style object from props | static | static | 0 | ok | — | spec §6.2 style object |
 | a-module-const | module const (literal, array) in render | static | static | 0 | ok | — | spec §6.2 literals/arrays; module consts fold at compile time (L1) |
-| a-module-const-mutated | module const array mutated in its module | static | static | precompute | ok | — | R1.1: a mutated array never folds; it stays a precompute slot |
+| a-module-const-mutated | module const array mutated in its module | react | react | ssr | ok | fallback:module-side-effect | R1.1: a mutated array never folds. F215: the precompute slot it was printed 'a' (the job copied the const, not the push) where React prints 'a, b'; the module-level push now falls back module-side-effect |
 | a-list-cond-element | .map returning a ternary between two elements | static | static | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms desugar to For + If |
 | a-list-cond-state | .map returning a conditional element over state | native | native | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms |
 | a-and-guard | && guard on a prop | static | static | 0 | ok | — | spec §6.2 && guard |
@@ -137,8 +137,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-slots-cond-prop | a prop condition inside island children | static | static | ssr | ok | — | F148a (R34.122): a condition on a plain prop is a conditional node of the tree (was R34.53 fail closed); a list over a prop still is (b-island-slots-list-prop) |
 | b-island-slots-list-prop | a list over a prop inside island children | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — "a list over data that is not a constant"; prop-path children stay a follow-up (F148a) |
 | b-island-slots-list-filter | a list through .filter inside island children | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — the message names the call outside the folded subset (`rows.filter`) |
-| b-island-slots-list-block | a module const mapped with a block-body callback | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — a `.map` callback with a block body |
-| b-island-slots-from-long | Array.from over the length bound | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — `Array.from` length is bounded to 10 000 |
+| b-island-slots-list-block | a module const mapped with a block-body callback | react | react | ssr | ok | fallback:island-children, fallback:module-side-effect | R34.53: fail closed — a `.map` callback with a block body |
+| b-island-slots-from-long | Array.from over the length bound | react | react | ssr | ok | fallback:island-children, fallback:module-side-effect | R34.53: fail closed — `Array.from` length is bounded to 10 000 |
 | b-island-slots-over-cap | an unrolled list over the 64 KB cap | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — the list has 5000 items and its lowered tree is over the 64 KB cap |
 | b-island-slots-elprop-state | an element prop that reads parent state | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — state inside the element |
 | b-island-slots-elprop-handler | an element prop with an event handler | react | react | ssr | ok | fallback:island-children | R34.53: fail closed — a handler cannot travel as JSON |
@@ -202,6 +202,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-top-element-helper | a module helper that calls another helper returning an element, printed as a child with no wrapper | react | react | ssr | ok | fallback:jsx-const-child | F198: a module function is element-free only when it writes no JSX and every module name it reads is element-free (a least fixpoint) |
 | b-prop-element-member | an imported element read through a member, passed as a prop the child prints | react | react | ssr | ok | fallback:jsx-const-child | F199 (wrong output on main: the child printed the element's internals): a component prop is judged by the element predicate (jsx-const-child) |
 | b-prop-plain-helpers | component props from a package helper, an element-free module helper and an object spread | static | static | precompute | ok | — | F199: only what can be an element refuses; a package export is not judged (accepted limit), an element-free module helper and an object literal judged by what it reads keep lowering |
+| b-module-side-effect | a module-level statement changes a module array a helper reads | react | react | ssr | ok | fallback:module-side-effect | F215 (wrong output on main: the job copied `const xs` but not the push, printing 'a' where React prints 'a,b'): falls back module-side-effect; served == React in scripts/shadcn/context-parity.test.ts (ctx-side-*) |
+| b-module-side-effect-callable | a module array changed at module time through a callable value (an object method called by a declaration) | react | react | ssr | ok | fallback:jsx-const-child, fallback:module-side-effect | F215 round 1 (Mellow F1, Afrojack F1): one writer rule over every callable body (IIFE, callback, class parts, method, arrow, getter) falls back module-side-effect; served == React (ctx-side-iife, ctx-side-method) |
+| b-module-side-effect-import | a module-level call changes an imported module array the component reads | react | react | ssr | ok | fallback:module-side-effect | F215 round 1 (Mellow F2): when the module has an effect an import is a read too (the job imports './store' without running add('b')); served == React (ctx-side-import) |
+| b-module-side-effect-unread | a module-level statement in a module whose bindings the component never reads | static | static | 0 | ok | — | F215: only a component that reads a module binding falls back |
 | b-plain-wrapper-helper-proven | imported helpers proven to return a primitive (a template, a method of a number or string), under a plain wrapper | static | static | precompute | ok | — | F173 control: plain_fn rules read in the helper module (its consts, primitive-returning methods); the child lowers |
 | b-plain-wrapper-methods | built-in number, string and Date methods (toLocaleString, toFixed, padStart, new Date(x).toISOString, …) as children of a plain wrapper | static | static | precompute | ok | — | F173 lead ruling on @57714ece: an allowlisted built-in method on an accepted read or new Date(…) of the unbound global; served == React in scripts/shadcn/context-parity.test.ts (ctx-plain-methods) |
 | b-plain-wrapper-method-override | an object literal with its own toString, called as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173 lead ruling: a user-defined receiver may override the method (an element would print nothing), so it falls back (jsx-const-child) |
@@ -318,6 +322,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-forward | a live prop through a static child's spread, with a handler | native | native | 0 | ok | — | R34.18 extended (2b-handlers): the parent binds the live value on the child element; the child stays unlinked |
 | c-live-forward-two-spreads | a live prop through a child that spreads the same rest on two elements | react | react | ssr | ok | fallback:spread-props | R34.18 extended: a live value needs ONE element to bind on |
 | c-live-forward-class | a live className through a static child's spread | react | react | ssr | ok | fallback:spread-handler | R34.18 extended: class and style merge, they are not bound through a spread |
+| c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
+| c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
+| c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
 | c-usetransition | useTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usesyncexternalstore | useSyncExternalStore | react | react | ssr | ok | fallback:hook-unsupported |  |
@@ -389,7 +396,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-cn-fold-alias-import | cn imported through a tsconfig alias (@/lib/utils) | static | static | 0 | ok | info:build-eval-instance | F149 ruling Q5: with no tsconfig paths (brustc alone) the alias reads as a package; `brust build` resolves it once F159 lands |
 | b-cn-fold-useid | a child with useId and a cn class | static | static | 0 | ok | info:build-eval-instance | F149 R34.92: ids are per request |
 | b-cn-fold-row-reading | a cva component reading each row of a constant list | static | static | 0 | ok | — | F149 ruling Q4: per-row instances (per-row-literal) keep their job in v1 |
-| b-cn-fold-denied-global | a class computed from Date in the child module | static | static | 0 | ok | info:build-eval-instance | F149 R34.92: time differs between runs; the L2 denylist applies |
+| b-cn-fold-denied-global | a class computed from Date in the child module | static | static | ssr | ok | — | F149 R34.92: time differs between runs. F215 allowlist: `Date.now()` at load time is not an accepted const, so the chip module is not clean and Chip renders as a React island (its SSR job); nothing is build-evaluated |
 | e-package-component | component from a package in a static parent | static | static | ssr | ok | fallback:external-component | L22: a package export renders as a React island (one ssr job); the parent stays static |
 | e-member-named-alias | member of a renamed named import (`<D.Root>`) in a static parent | static | static | ssr | ok | fallback:external-component | S1.4 R34.35: resolved to the package member, an island (external-component), no member-tag |
 | e-member-namespace | member of a namespace import (`<P.Group>`) | static | static | ssr | ok | fallback:external-component |  |
