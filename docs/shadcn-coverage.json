@@ -142,7 +142,7 @@
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 4
+      "libraryComponents": 5
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -286,7 +286,7 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 190
+      "libraryComponents": 189
     },
     {
       "blocker": "useContext / use*Context",

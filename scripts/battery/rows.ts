@@ -1482,4 +1482,10 @@ export const rows: Row[] = [
   { id: 'c-forwarded-ref-member', category: 'C', authoring: 'the forwardRef ref read as a member (ref.current)', expect: 'react',
     snippet: `import * as React from 'react'\nexport default React.forwardRef<any, any>(function C(props, ref) { return <div data-x={String(ref.current)} /> })`,
     note: 'B3: any read of the forwarded ref other than ref={ref} or a whole argument still needs React (forwardref-ref)' },
+  { id: 'c-callback-ref', category: 'C', authoring: 'ref={fn} with a useCallback function', expect: 'native', jobs: 0,
+    snippet: `import { useCallback, useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); const rec = useCallback((node: any) => { console.log(node) }, []); return <button ref={rec} onClick={() => setN(n + 1)}>{n}</button> }`,
+    note: 'B1: a ref that is a function value becomes a synthetic ref and a mount effect that calls it with the node' },
+  { id: 'c-callback-ref-in-list', category: 'C', authoring: 'ref={fn} on an element inside a list', expect: 'react',
+    snippet: `import { useCallback, useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); const rec = useCallback((node: any) => { console.log(node) }, []); return <ul onClick={() => setN(n + 1)}>{[1, 2].map((x) => <li key={x} ref={rec}>{x}</li>)}</ul> }`,
+    note: 'B1: a callback ref inside a list stays ref-shape' },
 ]

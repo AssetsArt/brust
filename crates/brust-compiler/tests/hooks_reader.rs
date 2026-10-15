@@ -664,3 +664,62 @@ fn the_forwarded_ref_handed_to_a_hook_is_null() {
         bad.diagnostics
     );
 }
+
+// B1: `ref={fn}` where `fn` is not a `useRef` binding becomes a synthetic ref plus a mount effect that sets it.
+#[test]
+fn a_callback_ref_becomes_a_synthetic_ref_and_a_mount_effect() {
+    for (decls, ref_expr, deps_kind) in [
+        (
+            "const rec = useCallback((n: any) => {}, [])",
+            "rec",
+            "Local",
+        ),
+        (
+            "const [node, setNode] = useState<any>(null)",
+            "setNode",
+            "Setter",
+        ),
+    ] {
+        let a = ir(&format!(
+            "{PRE}export default function F() {{ {decls}; const [n, setN] = useState(0); return <button ref={{{ref_expr}}} onClick={{() => setN(n + 1)}}>{{n}}</button> }}"
+        ));
+        assert!(
+            !a.diagnostics.iter().any(|d| d.rule == "ref-shape"),
+            "{ref_expr}: {:?}",
+            a.diagnostics
+        );
+        let Node::Element { attrs, .. } = &a.template else {
+            panic!()
+        };
+        assert!(
+            attrs
+                .iter()
+                .any(|x| matches!(x, Attr::Ref { name } if name == "_rf1")),
+            "{ref_expr}: {attrs:?}"
+        );
+        assert!(a.refs.iter().any(|r| r.name == "_rf1"));
+        let e = a.effects.last().expect("the mount effect");
+        assert!(e.layout);
+        assert!(
+            matches!(&e.deps.as_deref(), Some([d]) if format!("{:?}", d.kind).contains(deps_kind)),
+            "{ref_expr}: {:?}",
+            e.deps
+        );
+    }
+}
+
+#[test]
+fn a_ref_that_is_not_a_function_value_or_ref_object_stays_a_fallback() {
+    for body in [
+        // a loop binding
+        "<ul>{[1, 2].map((x) => <li key={x} ref={x}>{x}</li>)}</ul>",
+        // an element inside a list, even with a callback
+        "<ul>{[1, 2].map((x) => <li key={x} ref={cb}>{x}</li>)}</ul>",
+    ] {
+        let a = ir(&format!(
+            "{PRE}export default function F() {{ const cb = useCallback((n: any) => {{}}, []); const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}>{body}</div> }}"
+        ));
+        // Left as written (the tier pass reports `ref-shape`): no synthetic ref, no effect.
+        assert!(a.refs.is_empty() && a.effects.is_empty(), "{body}");
+    }
+}

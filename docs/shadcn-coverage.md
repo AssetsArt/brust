@@ -47,7 +47,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 9 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 36 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 10 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `child-component` diagnostic (docs/react-coverage.md) |
 | 11 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `jsx-expression` diagnostic (docs/react-coverage.md) |
-| 12 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 4 | `hook-shape` diagnostic (docs/react-coverage.md) |
+| 12 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 5 | `hook-shape` diagnostic (docs/react-coverage.md) |
 | 13 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
 | 14 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
 | 15 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 36 | `body-shape` diagnostic (docs/react-coverage.md) |
@@ -63,7 +63,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 25 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
 | 26 | rest-props spread | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 398 | b-spread-child / a-spread-host: fallback:spread-props |
 | 27 | forwardRef | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 286 | b-forwardref: fallback:default-export-shape |
-| 28 | fallback:forwardref-ref | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 190 | `forwardref-ref` diagnostic (docs/react-coverage.md) |
+| 28 | fallback:forwardref-ref | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 189 | `forwardref-ref` diagnostic (docs/react-coverage.md) |
 | 29 | useContext / use*Context | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 187 | c-usecontext: fallback:hook-unsupported |
 | 30 | Context.Provider / *Provider | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 137 | fallback:member-tag |
 | 31 | Primitive.* | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 113 | fallback:member-tag |
@@ -704,7 +704,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
 | src/password-toggle-field.tsx | PasswordToggleField | other | react | Context.Provider / *Provider, useControllableState, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, useId |
-| src/password-toggle-field.tsx | PasswordToggleFieldInput | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, addEventListener |
+| src/password-toggle-field.tsx | PasswordToggleFieldInput | forwardRef | react (fallback:external-component, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, addEventListener |
 | src/password-toggle-field.tsx | PasswordToggleFieldToggle | forwardRef | react (fallback:control-flow, fallback:forwardref-ref, fallback:hook-unsupported, fallback:prop-quoted-key) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useState, useRef, addEventListener |
 | src/password-toggle-field.tsx | PasswordToggleFieldIcon | forwardRef | react (fallback:body-shape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:spread-props) | forwardRef, useContext / use*Context, Slot / asChild, Primitive.*, rest-props spread |
 
@@ -979,7 +979,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
 | lib/components/grid/Cell.tsx | Cell | function | react (fallback:hook-unsupported, fallback:module-side-effect, fallback:prop-pattern, fallback:ref-shape) | useContext / use*Context, rest-props spread, useRef, useId |
-| lib/components/grid/Grid.tsx | Grid | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:module-side-effect) | Context.Provider / *Provider, useSyncExternalStore, useImperativeHandle, rest-props spread, useEffect, useRef, useMemo / useCallback, useId |
+| lib/components/grid/Grid.tsx | Grid | function | react (fallback:control-flow, fallback:hook-shape, fallback:hook-unsupported, fallback:module-side-effect) | Context.Provider / *Provider, useSyncExternalStore, useImperativeHandle, rest-props spread, useEffect, useRef, useMemo / useCallback, useId |
 | lib/components/grid/Gridline.tsx | Gridline | function | react (fallback:island-prop) | — |
 | lib/components/grid/GridTrackSeparator.tsx | GridTrackSeparator | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:let-var) | useContext / use*Context, useMemo / useCallback, useId |
 | lib/components/group/Group.tsx | Group | function | react (fallback:hook-unsupported, fallback:island-prop, fallback:member-tag, fallback:module-side-effect, fallback:prop-pattern, fallback:ref-shape) | Context.Provider / *Provider, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, useId |

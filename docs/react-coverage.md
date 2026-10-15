@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 215 | 112 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 44 | 2 | 17 | 25 | 0 | 0 | 0 | 0 |
+| C Hooks | 46 | 2 | 18 | 26 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 407 | 189 | 54 | 160 | 3 | 1 | 0 | 0 |
+| **Total** | 409 | 189 | 55 | 161 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -347,6 +347,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-rest-param | custom hook with a ...rest parameter whose body calls an exported function of its module | native | native | 0 | ok | — | B2: a rest parameter is the array of the remaining arguments; an exported function the hook calls is imported by the component; `return useCallback(…)` is read under a generated name |
 | c-forwarded-ref-to-hook | the forwardRef ref handed whole to a custom hook | native | native | 0 | ok | — | B3: the forwarded ref handed whole to a hook is null (a native component is never given a ref) |
 | c-forwarded-ref-member | the forwardRef ref read as a member (ref.current) | react | react | ssr | ok | fallback:forwardref-ref | B3: any read of the forwarded ref other than ref={ref} or a whole argument still needs React (forwardref-ref) |
+| c-callback-ref | ref={fn} with a useCallback function | native | native | 0 | ok | — | B1: a ref that is a function value becomes a synthetic ref and a mount effect that calls it with the node |
+| c-callback-ref-in-list | ref={fn} on an element inside a list | react | react | ssr | ok | fallback:ref-shape | B1: a callback ref inside a list stays ref-shape |
 
 ## D. API surface
 
