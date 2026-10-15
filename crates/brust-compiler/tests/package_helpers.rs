@@ -214,6 +214,14 @@ fn a_package_helper_that_is_not_provable_falls_back() {
                 ),
             ],
         ),
+        // Afrojack (round 1): an import re-exported by a clause is not a re-export the ruling follows.
+        (
+            "import-then-export",
+            &[
+                ("index.ts", "import { tag } from './tag'\nexport { tag }\n"),
+                ("tag.ts", TAG),
+            ],
+        ),
         // A chain that cannot be followed (the re-exported file does not exist).
         (
             "missing",
