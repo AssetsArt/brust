@@ -125,7 +125,8 @@ test('paths cases: into an existing paths, an empty one, an identical entry, ano
 })
 
 test('an unparseable tsconfig is not touched; the exact line to add is printed (R41.4)', async () => {
-  const bad = '{ "extends": "./base.json" }'
+  // (was `{ "extends": "./base.json" }` with no such file: since F226 an extends chain that cannot be read is refused)
+  const bad = '{ "include": ["src"] }'
   const d = project({ tsconfig: bad })
   const r = await init(d)
   expect(readFileSync(join(d, 'tsconfig.json'), 'utf8')).toBe(bad)

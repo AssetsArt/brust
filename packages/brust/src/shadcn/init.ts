@@ -2,8 +2,8 @@
 // shadcn's own `init` does not detect brust, so this writes what `add` needs (components.json, the `@/*` path),
 // installs the four packages the components import, and runs ONE pinned shadcn CLI for the theme and the components.
 // Every child process is spawned from an argv array, never through a shell; the runner is injected for tests.
-import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { type Member, type ObjectNode, raw, readObject } from './jsonc'
 
 /** The shadcn CLI version this command runs (R41.6). A release that moves it re-runs the transcript. */
@@ -61,21 +61,118 @@ function linkUnder(root: string, rel: string): boolean {
   return false
 }
 
-/** `compilerOptions.paths` (pattern → every target) and `baseUrl` of a tsconfig text; `extends` is true when the file
- *  inherits from another one (its own `paths` are then not the whole picture). Empty when it cannot be read. */
-function tsPaths(text: string | undefined): { base: string; map: Array<[string, string[]]>; extended: boolean } {
-  const none = { base: '', map: [] as Array<[string, string[]]>, extended: false }
-  if (text === undefined) return none
+type PathsMap = Array<[string, string[]]>
+
+/** What one tsconfig file says on its own: `baseUrl` (absolute), `paths` and the directory they are declared in (a `paths`
+ *  entry is relative to `baseUrl`, else to the file that declares it), and its `extends` specifiers. */
+interface TsFile {
+  baseUrl?: string
+  paths?: { dir: string; map: PathsMap }
+  extends: string[]
+}
+
+const EXTENDS_DEPTH = 20
+
+function readJsonc(file: string): { text: string; top: ObjectNode } | { error: string } {
+  let text: string
   try {
-    const co = readObject(text).members.find((m) => m.key === 'compilerOptions')?.object
-    const strs = (m: Member | undefined): string[] => (m ? [...raw(text, m).matchAll(/"([^"\\]*)"/g)].map((x) => x[1] ?? '') : [])
-    const base = strs(co?.members.find((m) => m.key === 'baseUrl'))[0] ?? ''
-    const map = (co?.members.find((m) => m.key === 'paths')?.object?.members ?? []).map((m): [string, string[]] => [m.key, strs(m)])
-    const extended = readObject(text).members.some((m) => m.key === 'extends') || (co?.members.some((m) => m.key === 'extends') ?? false)
-    return { base, map, extended }
+    text = readFileSync(file, 'utf8')
   } catch {
-    return none
+    return { error: `cannot read ${file}` }
   }
+  try {
+    return { text, top: readObject(text) }
+  } catch (e) {
+    return { error: `cannot parse ${file} (${(e as Error).message})` }
+  }
+}
+
+/** The strings inside a member's raw value (a string, or an array of strings). */
+function strings(text: string, m: Member | undefined): string[] {
+  return m ? [...raw(text, m).matchAll(/"([^"\\]*)"/g)].map((x) => x[1] ?? '') : []
+}
+
+function tsFile(file: string): TsFile | { error: string } {
+  const r = readJsonc(file)
+  if ('error' in r) return r
+  const { text, top } = r
+  const ext = top.members.find((m) => m.key === 'extends')
+  const extendsList = strings(text, ext)
+  if (ext && (extendsList.length === 0 || extendsList.some((x) => x === ''))) return { error: `${file}: "extends" must be a path or a list of paths` }
+  const co = top.members.find((m) => m.key === 'compilerOptions')?.object
+  const out: TsFile = { extends: extendsList }
+  const baseMember = co?.members.find((m) => m.key === 'baseUrl')
+  const pathsMember = co?.members.find((m) => m.key === 'paths')
+  if (pathsMember && !pathsMember.object) return { error: `${file}: compilerOptions.paths is not an object` }
+  const all = [...extendsList, ...strings(text, baseMember), ...(pathsMember?.object?.members.flatMap((m) => [m.key, ...strings(text, m)]) ?? [])]
+  if (all.some((x) => x.includes('${'))) return { error: `${file} uses a \${...} template in extends, baseUrl or paths; the shadcn CLI target paths cannot be checked` }
+  if (baseMember) out.baseUrl = resolve(dirname(file), strings(text, baseMember)[0] ?? '')
+  if (pathsMember?.object) out.paths = { dir: dirname(file), map: pathsMember.object.members.map((m): [string, string[]] => [m.key, strings(text, m)]) }
+  return out
+}
+
+/** The file an `extends` specifier names, the way TypeScript finds it: a relative or absolute path (with or without
+ *  `.json`), else a package config under the nearest `node_modules` (`pkg`, `pkg/sub`, `pkg/file.json`). */
+function resolveExtends(from: string, spec: string): string | undefined {
+  const isFile = (p: string): boolean => {
+    try {
+      return statSync(p).isFile()
+    } catch {
+      return false
+    }
+  }
+  const tryFile = (p: string): string | undefined => [p, `${p}.json`, join(p, 'tsconfig.json')].find(isFile)
+  if (spec.startsWith('./') || spec.startsWith('../') || isAbsolute(spec)) return tryFile(resolve(dirname(from), spec))
+  for (let dir = dirname(from); ; dir = dirname(dir)) {
+    const cand = join(dir, 'node_modules', spec)
+    const hit = tryFile(cand)
+    if (hit) return hit
+    // a package whose package.json names its config: "tsconfig": "./x.json"
+    try {
+      const field = (JSON.parse(readFileSync(join(cand, 'package.json'), 'utf8')) as { tsconfig?: unknown }).tsconfig
+      if (typeof field === 'string') {
+        const f = tryFile(resolve(cand, field))
+        if (f) return f
+      }
+    } catch {}
+    if (dirname(dir) === dir) return undefined
+  }
+}
+
+/** The `baseUrl` and `paths` a tsconfig ends up with once its `extends` chain is folded (later entries win; the file's
+ *  own `paths` replace inherited ones whole, as TypeScript does). `inherited` is true when the `paths` come from a parent. */
+function effectivePaths(file: string, trail: string[]): { baseUrl?: string; paths?: { dir: string; map: PathsMap }; inherited: boolean } | { error: string } {
+  if (trail.includes(file)) return { error: `${file} extends itself (a cycle)` }
+  if (trail.length >= EXTENDS_DEPTH) return { error: `the tsconfig "extends" chain is more than ${EXTENDS_DEPTH} files long` }
+  const own = tsFile(file)
+  if ('error' in own) return own
+  let baseUrl: string | undefined
+  let paths: { dir: string; map: PathsMap } | undefined
+  for (const spec of own.extends) {
+    const parent = resolveExtends(file, spec)
+    if (parent === undefined) return { error: `${file}: cannot resolve "extends" ${JSON.stringify(spec)}, so the paths the shadcn CLI will use cannot be read` }
+    const eff = effectivePaths(parent, [...trail, file])
+    if ('error' in eff) return eff
+    if (eff.baseUrl !== undefined) baseUrl = eff.baseUrl
+    if (eff.paths) paths = eff.paths
+  }
+  const inheritedPaths = own.paths === undefined && paths !== undefined
+  if (own.baseUrl !== undefined) baseUrl = own.baseUrl
+  if (own.paths) paths = own.paths
+  return { ...(baseUrl !== undefined && { baseUrl }), ...(paths && { paths }), inherited: inheritedPaths }
+}
+
+/** F226: `paths` and the project-relative directory they resolve from, read through the whole `extends` chain of
+ *  `tsconfig.json`. An error when a file of the chain cannot be read or found (fail closed: nothing is assumed). A
+ *  tsconfig that is not parseable at all keeps its old meaning (R41.4: not touched, the line is printed). */
+function tsconfigPaths(root: string, file: string): { base: string; map: PathsMap; inherited: boolean } | { error: string } {
+  const top = readJsonc(file)
+  if ('error' in top) return { base: '', map: [], inherited: false }
+  const eff = effectivePaths(file, [])
+  if ('error' in eff) return eff
+  const from = eff.baseUrl ?? eff.paths?.dir ?? root
+  const base = relative(root, from).split(sep).join('/')
+  return { base, map: eff.paths ? eff.paths.map.map(([k, v]): [string, string[]] => [k, [...v]]) : [], inherited: eff.inherited }
 }
 
 /** A project-relative path for an import alias (`@/hooks` → `hooks`) by the tsconfig `paths`, or undefined when no entry
@@ -103,10 +200,11 @@ function resolveAlias(alias: string, base: string, map: Array<[string, string[]]
 
 /** F193: every path the shadcn CLI may write, project-relative, or an error. The CLI follows symlinks, so the caller
  *  refuses when one is, or sits under, a symlink. Fails closed: an alias that cannot be resolved by the tsconfig `paths`
- *  (`@/*` → `./*` is assumed when the tsconfig has no entry: it is what this command asks for) is an error, not a skipped check. */
+ *  (read through `extends`, F226; `@/*` → `./*` is assumed only when no `@/*` is there and none is inherited: it is what
+ *  this command adds) is an error, not a skipped check. */
 function cliTargets(
   componentsText: string | undefined,
-  tsText: string | undefined,
+  ts: { base: string; map: PathsMap; inherited: boolean } | undefined,
   css: string | undefined,
   components: string[],
 ): { paths: string[]; dirs: string[] } | { error: string } {
@@ -126,11 +224,11 @@ function cliTargets(
       return { error: 'components.json is not valid JSON, so the shadcn CLI target paths cannot be checked' }
     }
   }
-  const { base, map, extended } = tsPaths(tsText)
-  // `@/*` → `./*` is the mapping this command adds or asks for; an existing entry (e.g. `./src/*`) wins. When the
-  // tsconfig also has its own `paths` without `@/*`, TypeScript ignores an inherited `@/*`, so the assumption is the
-  // only mapping there is; with no own `paths` and an `extends`, an inherited one is not read (residual, in the ledger).
-  if (!(extended && map.length > 0) && !map.some(([k]) => k === '@/*')) map.push(['@/*', ['./*']])
+  const base = ts?.base ?? ''
+  const map: PathsMap = ts ? [...ts.map] : []
+  // `@/*` → `./*` is the mapping this command adds when the tsconfig has no `@/*` of its own. When the `paths` are
+  // inherited through `extends` nothing is added (the file would then replace them), so only what the chain says counts.
+  if (!ts?.inherited && !map.some(([k]) => k === '@/*')) map.push(['@/*', ['./*']])
   const paths: string[] = []
   const dirs: string[] = []
   const roots: Record<string, string> = {}
@@ -208,6 +306,14 @@ export type PathEdit =
   | { kind: 'unparseable'; why: string }
 
 const ENTRY = '"@/*": ["./*"]'
+
+/** F226: the `paths` come from an extended file, so the file is not edited (an own `paths` would replace them whole):
+ *  the inherited `@/*` is judged like an own one. */
+function inheritedEdit(ts: { base: string; map: PathsMap }): PathEdit {
+  const hit = ts.map.find(([k]) => k === '@/*')
+  if (!hit) return { kind: 'unparseable', why: 'its "paths" are inherited through "extends" and have no "@/*"; an own "paths" would replace them' }
+  return resolveAlias('@/x', ts.base, [hit])?.[0] === 'x' ? { kind: 'present' } : { kind: 'other', target: JSON.stringify(hit[1]) }
+}
 
 /** The separator before a non-empty object's first member, so the new entry takes the same line and indent. */
 function lead(text: string, o: ObjectNode): string {
@@ -302,7 +408,10 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   const cj = join(root, 'components.json')
   const tsPath = join(root, 'tsconfig.json')
   // F192: a symlinked tsconfig.json is only a problem when the command would edit it (the `@/*` path is missing).
-  const tsEdit = existsSync(tsPath) ? addAliasPath(readFileSync(tsPath, 'utf8')) : undefined
+  // F226: the `paths` the CLI will see are the ones of the whole `extends` chain; a chain that cannot be read is refused.
+  const ts = existsSync(tsPath) ? tsconfigPaths(root, tsPath) : undefined
+  if (ts && 'error' in ts) return fail2(`${ts.error}; fix the tsconfig.json chain, then run again`)
+  const tsEdit = existsSync(tsPath) ? (ts?.inherited ? inheritedEdit(ts) : addAliasPath(readFileSync(tsPath, 'utf8'))) : undefined
   if (isLink(tsPath) && tsEdit?.kind === 'added') return fail2('tsconfig.json is a symbolic link; refusing to write through it. Add "@/*": ["./*"] to compilerOptions.paths of the real file yourself, then run again')
   if (isLink(cj) && (!existsSync(cj) || o.force)) return fail2('components.json is a symbolic link; refusing to write through it. Replace it with a real file or remove the link, then run again')
   // F193: the shadcn CLI writes files itself (the theme, `lib/utils.ts`, each component, the CSS entry). It follows
@@ -311,7 +420,7 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   const themeRuns = o.force || !readFileSync(join(root, entry.css), 'utf8').includes('shadcn/tailwind.css')
   const targets = cliTargets(
     writing ? undefined : readFileSync(cj, 'utf8'),
-    existsSync(tsPath) ? readFileSync(tsPath, 'utf8') : undefined,
+    ts,
     themeRuns ? entry.css : undefined,
     o.components,
   )
