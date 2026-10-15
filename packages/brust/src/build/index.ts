@@ -251,7 +251,8 @@ async function buildInto(
   let { compiled, routeComponent } = compileApp({ ...compileOpts, log: (l) => firstLog.push(l) })
   // F153c: the packages the app imports components from are compiled from their source when they publish it (and
   // it matches what they publish); the app is compiled again with those sources. A refused package stays the island.
-  const external = [...new Set([...compiled.values()].flatMap((c) => (c.ir.external ? [c.ir.external.source] : [])))]
+  // F197: and the packages a helper is imported from, when the compiler asked to prove one plain.
+  const external = [...new Set([...compiled.values()].flatMap((c) => [...(c.ir.external ? [c.ir.external.source] : []), ...((c.ir.package_requests ?? []) as string[])]))]
   const packages = preparePackageSources(appRoot, external)
   if (Object.keys(packages.scopes).length > 0) {
     firstLog.length = 0
