@@ -500,6 +500,33 @@ fn read_function_as(
     }
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
     ir.plain_fns = crate::analyze::plain_fn::plain_fns(ast, &*reader.names);
+    let from = parsed.path();
+    // React's element builders (and the namespace or default import that carries them), or an app module that may
+    // hold an element; `cache`, the hooks and other React exports return no element.
+    const BUILDERS: &[&str] = &[
+        "createElement",
+        "cloneElement",
+        "jsx",
+        "jsxs",
+        "jsxDEV",
+        "Children",
+        "createPortal",
+        "h",
+        "*",
+        "default",
+    ];
+    let element_import = |source: &str, imported: &str| {
+        ((source == "react"
+            || source.starts_with("react/")
+            || source.starts_with("react-dom")
+            || source.starts_with("preact"))
+            && BUILDERS.contains(&imported))
+            || opts.is_none_or(|o| {
+                crate::analyze::plain_fn::module_may_hold_element(&from, source, o, 0)
+            })
+    };
+    ir.element_free_fns =
+        crate::analyze::plain_fn::element_free_fns(ast, &*reader.names, &element_import);
     check_printer_panic(ir);
     ir.props = body.props;
     ir.props_rest = body.props_rest;
