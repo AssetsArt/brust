@@ -6,7 +6,7 @@ use super::common::{
     module_names_in, store_client_js, visit_idents, visit_verbatim_captures,
 };
 use super::{Member, MemberDef, Paint};
-use crate::ir::{Attr, ComponentIR, Expr, IdentKind, Node, RawExpr};
+use crate::ir::{Attr, ComponentIR, Expr, IdentKind, Literal, Node, RawExpr, RawKind};
 use std::collections::BTreeSet;
 
 /// The chunk source and its members in export order.
@@ -102,10 +102,24 @@ pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (Str
     }
     for (i, r) in ir.refs.iter().enumerate() {
         let loc = structural.refs[i].init.raw_loc().unwrap_or_default();
+        // `useRef(init)` is a cell that starts at `init` (an element attached later replaces it): `null` and
+        // `undefined` are the common case of a DOM ref and print as before.
+        let _ = r;
+        let init = match &structural.refs[i].init {
+            Expr::Raw(raw)
+                if !matches!(
+                    raw.kind,
+                    RawKind::Lit(Literal::Null) | RawKind::Lit(Literal::Undefined)
+                ) =>
+            {
+                format!(", {}", client_js(raw, &f))
+            }
+            _ => String::new(),
+        };
         decls.push((
             loc,
             format!(
-                "const {} = __ref({})",
+                "const {} = __ref({}{init})",
                 r.name,
                 crate::ir::expr::js_string(&r.name)
             ),

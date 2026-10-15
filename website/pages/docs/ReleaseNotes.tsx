@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-14', title: '2.0.0-alpha.14' },
       { id: 'alpha-13', title: '2.0.0-alpha.13' },
       { id: 'alpha-12', title: '2.0.0-alpha.12' },
       { id: 'alpha-11', title: '2.0.0-alpha.11' },
@@ -36,6 +37,54 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-14">2.0.0-alpha.14 · 15 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.13: #247–#251 (wave A 2b-hooks and 2b-handlers, F173/F190, F204, F201–F202, F206–F209) */}
+      <p>The shadcn Toggle compiles to a static page, children that disappeared under plain wrappers render again, and attributes updated in the browser now match the server.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #250 (2b-handlers) and #247 (2b-hooks): Radix's own useControllableState and Toggle, compiled as written */}
+        <li>
+          <strong>The shadcn Toggle page is static: 87 KB → 5 KB of JavaScript, no React island.</strong> Radix&rsquo;s <code>useControllableState</code> hook and its <code>Toggle</code> now compile as written. When a component spreads its props onto an element and also sets values that change with state (<code>aria-pressed</code>, <code>data-state</code>) or an <code>onClick</code>, the parent binds them in the browser. Hooks that take an options object, call plain helper functions, use <code>useLayoutEffect</code> or <code>useInsertionEffect</code>, or log development-only warnings now compile too.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #248 (F173, F190): plain wrappers on the total child predicate */}
+        <li>
+          <strong>Children of a plain wrapper no longer disappear.</strong> A child such as <code>{'{'}icons.home{'}'}</code>, <code>{'{'}list[0]{'}'}</code> or a call to an imported helper that returns JSX could render as nothing on the server. brust now renders a child itself only when it can prove the value is plain data, which still covers common cases such as <code>{'{'}price.toLocaleString(){'}'}</code> and <code>{'{'}new Date(d).toLocaleDateString(){'}'}</code>. Anything else renders with React.
+        </li>
+        {/* source: PR #250 (F206) */}
+        <li>
+          <strong><code>useRef(initialValue)</code> keeps its initial value</strong> in compiled components. It started as <code>undefined</code>, so an effect that compared against the previous value ran its change logic on mount.
+        </li>
+        {/* source: PR #251 (F201, F202) */}
+        <li>
+          <strong>Attributes updated in the browser match the server&rsquo;s HTML.</strong> Boolean and enumerated attributes such as <code>hidden</code>, <code>aria-*</code> and <code>data-*</code> follow the same table on both sides, and the safe-URL check now covers links inside SVG.
+        </li>
+        {/* source: PR #250 (F207, F208) */}
+        <li>
+          <strong>Two cases that broke the compiled JavaScript are fixed:</strong> reading the whole <code>props</code> object in a handler of a component that also spreads <code>...rest</code>, and a hook whose arguments are computed from other values.
+        </li>
+      </ul>
+
+      <h3>Security</h3>
+      <ul>
+        {/* source: PR #249 (F204), reviewed by Mellow */}
+        <li>
+          <strong>Loader data cannot overwrite internal per-component values.</strong> A key returned by a loader with the shape of brust&rsquo;s per-instance data is dropped, as job results already were in alpha.13.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #248 (F197, F205) */}
+        <li>
+          <strong>Some children now render with React instead of being compiled:</strong> calls to helpers imported from packages, and method calls on state or list items that brust cannot prove are plain values. The output is the same.
+        </li>
+      </ul>
 
       <h2 id="alpha-13">2.0.0-alpha.13 · 15 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.12: #242–#245 (R42.2–R42.3, wave A PR 2a, F195–F196, F186–F187) */}

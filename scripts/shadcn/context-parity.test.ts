@@ -8,13 +8,23 @@ import { FIXTURE, repo } from './paths.ts'
 
 const PAGES = ['ctx-progress-basic', 'ctx-progress-max', 'ctx-progress-indeterminate', 'ctx-progress-invalid']
 // F3: islands under a Provider keep the page React (the island hydrates, so scripts are expected and markup is React's own).
-const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix', 'ctx-page-collapsible', 'ctx-page-dialog', 'ctx-page-sheet', 'ctx-page-select', 'ctx-page-slider', 'ctx-page-switch', 'ctx-page-toggle', 'ctx-page-checkbox', 'ctx-dlg-title', 'ctx-sheet-title', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns',
+const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix', 'ctx-page-collapsible', 'ctx-page-dialog', 'ctx-page-sheet', 'ctx-page-select', 'ctx-page-slider', 'ctx-page-switch', 'ctx-page-toggle', 'ctx-page-toggle-onclick', 'ctx-page-checkbox', 'ctx-dlg-title', 'ctx-sheet-title', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns',
   'ctx-imp-m-and', 'ctx-imp-m-computed', 'ctx-imp-m-index', 'ctx-imp-m-member', 'ctx-imp-m-nullish', 'ctx-imp-m-opt', 'ctx-imp-m-root', 'ctx-imp-m-template', 'ctx-imp-m-tern', 'ctx-loc-m-and', 'ctx-loc-m-computed', 'ctx-loc-m-index', 'ctx-loc-m-member', 'ctx-loc-m-nullish', 'ctx-loc-m-opt', 'ctx-loc-m-root', 'ctx-loc-m-template', 'ctx-loc-m-tern',
   'ctx-pown-imp-root', 'ctx-pown-imp-and', 'ctx-pown-imp-tern', 'ctx-pown-imp-member', 'ctx-pown-imp-index', 'ctx-pown-loc-root', 'ctx-pown-loc-and', 'ctx-pown-loc-tern', 'ctx-pown-loc-member', 'ctx-pown-loc-index',
-  'ctx-plain-imp-root', 'ctx-plain-imp-and', 'ctx-plain-imp-tern', 'ctx-plain-loc-root', 'ctx-plain-loc-and', 'ctx-plain-loc-tern', 'ctx-trio-prov', 'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call', 'ctx-hid-provfed', 'ctx-hid-bare',
+  'ctx-plain-imp-root', 'ctx-plain-imp-and', 'ctx-plain-imp-tern', 'ctx-plain-loc-root', 'ctx-plain-loc-and', 'ctx-plain-loc-tern',
+  // F173 + F190: under a plain wrapper an element read through a member, an index or an array, or returned by a helper, printed
+  // nothing on main; the page is React now. Helpers their module cannot prove plain fall back the same way.
+  'ctx-plain-imp-member', 'ctx-plain-imp-index', 'ctx-plain-imp-array', 'ctx-plain-imp-call', 'ctx-plain-loc-member', 'ctx-plain-loc-index', 'ctx-plain-loc-array', 'ctx-plain-loc-call',
+  'ctx-plain-helper-index', 'ctx-plain-helper-member', 'ctx-plain-helper-let', 'ctx-plain-helper-ns',
+  // Lead ruling on @57714ece: an allowlisted method on a user-defined receiver (a class instance, a shadowed Date, a
+  // reassigned method), a computed name or an optional call keeps the page React.
+  'ctx-plain-method-class', 'ctx-plain-method-date-shadow', 'ctx-plain-method-reassigned', 'ctx-plain-method-computed', 'ctx-plain-method-optional', 'ctx-plain-method-optional-call',
+  'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call', 'ctx-hid-provfed', 'ctx-hid-bare',
 ]
 // Imported plain value: stays a static page (no script), and renders like React.
-const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain']
+// F173: the ordinary reads (a const map, .length, an imported helper proven plain in its module) lower under a wrapper AND
+// under a Provider (ctx-trio-prov was React until F173 proved formatPrice).
+const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper', 'ctx-plain-helper-string', 'ctx-plain-methods']
 const ROWS = join(FIXTURE, '.rows')
 const ENTRY = '.rows/ctx-parity-routes.tsx'
 const bin = join(repo, 'packages/brust/bin/brust')
@@ -33,7 +43,8 @@ beforeAll(async () => {
   writeFileSync(join(FIXTURE, ENTRY), `import { defineRoutes } from "@brust/core/routes"\n${imports}\nexport const routes = defineRoutes([\n${routes}\n])\n`)
   const b = Bun.spawnSync([process.execPath, bin, 'build', ENTRY, '--out-dir', '.rows/dist-ctx-parity'], { cwd: FIXTURE, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}${b.stdout.toString()}`)
-  const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
+  // `bun test` renders the React side in UTC; the server must too (ctx-plain-methods prints dates and times).
+  const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '', TZ: 'UTC' }
   proc = Bun.spawn([process.execPath, bin, 'start', '--port', '0', '--workers', '1', '--dist-dir', '.rows/dist-ctx-parity', '--entry', ENTRY], { cwd: FIXTURE, env, stdout: 'pipe', stderr: 'inherit' })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
@@ -100,8 +111,8 @@ for (const id of [...PAGES, ...PLAIN_PAGES]) {
 
 // useId differs only by the island's id prefix (R1, ruling 2bf3775a): the same id otherwise.
 // brust's own host elements (`<brust-island>` around an island, `<brust-host style=display:contents>` around a native component
-// that returns a fragment) and the `x-on-*` handler directives of a compiled Label (its mousedown guard) have no React equivalent and do not change the layout.
-const plain = (h: string) => normalise(h.replace(/<!-- -->/g, '').replace(/<brust-island\b[^>]*>/g, '').replace(/<\/brust-island>/g, '').replace(/<brust-host\b[^>]*>/g, '').replace(/<\/brust-host>/g, '').replace(/ x-on-[a-z]+="?[\w$]+"?/g, '')).replace(/(radix-)_\w*R_(\d+)_/g, '$1_R_$2_')
+// that returns a fragment) and the `x-on-*` handler and `x-bind-*` attribute directives a compiled component carries (a Label's mousedown guard, a toggle's live `aria-pressed`) have no React equivalent and do not change the layout.
+const plain = (h: string) => normalise(h.replace(/<!-- -->/g, '').replace(/<brust-island\b[^>]*>/g, '').replace(/<\/brust-island>/g, '').replace(/<brust-host\b[^>]*>/g, '').replace(/<\/brust-host>/g, '').replace(/ x-(?:on|bind)-[a-z-]+="?[\w$]+"?/g, '')).replace(/(radix-)_\w*R_(\d+)_/g, '$1_R_$2_')
 for (const id of ISLAND_PAGES) {
   test(`${id}: the page (island under a Provider, JSX const child) renders exactly as React does`, async () => {
     const mod = (await import(join(FIXTURE, 'repro', `${id}.tsx`))) as { default: () => unknown }
@@ -123,8 +134,8 @@ for (const id of ISLAND_PAGES) {
     } else if (id.startsWith('ctx-hid-')) {
       expect(html).toContain('lit') // React reads the context value, never the forged prop
       expect(html).not.toContain('forged')
-    } else if (id === 'ctx-trio-prov') {
-      expect(html).toContain('$5.00')
+    } else if (id.startsWith('ctx-plain-helper-') || /^ctx-plain-method-(computed|optional)/.test(id)) {
+      // React's own markup is the check (`toContain(react)` above): the helper's value, not an element.
     } else {
       // The dropped child is there. A template literal of an element is React's own "[object Object]" text.
       expect(html).toMatch(id.endsWith('-template') ? /\[object Object\]/ : /<b[^>]*>hi<\/b>/)

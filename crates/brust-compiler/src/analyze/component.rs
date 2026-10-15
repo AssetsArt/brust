@@ -503,6 +503,7 @@ fn read_function_as(
     check_printer_panic(ir);
     ir.props = body.props;
     ir.props_rest = body.props_rest;
+    ir.props_whole = body.props_whole;
     ir.poly = body.poly;
     // S2: the context fields this component reads are hidden props the call site fills from the Provider frame.
     ir.ctx_uses = reader.names.ctx_uses();

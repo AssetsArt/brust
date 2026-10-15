@@ -644,7 +644,7 @@ fn format_num(n: f64) -> String {
     }
 }
 
-fn data_name(d: &E) -> &'static str {
+pub(crate) fn data_name(d: &E) -> &'static str {
     match d {
         E::EArray(_) => "EArray",
         E::EUnary(_) => "EUnary",
