@@ -85,6 +85,13 @@ export interface VettedItem {
 
 const PLAIN_NAME = /^[a-z0-9][a-z0-9-]*$/
 
+/** The top-level keys of an item in the pinned registry schema (`@shadcn/registry` 0.1.3). Allowlist, not denylist: a key
+ *  this does not name (`font`, which makes the CLI write the CSS entry and a layout file, or one a later schema adds) is a
+ *  refusal, because the CLI could write something this never judged. */
+const ITEM_KEYS = new Set(['$schema', 'extends', 'name', 'type', 'title', 'author', 'description', 'dependencies', 'devDependencies', 'registryDependencies', 'files', 'tailwind', 'cssVars', 'css', 'envVars', 'meta', 'docs', 'categories'])
+/** Item types whose files the CLI rewrites to a framework path (`registry:page`) or whose write set is not judged (`registry:font`). */
+const REFUSED_TYPES = new Set(['registry:font', 'registry:page'])
+
 /**
  * Judges item JSON: the file targets it declares and the other things it makes the CLI write or fetch. Returns the
  * paths to check for symlinks, or the reason it is refused. Fail closed: anything it cannot judge is a refusal.
@@ -98,6 +105,9 @@ export function vetItem(text: string, cssEntry: string): VettedItem | { error: s
   }
   if (typeof item !== 'object' || item === null || Array.isArray(item)) return { error: 'is not a JSON object' }
   const o = item as Record<string, unknown>
+  if (o.type !== undefined && (typeof o.type !== 'string' || REFUSED_TYPES.has(o.type))) return { error: `is of type ${JSON.stringify(o.type)}, whose files the CLI places by rules this check does not model` }
+  const unknown = Object.keys(o).find((k) => !ITEM_KEYS.has(k))
+  if (unknown !== undefined) return { error: `has the key ${JSON.stringify(unknown)}, which this check does not know; it may make the CLI write files that cannot be checked` }
   const paths: string[] = []
   if (o.files !== undefined) {
     if (!Array.isArray(o.files)) return { error: '"files" is not an array' }
@@ -127,8 +137,7 @@ export function vetItem(text: string, cssEntry: string): VettedItem | { error: s
   // what else the CLI writes: the Tailwind CSS entry (css, cssVars), env files (envVars)
   if (o.css !== undefined || o.cssVars !== undefined || o.tailwind !== undefined) paths.push(cssEntry)
   if (o.envVars !== undefined) paths.push('.env', '.env.local')
-  // a components.json the item would merge in, and dependencies on other items the CLI would fetch after this check
-  if (o.config !== undefined) return { error: 'declares a "config" (components.json settings), which the CLI may merge; that cannot be checked here' }
+  // dependencies on other items the CLI would fetch after this check (a `config` that would merge into components.json is an unknown key, refused above)
   const deps = [...(Array.isArray(o.registryDependencies) ? o.registryDependencies : o.registryDependencies === undefined ? [] : [null]), ...(o.extends === undefined ? [] : [o.extends])]
   for (const d of deps) {
     if (typeof d !== 'string') return { error: 'has a registryDependencies / extends entry that is not a string' }

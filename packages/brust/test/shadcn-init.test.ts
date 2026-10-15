@@ -427,13 +427,17 @@ test('F193: a custom alias with an unreadable components.json is refused (fail c
   expect(r.calls).toEqual([])
 })
 
-test('F193: every target of a paths entry and nested entries of an alias directory are walked', async () => {
+test('F193: the first target of a paths entry is the one the CLI writes to, and nested entries of an alias directory are walked', async () => {
+  // tsconfig-paths (the CLI's resolver) returns the FIRST candidate of an entry; the second target is never written
   const outside = outsideDir()
-  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~k/*": ["./safe/*", "./second/*"] } } }' })
+  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~k/*": ["./first/*", "./second/*"] } } }' })
   writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~k/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
   mkdirSync(join(d, 'second'))
-  symlinkSync(outside, join(d, 'second/ui')) // the SECOND target of the entry
-  expect((await init(d)).code).toBe(2)
+  symlinkSync(outside, join(d, 'second/ui'))
+  expect((await init(d)).code).toBe(0) // the CLI does not write under second/
+  mkdirSync(join(d, 'first'))
+  symlinkSync(outside, join(d, 'first/ui'))
+  expect((await init(d)).code).toBe(2) // the FIRST target is where it writes
   const n = project()
   mkdirSync(join(n, 'components/ui/deep'), { recursive: true })
   symlinkSync(join(outside, 'x.tsx'), join(n, 'components/ui/deep/x.tsx')) // nested entry

@@ -1,10 +1,12 @@
-// F226: the `paths` the shadcn CLI uses are the ones of the whole tsconfig `extends` chain. The F193 pre-check reads
-// that chain (relative files, a package config, a list, `baseUrl`), and refuses when it cannot be read: never `@/*` by guess.
+// F226: the `paths` the shadcn CLI uses are the ones `tsconfig-paths` 4.2.0 (the CLI's own resolver, pinned beside
+// SHADCN_VERSION) makes of the `extends` chain, NOT TypeScript's: the paths base is the TOP file's directory, an inherited
+// baseUrl is rebased by the extends specifier string, a package config is looked up only at <dir>/node_modules/<spec>,
+// an unresolved parent counts as empty. The F193 pre-check asks that same code, and refuses a target outside the project.
 import { afterAll, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { shadcnInit } from '../src/shadcn/init'
+import { shadcnInit, TSCONFIG_PATHS_VERSION } from '../src/shadcn/init'
 
 const dirs: string[] = []
 afterAll(() => {
@@ -83,16 +85,8 @@ test('F226: an own "paths" replaces the inherited ones whole; baseUrl is inherit
   expect(r.text).toContain('lib-root/components')
 })
 
-test('F226: a package config in node_modules, a list of extends (later wins) and a chain two files long are read', async () => {
+test('F226: a list of extends (later wins) and a chain two files long are read', async () => {
   const outside = outsideDir()
-  const pkg = project({
-    'tsconfig.json': '{ "extends": "@acme/config/tsconfig.json" }',
-    'node_modules/@acme/config/tsconfig.json': '{ "extends": "./inner.json" }',
-    'node_modules/@acme/config/inner.json': '{ "compilerOptions": { "baseUrl": "../../..", "paths": { "@/*": ["./web/*"] } } }',
-  })
-  mkdirSync(join(pkg, 'web'))
-  symlinkSync(outside, join(pkg, 'web/components'))
-  expect((await init(pkg, ['button'])).code).toBe(2)
   const list = project({
     'tsconfig.json': '{ "extends": ["./one.json", "./two.json"] }',
     'one.json': '{ "compilerOptions": { "paths": { "@/*": ["./one/*"] } } }',
@@ -107,15 +101,62 @@ test('F226: a package config in node_modules, a list of extends (later wins) and
   expect((await init(one, ['button'])).code).toBe(2) // two.json has no paths: one.json's stay
 })
 
-test('F226: a chain that cannot be read is refused with the file named, and nothing is spawned or written', async () => {
+// Mellow F1 (a): the node_modules chain of the lane's earlier fixture. tsconfig-paths rebases the inner baseUrl
+// "../../.." by dirname of the extends STRINGS ("@acme/config" then "."), not by where the files are, so the base is the
+// PARENT of the project and the CLI would write outside it. TypeScript's reading (<project>/web) was a clean project.
+test('F226 (a): a baseUrl inherited through a package config that lands outside the project is refused, with no link at all', async () => {
+  const pkg = project({
+    'tsconfig.json': '{ "extends": "@acme/config/tsconfig.json" }',
+    'node_modules/@acme/config/tsconfig.json': '{ "extends": "./inner.json" }',
+    'node_modules/@acme/config/inner.json': '{ "compilerOptions": { "baseUrl": "../../..", "paths": { "@/*": ["./web/*"] } } }',
+  })
+  mkdirSync(join(pkg, 'web'))
+  const r = await init(pkg, ['button'])
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(r.text).toContain('outside the project')
+})
+
+// Mellow F1 (b): paths declared in ./config/base.json have no baseUrl, so they resolve from the TOP file's directory
+// (<project>/src), not from config/. A link at src/components is the CLI's target.
+test('F226 (b): inherited paths without a baseUrl resolve from the top tsconfig directory', async () => {
+  const outside = outsideDir()
+  const files = { 'tsconfig.json': '{ "extends": "./config/base.json" }', 'config/base.json': '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }' }
+  const d = project(files)
+  mkdirSync(join(d, 'src'))
+  symlinkSync(outside, join(d, 'src/components'))
+  const r = await init(d, ['button'])
+  expect(r.code).toBe(2)
+  expect(r.text).toContain('src/components')
+  // a link under config/src (where TypeScript would put it) is not a target
+  const e = project(files)
+  mkdirSync(join(e, 'config/src'), { recursive: true })
+  symlinkSync(outside, join(e, 'config/src/components'))
+  expect((await init(e, ['button'])).code).toBe(0)
+})
+
+// Mellow F1 (c): "@acme/tsconfig" is looked up by tsconfig-paths only at node_modules/@acme/tsconfig(.json) - there is no
+// package.json "tsconfig" field and no <pkg>/tsconfig.json - so the parent counts as empty and the paths are the command's own.
+test('F226 (c): a package config the CLI cannot find counts as empty, as the CLI sees it', async () => {
+  const outside = outsideDir()
+  const d = project({
+    'tsconfig.json': '{ "extends": "@acme/tsconfig" }',
+    'node_modules/@acme/tsconfig/tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./src/*"] } } }',
+    'node_modules/@acme/tsconfig/package.json': '{ "name": "@acme/tsconfig" }',
+  })
+  mkdirSync(join(d, 'src'))
+  symlinkSync(outside, join(d, 'src/components'))
+  const r = await init(d, ['button'])
+  expect(r.code).toBe(0) // src/ is not a target: the CLI sees no paths, so its target is the command's own @/* → ./*
+  expect(r.text).toContain('not edited') // no compilerOptions to add the line to: the reader is told to
+})
+
+test('F226: a chain the CLI throws on is refused, and nothing is spawned or written', async () => {
   const outside = outsideDir()
   const cases: Record<string, Record<string, string>> = {
-    'a missing file': { 'tsconfig.json': '{ "extends": "./missing.json" }' },
-    'an unresolvable package': { 'tsconfig.json': '{ "extends": "@nope/config" }' },
     'a parent that is not JSON': { 'tsconfig.json': '{ "extends": "./b.json" }', 'b.json': '{ nope' },
     'a cycle': { 'tsconfig.json': '{ "extends": "./b.json" }', 'b.json': '{ "extends": "./tsconfig.json" }' },
     'a non-string extends': { 'tsconfig.json': '{ "extends": 3 }' },
-    'a configDir template': { 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["${configDir}/*"] } } }' },
   }
   for (const [name, files] of Object.entries(cases)) {
     const d = project(files)
@@ -126,8 +167,23 @@ test('F226: a chain that cannot be read is refused with the file named, and noth
     expect(readFileSync(join(d, 'tsconfig.json'), 'utf8'), name).toBe(before)
     expect(() => readFileSync(join(d, 'components.json')), name).toThrow()
   }
-  expect((await init(project({ 'tsconfig.json': '{ "extends": "./missing.json" }' }))).text).toContain('missing.json')
   void outside
+})
+
+test('F226: a parent tsconfig-paths cannot find counts as empty (the CLI does the same); a ${configDir} stays literal', async () => {
+  for (const ext of ['./missing.json', '@nope/config']) {
+    const d = project({ 'tsconfig.json': `{ "extends": "${ext}" }` })
+    expect((await init(d, ['button'])).code, ext).toBe(0)
+    expect(readFileSync(join(d, 'tsconfig.json'), 'utf8'), ext).toBe(`{ "extends": "${ext}" }`)
+  }
+  // the CLI does not expand ${configDir}: it writes under a directory of that literal name, which is checked as any other
+  const outside = outsideDir()
+  const t = project({ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["${configDir}/*"] } } }' })
+  mkdirSync(join(t, '${configDir}'))
+  symlinkSync(outside, join(t, '${configDir}/components'))
+  const r = await init(t, ['button'])
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
 })
 
 test('F226 control: an extends-only tsconfig whose chain has no paths still gets the @/* the command adds', async () => {
@@ -135,4 +191,10 @@ test('F226 control: an extends-only tsconfig whose chain has no paths still gets
   const r = await init(d, ['button'])
   expect(r.code).toBe(0)
   expect(readFileSync(join(d, 'tsconfig.json'), 'utf8')).toContain('"@/*": ["./*"]')
+})
+
+test('F226: tsconfig-paths is a dependency at exactly the version the pinned CLI resolves with', () => {
+  const pkg = JSON.parse(readFileSync(join(import.meta.dir, '../package.json'), 'utf8')) as { dependencies: Record<string, string> }
+  expect(TSCONFIG_PATHS_VERSION).toBe('4.2.0')
+  expect(pkg.dependencies['tsconfig-paths']).toBe(TSCONFIG_PATHS_VERSION)
 })

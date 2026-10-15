@@ -126,6 +126,21 @@ test('F228: an item we cannot judge is refused: not JSON, not an object, bad fil
   expect((await init(project(), item({ registryDependencies: ['button', 'utils'] }))).code).toBe(0)
 })
 
+// Mellow F2: vetItem was a denylist of keys. A `registry:font` item makes the CLI write the CSS entry (and, on a next app,
+// a layout file) through keys it did not name. Now only the keys of the pinned schema pass.
+test('F228: a font item and a key the check does not know are refused (allowlist), as is a registry:page', async () => {
+  const font = await refused('font item', item({ type: 'registry:font', name: 'inter', font: { family: "'Inter'", provider: 'google', import: 'Inter', variable: '--font-sans' } }))
+  expect(font.text).toContain('registry:font')
+  const key = await refused('font key', item({ name: 'x', font: { family: 'x' } }))
+  expect(key.text).toContain('"font"')
+  await refused('unknown key', item({ name: 'x', somethingNew: true }))
+  await refused('config key', item({ config: { aliases: { ui: '@/x' } } }))
+  await refused('registry:page', item({ type: 'registry:page', files: [{ path: 'a.tsx', type: 'registry:page', target: '~/a.tsx' }] }))
+  await refused('type not a string', item({ type: 3 }))
+  // every key of the schema is accepted when it is sound
+  expect((await init(project(), item({ $schema: 'x', name: 'x', type: 'registry:ui', title: 't', author: 'a', description: 'd', dependencies: ['x'], devDependencies: ['y'], registryDependencies: ['button'], files: [], meta: {}, docs: 'd', categories: ['c'] }))).code).toBe(0)
+})
+
 test('F228: a network or HTTP error refuses with the reason; nothing is spawned or written', async () => {
   const r = await refused('network', new Error('connection refused'))
   expect(r.text).toContain('connection refused')
