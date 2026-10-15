@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 50 | 7 | 17 | 26 | 0 | 0 | 0 | 0 |
+| C Hooks | 52 | 8 | 17 | 27 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 414 | 195 | 54 | 161 | 3 | 1 | 0 | 0 |
+| **Total** | 416 | 196 | 54 | 162 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -348,6 +348,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
 | c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |
+| c-native-provider-as-child | asChild on a consumer of a state Provider, with a plain element child | static | static | 0 | ok | — | Q5/R34.117: the consumer's host is the caller's element, carrying the frame's bindings and handler |
+| c-native-provider-as-child-handler | asChild on a consumer of a state Provider, the child element has its own handler | react | react | ssr | ok | fallback:island-children, fallback:slot-native, fallback:slot-owner, info:specialise-unsupported | Q5: a handler on the asChild child is not composed yet (child first, then the Provider's); the Provider stays an island |
 | c-native-provider-two-sites | two call sites of a state Provider with different text | static | static | 0 | ok | — | R34.124: one clone per call site (own jinja and ids), one shared factory module for the equal chunks |
 | c-native-provider-handler-in-content | a page handler written in the content of a state Provider | react | react | ssr | ok | fallback:island-children, info:specialise-unsupported | R34.125: a page-owned handler in the content cannot move into the clone (specialise-unsupported; the island keeps it) |
 | c-native-provider-caller-prop | a prop of the calling component read in the content of a state Provider | static | static | ssr | ok | info:specialise-unsupported | R34.123 (S2): a name of the rendering component would read the clone's own members; the Provider stays the island |
