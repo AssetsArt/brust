@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
 | B Composition | 207 | 109 | 13 | 85 | 0 | 0 | 0 | 0 |
-| C Hooks | 38 | 2 | 14 | 22 | 0 | 0 | 0 | 0 |
+| C Hooks | 41 | 2 | 15 | 24 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 393 | 187 | 50 | 152 | 3 | 1 | 0 | 0 |
+| **Total** | 396 | 187 | 51 | 154 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -315,6 +315,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-forward | a live prop through a static child's spread, with a handler | native | native | 0 | ok | — | R34.18 extended (2b-handlers): the parent binds the live value on the child element; the child stays unlinked |
 | c-live-forward-two-spreads | a live prop through a child that spreads the same rest on two elements | react | react | ssr | ok | fallback:spread-props | R34.18 extended: a live value needs ONE element to bind on |
 | c-live-forward-class | a live className through a static child's spread | react | react | ssr | ok | fallback:spread-handler | R34.18 extended: class and style merge, they are not bound through a spread |
+| c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
+| c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
+| c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
 | c-usetransition | useTransition | react | react | ssr | ok | fallback:hook-unsupported |  |
 | c-usesyncexternalstore | useSyncExternalStore | react | react | ssr | ok | fallback:hook-unsupported |  |
