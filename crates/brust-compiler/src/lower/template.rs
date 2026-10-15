@@ -37,6 +37,9 @@ pub enum PropBinding {
     /// An event handler the parent hoisted (shadcn S1.3): the `x-on-*` directive value naming the
     /// parent's member. Bound where a spread lands it on an element; never a value.
     Handler(String),
+    /// A live value the parent bound itself (2b-handlers): the finished attribute text (server print and
+    /// `x-bind-*` member) in the parent's scope, bound where a spread lands it on an element.
+    Live(String),
 }
 
 /// One piece of a call site's props, in source order (shadcn S1.2): a named prop, or a spread
@@ -832,6 +835,88 @@ impl<'a, 'c> Printer<'a, 'c> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// A dynamic attribute `name={value}`: its server print and, when the value reads state, its `x-bind-*` member.
+    /// Shared by an element's own attributes and by a live prop the parent binds on a child's element (2b-handlers C4:
+    /// one print path per attribute kind).
+    fn dynamic_attr_into(
+        &mut self,
+        name: &str,
+        value: &Expr,
+        sa: &Attr,
+        tag: &str,
+        model: Option<&str>,
+        open: &mut String,
+    ) {
+        let html = attr_name(name);
+        if is_refused_attr(&html) {
+            self.refuse(&html, tag);
+            return;
+        }
+        let raw = match sa {
+            Attr::Dynamic { value: sv, .. } => raw_of(value, Some(sv)),
+            _ => None,
+        };
+        let v = self.value(value);
+        let style_obj = match raw {
+            Some(RawExpr {
+                kind: RawKind::Object(props),
+                ..
+            }) if html == "style" && matches!(value, Expr::Server(_)) => Some(props),
+            _ => None,
+        };
+        if let Some(props) = style_obj {
+            if props.is_empty() {
+                open.push_str(" style=\"{{ {} | style_css | e }}\"");
+            } else {
+                // M3-P P7: lowered at compile time. minijinja's dict
+                // literal iterated sorted by key and kept the LAST value
+                // of a duplicate key; do the same here, and drop the
+                // keys `style_obj_to_css` drops at render (`css_key`),
+                // so no per-element dict is built. Values are pure
+                // expressions, so a dropped key loses nothing.
+                let mut sorted: std::collections::BTreeMap<&str, _> =
+                    std::collections::BTreeMap::new();
+                for (k, pv) in props.iter() {
+                    sorted.insert(k.as_str(), pv);
+                }
+                let args: Vec<String> = sorted
+                    .into_iter()
+                    .filter(|(k, _)| brust_jinja::css_key(k))
+                    .flat_map(|(k, pv)| [jinja_string(k), self.jinja(pv)])
+                    .collect();
+                open.push_str(&format!(
+                    " style=\"{{{{ css_decls({}) | e }}}}\"",
+                    args.join(", ")
+                ));
+            }
+        } else if html == "style" {
+            // A style object held in a variable or prop: the same CSS
+            // rule; an undefined/null style omits the attribute (F36).
+            open.push_str(&format!(
+                "{{% if ({v}) | present %}} style=\"{{{{ ({v}) | style_css | e }}}}\"{{% endif %}}"
+            ));
+        } else {
+            open.push_str(&dynamic_attr(&html, &v, tag));
+        }
+        if model.is_some() && (html == "value" || html == "checked") {
+            return;
+        }
+        if let Some(b) = self.reactive(raw, value) {
+            let paint = if html == "style" {
+                Paint::Style
+            } else {
+                match attr_kind(&html) {
+                    AttrKind::Boolean => Paint::Bool,
+                    AttrKind::Stringify => Paint::AttrStr,
+                    AttrKind::Overloaded => Paint::AttrOver,
+                    AttrKind::Plain => Paint::Attr,
+                }
+            };
+            let d = self.value_member(raw.unwrap(), b, paint);
+            open.push_str(&format!(" x-bind-{html}=\"{d}\""));
+        }
+    }
+
     fn attr(
         &mut self,
         a: &Attr,
@@ -857,74 +942,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
             }
             Attr::Dynamic { name, value } => {
-                let html = attr_name(name);
-                if is_refused_attr(&html) {
-                    self.refuse(&html, tag);
-                    return;
-                }
-                let raw = match sa {
-                    Attr::Dynamic { value: sv, .. } => raw_of(value, Some(sv)),
-                    _ => None,
-                };
-                let v = self.value(value);
-                let style_obj = match raw {
-                    Some(RawExpr {
-                        kind: RawKind::Object(props),
-                        ..
-                    }) if html == "style" && matches!(value, Expr::Server(_)) => Some(props),
-                    _ => None,
-                };
-                if let Some(props) = style_obj {
-                    if props.is_empty() {
-                        open.push_str(" style=\"{{ {} | style_css | e }}\"");
-                    } else {
-                        // M3-P P7: lowered at compile time. minijinja's dict
-                        // literal iterated sorted by key and kept the LAST value
-                        // of a duplicate key; do the same here, and drop the
-                        // keys `style_obj_to_css` drops at render (`css_key`),
-                        // so no per-element dict is built. Values are pure
-                        // expressions, so a dropped key loses nothing.
-                        let mut sorted: std::collections::BTreeMap<&str, _> =
-                            std::collections::BTreeMap::new();
-                        for (k, pv) in props.iter() {
-                            sorted.insert(k.as_str(), pv);
-                        }
-                        let args: Vec<String> = sorted
-                            .into_iter()
-                            .filter(|(k, _)| brust_jinja::css_key(k))
-                            .flat_map(|(k, pv)| [jinja_string(k), self.jinja(pv)])
-                            .collect();
-                        open.push_str(&format!(
-                            " style=\"{{{{ css_decls({}) | e }}}}\"",
-                            args.join(", ")
-                        ));
-                    }
-                } else if html == "style" {
-                    // A style object held in a variable or prop: the same CSS
-                    // rule; an undefined/null style omits the attribute (F36).
-                    open.push_str(&format!(
-                        "{{% if ({v}) | present %}} style=\"{{{{ ({v}) | style_css | e }}}}\"{{% endif %}}"
-                    ));
-                } else {
-                    open.push_str(&dynamic_attr(&html, &v, tag));
-                }
-                if model.is_some() && (html == "value" || html == "checked") {
-                    return;
-                }
-                if let Some(b) = self.reactive(raw, value) {
-                    let paint = if html == "style" {
-                        Paint::Style
-                    } else {
-                        match attr_kind(&html) {
-                            AttrKind::Boolean => Paint::Bool,
-                            AttrKind::Stringify => Paint::AttrStr,
-                            AttrKind::Overloaded => Paint::AttrOver,
-                            AttrKind::Plain => Paint::Attr,
-                        }
-                    };
-                    let d = self.value_member(raw.unwrap(), b, paint);
-                    open.push_str(&format!(" x-bind-{html}=\"{d}\""));
-                }
+                self.dynamic_attr_into(name, value, sa, tag, model, open)
             }
             Attr::Event { event, handler } => {
                 if model.is_some() && event == "change" {
@@ -991,6 +1009,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             Runtime(String),
             /// A forwarded event handler: the React key and the directive value.
             Handler(String, String),
+            /// A live value the parent bound itself: the React key and the finished attribute text.
+            Live(String, String),
         }
         // Attributes merge on the HTML attribute they print as (review F1): `className` and
         // `class`, `htmlFor` and `for`, `tabIndex` and `tabindex` are one key, so a later alias wins.
@@ -1000,7 +1020,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     Attr::Static { name, .. } | Attr::Dynamic { name, .. } => Some(name.clone()),
                     _ => None,
                 },
-                It::Bound(k, _) | It::Handler(k, _) => Some(k.clone()),
+                It::Bound(k, _) | It::Handler(k, _) | It::Live(k, _) => Some(k.clone()),
                 It::Runtime(_) => None,
             }
         };
@@ -1023,6 +1043,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                             children.push(Seg::Named(k, b));
                         } else if let PropBinding::Handler(d) = b {
                             items.push(It::Handler(k, d));
+                        } else if let PropBinding::Live(text) = b {
+                            items.push(It::Live(k, text));
                         } else if k == "key"
                             || k == "ref"
                             || (k.starts_with("on")
@@ -1102,7 +1124,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
-                Some(PropBinding::Handler(_)) | None => None,
+                Some(PropBinding::Handler(_) | PropBinding::Live(_)) | None => None,
             }
         };
         let last_runtime = items.iter().rposition(|it| matches!(it, It::Runtime(_)));
@@ -1176,6 +1198,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                         self.handler_attr(k, d, tag, attrs, open)
                     }
                     It::Handler(..) => {}
+                    // The component's own rest cannot carry the key (`shadowed_props`), so the live value is final.
+                    It::Live(k, text) if !overridden(k) => open.push_str(text),
+                    It::Live(..) => {}
                     It::Runtime(d) => segs.push(if tail_names.is_empty() {
                         d.clone()
                     } else {
@@ -1213,6 +1238,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 It::Own(i) => self.attr(&attrs[*i], &sattrs[*i], tag, attrs, model, open),
                 It::Bound(k, PropBinding::Expr(e)) => self.bound_attr(k, e, tag, open),
                 It::Handler(k, d) => self.handler_attr(k, d, tag, attrs, open),
+                It::Live(_, text) => open.push_str(text),
                 It::Bound(..) | It::Runtime(_) => {}
             }
         }
@@ -1744,6 +1770,28 @@ impl<'a, 'c> Printer<'a, 'c> {
                 let d = directive(&h.name, &h.item_scoped);
                 segs.push(Seg::Named(pname.clone(), PropBinding::Handler(d)));
                 continue;
+            }
+            // A live value the parent binds on the child's element (2b-handlers): printed here, in this
+            // component's scope, like an attribute written on that element.
+            if ir
+                .live_forwards
+                .iter()
+                .any(|f| f.loc == *loc && &f.key == pname)
+            {
+                let sv = sprops
+                    .iter()
+                    .find(|(k, _)| k == pname)
+                    .map(|(_, e)| e.clone());
+                if let Some(sv) = sv {
+                    let mut text = String::new();
+                    let sa = Attr::Dynamic {
+                        name: pname.clone(),
+                        value: sv,
+                    };
+                    self.dynamic_attr_into(pname, v, &sa, name, None, &mut text);
+                    segs.push(Seg::Named(pname.clone(), PropBinding::Live(text)));
+                    continue;
+                }
             }
             if matches!(v, Expr::ClientOnly { .. }) {
                 continue;
