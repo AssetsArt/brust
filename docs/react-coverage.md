@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
-| B Composition | 215 | 112 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 43 | 2 | 16 | 25 | 0 | 0 | 0 | 0 |
+| B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
+| C Hooks | 44 | 2 | 17 | 25 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 406 | 189 | 53 | 160 | 3 | 1 | 0 | 0 |
+| **Total** | 408 | 190 | 54 | 160 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -297,6 +297,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-pkg-drift | a package whose published JS was not built from its map | static | static | ssr | ok | fallback:external-component | F153c R34.62: the integrity check fails: the island of the published export |
 | b-pkg-primitive-changed | a Primitive factory of another shape | static | static | ssr | ok | fallback:external-component | F153c R34.65 ruling Q1: no structural match, no host: the island of the published export |
 | b-pkg-dynamic-spread | a package leaf spreading an object computed by a call | static | static | ssr | ok | fallback:external-component | F153c fail closed: spread-props in the source, so the island of the published export |
+| b-absent-prop-default | a native child whose defaulted prop the call site omits (`<Ch />`, `defaultOpen = false`), in a static page | static | static | 0 | ok | — | F234: an omitted prop is left out of the x-props seed (the default applies on the client as on the server); an explicit null stays null |
 | b-pkg-namespace-barrel | a component reached through a package barrel (`export * as X from`) | static | static | 0 | ok | — | F153c: the `radix-ui` barrel shape (`export * as Label from '@radix-ui/react-label'`) is followed to the member |
 
 ## C. Hooks
@@ -346,6 +347,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useformstatus-child | useFormStatus in a child inside a static <form> | react | static | ssr | ok | — | known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react |
 | c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
 | c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
+| c-handler-binding-named-a | a handler that reads a component binding named a | native | native | 0 | ok | — | F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array |
 
 ## D. API surface
 
