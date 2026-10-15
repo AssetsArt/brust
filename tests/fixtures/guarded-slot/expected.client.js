@@ -2,7 +2,7 @@
 import { signal, computed, defineBehavior } from "brust/runtime-dom"
 export default defineBehavior("input_f3d26057", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const open = signal(false)
-  const _h1 = (...a) => (() => open.set(!open()))(...a)
+  const _h1 = (...__args) => (() => open.set(!open()))(...__args)
   const _c1 = computed(() => props().show)
   const _c2 = computed(() => open())
   const _c3 = computed(() => props().a && props().b)

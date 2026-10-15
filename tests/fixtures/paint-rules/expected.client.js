@@ -12,7 +12,7 @@ const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__
 export default defineBehavior("input_403bf43c", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const on = signal(false)
   const ref = __ref("ref")
-  const _h1 = (...a) => (() => on.set(!on()))(...a)
+  const _h1 = (...__args) => (() => on.set(!on()))(...__args)
   const _c1 = computed(() => __attr(on() && "on"))
   const _c2 = computed(() => __css({ color: on() ? "red" : "blue", fontSize: (props()["size"] === undefined ? 3 : props()["size"]), opacity: on() ? 1 : 0.5 }))
   const _c3 = computed(() => __text(on() && "Loading"))

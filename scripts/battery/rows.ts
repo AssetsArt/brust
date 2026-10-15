@@ -1481,4 +1481,7 @@ export const rows: Row[] = [
   { id: 'c-useid-in-conditional', category: 'C', authoring: 'useId() called in a branch of the returned tree', expect: 'react',
     snippet: `import { useId, useState } from 'react'\nexport default function C({ label }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}>{n ? <input id={useId()} /> : null}<span>{label}</span></div> }`,
     note: 'R34.120: a hook in a conditional position stays refused (hook-in-expression)' },
+  { id: 'c-handler-binding-named-a', category: 'C', authoring: 'a handler that reads a component binding named a', expect: 'native', jobs: 0,
+    snippet: `import { useRef, useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); const a = useRef<HTMLButtonElement>(null); return <button ref={a} onClick={() => { setN(n + 1); console.log(a.current) }}>{n}</button> }`,
+    note: 'F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array' },
 ]
