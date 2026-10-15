@@ -11,8 +11,8 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | B Composition | 215 | 112 | 14 | 89 | 0 | 0 | 0 | 0 |
 | C Hooks | 41 | 2 | 15 | 24 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 404 | 189 | 52 | 159 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 69 | 31 | 10 | 24 | 3 | 1 | 0 | 0 |
+| **Total** | 406 | 189 | 52 | 161 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -419,6 +419,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-island-prop-json-control | literal and props-path values to a React child (control) | static | static | ssr | ok | — | shadcn S1 R34.56 control: JSON props still make an island under a static host (unchanged) |
 | e-jsx-runtime-call | a hand-written `jsx(…)` call from react/jsx-runtime (what compiled-JS packages contain) | react | react | ssr | ok | fallback:jsx-runtime-call | S3 R34.67: fails closed; read as an expression it would print an element object |
 | e-jsx-runtime-namespace | `R.jsxDEV(…)` through a namespace import of the dev runtime | react | react | ssr | ok | fallback:jsx-runtime-call |  |
+| e-jsx-runtime-alias-value | the runtime builder read as a value (`const h = jsx; h(…)`) | react | react | ssr | ok | fallback:jsx-runtime-call | F156: any read of a runtime builder is jsx-runtime-call, not an opaque server slot |
+| e-jsx-runtime-comma-call | the runtime builder called through a comma (`(0, jsx)(…)`, bundler output) | react | react | ssr | ok | fallback:jsx-runtime-call | F156: any read of a runtime builder is jsx-runtime-call, not an opaque server slot |
 | e-jsx-runtime-local-name | a local function named `jsx` is not the runtime | static | static | precompute | ok | — |  |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
