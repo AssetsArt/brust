@@ -4,3 +4,9 @@ export function later(f: () => { v: string }) {
   f().v = 'b'
   return 0
 }
+
+// F215 (Mellow V3): changes the object it is handed.
+export function register(o: { v: string }) {
+  o.v = 'b'
+  return 0
+}

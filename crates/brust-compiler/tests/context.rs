@@ -826,6 +826,13 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
         // Lead ruling c2f61a77: the exemption is by symbol only; an app re-export or a local alias of forwardRef gets none.
         "side-app-forwardref.tsx",
         "side-alias-forwardref.tsx",
+        // Mellow V3 (delta 7f6ce3e0): package code handed an app-imported object, directly or through a closure.
+        "side-app-object-handed.tsx",
+        "side-app-object-closure.tsx",
+        // … and a package handed a callback that calls app code (`wrap((e) => { e.value = formatPrice(1) })`).
+        "side-package-callback.tsx",
+        // Lead ruling b76d738c: an app re-export of brust's cache gets no exemption.
+        "side-app-cache.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(
@@ -841,12 +848,12 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
         "side-unread.tsx",
         "side-callables-pure.tsx",
         "side-class-pure.tsx",
-        // Round 2: a package handed a callback that writes through its own parameter and calls app code (trusted, N1).
-        "side-package-callback.tsx",
         // Lead ruling c2f61a77: React's forwardRef / memo (by symbol: named, namespace or default import of 'react') handed a
         // render function that reads a module array; they store it and never call it at load time.
         "side-react-forwardref.tsx",
         "side-react-memo.tsx",
+        // Lead ruling b76d738c: brust's own cache (by symbol) stores the component, called only at render.
+        "side-brust-cache.tsx",
     ] {
         let (ir, jinja) = page(f);
         assert!(

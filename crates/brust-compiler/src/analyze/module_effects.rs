@@ -230,6 +230,13 @@ pub fn module_effect(
     // Mellow V1 (delta b3932298): a module-owned array or object (a module binding that is not a function, a value taken
     // from package code or a primitive), and every function whose code reads one or names such a function: handed to
     // package code, the package could call it and change the object it returns (`later(() => cfg)`).
+    // Mellow V3 (delta 7f6ce3e0): an app import is another app module's value; package code handed it (or code reading
+    // it) could change that module's object, which the job imports without running this call.
+    let app_import = |r: js_ast::Ref| {
+        names
+            .import_of(r)
+            .is_some_and(|(src, _)| app_specifier(src))
+    };
     let objects: HashSet<u32> = module
         .iter()
         .copied()
@@ -241,8 +248,8 @@ pub fn module_effect(
         for (k, w) in &walks {
             if !object_readers.contains(k)
                 && w.used.iter().any(|r| {
-                    let r = key(*r);
-                    objects.contains(&r) || object_readers.contains(&r)
+                    let k2 = key(*r);
+                    objects.contains(&k2) || object_readers.contains(&k2) || app_import(*r)
                 })
             {
                 object_readers.insert(*k);
@@ -252,17 +259,19 @@ pub fn module_effect(
             break;
         }
     }
-    let gives_object = |k: u32| objects.contains(&k) || object_readers.contains(&k);
+    let gives_object = |r: js_ast::Ref| {
+        let k = key(r);
+        objects.contains(&k) || object_readers.contains(&k) || app_import(r)
+    };
     fn hands_module_object(
         a: &js_ast::Expr,
-        names: &NameTable<'_>,
-        gives_object: &dyn Fn(u32) -> bool,
+        gives_object: &dyn Fn(js_ast::Ref) -> bool,
         depth: u8,
     ) -> bool {
         if depth > 16 {
             return true;
         }
-        let go = |x: &js_ast::Expr| hands_module_object(x, names, gives_object, depth + 1);
+        let go = |x: &js_ast::Expr| hands_module_object(x, gives_object, depth + 1);
         match &a.data {
             E::EArray(arr) => arr.items.iter().any(|x| match &x.data {
                 E::ESpread(sp) => go(&sp.value),
@@ -277,12 +286,12 @@ pub fn module_effect(
             E::EArrow(_) | E::EFunction(_) => {
                 let mut w = Walk::default();
                 w.expr(a);
-                w.used.iter().any(|r| gives_object(names.key_of(*r)))
+                w.used.iter().any(|r| gives_object(*r))
             }
-            _ => chain_root(a).is_some_and(|r| gives_object(names.key_of(r))),
+            _ => chain_root(a).is_some_and(gives_object),
         }
     }
-    let hands = |a: &js_ast::Expr| hands_module_object(a, names, &gives_object, 0);
+    let hands = |a: &js_ast::Expr| hands_module_object(a, &gives_object, 0);
     let code_writes = |w: &Walk| writes(w, &writers);
     let values = Values {
         names,
@@ -560,28 +569,37 @@ fn plain_pattern(b: &js_ast::Binding) -> bool {
     }
 }
 
-/// Mellow V1 scope: React's own `forwardRef` / `memo` (imported from `react`) store the function they are handed and never
-/// call it at load time, so handing them a render function that reads a module object hands the object to nobody.
+/// Lead rulings c2f61a77, b76d738c and d6ea7012: APIs that store the function they are handed and call it only at render, never at
+/// module load, resolved BY SYMBOL (a named import, or a member of a namespace or default import of the package): React's
+/// `forwardRef`, `memo` and `cache`, and brust's own `cache` (`cacheComponent` only tags the component). Handing them a function
+/// that reads a module or app-imported object hands it to nobody at load time. Nothing else is exempt (not
+/// `cache.invalidate`, not `createContext`, not an app re-export or a local alias).
 fn react_stores_fn(target: &js_ast::Expr, names: &NameTable<'_>) -> bool {
-    let react = |r: js_ast::Ref| names.import_of(r).is_some_and(|(src, _)| src == "react");
+    const STORES: &[(&str, &[&str])] = &[
+        ("react", &["forwardRef", "memo", "cache"]),
+        ("brust", &["cache"]),
+        ("@brust/core", &["cache"]),
+    ];
+    let names_for = |src: &str| STORES.iter().find(|(p, _)| *p == src).map(|(_, n)| *n);
     match &target.data {
+        // `React.forwardRef`, `brust.cache`: a member of a namespace or default import.
         E::EDot(d) => {
-            matches!(d.name.slice(), b"forwardRef" | b"memo")
-                && match &d.target.data {
-                    // A namespace (`* as React`) or default (`React`) import of 'react'.
-                    E::EIdentifier(id) => react(id.ref_),
-                    E::EImportIdentifier(id) => react(id.ref_),
-                    _ => false,
-                }
+            let member = String::from_utf8_lossy(d.name.slice());
+            let root = match &d.target.data {
+                E::EIdentifier(id) => Some(id.ref_),
+                E::EImportIdentifier(id) => Some(id.ref_),
+                _ => None,
+            };
+            root.and_then(|r| names.import_of(r))
+                .is_some_and(|(src, imp)| {
+                    (imp == "*" || imp == "default")
+                        && names_for(src).is_some_and(|n| n.contains(&member.as_ref()))
+                })
         }
-        _ => match &target.data {
-            E::EImportIdentifier(id) => {
-                react(id.ref_)
-                    && names
-                        .import_of(id.ref_)
-                        .is_some_and(|(_, imp)| imp == "forwardRef" || imp == "memo")
-            }
-            _ => false,
-        },
+        // `import { forwardRef } from 'react'`, `import { cache } from 'brust'`.
+        E::EImportIdentifier(id) => names
+            .import_of(id.ref_)
+            .is_some_and(|(src, imp)| names_for(src).is_some_and(|n| n.contains(&imp))),
+        _ => false,
     }
 }
