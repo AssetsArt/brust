@@ -3,7 +3,7 @@ import { computed, defineBehavior } from "brust/runtime-dom"
 const __attr = (v) => (typeof v === "boolean" ? null : v)
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("row_8f35bb06", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
-  const _h1 = (...a) => ((...a) => (props().onPick)(...a))(...a)
+  const _h1 = (...__args) => ((...__args) => (props().onPick)(...__args))(...__args)
   const _c1 = computed(() => __attr(props().selected ? "selected" : ""))
   const _c2 = computed(() => __text(props().title))
   return { _h1, _c1, _c2 }

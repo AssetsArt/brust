@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { REPORT, classifyBuild, renderReport, runBattery, type Result } from './run.ts'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { REPORT, classifyBuild, renderReport, runBattery, runtimeBytes, type Result } from './run.ts'
 import { rows } from './rows.ts'
 
 const results = runBattery()   // one cargo build + 60 brustc runs, shared by the tests below
@@ -16,9 +18,10 @@ test('report rows are fixed strings built from the row name, not machine paths o
   const pick = (id: string) => results.find((x) => x.row.id === id) as Result
   const report = renderReport([pick('a-static-text'), pick('c-usereducer')])
   const lines = report.split('\n').filter((l) => l.startsWith('| a-static-text') || l.startsWith('| c-usereducer'))
+  // F143: the Runtime column (KiB gzip) sits after Build: 0 for a page with no client JS, core + island for a react row
   expect(lines).toEqual([
-    '| a-static-text | static text | static | static | 0 | ok | — | spec §3.1 static tier |',
-    '| c-usereducer | useReducer | react | react | ssr | ok | fallback:hook-unsupported |  |',
+    '| a-static-text | static text | static | static | 0 | ok | 0 | — | spec §3.1 static tier |',
+    expect.stringMatching(/^\| c-usereducer \| useReducer \| react \| react \| ssr \| ok \| \d+\.\d \| fallback:hook-unsupported \| {2}\|$/),
   ])
   const full = renderReport(results)
   expect(full).not.toMatch(/\/Users\/|\/tmp\/|\/var\/|input_[0-9a-f]{8}|battery-/)
@@ -54,4 +57,30 @@ test('html_raw (the one unescaped sink) is printed only for dangerouslySetInnerH
     if (!r.row.snippet.includes('dangerouslySetInnerHTML')) expect(r.rawSinks).toBe(0)
   }
   expect(results.find((r) => r.row.id === 'a-inner-html-react')!.observed).toBe('react')
+})
+
+test('F143 runtimeBytes: core plus exactly the feature modules the printed templates need', () => {
+  const sizes = { core: 1000, features: { basics: 100, if: 10, for: 20, model: 30, html: 40, island: 5 } }
+  const out = mkdtempSync(join(tmpdir(), 'battery-rt-test-'))
+  try {
+    const put = (name: string, text: string) => (mkdirSync(out, { recursive: true }), writeFileSync(join(out, name), text))
+    expect(runtimeBytes(out, 'static', sizes)).toBe(0) // nothing printed: no client JS
+    put('a.jinja', '<p>hi</p>')
+    expect(runtimeBytes(out, 'static', sizes)).toBe(0) // a static template with no directive loads no runtime
+    put('b.jinja', '<button x-data="b" x-on-click="_h1" x-text="_c1">0</button>')
+    put('b.client.js', 'export default 1')
+    expect(runtimeBytes(out, 'native', sizes)).toBe(1100) // core + basics
+    put('c.jinja', '<ul x-data="c"><template x-for="i in xs"></template><i x-if="ok"></i><input x-model="v"></ul>')
+    expect(runtimeBytes(out, 'native', sizes)).toBe(1000 + 100 + 10 + 20 + 30)
+    put('d.jinja', '<brust-island data-id="d"></brust-island>')
+    expect(runtimeBytes(out, 'static', sizes)).toBe(1000 + 100 + 10 + 20 + 30 + 5)
+    // a directive named in prose (outside a tag) binds nothing
+    rmSync(out, { recursive: true, force: true })
+    put('e.jinja', '<p>use x-for to loop</p>')
+    expect(runtimeBytes(out, 'static', sizes)).toBe(0)
+    // a react-tier row is an island even when no template shows one
+    expect(runtimeBytes(out, 'react', sizes)).toBe(1005)
+  } finally {
+    rmSync(out, { recursive: true, force: true })
+  }
 })

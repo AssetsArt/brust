@@ -2,7 +2,7 @@
 import { computed, defineBehavior } from "brust/runtime-dom"
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("counter_1f1ff519", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
-  const _h1 = (...a) => ((...a) => (props().onReset)(...a))(...a)
+  const _h1 = (...__args) => ((...__args) => (props().onReset)(...__args))(...__args)
   const _c1 = computed(() => __text(props().n))
   return { _h1, _c1 }
 })

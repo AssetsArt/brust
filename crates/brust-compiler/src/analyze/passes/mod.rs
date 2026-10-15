@@ -75,6 +75,9 @@ pub struct PassCtx<'a> {
     /// The component the caller asked for (a route component), not a child compiled on the way. Only a
     /// root can be sure nothing links it, so only a root may treat its own props as fixed (ledger F70).
     pub is_root: bool,
+    /// R34.122: the component is a clone of another, its template already holds content whose hidden context props
+    /// were filled where the content was written (so a `__ctx_` prop there is not the author's).
+    pub specialised: bool,
 }
 
 impl PassCtx<'_> {

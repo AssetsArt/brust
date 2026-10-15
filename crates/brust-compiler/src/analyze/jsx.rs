@@ -531,7 +531,13 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
         Tag::Outlet => Node::Outlet,
         Tag::Provider { ctx, react } => {
             read_provider(r, &ctx, react, props_out, loc);
-            Node::Fragment(children)
+            // Transparent: a Provider around one element is that element (a Fragment of one would make an interactive
+            // component's root a `<brust-host>` wrapper that React does not render).
+            match <[Node; 1]>::try_from(children) {
+                Ok([one @ Node::Element { .. }]) => one,
+                Ok([other]) => Node::Fragment(vec![other]),
+                Err(children) => Node::Fragment(children),
+            }
         }
         Tag::Component {
             name,

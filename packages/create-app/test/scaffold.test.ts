@@ -125,6 +125,8 @@ test('pokedex: scaffold → install → build → start; /pokemon/pikachu render
   expect(existsSync(join(dir, 'data/pokedex.json'))).toBe(true)
   expect(existsSync(join(dir, 'data/team.sqlite'))).toBe(false)
   expect(existsSync(join(dir, 'test'))).toBe(false)
+  expect(existsSync(join(dir, 'app.css'))).toBe(true) // global CSS like blank: imported, built by brust
+  expect(existsSync(join(dir, 'public/app.css'))).toBe(false)
   setOverrides(dir)
   sh(['bun', 'install'], dir)
   sh(['bun', 'run', 'build'], dir)
@@ -137,6 +139,16 @@ test('pokedex: scaffold → install → build → start; /pokemon/pikachu render
   expect(((await added.json()) as { team: { id: number }[] }).team.map((m) => m.id)).toContain(25)
   const home = await (await fetch(`${a.base}/`)).text()
   expect(home).toMatch(/data-testid="team-count"[^>]*>1</)
+  // global CSS: one hashed stylesheet on every page, the 404 (its own <html>) included; no prebuilt /public/app.css
+  for (const route of ['/', '/pokedex', '/nope/really']) {
+    const html = await (await fetch(`${a.base}${route}`)).text()
+    const links = [...html.matchAll(/<link rel="stylesheet" href="(\/_brust\/client\/app-[0-9a-f]{10}\.css)" data-brust-css>/g)].map((m) => m[1]!)
+    expect([route, links.length]).toEqual([route, 1])
+    expect([route, html.includes('/public/app.css')]).toEqual([route, false])
+    const css = await fetch(new URL(links[0]!, a.base))
+    expect([route, css.status, css.headers.get('content-type')?.includes('text/css')]).toEqual([route, 200, true])
+    if (route === '/') expect(await css.text()).toContain('.bg-brand-500{')
+  }
   await stopOne(a)
   const b = await start(dir)
   const again = (await (await fetch(`${b.base}/_brust/action/team`)).json()) as { team: { id: number }[] }

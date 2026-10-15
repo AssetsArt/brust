@@ -674,7 +674,7 @@ pub fn module_may_hold_element(
     opts: &crate::analyze::component::AnalyzeOptions,
     depth: u8,
 ) -> bool {
-    if !(source.starts_with("./") || source.starts_with("../")) {
+    if !super::modules::is_relative_spec(source) {
         return false;
     }
     if depth > 4 {

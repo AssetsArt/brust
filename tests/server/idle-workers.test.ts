@@ -11,8 +11,10 @@ const app = join(import.meta.dir, '../fixtures/shadcn')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
 const STATIC = { dist: '.rows/dist-idle-workers', entry: 'started/idle-workers-routes.tsx' }
 const LOADER = { dist: '.rows/dist-idle-workers-loader', entry: 'started/idle-workers-loader-routes.tsx' }
+const ISLAND = { dist: '.rows/dist-idle-workers-island', entry: 'started/idle-workers-island-routes.tsx' }
 const FORCED = '.rows/dist-idle-workers-forced'
 const STRAY = '.rows/dist-idle-workers-stray'
+const NOPOOL = '.rows/dist-idle-workers-island-nopool'
 const PAGES = ['/', '/about', '/count', '/missing']
 
 type Server = { base: string; log: () => string; proc: ReturnType<typeof Bun.spawn> }
@@ -76,16 +78,18 @@ async function snapshot(base: string, path: string) {
 beforeAll(() => {
   build(STATIC)
   build(LOADER)
+  build(ISLAND)
 }, 180_000)
 
 afterAll(async () => {
   for (const s of [...live]) await stop(s)
-  for (const d of [STATIC.dist, LOADER.dist, FORCED, STRAY]) rmSync(join(app, d), { recursive: true, force: true })
+  for (const d of [STATIC.dist, LOADER.dist, ISLAND.dist, FORCED, STRAY, NOPOOL]) rmSync(join(app, d), { recursive: true, force: true })
 })
 
 test('the build says which apps need workers', () => {
   expect(manifestOf(STATIC.dist).needs_workers).toBe(false)
   expect(manifestOf(LOADER.dist).needs_workers).toBe(true)
+  expect(manifestOf(ISLAND.dist).needs_workers).toBe(true) // F172: an island's server render is a worker call
 })
 
 test('an all-static app starts with no worker and serves every page as the same build with a pool does', async () => {
@@ -168,6 +172,38 @@ test('a worker call that reaches a server with no worker answers 503 at once, an
     expect(performance.now() - t0).toBeLessThan(1000)
     expect((await snapshot(s.base, '/about')).status).toBe(200)
     expect(s.proc.exitCode).toBeNull()
+  } finally {
+    await stop(s)
+  }
+}, 60_000)
+
+test('F172: an all-static app with one island keeps needs_workers, starts the pool and renders the island on the server', async () => {
+  const s = await start(ISLAND.dist, ISLAND.entry)
+  try {
+    expect(s.log()).toContain('[brust] ready (2 workers)')
+    const page = await snapshot(s.base, '/island')
+    expect(page.status).toBe(200)
+    expect(page.body).toContain('Static markup around one island.')
+    expect(page.body).toContain('<brust-island') // the island shell
+    expect(page.body).toContain('pressed') // the island's own server-rendered text
+    // the pages around it are as static as ever
+    expect((await snapshot(s.base, '/about')).status).toBe(200)
+  } finally {
+    await stop(s)
+  }
+}, 60_000)
+
+test('F172: the island page is a worker call: with the pool taken away (a hand-edited manifest) it answers 503, not a half page', async () => {
+  variant(ISLAND.dist, NOPOOL, (m) => {
+    m.needs_workers = false
+  })
+  const s = await start(NOPOOL, ISLAND.entry)
+  try {
+    expect(s.log()).toContain('[brust] ready (0 workers)')
+    const r = await snapshot(s.base, '/island')
+    expect(r.status).toBe(503)
+    expect(r.body).not.toContain('pressed')
+    expect((await snapshot(s.base, '/about')).status).toBe(200)
   } finally {
     await stop(s)
   }

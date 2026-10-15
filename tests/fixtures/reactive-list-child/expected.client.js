@@ -5,7 +5,7 @@ const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__
 export default defineBehavior("input_cabc2a77", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const n = signal(1)
   const shown = computed(() => take(props().rows, n()))
-  const _h1 = (...a) => (() => n.set(n() + 1))(...a)
+  const _h1 = (...__args) => (() => n.set(n() + 1))(...__args)
   const _l1 = computed(() => shown())
   const _k1 = (p) => p.id
   const _c1 = (p) => __text(p.num)
