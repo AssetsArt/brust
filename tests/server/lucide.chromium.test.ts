@@ -46,7 +46,7 @@ test('a native lucide icon follows state: size and color update, no island, no c
   expect(await svg.getAttribute('width')).toBe('16')
   expect(await svg.getAttribute('stroke')).toBe('red')
   expect(await page.locator('brust-island').count()).toBe(0)
-  await page.waitForTimeout(300)   // let the client chunk mount
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))) // module scripts ran before 'load'; two frames let their mount settle (no fixed wait)
   await page.locator('#grow').click()
   await page.waitForFunction(() => document.querySelector('svg.lucide-heart')?.getAttribute('width') === '24')
   expect(await svg.getAttribute('height')).toBe('24')
@@ -64,7 +64,7 @@ test('an undefined state size renders the default and follows the state', async 
   await page.goto(`${base}/native-undefined`, { waitUntil: 'load' })
   const svg = page.locator('svg.lucide-heart')
   expect(await svg.getAttribute('width')).toBe('24')   // React's default, not a missing attribute
-  await page.waitForTimeout(300)
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))))
   await page.locator('#set').click()
   await page.waitForFunction(() => document.querySelector('svg.lucide-heart')?.getAttribute('width') === '8')
   await page.locator('#unset').click()
