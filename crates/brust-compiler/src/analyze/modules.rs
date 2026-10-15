@@ -49,7 +49,8 @@ impl ModuleCache {
     }
 
     /// F188: records the package export that `key`'s component is written as in app code. The first spelling wins; the
-    /// component's other readers keep their `Rc` (the field is read by the build, from `done()`).
+    /// component's other readers keep their `Rc` (the field is read by the build, from `done()`). Not `Done` (an import
+    /// cycle reaching the component while it compiles) is a no-op on purpose: the build then keeps the source import.
     pub fn set_dist(&mut self, key: &str, dist: crate::ir::ExternalRef) {
         if let Some(Entry::Done(ir)) = self.map.get_mut(key)
             && ir.dist.is_none()

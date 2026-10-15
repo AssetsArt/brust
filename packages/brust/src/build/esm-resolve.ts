@@ -1,59 +1,41 @@
 // F189: `Bun.resolveSync` answers the CJS `main` of a package that has both (recharts: `main` is a CJS build, `module`
 // the ES build), so a package resolved from a directory the bundler does not walk (a package's own, for what its source
-// imports) became a second, CJS copy beside the ESM one every other island imports. This picks the entry the bundler
-// itself would pick: `exports` conditions in the order the package lists them, else `module`; anything it cannot place
-// (patterns, missing files) falls back to `Bun.resolveSync`, which is today's answer.
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { splitSpecifier } from './pkg-src'
+// imports) became a second, CJS copy beside the ESM one every other island imports. Re-implementing the bundler's
+// choice drifts (conditions per target, the `browser` field, `development`, `module` before `import`), so this asks
+// the bundler itself: a throwaway `Bun.build` of a virtual file placed in `from` that imports `spec`, with the same
+// `target`; the first module the build loads from outside that file is the answer. Equal to the native pick by
+// construction. It runs in a child process: a `Bun.build` started inside a plugin callback of another build deadlocks.
+// Anything it cannot resolve falls back to `Bun.resolveSync`, which is today's answer.
+import { join } from 'node:path'
 
-const DEFAULT_CONDITIONS = ['import', 'module', 'default']
+export type ResolveTarget = 'bun' | 'browser'
 
-/** The first `node_modules/<name>` from `from` upwards, as a real path. */
-function packageDir(name: string, from: string): string | undefined {
-  for (let dir = from; ; dir = dirname(dir)) {
-    const p = join(dir, 'node_modules', name)
-    if (existsSync(join(p, 'package.json'))) return realpathSync(p)
-    if (dirname(dir) === dir) return undefined
-  }
-}
+const cache = new Map<string, string>()
 
-/** A target of `exports` / `module`: a string, or the first listed key whose condition holds (an array: the first that resolves). */
-function pick(x: unknown, conditions: readonly string[]): string | undefined {
-  if (typeof x === 'string') return x
-  if (Array.isArray(x)) {
-    for (const e of x) {
-      const t = pick(e, conditions)
-      if (t !== undefined) return t
-    }
-    return undefined
-  }
-  if (!x || typeof x !== 'object') return undefined
-  for (const [k, v] of Object.entries(x)) if (conditions.includes(k)) return pick(v, conditions)
-  return undefined
-}
+// argv: [target, entry, spec]; prints the resolved path.
+const PROBE = `
+const [target, entry, spec] = process.argv.slice(1)
+const source = 'import ' + JSON.stringify(spec) + '\\n'
+let found
+await Bun.build({
+  entrypoints: [entry], target, write: false, files: { [entry]: source },
+  plugins: [{ name: 'o', setup(b) { b.onLoad({ filter: /./ }, (a) => {
+    if (a.path === entry) return { contents: source, loader: 'ts' }
+    found ??= a.path
+    return { contents: '', loader: 'js' }
+  }) } }],
+})
+if (found) process.stdout.write(found)
+`
 
-/** `spec` from `from`, preferring the package's ES entry. */
-export function resolveEsm(spec: string, from: string, conditions: readonly string[] = DEFAULT_CONDITIONS): string {
-  const [name, sub] = splitSpecifier(spec)
-  const dir = packageDir(name, from)
-  if (dir !== undefined) {
-    try {
-      const pj = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { exports?: unknown; module?: unknown }
-      const key = sub === '' ? '.' : `./${sub}`
-      let target: string | undefined
-      if (pj.exports === undefined) target = sub === '' && typeof pj.module === 'string' ? pj.module : undefined
-      else if (typeof pj.exports === 'string' || Array.isArray(pj.exports) || !Object.keys(pj.exports as object).some((k) => k.startsWith('.')))
-        target = key === '.' ? pick(pj.exports, conditions) : undefined
-      else target = pick((pj.exports as Record<string, unknown>)[key], conditions)
-      // A target that leaves the package (`../x`) is not followed.
-      if (target !== undefined && !target.split('/').includes('..')) {
-        const file = join(dir, target)
-        if (existsSync(file)) return file
-      }
-    } catch {
-      // an unreadable package.json: the runtime resolution decides
-    }
-  }
-  return Bun.resolveSync(spec, from)
+/** `spec` as the bundler of `target` resolves it from the directory `from`. */
+export function resolveNative(spec: string, from: string, target: ResolveTarget): string {
+  const key = `${target}\0${from}\0${spec}`
+  const hit = cache.get(key)
+  if (hit !== undefined) return hit
+  const r = Bun.spawnSync([process.execPath, '-e', PROBE, target, join(from, '__brust_resolve__.ts'), spec], { cwd: from, stdout: 'pipe', stderr: 'pipe' })
+  const out = r.exitCode === 0 ? r.stdout.toString() : ''
+  const path = out !== '' ? out : Bun.resolveSync(spec, from)
+  cache.set(key, path)
+  return path
 }

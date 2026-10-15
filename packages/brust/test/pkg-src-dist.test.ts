@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { componentImport, sourceDirPlugin } from '../src/build/bundle'
 import type { Compiled } from '../src/build/compile'
-import { resolveEsm } from '../src/build/esm-resolve'
+import { resolveNative } from '../src/build/esm-resolve'
 import { preparePackageSources } from '../src/build/pkg-src'
 
 const cleanup: string[] = []
@@ -91,29 +91,59 @@ test('F188: the Provider island and a revived consumer share one module instance
   expect(count(after, 'UNIQUE_CONTEXT_MARK')).toBe(1)
 })
 
-test('F189: resolveEsm takes the ES entry the bundler would, and falls back to the runtime resolution', () => {
-  const root = tmp()
-  const mk = (name: string, pj: object, files: Record<string, string>) => {
-    put(join(root, 'node_modules', name, 'package.json'), JSON.stringify({ name, ...pj }))
-    for (const [f, t] of Object.entries(files)) put(join(root, 'node_modules', name, f), t)
-  }
-  mk('duo', { main: 'lib/index.js', module: 'es6/index.js' }, { 'lib/index.js': 'exports.v=1', 'es6/index.js': 'export const v=1' })
-  expect(resolveEsm('duo', root)).toBe(join(root, 'node_modules/duo/es6/index.js'))
-  // `exports`: the first LISTED key whose condition holds (node's rule), per the conditions of the build.
-  mk('cond', { exports: { '.': { require: './c.cjs', browser: './b.js', import: './i.js', default: './d.js' } } }, { 'c.cjs': '', 'b.js': '', 'i.js': '', 'd.js': '' })
-  expect(resolveEsm('cond', root)).toBe(join(root, 'node_modules/cond/i.js'))
-  expect(resolveEsm('cond', root, ['browser', 'import', 'module', 'default'])).toBe(join(root, 'node_modules/cond/b.js'))
-  mk('sub', { exports: { '.': './index.js', './x': { import: './x.mjs', require: './x.cjs' } } }, { 'index.js': '', 'x.mjs': '', 'x.cjs': '' })
-  expect(resolveEsm('sub/x', root)).toBe(join(root, 'node_modules/sub/x.mjs'))
-  // A scoped package.
-  mk('@s/p', { module: 'm.js', main: 'c.js' }, { 'm.js': 'export {}', 'c.js': '' })
-  expect(resolveEsm('@s/p', root)).toBe(join(root, 'node_modules/@s/p/m.js'))
-  // Unplaceable (a pattern, a target outside the package, a missing file): the runtime answer, as before.
-  mk('pat', { main: 'main.js', exports: { './*': './lib/*.js' } }, { 'main.js': '', 'lib/a.js': '' })
-  expect(resolveEsm('pat/a', root)).toBe(Bun.resolveSync('pat/a', root))
-  mk('esc', { main: 'main.js', module: '../outside.js' }, { 'main.js': '' })
-  expect(resolveEsm('esc', root)).toBe(Bun.resolveSync('esc', root))
-})
+/** Independent oracle: a REAL file in the app that imports `spec`, built by the same bundler for the same target. */
+async function nativePick(root: string, spec: string, target: 'bun' | 'browser'): Promise<string> {
+  const f = join(root, `native-${target}-${spec.replace(/\W/g, '_')}.ts`)
+  writeFileSync(f, `import ${JSON.stringify(spec)}\n`)
+  let got = ''
+  await Bun.build({
+    entrypoints: [f],
+    target,
+    write: false,
+    plugins: [{ name: 'o', setup: (b) => void b.onLoad({ filter: /node_modules/ }, (a) => ((got = a.path), { contents: '', loader: 'js' })) }],
+  })
+  return got
+}
+
+// The matrix of package layouts the bundler resolves differently per target (Mellow F1): the pick of resolveNative must
+// equal the pick of a real import in both targets, whatever the layout.
+const MATRIX: Record<string, [object, Record<string, string>]> = {
+  dual: [{ main: 'lib.js', module: 'es.js' }, { 'lib.js': 'exports.v=1', 'es.js': 'export const v=1' }],
+  'cond-node': [{ exports: { node: './n.js', import: './i.js' } }, { 'n.js': '', 'i.js': '' }],
+  'cond-bun': [{ exports: { bun: './b.js', import: './i.js' } }, { 'b.js': '', 'i.js': '' }],
+  'cond-module': [{ exports: { module: './m.js', import: './i.js' } }, { 'm.js': '', 'i.js': '' }],
+  'cond-development': [{ exports: { development: './d.js', import: './i.js' } }, { 'd.js': '', 'i.js': '' }],
+  'cond-browser': [{ exports: { browser: './b.js', import: './i.js', default: './d.js' } }, { 'b.js': '', 'i.js': '', 'd.js': '' }],
+  'cond-require-first': [{ exports: { require: './c.cjs', import: './i.js' } }, { 'c.cjs': '', 'i.js': '' }],
+  'cond-nested-fallthrough': [{ exports: { import: { worker: './w.js' }, default: './d.js' } }, { 'w.js': '', 'd.js': '' }],
+  'cond-nested': [{ exports: { '.': { import: { default: './i.js' }, require: './r.js' } } }, { 'i.js': '', 'r.js': '' }],
+  'field-browser-string': [{ module: 'm.js', browser: 'b.js', main: 'c.js' }, { 'm.js': '', 'b.js': '', 'c.js': '' }],
+  'field-browser-map': [{ main: 'm.js', browser: { './m.js': './b.js' } }, { 'm.js': '', 'b.js': '' }],
+  'only-main': [{ main: 'main.js' }, { 'main.js': '' }],
+  'sub/x': [{ exports: { '.': './index.js', './x': { import: './x.mjs', require: './x.cjs' } } }, { 'index.js': '', 'x.mjs': '', 'x.cjs': '' }],
+  'pattern/a': [{ exports: { './*': './lib/*.js' } }, { 'lib/a.js': '' }],
+  '@s/scoped': [{ module: 'm.js', main: 'c.js' }, { 'm.js': '', 'c.js': '' }],
+}
+
+for (const target of ['bun', 'browser'] as const) {
+  test(`F189: resolveNative equals the bundler's own pick for every layout (target ${target})`, async () => {
+    const root = tmp()
+    const specs: string[] = []
+    for (const [spec, [pj, files]] of Object.entries(MATRIX)) {
+      const name = spec.startsWith('@') ? spec : spec.split('/')[0]!
+      put(join(root, 'node_modules', name, 'package.json'), JSON.stringify({ name, ...pj }))
+      for (const [f, t] of Object.entries(files)) put(join(root, 'node_modules', name, f), t)
+      specs.push(spec)
+    }
+    for (const spec of specs) {
+      const want = await nativePick(root, spec, target)
+      expect(want, `${spec}: the oracle found nothing`).not.toBe('')
+      expect(resolveNative(spec, root, target), spec).toBe(want)
+    }
+    // An unresolvable specifier falls back to the runtime answer (which throws its own error).
+    expect(() => resolveNative("not-installed", root, target)).toThrow()
+  })
+}
 
 test('F189: what a package source imports resolves to the dependency ES entry, in the browser build too', async () => {
   const root = tmp()
@@ -134,7 +164,7 @@ test('F189: what a package source imports resolves to the dependency ES entry, i
   mkdirSync(join(root, '.stage'), { recursive: true })
   const staged = join(root, '.stage/native.ts')
   writeFileSync(staged, 'import { v } from "dup"\nconsole.log(v)\n')
-  const out = await Bun.build({ entrypoints: [staged], target: 'browser', plugins: [sourceDirPlugin(new Map([[staged, written]]), root, [], ['browser', 'import', 'module', 'default'])] })
+  const out = await Bun.build({ entrypoints: [staged], target: 'browser', plugins: [sourceDirPlugin(new Map([[staged, written]]), root, [], 'browser')] })
   expect(out.success).toBe(true)
   const code = await out.outputs[0]!.text()
   expect(code).toContain('FROM_ESM')
