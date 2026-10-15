@@ -15,6 +15,12 @@ function Badge({ icon, label }: { icon?: React.ReactNode; label?: string }) {
   return <i title={label}>{icon}</i>
 }
 
+// A module array handed to a helper that only reads it (build-eval's Pure page).
+const SIZES = [1, 2, 3]
+function total(xs: number[]): number {
+  return xs.reduce((a, b) => a + b, 0)
+}
+
 // An app function that only inspects the handler it is given.
 function kindOf(f: unknown) {
   return typeof f
@@ -38,6 +44,7 @@ export default function Page({ kind, price, title }: { kind: string; price: numb
       {items.length}
       {formatPrice(price)}
       {name}
+      {total(SIZES)}
       <Badge icon={title} label={formatPrice(price)} />
       <Badge icon={LABELS[kind]} label={cn('a', title)} />
       <Badge label={isValid(kind) ? kind : 'none'} />

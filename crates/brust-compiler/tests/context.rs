@@ -526,6 +526,8 @@ fn an_element_holder_falls_back_with_no_wrapper_and_as_a_prop() {
         "prop-loc-opaque-write.tsx",
         // An app function called with a callback that returns an element.
         "prop-loc-callback.tsx",
+        // An element-free helper handed an element to store.
+        "prop-loc-put.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(

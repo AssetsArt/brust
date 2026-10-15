@@ -376,24 +376,24 @@ fn fresh(e: &js_ast::Expr) -> bool {
     }
 }
 
-/// F199: names of the module's functions, const arrows and consts that cannot hand out a React element, a least
-/// fixpoint (a cycle is never proven): the declaration writes no JSX, is never reassigned or filled (an object written
-/// through, changed by a method, or passed to a call), does not read the global
-/// `React`, and every module name it reads is itself element-free and every import it reads is not `element_import`.
-/// Weaker than `plain_fns` (it may return an object or a function); only a component prop is judged by it.
+/// F199: names of the module's functions, const arrows and consts that cannot hand out a React element. A greatest
+/// "filled" / least "free" fixpoint over symbols (`key_of`; a cycle is never proven free):
+///
+/// * free: the declaration writes no JSX, is never reassigned and never filled, does not read the global `React`, and
+///   every module name it reads is free and every import it reads is not `element_import`; a const whose value is a
+///   primitive whatever it reads (`const A = B + 1`) is free outright;
+/// * filled (an object that may come to hold an element): written through a member (`slots.icon = …`) or by a mutating
+///   method, handed to a call that is not a read-only global unless the callee is a free module function and no other
+///   argument may carry an element, or what a filled binding was made from (`const s = slots`); a write through a root
+///   that is not a name (`get().icon = …`) leaves no non-primitive const free.
+///
+/// Weaker than `plain_fns` (it may return an object or a function); only a value printed with no wrapper is judged by it.
 pub fn element_free_fns(
     ast: &js_ast::Ast<'_>,
     names: &NameTable<'_>,
     element_import: &dyn Fn(&str, &str) -> bool,
 ) -> Vec<String> {
-    let mut module = crate::analyze::expr::Walk::default();
-    for part in ast.parts.iter() {
-        module.stmts(part.stmts.slice());
-    }
-    // Bindings by symbol (`key_of`), not by spelling: a parameter `orientation` is not the component's local of that name.
-    let assigned: HashSet<u32> = module.assigned.iter().map(|r| names.key_of(*r)).collect();
-    // An object another function could fill with an element: written through a member (`slots.icon = …`), the receiver
-    // of a method that changes it (`push`, `set`, …), or handed to any call as an argument (`Object.assign(slots, …)`).
+    use crate::analyze::expr::{Walk, chain_root};
     const MUTATING: &[&str] = &[
         "push",
         "unshift",
@@ -421,106 +421,68 @@ pub fn element_free_fns(
         ("Array", "isArray"),
         ("JSON", "stringify"),
     ];
+    let mut module = Walk::default();
+    for part in ast.parts.iter() {
+        module.stmts(part.stmts.slice());
+    }
+    let key = |r: js_ast::Ref| names.key_of(r);
+    let assigned: HashSet<u32> = module.assigned.iter().map(|r| key(*r)).collect();
+    // Written through a member or changed by a method: filled whatever else holds.
+    let mut base: HashSet<u32> = module.member_written.iter().map(|r| key(*r)).collect();
     let mut opaque_write = module.opaque_write;
-    let mut filled: HashSet<u32> = module
-        .member_written
-        .iter()
-        .map(|r| names.key_of(*r))
-        .collect();
     for c in &module.calls {
         let E::ECall(call) = &c.data else { continue };
         if let E::EDot(d) = &call.target.data
             && MUTATING.contains(&String::from_utf8_lossy(d.name.slice()).as_ref())
         {
-            match crate::analyze::expr::chain_root(&d.target) {
+            match chain_root(&d.target) {
                 Some(r) => {
-                    filled.insert(names.key_of(r));
+                    base.insert(key(r));
                 }
                 // Sorting a fresh copy (`[…].slice().sort()`) changes no binding; any other root is unknown.
                 None if !fresh(&d.target) => opaque_write = true,
                 None => {}
             }
         }
-        // A global that only reads its arguments (`Object.values(map)`, `String(x)`) does not fill them.
-        let global = |r: js_ast::Ref, n: &str| {
-            names.name(r) == n && matches!(names.kind_of(r).1, crate::ir::IdentKind::Global)
-        };
-        let read_only = match &call.target.data {
-            E::EIdentifier(id) => READ_ONLY_FNS.iter().any(|n| global(id.ref_, n)),
-            E::EDot(d) => match &d.target.data {
-                E::EIdentifier(id) => {
-                    let m = String::from_utf8_lossy(d.name.slice());
-                    READ_ONLY_STATICS
-                        .iter()
-                        .any(|(o, f)| global(id.ref_, o) && *f == m.as_ref())
-                }
-                _ => false,
-            },
-            _ => false,
-        };
-        if read_only {
-            continue;
-        }
-        for a in call.args.iter() {
-            let a = match &a.data {
-                E::ESpread(sp) => &sp.value,
-                _ => a,
-            };
-            if let Some(r) = crate::analyze::expr::chain_root(a) {
-                filled.insert(names.key_of(r));
-            }
-        }
     }
-    // What a binding was made from is filled with it (`const s = slots; s.icon = …`), to a fixpoint.
-    loop {
-        let before = filled.len();
-        for (t, u) in &module.flows {
-            if filled.contains(&names.key_of(*t)) {
-                filled.insert(names.key_of(*u));
-            }
-        }
-        if filled.len() == before {
-            break;
-        }
-    }
-    // (name, the walk of its declaration); `None` = a module name that is never provable (`let`, a class, a pattern).
-    let mut decls: Vec<(String, u32, Option<crate::analyze::expr::Walk>)> = Vec::new();
+    // (name, symbol, the walk of its declaration); `None` = never provable (`let`, a class, a pattern).
+    let mut decls: Vec<(String, u32, Option<Walk>)> = Vec::new();
     let mut always: HashSet<u32> = HashSet::new();
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
             match &stmt.data {
                 S::SFunction(f) => {
                     if let Some(n) = &f.func.name {
-                        let mut w = crate::analyze::expr::Walk::default();
+                        let mut w = Walk::default();
                         w.stmts(f.func.body.stmts.slice());
-                        decls.push((names.name(n.ref_), names.key_of(n.ref_), Some(w)));
+                        decls.push((names.name(n.ref_), key(n.ref_), Some(w)));
                     }
                 }
                 S::SLocal(l) => {
                     for d in l.decls.iter() {
                         if let B::BIdentifier(id) = d.binding.data {
-                            // A write through an unknown root may fill any const that is not a primitive.
+                            let is_const = matches!(l.kind, js_ast::S::Kind::KConst);
                             let primitive = d.value.as_ref().is_some_and(primitive_value);
-                            let w = (matches!(l.kind, js_ast::S::Kind::KConst)
-                                && (primitive || !opaque_write))
+                            if primitive && is_const {
+                                // Its value is a primitive whatever it reads: free outright.
+                                always.insert(key(id.r#ref));
+                            }
+                            // A write through an unknown root may fill any const that is not a primitive.
+                            let w = (is_const && (primitive || !opaque_write))
                                 .then_some(d.value.as_ref())
                                 .flatten()
                                 .map(|v| {
-                                    let mut w = crate::analyze::expr::Walk::default();
+                                    let mut w = Walk::default();
                                     w.expr(v);
                                     w
                                 });
-                            if primitive && matches!(l.kind, js_ast::S::Kind::KConst) {
-                                // Its value is a primitive whatever it reads (`const A = B + 1`): free outright.
-                                always.insert(names.key_of(id.r#ref));
-                            }
-                            decls.push((names.name(id.r#ref), names.key_of(id.r#ref), w));
+                            decls.push((names.name(id.r#ref), key(id.r#ref), w));
                         }
                     }
                 }
                 S::SClass(c) => {
                     if let Some(n) = &c.class.class_name {
-                        decls.push((names.name(n.ref_), names.key_of(n.ref_), None));
+                        decls.push((names.name(n.ref_), key(n.ref_), None));
                     }
                 }
                 _ => {}
@@ -528,40 +490,119 @@ pub fn element_free_fns(
         }
     }
     let module_keys: HashSet<u32> = decls.iter().map(|(_, k, _)| *k).collect();
-    let mut free: HashSet<u32> = always
-        .iter()
-        .copied()
-        .filter(|k| !assigned.contains(k))
-        .collect();
-    loop {
-        let before = free.len();
-        for (_, key, w) in &decls {
-            let Some(w) = w else { continue };
-            if free.contains(key) || assigned.contains(key) || filled.contains(key) {
+    let jsx_in = |w: &Walk| {
+        w.calls
+            .iter()
+            .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element))
+    };
+    let free_given = |filled: &HashSet<u32>| {
+        let mut free: HashSet<u32> = always
+            .iter()
+            .copied()
+            .filter(|k| !assigned.contains(k))
+            .collect();
+        loop {
+            let before = free.len();
+            for (_, k, w) in &decls {
+                let Some(w) = w else { continue };
+                if free.contains(k) || assigned.contains(k) || filled.contains(k) {
+                    continue;
+                }
+                let reads_ok = w.used.iter().all(|r| {
+                    if let Some((source, imported)) = names.import_of(*r) {
+                        return !element_import(source, imported);
+                    }
+                    let rk = key(*r);
+                    if module_keys.contains(&rk) {
+                        return free.contains(&rk);
+                    }
+                    names.name(*r) != "React"
+                });
+                if !jsx_in(w) && reads_ok {
+                    free.insert(*k);
+                }
+            }
+            if free.len() == before {
+                return free;
+            }
+        }
+    };
+    let global = |r: js_ast::Ref, n: &str| {
+        names.name(r) == n && matches!(names.kind_of(r).1, crate::ir::IdentKind::Global)
+    };
+    let mut filled = base.clone();
+    let free = loop {
+        let free = free_given(&filled);
+        let mut next = base.clone();
+        for c in &module.calls {
+            let E::ECall(call) = &c.data else { continue };
+            // A global that only reads its arguments (`Object.values(map)`, `String(x)`) fills none of them.
+            let read_only = match &call.target.data {
+                E::EIdentifier(id) => READ_ONLY_FNS.iter().any(|n| global(id.ref_, n)),
+                E::EDot(d) => match &d.target.data {
+                    E::EIdentifier(id) => {
+                        let m = String::from_utf8_lossy(d.name.slice());
+                        READ_ONLY_STATICS
+                            .iter()
+                            .any(|(o, f)| global(id.ref_, o) && *f == m.as_ref())
+                    }
+                    _ => false,
+                },
+                _ => false,
+            };
+            if read_only {
                 continue;
             }
-            let jsx = w
-                .calls
+            // A free module function writes no element into an argument unless another argument carries one in: one
+            // that writes JSX or reads anything but a free module name.
+            let free_callee = match &call.target.data {
+                E::EIdentifier(id) => {
+                    module_keys.contains(&key(id.ref_)) && free.contains(&key(id.ref_))
+                }
+                _ => false,
+            };
+            let args: Vec<&js_ast::Expr> = call
+                .args
                 .iter()
-                .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element));
-            let reads_ok = w.used.iter().all(|r| {
-                if let Some((source, imported)) = names.import_of(*r) {
-                    return !element_import(source, imported);
+                .map(|a| match &a.data {
+                    E::ESpread(sp) => &sp.value,
+                    _ => a,
+                })
+                .collect();
+            let carries = |a: &js_ast::Expr| {
+                let mut w = Walk::default();
+                w.expr(a);
+                jsx_in(&w)
+                    || w.used.iter().any(|r| {
+                        let rk = key(*r);
+                        !(module_keys.contains(&rk) && free.contains(&rk))
+                    })
+            };
+            for (i, a) in args.iter().enumerate() {
+                let Some(r) = chain_root(a) else { continue };
+                let others_carry = args.iter().enumerate().any(|(j, b)| j != i && carries(b));
+                if !free_callee || others_carry {
+                    next.insert(key(r));
                 }
-                let k = names.key_of(*r);
-                if module_keys.contains(&k) {
-                    return free.contains(&k);
-                }
-                names.name(*r) != "React"
-            });
-            if !jsx && reads_ok {
-                free.insert(*key);
             }
         }
-        if free.len() == before {
-            break;
+        // What a binding was made from is filled with it (`const s = slots; s.icon = …`).
+        loop {
+            let before = next.len();
+            for (t, u) in &module.flows {
+                if next.contains(&key(*t)) {
+                    next.insert(key(*u));
+                }
+            }
+            if next.len() == before {
+                break;
+            }
         }
-    }
+        if next == filled {
+            break free;
+        }
+        filled = next;
+    };
     decls
         .into_iter()
         .filter(|(_, k, _)| free.contains(k))
