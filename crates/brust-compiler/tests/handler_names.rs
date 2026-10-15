@@ -34,10 +34,12 @@ fn lower(file: &str) -> (Tier, String, String) {
 
 /// The handler `x-on-click` binds on the element with `data-testid="<id>"`.
 fn bound(jinja: &str, id: &str) -> String {
-    let at = jinja.find(&format!("data-testid=\"{id}\"")).unwrap_or_else(|| {
-        // A spread child prints its attributes through filters: find the literal value instead.
-        jinja.find(&format!("\"{id}\"")).expect(id)
-    });
+    let at = jinja
+        .find(&format!("data-testid=\"{id}\""))
+        .unwrap_or_else(|| {
+            // A spread child prints its attributes through filters: find the literal value instead.
+            jinja.find(&format!("\"{id}\"")).expect(id)
+        });
     let rest = &jinja[at..];
     let on = rest.find("x-on-click=\"").expect("x-on-click") + "x-on-click=\"".len();
     rest[on..on + rest[on..].find('"').unwrap()].to_string()
@@ -46,7 +48,11 @@ fn bound(jinja: &str, id: &str) -> String {
 /// `const <name> = <rest of line>` for the one declaration of `name` in the chunk.
 fn declared<'a>(chunk: &'a str, name: &str) -> &'a str {
     let decl = format!("const {name} = ");
-    assert_eq!(chunk.matches(&decl).count(), 1, "{name} declared once:\n{chunk}");
+    assert_eq!(
+        chunk.matches(&decl).count(),
+        1,
+        "{name} declared once:\n{chunk}"
+    );
     let at = chunk.find(&decl).unwrap() + decl.len();
     chunk[at..].lines().next().unwrap()
 }

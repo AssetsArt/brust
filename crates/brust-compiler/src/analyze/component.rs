@@ -499,7 +499,11 @@ fn read_function_as(
         ));
     }
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
-    ir.bound_names = reader.names.spellings().chain(reader.names.print_aliases().values().cloned()).collect();
+    ir.bound_names = reader
+        .names
+        .spellings()
+        .chain(reader.names.print_aliases().values().cloned())
+        .collect();
     ir.plain_fns = crate::analyze::plain_fn::plain_fns(ast, &*reader.names);
     // F215 allowlist: a module `const` is accepted when the folder folds it or `plain_fn` proves it plain.
     let folded = {

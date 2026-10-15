@@ -909,7 +909,10 @@ impl<'a> NameTable<'a> {
     /// generated name must not be one (F147).
     pub fn spells(&self, name: &str) -> bool {
         self.printed.values().any(|p| p == name)
-            || self.symbols.iter().any(|s| s.original_name.slice() == name.as_bytes())
+            || self
+                .symbols
+                .iter()
+                .any(|s| s.original_name.slice() == name.as_bytes())
     }
 
     /// Every name the module itself declares (imports, module and nested bindings), as spelled:

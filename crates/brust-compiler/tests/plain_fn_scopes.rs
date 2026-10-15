@@ -36,12 +36,17 @@ fn component(file: &str, prefix: &'static str) -> ComponentIR {
 }
 
 fn refused(ir: &ComponentIR) -> bool {
-    ir.diagnostics.iter().any(|d| d.rule == "jsx-const-child") && matches!(ir.tier, Tier::React { .. })
+    ir.diagnostics.iter().any(|d| d.rule == "jsx-const-child")
+        && matches!(ir.tier, Tier::React { .. })
 }
 
 #[test]
 fn a_block_scoped_local_is_not_in_scope_after_its_block() {
-    for f in ["ph-block-global.tsx", "ph-block-sibling.tsx", "ph-block-arrow.tsx"] {
+    for f in [
+        "ph-block-global.tsx",
+        "ph-block-sibling.tsx",
+        "ph-block-arrow.tsx",
+    ] {
         let ir = panel(f);
         assert!(refused(&ir), "{f}: {:?} {:?}", ir.tier, ir.diagnostics);
     }
@@ -50,14 +55,24 @@ fn a_block_scoped_local_is_not_in_scope_after_its_block() {
 #[test]
 fn block_scoped_locals_read_inside_their_block_stay_plain() {
     let ir = panel("ph-block-plain.tsx");
-    assert!(!refused(&ir) && !matches!(ir.tier, Tier::React { .. }), "{:?} {:?}", ir.tier, ir.diagnostics);
+    assert!(
+        !refused(&ir) && !matches!(ir.tier, Tier::React { .. }),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
 }
 
 /// Mellow's N1 repro and its siblings, under a plain wrapper: the page calling the helper falls back. A for-loop body and
 /// a catch parameter are refused already (the proof takes no loop and no `try`); they stay refused.
 #[test]
 fn mellows_n1_and_its_siblings_fall_back_under_a_plain_wrapper() {
-    for f in ["ph-block-n1.tsx", "ph-block-bare.tsx", "ph-block-for.tsx", "ph-block-catch.tsx"] {
+    for f in [
+        "ph-block-n1.tsx",
+        "ph-block-bare.tsx",
+        "ph-block-for.tsx",
+        "ph-block-catch.tsx",
+    ] {
         let ir = component(f, "");
         assert!(refused(&ir), "{f}: {:?} {:?}", ir.tier, ir.diagnostics);
     }
@@ -67,5 +82,10 @@ fn mellows_n1_and_its_siblings_fall_back_under_a_plain_wrapper() {
 #[test]
 fn an_outer_local_shadowed_inside_a_block_stays_plain() {
     let ir = component("ph-block-outer.tsx", "");
-    assert!(!refused(&ir) && !matches!(ir.tier, Tier::React { .. }), "{:?} {:?}", ir.tier, ir.diagnostics);
+    assert!(
+        !refused(&ir) && !matches!(ir.tier, Tier::React { .. }),
+        "{:?} {:?}",
+        ir.tier,
+        ir.diagnostics
+    );
 }

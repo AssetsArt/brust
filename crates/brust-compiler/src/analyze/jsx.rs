@@ -96,7 +96,9 @@ pub fn jsx_runtime_call(
     // (`const h = jsx; h(…)`, `(0, jsx)(…)`, `call(R.jsx)`) can build an element through any spelling: fail closed.
     used_at
         .iter()
-        .find(|(r, _)| import(*r).is_some_and(|(_, i)| FNS.contains(&i) || i == "*" || i == "default"))
+        .find(|(r, _)| {
+            import(*r).is_some_and(|(_, i)| FNS.contains(&i) || i == "*" || i == "default")
+        })
         .map(|(_, at)| (*at).max(0) as u32)
 }
 
