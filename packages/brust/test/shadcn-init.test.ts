@@ -4,7 +4,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { addAliasPath, componentsJson, SHADCN_DEP_PINS, SHADCN_DEPS, SHADCN_VERSION, shadcnInit } from '../src/shadcn/init'
+import { addAliasPath, componentsJson, SCAN_LIMIT, SHADCN_DEP_PINS, SHADCN_DEPS, SHADCN_VERSION, shadcnInit } from '../src/shadcn/init'
 import { readObject } from '../src/shadcn/jsonc'
 
 const dirs: string[] = []
@@ -434,4 +434,31 @@ test('F193: every target of a paths entry and nested entries of an alias directo
   expect(r.code).toBe(2)
   expect(r.calls).toEqual([])
   expect(readdirSync(outside)).toEqual([])
+})
+
+test('F227: a symlink 6 levels deep under an alias directory is found (no fixed depth)', async () => {
+  const outside = outsideDir()
+  const d = project()
+  mkdirSync(join(d, 'components/ui/a/b/c/d/e'), { recursive: true })
+  symlinkSync(join(outside, 'x.tsx'), join(d, 'components/ui/a/b/c/d/e/x.tsx')) // components/ui/a/b/c/d/e/x.tsx: 6 below components
+  const r = await init(d, ['button'])
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(r.lines.join('\n')).toContain('components/ui/a/b/c/d/e/x.tsx')
+  expect(readdirSync(outside)).toEqual([])
+})
+
+test('F227: an alias directory with more than SCAN_LIMIT entries is refused, not skipped', async () => {
+  const d = project()
+  mkdirSync(join(d, 'hooks'))
+  for (let i = 0; i <= SCAN_LIMIT; i++) writeFileSync(join(d, `hooks/h${i}.ts`), '')
+  const r = await init(d, ['button'])
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(r.lines.join('\n')).toContain(`more than ${SCAN_LIMIT} entries`)
+  // exactly at the bound is fine
+  const e = project()
+  mkdirSync(join(e, 'hooks'))
+  for (let i = 0; i < SCAN_LIMIT; i++) writeFileSync(join(e, `hooks/h${i}.ts`), '')
+  expect((await init(e)).code).toBe(0)
 })

@@ -248,12 +248,18 @@ function cliTargets(
   return { paths: [...paths, 'package.json', ...(css === undefined ? [] : [css]), ...components.filter((c) => COMPONENT.test(c)).map((c) => `${ui}/${c}.tsx`)], dirs }
 }
 
-/** Where a path or directory entry the CLI could write through is a symlink; undefined when clean. */
-function cliLink(root: string, t: { paths: string[]; dirs: string[] }): string | undefined {
+/** F227: the most entries `cliLink` looks at under the alias directories before it refuses (no fixed depth: a link at
+ *  any depth is found; a tree this big is not a components directory). */
+export const SCAN_LIMIT = 10_000
+
+/** Where a path or directory entry the CLI could write through is a symlink (`link`), or the directory walk hit its
+ *  entry bound (`tooMany`); undefined when clean. */
+function cliLink(root: string, t: { paths: string[]; dirs: string[] }): { link: string } | { tooMany: string } | undefined {
   const hit = t.paths.find((p) => linkUnder(root, p))
-  if (hit !== undefined) return hit
+  if (hit !== undefined) return { link: hit }
   // dependency files of a registry item (hooks, lib helpers) land in these directories: no entry may be a link
-  const scan = (rel: string, depth: number): string | undefined => {
+  let seen = 0
+  const scan = (rel: string): { link: string } | { tooMany: string } | undefined => {
     let names: string[]
     try {
       names = readdirSync(join(root, rel))
@@ -262,14 +268,15 @@ function cliLink(root: string, t: { paths: string[]; dirs: string[] }): string |
     }
     for (const e of names) {
       const sub = `${rel}/${e}`
-      if (isLink(join(root, sub))) return sub
-      const found = depth > 0 ? scan(sub, depth - 1) : undefined
+      if (++seen > SCAN_LIMIT) return { tooMany: rel }
+      if (isLink(join(root, sub))) return { link: sub }
+      const found = scan(sub)
       if (found !== undefined) return found
     }
     return undefined
   }
   for (const d of t.dirs) {
-    const found = scan(d, 3)
+    const found = scan(d)
     if (found !== undefined) return found
   }
   return undefined
@@ -426,7 +433,8 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   )
   if ('error' in targets) return fail2(targets.error)
   const hit = cliLink(root, targets)
-  if (hit !== undefined) return fail2(`${hit} is, or is inside, a symbolic link; the shadcn CLI would write through it. Replace the link with a real directory or file, then run again`)
+  if (hit && 'link' in hit) return fail2(`${hit.link} is, or is inside, a symbolic link; the shadcn CLI would write through it. Replace the link with a real directory or file, then run again`)
+  if (hit) return fail2(`${hit.tooMany} holds more than ${SCAN_LIMIT} entries, so it cannot be checked for symbolic links before the shadcn CLI writes into it; point the alias at a smaller directory, then run again`)
 
   const report = (name: string, step: Step, why = ''): void => out(`${step === 'done' ? '✓' : step === 'skipped' ? '-' : '✗'} ${name}: ${step}${why ? ` (${why})` : ''}`)
   const stop = (name: string, code: number): number => {
