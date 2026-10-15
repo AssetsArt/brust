@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 206 | 109 | 12 | 85 | 0 | 0 | 0 | 0 |
+| B Composition | 210 | 111 | 13 | 86 | 0 | 0 | 0 | 0 |
 | C Hooks | 38 | 2 | 14 | 22 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 392 | 187 | 49 | 152 | 3 | 1 | 0 | 0 |
+| **Total** | 396 | 189 | 50 | 153 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -205,6 +205,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-plain-wrapper-helper-proven | imported helpers proven to return a primitive (a template, a method of a number or string), under a plain wrapper | static | static | precompute | ok | — | F173 control: plain_fn rules read in the helper module (its consts, primitive-returning methods); the child lowers |
 | b-plain-wrapper-methods | built-in number, string and Date methods (toLocaleString, toFixed, padStart, new Date(x).toISOString, …) as children of a plain wrapper | static | static | precompute | ok | — | F173 lead ruling on @57714ece: an allowlisted built-in method on an accepted read or new Date(…) of the unbound global; served == React in scripts/shadcn/context-parity.test.ts (ctx-plain-methods) |
 | b-plain-wrapper-method-override | an object literal with its own toString, called as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173 lead ruling: a user-defined receiver may override the method (an element would print nothing), so it falls back (jsx-const-child) |
+| b-plain-wrapper-const-items | string and number methods on item fields of a module-const array (nested and filtered lists too), under a plain wrapper | static | static | precompute | ok | — | F205: every value of the field is a primitive literal written in the source (Placer::static_values), the const is plain data and never written (use_scan is_data), and the filter predicate only reads |
+| b-plain-wrapper-const-items-object | a method on an item field of a module-const array where the field is an object with its own method | react | react | ssr | ok | fallback:jsx-const-child | F205 hostile: the field is not a primitive literal, so the receiver is not proven (jsx-const-child) |
+| b-plain-wrapper-prop-filter | a string method on an item field of a prop list filtered by a read-only predicate, under a plain wrapper | static | static | precompute | ok | — | F205 (Mellow N3): filter(pred) holds some of the prop list elements when pred only reads; a predicate that calls, assigns or converts falls back |
+| b-plain-wrapper-state-cond | a string method on a state whose initial value is a conditional of two strings, under a plain wrapper | native | native | 0 | ok | — | F205 (Mellow N3): a ?: / && / \|\| / ?? init primitive-typed in every branch; an object branch or a prop operand falls back |
 | b-context-prop-under-provider | a component prop holding an element holder under a Provider frame | react | react | ssr | ok | fallback:jsx-const-child | Mellow scoping: the predicate runs at Placer::painted, the single print point (a prop is printed too) |
 | b-context-provider-field-element | a Provider value field holding an element holder | static | static | ssr | ok | — | Mellow: a Provider value field that holds an element would reach the consumer as a hidden prop and print as nothing; the Provider stays an island (context-state), the page stays static |
 | b-context-frame-prop | a Provider whose value reads a prop fed an element holder at the call site | react | react | ssr | ok | fallback:context-no-provider, fallback:context-value | Mellow: a frame value must be a literal (no prop read, no call); the page renders with React |

@@ -34,7 +34,7 @@ const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix',
 // under a Provider (ctx-trio-prov was React until F173 proved formatPrice).
 // F198 + F199: ordinary reads with no wrapper and in props (a const map, a helper, `cn(…)`, an element-free local helper,
 // an object spread) keep lowering.
-const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper', 'ctx-plain-helper-string', 'ctx-plain-methods', 'ctx-top-ordinary']
+const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper', 'ctx-plain-helper-string', 'ctx-plain-methods', 'ctx-top-ordinary', 'ctx-plain-f205']
 const ROWS = join(FIXTURE, '.rows')
 const ENTRY = '.rows/ctx-parity-routes.tsx'
 const bin = join(repo, 'packages/brust/bin/brust')
