@@ -418,3 +418,19 @@ test('F193: a custom alias with an unreadable components.json is refused (fail c
   expect(r.code).toBe(2)
   expect(r.calls).toEqual([])
 })
+
+test('F193: every target of a paths entry and nested entries of an alias directory are walked', async () => {
+  const outside = outsideDir()
+  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~k/*": ["./safe/*", "./second/*"] } } }' })
+  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~k/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  mkdirSync(join(d, 'second'))
+  symlinkSync(outside, join(d, 'second/ui')) // the SECOND target of the entry
+  expect((await init(d)).code).toBe(2)
+  const n = project()
+  mkdirSync(join(n, 'components/ui/deep'), { recursive: true })
+  symlinkSync(join(outside, 'x.tsx'), join(n, 'components/ui/deep/x.tsx')) // nested entry
+  const r = await init(n)
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(readdirSync(outside)).toEqual([])
+})

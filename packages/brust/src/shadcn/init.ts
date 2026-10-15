@@ -61,16 +61,18 @@ function linkUnder(root: string, rel: string): boolean {
   return false
 }
 
-/** `compilerOptions.paths` (pattern → first target) and `baseUrl` of a tsconfig text; empty when it cannot be read. */
-function tsPaths(text: string | undefined): { base: string; map: Array<[string, string]> } {
-  const none = { base: '', map: [] as Array<[string, string]> }
+/** `compilerOptions.paths` (pattern → every target) and `baseUrl` of a tsconfig text; `extends` is true when the file
+ *  inherits from another one (its own `paths` are then not the whole picture). Empty when it cannot be read. */
+function tsPaths(text: string | undefined): { base: string; map: Array<[string, string[]]>; extended: boolean } {
+  const none = { base: '', map: [] as Array<[string, string[]]>, extended: false }
   if (text === undefined) return none
   try {
     const co = readObject(text).members.find((m) => m.key === 'compilerOptions')?.object
-    const str = (m: Member | undefined): string => (m ? (/"([^"\\]*)"/.exec(raw(text, m))?.[1] ?? '') : '')
-    const base = str(co?.members.find((m) => m.key === 'baseUrl'))
-    const map = (co?.members.find((m) => m.key === 'paths')?.object?.members ?? []).map((m): [string, string] => [m.key, str(m)])
-    return { base, map }
+    const strs = (m: Member | undefined): string[] => (m ? [...raw(text, m).matchAll(/"([^"\\]*)"/g)].map((x) => x[1] ?? '') : [])
+    const base = strs(co?.members.find((m) => m.key === 'baseUrl'))[0] ?? ''
+    const map = (co?.members.find((m) => m.key === 'paths')?.object?.members ?? []).map((m): [string, string[]] => [m.key, strs(m)])
+    const extended = readObject(text).members.some((m) => m.key === 'extends') || (co?.members.some((m) => m.key === 'extends') ?? false)
+    return { base, map, extended }
   } catch {
     return none
   }
@@ -78,21 +80,25 @@ function tsPaths(text: string | undefined): { base: string; map: Array<[string, 
 
 /** A project-relative path for an import alias (`@/hooks` → `hooks`) by the tsconfig `paths`, or undefined when no entry
  *  matches or the result is not a plain path inside the project (absolute, `..`, a drive, a backslash). */
-function resolveAlias(alias: string, base: string, map: Array<[string, string]>): string | undefined {
-  let best: { rank: number; target: string } | undefined
-  for (const [key, target] of map) {
+function resolveAlias(alias: string, base: string, map: Array<[string, string[]]>): string[] | undefined {
+  let best: { rank: number; targets: string[] } | undefined
+  for (const [key, targets] of map) {
     const star = key.indexOf('*')
     let rest: string | undefined
     if (star < 0) rest = key === alias ? '' : undefined
     else if (alias.length >= key.length - 1 && alias.startsWith(key.slice(0, star)) && alias.endsWith(key.slice(star + 1))) rest = alias.slice(star, alias.length - (key.length - star - 1))
-    if (rest === undefined || target === '') continue
+    if (rest === undefined || targets.length === 0) continue
     const rank = star < 0 ? Number.MAX_SAFE_INTEGER : star
-    if (!best || rank > best.rank) best = { rank, target: star < 0 ? target : target.replace('*', rest) }
+    if (!best || rank > best.rank) best = { rank, targets: targets.map((t) => (star < 0 ? t : t.replace('*', rest))) }
   }
   if (!best) return undefined
-  const segs = `${base}/${best.target}`.split('/').filter((x) => x !== '' && x !== '.')
-  if (segs.some((x) => x === '..' || x.includes('\\') || x.includes(':')) || best.target.startsWith('/') || base.startsWith('/')) return undefined
-  return segs.join('/')
+  const out: string[] = []
+  for (const t of best.targets) {
+    const segs = `${base}/${t}`.split('/').filter((x) => x !== '' && x !== '.')
+    if (t === '' || segs.some((x) => x === '..' || x.includes('\\') || x.includes(':')) || t.startsWith('/') || base.startsWith('/')) return undefined
+    out.push(segs.join('/'))
+  }
+  return out
 }
 
 /** F193: every path the shadcn CLI may write, project-relative, or an error. The CLI follows symlinks, so the caller
@@ -120,20 +126,24 @@ function cliTargets(
       return { error: 'components.json is not valid JSON, so the shadcn CLI target paths cannot be checked' }
     }
   }
-  const { base, map } = tsPaths(tsText)
-  // `@/*` → `./*` is the mapping this command adds or asks for; an existing entry (e.g. `./src/*`) wins.
-  if (!map.some(([k]) => k === '@/*')) map.push(['@/*', './*'])
+  const { base, map, extended } = tsPaths(tsText)
+  // `@/*` → `./*` is the mapping this command adds or asks for; an existing entry (e.g. `./src/*`) wins. When the
+  // tsconfig also has its own `paths` without `@/*`, TypeScript ignores an inherited `@/*`, so the assumption is the
+  // only mapping there is; with no own `paths` and an `extends`, an inherited one is not read (residual, in the ledger).
+  if (!(extended && map.length > 0) && !map.some(([k]) => k === '@/*')) map.push(['@/*', ['./*']])
   const paths: string[] = []
   const dirs: string[] = []
   const roots: Record<string, string> = {}
   for (const [k, v] of Object.entries(aliases)) {
-    const rel = resolveAlias(v, base, map)
-    if (rel === undefined || rel === '') return { error: `alias ${JSON.stringify(k)} (${JSON.stringify(v)}) in components.json does not resolve to a path inside the project by the tsconfig "paths"; the shadcn CLI target cannot be checked` }
-    roots[k] = rel
-    if (k === 'utils') paths.push(rel, `${rel}.ts`)
-    else {
-      paths.push(rel)
-      dirs.push(rel)
+    const rels = resolveAlias(v, base, map)
+    if (rels === undefined || rels.length === 0 || rels.includes('')) return { error: `alias ${JSON.stringify(k)} (${JSON.stringify(v)}) in components.json does not resolve to a path inside the project by the tsconfig "paths"; the shadcn CLI target cannot be checked` }
+    roots[k] = rels[0]!
+    for (const rel of rels) {
+      if (k === 'utils') paths.push(rel, `${rel}.ts`)
+      else {
+        paths.push(rel)
+        dirs.push(rel)
+      }
     }
   }
   const ui = roots.ui ?? 'components/ui'
@@ -145,12 +155,24 @@ function cliLink(root: string, t: { paths: string[]; dirs: string[] }): string |
   const hit = t.paths.find((p) => linkUnder(root, p))
   if (hit !== undefined) return hit
   // dependency files of a registry item (hooks, lib helpers) land in these directories: no entry may be a link
-  for (const d of t.dirs) {
+  const scan = (rel: string, depth: number): string | undefined => {
+    let names: string[]
     try {
-      for (const e of readdirSync(join(root, d))) if (isLink(join(root, d, e))) return `${d}/${e}`
+      names = readdirSync(join(root, rel))
     } catch {
-      // the directory does not exist yet (the CLI creates it): nothing to follow
+      return undefined // not a directory, or it does not exist yet (the CLI creates it): nothing to follow
     }
+    for (const e of names) {
+      const sub = `${rel}/${e}`
+      if (isLink(join(root, sub))) return sub
+      const found = depth > 0 ? scan(sub, depth - 1) : undefined
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  for (const d of t.dirs) {
+    const found = scan(d, 3)
+    if (found !== undefined) return found
   }
   return undefined
 }
