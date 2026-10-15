@@ -80,18 +80,19 @@ One line per thing that keeps a row or a library component off the static/native
 | 42 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `browser-global` diagnostic (docs/react-coverage.md) |
 | 43 | fallback:let-var | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `let-var` diagnostic (docs/react-coverage.md) |
 | 44 | fallback:ref-in-render | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 6 | `ref-in-render` diagnostic (docs/react-coverage.md) |
-| 45 | useImperativeHandle | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 5 | c-useimperativehandle: fallback:hook-unsupported |
-| 46 | fallback:prop-quoted-key | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 4 | `prop-quoted-key` diagnostic (docs/react-coverage.md) |
-| 47 | fallback:prop-jinja-name | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `prop-jinja-name` diagnostic (docs/react-coverage.md) |
-| 48 | React.Children | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | d-children-map: fallback:jsx-expression |
-| 49 | useSyncExternalStore | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | c-usesyncexternalstore: fallback:hook-unsupported |
-| 50 | fallback:context-escape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `context-escape` diagnostic (docs/react-coverage.md) |
-| 51 | fallback:prop-default-shape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `prop-default-shape` diagnostic (docs/react-coverage.md) |
-| 52 | fallback:raw-text-child | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `raw-text-child` diagnostic (docs/react-coverage.md) |
+| 45 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 5 | `module-side-effect` diagnostic (docs/react-coverage.md) |
+| 46 | useImperativeHandle | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 5 | c-useimperativehandle: fallback:hook-unsupported |
+| 47 | fallback:prop-quoted-key | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 4 | `prop-quoted-key` diagnostic (docs/react-coverage.md) |
+| 48 | fallback:prop-jinja-name | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `prop-jinja-name` diagnostic (docs/react-coverage.md) |
+| 49 | React.Children | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | d-children-map: fallback:jsx-expression |
+| 50 | useSyncExternalStore | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | c-usesyncexternalstore: fallback:hook-unsupported |
+| 51 | fallback:context-escape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `context-escape` diagnostic (docs/react-coverage.md) |
+| 52 | fallback:prop-default-shape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `prop-default-shape` diagnostic (docs/react-coverage.md) |
+| 53 | fallback:raw-text-child | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `raw-text-child` diagnostic (docs/react-coverage.md) |
 
 ## Classification
 
-Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (37 survey truth, 15 census). The fixture is the CLI output unedited (the `@/` imports resolve through its `tsconfig.json` `paths`), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
+Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (38 survey truth, 15 census). The fixture is the CLI output unedited (the `@/` imports resolve through its `tsconfig.json` `paths`), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
 
 ### History: the named-export build rule (S0 → S1.1, PR #198)
 
@@ -977,14 +978,14 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
-| lib/components/grid/Cell.tsx | Cell | function | react (fallback:hook-unsupported, fallback:prop-pattern, fallback:ref-shape) | useContext / use*Context, rest-props spread, useRef, useId |
-| lib/components/grid/Grid.tsx | Grid | function | react (fallback:control-flow, fallback:hook-unsupported) | Context.Provider / *Provider, useSyncExternalStore, useImperativeHandle, rest-props spread, useEffect, useRef, useMemo / useCallback, useId |
+| lib/components/grid/Cell.tsx | Cell | function | react (fallback:hook-unsupported, fallback:module-side-effect, fallback:prop-pattern, fallback:ref-shape) | useContext / use*Context, rest-props spread, useRef, useId |
+| lib/components/grid/Grid.tsx | Grid | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:module-side-effect) | Context.Provider / *Provider, useSyncExternalStore, useImperativeHandle, rest-props spread, useEffect, useRef, useMemo / useCallback, useId |
 | lib/components/grid/Gridline.tsx | Gridline | function | react (fallback:island-prop) | — |
 | lib/components/grid/GridTrackSeparator.tsx | GridTrackSeparator | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:let-var) | useContext / use*Context, useMemo / useCallback, useId |
-| lib/components/group/Group.tsx | Group | function | react (fallback:hook-unsupported, fallback:island-prop, fallback:member-tag, fallback:prop-pattern, fallback:ref-shape) | Context.Provider / *Provider, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, useId |
+| lib/components/group/Group.tsx | Group | function | react (fallback:hook-unsupported, fallback:island-prop, fallback:member-tag, fallback:module-side-effect, fallback:prop-pattern, fallback:ref-shape) | Context.Provider / *Provider, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, useId |
 | lib/components/group/ResizePreview.tsx | ResizePreview | function | react (fallback:body-shape, fallback:control-flow, fallback:hook-unsupported, fallback:let-var) | isValidElement, rest-props spread |
-| lib/components/panel/Panel.tsx | Panel | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:let-var) | useContext / use*Context, useSyncExternalStore, rest-props spread, useEffect, useRef, useId |
-| lib/components/separator/Separator.tsx | Separator | function | react (fallback:hook-unsupported, fallback:island-prop, fallback:prop-pattern) | useContext / use*Context, rest-props spread, useId |
+| lib/components/panel/Panel.tsx | Panel | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:let-var, fallback:module-side-effect) | useContext / use*Context, useSyncExternalStore, rest-props spread, useEffect, useRef, useId |
+| lib/components/separator/Separator.tsx | Separator | function | react (fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:prop-pattern) | useContext / use*Context, rest-props spread, useId |
 | lib/components/separator/SeparatorClone.tsx | SeparatorClone | function | react (fallback:body-shape, fallback:hook-unsupported) | useRef |
 | lib/components/separator/SeparatorOverlayRenderer.tsx | SeparatorOverlayRenderer | function | react (fallback:control-flow, fallback:let-var) | rest-props spread |
 | lib/components/shared/ResizeSeparator.tsx | ResizeSeparator | function | react (fallback:control-flow, fallback:hook-unsupported, fallback:let-var, fallback:prop-quoted-key) | useEffect, useState, useRef |

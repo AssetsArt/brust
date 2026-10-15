@@ -1,7 +1,12 @@
 {
   "id": "input_ed250c7e",
   "source": "tests/fixtures/module-const-mutated-length/input.tsx",
-  "tier": "Static",
+  "tier": {
+    "React": {
+      "reason": "this module has a module-level expression statement; the code brust compiles copies the module's declarations but not that statement, so a value read from a module binding could differ from React's",
+      "client_only": false
+    }
+  },
   "props": [],
   "repeats_children": true,
   "state": [],
@@ -76,21 +81,19 @@
   },
   "jobs": [
     {
-      "kind": "Precompute",
-      "inputs": [],
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "*",
+        "__store"
+      ],
       "outputs": [
-        "_s1"
+        "_ssr_input_ed250c7e"
       ],
       "per_item": null
-    }
-  ],
-  "build_eval": [
-    {
-      "key": "tests/fixtures/module-const-mutated-length/input.tsx@103",
-      "slot": "_s1",
-      "build_time": false,
-      "line": 7,
-      "col": 8
     }
   ],
   "child_links": [],
@@ -100,5 +103,15 @@
   "needs_worker": true,
   "cache": null,
   "children": [],
-  "diagnostics": []
+  "diagnostics": [
+    {
+      "class": "Fallback",
+      "rule": "module-side-effect",
+      "message": "this module has a module-level expression statement; the code brust compiles copies the module's declarations but not that statement, so a value read from a module binding could differ from React's",
+      "loc": 103,
+      "line": 7,
+      "col": 8,
+      "remediation": "move the statement into the function that needs it, or keep this component in React"
+    }
+  ]
 }

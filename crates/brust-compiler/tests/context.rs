@@ -762,3 +762,39 @@ fn an_allowlisted_method_on_a_user_defined_receiver_falls_back() {
         assert!(is_react(&ir), "{f}: {:?}", ir.tier);
     }
 }
+
+/// F215: a precompute job, the client chunk and the build evaluation copy a module's declarations, never a statement
+/// that changes them (`xs.push('b')` at the top level printed "a" where React prints "a,b"). A component that reads a
+/// module binding of a module with such a statement falls back by name; a module without one, or a component that
+/// reads none of its bindings, keeps lowering.
+#[test]
+fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
+    for f in [
+        "side-push.tsx",
+        "side-closure.tsx",
+        "side-init.tsx",
+        "side-writer.tsx",
+        // A package call handed a module object it may change.
+        "side-arg.tsx",
+        // A `displayName` the module also reads.
+        "side-display-read.tsx",
+    ] {
+        let (ir, _) = page(f);
+        assert!(
+            rules(&ir).contains(&"module-side-effect") && is_react(&ir),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+    }
+    for f in ["side-none.tsx", "side-unread.tsx"] {
+        let (ir, jinja) = page(f);
+        assert!(
+            !rules(&ir).contains(&"module-side-effect") && !is_react(&ir),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+        assert!(!jinja.is_empty(), "{f}");
+    }
+}

@@ -117,6 +117,27 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);
     captures::captures(ir, &mut st, ctx);
+    // F215: the code brust copies out of the module (jobs, the client chunk, build evaluation) carries its
+    // declarations, never a statement that changes them; a component that reads a module binding of such a module
+    // falls back.
+    if let Some((at, what)) = ir.module_effect.clone() {
+        let read = st
+            .painted
+            .iter()
+            .find(|p| !p.deps.module_locals.is_empty() && !p.folds_module)
+            .map(|p| p.loc)
+            .or_else(|| (!ir.client_module_locals.is_empty()).then_some(at));
+        if let Some(loc) = read {
+            ir.diagnostics.push(crate::ir::Diagnostic::fallback(
+                "module-side-effect",
+                format!(
+                    "this module has {what}; the code brust compiles copies the module's declarations but not that statement, so a value read from a module binding could differ from React's"
+                ),
+                loc,
+                "move the statement into the function that needs it, or keep this component in React",
+            ));
+        }
+    }
     projection::projection(ir, &st);
     tier::tier(ir, &mut st, ctx);
     // Backstop: the final precompute job never imports a store handle (D8).

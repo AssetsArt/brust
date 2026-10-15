@@ -7,12 +7,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 52 | 37 | 12 | 3 | 0 | 0 | 0 | 0 |
-| B Composition | 206 | 109 | 12 | 85 | 0 | 0 | 0 | 0 |
+| A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
+| B Composition | 208 | 110 | 12 | 86 | 0 | 0 | 0 | 0 |
 | C Hooks | 38 | 2 | 14 | 22 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 392 | 187 | 49 | 152 | 3 | 1 | 0 | 0 |
+| **Total** | 394 | 187 | 49 | 154 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -32,7 +32,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-classname-template | className template literal | static | static | 0 | ok | — | spec §6.2 template literal |
 | a-style-object | style object from props | static | static | 0 | ok | — | spec §6.2 style object |
 | a-module-const | module const (literal, array) in render | static | static | 0 | ok | — | spec §6.2 literals/arrays; module consts fold at compile time (L1) |
-| a-module-const-mutated | module const array mutated in its module | static | static | precompute | ok | — | R1.1: a mutated array never folds; it stays a precompute slot |
+| a-module-const-mutated | module const array mutated in its module | react | react | ssr | ok | fallback:module-side-effect | R1.1: a mutated array never folds. F215: the precompute slot it was printed 'a' (the job copied the const, not the push) where React prints 'a, b'; the module-level push now falls back module-side-effect |
 | a-list-cond-element | .map returning a ternary between two elements | static | static | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms desugar to For + If |
 | a-list-cond-state | .map returning a conditional element over state | native | native | 0 | ok | — | spec §6.2 map-as-For; L6 conditional element arms |
 | a-and-guard | && guard on a prop | static | static | 0 | ok | — | spec §6.2 && guard |
@@ -202,6 +202,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-top-element-helper | a module helper that calls another helper returning an element, printed as a child with no wrapper | react | react | ssr | ok | fallback:jsx-const-child | F198: a module function is element-free only when it writes no JSX and every module name it reads is element-free (a least fixpoint) |
 | b-prop-element-member | an imported element read through a member, passed as a prop the child prints | react | react | ssr | ok | fallback:jsx-const-child | F199 (wrong output on main: the child printed the element's internals): a component prop is judged by the element predicate (jsx-const-child) |
 | b-prop-plain-helpers | component props from a package helper, an element-free module helper and an object spread | static | static | precompute | ok | — | F199: only what can be an element refuses; a package export is not judged (accepted limit), an element-free module helper and an object literal judged by what it reads keep lowering |
+| b-module-side-effect | a module-level statement changes a module array a helper reads | react | react | ssr | ok | fallback:module-side-effect | F215 (wrong output on main: the job copied `const xs` but not the push, printing 'a' where React prints 'a,b'): falls back module-side-effect; served == React in scripts/shadcn/context-parity.test.ts (ctx-side-*) |
+| b-module-side-effect-unread | a module-level statement in a module whose bindings the component never reads | static | static | 0 | ok | — | F215: only a component that reads a module binding falls back |
 | b-plain-wrapper-helper-proven | imported helpers proven to return a primitive (a template, a method of a number or string), under a plain wrapper | static | static | precompute | ok | — | F173 control: plain_fn rules read in the helper module (its consts, primitive-returning methods); the child lowers |
 | b-plain-wrapper-methods | built-in number, string and Date methods (toLocaleString, toFixed, padStart, new Date(x).toISOString, …) as children of a plain wrapper | static | static | precompute | ok | — | F173 lead ruling on @57714ece: an allowlisted built-in method on an accepted read or new Date(…) of the unbound global; served == React in scripts/shadcn/context-parity.test.ts (ctx-plain-methods) |
 | b-plain-wrapper-method-override | an object literal with its own toString, called as a child of a plain wrapper | react | react | ssr | ok | fallback:jsx-const-child | F173 lead ruling: a user-defined receiver may override the method (an element would print nothing), so it falls back (jsx-const-child) |

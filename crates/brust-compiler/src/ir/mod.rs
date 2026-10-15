@@ -254,6 +254,9 @@ pub struct ComponentIR {
     /// readable in a prop passed to a component.
     #[serde(skip)]
     pub element_free_fns: Vec<String>,
+    /// F215: the first module-level statement that runs for its effect (`analyze::module_effects`): its start and what it is.
+    #[serde(skip)]
+    pub module_effect: Option<(u32, String)>,
     /// This component's rendered tree holds a React island (a React-tier child, or a static child that does): such a
     /// subtree hydrates standalone, so a lowered context Provider above it cannot reach it (S2, F3).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -398,6 +401,7 @@ impl ComponentIR {
             ctx_pkg: false,
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),
+            module_effect: None,
             holds_island: false,
             unwritten_props: Vec::new(),
             shadowed_props: Vec::new(),
