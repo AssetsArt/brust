@@ -333,8 +333,9 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
     out
 }
 
-/// F173 (plain wrappers): the export `imported` of the RELATIVE module `source` (seen from `from`) is a function that
-/// module proves plain by the same rules (`plain_fns`, read in its own module: its consts, its helpers). An import is a
+/// F173 (plain wrappers) + F197: the export `imported` of the module `source` (seen from `from`: a relative module or a
+/// package source the build wrote) is a function its declaring module proves plain by the same rules (`plain_fns`, read
+/// in its own module: its consts, its helpers). An import is a
 /// read-only binding, so the importer cannot rebind it; the exporting module's own reassignments are refused there.
 /// Anything that does not resolve, read or parse is not proven.
 pub fn imported_plain_fn(
@@ -343,9 +344,22 @@ pub fn imported_plain_fn(
     imported: &str,
     opts: &crate::analyze::component::AnalyzeOptions,
 ) -> bool {
-    let Some(path) = crate::analyze::modules::resolve(from, source, opts) else {
+    // F197: a relative module, or a package source the build wrote under `.brust/pkg-src` (F153c; `resolve_package`
+    // refuses anything else), followed through barrels (`export { f } from`, `export *`) to the module that declares
+    // the export, where the same rules prove it. A package that was not written, or a chain that cannot be followed,
+    // proves nothing.
+    let Some(entry) = crate::analyze::modules::resolve_module(from, source, opts) else {
         return false;
     };
+    let (path, export) = crate::analyze::exports::declared_in(
+        &entry,
+        &crate::analyze::modules::Export::Named(imported.to_string()),
+        opts,
+    );
+    let crate::analyze::modules::Export::Named(imported) = export else {
+        return false;
+    };
+    let imported = imported.as_str();
     let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
         return false;
     };

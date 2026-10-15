@@ -1,0 +1,1 @@
+{"version": 3, "sources": ["../src/index.ts"], "sourcesContent": ["export function tag(n: number): string {\n  return `#${n.toFixed(0)}`\n}\nexport function loud(s: string): string {\n  return s.toUpperCase()\n}\n"], "mappings": "", "names": []}
