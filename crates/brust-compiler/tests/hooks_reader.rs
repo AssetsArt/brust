@@ -698,7 +698,7 @@ fn a_callback_ref_becomes_a_synthetic_ref_and_a_mount_effect() {
             "{ref_expr}: {attrs:?}"
         );
         assert!(a.refs.iter().any(|r| r.name == "_rf1"));
-        let e = a.effects.last().expect("the mount effect");
+        let e = a.effects.first().expect("the mount effect");
         assert!(e.layout);
         assert!(
             matches!(&e.deps.as_deref(), Some([d]) if format!("{:?}", d.kind).contains(deps_kind)),
@@ -722,6 +722,24 @@ fn a_ref_that_is_not_a_function_value_or_ref_object_stays_a_fallback() {
         // Left as written (the tier pass reports `ref-shape`): no synthetic ref, no effect.
         assert!(a.refs.is_empty() && a.effects.is_empty(), "{body}");
     }
+}
+
+#[test]
+fn a_callback_ref_under_a_conditional_stays_a_fallback() {
+    let a = ir(&format!(
+        "{PRE}export default function F() {{ const cb = useCallback((n: any) => {{}}, []); const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}>{{n > 0 && <input ref={{cb}} />}}</div> }}"
+    ));
+    assert!(a.refs.is_empty() && a.effects.is_empty(), "{:?}", a.effects);
+}
+
+#[test]
+fn the_callback_ref_effect_runs_before_the_components_own_effects() {
+    let a = ir(&format!(
+        "{PRE}export default function F() {{ const r = useRef<any>(null); const cb = useCallback((n: any) => {{ r.current = n }}, []); const [n, setN] = useState(0); useEffect(() => {{ r.current.focus() }}, []); return <input ref={{cb}} onClick={{() => setN(n + 1)}} /> }}"
+    ));
+    assert_eq!(a.effects.len(), 2, "{:?}", a.effects);
+    assert!(a.effects[0].layout && a.effects[0].deps.is_some());
+    assert!(!a.effects[1].layout);
 }
 
 // B4: a `useRef(init)` that is only ever read as `.current` in the render is a state cell nothing sets.

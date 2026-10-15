@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 215 | 112 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 50 | 2 | 20 | 28 | 0 | 0 | 0 | 0 |
+| C Hooks | 51 | 2 | 20 | 29 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 413 | 189 | 57 | 163 | 3 | 1 | 0 | 0 |
+| **Total** | 414 | 189 | 57 | 164 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -349,6 +349,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-forwarded-ref-member | the forwardRef ref read as a member (ref.current) | react | react | ssr | ok | fallback:forwardref-ref | B3: any read of the forwarded ref other than ref={ref} or a whole argument still needs React (forwardref-ref) |
 | c-callback-ref | ref={fn} with a useCallback function | native | native | 0 | ok | — | B1: a ref that is a function value becomes a synthetic ref and a mount effect that calls it with the node |
 | c-callback-ref-in-list | ref={fn} on an element inside a list | react | react | ssr | ok | fallback:ref-shape | B1: a callback ref inside a list stays ref-shape |
+| c-callback-ref-in-conditional | ref={fn} on an element under a conditional | react | react | ssr | ok | fallback:ref-shape | B1: a callback ref on an element that may mount later stays ref-shape (the mount effect runs once) |
 | c-object-spread-rest-key | an object literal spreading a ...rest key | native | native | precompute | ok | — | B5: ...rest.key in an object literal reads that prop and spreads it (Object.assign), instead of reading the rest object as a value |
 | c-object-spread-rest-whole | an object literal spreading the whole ...rest object | react | react | ssr | ok | fallback:prop-pattern | B5: the whole rest object read as a value stays prop-pattern |
 | c-ref-never-written | a useRef(init) only read as .current in the render | native | native | 0 | ok | — | B4: a ref nobody writes is its initial value, held as a state cell |

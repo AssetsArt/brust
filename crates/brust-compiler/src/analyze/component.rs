@@ -646,7 +646,9 @@ fn read_function_as(
 /// it stays a `ref-shape` fallback). React calls a function ref with the node at mount (and
 /// its returned cleanup, or `null`, at unmount) and sets `.current` on an object ref. Each such attribute is
 /// desugared to a synthetic `useRef` bound on the element plus a mount effect that does `setRef(x, node)`, which is
-/// what `composeRefs` itself does. A ref on an element inside a list stays a `ref-shape` fallback.
+/// what `composeRefs` itself does. A ref on an element inside a list, a conditional branch or a component's children (which
+/// may mount later or never) stays a `ref-shape` fallback. The mount effects go FIRST in `ir.effects`: React attaches
+/// refs before it runs any effect of the owner.
 fn callback_refs(ir: &mut ComponentIR) {
     let callable: Vec<(String, IdentKind)> = ir
         .derived
@@ -705,14 +707,18 @@ fn callback_refs(ir: &mut ComponentIR) {
                     .iter_mut()
                     .for_each(|c| walk(c, refs, callable, taken, made, in_list));
             }
+            // A branch or a component's children may mount later or not at all; the mount effect cannot follow that.
             Node::If { then, else_, .. } => then
                 .iter_mut()
                 .chain(else_.iter_mut())
-                .for_each(|c| walk(c, refs, callable, taken, made, in_list)),
+                .for_each(|c| walk(c, refs, callable, taken, made, true)),
             Node::For { body, .. } => body
                 .iter_mut()
                 .for_each(|c| walk(c, refs, callable, taken, made, true)),
-            Node::Component { children, .. } | Node::Fragment(children) => children
+            Node::Component { children, .. } => children
+                .iter_mut()
+                .for_each(|c| walk(c, refs, callable, taken, made, true)),
+            Node::Fragment(children) => children
                 .iter_mut()
                 .for_each(|c| walk(c, refs, callable, taken, made, in_list)),
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
@@ -729,7 +735,7 @@ fn callback_refs(ir: &mut ComponentIR) {
         false,
     );
     ir.template = template;
-    for (rf, x, kind, loc) in made {
+    for (at, (rf, x, kind, loc)) in made.into_iter().enumerate() {
         // Locals of the effect that neither shadow `x` nor the ref.
         let local = |base: &str| {
             let mut n = base.to_string();
@@ -754,24 +760,27 @@ fn callback_refs(ir: &mut ComponentIR) {
                 kind: RawKind::Lit(Literal::Null),
             }),
         });
-        ir.effects.push(EffectDecl {
-            body: RawExpr {
-                loc,
-                kind: RawKind::Arrow {
-                    params: Vec::new(),
-                    body: ArrowBody::Block {
-                        source,
-                        captures_only: false,
+        ir.effects.insert(
+            at,
+            EffectDecl {
+                body: RawExpr {
+                    loc,
+                    kind: RawKind::Arrow {
+                        params: Vec::new(),
+                        body: ArrowBody::Block {
+                            source,
+                            captures_only: false,
+                        },
+                        captures: vec![(x.clone(), kind.clone()), (rf.clone(), IdentKind::Local)],
                     },
-                    captures: vec![(x.clone(), kind.clone()), (rf.clone(), IdentKind::Local)],
                 },
+                deps: Some(vec![RawExpr {
+                    loc,
+                    kind: RawKind::Ident { name: x, kind },
+                }]),
+                layout: true,
             },
-            deps: Some(vec![RawExpr {
-                loc,
-                kind: RawKind::Ident { name: x, kind },
-            }]),
-            layout: true,
-        });
+        );
     }
 }
 
