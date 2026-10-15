@@ -1,4 +1,4 @@
-import { swapped } from './lib/helpers'
+import { swapped } from './lib/helpers-let'
 function Wrap({ children }: { children?: React.ReactNode }) {
   return <section>{children}</section>
 }

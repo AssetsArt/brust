@@ -27,6 +27,9 @@ const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix',
   // Mellow round 1: a parameter default, a destructured module binding, the comma operator, a state started with an element and
   // a loop over a list of elements.
   'ctx-top-param-default', 'ctx-top-param-pattern', 'ctx-top-pattern-binding', 'ctx-top-comma', 'ctx-top-state-element', 'ctx-top-loop-element',
+  // F215: a module-level statement that changes a module binding is not in the copied code (main printed "a" for "a,b"
+  // and "x" for "y"); the page is React now.
+  'ctx-side-push', 'ctx-side-closure', 'ctx-side-init', 'ctx-side-writer', 'ctx-side-iife', 'ctx-side-method', 'ctx-side-import', 'ctx-side-param', 'ctx-side-import-call', 'ctx-side-pattern', 'ctx-side-coerce', 'ctx-side-later', 'ctx-side-getter', 'ctx-side-app-handed',
   'ctx-pprop-imp', 'ctx-pprop-loc', 'ctx-pfield-imp', 'ctx-pfield-loc', 'ctx-pframe-prop', 'ctx-pframe-call', 'ctx-hid-provfed', 'ctx-hid-bare',
 ]
 // Imported plain value: stays a static page (no script), and renders like React.
@@ -34,7 +37,7 @@ const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix',
 // under a Provider (ctx-trio-prov was React until F173 proved formatPrice).
 // F198 + F199: ordinary reads with no wrapper and in props (a const map, a helper, `cn(…)`, an element-free local helper,
 // an object spread) keep lowering.
-const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper', 'ctx-plain-helper-string', 'ctx-plain-methods', 'ctx-top-ordinary']
+const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper', 'ctx-plain-helper-string', 'ctx-plain-methods', 'ctx-top-ordinary', 'ctx-plain-f205', 'ctx-side-none']
 const ROWS = join(FIXTURE, '.rows')
 const ENTRY = '.rows/ctx-parity-routes.tsx'
 const bin = join(repo, 'packages/brust/bin/brust')
@@ -144,6 +147,9 @@ for (const id of ISLAND_PAGES) {
     } else if (id.startsWith('ctx-hid-')) {
       expect(html).toContain('lit') // React reads the context value, never the forged prop
       expect(html).not.toContain('forged')
+    } else if (id.startsWith('ctx-side-')) {
+      // The value React computes after the module's own statements ran.
+      expect(html).toMatch(id === 'ctx-side-closure' ? /<section ?>y<\/section>/ : id === 'ctx-side-param' || id === 'ctx-side-later' || id === 'ctx-side-app-handed' ? /<section ?>b<\/section>/ : /<section ?>a,b<\/section>/)
     } else if (id.startsWith('ctx-plain-helper-') || /^ctx-plain-method-(computed|optional)/.test(id) || id === 'ctx-top-imp-object') {
       // React's own markup is the check (`toContain(react)` above): the helper's value, not an element.
     } else {

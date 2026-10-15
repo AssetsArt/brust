@@ -12,7 +12,8 @@ use super::deps::{Deps, minimal_paths};
 use super::server_expr::try_server;
 use crate::analyze::const_fold::{Folder, imported_const, map_idents, map_pre};
 use crate::ir::{
-    Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobDecl, JobKind, Node, RawExpr, RawKind,
+    Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobDecl, JobKind, Literal, Node, RawExpr,
+    RawKind,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -30,6 +31,8 @@ enum Place {
 pub struct Painted {
     pub loc: u32,
     pub deps: Deps,
+    /// F215: once module consts fold (a proven read-only const, evaluated at build), the value reads no module binding.
+    pub folds_module: bool,
 }
 
 /// A precomputed slot's source and deps.
@@ -793,6 +796,29 @@ impl Placer<'_> {
         let go = |x: &RawExpr| self.receiver_problem(x, depth + 1);
         let judged = |x: &RawExpr| self.child_read_problem(x, depth + 1);
         let not = || Some("a value that may carry its own methods".to_string());
+        // F205: a read whose every possible value is a primitive literal written in the source (an item field of a
+        // module-const or literal array, `ITEMS.map((i) => i.label.toUpperCase())`) is a primitive receiver.
+        if matches!(
+            r.kind,
+            RawKind::Member { .. }
+                | RawKind::Index { .. }
+                | RawKind::Ident {
+                    kind: IdentKind::LoopBinding,
+                    ..
+                }
+        ) && self
+            .static_values(r, self.lists.len(), 0)
+            .is_some_and(|vs| {
+                vs.iter().all(|v| {
+                    matches!(
+                        v.kind,
+                        RawKind::Lit(Literal::Str(_) | Literal::Num(_) | Literal::Bool(_))
+                    )
+                })
+            })
+        {
+            return None;
+        }
         match &r.kind {
             RawKind::Lit(_) => None,
             RawKind::Template { .. } | RawKind::Unary { .. } => judged(r),
@@ -810,23 +836,10 @@ impl Placer<'_> {
                 // Mellow F3: a state value is a receiver only when its `useState` initial value is primitive (a literal, a
                 // template, an operator over judged reads). An object, a prop, a lazy initializer, refuse; what a setter
                 // writes later is out of model (ledger N2).
-                IdentKind::State => match self.state_inits.get(name).map(|i| &i.kind) {
-                    Some(RawKind::Lit(_)) => None,
-                    Some(RawKind::Template { .. } | RawKind::Unary { .. }) => {
-                        judged(&self.state_inits[name]).map(|_| name.clone())
-                    }
-                    // `&&` / `||` / `??` return an operand; the other operators return a primitive.
-                    Some(RawKind::Binary { op, .. })
-                        if !matches!(
-                            op,
-                            crate::ir::BinOp::And
-                                | crate::ir::BinOp::Or
-                                | crate::ir::BinOp::Nullish
-                        ) =>
-                    {
-                        judged(&self.state_inits[name]).map(|_| name.clone())
-                    }
-                    _ => Some(name.clone()),
+                // F205: a conditional or logical init whose every possible result is primitive-typed is one too.
+                IdentKind::State => match self.state_inits.get(name) {
+                    Some(init) => self.prim_typed(init, depth + 1).map(|_| name.clone()),
+                    None => Some(name.clone()),
                 },
                 // Mellow F2: a list item carries what its list holds (`[{ toString: fmt }].map((r) => r.toString())`).
                 IdentKind::LoopBinding => match self
@@ -910,6 +923,14 @@ impl Placer<'_> {
                             name: g,
                             kind: IdentKind::Global,
                         } => g == "Math",
+                        // F205 (Mellow N3): `list.filter(pred)` holds some of `list`'s own elements when `pred` only
+                        // reads (it cannot change an element); its result is a receiver exactly when `list` is.
+                        _ if name == "filter" => {
+                            return match args.as_slice() {
+                                [p] if self.read_only_pred(p) => go(target),
+                                _ => not(),
+                            };
+                        }
                         _ => plain_method(name) && go(target).is_none(),
                     },
                     _ => false,
@@ -946,6 +967,211 @@ impl Placer<'_> {
             | RawKind::Arrow { .. }
             | RawKind::Jsx(_)
             | RawKind::Opaque { .. } => not(),
+        }
+    }
+
+    /// F173 (Mellow F3) + F205: why a state's initial value may not be primitive-typed: a literal; a template, a unary
+    /// or a non-logical binary over judged reads (they return a primitive); a conditional whose test is judged and whose
+    /// two arms are primitive-typed; `&&` / `||` / `??` whose two operands are (they return one). Anything else refuses,
+    /// a prop included.
+    fn prim_typed(&self, r: &RawExpr, depth: u8) -> Option<String> {
+        if depth > 8 {
+            return Some("an expression nested deeper than 8".into());
+        }
+        let go = |x: &RawExpr| self.prim_typed(x, depth + 1);
+        match &r.kind {
+            RawKind::Lit(_) => None,
+            RawKind::Binary {
+                op: crate::ir::BinOp::And | crate::ir::BinOp::Or | crate::ir::BinOp::Nullish,
+                left,
+                right,
+            } => go(left).or_else(|| go(right)),
+            RawKind::Template { .. } | RawKind::Unary { .. } | RawKind::Binary { .. } => {
+                self.child_read_problem(r, depth + 1)
+            }
+            RawKind::Cond { test, yes, no } => self
+                .child_read_problem(test, depth + 1)
+                .or_else(|| go(yes))
+                .or_else(|| go(no)),
+            RawKind::Ident { name, .. } => Some(name.clone()),
+            _ => Some("a value that may not be primitive".into()),
+        }
+    }
+
+    /// F205: every value `r` can take, as literals written in the source, or `None` when that is not provable. Roots: an
+    /// array or object literal (a primitive literal too), a module const never written (`mutated` is false, so no
+    /// element changes either) and a loop item, through what its list holds. A field is the last own key of that name
+    /// of every object (a missing key or `__proto__` refuses); an index must be a literal in range. `scope` is the
+    /// number of enclosing lists the names in `r` may resolve to (a list source sees only the lists outside it).
+    fn static_values(&self, r: &RawExpr, scope: usize, depth: u8) -> Option<Vec<RawExpr>> {
+        // Its own budget: one step per name, field, index or list on the way to the literal.
+        if depth > 16 {
+            return None;
+        }
+        let out = match &r.kind {
+            RawKind::Lit(_) | RawKind::Array(_) | RawKind::Object(_) => vec![r.clone()],
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Local,
+            } if !self.derived_raw.contains_key(name) => {
+                let c = self
+                    .module_decls
+                    .iter()
+                    .flat_map(|d| &d.consts)
+                    .find(|c| &c.name == name)?;
+                if c.mutated {
+                    return None;
+                }
+                // A module const's value reads module names only: no enclosing list.
+                self.static_values(&c.value, 0, depth + 1)?
+            }
+            RawKind::Ident {
+                name,
+                kind: IdentKind::LoopBinding,
+            } => {
+                let (at, l) = self.lists[..scope]
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, l)| &l.item == name || l.index.as_ref() == Some(name))?;
+                if &l.item != name {
+                    return None;
+                }
+                self.static_elems(l.source.as_ref()?, at, depth + 1)?
+            }
+            RawKind::Member {
+                target,
+                name,
+                optional: false,
+            } if name != "__proto__" => {
+                let mut out = Vec::new();
+                for v in self.static_values(target, scope, depth + 1)? {
+                    let RawKind::Object(ps) = &v.kind else {
+                        return None;
+                    };
+                    out.push(ps.iter().rev().find(|(k, _)| k == name)?.1.clone());
+                }
+                out
+            }
+            RawKind::Index { target, index } => {
+                let RawKind::Lit(Literal::Num(i)) = index.kind else {
+                    return None;
+                };
+                let mut out = Vec::new();
+                for v in self.static_values(target, scope, depth + 1)? {
+                    let RawKind::Array(xs) = &v.kind else {
+                        return None;
+                    };
+                    let at = (i >= 0.0 && i.fract() == 0.0).then_some(i as usize)?;
+                    out.push(xs.get(at)?.clone());
+                }
+                out
+            }
+            _ => return None,
+        };
+        (out.len() <= 64).then_some(out)
+    }
+
+    /// F205: every element the list `src` can hold (see `static_values`): the elements of each array it can be, through
+    /// `filter(pred)` with a read-only `pred` and `slice(…)` of judged arguments (both hand back some of the same
+    /// elements).
+    fn static_elems(&self, src: &RawExpr, scope: usize, depth: u8) -> Option<Vec<RawExpr>> {
+        if depth > 16 {
+            return None;
+        }
+        if let RawKind::Call { callee, args } = &src.kind
+            && let RawKind::Member {
+                target,
+                name,
+                optional: false,
+            } = &callee.kind
+        {
+            let ok = match name.as_str() {
+                "filter" => matches!(args.as_slice(), [p] if self.read_only_pred(p)),
+                "slice" => args
+                    .iter()
+                    .all(|a| self.child_read_problem(a, depth + 1).is_none()),
+                _ => false,
+            };
+            return if ok {
+                self.static_elems(target, scope, depth + 1)
+            } else {
+                None
+            };
+        }
+        let mut out = Vec::new();
+        for v in self.static_values(src, scope, depth + 1)? {
+            let RawKind::Array(xs) = &v.kind else {
+                return None;
+            };
+            out.extend(xs.iter().cloned());
+        }
+        (out.len() <= 64).then_some(out)
+    }
+
+    /// F205: a `filter` predicate that only reads, so it cannot change the elements it is handed: the unbound global
+    /// `Boolean`, or an expression arrow whose body is literals, its own parameters, props, state, stores, loop bindings
+    /// and globals, under member / index reads, `!`, `typeof`, `===`, `!==`, `&&`, `||`, `??` and `?:`. No call (a
+    /// method may run author code), no converting operator or template, no function, no verbatim code (an assignment
+    /// is verbatim).
+    fn read_only_pred(&self, p: &RawExpr) -> bool {
+        fn reads(e: &RawExpr, params: &[String], depth: u8) -> bool {
+            if depth > 8 {
+                return false;
+            }
+            let go = |x: &RawExpr| reads(x, params, depth + 1);
+            match &e.kind {
+                RawKind::Lit(_) => true,
+                RawKind::Ident { name, kind } => {
+                    params.contains(name)
+                        || matches!(
+                            kind,
+                            IdentKind::Prop
+                                | IdentKind::State
+                                | IdentKind::Store { .. }
+                                | IdentKind::LoopBinding
+                                | IdentKind::Global
+                        )
+                }
+                RawKind::Member { target, .. } => go(target),
+                RawKind::Index { target, index } => go(target) && go(index),
+                // Only operators that never convert an operand: a conversion calls the operand's own `toString` /
+                // `valueOf`, which may be author code.
+                RawKind::Binary { op, left, right } => {
+                    matches!(
+                        op,
+                        crate::ir::BinOp::StrictEq
+                            | crate::ir::BinOp::StrictNe
+                            | crate::ir::BinOp::And
+                            | crate::ir::BinOp::Or
+                            | crate::ir::BinOp::Nullish
+                    ) && go(left)
+                        && go(right)
+                }
+                RawKind::Unary { op, value } => {
+                    matches!(op, crate::ir::UnOp::Not | crate::ir::UnOp::Typeof) && go(value)
+                }
+                RawKind::Cond { test, yes, no } => go(test) && go(yes) && go(no),
+                RawKind::Template { .. }
+                | RawKind::Call { .. }
+                | RawKind::Array(_)
+                | RawKind::Object(_)
+                | RawKind::Arrow { .. }
+                | RawKind::Jsx(_)
+                | RawKind::Opaque { .. } => false,
+            }
+        }
+        match &p.kind {
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Global,
+            } => name == "Boolean",
+            RawKind::Arrow {
+                params,
+                body: crate::ir::ArrowBody::Expr(b),
+                ..
+            } => reads(b, params, 0),
+            _ => false,
         }
     }
 
@@ -1386,9 +1612,17 @@ impl Placer<'_> {
             ));
         }
         let deps = self.st.cx.deps(r, &self.loop_scope);
+        let folds_module = !deps.module_locals.is_empty()
+            && self
+                .st
+                .cx
+                .deps(&self.fold(r), &self.loop_scope)
+                .module_locals
+                .is_empty();
         self.st.painted.push(Painted {
             loc: r.loc,
             deps: deps.clone(),
+            folds_module,
         });
         if deps.reactive() {
             // The client re-evaluates it (§3.2 rule 3: its props are seeds).

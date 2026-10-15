@@ -51,6 +51,9 @@ export type ComponentIR = Record<string, any> & {
   stores?: { handle: string; resolved: { name: string; module: string } | null }[]
   /** A package export rendered as a React island (L22): `source` is then not a file. */
   external?: { source: string; export: string; member?: string[] }
+  /** A component compiled from a package source and written in app code as a package import (F188): the published
+   * export a React island or revive hook imports instead of the source. */
+  dist?: { source: string; export: string; member?: string[] }
   /** The binding a React island imports this component by from `source` (absent: the default export). */
   export?: string
   /** Child components; `nested` is set when this file passes lowered JSX children to that child, an island (shadcn S1). */
