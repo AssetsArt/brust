@@ -51,6 +51,33 @@ function isLink(path: string): boolean {
   }
 }
 
+/** True when `rel` (project-relative), or any directory on the way to it, is a symlink. */
+function linkUnder(root: string, rel: string): boolean {
+  let cur = root
+  for (const seg of rel.split('/').filter(Boolean)) {
+    cur = join(cur, seg)
+    if (isLink(cur)) return true
+  }
+  return false
+}
+
+/** Where the shadcn CLI writes, project-relative: the alias directories of `components.json` (`@/x` → `x`; the defaults
+ *  when we are writing it or it has none), `lib/utils.ts`, the Tailwind CSS entry (when the theme step runs) and one file per plain component name. */
+function cliTargets(componentsText: string | undefined, css: string | undefined, components: string[]): string[] {
+  const alias = (k: string, d: string): string => {
+    try {
+      const a = (JSON.parse(componentsText ?? '{}') as { aliases?: Record<string, unknown> }).aliases?.[k]
+      return typeof a === 'string' && a.startsWith('@/') && !a.split('/').includes('..') ? a.slice(2) : d
+    } catch {
+      return d
+    }
+  }
+  const ui = alias('ui', 'components/ui')
+  const lib = alias('lib', 'lib')
+  const utils = alias('utils', 'lib/utils')
+  return [ui, alias('components', 'components'), lib, `${utils}.ts`, ...(css === undefined ? [] : [css]), ...components.filter((c) => COMPONENT.test(c)).map((c) => `${ui}/${c}.tsx`)]
+}
+
 /** The name a registry URL installs: its last path segment without `.json`; undefined when it is not a plain name. */
 function urlItemName(url: string): string | undefined {
   try {
@@ -175,8 +202,17 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   // refuse before the first write, even with --force; the reader edits the real file by hand.
   const cj = join(root, 'components.json')
   const tsPath = join(root, 'tsconfig.json')
-  if (isLink(tsPath)) return fail2('tsconfig.json is a symbolic link; refusing to write through it. Add "@/*": ["./*"] to compilerOptions.paths of the real file yourself, then run again')
+  // F192: a symlinked tsconfig.json is only a problem when the command would edit it (the `@/*` path is missing).
+  const tsEdit = existsSync(tsPath) ? addAliasPath(readFileSync(tsPath, 'utf8')) : undefined
+  if (isLink(tsPath) && tsEdit?.kind === 'added') return fail2('tsconfig.json is a symbolic link; refusing to write through it. Add "@/*": ["./*"] to compilerOptions.paths of the real file yourself, then run again')
   if (isLink(cj) && (!existsSync(cj) || o.force)) return fail2('components.json is a symbolic link; refusing to write through it. Replace it with a real file or remove the link, then run again')
+  // F193: the shadcn CLI writes files itself (the theme, `lib/utils.ts`, each component, the CSS entry). It follows
+  // links, so refuse before spawning it when one of its target paths is, or sits under, a symlink.
+  const writing = !existsSync(cj) || o.force
+  const themeRuns = o.force || !readFileSync(join(root, entry.css), 'utf8').includes('shadcn/tailwind.css')
+  const targets = cliTargets(writing ? undefined : readFileSync(cj, 'utf8'), themeRuns ? entry.css : undefined, o.components)
+  const hit = targets.find((t) => linkUnder(root, t))
+  if (hit !== undefined) return fail2(`${hit} is, or is inside, a symbolic link; the shadcn CLI would write through it. Replace the link with a real directory or file, then run again`)
 
   const report = (name: string, step: Step, why = ''): void => out(`${step === 'done' ? '✓' : step === 'skipped' ? '-' : '✗'} ${name}: ${step}${why ? ` (${why})` : ''}`)
   const stop = (name: string, code: number): number => {
@@ -195,7 +231,7 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   if (!existsSync(tsPath)) {
     report('tsconfig.json', 'skipped', `no tsconfig.json; add ${JSON.stringify({ compilerOptions: { paths: { '@/*': ['./*'] } } })}`)
   } else {
-    const edit = addAliasPath(readFileSync(tsPath, 'utf8'))
+    const edit = tsEdit!
     if (edit.kind === 'added') {
       writeFileSync(tsPath, edit.text)
       report('tsconfig.json', 'done', 'added "@/*": ["./*"] under compilerOptions.paths')
