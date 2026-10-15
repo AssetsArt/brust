@@ -75,7 +75,9 @@ done   # every line must end with $V
 - `release.yml` moves `latest` onto prereleases on purpose, because npm freezes `latest` at the first publish.
 - Right after the publish, an old tag or a 404 is propagation lag: poll every 30 s for a few minutes before calling it a failure.
 
-## 6. Deploy brust.dev
+## 6. Deploy brust.dev, only after step 5 passes
+
+The site announces the version and documents its commands. If you deploy it right after the tag, users who follow it get the previous version for 10–20 minutes, and a failed publish leaves the site pointing at a version that does not exist. If step 5 does not show the new version on every package, do not deploy. Fix the publish first.
 
 The site is built by brust itself, so it needs the native addon of this checkout:
 
