@@ -448,7 +448,7 @@ test('F227: a symlink 6 levels deep under an alias directory is found (no fixed 
   const d = project()
   mkdirSync(join(d, 'components/ui/a/b/c/d/e'), { recursive: true })
   symlinkSync(join(outside, 'x.tsx'), join(d, 'components/ui/a/b/c/d/e/x.tsx')) // components/ui/a/b/c/d/e/x.tsx: 6 below components
-  const r = await init(d, ['button'])
+  const r = await init(d, { components: ['button'] })
   expect(r.code).toBe(2)
   expect(r.calls).toEqual([])
   expect(r.lines.join('\n')).toContain('components/ui/a/b/c/d/e/x.tsx')
@@ -459,7 +459,7 @@ test('F227: an alias directory with more than SCAN_LIMIT entries is refused, not
   const d = project()
   mkdirSync(join(d, 'hooks'))
   for (let i = 0; i <= SCAN_LIMIT; i++) writeFileSync(join(d, `hooks/h${i}.ts`), '')
-  const r = await init(d, ['button'])
+  const r = await init(d, { components: ['button'] })
   expect(r.code).toBe(2)
   expect(r.calls).toEqual([])
   expect(r.lines.join('\n')).toContain(`more than ${SCAN_LIMIT} entries`)
