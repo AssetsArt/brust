@@ -3,6 +3,7 @@
 // output; `test/attr-parity-react.test.ts` re-runs it and fails when the file is stale, so the Rust matrix
 // (`crates/brust-compiler/tests/attr_boolean_parity.rs`) is always compared with what React does today.
 // Run from packages/brust: `bun test/attr-parity-gen.ts > ../../tests/fixtures/attr-parity/react.json`
+// and `bun test/attr-parity-gen.ts --custom > ../../tests/fixtures/attr-parity/react-custom.json` (the same names on a custom element, F213).
 import * as React from 'react'
 const server = (await import('react-dom/server')) as unknown as { renderToString(el: unknown): string }
 const renderToString = server.renderToString
@@ -20,28 +21,32 @@ export const NAMES = [
 export const VALUES = ['true', 'false', '0', '1', "''", 'null', 'undefined', "'x'"] as const
 const parse = (v: (typeof VALUES)[number]): unknown => (v === 'undefined' ? undefined : (0, eval)(`(${v})`))
 
-export function render(): Record<string, Record<string, string>> {
+export function render(custom = false): Record<string, Record<string, string>> {
   const warn = console.error
   console.error = () => {} // React's dev warnings ("Received `true` for a non-boolean attribute") are the point of some rows
   try {
-    return renderAll()
+    return renderAll(custom)
   } finally {
     console.error = warn
   }
 }
 
-function renderAll(): Record<string, Record<string, string>> {
+/** A custom element (a tag with `-`) passes every attribute through as given: the names below keep their meaning only on the built-in tags. */
+export const CUSTOM_SKIP = ['className', 'is']
+
+function renderAll(custom: boolean): Record<string, Record<string, string>> {
   const out: Record<string, Record<string, string>> = {}
   for (const n of NAMES) {
+    if (custom && CUSTOM_SKIP.includes(n)) continue
     out[n] = {}
     for (const v of VALUES) {
       // an input for the property booleans (`checked`, `value`), a div for the rest: the attribute table is per name, not per tag
-      const tag = n === 'checked' || n === 'value' ? 'input' : n === 'selected' ? 'option' : 'div'
+      const tag = custom ? 'x-y' : n === 'checked' || n === 'value' ? 'input' : n === 'selected' ? 'option' : 'div'
       const html = renderToString(React.createElement(tag, { [n]: parse(v) }))
-      const m = /^<\w+([^>]*?)\/?>/.exec(html)!
+      const m = /^<[\w-]+([^>]*?)\/?>/.exec(html)!
       out[n][v] = m[1]!.trim().toLowerCase().replace(/\s+/g, ' ')
     }
   }
   return out
 }
-if (import.meta.main) console.log(JSON.stringify(render(), null, 1))
+if (import.meta.main) console.log(JSON.stringify(render(process.argv.includes('--custom')), null, 1))

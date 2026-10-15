@@ -8,10 +8,18 @@ const root = join(import.meta.dir, '..')
 const RS = join(root, 'crates/brust-jinja/src/lib.rs')
 const OUT = join(root, 'packages/runtime-dom/src/attr-kinds.ts')
 
+/** F212: a generated name lands inside a single-quoted, space-split string literal of the runtime: only this charset may. */
+export const NAME = /^[a-z][a-z0-9-]*$/
+
+export function checkNames(name: string, names: string[]): string[] {
+  for (const n of names) if (!NAME.test(n)) throw new Error(`${name} has a name outside ${NAME}: ${JSON.stringify(n)}`)
+  return names
+}
+
 export function table(src: string, name: string): string[] {
   const m = src.match(new RegExp(`pub const ${name}: &\\[&str\\] = &\\[([^\\]]*)\\];`))
   if (!m) throw new Error(`${name} not found in brust-jinja lib.rs`)
-  return [...(m[1] ?? '').matchAll(/"([^"]+)"/g)].map((x) => x[1] as string)
+  return checkNames(name, [...(m[1] ?? '').matchAll(/"([^"]+)"/g)].map((x) => x[1] as string))
 }
 
 export function generate(): string {

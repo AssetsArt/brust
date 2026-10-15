@@ -17,18 +17,20 @@ BINDERS.push({
       // setAttribute: `className` is a getter-only SVGAnimatedString on SVG elements (F96a).
       if (name === 'class') { el.setAttribute('class', v == null ? '' : String(v)); return }
       if (name === 'value' && 'value' in el) { (el as HTMLInputElement).value = v == null ? '' : String(v); return }
-      if (BOOLEAN.has(name)) {
+      // React passes every attribute of a custom element (a tag with `-`) through as given: `true` is ``, `false` omits it.
+      const custom = el.localName.includes('-')
+      if (!custom && BOOLEAN.has(name)) {
         const on = Boolean(v)
         if (name in el) (el as unknown as Record<string, unknown>)[name] = on
         if (on) el.setAttribute(name, '') ; else el.removeAttribute(name)
         return
       }
       // aria-*, data-* and the booleanish strings print `true`/`false`; download/capture print `true` as ``; on any other attribute React omits a boolean.
-      if (name.startsWith('aria-') || name.startsWith('data-') || STRINGIFY.has(name)) { if (v == null) el.removeAttribute(name); else el.setAttribute(name, String(v)); return }
-      if (OVERLOADED.has(name) && typeof v === 'boolean') { if (v) el.setAttribute(name, ''); else el.removeAttribute(name); return }
+      if (!custom && (name.startsWith('aria-') || name.startsWith('data-') || STRINGIFY.has(name))) { if (v == null) el.removeAttribute(name); else el.setAttribute(name, String(v)); return }
+      if ((custom || OVERLOADED.has(name)) && typeof v === 'boolean') { if (v) el.setAttribute(name, ''); else el.removeAttribute(name); return }
       if (v == null || typeof v === 'boolean') { el.removeAttribute(name); return }
       // React writes no `src=""` / `href=""` (it would load the page again); an anchor keeps its empty href.
-      if (v === '' && (name === 'src' || name === 'href') && el.localName !== 'a') { el.removeAttribute(name); return }
+      if (v === '' && (name === 'src' || name === 'href') && el.localName !== 'a' && !custom) { el.removeAttribute(name); return }
       if (URL_ATTRS.has(name) && !safeUrl(String(v))) { warnOnce(`b:${inst.name}:${name}`, `${attr} in ${inst.name}: unsafe URL refused`); return }
       el.setAttribute(name, String(v))
     })

@@ -1,0 +1,592 @@
+{
+ "aria-checked": {
+  "0": "aria-checked=\"0\"",
+  "1": "aria-checked=\"1\"",
+  "true": "aria-checked=\"\"",
+  "false": "",
+  "''": "aria-checked=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "aria-checked=\"x\""
+ },
+ "aria-hidden": {
+  "0": "aria-hidden=\"0\"",
+  "1": "aria-hidden=\"1\"",
+  "true": "aria-hidden=\"\"",
+  "false": "",
+  "''": "aria-hidden=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "aria-hidden=\"x\""
+ },
+ "aria-expanded": {
+  "0": "aria-expanded=\"0\"",
+  "1": "aria-expanded=\"1\"",
+  "true": "aria-expanded=\"\"",
+  "false": "",
+  "''": "aria-expanded=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "aria-expanded=\"x\""
+ },
+ "data-x": {
+  "0": "data-x=\"0\"",
+  "1": "data-x=\"1\"",
+  "true": "data-x=\"\"",
+  "false": "",
+  "''": "data-x=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "data-x=\"x\""
+ },
+ "data-state": {
+  "0": "data-state=\"0\"",
+  "1": "data-state=\"1\"",
+  "true": "data-state=\"\"",
+  "false": "",
+  "''": "data-state=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "data-state=\"x\""
+ },
+ "draggable": {
+  "0": "draggable=\"0\"",
+  "1": "draggable=\"1\"",
+  "true": "draggable=\"\"",
+  "false": "",
+  "''": "draggable=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "draggable=\"x\""
+ },
+ "spellCheck": {
+  "0": "spellcheck=\"0\"",
+  "1": "spellcheck=\"1\"",
+  "true": "spellcheck=\"\"",
+  "false": "",
+  "''": "spellcheck=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "spellcheck=\"x\""
+ },
+ "contentEditable": {
+  "0": "contenteditable=\"0\"",
+  "1": "contenteditable=\"1\"",
+  "true": "contenteditable=\"\"",
+  "false": "",
+  "''": "contenteditable=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "contenteditable=\"x\""
+ },
+ "focusable": {
+  "0": "focusable=\"0\"",
+  "1": "focusable=\"1\"",
+  "true": "focusable=\"\"",
+  "false": "",
+  "''": "focusable=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "focusable=\"x\""
+ },
+ "autoReverse": {
+  "0": "autoreverse=\"0\"",
+  "1": "autoreverse=\"1\"",
+  "true": "autoreverse=\"\"",
+  "false": "",
+  "''": "autoreverse=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "autoreverse=\"x\""
+ },
+ "externalResourcesRequired": {
+  "0": "externalresourcesrequired=\"0\"",
+  "1": "externalresourcesrequired=\"1\"",
+  "true": "externalresourcesrequired=\"\"",
+  "false": "",
+  "''": "externalresourcesrequired=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "externalresourcesrequired=\"x\""
+ },
+ "preserveAlpha": {
+  "0": "preservealpha=\"0\"",
+  "1": "preservealpha=\"1\"",
+  "true": "preservealpha=\"\"",
+  "false": "",
+  "''": "preservealpha=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "preservealpha=\"x\""
+ },
+ "value": {
+  "0": "value=\"0\"",
+  "1": "value=\"1\"",
+  "true": "value=\"\"",
+  "false": "",
+  "''": "value=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "value=\"x\""
+ },
+ "hidden": {
+  "0": "hidden=\"0\"",
+  "1": "hidden=\"1\"",
+  "true": "hidden=\"\"",
+  "false": "",
+  "''": "hidden=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "hidden=\"x\""
+ },
+ "disabled": {
+  "0": "disabled=\"0\"",
+  "1": "disabled=\"1\"",
+  "true": "disabled=\"\"",
+  "false": "",
+  "''": "disabled=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "disabled=\"x\""
+ },
+ "checked": {
+  "0": "checked=\"0\"",
+  "1": "checked=\"1\"",
+  "true": "checked=\"\"",
+  "false": "",
+  "''": "checked=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "checked=\"x\""
+ },
+ "selected": {
+  "0": "selected=\"0\"",
+  "1": "selected=\"1\"",
+  "true": "selected=\"\"",
+  "false": "",
+  "''": "selected=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "selected=\"x\""
+ },
+ "multiple": {
+  "0": "multiple=\"0\"",
+  "1": "multiple=\"1\"",
+  "true": "multiple=\"\"",
+  "false": "",
+  "''": "multiple=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "multiple=\"x\""
+ },
+ "muted": {
+  "0": "muted=\"0\"",
+  "1": "muted=\"1\"",
+  "true": "muted=\"\"",
+  "false": "",
+  "''": "muted=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "muted=\"x\""
+ },
+ "open": {
+  "0": "open=\"0\"",
+  "1": "open=\"1\"",
+  "true": "open=\"\"",
+  "false": "",
+  "''": "open=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "open=\"x\""
+ },
+ "inert": {
+  "0": "inert=\"0\"",
+  "1": "inert=\"1\"",
+  "true": "inert=\"\"",
+  "false": "",
+  "''": "inert=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "inert=\"x\""
+ },
+ "itemScope": {
+  "0": "itemscope=\"0\"",
+  "1": "itemscope=\"1\"",
+  "true": "itemscope=\"\"",
+  "false": "",
+  "''": "itemscope=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "itemscope=\"x\""
+ },
+ "allowFullScreen": {
+  "0": "allowfullscreen=\"0\"",
+  "1": "allowfullscreen=\"1\"",
+  "true": "allowfullscreen=\"\"",
+  "false": "",
+  "''": "allowfullscreen=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "allowfullscreen=\"x\""
+ },
+ "async": {
+  "0": "async=\"0\"",
+  "1": "async=\"1\"",
+  "true": "async=\"\"",
+  "false": "",
+  "''": "async=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "async=\"x\""
+ },
+ "autoFocus": {
+  "0": "autofocus=\"0\"",
+  "1": "autofocus=\"1\"",
+  "true": "autofocus=\"\"",
+  "false": "",
+  "''": "autofocus=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "autofocus=\"x\""
+ },
+ "autoPlay": {
+  "0": "autoplay=\"0\"",
+  "1": "autoplay=\"1\"",
+  "true": "autoplay=\"\"",
+  "false": "",
+  "''": "autoplay=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "autoplay=\"x\""
+ },
+ "controls": {
+  "0": "controls=\"0\"",
+  "1": "controls=\"1\"",
+  "true": "controls=\"\"",
+  "false": "",
+  "''": "controls=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "controls=\"x\""
+ },
+ "default": {
+  "0": "default=\"0\"",
+  "1": "default=\"1\"",
+  "true": "default=\"\"",
+  "false": "",
+  "''": "default=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "default=\"x\""
+ },
+ "defer": {
+  "0": "defer=\"0\"",
+  "1": "defer=\"1\"",
+  "true": "defer=\"\"",
+  "false": "",
+  "''": "defer=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "defer=\"x\""
+ },
+ "formNoValidate": {
+  "0": "formnovalidate=\"0\"",
+  "1": "formnovalidate=\"1\"",
+  "true": "formnovalidate=\"\"",
+  "false": "",
+  "''": "formnovalidate=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "formnovalidate=\"x\""
+ },
+ "loop": {
+  "0": "loop=\"0\"",
+  "1": "loop=\"1\"",
+  "true": "loop=\"\"",
+  "false": "",
+  "''": "loop=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "loop=\"x\""
+ },
+ "noModule": {
+  "0": "nomodule=\"0\"",
+  "1": "nomodule=\"1\"",
+  "true": "nomodule=\"\"",
+  "false": "",
+  "''": "nomodule=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "nomodule=\"x\""
+ },
+ "noValidate": {
+  "0": "novalidate=\"0\"",
+  "1": "novalidate=\"1\"",
+  "true": "novalidate=\"\"",
+  "false": "",
+  "''": "novalidate=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "novalidate=\"x\""
+ },
+ "playsInline": {
+  "0": "playsinline=\"0\"",
+  "1": "playsinline=\"1\"",
+  "true": "playsinline=\"\"",
+  "false": "",
+  "''": "playsinline=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "playsinline=\"x\""
+ },
+ "readOnly": {
+  "0": "readonly=\"0\"",
+  "1": "readonly=\"1\"",
+  "true": "readonly=\"\"",
+  "false": "",
+  "''": "readonly=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "readonly=\"x\""
+ },
+ "required": {
+  "0": "required=\"0\"",
+  "1": "required=\"1\"",
+  "true": "required=\"\"",
+  "false": "",
+  "''": "required=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "required=\"x\""
+ },
+ "reversed": {
+  "0": "reversed=\"0\"",
+  "1": "reversed=\"1\"",
+  "true": "reversed=\"\"",
+  "false": "",
+  "''": "reversed=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "reversed=\"x\""
+ },
+ "scoped": {
+  "0": "scoped=\"0\"",
+  "1": "scoped=\"1\"",
+  "true": "scoped=\"\"",
+  "false": "",
+  "''": "scoped=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "scoped=\"x\""
+ },
+ "seamless": {
+  "0": "seamless=\"0\"",
+  "1": "seamless=\"1\"",
+  "true": "seamless=\"\"",
+  "false": "",
+  "''": "seamless=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "seamless=\"x\""
+ },
+ "disablePictureInPicture": {
+  "0": "disablepictureinpicture=\"0\"",
+  "1": "disablepictureinpicture=\"1\"",
+  "true": "disablepictureinpicture=\"\"",
+  "false": "",
+  "''": "disablepictureinpicture=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "disablepictureinpicture=\"x\""
+ },
+ "disableRemotePlayback": {
+  "0": "disableremoteplayback=\"0\"",
+  "1": "disableremoteplayback=\"1\"",
+  "true": "disableremoteplayback=\"\"",
+  "false": "",
+  "''": "disableremoteplayback=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "disableremoteplayback=\"x\""
+ },
+ "download": {
+  "0": "download=\"0\"",
+  "1": "download=\"1\"",
+  "true": "download=\"\"",
+  "false": "",
+  "''": "download=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "download=\"x\""
+ },
+ "capture": {
+  "0": "capture=\"0\"",
+  "1": "capture=\"1\"",
+  "true": "capture=\"\"",
+  "false": "",
+  "''": "capture=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "capture=\"x\""
+ },
+ "translate": {
+  "0": "translate=\"0\"",
+  "1": "translate=\"1\"",
+  "true": "translate=\"\"",
+  "false": "",
+  "''": "translate=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "translate=\"x\""
+ },
+ "popover": {
+  "0": "popover=\"0\"",
+  "1": "popover=\"1\"",
+  "true": "popover=\"\"",
+  "false": "",
+  "''": "popover=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "popover=\"x\""
+ },
+ "autoCapitalize": {
+  "0": "autocapitalize=\"0\"",
+  "1": "autocapitalize=\"1\"",
+  "true": "autocapitalize=\"\"",
+  "false": "",
+  "''": "autocapitalize=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "autocapitalize=\"x\""
+ },
+ "autoComplete": {
+  "0": "autocomplete=\"0\"",
+  "1": "autocomplete=\"1\"",
+  "true": "autocomplete=\"\"",
+  "false": "",
+  "''": "autocomplete=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "autocomplete=\"x\""
+ },
+ "id": {
+  "0": "id=\"0\"",
+  "1": "id=\"1\"",
+  "true": "id=\"\"",
+  "false": "",
+  "''": "id=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "id=\"x\""
+ },
+ "tabIndex": {
+  "0": "tabindex=\"0\"",
+  "1": "tabindex=\"1\"",
+  "true": "tabindex=\"\"",
+  "false": "",
+  "''": "tabindex=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "tabindex=\"x\""
+ },
+ "role": {
+  "0": "role=\"0\"",
+  "1": "role=\"1\"",
+  "true": "role=\"\"",
+  "false": "",
+  "''": "role=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "role=\"x\""
+ },
+ "title": {
+  "0": "title=\"0\"",
+  "1": "title=\"1\"",
+  "true": "title=\"\"",
+  "false": "",
+  "''": "title=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "title=\"x\""
+ },
+ "href": {
+  "0": "href=\"0\"",
+  "1": "href=\"1\"",
+  "true": "href=\"\"",
+  "false": "",
+  "''": "href=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "href=\"x\""
+ },
+ "src": {
+  "0": "src=\"0\"",
+  "1": "src=\"1\"",
+  "true": "src=\"\"",
+  "false": "",
+  "''": "src=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "src=\"x\""
+ },
+ "crossOrigin": {
+  "0": "crossorigin=\"0\"",
+  "1": "crossorigin=\"1\"",
+  "true": "crossorigin=\"\"",
+  "false": "",
+  "''": "crossorigin=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "crossorigin=\"x\""
+ },
+ "preload": {
+  "0": "preload=\"0\"",
+  "1": "preload=\"1\"",
+  "true": "preload=\"\"",
+  "false": "",
+  "''": "preload=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "preload=\"x\""
+ },
+ "wrap": {
+  "0": "wrap=\"0\"",
+  "1": "wrap=\"1\"",
+  "true": "wrap=\"\"",
+  "false": "",
+  "''": "wrap=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "wrap=\"x\""
+ },
+ "rel": {
+  "0": "rel=\"0\"",
+  "1": "rel=\"1\"",
+  "true": "rel=\"\"",
+  "false": "",
+  "''": "rel=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "rel=\"x\""
+ },
+ "inputMode": {
+  "0": "inputmode=\"0\"",
+  "1": "inputmode=\"1\"",
+  "true": "inputmode=\"\"",
+  "false": "",
+  "''": "inputmode=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "inputmode=\"x\""
+ },
+ "foo": {
+  "0": "foo=\"0\"",
+  "1": "foo=\"1\"",
+  "true": "foo=\"\"",
+  "false": "",
+  "''": "foo=\"\"",
+  "null": "",
+  "undefined": "",
+  "'x'": "foo=\"x\""
+ }
+}
