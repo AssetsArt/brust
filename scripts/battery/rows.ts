@@ -1471,4 +1471,7 @@ export const rows: Row[] = [
     snippet: `import Child from './Child'\nasync function act() { 'use server' }\nexport default function C() { return <Child act={act} /> }`,
     files: { 'Child.tsx': `export default function Child({ act }: any) { return <button onClick={() => act()}>go</button> }` } },
 
+  { id: 'c-handler-binding-named-a', category: 'C', authoring: 'a handler that reads a component binding named a', expect: 'native', jobs: 0,
+    snippet: `import { useRef, useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); const a = useRef<HTMLButtonElement>(null); return <button ref={a} onClick={() => { setN(n + 1); console.log(a.current) }}>{n}</button> }`,
+    note: 'F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array' },
 ]

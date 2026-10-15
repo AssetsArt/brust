@@ -4,7 +4,7 @@ const __attr = (v) => (typeof v === "boolean" ? null : v)
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("input_2b13db9f", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const q = signal("")
-  const _h1 = (...a) => ((e) => q.set(e.target.value))(...a)
+  const _h1 = (...__args) => ((e) => q.set(e.target.value))(...__args)
   const _c1 = computed(() => __attr(props().placeholder))
   const _c2 = computed(() => q().length > 0)
   const _c3 = computed(() => __text(q()))

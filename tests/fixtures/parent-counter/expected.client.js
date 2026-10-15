@@ -2,7 +2,7 @@
 import { signal, computed, defineBehavior } from "brust/runtime-dom"
 export default defineBehavior("input_517275ac", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const count = signal(0)
-  const _h1 = (...a) => (() => count.set(count() + 1))(...a)
+  const _h1 = (...__args) => (() => count.set(count() + 1))(...__args)
   const _p1 = computed(() => ({ n: count(), onReset: () => count.set(0) }))
   return { count, _h1, _p1 }
 })

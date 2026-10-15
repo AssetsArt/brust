@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 215 | 112 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 41 | 2 | 15 | 24 | 0 | 0 | 0 | 0 |
+| C Hooks | 42 | 2 | 16 | 24 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 404 | 189 | 52 | 159 | 3 | 1 | 0 | 0 |
+| **Total** | 405 | 189 | 53 | 159 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -344,6 +344,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-use-context | use(context) | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: use |
 | c-useformstatus | useFormStatus read in the component | react | react | ssr | ok | fallback:hook-unsupported | react-dom hook, outside the supported set |
 | c-useformstatus-child | useFormStatus in a child inside a static <form> | react | static | ssr | ok | — | known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react |
+| c-handler-binding-named-a | a handler that reads a component binding named a | native | native | 0 | ok | — | F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array |
 
 ## D. API surface
 

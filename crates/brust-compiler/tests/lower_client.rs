@@ -15,7 +15,7 @@ fn block_sources_bind_their_captures() {
     .unwrap();
     assert!(c.contains("((n, heading, setN) => ("), "{c}");
     assert!(
-        c.contains("))(n(), props()[\"title\"], n.set))(...a)"),
+        c.contains("))(n(), props()[\"title\"], n.set))(...__args)"),
         "{c}"
     );
 }
@@ -29,7 +29,7 @@ fn effects_refs_and_use_callback() {
     .unwrap();
     assert!(c.contains("  const r = __ref(\"r\")\n"), "{c}");
     assert!(
-        c.contains("const inc = (...a) => (() => n.set(n() + 1))(...a)"),
+        c.contains("const inc = (...__args) => (() => n.set(n() + 1))(...__args)"),
         "{c}"
     );
     assert!(
@@ -70,4 +70,36 @@ fn chunks_are_react_free_and_parse() {
         );
     }
     assert!(n >= 5);
+}
+
+/// F232: the wrapper a handler body is called through binds a rest parameter that no name of the component can meet.
+#[test]
+fn a_binding_named_a_is_read_inside_a_handler_not_the_rest_arguments() {
+    let c = lower(&format!(
+        "{STATE}export default function T() {{ const [n, setN] = useState(0); const a = useRef(null); return <button ref={{a}} onClick={{() => {{ setN(n + 1); console.log(a.current) }}}}>{{n}}</button> }}"
+    ))
+    .client_js
+    .unwrap();
+    assert!(c.contains("const _h1 = (...__args) => "), "{c}");
+    assert!(c.contains("console.log(a.current)"), "{c}");
+    assert!(!c.contains("(...a)"), "{c}");
+}
+
+#[test]
+fn the_rest_parameter_avoids_a_component_binding_of_its_own_name() {
+    for (name, expect) in [("__args", "__args1"), ("__args1", "__args2")] {
+        let c = lower(&format!(
+            "{STATE}export default function T() {{ const [n, setN] = useState(0); const {name} = useRef(null); return <button ref={{{name}}} onClick={{() => {{ setN(n + 1); console.log({name}.current) }}}}>{{n}}</button> }}"
+        ))
+        .client_js
+        .unwrap();
+        assert!(
+            c.contains(&format!("const _h1 = (...{expect}) => ")),
+            "{name}: {c}"
+        );
+        assert!(
+            c.contains(&format!("console.log({name}.current)")),
+            "{name}: {c}"
+        );
+    }
 }
