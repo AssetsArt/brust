@@ -240,7 +240,7 @@ jobs:
         if: always()
         with: { name: shadcn-sizes, path: tests/fixtures/shadcn/.rows/shadcn-sizes.json, retention-days: 14, if-no-files-found: ignore }
       # Unit files together; each server-starting file on its own (port/process hygiene).
-      - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/store-server-context.test.ts test/worker-store.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-client.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/run-options.test.ts test/actions-bridge.test.ts test/cache-adapter-memory.test.ts test/cache-adapter-bridge.test.ts test/cache-adapter-runtime.test.ts test/build-config-cache.test.ts test/build-cache.test.ts test/ssg.test.ts test/dev-unit.test.ts test/config-l10.test.ts test/pkg-src.test.ts test/runtime-features.test.ts test/idle-workers.test.ts test/build-job-import.test.ts test/pkg-src-dist.test.ts
+      - run: cd packages/brust && bun test test/routes.test.ts test/cache.test.ts test/worker.test.ts test/config.test.ts test/napi-compile.test.ts test/build-compile.test.ts test/store-server-context.test.ts test/worker-store.test.ts test/actions-elysia.test.ts test/actions-load.test.ts test/actions-client.test.ts test/build-config-actions.test.ts test/config-cors.test.ts test/run-options.test.ts test/actions-bridge.test.ts test/cache-adapter-memory.test.ts test/cache-adapter-bridge.test.ts test/cache-adapter-runtime.test.ts test/build-config-cache.test.ts test/build-cache.test.ts test/ssg.test.ts test/dev-unit.test.ts test/config-l10.test.ts test/pkg-src.test.ts test/runtime-features.test.ts test/idle-workers.test.ts test/build-job-import.test.ts test/pkg-src-dist.test.ts test/resolver-followups.test.ts
       - run: cd packages/brust && bun test test/napi-server.test.ts
       - run: cd packages/brust && bun test test/build-manifest.test.ts
       - run: cd packages/brust && bun test --timeout 180000 test/build-cn-fold.test.ts
@@ -255,6 +255,10 @@ jobs:
       - run: cd packages/brust && bun test test/cli.test.ts
       - run: cd packages/brust && bun test test/attr-parity-react.test.ts
       - run: cd packages/brust && bun test test/shadcn-init.test.ts
+      # F226/F227: tsconfig extends/paths folding for the init target check.
+      - run: cd packages/brust && bun test test/shadcn-init-extends.test.ts
+      # F228: registry URL item vetting; starts a local Bun.serve, so it runs alone.
+      - run: cd packages/brust && bun test test/shadcn-init-registry.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e.test.ts
       - run: cd packages/brust && bun test --timeout 120000 test/e2e-child-literals.test.ts
       - run: cd packages/brust && bun test test/build-store.test.ts
@@ -322,6 +326,11 @@ jobs:
       - run: bun test --timeout 120000 tests/server/rest-style.chromium.test.ts
       # B4: a never-written useRef read in the render is its first value, served == React.
       - run: bun test --timeout 120000 tests/server/ref-snapshot.chromium.test.ts
+      # 2c-2 (R34.116, R34.122): a state Provider is specialised per call site; first paint == React, independent toggles, nesting, a consumer under the Provider's own condition.
+      - run: bun test --timeout 180000 tests/server/native-provider.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/absent-prop-seed.chromium.test.ts
+      # F232: a handler reading a binding named `a` reads that binding (the handler wrapper's rest parameter is reserved).
+      - run: bun test --timeout 120000 tests/server/handler-shadow.chromium.test.ts
       - run: bun test --timeout 300000 tests/server/cn-fold.test.ts
       # R34.96 PR 2b: the shadcn pages a fused child moved off React, served == React, folded and per request.
       - run: bun test --timeout 300000 tests/server/fused-jobs.test.ts

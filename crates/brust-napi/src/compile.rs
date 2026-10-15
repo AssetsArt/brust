@@ -15,6 +15,13 @@ pub struct NapiDiagnostic {
     pub remediation: String,
 }
 
+/// A module a chunk imports by name, shared with other chunks (`<name>.js` beside it, R34.124).
+#[napi(object)]
+pub struct ClientModule {
+    pub name: String,
+    pub code: String,
+}
+
 #[napi(object)]
 pub struct CompiledComponent {
     pub id: String,
@@ -26,6 +33,8 @@ pub struct CompiledComponent {
     /// Build-time evaluation module (L2): one thunk per `ir.build_eval` slot.
     pub eval_ts: Option<String>,
     pub client_js: Option<String>,
+    /// Modules the chunk imports that other chunks share (specialised clones with an equal factory, R34.124).
+    pub client_modules: Vec<ClientModule>,
     pub diagnostics: Vec<NapiDiagnostic>,
 }
 
@@ -162,6 +171,15 @@ pub(crate) fn compile_tree_impl(
                         server_ts: l.artifacts.server_ts.clone(),
                         eval_ts: l.artifacts.eval_ts.clone(),
                         client_js: l.artifacts.client_js.clone(),
+                        client_modules: l
+                            .artifacts
+                            .client_modules
+                            .iter()
+                            .map(|(name, code)| ClientModule {
+                                name: name.clone(),
+                                code: code.clone(),
+                            })
+                            .collect(),
                         diagnostics: l
                             .ir
                             .diagnostics

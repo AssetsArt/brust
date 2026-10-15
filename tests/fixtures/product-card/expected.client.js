@@ -5,7 +5,7 @@ const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__
 export default defineBehavior("input_6af673af", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const qty = signal(1)
   const total = computed(() => formatPrice(props().item.price * qty()))
-  const _h1 = (...a) => (() => qty.set(qty() + 1))(...a)
+  const _h1 = (...__args) => (() => qty.set(qty() + 1))(...__args)
   const _c1 = computed(() => __text(props().item.name))
   const _c2 = computed(() => __text(total()))
   return { qty, _h1, _c1, _c2 }

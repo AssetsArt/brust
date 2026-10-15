@@ -21,6 +21,8 @@ afterAll(() => rmSync(work, { recursive: true, force: true }))
 
 test('prepack generated templates/pokedex and it ships', () => {
   for (const f of ['routes.tsx', 'package.json.tmpl', '_gitignore', 'data/pokedex.json', 'actions.ts', 'README.md.tmpl']) expect(names, f).toContain(`package/templates/pokedex/${f}`)
+  expect(names).toContain('package/templates/pokedex/app.css') // global CSS, built by brust
+  expect(names).not.toContain('package/templates/pokedex/public/app.css')
   expect(names).toContain('package/templates/blank/_gitignore')
   expect(names).toContain('package/templates/blank/package.json.tmpl')
 })

@@ -111,7 +111,7 @@ fn export_names(
         stars
     });
     for spec in stars {
-        if (spec.starts_with("./") || spec.starts_with("../"))
+        if super::modules::is_relative_spec(&spec)
             && let Some(p) = resolve(path, &spec, opts)
         {
             export_names(&p, opts, visited, depth + 1, out);
@@ -151,7 +151,7 @@ fn read_export(
         .map_err(|e| format!("cannot parse {path}: {}", e.message))?;
     let found = parsed.with_ast(|ast| find_export(ast, path, export))?;
     let follow = |spec: &str| -> Result<String, String> {
-        if !(spec.starts_with("./") || spec.starts_with("../")) {
+        if !super::modules::is_relative_spec(spec) {
             return Err(format!(
                 "`{export}` is re-exported by {path} from the package {spec}"
             ));

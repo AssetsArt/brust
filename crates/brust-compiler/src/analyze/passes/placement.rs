@@ -701,8 +701,7 @@ impl Placer<'_> {
                             // F197: a package the build was never asked to write: request it, so the next compile
                             // reads its source (a refused package stays refused).
                             if !ok
-                                && !source.starts_with("./")
-                                && !source.starts_with("../")
+                                && !crate::analyze::modules::is_relative_spec(source)
                                 && matches!(
                                     crate::analyze::modules::resolve_package(
                                         &self.path, source, self.opts
@@ -1266,7 +1265,7 @@ impl Placer<'_> {
                 let package = matches!(
                     &chain_root_raw(callee).kind,
                     RawKind::Ident { kind: IdentKind::Import { source, .. }, .. }
-                        if !source.starts_with("./") && !source.starts_with("../")
+                        if !crate::analyze::modules::is_relative_spec(source)
                 );
                 go(callee).or_else(|| {
                     args.iter()

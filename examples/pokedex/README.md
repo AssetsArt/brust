@@ -44,10 +44,12 @@ bun run dev:cf             # brust build --target cloudflare + wrangler dev (reb
 ## Regenerating the generated files (never hand-edit)
 
 - Dataset (needs network, run by hand): `bun run snapshot` → `data/pokedex.json`.
-- Stylesheet (Tailwind CLI v4, run once, output committed):
-  `bunx @tailwindcss/cli@4 -i styles/app.css -o public/app.css --minify`
-  (Tailwind must resolve from the input's directory; the header comment of `public/app.css`
-  records the command. `@source` scans `**/*.{tsx,ts}`.)
+
+## Styling
+
+`app.css` (Tailwind CSS v4, CSS-first: no `tailwind.config`) is imported by `components/AppLayout.tsx` and by the 404 page, which renders its own
+`<html>`. Edit `app.css`; brust builds it into one minified, content-hashed file and links it in `<head>` (see docs/css.md). There is no
+prebuilt stylesheet and no `<link>` to write. `brust dev` swaps the stylesheet in place, without a reload.
 
 ## Layout
 

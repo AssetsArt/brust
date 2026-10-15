@@ -567,9 +567,9 @@ fn read_function_as(
     if let Some(loc) = reader.names.ctx_escape.get() {
         ir.diagnostics.push(Diagnostic::fallback(
             "context-escape",
-            "a context value is used as a whole (not `context.field`); brust reads the fields one by one",
+            "a context value is used as a whole, or inside code brust prints as written (an effect, a handler), not as `context.field` in the render; brust reads the fields one by one",
             loc,
-            "read context.field, or keep this component in React",
+            "read context.field into a const in the render, or keep this component in React",
         ));
     }
     if let Some((loc, name, code, what)) = reader.names.prop_read_problem.borrow().clone() {
@@ -617,8 +617,9 @@ fn read_function_as(
     ir.id_bindings = body.id_bindings;
     ir.stores = body.stores;
     ir.diagnostics.extend(body.diagnostics);
-    // S2: a Provider whose values cannot be expressed at the call site (state, a handler, a loop value) is not
-    // compiled yet (a native provider is a later step): the component stays a React island, as before.
+    // S2: a Provider whose values cannot be expressed at the call site (state, a handler, a loop value) is a React
+    // island of its own. A call site that can specialise it (R34.122) builds a clone of its pre-pass IR with this
+    // diagnostic removed and never reaches the island; every other call site keeps the island, as before.
     if let Some((loc, why)) = crate::analyze::context::provider_problem(ir) {
         ir.diagnostics.push(Diagnostic::fallback(
             "context-state",

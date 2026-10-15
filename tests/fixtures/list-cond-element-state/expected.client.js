@@ -4,7 +4,7 @@ const __attr = (v) => (typeof v === "boolean" ? null : v)
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("input_9eb001a4", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const linked = signal(true)
-  const _h1 = (...a) => (() => linked.set(!linked()))(...a)
+  const _h1 = (...__args) => (() => linked.set(!linked()))(...__args)
   const _l1 = computed(() => props().items)
   const _k1 = (it) => it.id
   const _c1 = (it) => linked() && it.href

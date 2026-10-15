@@ -1,6 +1,7 @@
 // components/AppLayout.tsx — the document (S9): plain <html>, <Outlet/> for the leaf, TeamBuilder as a react child.
 import { Outlet } from '@brust/core/routes'
 import type { NavItem } from '../lib/types'
+import '../app.css'
 import NavLink from './NavLink'
 import TeamBuilder from './TeamBuilder'
 import ThemeToggle from './ThemeToggle'
@@ -13,7 +14,6 @@ export default function AppLayout(props: { title: string; mode: 'dark' | 'light'
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{props.title}</title>
         <link rel="icon" href="/public/favicon.svg" />
-        <link rel="stylesheet" href="/public/app.css" />
       </head>
       <body className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
         <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80">

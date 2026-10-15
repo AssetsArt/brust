@@ -269,7 +269,7 @@ fn use_store_decl(
     Some((handle, import, store_binding(&decl.binding)?))
 }
 
-fn call_addr(call: &js_ast::E::Call) -> usize {
+pub(crate) fn call_addr(call: &js_ast::E::Call) -> usize {
     call as *const js_ast::E::Call as usize
 }
 
@@ -688,6 +688,9 @@ fn read_stmts(
                 });
             }
             S::SReturn(ret) => {
+                if let Some(v) = &ret.value {
+                    hoist_ids(v, r, out);
+                }
                 returned = Some(ret.value.map(|v| returned_value(&v, r, out)));
             }
             // S2 (R34.104): `if (cond) { console.error(…) }` only logs (Radix's dev validation of its props): it is not
@@ -841,6 +844,93 @@ fn simple_hook(
     }
 }
 
+/// R34.120: a `useId()` in the returned expression that runs on every render (`contentId={useId()}`) is the same hook
+/// call as `const id = useId()` before the return, in source order. Each is given a generated local (a name no module
+/// symbol takes) that the reader prints in its place. A call in a conditional, short-circuited or looped position is
+/// left alone, and `nested_hooks` refuses it (`hook-in-expression`).
+fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) {
+    let mut found = Vec::new();
+    unconditional_calls(value, &mut found);
+    for call in found {
+        if react_hook_name(call, r.names).as_deref() != Some("useId") {
+            continue;
+        }
+        let addr = call_addr(call);
+        if !call.args.is_empty() || r.hoisted_calls.contains_key(&addr) {
+            continue;
+        }
+        let mut n = out.id_bindings.len() + 1;
+        let name = loop {
+            let name = format!("_id{n}");
+            if out.inline.taken.insert(name.clone()) {
+                break name;
+            }
+            n += 1;
+        };
+        out.classified_hooks.insert(addr);
+        out.uses_id = true;
+        out.id_bindings.push(name.clone());
+        r.hoisted_calls.insert(addr, name);
+    }
+}
+
+/// The calls of `e` that run on every evaluation of it, in source order: not inside a function, the branches of a
+/// conditional, the right side of a short-circuit operator, or an optional chain.
+fn unconditional_calls<'e>(e: &'e js_ast::Expr, out: &mut Vec<&'e js_ast::E::Call>) {
+    match &e.data {
+        E::ECall(c) => {
+            unconditional_calls(&c.target, out);
+            if c.optional_chain.is_none() {
+                for a in c.args.iter() {
+                    unconditional_calls(a, out);
+                }
+            }
+            out.push(c);
+        }
+        E::EDot(d) => unconditional_calls(&d.target, out),
+        E::EIndex(i) => {
+            unconditional_calls(&i.target, out);
+            if i.optional_chain.is_none() {
+                unconditional_calls(&i.index, out);
+            }
+        }
+        E::EArray(a) => a.items.iter().for_each(|x| unconditional_calls(x, out)),
+        E::EObject(o) => {
+            for p in o.properties.iter() {
+                if let Some(k) = &p.key {
+                    unconditional_calls(k, out);
+                }
+                if let Some(v) = &p.value {
+                    unconditional_calls(v, out);
+                }
+            }
+        }
+        E::ESpread(s) => unconditional_calls(&s.value, out),
+        E::EUnary(u) => unconditional_calls(&u.value, out),
+        E::EBinary(b) => {
+            unconditional_calls(&b.left, out);
+            if !matches!(
+                b.op,
+                js_ast::OpCode::BinLogicalAnd
+                    | js_ast::OpCode::BinLogicalOr
+                    | js_ast::OpCode::BinNullishCoalescing
+            ) {
+                unconditional_calls(&b.right, out);
+            }
+        }
+        E::EIf(i) => unconditional_calls(&i.test, out),
+        E::ETemplate(t) => {
+            if let Some(tag) = &t.tag {
+                unconditional_calls(tag, out);
+            }
+            for p in t.parts.slice() {
+                unconditional_calls(&p.value, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Hook calls anywhere but as a classified top-level statement: inside an
 /// expression, a JSX attribute, a prop default or a nested function (spec
 /// §4.3: such a component is React-only).
@@ -872,7 +962,11 @@ fn nested_hooks_in(
         }
         if let Some((hook, _)) = hook_target(&call.target, names) {
             out.fallback(
-                "hook-unsupported",
+                if hook == "useId" {
+                    "hook-in-expression"
+                } else {
+                    "hook-unsupported"
+                },
                 format!("hook {hook} is called inside an expression"),
                 loc_of(e),
                 "call hooks only as `const x = useHook(...)` at the top of the component",

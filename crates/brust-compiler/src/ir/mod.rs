@@ -211,6 +211,10 @@ pub struct ComponentIR {
     /// `export` names a function nothing exports (a helper component of its module): the build exposes it for the island.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unexported: bool,
+    /// R34.122: a clone of a component made for one call site, with the call site's content spliced in. Its chunk
+    /// shares one factory module with every clone whose chunk is equal (R34.124).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub specialised: bool,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (shadcn S1.2, R34.14): the props minus every
@@ -401,6 +405,7 @@ impl ComponentIR {
             dist: None,
             export: None,
             unexported: false,
+            specialised: false,
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,
