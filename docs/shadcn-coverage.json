@@ -406,6 +406,15 @@
       "libraryComponents": 14
     },
     {
+      "blocker": "fallback:module-side-effect",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 13
+    },
+    {
       "blocker": "fallback:browser-global",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -431,15 +440,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 6
-    },
-    {
-      "blocker": "fallback:module-side-effect",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 5
     },
     {
       "blocker": "useImperativeHandle",

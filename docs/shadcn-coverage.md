@@ -77,10 +77,10 @@ One line per thing that keeps a row or a library component off the static/native
 | 39 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 18 | `member-tag` diagnostic (docs/react-coverage.md) |
 | 40 | createPortal / Portal | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 15 | d-createportal: fallback:browser-global |
 | 41 | cloneElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 14 | d-clone-element: fallback:hook-unsupported |
-| 42 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `browser-global` diagnostic (docs/react-coverage.md) |
-| 43 | fallback:let-var | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `let-var` diagnostic (docs/react-coverage.md) |
-| 44 | fallback:ref-in-render | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 6 | `ref-in-render` diagnostic (docs/react-coverage.md) |
-| 45 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 5 | `module-side-effect` diagnostic (docs/react-coverage.md) |
+| 42 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 13 | `module-side-effect` diagnostic (docs/react-coverage.md) |
+| 43 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `browser-global` diagnostic (docs/react-coverage.md) |
+| 44 | fallback:let-var | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `let-var` diagnostic (docs/react-coverage.md) |
+| 45 | fallback:ref-in-render | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 6 | `ref-in-render` diagnostic (docs/react-coverage.md) |
 | 46 | useImperativeHandle | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 5 | c-useimperativehandle: fallback:hook-unsupported |
 | 47 | fallback:prop-quoted-key | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 4 | `prop-quoted-key` diagnostic (docs/react-coverage.md) |
 | 48 | fallback:prop-jinja-name | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `prop-jinja-name` diagnostic (docs/react-coverage.md) |
@@ -560,8 +560,8 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
-| src/dismissable-layer.tsx | DismissableLayer | forwardRef | react (fallback:body-shape, fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-shape, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
-| src/dismissable-layer.tsx | DismissableLayerBranch | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef |
+| src/dismissable-layer.tsx | DismissableLayer | forwardRef | react (fallback:body-shape, fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-shape, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
+| src/dismissable-layer.tsx | DismissableLayerBranch | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef |
 
 ### @radix-ui/react-dropdown-menu 2.2.1
 
@@ -588,7 +588,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
-| src/focus-scope.tsx | FocusScope | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:prop-jinja-name, fallback:spread-props) | forwardRef, composeRefs, Primitive.*, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
+| src/focus-scope.tsx | FocusScope | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:prop-jinja-name, fallback:spread-props) | forwardRef, composeRefs, Primitive.*, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
 | src/focus-scope.tsx | FocusScopeBranchProvider | function | react (fallback:control-flow) | Context.Provider / *Provider |
 
 ### @radix-ui/react-form 0.3.0
@@ -596,7 +596,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
 | src/form.tsx | Form | forwardRef | not exported | forwardRef, Context.Provider / *Provider, composeRefs, Primitive.*, rest-props spread, useState, useRef, useMemo / useCallback |
-| src/form.tsx | FormField | forwardRef | react (fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, Primitive.*, rest-props spread, useId |
+| src/form.tsx | FormField | forwardRef | react (fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, Primitive.*, rest-props spread, useId |
 | src/form.tsx | FormLabel | forwardRef | react (fallback:context-scope, fallback:control-flow, fallback:forwardref-ref) | forwardRef, useContext / use*Context, rest-props spread |
 | src/form.tsx | FormControl | forwardRef | react (fallback:context-scope, fallback:control-flow, fallback:forwardref-ref, fallback:hook-unsupported, fallback:prop-quoted-key) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, useMemo / useCallback, addEventListener |
 | src/form.tsx | FormMessage | forwardRef | react (fallback:context-scope, fallback:control-flow, fallback:forwardref-ref) | forwardRef, useContext / use*Context, rest-props spread |
@@ -611,11 +611,11 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
 | src/hover-card.tsx | HoverCard | function | not exported | Context.Provider / *Provider, useControllableState, useEffect, useRef, useMemo / useCallback, DOM globals (document / window) |
-| src/hover-card.tsx | HoverCardTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Slot / asChild, Primitive.*, rest-props spread |
+| src/hover-card.tsx | HoverCardTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Slot / asChild, Primitive.*, rest-props spread |
 | src/hover-card.tsx | HoverCardPortal | function | react | useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence |
-| src/hover-card.tsx | HoverCardContent | forwardRef | react (fallback:body-shape, fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Presence, rest-props spread |
+| src/hover-card.tsx | HoverCardContent | forwardRef | react (fallback:body-shape, fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Presence, rest-props spread |
 | src/hover-card.tsx | HoverCardContentImpl | forwardRef | not exported | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, rest-props spread, useEffect, useState, useRef, DOM globals (document / window), addEventListener |
-| src/hover-card.tsx | HoverCardArrow | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
+| src/hover-card.tsx | HoverCardArrow | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, rest-props spread |
 
 ### @radix-ui/react-label 2.1.17
 
@@ -1030,7 +1030,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/cartesian/Brush.tsx | Slide | function | not exported | — |
 | webpack:/Recharts/src/cartesian/Brush.tsx | BrushWithState | other | not exported | Context.Provider / *Provider, DOM globals (document / window), addEventListener |
 | webpack:/Recharts/src/cartesian/Brush.tsx | BrushInternal | function | not exported | useContext / use*Context, rest-props spread, useEffect, useMemo / useCallback |
-| webpack:/Recharts/src/cartesian/Brush.tsx | Brush | function | react (fallback:island-prop, fallback:spread-props) | rest-props spread |
+| webpack:/Recharts/src/cartesian/Brush.tsx | Brush | function | react (fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | rest-props spread |
 | webpack:/Recharts/src/cartesian/CartesianAxis.tsx | AxisLine | function | not exported | rest-props spread |
 | webpack:/Recharts/src/cartesian/CartesianAxis.tsx | TickItem | function | not exported | cloneElement, isValidElement, rest-props spread |
 | webpack:/Recharts/src/cartesian/CartesianAxis.tsx | Ticks | forwardRef | not exported | forwardRef, rest-props spread |

@@ -119,14 +119,21 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     captures::captures(ir, &mut st, ctx);
     // F215: the code brust copies out of the module (jobs, the client chunk, build evaluation) carries its
     // declarations, never a statement that changes them; a component that reads a module binding of such a module
-    // falls back.
+    // falls back. Round 1 (Mellow F2): an import counts too, since the statement may change the imported module's
+    // objects (`add('b')` filling `items` of './store'), and the job or chunk imports that module without running it.
     if let Some((at, what)) = ir.module_effect.clone() {
         let read = st
             .painted
             .iter()
-            .find(|p| !p.deps.module_locals.is_empty() && !p.folds_module)
+            // An imported value that folds at build is read from its module's declarations, which this module's
+            // statement may have changed: it is a read too.
+            .find(|p| {
+                (!p.deps.module_locals.is_empty() && !p.folds_module) || !p.deps.imports.is_empty()
+            })
             .map(|p| p.loc)
-            .or_else(|| (!ir.client_module_locals.is_empty()).then_some(at));
+            .or_else(|| {
+                (!ir.client_module_locals.is_empty() || !ir.client_imports.is_empty()).then_some(at)
+            });
         if let Some(loc) = read {
             ir.diagnostics.push(crate::ir::Diagnostic::fallback(
                 "module-side-effect",

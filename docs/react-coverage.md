@@ -8,11 +8,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
-| B Composition | 208 | 110 | 12 | 86 | 0 | 0 | 0 | 0 |
+| B Composition | 210 | 110 | 12 | 88 | 0 | 0 | 0 | 0 |
 | C Hooks | 38 | 2 | 14 | 22 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 394 | 187 | 49 | 154 | 3 | 1 | 0 | 0 |
+| **Total** | 396 | 187 | 49 | 156 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -203,6 +203,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-prop-element-member | an imported element read through a member, passed as a prop the child prints | react | react | ssr | ok | fallback:jsx-const-child | F199 (wrong output on main: the child printed the element's internals): a component prop is judged by the element predicate (jsx-const-child) |
 | b-prop-plain-helpers | component props from a package helper, an element-free module helper and an object spread | static | static | precompute | ok | — | F199: only what can be an element refuses; a package export is not judged (accepted limit), an element-free module helper and an object literal judged by what it reads keep lowering |
 | b-module-side-effect | a module-level statement changes a module array a helper reads | react | react | ssr | ok | fallback:module-side-effect | F215 (wrong output on main: the job copied `const xs` but not the push, printing 'a' where React prints 'a,b'): falls back module-side-effect; served == React in scripts/shadcn/context-parity.test.ts (ctx-side-*) |
+| b-module-side-effect-callable | a module array changed at module time through a callable value (an object method called by a declaration) | react | react | ssr | ok | fallback:jsx-const-child, fallback:module-side-effect | F215 round 1 (Mellow F1, Afrojack F1): one writer rule over every callable body (IIFE, callback, class parts, method, arrow, getter) falls back module-side-effect; served == React (ctx-side-iife, ctx-side-method) |
+| b-module-side-effect-import | a module-level call changes an imported module array the component reads | react | react | ssr | ok | fallback:module-side-effect | F215 round 1 (Mellow F2): when the module has an effect an import is a read too (the job imports './store' without running add('b')); served == React (ctx-side-import) |
 | b-module-side-effect-unread | a module-level statement in a module whose bindings the component never reads | static | static | 0 | ok | — | F215: only a component that reads a module binding falls back |
 | b-plain-wrapper-helper-proven | imported helpers proven to return a primitive (a template, a method of a number or string), under a plain wrapper | static | static | precompute | ok | — | F173 control: plain_fn rules read in the helper module (its consts, primitive-returning methods); the child lowers |
 | b-plain-wrapper-methods | built-in number, string and Date methods (toLocaleString, toFixed, padStart, new Date(x).toISOString, …) as children of a plain wrapper | static | static | precompute | ok | — | F173 lead ruling on @57714ece: an allowlisted built-in method on an accepted read or new Date(…) of the unbound global; served == React in scripts/shadcn/context-parity.test.ts (ctx-plain-methods) |

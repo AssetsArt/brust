@@ -778,6 +778,21 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
         "side-arg.tsx",
         // A `displayName` the module also reads.
         "side-display-read.tsx",
+        // Round 1 (Mellow F1, Afrojack F1): code runs at module time through any callable value: an IIFE, a callback,
+        // a class static block, static field and constructor, an object method, an arrow const, a getter, a function in
+        // an array, a writer handed to a call.
+        "side-iife.tsx",
+        "side-callback.tsx",
+        "side-class-static.tsx",
+        "side-class-field.tsx",
+        "side-class-ctor.tsx",
+        "side-object-method.tsx",
+        "side-arrow.tsx",
+        "side-getter.tsx",
+        "side-array-fn.tsx",
+        "side-handed-writer.tsx",
+        // Mellow F2: a statement that changes an imported module's object; the import is read.
+        "side-import.tsx",
     ] {
         let (ir, _) = page(f);
         assert!(
@@ -787,7 +802,20 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
             ir.diagnostics
         );
     }
-    for f in ["side-none.tsx", "side-unread.tsx"] {
+    // A writer nothing calls at module time is not an effect (declaring a function runs nothing).
+    let (ir, _) = page("side-writer-uncalled.tsx");
+    assert!(
+        !rules(&ir).contains(&"module-side-effect"),
+        "{:?}",
+        ir.diagnostics
+    );
+    // Callable values that write nothing (an arrow const called, a class, an object method) keep lowering.
+    for f in [
+        "side-none.tsx",
+        "side-unread.tsx",
+        "side-callables-pure.tsx",
+        "side-class-pure.tsx",
+    ] {
         let (ir, jinja) = page(f);
         assert!(
             !rules(&ir).contains(&"module-side-effect") && !is_react(&ir),
