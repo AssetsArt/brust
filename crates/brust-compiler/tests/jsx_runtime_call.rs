@@ -105,3 +105,14 @@ fn ordinary_jsx_next_to_an_unused_runtime_import_does_not() {
         "import { jsx } from 'react/jsx-runtime'\nexport default function C() { return <p>x</p> }"
     ));
 }
+
+#[test]
+fn a_fragment_through_a_namespace_import_of_the_runtime_falls_back_too() {
+    // F156's cost: the namespace read is not told apart from `R.jsx`; `<>…</>` and React's `Fragment` are unaffected.
+    assert!(flagged(
+        "import * as R from 'react/jsx-runtime'\nexport default function C() { return <R.Fragment><p>x</p></R.Fragment> }"
+    ));
+    assert!(!flagged(
+        "import { Fragment } from 'react'\nexport default function C() { return <Fragment><p>x</p></Fragment> }"
+    ));
+}
