@@ -1,4 +1,4 @@
-import { Disclosure, DisclosureContent, DisclosureTrigger } from './Disclosure'
+import { Disclosure, DisclosureContent, DisclosureNote, DisclosureTrigger } from './Disclosure'
 
 export default function Page() {
   return (
@@ -9,6 +9,7 @@ export default function Page() {
         <DisclosureContent>
           <p>first body</p>
         </DisclosureContent>
+        <DisclosureNote>note</DisclosureNote>
       </Disclosure>
       <Disclosure defaultOpen>
         <DisclosureTrigger>Second</DisclosureTrigger>

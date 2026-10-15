@@ -81,8 +81,11 @@ test('each instance toggles on its own, with consistent ids', async () => {
   await page.waitForFunction(() => document.querySelector('div[data-state]')?.hasAttribute('x-data'))
   await expect(first.getAttribute('aria-expanded')).resolves.toBe('false')
   await expect(second.getAttribute('aria-expanded')).resolves.toBe('true')
+  // the native consumer with a ref and an effect of its own follows the Provider's state
+  await page.waitForFunction(() => document.querySelector('p[data-seen]')?.getAttribute('data-seen') === 'closed')
   await first.click()
   await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-expanded') === 'true')
+  await page.waitForFunction(() => document.querySelector('p[data-seen]')?.getAttribute('data-seen') === 'open')
   expect(await page.getByText('first body').isVisible()).toBe(true)
   const controls = await first.getAttribute('aria-controls')
   expect(await page.locator(`[id="${controls}"]`).count()).toBe(1)

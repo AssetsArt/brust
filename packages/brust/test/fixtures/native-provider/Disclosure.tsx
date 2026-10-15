@@ -55,3 +55,16 @@ export function PanelContent({ children }: { children?: React.ReactNode }) {
   const c = useContext(PanelCtx)
   return c.open ? <div>{children}</div> : null
 }
+
+// A consumer with a ref and an effect of its own (a native consumer): it stays its own host, linked to the Provider. The
+// effect reads the context through a const read in the render (a context value inside an effect is code brust cannot
+// bind, and keeps the consumer in React).
+export function DisclosureNote({ children }: { children?: React.ReactNode }) {
+  const c = useContext(Ctx)
+  const open = c.open
+  const ref = React.useRef<HTMLParagraphElement>(null)
+  React.useEffect(() => {
+    if (ref.current) ref.current.setAttribute('data-seen', open ? 'open' : 'closed')
+  }, [open])
+  return <p ref={ref}>{children}</p>
+}

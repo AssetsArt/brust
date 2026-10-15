@@ -567,9 +567,9 @@ fn read_function_as(
     if let Some(loc) = reader.names.ctx_escape.get() {
         ir.diagnostics.push(Diagnostic::fallback(
             "context-escape",
-            "a context value is used as a whole (not `context.field`); brust reads the fields one by one",
+            "a context value is used as a whole, or inside code brust prints as written (an effect, a handler), not as `context.field` in the render; brust reads the fields one by one",
             loc,
-            "read context.field, or keep this component in React",
+            "read context.field into a const in the render, or keep this component in React",
         ));
     }
     if let Some((loc, name, code, what)) = reader.names.prop_read_problem.borrow().clone() {

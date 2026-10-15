@@ -143,6 +143,8 @@ struct Frame {
     /// site: the Provider is specialised for this call site (R34.122) and the consumers are spliced into the clone.
     /// The number identifies that Provider instance.
     owner: Option<usize>,
+    /// The location of the Provider's call site (what a specialisation failure is reported against).
+    loc: u32,
 }
 
 /// S2 context lowering, BEFORE placement (R34.102-R34.104): a Provider component's value fields become hidden props
@@ -1257,7 +1259,14 @@ impl Walker<'_, '_> {
             )
         });
         self.frames_node_once(n, frames, bubbled, diags);
-        if let Some((loc, why)) = self.spec_failure.take()
+        let mine = match n {
+            Node::Component { loc, .. } => Some(*loc),
+            _ => None,
+        };
+        // A failure belongs to the Provider call site it names; an outer wrapper handles one found deeper.
+        if self.spec_failure.as_ref().map(|(l, _)| *l) == mine
+            && mine.is_some()
+            && let Some((loc, why)) = self.spec_failure.take()
             && let Some((saved, nf, nb, nd, np)) = snapshot
         {
             *n = saved;
@@ -1333,7 +1342,17 @@ impl Walker<'_, '_> {
                 // F3 (fail closed): a Provider that is lowered away no longer shares a React tree with an island
                 // under it, which would hydrate standalone and read the context DEFAULT. Any island (or a static
                 // child holding one) under an active frame, or inside a Provider's own tree, keeps the page React.
-                if ((island || cir.holds_island) && !frames.is_empty())
+                // R34.122: an island among the content of a native frame cannot move into the clone (it would hydrate
+                // standalone and read the context default): that Provider call site keeps its island.
+                let under_native = (island || cir.holds_island)
+                    .then(|| frames.iter().rev().find_map(|f| f.owner.map(|_| f.loc)))
+                    .flatten();
+                if let Some(at) = under_native {
+                    self.spec_failure.get_or_insert((
+                        at,
+                        format!("<{name}> is, or holds, a React island in the content"),
+                    ));
+                } else if ((island || cir.holds_island) && !frames.is_empty())
                     || (!island && cir.holds_island && !cir.provides.is_empty())
                 {
                     diags.push(Diagnostic::fallback(
@@ -1429,6 +1448,7 @@ impl Walker<'_, '_> {
                             context: pd.context.clone(),
                             fields: pd.fields.clone(),
                             owner: Some(o),
+                            loc: *loc,
                         });
                         pushed += 1;
                         continue;
@@ -1454,6 +1474,7 @@ impl Walker<'_, '_> {
                                 context: pd.context.clone(),
                                 fields,
                                 owner: None,
+                                loc: *loc,
                             });
                             pushed += 1;
                         }
@@ -1474,7 +1495,9 @@ impl Walker<'_, '_> {
                     .iter_mut()
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
                 frames.truncate(frames.len() - pushed);
-                if let Some(o) = owner {
+                if let Some(o) = owner
+                    && self.spec_failure.as_ref().map(|(l, _)| *l) != Some(*loc)
+                {
                     // R34.122: the Provider and its content become one component for this call site.
                     let from = child.path.clone().unwrap_or_default();
                     match self.specialise(&cir, &from, o, *loc, props, children) {
