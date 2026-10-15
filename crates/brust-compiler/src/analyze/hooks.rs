@@ -277,6 +277,8 @@ fn call_addr(call: &js_ast::E::Call) -> usize {
 /// expression of the body is read, so reads resolve to `State` / `Setter`;
 /// and `useStore(h)` bindings, so reads resolve to `Store` (M3-F D7).
 pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
+    let mut w = Walk::default();
+    w.stmts(func.body.stmts.slice());
     for stmt in func.body.stmts.slice() {
         let S::SLocal(local) = &stmt.data else {
             continue;
@@ -291,6 +293,15 @@ pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
                         }
                     }
                 }
+                continue;
+            }
+            // B4: `const x = useRef(init)` read only as `x.current` in the render and never written.
+            if let (Some(value), B::BIdentifier(id)) = (&decl.value, decl.binding.data)
+                && let E::ECall(call) = &value.data
+                && react_hook_name(call, names).as_deref() == Some("useRef")
+                && is_snapshot_ref(&w, names, id.r#ref)
+            {
+                names.mark_snapshot_ref(id.r#ref);
                 continue;
             }
             let (Some(value), B::BArray(arr)) = (&decl.value, decl.binding.data) else {
@@ -311,6 +322,23 @@ pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
             }
         }
     }
+}
+
+/// B4: every read of `r` in `w` is `r.current` outside any function, and `r` is never written, assigned, or handed on.
+fn is_snapshot_ref(w: &Walk, names: &NameTable<'_>, r: js_ast::Ref) -> bool {
+    let uses: Vec<i32> = w
+        .used_at
+        .iter()
+        .filter(|(u, _)| names.same(*u, r))
+        .map(|(_, loc)| *loc)
+        .collect();
+    !uses.is_empty()
+        && !w.opaque_write
+        && !w.assigned.iter().any(|a| names.same(*a, r))
+        && !w.member_written.iter().any(|a| names.same(*a, r))
+        && !w.member_writes.iter().any(|(a, _)| names.same(*a, r))
+        && !w.fn_uses.iter().any(|a| names.same(*a, r))
+        && uses.iter().all(|loc| w.current_reads.contains(loc))
 }
 
 /// The component's props: one per destructured property, or `props` for a
@@ -720,7 +748,7 @@ fn returned_value(v: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls)
         };
         let vloc = loc_of(v);
         let args: Vec<js_ast::Expr> = call.args.to_vec();
-        simple_hook(r, out, &hook, Some(name.clone()), &args, vloc);
+        simple_hook(r, out, &hook, Some(name.clone()), &args, vloc, false);
         return RawExpr {
             loc: vloc,
             kind: RawKind::Ident {
@@ -741,6 +769,7 @@ fn simple_hook(
     ident: Option<String>,
     args: &[js_ast::Expr],
     vloc: u32,
+    snapshot: bool,
 ) {
     match hook {
         "useMemo" => {
@@ -787,10 +816,19 @@ fn simple_hook(
                 Some(a) => r.expr(a),
                 None => undefined_at(vloc),
             };
-            out.refs.push(RefDecl {
-                name,
-                init: Expr::Raw(init),
-            });
+            if snapshot {
+                // B4: its initial value is all `.current` ever is: a state cell nothing sets.
+                out.state.push(StateDecl {
+                    name,
+                    setter: None,
+                    init: Expr::Raw(init),
+                });
+            } else {
+                out.refs.push(RefDecl {
+                    name,
+                    init: Expr::Raw(init),
+                });
+            }
         }
         "useId" => {
             let Some(name) = ident else {
@@ -1184,7 +1222,8 @@ fn read_decl(
                 });
             }
             (true, "useMemo" | "useCallback" | "useRef" | "useId") => {
-                simple_hook(r, out, &hook, ident, &args, vloc)
+                let snapshot = matches!(decl.binding.data, B::BIdentifier(id) if r.names.is_snapshot_ref(id.r#ref));
+                simple_hook(r, out, &hook, ident, &args, vloc, snapshot)
             }
             _ => out.fallback(
                 "hook-unsupported",

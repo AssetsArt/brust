@@ -588,6 +588,16 @@ fn read_function_as(
             "move the pattern above its first use",
         ));
     }
+    if let Some(loc) = reader.names.snapshot_escape.get() {
+        // B4: a never-written ref read in the render is a state cell; code printed as written would read `.current`
+        // off its value, so it keeps the fallback it had.
+        ir.diagnostics.push(Diagnostic::fallback(
+            "ref-in-render",
+            "a ref read during render is also read by code printed as written",
+            loc,
+            "read the ref in an effect or an event handler",
+        ));
+    }
     if let Some(loc) = reader.names.rest_escape.get() {
         // R34.14 fail closed: brust reads `rest.k` and spreads `{...rest}`; any other read of the
         // rest object (a value, or code printed as written) would see the named keys too.

@@ -56,6 +56,7 @@ impl<'r, 'a> Reader<'r, 'a> {
         let mut w = Walk::default();
         w.expr(e);
         self.rest_in_verbatim(&w, loc_of(e));
+        self.snapshot_in_verbatim(&w, loc_of(e));
         let (captures, jsx) = self.captured(w);
         RawExpr {
             loc: loc_of(e),
@@ -105,6 +106,16 @@ impl<'r, 'a> Reader<'r, 'a> {
                     self.names.ctx_escape.set(Some(loc));
                 }
                 return self.opaque(e, "context value");
+            }
+            // B4: `.current` of a ref that is never written is its initial value, held as a state cell no one sets.
+            E::EDot(d)
+                if d.name.slice() == b"current"
+                    && matches!(&d.target.data, E::EIdentifier(t) if self.names.is_snapshot_ref(t.ref_)) =>
+            {
+                let E::EIdentifier(t) = &d.target.data else {
+                    unreachable!()
+                };
+                self.ident(t.ref_)
             }
             E::EIdentifier(id) => self.ident(id.ref_),
             E::EImportIdentifier(id) => self.ident(id.ref_),
@@ -373,6 +384,16 @@ impl<'r, 'a> Reader<'r, 'a> {
 
     /// Code printed as written that reads the props `...rest` object would see the whole props
     /// (named keys included): recorded so the component falls back (R34.14).
+    /// B4: a ref held as a state cell is read as `.current` only in structured code; printed as written it would read
+    /// `.current` off the value. Recorded so the component keeps the old `ref-in-render` fallback.
+    fn snapshot_in_verbatim(&self, w: &Walk, loc: u32) {
+        if self.names.snapshot_escape.get().is_none()
+            && w.used.iter().any(|r| self.names.is_snapshot_ref(*r))
+        {
+            self.names.snapshot_escape.set(Some(loc));
+        }
+    }
+
     fn rest_in_verbatim(&self, w: &Walk, loc: u32) {
         if self.names.rest_escape.get().is_none() && w.used.iter().any(|r| self.names.is_rest(*r)) {
             self.names.rest_escape.set(Some(loc));
@@ -806,6 +827,12 @@ pub struct Walk {
     /// `(binding, read)`: a binding declared or assigned from a value that reads `read` (`const s = slots`,
     /// `s = { a: slots }`), so writing through the binding may write into `read`.
     pub flows: Vec<(js_ast::Ref, js_ast::Ref)>,
+    /// B4: the start of each identifier expression that is the object of a `.current` member read.
+    pub current_reads: Vec<i32>,
+    /// B4: identifiers read inside a nested function (a handler, an effect, a callback), where a ref is not a render read.
+    pub fn_uses: Vec<js_ast::Ref>,
+    /// Depth of nested functions at the point being walked.
+    depth: u32,
 }
 
 impl Walk {
@@ -882,6 +909,7 @@ impl Walk {
     }
 
     fn func(&mut self, f: &js_ast::G::Fn) {
+        self.depth += 1;
         if let Some(name) = &f.name {
             self.declared.push(name.ref_);
         }
@@ -892,6 +920,7 @@ impl Walk {
             }
         }
         self.stmts(f.body.stmts.slice());
+        self.depth -= 1;
     }
 
     pub fn stmts(&mut self, stmts: &[js_ast::Stmt]) {
@@ -1000,10 +1029,16 @@ impl Walk {
             E::EIdentifier(id) => {
                 self.used.push(id.ref_);
                 self.used_at.push((id.ref_, e.loc.start));
+                if self.depth > 0 {
+                    self.fn_uses.push(id.ref_);
+                }
             }
             E::EImportIdentifier(id) => {
                 self.used.push(id.ref_);
                 self.used_at.push((id.ref_, e.loc.start));
+                if self.depth > 0 {
+                    self.fn_uses.push(id.ref_);
+                }
             }
             E::EArray(a) => a.items.iter().for_each(|x| self.expr(x)),
             E::EUnary(u) => {
@@ -1045,12 +1080,20 @@ impl Walk {
                 self.expr(&c.target);
                 c.args.iter().for_each(|x| self.expr(x));
             }
-            E::EDot(d) => self.expr(&d.target),
+            E::EDot(d) => {
+                if d.name.slice() == b"current"
+                    && let E::EIdentifier(_) = &d.target.data
+                {
+                    self.current_reads.push(d.target.loc.start);
+                }
+                self.expr(&d.target)
+            }
             E::EIndex(i) => {
                 self.expr(&i.target);
                 self.expr(&i.index);
             }
             E::EArrow(a) => {
+                self.depth += 1;
                 for arg in a.args.slice() {
                     self.declare_binding(&arg.binding);
                     if let Some(d) = &arg.default {
@@ -1058,6 +1101,7 @@ impl Walk {
                     }
                 }
                 self.stmts(a.body.stmts.slice());
+                self.depth -= 1;
             }
             E::EFunction(f) => self.func(&f.func),
             E::EClass(c) => self.class(c),

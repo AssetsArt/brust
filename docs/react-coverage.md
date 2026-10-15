@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 215 | 112 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 48 | 2 | 19 | 27 | 0 | 0 | 0 | 0 |
+| C Hooks | 50 | 2 | 20 | 28 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 411 | 189 | 56 | 162 | 3 | 1 | 0 | 0 |
+| **Total** | 413 | 189 | 57 | 163 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -351,6 +351,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-callback-ref-in-list | ref={fn} on an element inside a list | react | react | ssr | ok | fallback:ref-shape | B1: a callback ref inside a list stays ref-shape |
 | c-object-spread-rest-key | an object literal spreading a ...rest key | native | native | precompute | ok | — | B5: ...rest.key in an object literal reads that prop and spreads it (Object.assign), instead of reading the rest object as a value |
 | c-object-spread-rest-whole | an object literal spreading the whole ...rest object | react | react | ssr | ok | fallback:prop-pattern | B5: the whole rest object read as a value stays prop-pattern |
+| c-ref-never-written | a useRef(init) only read as .current in the render | native | native | 0 | ok | — | B4: a ref nobody writes is its initial value, held as a state cell |
+| c-ref-written-read-in-render | a useRef written in a handler and read in the render | react | react | ssr | ok | fallback:ref-in-render | B4: a written ref read during render stays ref-in-render |
 
 ## D. API surface
 

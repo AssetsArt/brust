@@ -723,3 +723,42 @@ fn a_ref_that_is_not_a_function_value_or_ref_object_stays_a_fallback() {
         assert!(a.refs.is_empty() && a.effects.is_empty(), "{body}");
     }
 }
+
+// B4: a `useRef(init)` that is only ever read as `.current` in the render is a state cell nothing sets.
+#[test]
+fn a_never_written_ref_read_in_the_render_is_a_state_cell() {
+    let a = ir(&format!(
+        "{PRE}export default function F({{ checked }}: any) {{ const [n, setN] = useState(0); const snap = useRef(checked); return <div onClick={{() => setN(n + 1)}}><input defaultChecked={{snap.current}} /></div> }}"
+    ));
+    assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+    assert!(a.refs.is_empty(), "{:?}", a.refs);
+    assert!(
+        a.state
+            .iter()
+            .any(|s| s.name == "snap" && s.setter.is_none())
+    );
+}
+
+#[test]
+fn a_ref_that_is_written_or_read_in_a_function_or_bound_stays_a_ref() {
+    for body in [
+        // written
+        "const snap = useRef(checked); return <div onClick={() => { snap.current = true }}><input defaultChecked={snap.current} /></div>",
+        // also read in a handler (verbatim code)
+        "const snap = useRef(checked); return <div onClick={() => console.log(snap.current)}><input defaultChecked={snap.current} /></div>",
+        // bound to an element
+        "const snap = useRef(null); return <div onClick={() => {}}><input ref={snap} data-x={snap.current} /></div>",
+        // handed on whole
+        "const snap = useRef(checked); const w = snap; return <div onClick={() => {}}><input data-x={String(w.current)} defaultChecked={snap.current} /></div>",
+    ] {
+        let a = ir(&format!(
+            "{PRE}export default function F({{ checked }}: any) {{ const [n, setN] = useState(0); {body} }}"
+        ));
+        assert!(
+            a.refs.iter().any(|r| r.name == "snap") && !a.state.iter().any(|s| s.name == "snap"),
+            "{body}: refs {:?} state {:?}",
+            a.refs,
+            a.state
+        );
+    }
+}

@@ -1494,4 +1494,10 @@ export const rows: Row[] = [
   { id: 'c-object-spread-rest-whole', category: 'C', authoring: 'an object literal spreading the whole ...rest object', expect: 'react',
     snippet: `import { useState } from 'react'\nexport default function C({ label, ...props }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}><input aria-label={label} style={{ ...props, position: 'absolute' }} /></div> }`,
     note: 'B5: the whole rest object read as a value stays prop-pattern' },
+  { id: 'c-ref-never-written', category: 'C', authoring: 'a useRef(init) only read as .current in the render', expect: 'native', jobs: 0,
+    snippet: `import { useRef, useState } from 'react'\nexport default function C({ checked }: any) { const [n, setN] = useState(0); const snap = useRef(checked); return <div onClick={() => setN(n + 1)}><input type="checkbox" defaultChecked={snap.current} /><span>{n}</span></div> }`,
+    note: 'B4: a ref nobody writes is its initial value, held as a state cell' },
+  { id: 'c-ref-written-read-in-render', category: 'C', authoring: 'a useRef written in a handler and read in the render', expect: 'react',
+    snippet: `import { useRef, useState } from 'react'\nexport default function C({ checked }: any) { const [n, setN] = useState(0); const snap = useRef(checked); return <div onClick={() => { setN(n + 1); snap.current = !snap.current }}><input type="checkbox" defaultChecked={snap.current} /></div> }`,
+    note: 'B4: a written ref read during render stays ref-in-render' },
 ]

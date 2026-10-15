@@ -433,15 +433,6 @@
       "libraryComponents": 9
     },
     {
-      "blocker": "fallback:ref-in-render",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 6
-    },
-    {
       "blocker": "useImperativeHandle",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
@@ -458,6 +449,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 4
+    },
+    {
+      "blocker": "fallback:ref-in-render",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 3
     },
     {
       "blocker": "fallback:prop-jinja-name",
