@@ -27,6 +27,9 @@ pub struct Reader<'r, 'a> {
     map_callback: bool,
     /// The context Providers read in the template (S2): what this component hands to its consumers.
     pub provides: Vec<crate::ir::ProvideDecl>,
+    /// `useId()` calls hoisted out of the return expression (R34.120), by call address: each reads as the local the
+    /// component declares for it.
+    pub hoisted_calls: std::collections::HashMap<usize, String>,
 }
 
 impl<'r, 'a> Reader<'r, 'a> {
@@ -39,6 +42,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             loop_scope: Vec::new(),
             map_callback: false,
             provides: Vec::new(),
+            hoisted_calls: std::collections::HashMap::new(),
         }
     }
 
@@ -164,6 +168,15 @@ impl<'r, 'a> Reader<'r, 'a> {
                 index: Box::new(self.expr(&ix.index)),
             },
             E::ECall(c) if c.was_jsx_element => return self.jsx_expr(e),
+            E::ECall(c)
+                if let Some(name) =
+                    self.hoisted_calls.get(&crate::analyze::hooks::call_addr(c)) =>
+            {
+                RawKind::Ident {
+                    name: name.clone(),
+                    kind: IdentKind::Local,
+                }
+            }
             E::ECall(c) => match &c.target.data {
                 E::EIdentifier(_) | E::EImportIdentifier(_) | E::EDot(_)
                     if c.optional_chain.is_none() =>

@@ -1471,4 +1471,10 @@ export const rows: Row[] = [
     snippet: `import Child from './Child'\nasync function act() { 'use server' }\nexport default function C() { return <Child act={act} /> }`,
     files: { 'Child.tsx': `export default function Child({ act }: any) { return <button onClick={() => act()}>go</button> }` } },
 
+  { id: 'c-useid-in-attribute', category: 'C', authoring: 'useId() called in attribute values of the returned tree', expect: 'native', jobs: 0,
+    snippet: `import { useId, useState } from 'react'\nexport default function C({ label }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}><label htmlFor={useId()}>{label}</label><input id={useId()} /><span>{n}</span></div> }`,
+    note: 'R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return' },
+  { id: 'c-useid-in-conditional', category: 'C', authoring: 'useId() called in a branch of the returned tree', expect: 'react',
+    snippet: `import { useId, useState } from 'react'\nexport default function C({ label }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}>{n ? <input id={useId()} /> : null}<span>{label}</span></div> }`,
+    note: 'R34.120: a hook in a conditional position stays refused (hook-in-expression)' },
 ]

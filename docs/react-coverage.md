@@ -9,10 +9,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 215 | 112 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 41 | 2 | 15 | 24 | 0 | 0 | 0 | 0 |
+| C Hooks | 43 | 2 | 16 | 25 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 404 | 189 | 52 | 159 | 3 | 1 | 0 | 0 |
+| **Total** | 406 | 189 | 53 | 160 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -344,6 +344,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-use-context | use(context) | react | react | ssr | ok | fallback:hook-unsupported | spec §3 react tier: use |
 | c-useformstatus | useFormStatus read in the component | react | react | ssr | ok | fallback:hook-unsupported | react-dom hook, outside the supported set |
 | c-useformstatus-child | useFormStatus in a child inside a static <form> | react | static | ssr | ok | — | known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react |
+| c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
+| c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
 
 ## D. API surface
 
