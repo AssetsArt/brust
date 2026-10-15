@@ -4,7 +4,7 @@ const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__
 export default defineBehavior("input_135770e2", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const id = JSON.parse(__el.getAttribute("x-props") ?? "{}")._id0
   const v = signal("")
-  const _h1 = (...a) => ((e) => v.set(e.target.value))(...a)
+  const _h1 = (...__args) => ((e) => v.set(e.target.value))(...__args)
   const _c1 = computed(() => __text(props().label))
   return { v, _h1, _c1 }
 })

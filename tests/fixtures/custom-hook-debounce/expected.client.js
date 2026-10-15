@@ -6,7 +6,7 @@ export default defineBehavior("input_5d6490dd", ({ el: __el, props, effect: __ef
   const q = signal(props().initial)
   const ms_useDebounced1 = computed(() => 300)
   const settled_useDebounced1 = signal(q())
-  const _h1 = (...a) => ((e) => q.set(e.currentTarget.value))(...a)
+  const _h1 = (...__args) => ((e) => q.set(e.currentTarget.value))(...__args)
   const _c1 = computed(() => __attrs(q()))
   const _c2 = computed(() => __text(settled_useDebounced1()))
   __effect(() => { void [q(), ms_useDebounced1()]; return untracked(() => (((setSettled_useDebounced1, q, ms_useDebounced1) => (() => {

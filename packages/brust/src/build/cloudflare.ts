@@ -90,6 +90,9 @@ export interface CfBuildCtx {
   log: (s: string) => void
 }
 
+/** The resolution conditions of the Worker bundle; the package-resolver probe (`sourceDirPlugin`) must carry the same (F223). */
+export const CF_CONDITIONS = ['workerd', 'worker', 'browser']
+
 const CORE_SRC = join(import.meta.dir, '..')
 const BUILTINS = new Set(builtinModules.filter((m) => !m.startsWith('_')))
 
@@ -272,11 +275,11 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     entrypoints: [entryPath],
     target: 'browser',
     format: 'esm',
-    conditions: ['workerd', 'worker', 'browser'],
+    conditions: CF_CONDITIONS,
     define: PRODUCTION,
     minify: false,
     external: ['node:*', 'cloudflare:*', glueSpec],
-    plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map()), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*']), exposePlugin(ctx.compiled)],
+    plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map()), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'], 'browser', CF_CONDITIONS), exposePlugin(ctx.compiled)],
   })
   if (violations.length > 0) throw new BuildError('cf-unsupported', `${[...new Set(violations)].join('\n')}\nthese modules do not exist on Cloudflare Workers; swap them with [cloudflare] alias`)
   if (!res.success) throw new BuildError('bundle', `cloudflare: ${res.logs.map(String).join('\n')}`)

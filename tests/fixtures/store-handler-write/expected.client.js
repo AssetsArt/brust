@@ -4,11 +4,11 @@ import { cart } from "./cart"
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("input_5e4b56f8", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const s = { get count() { return cart.count() } }
-  const _h1 = (...a) => (() => cart.count.set(cart.count() + props().step))(...a)
-  const _h2 = (...a) => ((...a) => ((() => {
+  const _h1 = (...__args) => (() => cart.count.set(cart.count() + props().step))(...__args)
+  const _h2 = (...__args) => ((...__args) => ((() => {
   const n = s.count * 2;
   cart.count.set(n);
-}))(...a))(...a)
+}))(...__args))(...__args)
   const _c1 = computed(() => __text(cart.count()))
   return { _h1, _h2, _c1 }
 })

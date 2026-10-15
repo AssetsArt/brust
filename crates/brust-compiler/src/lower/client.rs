@@ -208,12 +208,13 @@ fn chunk_in(
     exported.extend(ir.state.iter().map(|s| s.name.clone()));
     for h in &ir.handlers {
         let mut params: Vec<String> = h.item_scoped.clone();
-        params.push("...a".into());
+        params.push(format!("...{}", f.rest));
         body.push(format!(
-            "const {} = ({}) => ({})(...a)",
+            "const {} = ({}) => ({})(...{})",
             h.name,
             params.join(", "),
-            client_fn(&h.body, &f)
+            client_fn(&h.body, &f),
+            f.rest
         ));
         exported.push(h.name.clone());
     }

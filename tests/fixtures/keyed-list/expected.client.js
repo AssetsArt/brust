@@ -4,7 +4,7 @@ const __attr = (v) => (typeof v === "boolean" ? null : v)
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("input_d4c7015a", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const selected = signal(null)
-  const _h1 = (todo, i, ...a) => (() => selected.set(todo.id))(...a)
+  const _h1 = (todo, i, ...__args) => (() => selected.set(todo.id))(...__args)
   const _l1 = computed(() => props().todos)
   const _k1 = (todo) => todo.id
   const _c1 = (todo) => __attr(todo.id === selected() ? "selected" : "")

@@ -2,7 +2,7 @@
 import { signal, computed, defineBehavior } from "brust/runtime-dom"
 export default defineBehavior("input_0df7be4d", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const on = signal(true)
-  const _h1 = (...a) => (() => on.set(!on()))(...a)
+  const _h1 = (...__args) => (() => on.set(!on()))(...__args)
   const _c1 = computed(() => on() ? "<b>bold</b>" : "<i>ital</i>")
   return { on, _h1, _c1 }
 })
