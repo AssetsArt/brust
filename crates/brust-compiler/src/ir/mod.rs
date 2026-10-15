@@ -281,6 +281,10 @@ pub struct ComponentIR {
     /// passes its children on to a component that does (F169, transitive).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub repeats_children: bool,
+    /// This component hands its own `{children}` to a component that prints them under a native host element (F214,
+    /// transitive): directives in the slot content its caller gives would be bound by that host, not by the caller.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hosts_children: bool,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -413,6 +417,7 @@ impl ComponentIR {
             shadowed_props: Vec::new(),
             live_forwards: Vec::new(),
             repeats_children: false,
+            hosts_children: false,
             state: vec![],
             derived: vec![],
             effects: vec![],

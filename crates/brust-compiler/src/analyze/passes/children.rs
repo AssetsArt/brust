@@ -73,6 +73,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         shadowed: BTreeSet::new(),
         live_forwards: Vec::new(),
         passes_to_repeater: false,
+        passes_to_host: false,
         own_fed: crate::ir::is_fed(ir),
         own_job: ir
             .jobs
@@ -211,6 +212,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
     w.node(&mut template);
     ir.repeats_children = w.passes_to_repeater || template_has_for(&template);
+    ir.hosts_children = w.passes_to_host;
     if !w.fused.is_empty() {
         // R34.96: the job of this component also runs its fused children's jobs: their renamed outputs are its
         // outputs, and the props they read are its inputs (the caller's record maps them, A4).
@@ -335,6 +337,9 @@ struct Walker<'s, 'c> {
     live_forwards: Vec<crate::ir::Forwarded>,
     /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
     passes_to_repeater: bool,
+    /// This component hands its own `{children}` to a component that prints them under a native host element
+    /// (`ComponentIR::hosts_children`, F214).
+    passes_to_host: bool,
     /// This component runs a precompute job of its own, or has `useId` values: its caller feeds it per instance.
     own_fed: bool,
     /// ... and a `Precompute` job exists for fused children to join (R34.96).
@@ -391,6 +396,9 @@ struct Child {
     inner: Option<Inner>,
     /// The compiled child's template repeats something in a list (a `For`): slot content is printed once and pasted per row.
     has_for: bool,
+    /// The slot content given to this child is printed under a native host element that is not the caller's (F214): the
+    /// child is native and renders `{children}`, or passes its `{children}` on to one that does.
+    hosts_children: bool,
     /// Keys the call site must not pass (`ComponentIR::absent_props`).
     absent: Vec<String>,
     /// The compiled child (S2 context frames read its `provides` / `ctx_uses` / props / derived).
@@ -510,6 +518,21 @@ fn template_has_for(n: &Node) -> bool {
         | Node::Component { children, .. }
         | Node::Fragment(children) => children.iter().any(template_has_for),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(template_has_for),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
+/// Whether `n` renders the component's own `{children}`.
+fn template_reads_children(n: &Node) -> bool {
+    match n {
+        Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => {
+            matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children")
+        }
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().any(template_reads_children),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(template_reads_children),
+        Node::For { body, .. } => body.iter().any(template_reads_children),
         Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
     }
 }
@@ -1574,6 +1597,7 @@ impl Walker<'_, '_> {
             reads_children_value: false,
             use_id: false,
             has_for: false,
+            hosts_children: false,
             inner: None,
             absent: Vec::new(),
             ir: None,
@@ -1623,6 +1647,7 @@ impl Walker<'_, '_> {
                     reads_children_value: false,
                     use_id: false,
                     has_for: false,
+                    hosts_children: false,
                     inner: None,
                     absent: Vec::new(),
                     ir: None,
@@ -1800,6 +1825,7 @@ impl Walker<'_, '_> {
                         reads_children_value: false,
                         use_id: false,
                         has_for: false,
+                        hosts_children: false,
                         inner: None,
                         absent: Vec::new(),
                         ir: None,
@@ -1852,6 +1878,7 @@ impl Walker<'_, '_> {
         let mut job_all = false;
         let mut use_id = false;
         let mut has_for = false;
+        let mut hosts_children = false;
         let mut inner = None;
         let mut forwards_ref = false;
         let mut icon_spread = false;
@@ -1870,6 +1897,8 @@ impl Walker<'_, '_> {
                 icon_spread = ir.icon_spread;
                 absent = ir.absent_props.clone();
                 has_for = ir.repeats_children || template_has_for(&ir.template);
+                hosts_children = ir.hosts_children
+                    || (matches!(ir.tier, Tier::Native) && template_reads_children(&ir.template));
                 reads_children_value =
                     matches!(ir.tier, Tier::Static | Tier::Native) && reads_children_as_value(&ir);
                 unwritten = ir.unwritten_props.clone();
@@ -1977,6 +2006,7 @@ impl Walker<'_, '_> {
             use_id,
             inner,
             has_for,
+            hosts_children,
             absent,
             ir: child_ir,
             job_eval,
@@ -2418,6 +2448,72 @@ impl Walker<'_, '_> {
             }
             Node::Fragment(cs) => cs.iter().any(|c| self.body_directive(c)),
             Node::Text(_) | Node::Outlet => false,
+        }
+    }
+
+    /// What in slot content is bound by an instance (this component's) when printed: a handler, a ref, a binding that
+    /// reads state, a list or condition over state, a linked or hoisted child. `None` for markup the server prints once.
+    fn owned_directive(&self, n: &Node) -> Option<&'static str> {
+        match n {
+            Node::Element {
+                attrs, children, ..
+            } => attrs
+                .iter()
+                .find_map(|a| match a {
+                    Attr::Event { .. } => Some("an event handler"),
+                    Attr::Ref { .. } => Some("a ref"),
+                    Attr::Dynamic { value, .. }
+                    | Attr::InnerHtml { value }
+                    | Attr::Spread(value)
+                        if self.source_reactive(value) =>
+                    {
+                        Some("an attribute that changes on the client")
+                    }
+                    _ => None,
+                })
+                .or_else(|| children.iter().find_map(|c| self.owned_directive(c))),
+            // The caller's own `{children}` passed on is that caller's content, judged where it is given.
+            Node::Slot(_) if template_reads_children(n) => None,
+            Node::Slot(e) if self.source_reactive(e) => Some("text that changes on the client"),
+            Node::Slot(_) | Node::Text(_) | Node::Outlet => None,
+            Node::If {
+                cond, then, else_, ..
+            } => {
+                if self.source_reactive(cond) {
+                    Some("a condition that changes on the client")
+                } else {
+                    then.iter()
+                        .chain(else_)
+                        .find_map(|c| self.owned_directive(c))
+                }
+            }
+            Node::For { source, body, .. } => {
+                if self.source_reactive(source) {
+                    Some("a list that changes on the client")
+                } else {
+                    body.iter().find_map(|c| self.owned_directive(c))
+                }
+            }
+            Node::Component {
+                loc,
+                link,
+                children,
+                ..
+            } => {
+                if link.is_some_and(|id| !self.row_only.contains_key(&id)) {
+                    Some("a component with props that change on the client")
+                } else if self
+                    .handlers
+                    .iter()
+                    .any(|h| h.forwarded.as_ref().is_some_and(|f| f.loc == *loc))
+                    || self.live_forwards.iter().any(|f| f.loc == *loc)
+                {
+                    Some("a handler or a live value bound on a child's element")
+                } else {
+                    children.iter().find_map(|c| self.owned_directive(c))
+                }
+            }
+            Node::Fragment(cs) => cs.iter().find_map(|c| self.owned_directive(c)),
         }
     }
 
@@ -3123,6 +3219,27 @@ impl Walker<'_, '_> {
         }
         if child.has_for && !matches!(child.tier, Tier::React { .. }) && !children.is_empty() {
             self.passes_to_repeater = true;
+        }
+        // F214: slot content printed under a native child's host element is bound by that host's instance (the runtime
+        // binds every directive by the nearest `x-data`), so a directive of THIS component in it would read, call and
+        // write the child's members. Directives are owned by the component whose scope resolves their names; until a
+        // frame can say otherwise (a native Provider), the only owner of slot content is its caller, and the caller
+        // stays on React.
+        if child.hosts_children && !matches!(child.tier, Tier::React { .. }) && !children.is_empty()
+        {
+            if children.iter().any(template_reads_children) {
+                self.passes_to_host = true;
+            }
+            if let Some(what) = children.iter().find_map(|c| self.owned_directive(c)) {
+                self.diagnostics.push(Diagnostic::fallback(
+                    "slot-owner",
+                    format!(
+                        "the children given to <{name}> contain {what}, and <{name}> prints them inside its own host element, which would bind them to its instance instead of this component's"
+                    ),
+                    *loc,
+                    "move the interactive part into the component that owns its state, or keep this component interactive with React",
+                ));
+            }
         }
         if child.has_for
             && !matches!(child.tier, Tier::React { .. })
