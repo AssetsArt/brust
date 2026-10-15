@@ -132,6 +132,8 @@ struct Placer<'s> {
     state_inits: HashMap<String, RawExpr>,
     /// F174: the verdict on each derived value / module const already judged (a chain of derived values is deep and shared).
     read_memo: std::cell::RefCell<std::collections::HashMap<String, Option<String>>>,
+    /// F197: bare specifiers of helpers the predicate asked to prove whose package source the build has not written.
+    package_requests: std::cell::RefCell<BTreeSet<String>>,
     slot_values: &'s std::collections::HashMap<String, serde_json::Value>,
     opts: &'s crate::analyze::component::AnalyzeOptions,
 }
@@ -291,6 +293,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
             })
             .collect(),
         read_memo: Default::default(),
+        package_requests: Default::default(),
         slot_values: &ctx.opts.slot_values,
         opts: ctx.opts,
     };
@@ -324,6 +327,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         }
     }
     ir.diagnostics.append(&mut p.diagnostics);
+    ir.package_requests = p.package_requests.take().into_iter().collect();
     ir.build_eval = std::mem::take(&mut p.st.build_eval);
     for d in p.css_errors.take() {
         if !ir
@@ -692,6 +696,20 @@ impl Placer<'_> {
                             let ok = crate::analyze::plain_fn::imported_plain_fn(
                                 &self.path, source, imported, self.opts,
                             );
+                            // F197: a package the build was never asked to write: request it, so the next compile
+                            // reads its source (a refused package stays refused).
+                            if !ok
+                                && !source.starts_with("./")
+                                && !source.starts_with("../")
+                                && matches!(
+                                    crate::analyze::modules::resolve_package(
+                                        &self.path, source, self.opts
+                                    ),
+                                    Err(None)
+                                )
+                            {
+                                self.package_requests.borrow_mut().insert(source.clone());
+                            }
                             self.read_memo
                                 .borrow_mut()
                                 .insert(key, (!ok).then(|| imported.clone()));
