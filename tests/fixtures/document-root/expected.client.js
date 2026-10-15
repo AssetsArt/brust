@@ -5,7 +5,7 @@ const __attrs = (v) => (typeof v === "boolean" ? String(v) : v)
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("input_23089a0b", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const open = signal(false)
-  const _h1 = (...a) => (() => open.set(!open()))(...a)
+  const _h1 = (...__args) => (() => open.set(!open()))(...__args)
   const _c1 = computed(() => __attr(props().lang))
   const _c2 = computed(() => __text(props().title))
   const _c3 = computed(() => __attrs(open() ? "yes" : "no"))
