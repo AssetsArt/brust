@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderPage } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderNested, renderNestedIds, renderPage } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -92,5 +92,46 @@ test('each instance toggles on its own, with consistent ids', async () => {
   expect(await page.getByText('first body').isVisible()).toBe(false)
   expect(await page.getByText('second body').isVisible()).toBe(true)
   expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('nested instances of one Provider component read their own frame', async () => {
+  const served = plain(await (await fetch(`${base}/nested`)).text())
+  expect(served).toBe(plain(renderNested()))
+  const html = await (await fetch(`${base}/nested`)).text()
+  expect(html).not.toContain('brust-island')
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/nested`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('section[data-panel]')?.hasAttribute('x-data'))
+  const outer = page.getByRole('button', { name: 'Outer' })
+  const inner = page.getByRole('button', { name: 'Inner' })
+  expect(await inner.getAttribute('aria-expanded')).toBe('false')
+  expect(await page.getByText('inner body').isVisible()).toBe(false)
+  await inner.click()
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Inner')?.getAttribute('aria-expanded') === 'true')
+  expect(await page.getByText('inner body').isVisible()).toBe(true)
+  // the outer trigger flips the OUTER instance only: its content (and the inner instance in it) goes away and comes back
+  await outer.click()
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Outer')?.getAttribute('aria-expanded') === 'false')
+  expect(await page.getByRole('button', { name: 'Inner' }).count()).toBe(0)
+  await outer.click()
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Outer')?.getAttribute('aria-expanded') === 'true')
+  expect(await page.getByRole('button', { name: 'Inner' }).count()).toBe(1)
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('nested instances that both carry a useId keep the island Provider with its children', async () => {
+  const html = await (await fetch(`${base}/nested-ids`)).text()
+  expect(plain(html.replace(/<brust-island\b[^>]*>/g, '').replace(/<\/brust-island>/g, ''))).toBe(plain(renderNestedIds()))
+  const page = await browser.newPage()
+  await page.goto(`${base}/nested-ids`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('brust-island')?.hasAttribute('data-hydrated') || true)
+  await page.getByRole('button', { name: 'Inner' }).click()
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Inner')?.getAttribute('aria-expanded') === 'true')
+  expect(await page.getByText('inner body').isVisible()).toBe(true)
   await page.close()
 }, 60_000)

@@ -1417,7 +1417,8 @@ impl Walker<'_, '_> {
                     self.next_owner += 1;
                     self.next_owner
                 });
-                for pd in &cir.provides {
+                // A clone already holds the content its frame served: it pushes no frame of its own.
+                for pd in cir.provides.iter().filter(|_| !cir.specialised) {
                     if let Some(o) = owner {
                         // R34.116: the fields stay expressions of the Provider's own scope.
                         frames.push(Frame {
@@ -1490,7 +1491,9 @@ impl Walker<'_, '_> {
 
     /// R34.116: whether `cir` is a Provider whose frame is state-valued and a native clone of it can carry the frame.
     fn specialisable(&self, cir: &ComponentIR) -> bool {
-        !cir.provides.is_empty()
+        // A clone already carries its content (it is what a call site names after specialising).
+        !cir.specialised
+            && !cir.provides.is_empty()
             && !crate::analyze::context::frames_are_plain(cir)
             && crate::analyze::context::native_provider_problem(cir).is_none()
             // The island diagnostic `context-state` is the only reason it is React; a clone drops it.
@@ -1528,7 +1531,7 @@ impl Walker<'_, '_> {
         let key = format!("{c_path}#{exp}~spec~{}~{loc}", ctx.path);
         let mut once = Some(nodes);
         let clone_id = id.clone();
-        crate::analyze::modules::compile_specialised(
+        let clone = crate::analyze::modules::compile_specialised(
             c_path,
             &export,
             key.clone(),
@@ -1542,6 +1545,13 @@ impl Walker<'_, '_> {
                 Ok(())
             },
         )?;
+        // A clone that still needs React would be an island of the Provider WITHOUT the content that moved into it:
+        // the call site keeps the island it had, with its children.
+        if let Tier::React { reason, .. } = &clone.tier {
+            let reason = reason.clone();
+            ctx.modules.borrow_mut().remove(&key);
+            return Err(format!("the specialised component needs React ({reason})"));
+        }
         Ok((id, key))
     }
 

@@ -73,6 +73,11 @@ impl ModuleCache {
     pub fn insert(&mut self, key: String, e: Entry) {
         self.map.insert(key, e);
     }
+
+    /// Forgets `key` (a specialised clone that turned out to need React).
+    pub fn remove(&mut self, key: &str) {
+        self.map.remove(key);
+    }
 }
 
 /// Which component of a module.

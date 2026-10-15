@@ -65,8 +65,9 @@ pub fn compile_tree(
         // R34.122: a Provider that only exists as a React island because its state frame needs a native provider is
         // not part of the tree when every call site was specialised (nothing references it).
         if !reachable.contains(&ir.id)
-            && ir.provides.iter().any(|_| true)
-            && ir.diagnostics.iter().any(|d| d.rule == "context-state")
+            && (ir.specialised
+                || (!ir.provides.is_empty()
+                    && ir.diagnostics.iter().any(|d| d.rule == "context-state")))
         {
             continue;
         }
