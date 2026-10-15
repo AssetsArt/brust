@@ -298,6 +298,13 @@ impl<'r, 'a> Reader<'r, 'a> {
         if self.names.rest_escape.get().is_none() && w.used.iter().any(|r| self.names.is_rest(*r)) {
             self.names.rest_escape.set(Some(loc));
         }
+        // A context local (`const c = useContext(Ctx)`) is not a value in the chunk: `c.field` is read as a hidden prop
+        // by the structured reader only. Printed as written it would be an undefined name (R34.103).
+        if self.names.ctx_escape.get().is_none()
+            && w.used.iter().any(|r| self.names.ctx_local(*r).is_some())
+        {
+            self.names.ctx_escape.set(Some(loc));
+        }
     }
 
     /// F168: the template prints a prop read as its bare name, so a name the template binds itself (`loop`, `range`,
