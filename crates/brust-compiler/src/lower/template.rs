@@ -905,7 +905,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             let paint = if html == "style" {
                 Paint::Style
             } else {
-                match attr_kind(&html) {
+                match attr_kind_of(&html, tag) {
                     AttrKind::Boolean => Paint::Bool,
                     AttrKind::Stringify => Paint::AttrStr,
                     AttrKind::Overloaded => Paint::AttrOver,
@@ -2308,17 +2308,26 @@ fn static_text(e: &Expr) -> Option<String> {
     }
 }
 
-/// React omits `src=""` and `href=""` on every element but `<a>`.
+/// React omits `src=""` and `href=""` on every element but `<a>` and a custom element (which passes it through).
 fn empty_url_dropped(html: &str, tag: &str) -> bool {
-    matches!(html, "src" | "href") && tag != "a"
+    matches!(html, "src" | "href") && tag != "a" && !tag.contains('-')
+}
+
+/// The kind that decides how React prints a boolean on `html` of `tag`: a custom element passes every attribute through
+/// as given (`true` → `""`, `false` omits), the same as the overloaded ones; otherwise the name decides.
+fn attr_kind_of(html: &str, tag: &str) -> AttrKind {
+    if tag.contains('-') {
+        AttrKind::Overloaded
+    } else {
+        attr_kind(html)
+    }
 }
 
 /// A dynamic attribute on the server, by what React does with its value (`brust_jinja::attr_kind`): a boolean attribute
 /// prints when truthy; `aria-*`, `data-*` and the other "booleanish string" attributes print `"true"`/`"false"`; `download`
-/// and `capture` print `""` for `true`; any other attribute omits a boolean (a custom element, `custom`, keeps `true`).
-/// A URL attribute also needs a safe scheme (the runtime's rule).
+/// and `capture` print `""` for `true`; any other attribute omits a boolean. A custom element (a tag with `-`) is React's pass-through rule for every
+/// attribute: `true` is `""`, `false` omits it, anything else is its string (F213). A URL attribute also needs a safe scheme (the runtime's rule).
 fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
-    let custom = tag.contains('-');
     let mut url = if is_url_attr(html) {
         format!(" and ({v} | url_ok)")
     } else {
@@ -2328,16 +2337,16 @@ fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
     if empty_url_dropped(html, tag) {
         url.push_str(&format!(" and ({v} | attr_str) != \"\""));
     }
-    match attr_kind(html) {
+    match attr_kind_of(html, tag) {
         AttrKind::Boolean => format!("{{% if ({v}) | truthy %}} {html}{{% endif %}}"),
         AttrKind::Overloaded => format!(
-            "{{% if ({v}) | bool_true %}} {html}=\"\"{{% elif ({v}) | present %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
+            "{{% if ({v}) | bool_true %}} {html}=\"\"{{% elif ({v}) | present{url} %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
         ),
         AttrKind::Stringify => format!(
             "{{% if ({v} | present_str){url} %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"
         ),
         AttrKind::Plain => {
-            let present = if custom { "present" } else { "present_plain" };
+            let present = "present_plain";
             if url.is_empty() {
                 format!(
                     "{{% if {v} | {present} %}} {html}=\"{{{{ {v} | attr_str | e }}}}\"{{% endif %}}"

@@ -41,9 +41,11 @@ afterAll(async () => {
 
 const NAMES = ['loop', 'muted', 'inert', 'itemscope', 'allowfullscreen', 'autoplay', 'playsinline', 'novalidate', 'readonly', 'required', 'reversed', 'aria-busy', 'data-on', 'download']
 
+const CE = ['disabled', 'aria-busy', 'foo', 'download']
+
 /** `name="value"` pairs of one tag's attributes from React's markup, sorted. */
 const reactAttrs = (html: string, testid: string, names: string[]): string[] => {
-  const tag = new RegExp(`<[a-z]+[^>]*data-testid="${testid}"[^>]*>`).exec(html)![0]
+  const tag = new RegExp(`<[a-z-]+[^>]*data-testid="${testid}"[^>]*>`).exec(html)![0]
   return [...tag.matchAll(/([\w:-]+)(?:="([^"]*)")?/g)]
     .map((m) => `${m[1]!.toLowerCase()}="${m[2] ?? ''}"`)
     .filter((a) => names.includes(a.split('=')[0]!))
@@ -62,6 +64,8 @@ test('first paint equals React for the boolean attributes and the SVG <a>', asyn
   expect(reactAttrs(react, 'bools', NAMES)).toContain('loop=""')
   expect(reactAttrs(html, 'bools', NAMES)).toEqual(reactAttrs(react, 'bools', NAMES))
   expect(reactAttrs(html, 'svga', ['href'])).toEqual(['href="/x"'])
+  expect(reactAttrs(html, 'ce', CE)).toEqual(reactAttrs(react, 'ce', CE))
+  expect(reactAttrs(react, 'ce', CE)).toContain('aria-busy=""')
 })
 
 test('after each click the client-updated attributes equal React\'s render of that state', async () => {
@@ -76,6 +80,8 @@ test('after each click the client-updated attributes equal React\'s render of th
     await page.waitForFunction((s) => document.querySelector('[data-testid="bools"]')?.hasAttribute('loop') === s, state)
     const react = renderProbe(state)
     expect(await page.evaluate(domAttrs, ['bools', NAMES] as [string, string[]])).toEqual(reactAttrs(react, 'bools', NAMES))
+    // a custom element (F213): React passes every attribute through, true is "", false omits it
+    expect(await page.evaluate(domAttrs, ['ce', CE] as [string, string[]])).toEqual(reactAttrs(react, 'ce', CE))
     // the SVG <a>: React keeps href="" on an anchor, SVG included
     expect(await page.evaluate(domAttrs, ['svga', ['href']] as [string, string[]])).toEqual(reactAttrs(react, 'svga', ['href']))
   }

@@ -28,12 +28,16 @@ function variant(name: string, edit: (dir: string) => void): string {
 }
 
 let built: ReturnType<typeof build>
+// A build killed mid-way (a timeout) leaves its temp output beside dist; clear it before and after.
+const tmp = join(fixture, '.dist.brust-tmp')
 beforeAll(() => {
   rmSync(dist, { recursive: true, force: true })
+  rmSync(tmp, { recursive: true, force: true })
   built = build(fixture)
 })
 afterAll(() => {
   rmSync(dist, { recursive: true, force: true })
+  rmSync(tmp, { recursive: true, force: true })
   for (const d of copies) rmSync(d, { recursive: true, force: true })
 })
 

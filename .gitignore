@@ -15,3 +15,6 @@ tests/fixtures/shadcn/dist/
 
 # F153c: package sources the build writes
 **/.brust/pkg-src/
+
+# a build killed mid-way leaves its temp output next to dist (build/index.ts); never commit it
+**/.dist.brust-tmp/

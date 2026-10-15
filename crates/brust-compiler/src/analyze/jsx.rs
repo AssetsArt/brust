@@ -270,7 +270,9 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                         }
                         match tag {
                             Tag::Host(_) => {
-                                if let Some(attr) = read_attr(r, &name, v, &mut ref_name) {
+                                if let Some(attr) =
+                                    read_attr(r, &name, v, &mut ref_name, is_custom(&tag))
+                                {
                                     attrs.push(attr);
                                 }
                             }
@@ -447,7 +449,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
         }
         match tag {
             Tag::Host(_) => {
-                if let Some(attr) = read_attr(r, &name, value, &mut ref_name) {
+                if let Some(attr) = read_attr(r, &name, value, &mut ref_name, is_custom(&tag)) {
                     // An own attribute after a union spread replaces the joined one (it keeps the first place).
                     let at = union_names.contains(&name).then(|| {
                         attrs
@@ -857,7 +859,7 @@ fn read_union_attr(
         loc: loc_of(v),
         kind: RawKind::Lit(l),
     };
-    match read_attr(r, name, v, ref_name)? {
+    match read_attr(r, name, v, ref_name, false)? {
         Attr::Static { .. } if matches!(v.data, E::EBoolean(_)) => {
             Some(lit(crate::ir::Literal::Bool(true)))
         }
@@ -880,11 +882,17 @@ fn union_root(r: &Reader<'_, '_>, value: &js_ast::Expr) -> bool {
     }
 }
 
+/// True for a custom element tag (a host tag with `-`).
+fn is_custom(tag: &Tag) -> bool {
+    matches!(tag, Tag::Host(h) if h.contains('-'))
+}
+
 fn read_attr(
     r: &mut Reader<'_, '_>,
     name: &str,
     value: &js_ast::Expr,
     ref_name: &mut Option<String>,
+    custom: bool,
 ) -> Option<Attr> {
     // Bun inlines a literal spread (`{...{ 'a b': 1 }}`) into the props object, so an attribute
     // name here can be any string: one that is not an attribute name is never printed (R34.17).
@@ -959,6 +967,11 @@ fn read_attr(
         // React writes a literal `true` by the kind of the attribute (`brust_jinja::attr_kind`): `aria-*`, `data-*` and the
         // other booleanish-string attributes as "true" (`aria-hidden` alone is `aria-hidden="true"`), a boolean attribute
         // and `download`/`capture` as the empty value. On any other attribute it prints nothing: that is the dynamic path.
+        // A custom element (a tag with `-`) passes every attribute through as given: a literal `true` is the empty value (F213).
+        E::EBoolean(b) if b.value && custom => Attr::Static {
+            name: name.into(),
+            value: String::new(),
+        },
         E::EBoolean(b)
             if b.value
                 && brust_jinja::attr_kind(&brust_jinja::attr_name(name))

@@ -1357,6 +1357,7 @@
         "react"
       ],
       "diagnostics": [
+        "fallback:jsx-const-child",
         "fallback:browser-global"
       ],
       "shapes": [
@@ -1366,6 +1367,7 @@
           "expected": "react",
           "observed": "react",
           "diagnostics": [
+            "fallback:jsx-const-child",
             "fallback:browser-global"
           ]
         }

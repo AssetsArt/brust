@@ -13,11 +13,11 @@ fn l2_stats(s: &Server) -> Value {
     stats(s)["l2"].clone()
 }
 
-/// Poll `f` for up to 2 s.
+/// Poll `f` until it holds. The bound only ends a hang (a poll returns the moment its event happens), so it is long (F203).
 fn wait_for(what: &str, f: impl Fn() -> bool) {
     let t0 = Instant::now();
     while !f() {
-        assert!(t0.elapsed() < Duration::from_secs(2), "timed out: {what}");
+        assert!(t0.elapsed() < Duration::from_secs(30), "timed out: {what}");
         std::thread::sleep(Duration::from_millis(5));
     }
 }

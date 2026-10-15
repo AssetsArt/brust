@@ -1,7 +1,7 @@
 // F175 (R41.1-R41.10): `brust shadcn init`. The process runner is injected, so no network: every branch of the plan is
 // covered with real files in a temp project and a recording runner.
 import { afterAll, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { addAliasPath, componentsJson, SHADCN_DEP_PINS, SHADCN_DEPS, SHADCN_VERSION, shadcnInit } from '../src/shadcn/init'
@@ -293,4 +293,144 @@ test('a registry URL whose item is already installed is skipped on a second run;
   expect(second.calls.some((c) => c.includes(url))).toBe(false)
   expect(second.lines.join('\n')).toContain('already in components')
   expect((await init(d, { components: [url], force: true })).calls.at(-1)).toContain(url)
+})
+
+test('a symlinked tsconfig.json that already has "@/*" is not refused and is left alone (F192)', async () => {
+  const d = project({ tsconfig: null })
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'brust-shadcn-outside-')))
+  dirs.push(outside)
+  const withAlias = TSCONFIG.replace('"strict": true,', '"strict": true,\n    "paths": { "@/*": ["./*"] },')
+  writeFileSync(join(outside, 'tsconfig.json'), withAlias)
+  symlinkSync(join(outside, 'tsconfig.json'), join(d, 'tsconfig.json'))
+  const r = await init(d)
+  expect(r.code).toBe(0)
+  expect(r.lines.join('\n')).toContain('"@/*" is already there')
+  expect(readFileSync(join(outside, 'tsconfig.json'), 'utf8')).toBe(withAlias)
+})
+
+test('the shadcn CLI is not spawned when a path it writes is, or is under, a symlink (F193)', async () => {
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'brust-shadcn-outside-')))
+  dirs.push(outside)
+  const cases: Array<[string, (d: string) => void, string[]?]> = [
+    ['components/ui as a link', (d) => { mkdirSync(join(d, 'components')); symlinkSync(outside, join(d, 'components/ui')) }],
+    ['components as a link', (d) => symlinkSync(outside, join(d, 'components'))],
+    ['lib as a link', (d) => symlinkSync(outside, join(d, 'lib'))],
+    ['a component file as a link', (d) => { mkdirSync(join(d, 'components/ui'), { recursive: true }); symlinkSync(join(outside, 'button.tsx'), join(d, 'components/ui/button.tsx')) }, ['button']],
+  ]
+  for (const [label, setup, components] of cases) {
+    const d = project()
+    setup(d)
+    const r = await init(d, { components: components ?? [], force: true })
+    expect([label, r.code]).toEqual([label, 2])
+    expect(r.calls).toEqual([])
+    expect(r.lines.join('\n')).toContain('symbolic link')
+    expect(readdirSync(outside)).toEqual([])
+  }
+})
+
+test('the CLI target check follows the aliases of an existing components.json (F193)', async () => {
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'brust-shadcn-outside-')))
+  dirs.push(outside)
+  const d = project()
+  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '@/src/kit', components: '@/src', lib: '@/src/lib', utils: '@/src/lib/utils' } }))
+  mkdirSync(join(d, 'src'))
+  symlinkSync(outside, join(d, 'src/kit'))
+  const r = await init(d)
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  // the same project without the link runs the CLI
+  const clean = project()
+  writeFileSync(join(clean, 'components.json'), JSON.stringify({ aliases: { ui: '@/src/kit' } }))
+  expect((await init(clean)).code).toBe(0)
+})
+
+// F193 round 2 (Mellow F1): the CLI writes through hooks, registryDependency files, non-`@/` aliases and package.json too.
+function outsideDir(): string {
+  const o = realpathSync(mkdtempSync(join(tmpdir(), 'brust-shadcn-outside-')))
+  dirs.push(o)
+  return o
+}
+
+test('F193 control: a clean project runs the CLI', async () => {
+  const r = await init(project(), { components: ['button'] })
+  expect(r.code).toBe(0)
+  expect(r.calls.length).toBeGreaterThan(0)
+})
+
+test('F193 (a): a symlinked hooks directory is refused before the CLI is spawned', async () => {
+  const outside = outsideDir()
+  const d = project()
+  symlinkSync(outside, join(d, 'hooks'))
+  const r = await init(d, { components: ['sidebar'] })
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(readdirSync(outside)).toEqual([])
+})
+
+test('F193 (b): a symlinked file inside an alias directory (a registryDependency such as use-mobile) is refused', async () => {
+  const outside = outsideDir()
+  const d = project()
+  mkdirSync(join(d, 'hooks'))
+  symlinkSync(join(outside, 'use-mobile.ts'), join(d, 'hooks/use-mobile.ts'))
+  const r = await init(d, { components: ['sidebar'] })
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(readdirSync(outside)).toEqual([])
+})
+
+test('F193 (c): a non-@/ alias is resolved by the tsconfig paths, and refused when it cannot be resolved', async () => {
+  const outside = outsideDir()
+  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~kit/*": ["./src/kit/*"] } } }' })
+  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~kit/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  mkdirSync(join(d, 'src/kit'), { recursive: true })
+  symlinkSync(outside, join(d, 'src/kit/ui'))
+  const linked = await init(d)
+  expect(linked.code).toBe(2)
+  expect(linked.calls).toEqual([])
+  // an alias with no tsconfig path: fail closed
+  const e = project()
+  writeFileSync(join(e, 'components.json'), JSON.stringify({ aliases: { ui: '~nowhere/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  const r = await init(e)
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(r.lines.join('\n')).toContain('does not resolve')
+  // an alias that escapes the project
+  writeFileSync(join(e, 'components.json'), JSON.stringify({ aliases: { ui: '@/../outside', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  expect((await init(e)).code).toBe(2)
+  expect(readdirSync(outside)).toEqual([])
+})
+
+test('F193 (d): a symlinked package.json is refused before the CLI is spawned', async () => {
+  const outside = outsideDir()
+  const d = project({ pkg: null })
+  writeFileSync(join(outside, 'package.json'), JSON.stringify({ name: 'a', dependencies: { '@brust/core': '^2.0.0' } }))
+  symlinkSync(join(outside, 'package.json'), join(d, 'package.json'))
+  const r = await init(d, { components: ['button'] })
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(JSON.parse(readFileSync(join(outside, 'package.json'), 'utf8')).name).toBe('a')
+})
+
+test('F193: a custom alias with an unreadable components.json is refused (fail closed)', async () => {
+  const d = project()
+  writeFileSync(join(d, 'components.json'), '{ not json')
+  const r = await init(d)
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+})
+
+test('F193: every target of a paths entry and nested entries of an alias directory are walked', async () => {
+  const outside = outsideDir()
+  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~k/*": ["./safe/*", "./second/*"] } } }' })
+  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~k/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  mkdirSync(join(d, 'second'))
+  symlinkSync(outside, join(d, 'second/ui')) // the SECOND target of the entry
+  expect((await init(d)).code).toBe(2)
+  const n = project()
+  mkdirSync(join(n, 'components/ui/deep'), { recursive: true })
+  symlinkSync(join(outside, 'x.tsx'), join(n, 'components/ui/deep/x.tsx')) // nested entry
+  const r = await init(n)
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(readdirSync(outside)).toEqual([])
 })
