@@ -1721,6 +1721,18 @@ impl Walker<'_, '_> {
             }
             return self.external_child_why(name, source, imported, member, loc, Some(why));
         }
+        // F188 (R34.62): written in app code, the component also has a published spelling: wherever the build needs
+        // React code for it (a revive hook inside an island's children) it imports that, never the map source.
+        if !is_package_source(from) {
+            ctx.modules.borrow_mut().set_dist(
+                &cache_key(&crate::analyze::modules::normalize(&path), &export),
+                ExternalRef {
+                    source: source.to_string(),
+                    export: imported.to_string(),
+                    member: member.to_vec(),
+                },
+            );
+        }
         self.finish(name, Some(id), Some(path), lookup, loc)
     }
 

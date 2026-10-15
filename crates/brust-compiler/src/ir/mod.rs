@@ -200,6 +200,11 @@ pub struct ComponentIR {
     /// `package_<specifier>_<export>` made filename-safe, not a file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external: Option<ExternalRef>,
+    /// Set on a component compiled from a package source and written in app code as a package import (F188): the
+    /// published export a React island or a revive hook imports instead of the source (R34.62), so every user of a
+    /// package shares the dist's one module instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dist: Option<ExternalRef>,
     /// The name a React island imports this component by from `source`; absent for the default export.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub export: Option<String>,
@@ -378,6 +383,7 @@ impl ComponentIR {
             id,
             source,
             external: None,
+            dist: None,
             export: None,
             unexported: false,
             tier: Tier::Pending,
