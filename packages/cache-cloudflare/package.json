@@ -1,6 +1,6 @@
 {
   "name": "@brust/cache-cloudflare",
-  "version": "2.0.0-alpha.13",
+  "version": "2.0.0-alpha.14",
   "description": "brust cache adapters for Cloudflare Workers: KV store, Durable Object broadcast/store, and their combination",
   "license": "MIT",
   "homepage": "https://brust.dev",
