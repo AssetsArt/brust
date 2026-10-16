@@ -218,3 +218,26 @@ test('F251: a package-shaped components.json alias (@scope/name) is refused, eve
   expect((await init(ok, ['button'])).code).toBe(0)
   expect((await init(project({ 'tsconfig.json': '{ "compilerOptions": {} }' }), ['button'])).code).toBe(0)
 })
+
+// F261 (Mellow on ledger-knock4): the CLI's workspace route takes the first path segment of ANY alias as a package name,
+// so a bare alias (no @scope/) is no safer than a scoped one. By default only "@/...", "~/..." and the exact key of a
+// paths entry are accepted.
+test('F261: a bare alias is refused unless it is "@/", "~/" or the exact key of a paths entry', async () => {
+  const aliases = (ui: string) => ({ ui, components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' })
+  // a baseUrl alias named like a workspace package: resolved by tsconfig-paths, but the CLI may write through the package
+  const base = project({ 'tsconfig.json': '{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./*"] } } }' })
+  writeFileSync(join(base, 'components.json'), JSON.stringify({ aliases: aliases('ui-kit/ui') }))
+  const r = await init(base, ['button'])
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(r.text).toContain('workspace package')
+  expect(r.text).toContain('"ui"')
+  // a wildcard match does not make it exact
+  const wild = project({ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./*"], "$lib/*": ["./src/lib/*"] } } }' })
+  writeFileSync(join(wild, 'components.json'), JSON.stringify({ aliases: aliases('$lib/ui') }))
+  expect((await init(wild, ['button'])).code).toBe(2)
+  // an exact paths key is accepted, and so are "@/" and "~/"
+  const exact = project({ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./*"], "$ui": ["./src/ui"] } } }' })
+  writeFileSync(join(exact, 'components.json'), JSON.stringify({ aliases: aliases('$ui') }))
+  expect((await init(exact, ['button'])).code).toBe(0)
+})
