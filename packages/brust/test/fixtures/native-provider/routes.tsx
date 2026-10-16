@@ -3,6 +3,7 @@ import DirNonePage from './DirNonePage'
 import DirProvPage from './DirProvPage'
 import FwdPage from './FwdPage'
 import GatePage from './GatePage'
+import HydrPage from './HydrPage'
 import HooksPage from './HooksPage'
 import Nested from './Nested'
 import NestedIds from './NestedIds'
@@ -25,6 +26,7 @@ export const routes = defineRoutes([
   { path: '/rest', Component: RestPage },
   { path: '/rest-live', Component: RestLivePage },
   { path: '/inputs', Component: InputsPage },
+  { path: '/hydr', Component: HydrPage },
   { path: '/dir', Component: DirNonePage },
   { path: '/dir-provider', Component: DirProvPage },
   { path: '/hooks', Component: HooksPage },

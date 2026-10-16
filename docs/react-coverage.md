@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 91 | 22 | 27 | 42 | 0 | 0 | 0 | 0 |
+| C Hooks | 93 | 23 | 27 | 43 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 464 | 211 | 71 | 178 | 3 | 1 | 0 | 0 |
+| **Total** | 466 | 212 | 71 | 179 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -383,6 +383,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-context-scalar-provider | Radix's DirectionProvider over a native consumer | static | static | 0 | ok | 4.4 | — | R34.142: the Provider's `value={dir}` is the whole value of the context (a `__whole` frame field); the consumer's own `dir` still wins |
 | c-context-whole-vs-fields | a consumer reads the whole value of a context whose Provider hands out fields | react | react | ssr | ok | 3.8 | fallback:context-shape | R34.142: the two frame shapes differ (context-shape): never `undefined` for a value the Provider did hand out |
 | c-context-fields-vs-whole | a consumer reads a field of a context whose Provider hands out one value | react | react | ssr | ok | 3.8 | fallback:context-shape | R34.142: the reverse mismatch (context-shape) |
+| c-hook-radix-useishydrated | Radix's useIsHydrated (useSyncExternalStore of the hydration shape) read in the render and an effect | static | static | 0 | ok | 4.4 | — | R34.143: useSyncExternalStore(subscribe, () => true, () => false) with a subscribe that subscribes to nothing is a state that is false in the server markup (React's getServerSnapshot) and set true by a mount effect; every other store stays hook-unsupported |
+| c-usesyncexternalstore-other | useSyncExternalStore with other snapshots (a store, not the hydration pair) | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | R34.143: only the exact hydration shape is lowered; any other useSyncExternalStore stays hook-unsupported |
 | c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
 | c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |

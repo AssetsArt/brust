@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -375,4 +375,23 @@ test('a context with a literal default read as a value (Radix\'s useDirection): 
     expect(errors).toEqual([])
     await page.close()
   }
+}, 60_000)
+
+test('useIsHydrated (useSyncExternalStore of the hydration shape): false in the server markup like React, true once mounted, and the effect sees it', async () => {
+  const html = await (await fetch(`${base}/hydr`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderHydr()))
+  expect(html).toContain('data-h="n"')
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/hydr`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('main button')?.getAttribute('data-h') === 'y')
+  await page.waitForFunction(() => document.querySelector('main button')?.getAttribute('data-seen') === 'effect')
+  await page.locator('main button').click()
+  await page.waitForFunction(() => document.querySelector('main button')?.textContent === '1')
+  expect(await page.locator('main button').getAttribute('data-h')).toBe('y')
+  expect(errors).toEqual([])
+  await page.close()
 }, 60_000)

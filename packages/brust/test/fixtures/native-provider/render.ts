@@ -3,6 +3,7 @@ import DirNonePage from './DirNonePage'
 import DirProvPage from './DirProvPage'
 import FwdPage from './FwdPage'
 import GatePage from './GatePage'
+import HydrPage from './HydrPage'
 import HooksPage from './HooksPage'
 import Nested from './Nested'
 import NestedIds from './NestedIds'
@@ -32,3 +33,4 @@ export const renderLoop = (loop: string): string => server.renderToStaticMarkup(
 export const renderHooks = (): string => html(HooksPage)
 export const renderDir = (): string => html(DirNonePage)
 export const renderDirProvider = (): string => html(DirProvPage)
+export const renderHydr = (): string => html(HydrPage)

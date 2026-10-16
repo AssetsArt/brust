@@ -197,7 +197,7 @@ pub(crate) const REACT_HOOKS: &[&str] = &[
 const EFFECT_HOOKS: &[&str] = &["useEffect", "useInsertionEffect", "useLayoutEffect"];
 
 /// `() => {}` / `function () {}`: a function whose body does nothing.
-fn is_noop_fn(e: &js_ast::Expr) -> bool {
+pub(crate) fn is_noop_fn(e: &js_ast::Expr) -> bool {
     match &e.data {
         E::EArrow(a) => a.body.stmts.is_empty(),
         E::EFunction(f) => f.func.body.stmts.is_empty(),

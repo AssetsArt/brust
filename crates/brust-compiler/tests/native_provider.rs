@@ -664,3 +664,33 @@ fn an_identity_update_effect_whose_test_has_a_side_effect_is_not_dropped() {
     );
     assert!(is_react(&all[0].ir), "{:?}", all[0].ir.tier);
 }
+
+// R34.143: `useSyncExternalStore(subscribe, () => true, () => false)` with a `subscribe` that subscribes to nothing (Radix's
+// `useIsHydrated`) is false on the server and true once mounted; every other store stays `hook-unsupported`.
+#[test]
+fn use_is_hydrated_lowers_to_a_state_that_a_mount_effect_sets() {
+    let all = compile("HydrBox.tsx");
+    let b = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("hydrBox"))
+        .expect("the component");
+    assert!(!is_react(&b.ir), "{:?}", b.ir.diagnostics);
+    // false in the server markup (React's `getServerSnapshot`), set on mount in the chunk
+    assert!(b.jinja.contains("data-h=\"n\"") || b.jinja.contains("'n'") || b.jinja.contains("\"n\""), "{}", b.jinja);
+    let client = b.client.as_deref().expect("a client chunk");
+    assert!(client.contains("(!0)") || client.contains("(true)"), "{client}");
+}
+
+#[test]
+fn another_external_store_keeps_the_hook_unsupported_refusal() {
+    for f in ["sync_other.tsx", "sync_subscribes.tsx"] {
+        let all = compile(f);
+        assert!(
+            all.iter()
+                .any(|i| has(&i.ir, DiagClass::Fallback, "hook-unsupported")),
+            "{f}: {:?}",
+            all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+        );
+        assert!(is_react(&all[0].ir), "{f}");
+    }
+}
