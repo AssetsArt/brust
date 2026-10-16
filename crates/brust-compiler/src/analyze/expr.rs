@@ -86,6 +86,12 @@ impl<'r, 'a> Reader<'r, 'a> {
     /// object. Only non-computed member reads qualify (`c.f`, `c?.f`, `c.f(...)`), on identifier field names that are not
     /// the prototype's; a scalar-default context (`createContext(undefined)`) reads as its whole value. Every other use
     /// (a write, `c[k]`, a destructure, the local as a value) is `None` here and keeps `context-escape`.
+    ///
+    /// Pinned dependency (F304, Mellow N1; Afrojack condition c): the object is rebuilt at every read and holds only the
+    /// fields THIS consumer reads, so a `this`-reading method or a stateful field of the Provider value would see a
+    /// different object than in React. That never happens today because such a Provider value (a method shorthand that
+    /// reads `this`, a class instance) is refused before a consumer is native (`context-state` / `context-value`, test
+    /// `a_provider_value_that_reads_this_or_is_a_class_instance_stays_react`). Loosening those refusals must revisit this.
     fn ctx_verbatim(&self, w: &Walk) -> (Vec<CtxVerb>, bool) {
         let mut out: Vec<CtxVerb> = Vec::new();
         let mut ok = true;

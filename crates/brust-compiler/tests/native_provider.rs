@@ -828,3 +828,29 @@ fn every_other_use_of_a_context_in_printed_code_keeps_context_escape() {
         );
     }
 }
+
+// F304 (condition c): the consumer's `c.f()` runs with `this` = the object of the fields the consumer reads, so a Provider
+// value whose methods read `this`, or a class instance, must never reach a native consumer: the Provider stays React
+#[test]
+fn a_provider_value_that_reads_this_or_is_a_class_instance_stays_react() {
+    for (file, provider, rule) in [
+        ("ctxthis_method.tsx", "tP_", "context-state"),
+        ("ctxthis_class.tsx", "kP_", "context-value"),
+    ] {
+        let all = compile(file);
+        let p = all
+            .iter()
+            .find(|i| i.ir.id.starts_with(provider))
+            .unwrap_or_else(|| panic!("{file}: the Provider"));
+        assert!(
+            is_react(&p.ir) && has(&p.ir, DiagClass::Fallback, rule),
+            "{file}: {:?} {:?}",
+            p.ir.tier,
+            p.ir.diagnostics
+        );
+        assert!(
+            clones(&all).is_empty(),
+            "{file}: no native clone of the Provider"
+        );
+    }
+}

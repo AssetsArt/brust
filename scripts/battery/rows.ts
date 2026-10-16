@@ -53,6 +53,8 @@ const NATIVE_PROV = readFileSync(join(import.meta.dir, '../../crates/brust-compi
 
 const CTXV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/CtxV.tsx'), 'utf8')
 
+const CTXTHIS = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/CtxThis.tsx'), 'utf8')
+
 const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
 
 const NATIVE_FWD = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Fwd.tsx'), 'utf8')
@@ -1762,25 +1764,33 @@ export const rows: Row[] = [
   { id: 'c-ctx-verbatim-computed', category: 'C', authoring: 'a handler that reads the context with a computed key', expect: 'static', jobs: 1,
     snippet: `import { CP, CComputed } from './CtxV'\nexport default function C() { return <main><CP><CComputed /></CP></main> }`,
     files: { 'CtxV.tsx': CTXV },
-    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
   { id: 'c-ctx-verbatim-destruct', category: 'C', authoring: 'a handler that destructures the context', expect: 'static', jobs: 1,
     snippet: `import { CP, CDestruct } from './CtxV'\nexport default function C() { return <main><CP><CDestruct /></CP></main> }`,
     files: { 'CtxV.tsx': CTXV },
-    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
   { id: 'c-ctx-verbatim-whole', category: 'C', authoring: 'a handler that passes the whole context on', expect: 'static', jobs: 1,
     snippet: `import { CP, CWhole } from './CtxV'\nexport default function C() { return <main><CP><CWhole /></CP></main> }`,
     files: { 'CtxV.tsx': CTXV },
-    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
   { id: 'c-ctx-verbatim-write', category: 'C', authoring: 'a handler that writes through a context field', expect: 'static', jobs: 1,
     snippet: `import { CP, CWrite } from './CtxV'\nexport default function C() { return <main><CP><CWrite /></CP></main> }`,
     files: { 'CtxV.tsx': CTXV },
-    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
   { id: 'c-ctx-verbatim-delete', category: 'C', authoring: 'a handler that deletes a context field', expect: 'static', jobs: 1,
     snippet: `import { CP, CDelete } from './CtxV'\nexport default function C() { return <main><CP><CDelete /></CP></main> }`,
     files: { 'CtxV.tsx': CTXV },
-    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
   { id: 'c-ctx-verbatim-proto', category: 'C', authoring: 'a handler that reads constructor off the context', expect: 'static', jobs: 1,
     snippet: `import { CP, CProto } from './CtxV'\nexport default function C() { return <main><CP><CProto /></CP></main> }`,
     files: { 'CtxV.tsx': CTXV },
-    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
+  { id: 'c-ctx-verbatim-this-method', category: 'C', authoring: 'a consumer calls a context method whose Provider value reads this', expect: 'static', jobs: 1,
+    snippet: `import { TP, TC } from './CtxThis'\nexport default function C() { return <main><TP><TC>x</TC></TP></main> }`,
+    files: { 'CtxThis.tsx': CTXTHIS },
+    note: 'F304 (c): c.f() runs with this = the object of the fields the consumer reads; a Provider value that reads this stays a React island (context-state)' },
+  { id: 'c-ctx-verbatim-class-value', category: 'C', authoring: 'a consumer calls a method of a class-instance Provider value', expect: 'static', jobs: 1,
+    snippet: `import { KP, KC } from './CtxThis'\nexport default function C() { return <main><KP><KC>x</KC></KP></main> }`,
+    files: { 'CtxThis.tsx': CTXTHIS },
+    note: 'F304 (c): a class instance is not an object literal of closures: the Provider stays a React island (context-value)' },
 ]
