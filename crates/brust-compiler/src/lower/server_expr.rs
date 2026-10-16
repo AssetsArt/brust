@@ -211,6 +211,10 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
 }
 
 fn call(callee: &RawExpr, args: &[RawExpr], ctx: &JinjaCtx<'_>) -> String {
+    // F287: `[lit, …].includes(x)` is printed as the strict-equality chain `check` accepted.
+    if let Some(chain) = crate::analyze::passes::server_expr::includes_chain(callee, args) {
+        return raw(&chain, ctx);
+    }
     let RawKind::Member { target, name, .. } = &callee.kind else {
         return "none".into();
     };

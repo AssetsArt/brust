@@ -1,7 +1,7 @@
 //! The template subset (spec §6.2) as one table: `try_server` accepts an
 //! expression iff every node is a production of the grammar. Growing the subset
 //! means adding a row here plus a golden test — never a special case elsewhere.
-use crate::ir::{IdentKind, Literal, RawExpr, RawKind, ServerExpr, UnOp};
+use crate::ir::{BinOp, IdentKind, Literal, RawExpr, RawKind, ServerExpr, UnOp};
 
 /// String / array methods callable on a subset value, with literal arguments.
 const METHODS: &[&str] = &[
@@ -64,7 +64,64 @@ fn check(e: &RawExpr) -> Result<(), &'static str> {
     }
 }
 
+/// F287: `[lit, …].includes(x)` as the strict-equality chain the subset already prints: `x === lit1 || x === lit2`.
+/// SameValueZero and `===` differ only for `NaN` (`[NaN].includes(NaN)` is true), so an array with a `NaN` member is not
+/// rewritten (it stays a job, evaluated by JS); `-0` equals `0` under both. The needle is read once per member, which is
+/// safe because every expression of the subset is pure. Arrays of more than 16 members are left alone.
+pub fn includes_chain(callee: &RawExpr, args: &[RawExpr]) -> Option<RawExpr> {
+    let RawKind::Member {
+        target,
+        name,
+        optional: false,
+    } = &callee.kind
+    else {
+        return None;
+    };
+    let ([needle], RawKind::Array(items)) = (args, &target.kind) else {
+        return None;
+    };
+    if name != "includes" || items.len() > 16 {
+        return None;
+    }
+    let plain = |m: &RawExpr| match &m.kind {
+        RawKind::Lit(Literal::Num(n)) => !n.is_nan(),
+        RawKind::Lit(_) => true,
+        _ => false,
+    };
+    if !items.iter().all(plain) {
+        return None;
+    }
+    let at = |kind| RawExpr {
+        loc: callee.loc,
+        kind,
+    };
+    let eq = |m: &RawExpr| {
+        at(RawKind::Binary {
+            op: BinOp::StrictEq,
+            left: Box::new(needle.clone()),
+            right: Box::new(m.clone()),
+        })
+    };
+    // Folded from the right: the `||` printer repeats its left operand, so a left-leaning chain would grow with the
+    // square (or worse) of its length, a right-leaning one grows linearly.
+    let mut chain: Option<RawExpr> = None;
+    for m in items.iter().rev() {
+        chain = Some(match chain {
+            None => eq(m),
+            Some(r) => at(RawKind::Binary {
+                op: BinOp::Or,
+                left: Box::new(eq(m)),
+                right: Box::new(r),
+            }),
+        });
+    }
+    Some(chain.unwrap_or_else(|| at(RawKind::Lit(Literal::Bool(false)))))
+}
+
 fn call(callee: &RawExpr, args: &[RawExpr]) -> Result<(), &'static str> {
+    if let Some(chain) = includes_chain(callee, args) {
+        return check(&chain);
+    }
     let RawKind::Member { target, name, .. } = &callee.kind else {
         return Err("call");
     };
