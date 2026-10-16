@@ -1206,16 +1206,19 @@ fn literal_shape(e: &js_ast::Expr, depth: u32) -> bool {
     }
 }
 
+/// `loop`, `range`, `namespace`, `caller` and `self` are names the template itself binds or calls (a loop variable,
+/// `Array.from` lowers to `range(...)`). A prop of that name is read as `_props.<name>` in the standalone template, so it
+/// cannot shadow them (R34.142, the roving group's `loop`).
+pub const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
+
 /// Why a prop named `name` cannot be a plain template variable, as `(code, what)`; `None` = it can. A key that is not
 /// an identifier prints as an expression (`data-x` reads as a subtraction); a jinja keyword is a syntax error or the
-/// wrong value; `loop`, `range`, `namespace`, `caller` and `self` are names the template itself binds or calls (a loop
-/// variable, `Array.from` lowers to `range(...)`), so a prop of that name would shadow them.
+/// wrong value. The template's own names (`TEMPLATE_OWN`) are fine: they print through `_props`.
 pub fn template_name_problem(name: &str) -> Option<(&'static str, &'static str)> {
     const KEYWORDS: &[&str] = &[
         "true", "false", "none", "True", "False", "None", "and", "or", "not", "in", "is", "if",
         "else",
     ];
-    const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
     if name.starts_with("__ctx_") {
         return Some((
             "context-shape",
@@ -1236,11 +1239,6 @@ pub fn template_name_problem(name: &str) -> Option<(&'static str, &'static str)>
         Some((
             "prop-jinja-name",
             "is a keyword of the server template language, so it cannot name a template variable",
-        ))
-    } else if TEMPLATE_OWN.contains(&name) {
-        Some((
-            "prop-jinja-name",
-            "is a name the server template uses itself (a loop variable or a built-in), so a prop of that name would shadow it",
         ))
     } else {
         None

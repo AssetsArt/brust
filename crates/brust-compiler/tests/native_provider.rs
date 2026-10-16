@@ -477,6 +477,21 @@ fn content_written_in_the_providers_own_module_is_specialised() {
     );
 }
 
+// R34.142: a context field named like a template name (`loop`) is a hidden prop `__ctx_<ctx>_loop`: nothing to shadow.
+#[test]
+fn a_context_field_named_loop_is_lowered_like_any_other() {
+    let all = compile("ctx_loop.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", root.ir.diagnostics);
+    assert!(
+        !all.iter()
+            .any(|i| i.ir.diagnostics.iter().any(|d| d.rule == "context-shape")),
+        "{:?}",
+        all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+    );
+}
+
 // F278: the call site's `...rest` spread into the content crosses as ONE hidden input and is spread there.
 // F279: a call of a single-return module helper with a plain-read argument is its expression, so the consumer has no job.
 #[test]

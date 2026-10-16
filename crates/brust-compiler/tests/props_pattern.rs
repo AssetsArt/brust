@@ -91,44 +91,61 @@ fn printable_defaults_and_renames_still_compile() {
     }
 }
 
-/// F161 follow-up (props-pattern N1, N2): a prop named like a template keyword or like a name the template binds itself
-/// falls back with `prop-jinja-name`, and the message says which of the two it is (not "not a plain identifier").
+/// F161 follow-up (props-pattern N1): a prop named like a template keyword falls back with `prop-jinja-name`, and the
+/// message says it is a keyword (not "not a plain identifier").
 #[test]
-fn a_prop_named_like_a_template_name_falls_back_with_its_own_code() {
-    for (f, key, words) in [
-        ("jn-loop.tsx", "loop", "uses itself"),
-        ("jn-range.tsx", "range", "uses itself"),
-        ("jn-namespace.tsx", "namespace", "uses itself"),
-        ("jn-caller.tsx", "caller", "uses itself"),
-        ("jn-self.tsx", "self", "uses itself"),
-        ("jn-none.tsx", "none", "keyword"),
-    ] {
-        let (ir, _) = compile(f);
-        let d = ir
-            .diagnostics
-            .iter()
-            .find(|d| d.rule == "prop-jinja-name")
-            .unwrap_or_else(|| panic!("{f}: {:?}", ir.diagnostics));
-        assert!(
-            d.message.contains(&format!("`{key}`")) && d.message.contains(words),
-            "{f}: {}",
-            d.message
-        );
-        assert!(
-            !d.message.contains("plain identifier"),
-            "{f}: {}",
-            d.message
-        );
-        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
-    }
-    // The quoted key keeps its own code and wording.
-    let (ir, _) = compile("quoted-key.tsx");
+fn a_prop_named_like_a_template_keyword_falls_back_with_its_own_code() {
+    let (ir, _) = compile("jn-none.tsx");
     let d = ir
         .diagnostics
         .iter()
-        .find(|d| d.rule == "prop-quoted-key")
-        .expect("quoted");
-    assert!(d.message.contains("plain identifier"), "{}", d.message);
+        .find(|d| d.rule == "prop-jinja-name")
+        .unwrap_or_else(|| panic!("{:?}", ir.diagnostics));
+    assert!(
+        d.message.contains("`none`") && d.message.contains("keyword"),
+        "{}",
+        d.message
+    );
+    assert!(!d.message.contains("plain identifier"), "{}", d.message);
+}
+
+/// R34.142 (was F161 N2 / F168): a prop named like a name the template binds itself (`loop`, `range`, `namespace`,
+/// `caller`, `self`) compiles: the template reads it off the props object (`_props.loop`), never as the bare name that
+/// jinja's own loop object or built-in would shadow. Declared as a pattern key, read as a member, read off a rest.
+#[test]
+fn a_template_own_name_prints_through_the_props_object() {
+    for (f, key) in [
+        ("jn-loop.tsx", "loop"),
+        ("jn-range.tsx", "range"),
+        ("jn-namespace.tsx", "namespace"),
+        ("jn-caller.tsx", "caller"),
+        ("jn-self.tsx", "self"),
+        ("mem-loop.tsx", "loop"),
+        ("mem-range.tsx", "range"),
+        ("mem-namespace.tsx", "namespace"),
+        ("mem-caller.tsx", "caller"),
+        ("mem-self.tsx", "self"),
+        ("mem-rest.tsx", "loop"),
+    ] {
+        let (ir, jinja) = compile(f);
+        assert!(
+            !is_react(&ir) && rules(&ir).is_empty(),
+            "{f}: {:?} {:?}",
+            ir.tier,
+            ir.diagnostics
+        );
+        assert!(
+            jinja.contains(&format!("_props.{key}")),
+            "{f}: reads the prop through _props: {jinja}"
+        );
+        // no bare read: every occurrence of the name is the `_props.` member
+        assert!(
+            !jinja
+                .replace(&format!("_props.{key}"), "")
+                .contains(&format!("{{{{ {key}")),
+            "{f}: a bare `{key}` is left: {jinja}"
+        );
+    }
 }
 
 /// F162: a name of a body pattern used before the pattern statement is a TDZ error in React; it falls back instead of
@@ -144,40 +161,4 @@ fn a_body_pattern_name_used_before_the_pattern_falls_back() {
         );
         assert!(is_react(&ir), "{f}: {:?}", ir.tier);
     }
-}
-
-/// F168 (hardening-batch, option b): the same names READ as a member (`props.loop`, also inside a `.map`, or `rest.loop`)
-/// fall back with `prop-jinja-name`: the template printed the bare name, which jinja's own loop object / function shadows.
-#[test]
-fn a_template_name_read_as_a_member_falls_back() {
-    for (f, key) in [
-        ("mem-loop.tsx", "loop"),
-        ("mem-range.tsx", "range"),
-        ("mem-namespace.tsx", "namespace"),
-        ("mem-caller.tsx", "caller"),
-        ("mem-self.tsx", "self"),
-        ("mem-rest.tsx", "loop"),
-    ] {
-        let (ir, _) = compile(f);
-        let d = ir
-            .diagnostics
-            .iter()
-            .find(|d| d.rule == "prop-jinja-name")
-            .unwrap_or_else(|| panic!("{f}: {:?}", ir.diagnostics));
-        assert!(
-            d.message.contains(&format!("`{key}`")),
-            "{f}: {}",
-            d.message
-        );
-        assert!(is_react(&ir), "{f}: {:?}", ir.tier);
-    }
-    // A member read of an ordinary name inside the same `.map` is untouched.
-    let (ir, jinja) = compile("mem-ok.tsx");
-    assert!(
-        !is_react(&ir) && rules(&ir).is_empty(),
-        "{:?} {:?}",
-        ir.tier,
-        ir.diagnostics
-    );
-    assert!(jinja.contains("label"), "{jinja}");
 }

@@ -4,6 +4,7 @@ import GatePage from './GatePage'
 import Nested from './Nested'
 import NestedIds from './NestedIds'
 import InputsPage from './InputsPage'
+import LoopPage from './LoopPage'
 import Page from './Page'
 import RestPage from './RestPage'
 import SamePage from './SamePage'
@@ -24,3 +25,4 @@ export const renderPoly = (): string => html(PolyPage)
 export const renderFwd = (): string => html(FwdPage)
 export const renderSame = (): string => html(SamePage)
 export const renderRest = (): string => html(RestPage)
+export const renderLoop = (loop: string): string => server.renderToStaticMarkup(createElement(LoopPage as never, { loop } as never))

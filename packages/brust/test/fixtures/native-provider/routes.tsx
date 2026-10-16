@@ -4,6 +4,7 @@ import GatePage from './GatePage'
 import Nested from './Nested'
 import NestedIds from './NestedIds'
 import InputsPage from './InputsPage'
+import LoopPage from './LoopPage'
 import Page from './Page'
 import RestLivePage from './RestLivePage'
 import RestPage from './RestPage'
@@ -21,6 +22,7 @@ export const routes = defineRoutes([
   { path: '/rest', Component: RestPage },
   { path: '/rest-live', Component: RestLivePage },
   { path: '/inputs', Component: InputsPage },
+  { path: '/loop/{loop}', Component: LoopPage, loader: async ({ params }: { params: { loop: string } }) => ({ loop: params.loop }) },
   { path: '/render', Component: RenderPage },
   { path: '/poly', Component: PolyPage },
 ])

@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderFwd, renderGate, renderInputs, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderFwd, renderGate, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -308,6 +308,26 @@ test('a live caller rest reaches the spread attributes after a click (Mellow F1)
   await page.waitForFunction(() => document.querySelector('button[data-n]')?.getAttribute('data-n') === '0')
   await page.getByRole('button', { name: 'inc' }).click()
   await page.waitForFunction(() => document.querySelector('button[data-n]')?.getAttribute('data-n') === '1')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('a prop named like a template name (`loop`, `range`) prints through the props object and equals React', async () => {
+  const html = await (await fetch(`${base}/loop/XYZ`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderLoop('XYZ')))
+  expect(html).toContain('page:XYZ')
+  expect(html).toContain('a:L:R')
+  expect(html).toContain('x-XYZ')
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/loop/XYZ`, { waitUntil: 'domcontentloaded' })
+  const button = page.locator('main button')
+  await page.waitForFunction(() => document.querySelector('main button')?.textContent === '0')
+  await button.click()
+  await page.waitForFunction(() => document.querySelector('main button')?.textContent === '2')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
