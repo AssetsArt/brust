@@ -341,6 +341,11 @@ pub struct ComponentIR {
     /// so they never count as changing (`props_are_signal`). Filled by the children pass, read by lowering.
     #[serde(skip)]
     pub seed_props: Vec<String>,
+    /// W1d PR 3 (ruling A, condition 3): the props read by the tests of an early-return chain that ends in a throw. A
+    /// discriminant that changes after mount stays refused: they are frozen (a call site that passes a changing value falls
+    /// back, `frozen-prop`), whatever the children pass decides about the rest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub throw_props: Vec<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -497,6 +502,7 @@ impl ComponentIR {
             mount_once: None,
             frozen_props: Vec::new(),
             seed_props: Vec::new(),
+            throw_props: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],

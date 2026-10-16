@@ -219,8 +219,16 @@ fn a_handler_in_a_forwarders_spread_keeps_the_freeze_instead_of_a_link() {
     let c = "import { useRef } from 'react'\nfunction Fwd(props: any) { return <input type=\"checkbox\" {...props} /> }\nexport default function C({ on }: any) { const snap = useRef(on); return <Fwd data-testid={on ? 'a' : 'b'} tabIndex={-1} defaultChecked={snap.current} onClick={(e: any) => e.stopPropagation()} /> }";
     let ir = tree(CONST_PARENT, c, NONE);
     assert!(rules(&ir).is_empty(), "{:?}", rules(&ir));
+    // F300 forwards that snapshot (`defaultChecked`, unchanged after mount) and binds the live `data-testid` on the
+    // parent's element: nothing is left for a link, so the live caller follows natively.
+    let ir = tree(PARENT, c, NONE);
+    assert!(rules(&ir).is_empty(), "{:?}", rules(&ir));
+    // A live key no forward takes (`value`): the hold keeps the forwarder unlinked and the freeze answers.
+    let c = c.replace("defaultChecked={snap.current}", "value={on ? 'x' : 'y'}");
+    let ir = tree(CONST_PARENT, &c, NONE);
+    assert!(rules(&ir).is_empty(), "{:?}", rules(&ir));
     // Without the hold the forwarder would be linked while its handler is bound on its element, which needs an
     // unlinked instance (forward_handlers): refused here instead.
-    let ir = tree(PARENT, c, NONE);
+    let ir = tree(PARENT, &c, NONE);
     assert_eq!(rules(&ir), vec!["frozen-prop".to_string()]);
 }

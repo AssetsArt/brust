@@ -1,8 +1,8 @@
 // F295 in real Chromium, against React hydrating the same page in the same browser. A never-written ref seeded from a
 // live prop (Radix's BubbleInput `defaultChecked`) reaches the element through a forwarding primitive's spread: where
 // every instance mounts with the page and never again (directly, and through a wrapper), it is printed once and stays
-// the first render's value, as in React. Under a condition a later mount would need the value current then, which a
-// spread key cannot get on the client yet (F300): that page is refused and renders with React.
+// the first render's value, as in React. Under a condition a later mount takes the value current then (F300): the
+// child binds the snapshot on the forwarded element at mount, so that page is native too and equals React.
 // Run alone: `bun test --timeout 120000 tests/server/snapshot-spread.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
@@ -100,8 +100,9 @@ test('where every instance mounts once, the snapshot crosses the spread: native,
   expect(served.log).toEqual(react.log)
 }, 90_000)
 
-test('under a condition a later mount needs the current value: refused (snapshot-remount), the React page equals React', async () => {
-  expect(tierOf('guarded_')).toBe('react')
+test('under a condition a later mount takes the value current then: native, and equal to React', async () => {
+  expect(tierOf('guarded_')).toBe('native')
+  expect(tierOf('bubble_')).toBe('native')
   const steps = ['toggle', 'open', 'open', 'toggle', 'open']
   const react = await run('react', 'guarded', steps)
   const served = await run('brust', 'guarded', steps)

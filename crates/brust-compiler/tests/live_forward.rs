@@ -298,7 +298,6 @@ fn a_live_value_the_child_could_also_consume_elsewhere_stays_refused() {
     for (file, name) in [
         ("Twice", "Twice"),
         ("RestRead", "RestRead"),
-        ("RestAlias", "RestAlias"),
         ("RestJson", "RestJson"),
         ("Reads", "Reads"),
         ("Onward", "Onward"),
@@ -306,6 +305,9 @@ fn a_live_value_the_child_could_also_consume_elsewhere_stays_refused() {
         refused_any(&live(file, name));
     }
     // Reading another key of the rest by name does not stop the parent binding this one.
+    // W1d PR 3: `const copy = rest` is the rest object itself, so `copy.label` is `rest.label`: the same case.
+    let a = live("RestAlias", "RestAlias");
+    assert!(!matches!(a.tier, Tier::React { .. }), "{:?}", a.diags);
     let m = live("RestMember", "RestMember");
     assert!(!matches!(m.tier, Tier::React { .. }), "{:?}", m.diags);
     assert!(m.jinja.contains("x-bind-aria-pressed"), "{}", m.jinja);
