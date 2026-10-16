@@ -76,8 +76,8 @@ One line per thing that keeps a row or a library component off the static/native
 | 38 | isValidElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 22 | no battery row: not analysable |
 | 39 | fallback:context-escape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 21 | `context-escape` diagnostic (docs/react-coverage.md) |
 | 40 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 18 | `member-tag` diagnostic (docs/react-coverage.md) |
-| 41 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 16 | `prop-pattern` diagnostic (docs/react-coverage.md) |
-| 42 | createPortal / Portal | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 15 | d-createportal: fallback:browser-global |
+| 41 | createPortal / Portal | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 15 | d-createportal: fallback:browser-global |
+| 42 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 15 | `prop-pattern` diagnostic (docs/react-coverage.md) |
 | 43 | cloneElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 14 | d-clone-element: fallback:hook-unsupported |
 | 44 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `browser-global` diagnostic (docs/react-coverage.md) |
 | 45 | fallback:let-var | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `let-var` diagnostic (docs/react-coverage.md) |
@@ -760,7 +760,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/radio-group.tsx | RadioGroup | forwardRef | not exported | forwardRef, Context.Provider / *Provider, composeRefs, Slot / asChild, Primitive.*, useControllableState, rest-props spread, useEffect, useState, useRef, addEventListener |
 | src/radio-group.tsx | RadioGroupItemProvider | function | react (fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | useContext / use*Context, Context.Provider / *Provider |
 | src/radio-group.tsx | RadioGroupItemTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, rest-props spread, useEffect, useRef, DOM globals (document / window), addEventListener |
-| src/radio-group.tsx | RadioGroupItem | forwardRef | react (fallback:island-prop, fallback:module-side-effect, fallback:prop-pattern) | forwardRef, Context.Provider / *Provider, rest-props spread |
+| src/radio-group.tsx | RadioGroupItem | forwardRef | react (fallback:island-prop, fallback:module-side-effect) | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/radio-group.tsx | RadioGroupItemBubbleInput | forwardRef | react (fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, rest-props spread |
 | src/radio-group.tsx | RadioGroupIndicator | forwardRef | react (fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/radio.tsx | RadioProvider | function | react (fallback:jsx-const-child, fallback:spread-props) | Context.Provider / *Provider, useState |

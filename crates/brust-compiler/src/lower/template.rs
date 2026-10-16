@@ -540,8 +540,12 @@ impl<'a, 'c> Printer<'a, 'c> {
         // Props are a signal in the chunk (a linked child's change after
         // first paint): in a native component a prop read is reactive too —
         // unless it also reads a loop binding outside an x-for row (no scope).
-        let prop_read =
-            !deps.props.is_empty() && client_ok && (deps.loop_bindings.is_empty() || in_row);
+        // S2: a hidden input the call site fixes for the life of the instance is not a signal.
+        let live_props = deps.props.iter().any(|p| {
+            let root = p.split(['.', '[']).next().unwrap_or(p);
+            !self.f.ir.fixed_props.iter().any(|f| f == root)
+        });
+        let prop_read = live_props && client_ok && (deps.loop_bindings.is_empty() || in_row);
         if !(self.native && (sd || loop_read || prop_read)) {
             return None;
         }
