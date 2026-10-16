@@ -352,15 +352,6 @@
       "libraryComponents": 45
     },
     {
-      "blocker": "fallback:context-escape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 29
-    },
-    {
       "blocker": "fallback:context-scope",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
