@@ -218,3 +218,29 @@ test('F251: a package-shaped components.json alias (@scope/name) is refused, eve
   expect((await init(ok, ['button'])).code).toBe(0)
   expect((await init(project({ 'tsconfig.json': '{ "compilerOptions": {} }' }), ['button'])).code).toBe(0)
 })
+
+// F261 (Mellow on ledger-knock4, round 1 of ledger-knock5): the CLI's workspace route takes the first path segment of ANY
+// alias as a package name, before the tsconfig paths and whatever they say. So an exact paths key is no safer than a
+// wildcard or a baseUrl alias: only "@/..." and "~/..." (never a package name) are accepted.
+test('F261: only "@/" and "~/" aliases are accepted; a bare alias is refused even when a paths entry names it exactly', async () => {
+  const aliases = (ui: string) => ({ ui, components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' })
+  const cases: Record<string, { tsconfig: string; alias: string }> = {
+    'a baseUrl alias named like a package': { tsconfig: '{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./*"] } } }', alias: 'ui-kit/ui' },
+    'a wildcard-matched alias': { tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "$lib/*": ["./src/lib/*"] } } }', alias: '$lib/ui' },
+    'an exact bare key (a workspace package "ui" would win)': { tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "ui": ["./src/ui"] } } }', alias: 'ui' },
+    'an exact scoped-looking key': { tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "@acme/ui": ["./src/ui"] } } }', alias: '@acme/ui' },
+  }
+  for (const [name, c] of Object.entries(cases)) {
+    const d = project({ 'tsconfig.json': c.tsconfig })
+    writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: aliases(c.alias) }))
+    const r = await init(d, ['button'])
+    expect(r.code, name).toBe(2)
+    expect(r.calls, name).toEqual([])
+    expect(r.text, name).toContain('workspace package')
+    expect(r.text, name).toContain('"ui"')
+  }
+  // "@/" and "~/" are accepted
+  const ok = project({ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~/*": ["./src/*"] } } }' })
+  writeFileSync(join(ok, 'components.json'), JSON.stringify({ aliases: aliases('~/ui') }))
+  expect((await init(ok, ['button'])).code).toBe(0)
+})
