@@ -771,6 +771,12 @@ impl Placer<'_> {
                 })
             }
             RawKind::Binary { left, right, .. } => go(left).or_else(|| go(right)),
+            // F269: `!x` is a boolean whatever `x` is, so nothing of `x` is printed (`!!control.closest('form')`); `x` is
+            // evaluated, as React does, wherever the value is computed.
+            RawKind::Unary {
+                op: crate::ir::UnOp::Not,
+                ..
+            } => None,
             RawKind::Unary { value, .. } => go(value),
             RawKind::Cond { test, yes, no } => go(test).or_else(|| go(yes)).or_else(|| go(no)),
             RawKind::Template { parts, .. } => parts.iter().find_map(|(p, _)| go(p)),

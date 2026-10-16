@@ -614,6 +614,173 @@ fn a_foreign_hooks_global_does_not_bind_to_the_component_modules_names() {
     assert_eq!(ok.tier, Tier::Native);
 }
 
+const COMPOSE: &str = "import * as React from 'react'\nfunction setRef(ref: any, value: any) { if (typeof ref === 'function') return ref(value); else if (ref !== null && ref !== undefined) ref.current = value }\nexport function composeRefs(...refs: any[]) { return (node: any) => { refs.forEach((r) => setRef(r, node)) } }\nexport function useComposedRefs(...refs: any[]) { return React.useCallback(composeRefs(...refs), refs) }\n";
+
+// B2: a custom hook's `...rest` parameter is the array of the call site's remaining arguments.
+#[test]
+fn a_rest_parameter_of_a_custom_hook_is_bound_to_the_remaining_arguments() {
+    let ir = project(
+        &[
+            ("compose.ts", COMPOSE),
+            (
+                "C.tsx",
+                "import { useState, useRef } from 'react'\nimport { useComposedRefs } from './compose'\nexport default function C() { const [n, setN] = useState(0); const a = useRef(null); const b = useRef(null); const set = useComposedRefs(a, b); return <button onClick={() => { setN(n + 1); set(null) }}>{n}</button> }",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(fallbacks(&ir).is_empty(), "{:?}", ir.diagnostics);
+    assert_eq!(ir.tier, Tier::Native);
+}
+
+// B3: the forwarded ref handed whole to a hook is `null`; any other read of it still needs React.
+#[test]
+fn the_forwarded_ref_handed_to_a_hook_is_null() {
+    let ok = project(
+        &[
+            ("compose.ts", COMPOSE),
+            (
+                "C.tsx",
+                "import * as React from 'react'\nimport { useState, useRef } from 'react'\nimport { useComposedRefs } from './compose'\nexport default React.forwardRef<any, any>(function C(props, forwardedRef) { const [n, setN] = useState(0); const a = useRef(null); const set = useComposedRefs(forwardedRef, a); return <button onClick={() => { setN(n + 1); set(null) }}>{n}</button> })",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(fallbacks(&ok).is_empty(), "{:?}", ok.diagnostics);
+    assert_eq!(ok.tier, Tier::Native);
+    let bad = project(
+        &[
+            ("compose.ts", COMPOSE),
+            (
+                "C.tsx",
+                "import * as React from 'react'\nimport { useState, useRef } from 'react'\nimport { useComposedRefs } from './compose'\nexport default React.forwardRef<any, any>(function C(props, forwardedRef) { const [n, setN] = useState(0); const a = useRef(null); const set = useComposedRefs(forwardedRef.current, a); return <button onClick={() => { setN(n + 1); set(null) }}>{n}</button> })",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(
+        bad.diagnostics.iter().any(|d| d.rule == "forwardref-ref"),
+        "{:?}",
+        bad.diagnostics
+    );
+}
+
+// B1: `ref={fn}` where `fn` is not a `useRef` binding becomes a synthetic ref plus a mount effect that sets it.
+#[test]
+fn a_callback_ref_becomes_a_synthetic_ref_and_a_mount_effect() {
+    for (decls, ref_expr, deps_kind) in [
+        (
+            "const rec = useCallback((n: any) => {}, [])",
+            "rec",
+            "Local",
+        ),
+        (
+            "const [node, setNode] = useState<any>(null)",
+            "setNode",
+            "Setter",
+        ),
+    ] {
+        let a = ir(&format!(
+            "{PRE}export default function F() {{ {decls}; const [n, setN] = useState(0); return <button ref={{{ref_expr}}} onClick={{() => setN(n + 1)}}>{{n}}</button> }}"
+        ));
+        assert!(
+            !a.diagnostics.iter().any(|d| d.rule == "ref-shape"),
+            "{ref_expr}: {:?}",
+            a.diagnostics
+        );
+        let Node::Element { attrs, .. } = &a.template else {
+            panic!()
+        };
+        assert!(
+            attrs
+                .iter()
+                .any(|x| matches!(x, Attr::Ref { name } if name == "_rf1")),
+            "{ref_expr}: {attrs:?}"
+        );
+        assert!(a.refs.iter().any(|r| r.name == "_rf1"));
+        let e = a.effects.first().expect("the mount effect");
+        assert!(e.layout);
+        assert!(
+            matches!(&e.deps.as_deref(), Some([d]) if format!("{:?}", d.kind).contains(deps_kind)),
+            "{ref_expr}: {:?}",
+            e.deps
+        );
+    }
+}
+
+#[test]
+fn a_ref_that_is_not_a_function_value_or_ref_object_stays_a_fallback() {
+    for body in [
+        // a loop binding
+        "<ul>{[1, 2].map((x) => <li key={x} ref={x}>{x}</li>)}</ul>",
+        // an element inside a list, even with a callback
+        "<ul>{[1, 2].map((x) => <li key={x} ref={cb}>{x}</li>)}</ul>",
+    ] {
+        let a = ir(&format!(
+            "{PRE}export default function F() {{ const cb = useCallback((n: any) => {{}}, []); const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}>{body}</div> }}"
+        ));
+        // Left as written (the tier pass reports `ref-shape`): no synthetic ref, no effect.
+        assert!(a.refs.is_empty() && a.effects.is_empty(), "{body}");
+    }
+}
+
+#[test]
+fn a_callback_ref_under_a_conditional_stays_a_fallback() {
+    let a = ir(&format!(
+        "{PRE}export default function F() {{ const cb = useCallback((n: any) => {{}}, []); const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}>{{n > 0 && <input ref={{cb}} />}}</div> }}"
+    ));
+    assert!(a.refs.is_empty() && a.effects.is_empty(), "{:?}", a.effects);
+}
+
+#[test]
+fn the_callback_ref_effect_runs_before_the_components_own_effects() {
+    let a = ir(&format!(
+        "{PRE}export default function F() {{ const r = useRef<any>(null); const cb = useCallback((n: any) => {{ r.current = n }}, []); const [n, setN] = useState(0); useEffect(() => {{ r.current.focus() }}, []); return <input ref={{cb}} onClick={{() => setN(n + 1)}} /> }}"
+    ));
+    assert_eq!(a.effects.len(), 2, "{:?}", a.effects);
+    assert!(a.effects[0].layout && a.effects[0].deps.is_some());
+    assert!(!a.effects[1].layout);
+}
+
+// B4: a `useRef(init)` that is only ever read as `.current` in the render is a state cell nothing sets.
+#[test]
+fn a_never_written_ref_read_in_the_render_is_a_state_cell() {
+    let a = ir(&format!(
+        "{PRE}export default function F({{ checked }}: any) {{ const [n, setN] = useState(0); const snap = useRef(checked); return <div onClick={{() => setN(n + 1)}}><input defaultChecked={{snap.current}} /></div> }}"
+    ));
+    assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+    assert!(a.refs.is_empty(), "{:?}", a.refs);
+    assert!(
+        a.state
+            .iter()
+            .any(|s| s.name == "snap" && s.setter.is_none())
+    );
+}
+
+#[test]
+fn a_ref_that_is_written_or_read_in_a_function_or_bound_stays_a_ref() {
+    for body in [
+        // written
+        "const snap = useRef(checked); return <div onClick={() => { snap.current = true }}><input defaultChecked={snap.current} /></div>",
+        // also read in a handler (verbatim code)
+        "const snap = useRef(checked); return <div onClick={() => console.log(snap.current)}><input defaultChecked={snap.current} /></div>",
+        // bound to an element
+        "const snap = useRef(null); return <div onClick={() => {}}><input ref={snap} data-x={snap.current} /></div>",
+        // handed on whole
+        "const snap = useRef(checked); const w = snap; return <div onClick={() => {}}><input data-x={String(w.current)} defaultChecked={snap.current} /></div>",
+    ] {
+        let a = ir(&format!(
+            "{PRE}export default function F({{ checked }}: any) {{ const [n, setN] = useState(0); {body} }}"
+        ));
+        assert!(
+            a.refs.iter().any(|r| r.name == "snap") && !a.state.iter().any(|s| s.name == "snap"),
+            "{body}: refs {:?} state {:?}",
+            a.refs,
+            a.state
+        );
+    }
+}
+
 // R34.120: a `useId()` in the returned expression that runs on every render is the same hook as
 // `const id = useId()` before the return.
 #[test]

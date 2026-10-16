@@ -98,12 +98,22 @@ pub struct NameTable<'a> {
     /// `const x = c ? {…} : {…}` at module level or at the top of the component body: the initialiser, for
     /// a union spread `{...x}` (R34.66). Only a conditional is kept; a `const` is never reassigned.
     cond_consts: HashMap<u32, js_ast::Expr>,
+    /// `const x = { … }` at module level or at the top of the component body: the object literal, for a spread
+    /// `{...x}` or an argument `f(x)` (F266). A `const` is never reassigned.
+    object_consts: HashMap<u32, js_ast::Expr>,
+    /// Bindings some use of which is not a spread, a member read or an argument of a given function (F266).
+    object_unsafe: HashSet<u32>,
     /// Module-level `const NAME = <literal-shaped initialiser>` with no use that could write it, by name: the
     /// folder reads them for a prop default (`orientation = DEFAULT_ORIENTATION`, F153b).
     module_inits: HashMap<String, js_ast::Expr>,
     /// The component's polymorphic tag local (`Comp` of `const Comp = asChild ? Slot.Root : "a"`, R34.28).
     poly: HashMap<u32, PolyTag>,
     state: HashSet<u32>,
+    /// B4: `const x = useRef(init)` whose `.current` is only ever read in the render (never written, never bound to an
+    /// element, never read inside a function): held as a state cell (`state` holds it too).
+    snapshot_refs: HashSet<u32>,
+    /// B4: the first verbatim code that reads such a ref (the component keeps the `ref-in-render` fallback).
+    pub snapshot_escape: std::cell::Cell<Option<u32>>,
     setters: HashSet<u32>,
     loop_bindings: HashSet<u32>,
     /// `useStore` bindings (M3-F D7) → (handle as written, key): the view `s` has key `None`,
@@ -383,9 +393,13 @@ impl<'a> NameTable<'a> {
             member_aliases: HashMap::new(),
             dom_consts: HashMap::new(),
             cond_consts: HashMap::new(),
+            object_consts: HashMap::new(),
+            object_unsafe: HashSet::new(),
             module_inits: HashMap::new(),
             poly: HashMap::new(),
             state: HashSet::new(),
+            snapshot_refs: HashSet::new(),
+            snapshot_escape: std::cell::Cell::new(None),
             setters: HashSet::new(),
             loop_bindings: HashSet::new(),
             stores: HashMap::new(),
@@ -403,6 +417,7 @@ impl<'a> NameTable<'a> {
         for part in ast.parts.iter() {
             table.add_cond_consts(part.stmts.slice());
         }
+        table.object_unsafe = crate::analyze::use_scan::unsafe_objects(ast, &table);
         table.collect_module_inits(ast);
         table.collect_dom_consts(ast);
         table.collect_react_hook_aliases(ast);
@@ -645,11 +660,17 @@ impl<'a> NameTable<'a> {
                 continue;
             }
             for d in l.decls.iter() {
-                if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
-                    && matches!(v.data, js_ast::expr::Data::EIf(_))
-                {
+                if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value) {
                     let k = self.key(id.r#ref);
-                    self.cond_consts.insert(k, v);
+                    match v.data {
+                        js_ast::expr::Data::EIf(_) => {
+                            self.cond_consts.insert(k, v);
+                        }
+                        js_ast::expr::Data::EObject(_) => {
+                            self.object_consts.insert(k, v);
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -658,6 +679,43 @@ impl<'a> NameTable<'a> {
     /// The conditional a `const` was initialised with (see `cond_consts`).
     pub fn cond_const(&self, r: js_ast::Ref) -> Option<js_ast::Expr> {
         self.cond_consts.get(&self.key(r)).copied()
+    }
+
+    /// The object literal a `const` was initialised with (see `object_consts`).
+    /// Only a `const` that is never written, handed on or aliased: its literal is its value everywhere.
+    pub fn object_const(&self, r: js_ast::Ref) -> Option<js_ast::Expr> {
+        let k = self.key(r);
+        if self.object_unsafe.contains(&k) || self.object_unsafe.contains(&r.inner_index()) {
+            return None;
+        }
+        self.object_consts.get(&k).copied()
+    }
+
+    /// The names of the `const` object literals `object_const` accepts (the ones of the component body count too).
+    pub fn safe_object_const_names(&self) -> Vec<String> {
+        let name = |k: &u32| {
+            self.symbols
+                .get(*k as usize)
+                .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())
+                .unwrap_or_default()
+        };
+        // a name is safe only when no const of that name is not (two scopes may reuse it)
+        let unsafe_names: HashSet<String> = self
+            .object_consts
+            .keys()
+            .filter(|k| self.object_unsafe.contains(k))
+            .map(name)
+            .collect();
+        let mut out: Vec<String> = self
+            .object_consts
+            .keys()
+            .filter(|k| !self.object_unsafe.contains(k))
+            .map(name)
+            .filter(|n| !unsafe_names.contains(n))
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     fn collect_member_aliases(&self, ast: &js_ast::Ast<'_>) -> HashMap<u32, MemberRef> {
@@ -983,6 +1041,16 @@ impl<'a> NameTable<'a> {
     pub fn mark_state(&mut self, r: js_ast::Ref) {
         let k = self.key(r);
         self.state.insert(k);
+    }
+
+    pub fn mark_snapshot_ref(&mut self, r: js_ast::Ref) {
+        let k = self.key(r);
+        self.snapshot_refs.insert(k);
+        self.state.insert(k);
+    }
+
+    pub fn is_snapshot_ref(&self, r: js_ast::Ref) -> bool {
+        self.snapshot_refs.contains(&self.key(r))
     }
 
     pub fn mark_setter(&mut self, r: js_ast::Ref) {

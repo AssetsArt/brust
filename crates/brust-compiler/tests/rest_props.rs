@@ -365,3 +365,37 @@ fn aliases_are_one_attribute_in_both_paths() {
     let h = render(&a.jinja, serde_json::json!({}));
     assert_eq!(h, "<label class=\"x\" for=\"a\"></label>", "{h}");
 }
+
+// B5: `{ ...rest.key, ...local, k: v }` reads the prop `key` and spreads it, as `rest.key` already does elsewhere.
+#[test]
+fn an_object_spread_of_a_rest_key_reads_that_prop() {
+    let ok = lower(
+        "T.tsx",
+        &format!(
+            "{STATE}export default function T({{ label, ...props }}: any) {{ const [n, setN] = useState(0); const size = {{ width: n * 10 }}; return <div onClick={{() => setN(n + 1)}}><input aria-label={{label}} style={{{{ ...props.style, ...size, position: 'absolute' }}}} /></div> }}"
+        ),
+    );
+    assert!(
+        !has(&ok, DiagClass::Fallback, "prop-pattern"),
+        "{:?}",
+        ok.diags
+    );
+    assert!(
+        ok.chunk
+            .contains("Object.assign({}, props().style, size(), { position: \"absolute\" })"),
+        "{}",
+        ok.chunk
+    );
+    // The whole rest object spread into an object is still a read of the rest object as a value.
+    let bad = lower(
+        "T.tsx",
+        &format!(
+            "{STATE}export default function T({{ label, ...props }}: any) {{ const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}><input aria-label={{label}} style={{{{ ...props, position: 'absolute' }}}} /></div> }}"
+        ),
+    );
+    assert!(
+        has(&bad, DiagClass::Fallback, "prop-pattern"),
+        "{:?}",
+        bad.diags
+    );
+}
