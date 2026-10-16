@@ -256,6 +256,9 @@ pub struct ComponentIR {
     /// the component was given: a derived value of one of these names stands for its literal.
     #[serde(skip)]
     pub safe_objects: Vec<String>,
+    /// F279: single-return module functions the call of which is replaced by the expression (`InlineFn`).
+    #[serde(skip)]
+    pub inline_fns: Vec<InlineFn>,
     /// S2: props of a specialised clone whose value the call site fixes for the life of the instance (a hidden input
     /// that is not client-changing there): reading one is not a client change.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -433,6 +436,7 @@ impl ComponentIR {
             provides: Vec::new(),
             render_props: Vec::new(),
             safe_objects: Vec::new(),
+            inline_fns: Vec::new(),
             fixed_props: Vec::new(),
             ctx_uses: Vec::new(),
             ctx_pkg: false,

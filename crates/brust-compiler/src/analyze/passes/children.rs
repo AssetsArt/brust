@@ -72,6 +72,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         unwritten: BTreeSet::new(),
         shadowed: BTreeSet::new(),
         live_forwards: Vec::new(),
+        own_refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
         passes_to_repeater: false,
         passes_to_host: false,
         own_fed: crate::ir::is_fed(ir),
@@ -375,6 +376,8 @@ struct Walker<'s, 'c> {
     shadowed: BTreeSet<String>,
     /// Live props hoisted onto a static child's element (`ComponentIR::live_forwards`).
     live_forwards: Vec<crate::ir::Forwarded>,
+    /// The ref cells of this component (F267).
+    own_refs: BTreeSet<String>,
     /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
     passes_to_repeater: bool,
     /// This component hands its own `{children}` to a component that prints them under a native host element
@@ -425,6 +428,9 @@ struct Child {
     job_all: bool,
     /// The compiled child is a `forwardRef` component (R34.63): a call site that passes `ref` needs React.
     forwards_ref: bool,
+    /// F267: the compiled child hands the ref its caller passes to exactly one element it always renders
+    /// (`ref={forwardedRef}` on a host element outside any list or condition).
+    ref_site: bool,
     /// The compiled child spreads its props onto an inlined lucide icon (R34.77).
     icon_spread: bool,
     /// The compiled child reads `children` as a value (`children ?? <X/>`, `children ? a : b`), not only as `{children}`:
@@ -454,6 +460,43 @@ struct Child {
     unwritten: Vec<String>,
     /// Keys the call site must not write at all (`ComponentIR::shadowed_props`).
     shadowed: Vec<String>,
+}
+
+/// F267: the number of `ref={forwardedRef}` elements of `n` that always render (`always`: not inside a list, a
+/// condition or a component's children); `None` when one sits where it does not.
+fn forward_ref_sites(n: &Node, always: bool) -> Option<usize> {
+    match n {
+        Node::Element {
+            attrs, children, ..
+        } => {
+            let own = attrs
+                .iter()
+                .filter(|a| matches!(a, Attr::ForwardRef))
+                .count();
+            if own > 0 && !always {
+                return None;
+            }
+            let mut total = own;
+            for c in children {
+                total += forward_ref_sites(c, always)?;
+            }
+            Some(total)
+        }
+        Node::Fragment(cs) => cs
+            .iter()
+            .try_fold(0, |t, c| forward_ref_sites(c, always).map(|x| t + x)),
+        Node::If { then, else_, .. } => then
+            .iter()
+            .chain(else_.iter())
+            .try_fold(0, |t, c| forward_ref_sites(c, false).map(|x| t + x)),
+        Node::For { body, .. } => body
+            .iter()
+            .try_fold(0, |t, c| forward_ref_sites(c, false).map(|x| t + x)),
+        Node::Component { children, .. } => children
+            .iter()
+            .try_fold(0, |t, c| forward_ref_sites(c, false).map(|x| t + x)),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => Some(0),
+    }
 }
 
 /// Facts that decide whether a handler landing in a static child's spread can be bound by the
@@ -585,6 +628,10 @@ fn rebase_sources(
     to: &str,
     opts: &crate::analyze::component::AnalyzeOptions,
 ) -> Result<(), String> {
+    // F267: the clone is compiled in the module the content was written in: every name reads as it did.
+    if from == to {
+        return Ok(());
+    }
     for n in nodes {
         match n {
             Node::Component {
@@ -708,6 +755,9 @@ type Specialised = (String, String, Vec<(String, Expr)>);
 /// written in the content (`onClick={() => …}`) becomes a handler of the clone that calls the carried function.
 /// What cannot cross is refused by name: the caller's whole props or `...rest`, a ref, a list row's bindings, imports,
 /// stores, module-level functions, and a name read inside code printed as written.
+/// The hidden input that carries the call site's whole `...rest` into a clone (F278).
+const REST_INPUT: &str = "__in_rest";
+
 struct Carry<'a> {
     native: &'a [(u32, String, usize)],
     owner: usize,
@@ -770,6 +820,40 @@ impl<'a> Carry<'a> {
             }),
         ));
         Ok(hidden)
+    }
+
+    /// F278: `{...rest}` of the call site's component, spread into an element or a component of the content: its keys
+    /// are known per instance, so the clone takes the whole object as one hidden input (`__in_rest`) and spreads
+    /// that (a props path), exactly as the call site would have spread its own rest.
+    fn rest_spread(&mut self, e: &mut Expr) -> Result<bool, String> {
+        let (Expr::Raw(r) | Expr::Server(ServerExpr(r))) = e else {
+            return Ok(false);
+        };
+        let RawKind::Ident {
+            name,
+            kind: IdentKind::Prop,
+        } = &r.kind
+        else {
+            return Ok(false);
+        };
+        if name != crate::ir::REST_PROPS {
+            return Ok(false);
+        }
+        let hidden = REST_INPUT.to_string();
+        if !self.inputs.iter().any(|(h, _)| *h == hidden) {
+            if self.taken.contains(&hidden) {
+                return Err(format!("the component already has a prop `{hidden}`"));
+            }
+            self.inputs.push((hidden.clone(), Expr::Raw(r.clone())));
+        }
+        *r = RawExpr {
+            loc: r.loc,
+            kind: RawKind::Ident {
+                name: hidden,
+                kind: IdentKind::Prop,
+            },
+        };
+        Ok(true)
     }
 
     fn raw(&mut self, r: &mut RawExpr, bound: &[String], what: &str) -> Result<(), String> {
@@ -875,13 +959,15 @@ impl<'a> Carry<'a> {
             } => {
                 for a in attrs.iter_mut() {
                     match a {
-                        Attr::Static { .. } => {}
+                        Attr::Static { .. } | Attr::ForwardRef => {}
                         Attr::Dynamic { name, value } => {
                             let what = format!("the attribute `{name}`");
                             self.expr(value, bound, &what)?
                         }
                         Attr::InnerHtml { value } | Attr::Spread(value) => {
-                            self.expr(value, bound, "an attribute")?
+                            if !self.rest_spread(value)? {
+                                self.expr(value, bound, "an attribute")?
+                            }
                         }
                         Attr::Event { handler, .. } => {
                             let h = handler.clone();
@@ -960,6 +1046,9 @@ impl<'a> Carry<'a> {
                         .iter()
                         .any(|(l, kk, o)| l == loc && kk == k && *o == self.owner)
                     {
+                        continue;
+                    }
+                    if k == crate::ir::SPREAD_KEY && self.rest_spread(v)? {
                         continue;
                     }
                     let what = format!("the prop `{k}`");
@@ -1146,7 +1235,7 @@ fn mentions_prop(e: &RawExpr, key: &str) -> bool {
 }
 
 /// `a`, `a.b.c`, a literal, an object literal of those: a read with no effect and one value.
-fn pure_read(e: &RawExpr) -> bool {
+pub(crate) fn pure_read(e: &RawExpr) -> bool {
     match &e.kind {
         RawKind::Lit(_) => true,
         RawKind::Ident { .. } => true,
@@ -1380,7 +1469,7 @@ fn count_prop_spreads(n: &Node) -> usize {
         } => {
             props
                 .iter()
-                .filter(|(k, v)| k == crate::ir::SPREAD_KEY && own(v))
+                .filter(|(k, v)| (k == crate::ir::SPREAD_KEY || k == REST_INPUT) && own(v))
                 .count()
                 + children.iter().map(count_prop_spreads).sum::<usize>()
         }
@@ -1498,7 +1587,8 @@ impl SpreadSink {
                     props, children, ..
                 } => {
                     for (k, v) in props {
-                        if k == crate::ir::SPREAD_KEY {
+                        // F278: the rest handed to a clone as its input is spread there
+                        if k == crate::ir::SPREAD_KEY || k == REST_INPUT {
                             add(v);
                         }
                     }
@@ -2691,6 +2781,7 @@ impl Walker<'_, '_> {
             job_roots: BTreeSet::new(),
             job_all: false,
             forwards_ref: false,
+            ref_site: false,
             icon_spread: false,
             reads_children_value: false,
             use_id: false,
@@ -2754,6 +2845,7 @@ impl Walker<'_, '_> {
                     job_roots: BTreeSet::new(),
                     job_all: false,
                     forwards_ref: false,
+                    ref_site: false,
                     icon_spread: false,
                     reads_children_value: false,
                     use_id: false,
@@ -2932,6 +3024,7 @@ impl Walker<'_, '_> {
                         job_roots: BTreeSet::new(),
                         job_all: false,
                         forwards_ref: false,
+                        ref_site: false,
                         icon_spread: false,
                         reads_children_value: false,
                         use_id: false,
@@ -2993,6 +3086,7 @@ impl Walker<'_, '_> {
         let mut hosts_children = false;
         let mut inner = None;
         let mut forwards_ref = false;
+        let mut ref_site = false;
         let mut icon_spread = false;
         let mut reads_children_value = false;
         let mut absent = Vec::new();
@@ -3006,6 +3100,7 @@ impl Walker<'_, '_> {
             Lookup::Compiled(ir) => {
                 child_ir = Some(ir.clone());
                 forwards_ref = ir.forwards_ref;
+                ref_site = ir.forwards_ref && forward_ref_sites(&ir.template, true) == Some(1);
                 icon_spread = ir.icon_spread;
                 absent = ir.absent_props.clone();
                 has_for = ir.repeats_children || template_has_for(&ir.template);
@@ -3113,6 +3208,7 @@ impl Walker<'_, '_> {
             job_roots,
             job_all,
             forwards_ref,
+            ref_site,
             icon_spread,
             reads_children_value,
             use_id,
@@ -3445,11 +3541,18 @@ impl Walker<'_, '_> {
     fn spread_carries(&self, key: &str, props: &[(String, Expr)]) -> Result<bool, ()> {
         let mut carries = false;
         for (k, v) in props {
-            if k != crate::ir::SPREAD_KEY {
+            // F278: the call site's whole rest handed to a clone as its hidden input behaves as the spread of it.
+            let rest_input = k == REST_INPUT;
+            if k != crate::ir::SPREAD_KEY && !rest_input {
                 continue;
             }
             match v {
                 Expr::Raw(r) | Expr::Server(ServerExpr(r)) => match &r.kind {
+                    // inside the clone: the spread of that input, whose keys are the caller's rest
+                    RawKind::Ident {
+                        name,
+                        kind: IdentKind::Prop,
+                    } if name == REST_INPUT && !rest_input => carries = true,
                     RawKind::Ident {
                         name,
                         kind: IdentKind::Prop,
@@ -3734,7 +3837,10 @@ impl Walker<'_, '_> {
                 "pass the ref to an element, or to a forwardRef component that does",
             ));
         }
-        if child.forwards_ref && props.iter().any(|(k, _)| k == "ref") {
+        // F267: a ref of this component's own bound on the one element an inlined child hands its `ref` to.
+        let ref_cell = self.forward_ref(*loc, props, &child);
+        let ref_fwd = ref_cell.is_some();
+        if child.forwards_ref && !ref_fwd && props.iter().any(|(k, _)| k == "ref") {
             self.diagnostics.push(Diagnostic::fallback(
                 "forwardref-ref",
                 format!("`ref` is passed to the forwardRef component <{name}>; brust renders it without a ref"),
@@ -3742,7 +3848,7 @@ impl Walker<'_, '_> {
                 "drop the ref, or keep this component in React",
             ));
         }
-        let live = self.forward_live(name, *loc, props, &child);
+        let live = self.forward_live(name, *loc, props, &child, ref_fwd);
         let (mut hoisted, unbound) = self.forward_handlers(name, *loc, props, &child, &live);
         // A hoisted handler is a member of this component, printed from its own declaration: the prop's slot in the
         // precompute job is read by nothing any more, and must not keep the job (and a per-instance feed) alive.
@@ -3757,6 +3863,25 @@ impl Walker<'_, '_> {
         // A live value the parent binds itself is, like a hoisted handler, the parent's own member: not a prop of the
         // instance, and nothing for `check_spread` to refuse.
         hoisted.extend(live);
+        if let Some(cell) = ref_cell {
+            // the prop is the parent's ref cell, as the printer binds it (not a function value)
+            for (k, v) in props.iter_mut() {
+                if k == "ref" {
+                    *v = Expr::Raw(RawExpr {
+                        loc: *loc,
+                        kind: RawKind::Ident {
+                            name: cell.clone(),
+                            kind: IdentKind::Local,
+                        },
+                    });
+                }
+            }
+            hoisted.push("ref".to_string());
+            self.live_forwards.push(crate::ir::Forwarded {
+                loc: *loc,
+                key: "ref".to_string(),
+            });
+        }
         self.check_children_read(name, children, &child, *loc);
         // F148a (R34.121): the island inside this wrapper renders its `{children}`: the call site hands the
         // wrapper the constant tree of them as the reserved prop `__ch`, which only a compiler-written call
@@ -4533,7 +4658,7 @@ impl Walker<'_, '_> {
             return;
         }
         let bad = attrs.iter().find_map(|a| match a {
-            Attr::Static { .. } => None,
+            Attr::Static { .. } | Attr::ForwardRef => None,
             Attr::Dynamic { value, .. } => self
                 .reads_state(value)
                 .then_some(("slot-child-attr", "an attribute that changes on the client")),
@@ -4839,6 +4964,7 @@ impl Walker<'_, '_> {
                     let mut p = Map::new();
                     for a in attrs {
                         match a {
+                            Attr::ForwardRef => {}
                             Attr::Static { name, value } if value.is_empty() => {
                                 if !BOOLEAN_ATTRS.contains(&name.as_str()) {
                                     return Err(format!(
@@ -5145,6 +5271,7 @@ impl Walker<'_, '_> {
         loc: u32,
         props: &[(String, Expr)],
         child: &Child,
+        ref_fwd: bool,
     ) -> Vec<String> {
         let mut live: Vec<String> = Vec::new();
         let mut cands: Vec<(String, bool)> = Vec::new();
@@ -5195,7 +5322,9 @@ impl Walker<'_, '_> {
             &child.tier,
             props
                 .iter()
-                .filter(|(k, v)| !keys.contains(&k) && !is_handler_prop(k, v))
+                .filter(|(k, v)| {
+                    !keys.contains(&k) && !is_handler_prop(k, v) && !(ref_fwd && *k == "ref")
+                })
                 .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
         );
         if need != LinkNeed::None {
@@ -5213,6 +5342,32 @@ impl Walker<'_, '_> {
         }
         let _ = name;
         live
+    }
+
+    /// F267: whether the `ref` of this call site is a ref cell of this component and `child` is an inlined `forwardRef`
+    /// component that hands its ref to exactly one element it always renders: the parent binds `x-ref` there, in its own
+    /// scope, and the child stays static and unlinked.
+    fn forward_ref(&self, loc: u32, props: &[(String, Expr)], child: &Child) -> Option<String> {
+        let ok = matches!(child.tier, Tier::Static)
+            && child.ref_site
+            && props.iter().filter(|(k, _)| k == "ref").count() == 1
+            && !props.iter().any(|(k, _)| k == "asChild")
+            // a spread after the ref could carry a `ref` of its own (React 19 passes it as a prop)
+            && props
+                .iter()
+                .rposition(|(k, _)| k == crate::ir::SPREAD_KEY)
+                .zip(props.iter().position(|(k, _)| k == "ref"))
+                .is_none_or(|(spread, at)| spread < at);
+        if !ok {
+            return None;
+        }
+        match self.st.prop_raws.get(&(loc, "ref".to_string())) {
+            Some(RawExpr {
+                kind: RawKind::Ident { name, .. },
+                ..
+            }) if self.own_refs.contains(name) => Some(name.clone()),
+            _ => None,
+        }
     }
 
     /// Event handlers the parent binds itself (shadcn S1.3, R34.18): an `on*` prop that lands in
@@ -5428,7 +5583,16 @@ impl Walker<'_, '_> {
             }
             // Props spread in carry keys known only at render: a linked instance next to them could
             // repaint an attribute the spread set.
-            if k == crate::ir::SPREAD_KEY || spreads_in || child.spread.lands(k) {
+            // F278: a prop the compiler wrote (`__ctx_…`, `__in_…`) AFTER the last spread is not replaced by it (React:
+            // the later key wins) and no caller can name it, so the spread cannot repaint what it binds.
+            let after_spreads = (k.starts_with("__ctx_") || k.starts_with("__in_"))
+                && props
+                    .iter()
+                    .rposition(|(o, _)| o == crate::ir::SPREAD_KEY)
+                    .zip(props.iter().position(|(o, _)| o == k))
+                    .is_none_or(|(spread, at)| spread < at);
+            if k == crate::ir::SPREAD_KEY || (spreads_in && !after_spreads) || child.spread.lands(k)
+            {
                 let function = matches!(v, Expr::ClientOnly { .. });
                 if function && crate::analyze::jsx::event_name(k).is_none() {
                     // R34.19: not an event, so no element binding can stand for it (a render prop).

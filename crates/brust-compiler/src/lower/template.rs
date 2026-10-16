@@ -41,6 +41,9 @@ pub enum PropBinding {
     /// A live value the parent bound itself (2b-handlers): the finished attribute text (server print and
     /// `x-bind-*` member) in the parent's scope, bound where a spread lands it on an element.
     Live(String),
+    /// A ref the parent bound itself on an inlined `forwardRef` child (F267): the name of the parent's ref cell, bound
+    /// as `x-ref` where the child's own `ref={forwardedRef}` is.
+    Ref(String),
 }
 
 /// One piece of a call site's props, in source order (shadcn S1.2): a named prop, or a spread
@@ -111,6 +114,14 @@ impl Inline {
             }
         }
         cur
+    }
+
+    /// The parent's ref cell bound on this instance (F267).
+    pub fn ref_binding(&self) -> Option<&str> {
+        self.segs.iter().rev().find_map(|s| match s {
+            Seg::Named(_, PropBinding::Ref(n)) => Some(n.as_str()),
+            _ => None,
+        })
     }
 
     /// No spread of unknown keys: every key the call site passes is listed.
@@ -369,8 +380,15 @@ impl<'a, 'c> Printer<'a, 'c> {
             IdentKind::Prop => {
                 let base = match &self.inline {
                     None if name == "*" => "_props".into(),
+                    // F278: the rest object as a VALUE (the hidden input of a clone), the props the pattern names left out
+                    None if name == crate::ir::REST_PROPS => {
+                        format!("({})", omit_jinja("_props", &self.rest_omits()))
+                    }
                     None => name.to_string(),
                     Some(i) if name == "*" => format!("({})", i.object(&[])),
+                    Some(i) if name == crate::ir::REST_PROPS => {
+                        format!("({})", i.object(&self.rest_omits()))
+                    }
                     Some(i) => match i.get(name) {
                         Some(PropBinding::Expr(e)) => format!("({e})"),
                         _ => UNDEFINED.into(),
@@ -1018,6 +1036,15 @@ impl<'a, 'c> Printer<'a, 'c> {
                     open.push_str(&format!(" x-ref=\"{name}\""));
                 }
             }
+            // F267: the ref the caller bound on this inlined instance lands here, in the caller's scope.
+            // (A static child is printed with its own printer: the binding itself says the caller is native.)
+            Attr::ForwardRef => {
+                if let Some(i) = &self.inline
+                    && let Some(n) = i.ref_binding()
+                {
+                    open.push_str(&format!(" x-ref=\"{n}\""));
+                }
+            }
             Attr::Spread(_) => {}
             Attr::InnerHtml { value } => {
                 // The one raw sink (`html_raw`): the element body is the value, unescaped.
@@ -1176,7 +1203,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
-                Some(PropBinding::Handler(_) | PropBinding::Live(_)) | None => None,
+                Some(PropBinding::Handler(_) | PropBinding::Live(_) | PropBinding::Ref(_))
+                | None => None,
             }
         };
         let last_runtime = items.iter().rposition(|it| matches!(it, It::Runtime(_)));
@@ -1819,6 +1847,20 @@ impl<'a, 'c> Printer<'a, 'c> {
         for (pname, v) in props.iter() {
             if pname == crate::ir::SPREAD_KEY {
                 segs.extend(self.spread_segs(v));
+                continue;
+            }
+            // F267: the parent's ref cell, bound where the child's own `ref={forwardedRef}` is.
+            if pname == "ref"
+                && ir
+                    .live_forwards
+                    .iter()
+                    .any(|f| f.loc == *loc && f.key == "ref")
+                && let Expr::Raw(RawExpr {
+                    kind: RawKind::Ident { name: cell, .. },
+                    ..
+                }) = v
+            {
+                segs.push(Seg::Named(pname.clone(), PropBinding::Ref(cell.clone())));
                 continue;
             }
             let forwarded = ir.handlers.iter().find(|h| {

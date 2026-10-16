@@ -6,6 +6,7 @@ pub mod exports;
 pub mod expr;
 pub mod hir;
 pub mod hooks;
+pub mod inline_fn;
 pub mod jsx;
 pub mod module_effects;
 pub mod modules;

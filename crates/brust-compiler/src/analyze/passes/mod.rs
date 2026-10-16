@@ -7,6 +7,7 @@ pub mod build_eval;
 pub mod captures;
 pub mod children;
 pub mod deps;
+pub mod helpers;
 pub mod icons;
 pub mod placement;
 pub mod projection;
@@ -101,6 +102,8 @@ impl PassState {
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     // lucide icons become elements before anything snapshots or places the template (L23).
     icons::inline(ir, ctx);
+    // F279: calls of single-return module helpers become their expression, before anything places a value.
+    helpers::inline(ir);
     // First: `DepsCx` reads the resolved stores.
     stores::resolve(ir, ctx);
     // Before placement: a refused render read never becomes a placed value.
