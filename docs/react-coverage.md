@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 223 | 117 | 16 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 181 | 56 | 54 | 71 | 0 | 0 | 0 | 0 |
+| C Hooks | 191 | 57 | 59 | 75 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 561 | 249 | 99 | 209 | 3 | 1 | 0 | 0 |
+| **Total** | 571 | 250 | 104 | 213 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -357,6 +357,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | ssr | ok | 5.4 | info:rest-children-unsupported | F298 + F309: that element is linked, so it would host the Thumb (slot-owner): no clone, LiveRoot stays a React island with its children (F307 relaxes it) |
 | c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F324: the children reach the button through the rest in React; the clone has no children slot, so it is refused and the Provider stays an island that carries them (info specialise-unsupported; was: children silently dropped, alpha.16) |
 | c-spec-rest-no-children | the same Provider component called without children | static | static | 0 | ok | 4.6 | — | F324: nothing to drop, so the clone is still taken |
+| c-literal-order-entries | an object literal written out of sorted order, passed to a stateful child that reads Object.entries / Object.keys | static | static | 0 | ok | 4.6 | — | F333: the literal prints through obj_lit (JS key order z,a); a jinja map literal sorted it a,z |
 | c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | 4.6 | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
@@ -470,7 +471,16 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-hoist-object | a custom hook returning an object whose properties are hook calls | native | native | 0 | ok | 4.6 | — | F286: an unconditional hook call in a returned object property is hoisted before the return, in source order |
 | c-hook-hoist-return | custom hooks that return useState(...) and useCallback(...) | native | native | 0 | ok | 4.6 | — | F286: a hook call in the return position is the pair or the value the call site binds |
 | c-hook-hoist-conditional | a hook call in a conditional property of a returned object | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | F286: only unconditional positions are hoisted; a conditional hook call stays refused |
-| c-hook-hoist-whole | a custom hook returning an object with a hook call, bound whole at the call site | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F286: hook-return-shape until F289: the whole object would be a derived value naming the hoisted handler |
+| c-hook-object-whole | a custom hook returning an object with a handler, bound whole at the call site | native | native | 0 | ok | 4.6 | — | F289: the object is read member by member (t.key), as a destructuring is; it was a job naming the handler local (500) |
+| c-hook-object-whole-array | a custom hook returning an array with a handler, bound whole at the call site | native | native | 0 | ok | 4.6 | — | F289: t[0] / t[1] with a literal index are the items of the returned array |
+| c-hook-object-whole-escapes | a custom hook's returned object bound whole and passed on as a whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: a hook object used as a value (not t.key) cannot be named in a job: hook-return-shape, the component stays React |
+| c-hook-object-memo | a custom hook returning useMemo of an object with a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: not an object literal, so not read per member; a job naming the handler would 500: hook-return-shape |
+| c-hook-object-spread | a custom hook returning an object with a spread and a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: a spread makes the returned object a computed value: hook-return-shape |
+| c-hook-object-ident | a custom hook returning a local object (return obj) with a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: an identifier is not the literal: a job naming the hook-declared function would 500: hook-return-shape |
+| c-handler-in-computed-member | an object holding a hook object's handler (const o = { cb: t.toggle }) | native | native | 0 | ok | 4.6 | — | F331: read member by member (o.cb is t.toggle), not a per-request job naming a handler |
+| c-handler-in-computed-destructured | an object holding a destructured hook handler (const o = { cb: toggle }) | native | native | 0 | ok | 4.6 | — | F331: read member by member (was client-function-in-job after F289, a 500 before) |
+| c-own-function-in-object | an object holding the component's own arrow and function (const o = { cb: inc, off: reset }) | native | native | 0 | ok | 4.6 | — | F331: read member by member; o.cb is inc |
+| c-own-function-in-computed-member | an object whose member is computed from the component's own function | react | react | ssr | ok | 4.0 | fallback:client-function-in-job | F331: a computed member naming a client function is still a per-request job: client-function-in-job |
 | c-usereducer-callback-by-name | useReducer whose reducer maps with a named helper | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a callback passed by name is a function the purity proof cannot see: reducer-impure |
 | c-usereducer-default-param | useReducer whose reducer has a parameter default that calls a function | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a default runs on every call like the body: reducer-impure |
 | c-usereducer-default-pattern | useReducer whose reducer destructures with a default that calls a function | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a destructuring default is checked like a parameter default |
