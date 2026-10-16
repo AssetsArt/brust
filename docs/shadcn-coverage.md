@@ -152,7 +152,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | message | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | message-scroller | measured | static | 1 | 13 (12) | 94 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, spread-props | built |
 | native-select | measured | static | 0 | 3 (0) | 0 | 1 | external-component | built |
-| navigation-menu | measured | static | 1 | 15 (14) | 99 | 1 | external-component, island-prop, spread-props | built |
+| navigation-menu | measured | static | 1 | 15 (14) | 100 | 1 | external-component, island-prop, spread-props | built |
 | pagination | measured | static | 0 | 8 (0) | 0 | 3 | external-component | built |
 | popover | measured | static | 1 | 9 (7) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
 | progress | measured | static | 1 | 5 (2) | 86 | 1 | external-component, island-children, island-prop, spread-props | built |
@@ -169,7 +169,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | spinner | measured | static | 0 | 2 (0) | 0 | 1 | external-component, spread-props | built |
 | switch | measured | static | 1 | 8 (2) | 89 | 1 | external-component, island-children, island-prop, spread-props | built |
 | table | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
-| tabs | measured | static | 1 | 9 (8) | 94 | 1 | external-component, island-prop, spread-props | built |
+| tabs | measured | static | 1 | 9 (8) | 95 | 1 | external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | toggle | measured | static | 0 | 4 (0) | 6 | 0 | — | built |
 | toggle-group | measured | static | 1 | 5 (4) | 94 | 1 | external-component, island-prop, jsx-const-child, spread-props | built |

@@ -1114,6 +1114,9 @@ impl<'a> Carry<'a> {
                 for a in attrs.iter_mut() {
                     match a {
                         Attr::Static { .. } | Attr::ForwardRef => {}
+                        Attr::CollectionItem { data } => {
+                            self.expr(data, bound, "the data of a collection item")?
+                        }
                         Attr::Dynamic { name, value } => {
                             let what = format!("the attribute `{name}`");
                             self.expr(value, bound, &what)?
@@ -2316,6 +2319,23 @@ impl Walker<'_, '_> {
                     && !self.no_spec.contains(loc)
                     && self.specialisable(&cir, self.renders.iter().any(|r| r.loc == *loc));
                 let island = !matches!(cir.tier, Tier::Static | Tier::Native) && !native_prov;
+                // R34.140: a `<Collection.Slot>` over a component hands it the root marker, which only a native instance's
+                // host prints; a static (hostless) component or a React island would drop it, and `getItems()` would find
+                // nothing where React finds the items (fail closed)
+                if props
+                    .iter()
+                    .any(|(k, _)| k == crate::ir::COLLECTION_ROOT_PROP)
+                    && !matches!(cir.tier, Tier::Native)
+                {
+                    diags.push(Diagnostic::fallback(
+                        "collection-shape",
+                        format!(
+                            "<Collection.Slot> wraps <{name}>, which is not a native component with a host of its own to carry the collection root"
+                        ),
+                        *loc,
+                        "put the Slot around an element, or around a component that holds state",
+                    ));
+                }
                 // F3 (fail closed): a Provider that is lowered away no longer shares a React tree with an island
                 // under it, which would hydrate standalone and read the context DEFAULT. Any island (or a static
                 // child holding one) under an active frame, or inside a Provider's own tree, keeps the page React.
@@ -5230,6 +5250,7 @@ impl Walker<'_, '_> {
                 .reads_state(value)
                 .then_some(("slot-child-attr", "an attribute that changes on the client")),
             Attr::Event { .. } => Some(("slot-handler", "an event handler")),
+            Attr::CollectionItem { .. } => Some(("slot-child-shape", "a collection item")),
             Attr::Ref { .. } => Some(("slot-ref", "a ref")),
             Attr::Spread(_) | Attr::InnerHtml { .. } => {
                 Some(("slot-child-shape", "a spread or dangerouslySetInnerHTML"))
@@ -5538,6 +5559,11 @@ impl Walker<'_, '_> {
                     for a in attrs {
                         match a {
                             Attr::ForwardRef => {}
+                            Attr::CollectionItem { .. } => {
+                                return Err(
+                                    "a collection item (its data is read on the client)".into()
+                                );
+                            }
                             Attr::Static { name, value } if value.is_empty() => {
                                 if !BOOLEAN_ATTRS.contains(&name.as_str()) {
                                     return Err(format!(

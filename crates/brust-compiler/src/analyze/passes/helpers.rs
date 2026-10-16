@@ -59,6 +59,7 @@ impl Cx<'_> {
                         Attr::Dynamic { value, .. }
                         | Attr::Spread(value)
                         | Attr::InnerHtml { value } => self.expr(value),
+                        Attr::CollectionItem { data } => self.expr(data),
                         Attr::Static { .. }
                         | Attr::Event { .. }
                         | Attr::Ref { .. }
