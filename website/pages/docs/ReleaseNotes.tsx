@@ -42,7 +42,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-17">2.0.0-alpha.17 · 17 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#311 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
+      {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#311 including #304 and #306 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
       <p>This version closes several cases where a compiled component showed stale or missing output, including a regression from 2.0.0-alpha.16, and it compiles more Radix patterns to native code. Upgrade if you use a Provider that spreads its props or a component whose props change while the page is open.</p>
 
       <h3>New</h3>
@@ -118,6 +118,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #296 (F282), PR #299 (F318), PR #311 (F333) */}
         <li>
           <strong>Objects keep JavaScript&rsquo;s key order.</strong> Keys were sorted in a style object handed to a React island, in an object read at request time (<code>Object.keys</code> and <code>Object.entries</code> over loader, job or store data), and in an object literal passed to a compiled child. <code>{'{'} marginTop: 5, margin: 0 {'}'}</code> printed <code>margin:0;margin-top:5px</code>, so the longhand won where React ends with <code>margin-top: 0</code>. The order now follows the source, and the first paint equals React&rsquo;s.
+        </li>
+        {/* source: PR #306 (F321, F322) */}
+        <li>
+          <strong>Two requests whose objects differ only in key order no longer share a cached render, and integer-like keys come first.</strong> The cache key sorted the keys, so a second request with the same keys in another order could be answered with the page printed in the first order. The cache key now includes the order when it matters. Keys such as <code>&quot;2&quot;</code> and <code>&quot;10&quot;</code> are listed first in ascending order, then the others in the order written, as JavaScript lists them.
         </li>
         {/* source: PR #296 (F311) */}
         <li>
