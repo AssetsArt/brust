@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 223 | 117 | 16 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 182 | 50 | 56 | 76 | 0 | 0 | 0 | 0 |
+| C Hooks | 189 | 56 | 56 | 77 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 562 | 243 | 101 | 214 | 3 | 1 | 0 | 0 |
+| **Total** | 569 | 249 | 101 | 215 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -402,6 +402,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-key-live-outside-list | a key that changes on an element that is not a list body | react | react | ssr | ok | 5.4 | fallback:key-outside-list | F308: React remounts on a key change (state resets), brust keeps the instance: key-outside-list refuses |
 | c-key-literal-outside-list | a literal key on an element that is not a list body | native | native | 0 | ok | 4.6 | warning:key-outside-list | F308: a literal key never changes, so it only warns (key-outside-list) |
 | c-key-live-through-spread | a changing key written through a spread of an object literal | react | react | ssr | ok | 5.4 | fallback:key-outside-list | F334: a key through a spread is React's key: a changing one remounts, so key-outside-list refuses |
+| c-key-path-spread-component | a props path spread onto a component (may carry a changing key) | react | react | ssr | ok | 4.0 | fallback:key-outside-list | F335: the object may hold a key that changes (React remounts the child): key-outside-list; on a host element it stays native (known limit) |
 | c-useid-in-key | useId() called in an element key | react | react | ssr | ok | 4.0 | fallback:hook-in-expression, fallback:key-outside-list | F235: the JSX runtime evaluates key after the props, so the hook is refused there (hook-in-expression) |
 | c-useid-logical-assign | useId() on the right side of `??=` in the returned tree | react | react | ssr | ok | 4.0 | fallback:hook-in-expression | F236: the right side of \|\|=, &&=, ??= runs conditionally, so the hook is refused there (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | 5.0 | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |
@@ -496,6 +497,12 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-scope-token-host | a scope token spread on a host element | react | react | ssr | ok | 4.0 | fallback:context-island | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
 | c-scope-token-value | a scope token read as a value | react | react | ssr | ok | 4.0 | fallback:context-island | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
 | c-scope-by-name | a hook named like a scope hook that createContextScope did not make | react | react | ssr | ok | 4.0 | fallback:local-component | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
+| c-chain | an early return chain of two ifs and a final return, with a const in each branch | static | static | 0 | ok | 0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-throw | an early return chain on a prop that ends in throw new Error(literal) (Radix ToggleGroup root) | static | static | 0 | ok | 0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-rest | a rest aliased in each branch of a type switch (const singleProps = rest) with a module const object as discriminant | static | static | 0 | ok | 0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-throw-state | an early return chain that ends in a throw, tested on state | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-throw-msg | a chain that ends in throw new Error(prop) | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-throw-value | a chain that ends in throw of a string | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
 
 ## D. API surface
 

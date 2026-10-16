@@ -217,15 +217,6 @@
       "libraryComponents": 1
     },
     {
-      "blocker": "fallback:client-function-in-job",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 0
-    },
-    {
       "blocker": "fallback:instance-prop-path",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -242,6 +233,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 1
+    },
+    {
+      "blocker": "fallback:client-function-in-job",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:event-capture",
