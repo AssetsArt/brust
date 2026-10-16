@@ -2,8 +2,8 @@
 // ONE run at a time, and every change that arrives while a run is in flight is kept for the next
 // run (post-mortem 8f29c26: an edit during a rebuild was dropped). `run` receives the app-relative
 // paths that changed since the previous run started.
-import { type FSWatcher, statSync, watch } from 'node:fs'
-import { join, sep } from 'node:path'
+import { type FSWatcher, readdirSync, statSync, watch } from 'node:fs'
+import { join, relative, resolve, sep } from 'node:path'
 
 export interface WatchLoop {
   /** Queue a run as if `rel` changed (the `r` hotkey, tests). */
@@ -14,7 +14,36 @@ export interface WatchLoop {
   idle(): Promise<void>
 }
 
-export function watchLoop(o: { root: string; ignored: (rel: string) => boolean; debounceMs: number; run: (changed: Set<string>) => Promise<void> }): WatchLoop {
+/** F273: a source root holding more files than this gets a warning (a root that broad slows every rebuild check). */
+export const ROOT_FILE_WARN = 5_000
+
+/** Files under `dir` (skipping dependency/VCS dirs), counting stops once past `limit`. */
+export function countFiles(dir: string, limit: number): number {
+  let n = 0
+  const walk = (d: string): void => {
+    let ents: import('node:fs').Dirent[]
+    try {
+      ents = readdirSync(d, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of ents) {
+      if (n > limit) return
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name)) walk(join(d, e.name))
+      } else n++
+    }
+  }
+  walk(dir)
+  return n
+}
+
+/** Warning lines for source roots broader than `ROOT_FILE_WARN` files; `roots` are absolute. */
+export function broadRootWarnings(roots: string[], appRoot: string, limit = ROOT_FILE_WARN): string[] {
+  return roots.flatMap((r) => (countFiles(r, limit) > limit ? [`[brust] warning: source root ${relative(appRoot, r) || r} holds more than ${limit} files; watching it slows every change check. Point source_roots at a narrower directory`] : []))
+}
+
+export function watchLoop(o: { root: string; /** F273: `[build] source_roots`, absolute: watched too; their changes are reported app-relative (`../shared/x.ts`). */ extraRoots?: string[]; ignored: (rel: string) => boolean; debounceMs: number; run: (changed: Set<string>) => Promise<void> }): WatchLoop {
   let pending = new Set<string>()
   let timer: ReturnType<typeof setTimeout> | undefined
   let running = false
@@ -44,24 +73,36 @@ export function watchLoop(o: { root: string; ignored: (rel: string) => boolean; 
     clearTimeout(timer)
     timer = setTimeout(() => void pump(), o.debounceMs)
   }
-  const watcher: FSWatcher = watch(o.root, { recursive: true }, (_ev, name) => {
+  const onEvent = (base: string) => (_ev: string, name: string | null) => {
     if (!name) return
-    const rel = String(name).split(sep).join('/')
+    const abs = join(base, String(name))
+    const rel = (base === o.root ? String(name) : relative(o.root, abs)).split(sep).join('/')
     if (o.ignored(rel)) return
     // A directory's own event is metadata noise (reading a dir bumps its atime, which FSEvents reports): a real
     // change inside it reports the file itself. A path that no longer exists is a delete, which counts.
     try {
-      if (statSync(join(o.root, rel)).isDirectory()) return
+      if (statSync(abs).isDirectory()) return
     } catch {}
     queue(rel)
-  })
+  }
+  const watchers: FSWatcher[] = [watch(o.root, { recursive: true }, onEvent(o.root))]
+  for (const r of o.extraRoots ?? []) {
+    const abs = resolve(r)
+    // a root inside the app is already watched; one that cannot be watched must not stop the session
+    if (abs === o.root || abs.startsWith(o.root + sep)) continue
+    try {
+      watchers.push(watch(abs, { recursive: true }, onEvent(abs)))
+    } catch (e) {
+      console.error(`[brust] cannot watch source root ${abs}: ${(e as Error).message}`)
+    }
+  }
   return {
     trigger: (rel = '.') => queue(rel),
     close() {
       closed = true
       clearTimeout(timer)
       pending.clear()
-      watcher.close()
+      for (const w of watchers) w.close()
       for (const w of idleWaiters.splice(0)) w()
     },
     idle: () => (!running && pending.size === 0 ? Promise.resolve() : new Promise<void>((r) => idleWaiters.push(r))),

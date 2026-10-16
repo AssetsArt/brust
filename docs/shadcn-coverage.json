@@ -42,7 +42,7 @@
       "classification": "survey truth (today's rule; R34.7 removes it)",
       "measuredRows": 37,
       "analysisOnlyRows": 0,
-      "appComponents": 135,
+      "appComponents": 133,
       "libraryComponents": 151
     },
     {
@@ -51,8 +51,8 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 32,
       "analysisOnlyRows": 0,
-      "appComponents": 123,
-      "libraryComponents": 180
+      "appComponents": 121,
+      "libraryComponents": 178
     },
     {
       "blocker": "fallback:island-prop",
@@ -178,7 +178,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 10
+      "libraryComponents": 12
     },
     {
       "blocker": "fallback:local-component",
@@ -331,7 +331,7 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 54
+      "libraryComponents": 53
     },
     {
       "blocker": "error:unresolved-import (published .js/.mjs module is not followed)",
@@ -397,18 +397,18 @@
       "libraryComponents": 18
     },
     {
-      "blocker": "fallback:prop-pattern",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 16
-    },
-    {
       "blocker": "createPortal / Portal",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 15
+    },
+    {
+      "blocker": "fallback:prop-pattern",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
@@ -460,15 +460,6 @@
       "libraryComponents": 4
     },
     {
-      "blocker": "fallback:ref-in-render",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 3
-    },
-    {
       "blocker": "fallback:prop-jinja-name",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -506,6 +497,15 @@
     },
     {
       "blocker": "fallback:raw-text-child",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 1
+    },
+    {
+      "blocker": "fallback:ref-in-render",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
@@ -842,7 +842,7 @@
       "tier": "react",
       "islands": 1,
       "components": 25,
-      "reactComponents": 16,
+      "reactComponents": 14,
       "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
@@ -1236,8 +1236,8 @@
       "tier": "react",
       "islands": 1,
       "components": 21,
-      "reactComponents": 15,
-      "jsGzipKb": 101,
+      "reactComponents": 13,
+      "jsGzipKb": 100,
       "workerCalls": 1,
       "codes": [
         "context-island",

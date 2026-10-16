@@ -354,3 +354,5 @@ jobs:
       - run: bun run m2-exit && git diff --exit-code docs/plans/m2-exit-report.md
       - run: bun test scripts/m2-exit
       - run: bun test scripts/release-check.test.ts scripts/core-cf-check.test.ts
+      # F264: the generated-names fixture is generated; stale or out of step with the cargo/Chromium tables fails.
+      - run: bun test scripts/gen-generated-names.test.ts

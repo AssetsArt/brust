@@ -36,6 +36,16 @@ pub struct RenderProp {
     pub body: Vec<crate::ir::Node>,
 }
 
+/// F279: a module function the plain-function proof accepted whose body is ONE `return <expression>` over its
+/// parameters (`function getState(checked) { return checked ? 'checked' : 'unchecked' }`): a call with plain-read
+/// arguments is that expression with the arguments put in, so a server expression stands where a job would run it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct InlineFn {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: RawExpr,
+}
+
 /// The context fields a component reads (`const context = useXContext(...)`, then `context.field`). Each field is a
 /// hidden prop `__ctx_<context>_<field>` (`ctx_prop`) the call site fills from the nearest Provider frame.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

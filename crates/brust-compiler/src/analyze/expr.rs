@@ -29,6 +29,10 @@ pub struct Reader<'r, 'a> {
     pub provides: Vec<crate::ir::ProvideDecl>,
     /// B7: render-prop arrows written on components, read as templates (`ir::RenderProp`).
     pub render_props: Vec<crate::ir::RenderProp>,
+    /// B7: the code being read is the verbatim copy of an arrow whose body was also read as a template. The copy is
+    /// used only if its call site cannot be specialised, and that call site then falls back anyway (`island-prop`),
+    /// so what the copy reads as written (`...rest`, a snapshot ref, a context local) is not an escape of this component.
+    pub verbatim_unused: bool,
     /// `useId()` calls hoisted out of the return expression (R34.120), by call address: each reads as the local the
     /// component declares for it.
     pub hoisted_calls: std::collections::HashMap<usize, String>,
@@ -45,6 +49,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             map_callback: false,
             provides: Vec::new(),
             render_props: Vec::new(),
+            verbatim_unused: false,
             hoisted_calls: std::collections::HashMap::new(),
         }
     }
@@ -403,6 +408,9 @@ impl<'r, 'a> Reader<'r, 'a> {
     /// B4: a ref held as a state cell is read as `.current` only in structured code; printed as written it would read
     /// `.current` off the value. Recorded so the component keeps the old `ref-in-render` fallback.
     fn snapshot_in_verbatim(&self, w: &Walk, loc: u32) {
+        if self.verbatim_unused {
+            return;
+        }
         if self.names.snapshot_escape.get().is_none()
             && w.used.iter().any(|r| self.names.is_snapshot_ref(*r))
         {
@@ -411,6 +419,9 @@ impl<'r, 'a> Reader<'r, 'a> {
     }
 
     fn rest_in_verbatim(&self, w: &Walk, loc: u32) {
+        if self.verbatim_unused {
+            return;
+        }
         if self.names.rest_escape.get().is_none() && w.used.iter().any(|r| self.names.is_rest(*r)) {
             self.names.rest_escape.set(Some(loc));
         }
@@ -850,6 +861,9 @@ pub struct Walk {
     /// `(binding, read)`: a binding declared or assigned from a value that reads `read` (`const s = slots`,
     /// `s = { a: slots }`), so writing through the binding may write into `read`.
     pub flows: Vec<(js_ast::Ref, js_ast::Ref)>,
+    /// `(base, member, base start)` of each `base.member` / `base['member']` read whose base is an identifier; the member
+    /// is empty for a computed one (`base[key]`). The base is also in `used_at`.
+    pub member_reads: Vec<(js_ast::Ref, String, i32)>,
     /// B4: the start of each identifier expression that is the object of a `.current` member read.
     pub current_reads: Vec<i32>,
     /// B4: identifiers read inside a nested function (a handler, an effect, a callback), where a ref is not a render read.
@@ -1104,6 +1118,17 @@ impl Walk {
                 c.args.iter().for_each(|x| self.expr(x));
             }
             E::EDot(d) => {
+                if let Some(base) = match &d.target.data {
+                    E::EIdentifier(id) => Some(id.ref_),
+                    E::EImportIdentifier(id) => Some(id.ref_),
+                    _ => None,
+                } {
+                    self.member_reads.push((
+                        base,
+                        String::from_utf8_lossy(d.name.slice()).into_owned(),
+                        d.target.loc.start,
+                    ));
+                }
                 if d.name.slice() == b"current"
                     && let E::EIdentifier(_) = &d.target.data
                 {
@@ -1112,6 +1137,17 @@ impl Walk {
                 self.expr(&d.target)
             }
             E::EIndex(i) => {
+                if let Some(base) = match &i.target.data {
+                    E::EIdentifier(id) => Some(id.ref_),
+                    E::EImportIdentifier(id) => Some(id.ref_),
+                    _ => None,
+                } {
+                    let member = match &i.index.data {
+                        E::EString(s) => estring(s),
+                        _ => String::new(),
+                    };
+                    self.member_reads.push((base, member, i.target.loc.start));
+                }
                 self.expr(&i.target);
                 self.expr(&i.index);
             }

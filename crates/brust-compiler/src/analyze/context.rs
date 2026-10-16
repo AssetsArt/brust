@@ -140,7 +140,7 @@ fn field_bad(
     callee: bool,
     native: bool,
 ) -> Option<String> {
-    use crate::ir::{Expr, IdentKind, RawKind};
+    use crate::ir::{Expr, IdentKind, RawKind, ServerExpr};
     if depth > 8 {
         return Some("a chain of derived values deeper than 8".into());
     }
@@ -158,6 +158,23 @@ fn field_bad(
                 if let Some(d) = ir.derived.iter().find(|d| &d.name == name) {
                     return match &d.expr {
                         Expr::Raw(e) => field_bad(ir, e, depth + 1, false, native),
+                        // F269: a native frame hands out a derived value over state as the component wrote it. Placement
+                        // may have turned it into another form (a server expression, a client-only or precomputed
+                        // value; the structural IR keeps the written one). Only a plain combination of reads: a call (a helper, F174) keeps the answer it had.
+                        Expr::Server(ServerExpr(e)) if native && calls_nothing(e) => {
+                            field_bad(ir, e, depth + 1, false, native)
+                        }
+                        _ if native => match ir
+                            .structural
+                            .as_ref()
+                            .and_then(|s| s.derived.iter().find(|x| &x.name == name))
+                            .map(|x| &x.expr)
+                        {
+                            Some(Expr::Raw(e)) if calls_nothing(e) => {
+                                field_bad(ir, e, depth + 1, false, native)
+                            }
+                            _ => Some(format!("`{name}`, which is not a plain expression")),
+                        },
                         _ => Some(format!("`{name}`, which is not a plain expression")),
                     };
                 }
@@ -207,6 +224,31 @@ fn field_bad(
         RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => {
             Some("a function or an expression outside the subset".into())
         }
+    }
+}
+
+/// `e` combines reads with operators, conditionals and methods of values only (no call of a function by name, no
+/// function or JSX).
+fn calls_nothing(e: &crate::ir::RawExpr) -> bool {
+    use crate::ir::RawKind;
+    match &e.kind {
+        RawKind::Lit(_) | RawKind::Ident { .. } => true,
+        RawKind::Member { target, .. } | RawKind::Unary { value: target, .. } => {
+            calls_nothing(target)
+        }
+        RawKind::Index { target, index } => calls_nothing(target) && calls_nothing(index),
+        RawKind::Binary { left, right, .. } => calls_nothing(left) && calls_nothing(right),
+        // A method of a value (`control.closest('form')`): the value is what it is called on. A function by name (a
+        // helper of the module) is not, F174.
+        RawKind::Call { callee, args } => {
+            matches!(callee.kind, RawKind::Member { .. })
+                && calls_nothing(callee)
+                && args.iter().all(calls_nothing)
+        }
+        RawKind::Cond { test, yes, no } => {
+            calls_nothing(test) && calls_nothing(yes) && calls_nothing(no)
+        }
+        _ => false,
     }
 }
 

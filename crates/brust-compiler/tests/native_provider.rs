@@ -135,8 +135,6 @@ fn call_sites_with_different_text_share_one_factory_module_and_keep_their_own_id
 #[test]
 fn shapes_the_splice_cannot_carry_keep_the_island_provider_and_say_why() {
     for (file, why) in [
-        ("handler.tsx", "handler"),
-        ("prop.tsx", "title"),
         ("gated.tsx", "children as a value"),
         ("local.tsx", "declared in the module"),
     ] {
@@ -212,6 +210,10 @@ fn a_render_prop_the_provider_only_calls_is_spliced_into_the_clone() {
         "render_guarded.tsx",
         "render_bare.tsx",
         "render_noparams.tsx",
+        // F266: `render(ctx)` with `const ctx = { on }`
+        "render_ctx.tsx",
+        // F269: `!!el.closest('form')` over state is a boolean
+        "render_not.tsx",
     ] {
         let all = compile(file);
         let root = &all[0];
@@ -236,7 +238,6 @@ fn a_render_prop_that_cannot_be_spliced_keeps_the_island_provider() {
     for (file, why) in [
         ("render_used.tsx", "render"),
         ("render_calc.tsx", "computation"),
-        ("render_free.tsx", "title"),
         // capture: the row binds `on`, which the substituted argument (the Provider's state `on`) also names
         ("render_capture.tsx", "binds `on`"),
     ] {
@@ -267,6 +268,62 @@ fn a_provider_in_a_render_body_does_not_provide_to_the_writers_children() {
     let all = compile("render_provider.tsx");
     for i in &all {
         assert!(!i.jinja.contains("inner"), "{}: {}", i.ir.id, i.jinja);
+    }
+}
+
+// S2 (R34.123, F262): the call site's names read in the content cross as hidden inputs of the clone.
+#[test]
+fn a_name_of_the_call_sites_component_in_the_content_is_a_hidden_input_of_the_clone() {
+    for (file, seen, input) in [
+        ("prop.tsx", "title", "__in_title"),
+        ("handler.tsx", "__in_n", "__in_n"),
+    ] {
+        let all = compile(file);
+        let root = &all[0];
+        assert!(!is_react(&root.ir), "{file}: {:?}", root.ir.diagnostics);
+        let c = clones(&all);
+        assert_eq!(c.len(), 1, "{file}: {:?}", root.ir.diagnostics);
+        assert!(matches!(c[0].ir.tier, Tier::Native), "{file}");
+        // the call site fills the input with its own value
+        assert!(root.jinja.contains(seen), "{file}: {}", root.jinja);
+        assert!(c[0].ir.props.iter().any(|p| p.name == input), "{file}");
+    }
+    // a constant name stays fixed in the clone: printed once, no directive
+    let all = compile("prop.tsx");
+    let c = &clones(&all)[0];
+    assert_eq!(c.ir.fixed_props, vec!["__in_title".to_string()]);
+    assert!(!c.jinja.contains("x-text"), "{}", c.jinja);
+    // a handler of the call site is called through a prop of the clone
+    let all = compile("handler.tsx");
+    let c = &clones(&all)[0];
+    assert!(
+        c.ir.handlers.iter().any(|h| h.name == "__inh__h1"),
+        "{:?}",
+        c.ir.handlers
+    );
+    assert!(c.jinja.contains("x-on-click=\"__inh__h1\""), "{}", c.jinja);
+}
+
+#[test]
+fn names_that_cannot_cross_keep_the_island_provider_and_say_which() {
+    for (file, why) in [
+        ("in_ref.tsx", "ref `r`"),
+        ("in_row.tsx", "enclosing list"),
+        ("in_props.tsx", "whole props"),
+        ("in_fn.tsx", "module-level"),
+        ("in_import.tsx", "an import"),
+        // O1: a live value of the page printed inside another native host's markup is bound by the wrong instance
+        ("in_live_nested.tsx", "changes on the client"),
+    ] {
+        let all = compile(file);
+        assert!(clones(&all).is_empty(), "{file}: nothing was specialised");
+        let info = all[0]
+            .ir
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "specialise-unsupported")
+            .unwrap_or_else(|| panic!("{file}: {:?}", all[0].ir.diagnostics));
+        assert!(info.message.contains(why), "{file}: {}", info.message);
     }
 }
 
@@ -322,4 +379,170 @@ fn an_as_child_consumer_keeps_its_limits() {
             .unwrap_or_else(|| panic!("{file}: {:?}", all[0].ir.diagnostics));
         assert!(info.message.contains(want), "{file}: {}", info.message);
     }
+}
+
+// F266: a `const` object literal of plain reads spreads as its entries.
+#[test]
+fn a_const_object_literal_is_spread_as_its_entries() {
+    let all = compile("spread_const.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert!(
+        !root.ir.diagnostics.iter().any(|d| d.rule == "spread-props"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    assert!(root.jinja.contains("data-tone"), "{}", root.jinja);
+}
+
+// F269: a frame field that is a derived value over a prop and state is a member of the clone's own instance.
+#[test]
+fn a_frame_field_derived_from_a_prop_and_state_is_carried_by_the_clone() {
+    let all = compile("derived_frame.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", root.ir.diagnostics);
+}
+
+// Mellow F1 (switch-provider): a const object that is written (at load, through an alias, or in the body) is not its
+// literal: the spread never prints the literal's value.
+#[test]
+fn a_const_object_that_is_written_is_not_spread_as_its_literal() {
+    for file in [
+        "mut_module.tsx",
+        "mut_alias.tsx",
+        "mut_body.tsx",
+        "proto_key.tsx",
+    ] {
+        let all = compile(file);
+        let root = &all[0];
+        assert!(
+            !root.jinja.contains("\"sm\"") && !root.jinja.contains(">sm<"),
+            "{file}: {}",
+            root.jinja
+        );
+    }
+}
+
+// F267: a `ref` of the component's own bound on the one element an inlined forwardRef child hands its ref to.
+#[test]
+fn a_ref_passed_to_an_inlined_forward_ref_child_binds_on_its_element() {
+    for file in ["fwd_ref.tsx", "fwd_cb.tsx"] {
+        let all = compile(file);
+        let root = &all[0];
+        assert!(!is_react(&root.ir), "{file}: {:?}", root.ir.diagnostics);
+        assert!(
+            !has(&root.ir, DiagClass::Fallback, "forwardref-ref"),
+            "{file}: {:?}",
+            root.ir.diagnostics
+        );
+        // the parent binds its ref cell on the child's own button
+        assert!(
+            root.jinja.contains("<button") && root.jinja.contains("x-ref=\"_rf")
+                || root.jinja.contains("x-ref=\"r\""),
+            "{file}: {}",
+            root.jinja
+        );
+    }
+}
+
+#[test]
+fn a_ref_passed_to_a_forward_ref_child_that_may_not_render_stays_react() {
+    // a callback under a condition; a child that renders its element sometimes; a spread after the ref
+    for file in ["fwd_cond.tsx", "fwd_child_cond.tsx", "fwd_spread_after.tsx"] {
+        let all = compile(file);
+        assert!(
+            has(&all[0].ir, DiagClass::Fallback, "forwardref-ref"),
+            "{file}: {:?}",
+            all[0].ir.diagnostics
+        );
+    }
+}
+
+// F267: the content is written in the module of the Provider (Radix's `Switch` renders `SwitchProvider` and
+// `SwitchTrigger`): the clone is compiled where the content was written, so a component of that module is reachable.
+#[test]
+fn content_written_in_the_providers_own_module_is_specialised() {
+    let all = compile("same_module.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    let c = clones(&all);
+    assert_eq!(
+        c.len(),
+        1,
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.diagnostics))
+            .collect::<Vec<_>>()
+    );
+}
+
+// F278: the call site's `...rest` spread into the content crosses as ONE hidden input and is spread there.
+// F279: a call of a single-return module helper with a plain-read argument is its expression, so the consumer has no job.
+#[test]
+fn a_rest_spread_in_the_content_crosses_and_a_plain_helper_call_needs_no_job() {
+    let all = compile("rest_input.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert_eq!(
+        clones(&all).len(),
+        1,
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.diagnostics))
+            .collect::<Vec<_>>()
+    );
+    assert!(root.jinja.contains("data-x"), "{}", root.jinja);
+    // the component that renders the Provider is native too (no island of it is left)
+    assert!(
+        all.iter()
+            .filter(|i| i.ir.id.starts_with("outer_"))
+            .all(|i| !is_react(&i.ir)),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.tier))
+            .collect::<Vec<_>>()
+    );
+    for i in &all {
+        assert!(
+            !i.ir
+                .jobs
+                .iter()
+                .any(|j| matches!(j.kind, JobKind::Precompute)),
+            "{}: {:?}",
+            i.ir.id,
+            i.ir.jobs
+        );
+    }
+}
+
+#[test]
+fn a_helper_called_with_a_computation_keeps_its_job() {
+    let all = compile("helper_neg.tsx");
+    assert!(
+        all.iter().any(|i| i
+            .ir
+            .jobs
+            .iter()
+            .any(|j| matches!(j.kind, JobKind::Precompute))),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.jobs))
+            .collect::<Vec<_>>()
+    );
+}
+
+// Mellow F1 (switch-rest-fed): a LIVE rest crossing as `__in_rest` would stay at its first value (the clone is not
+// linked and a spread is expanded into HTML only), so the call that passes one is refused where the rest is spread.
+#[test]
+fn a_live_caller_rest_is_never_carried_into_a_clone() {
+    let all = compile("rest_live.tsx");
+    let root = &all[0];
+    assert!(
+        is_react(&root.ir) || has(&root.ir, DiagClass::Fallback, "spread-props"),
+        "{:?}\n{}",
+        root.ir.diagnostics,
+        root.jinja
+    );
+    assert!(!root.jinja.contains("data-n=\"0\""), "{}", root.jinja);
 }

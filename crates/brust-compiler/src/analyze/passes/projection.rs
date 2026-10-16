@@ -111,7 +111,10 @@ fn body_reads(n: &Node, st: &PassState, item: &str, out: &mut ItemRead) {
                     Attr::Dynamic { value, .. }
                     | Attr::Spread(value)
                     | Attr::InnerHtml { value } => raw_reads(value, st, item, out),
-                    Attr::Static { .. } | Attr::Event { .. } | Attr::Ref { .. } => {}
+                    Attr::Static { .. }
+                    | Attr::Event { .. }
+                    | Attr::Ref { .. }
+                    | Attr::ForwardRef => {}
                 }
             }
             children.iter().for_each(|c| body_reads(c, st, item, out));

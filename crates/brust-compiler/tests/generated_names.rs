@@ -10,7 +10,9 @@ use brust_compiler::parse::run_on_compiler_thread;
 use brust_compiler::pipeline::compile_tree;
 use lower_common::{bun, lower, repo};
 
-/// Every name the chunk generates itself.
+/// Every name the chunk generates itself. F264: `tests/fixtures/shadcn/repro/generated-names.tsx` is generated from this
+/// table: after a change run `bun scripts/gen-generated-names.ts` to re-bless it (`scripts/gen-generated-names.test.ts`
+/// fails while it is stale, or while the Chromium test's copy differs).
 const NAMES: &[&str] = &[
     "signal",
     "computed",
@@ -87,9 +89,18 @@ export default function T({{ title }}: any) {{
 }
 
 fn parses(file_name: &str, code: &str) -> Result<(), String> {
+    // F265: a missing `bun` is a failure, never a pass. `BRUSTC_ALLOW_NO_BUN=1` is the explicit, loud way to run without it.
     let Some(bun) = bun() else {
-        eprintln!("warning: bun not on PATH; skipping the syntax check");
-        return Ok(());
+        if std::env::var_os("BRUSTC_ALLOW_NO_BUN").is_some() {
+            eprintln!(
+                "warning: BRUSTC_ALLOW_NO_BUN is set and bun is not on PATH: the syntax check is NOT running"
+            );
+            return Ok(());
+        }
+        return Err(
+            "bun is not on PATH, so the syntax check cannot run (set BRUSTC_ALLOW_NO_BUN=1 to skip it on purpose)"
+                .to_string(),
+        );
     };
     let dir = std::env::temp_dir().join(format!("brustc-generated-names-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -330,7 +341,9 @@ fn f257_a_body_local_named_like_a_prop_read_off_the_parameter() {
     ] {
         let a = lower(src);
         // `Math.max` keeps a precompute job (a plain merge prints in the template since F277).
-        let job = a.server_ts.unwrap_or_else(|| panic!("{label}: no job"));
+        let job = a.server_ts.unwrap_or_else(|| {
+            panic!("{label}: no precompute job was emitted, so the test would check nothing")
+        });
         parses(&format!("f257-{}.ts", label.replace(' ', "-")), &job)
             .unwrap_or_else(|e| panic!("{label}: the job does not parse\n{e}\n{job}"));
         let decls = job

@@ -508,6 +508,7 @@ fn read_function_as(
         .chain(reader.names.print_aliases().values().cloned())
         .collect();
     ir.plain_fns = crate::analyze::plain_fn::plain_fns(ast, &*reader.names);
+    ir.inline_fns = crate::analyze::inline_fn::inline_fns(ast, &mut reader, &ir.plain_fns);
     // F215 allowlist: a module `const` is accepted when the folder folds it or `plain_fn` proves it plain.
     let folded = {
         let path = parsed.path();
@@ -560,6 +561,7 @@ fn read_function_as(
         !ir.ctx_uses.is_empty() && ir.source.starts_with(crate::analyze::modules::PKG_SRC_DIR);
     ir.provides = std::mem::take(&mut reader.provides);
     ir.render_props = std::mem::take(&mut reader.render_props);
+    ir.safe_objects = reader.names.safe_object_const_names();
     for u in &ir.ctx_uses {
         for f in &u.fields {
             let name = crate::ir::ctx_prop(&u.context, f);
@@ -725,9 +727,35 @@ fn callback_refs(ir: &mut ComponentIR) {
             Node::For { body, .. } => body
                 .iter_mut()
                 .for_each(|c| walk(c, refs, callable, taken, made, true)),
-            Node::Component { children, .. } => children
-                .iter_mut()
-                .for_each(|c| walk(c, refs, callable, taken, made, true)),
+            Node::Component {
+                loc,
+                props,
+                children,
+                ..
+            } => {
+                // F267: `ref={cb}` on a component: the same mount effect, the ref cell is what the call site binds on
+                // the child's element (the children pass decides whether the child can take it).
+                if !in_list
+                    && let Some((_, Expr::Raw(r))) = props.iter_mut().find(|(k, _)| k == "ref")
+                    && let RawKind::Ident { name, .. } = &mut r.kind
+                    && !refs.contains(name)
+                    && let Some((_, kind)) = callable.iter().find(|(c, _)| c == name)
+                {
+                    let mut k = made.len() + 1;
+                    let rf = loop {
+                        let rf = format!("_rf{k}");
+                        if taken.insert(rf.clone()) {
+                            break rf;
+                        }
+                        k += 1;
+                    };
+                    made.push((rf.clone(), name.clone(), kind.clone(), *loc));
+                    *name = rf;
+                }
+                children
+                    .iter_mut()
+                    .for_each(|c| walk(c, refs, callable, taken, made, true))
+            }
             Node::Fragment(children) => children
                 .iter_mut()
                 .for_each(|c| walk(c, refs, callable, taken, made, in_list)),

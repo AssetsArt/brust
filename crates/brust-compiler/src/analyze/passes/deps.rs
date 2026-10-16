@@ -530,7 +530,10 @@ impl Walker<'_> {
                         Attr::Dynamic { value, .. }
                         | Attr::Spread(value)
                         | Attr::InnerHtml { value } => self.expr(value, out),
-                        Attr::Static { .. } | Attr::Event { .. } | Attr::Ref { .. } => {}
+                        Attr::Static { .. }
+                        | Attr::Event { .. }
+                        | Attr::Ref { .. }
+                        | Attr::ForwardRef => {}
                     }
                 }
                 self.nodes(children, out);
