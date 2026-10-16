@@ -40,28 +40,28 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 37,
+      "measuredRows": 39,
       "analysisOnlyRows": 0,
-      "appComponents": 133,
-      "libraryComponents": 151
+      "appComponents": 135,
+      "libraryComponents": 167
     },
     {
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 32,
+      "measuredRows": 33,
       "analysisOnlyRows": 0,
-      "appComponents": 121,
-      "libraryComponents": 178
+      "appComponents": 123,
+      "libraryComponents": 191
     },
     {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 31,
+      "measuredRows": 32,
       "analysisOnlyRows": 0,
-      "appComponents": 87,
-      "libraryComponents": 176
+      "appComponents": 88,
+      "libraryComponents": 192
     },
     {
       "blocker": "fallback:island-children",
@@ -79,7 +79,25 @@
       "measuredRows": 7,
       "analysisOnlyRows": 0,
       "appComponents": 8,
-      "libraryComponents": 29
+      "libraryComponents": 35
+    },
+    {
+      "blocker": "fallback:hook-unsupported",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 175
+    },
+    {
+      "blocker": "fallback:jsx-expression",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 4,
+      "analysisOnlyRows": 0,
+      "appComponents": 4,
+      "libraryComponents": 8
     },
     {
       "blocker": "fallback:context-island",
@@ -100,40 +118,22 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:hook-unsupported",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 3,
-      "analysisOnlyRows": 0,
-      "appComponents": 3,
-      "libraryComponents": 154
-    },
-    {
       "blocker": "fallback:control-flow",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 3,
       "analysisOnlyRows": 0,
-      "appComponents": 8,
-      "libraryComponents": 36
+      "appComponents": 9,
+      "libraryComponents": 53
     },
     {
-      "blocker": "fallback:jsx-expression",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 3,
-      "analysisOnlyRows": 0,
-      "appComponents": 3,
-      "libraryComponents": 6
-    },
-    {
-      "blocker": "fallback:child-component",
+      "blocker": "fallback:prop-pattern",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 6
+      "libraryComponents": 26
     },
     {
       "blocker": "fallback:hook-shape",
@@ -142,7 +142,7 @@
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 5
+      "libraryComponents": 7
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -169,7 +169,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 36
+      "libraryComponents": 43
     },
     {
       "blocker": "fallback:context-state",
@@ -178,10 +178,10 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 12
+      "libraryComponents": 15
     },
     {
-      "blocker": "fallback:local-component",
+      "blocker": "fallback:child-component",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -205,7 +205,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 1
+      "libraryComponents": 4
     },
     {
       "blocker": "fallback:event-capture",
@@ -277,7 +277,7 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 187
+      "libraryComponents": 188
     },
     {
       "blocker": "useContext / use*Context",
@@ -331,7 +331,7 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 53
+      "libraryComponents": 54
     },
     {
       "blocker": "error:unresolved-import (published .js/.mjs module is not followed)",
@@ -352,13 +352,13 @@
       "libraryComponents": 45
     },
     {
-      "blocker": "Presence",
-      "kind": "construct",
-      "classification": "census (construct present; blocks per the battery row in Why)",
+      "blocker": "fallback:context-escape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 27
+      "libraryComponents": 29
     },
     {
       "blocker": "fallback:context-scope",
@@ -367,7 +367,16 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 25
+      "libraryComponents": 27
+    },
+    {
+      "blocker": "Presence",
+      "kind": "construct",
+      "classification": "census (construct present; blocks per the battery row in Why)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 27
     },
     {
       "blocker": "isValidElement",
@@ -379,36 +388,18 @@
       "libraryComponents": 22
     },
     {
-      "blocker": "fallback:context-escape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 21
-    },
-    {
       "blocker": "fallback:member-tag",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 18
+      "libraryComponents": 20
     },
     {
       "blocker": "createPortal / Portal",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 15
-    },
-    {
-      "blocker": "fallback:prop-pattern",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
@@ -424,16 +415,16 @@
       "libraryComponents": 14
     },
     {
-      "blocker": "fallback:browser-global",
+      "blocker": "fallback:let-var",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 9
+      "libraryComponents": 12
     },
     {
-      "blocker": "fallback:let-var",
+      "blocker": "fallback:browser-global",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
@@ -458,6 +449,24 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 4
+    },
+    {
+      "blocker": "fallback:hook-in-expression",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 2
+    },
+    {
+      "blocker": "fallback:local-component",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 2
     },
     {
       "blocker": "fallback:prop-jinja-name",
@@ -741,8 +750,8 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 9,
-      "reactComponents": 8,
+      "components": 10,
+      "reactComponents": 9,
       "jsGzipKb": 240,
       "workerCalls": 1,
       "codes": [
@@ -751,7 +760,6 @@
         "hook-shape",
         "island-prop",
         "jsx-const-child",
-        "local-component",
         "use-id-in-render"
       ]
     },
@@ -928,15 +936,17 @@
       "basis": "measured",
       "tier": "react",
       "islands": 1,
-      "components": 4,
-      "reactComponents": 3,
+      "components": 5,
+      "reactComponents": 4,
       "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
         "child-component",
+        "external-component",
         "hook-unsupported",
         "island-children",
         "island-prop",
+        "prop-pattern",
         "spread-props"
       ]
     },
@@ -1301,12 +1311,17 @@
       "basis": "measured",
       "tier": "native",
       "islands": 1,
-      "components": 3,
-      "reactComponents": 1,
+      "components": 4,
+      "reactComponents": 2,
       "jsGzipKb": 87,
       "workerCalls": 1,
       "codes": [
-        "child-component"
+        "external-component",
+        "hook-unsupported",
+        "island-prop",
+        "jsx-expression",
+        "prop-pattern",
+        "spread-props"
       ]
     },
     {

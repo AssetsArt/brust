@@ -10,9 +10,9 @@
   },
   "summary": {
     "entries": 58,
-    "native": 11,
+    "native": 12,
     "static": 11,
-    "island": 27,
+    "island": 26,
     "partial": 4,
     "unsupported": 0,
     "n/a": 5
@@ -382,28 +382,32 @@
       "name": "useReducer",
       "group": "hooks",
       "url": "https://react.dev/reference/react/useReducer",
-      "status": "island",
+      "status": "native",
       "rows": [
-        "c-usereducer"
+        "c-usereducer",
+        "c-usereducer-inline"
       ],
       "tiers": [
-        "react"
+        "native"
       ],
-      "diagnostics": [
-        "fallback:hook-unsupported"
-      ],
+      "diagnostics": [],
       "shapes": [
         {
           "row": "c-usereducer",
           "authoring": "useReducer",
-          "expected": "react",
-          "observed": "react",
-          "diagnostics": [
-            "fallback:hook-unsupported"
-          ]
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
+        },
+        {
+          "row": "c-usereducer-inline",
+          "authoring": "useReducer with an inline reducer",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
         }
       ],
-      "note": "useReducer"
+      "note": "F285: a state cell and one stable dispatch handler (was react, hook-unsupported)"
     },
     {
       "name": "useRef",

@@ -1,7 +1,7 @@
 // components/TeamBuilder.tsx — react tier on purpose (useReducer for `open`): SSR + idle hydration (S12). The roster is the
 // unified `team` store: the SSR scope is seeded from the snapshot, so the first client snapshot equals the server paint (D8).
 import { useStore } from '@brust/core/store/react'
-import { useReducer } from 'react'
+import { useReducer, useTransition } from 'react'
 import { removeMember } from '../lib/team-client'
 import { team } from '../stores/team'
 
@@ -9,6 +9,7 @@ const flip = (open: boolean): boolean => !open
 
 export default function TeamBuilder() {
   const { members, max } = useStore(team)
+  useTransition()
   const [open, toggle] = useReducer(flip, false)
   return (
     <div className="fixed bottom-5 right-5 z-[200]">

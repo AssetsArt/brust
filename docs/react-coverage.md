@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
-| B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 84 | 17 | 26 | 41 | 0 | 0 | 0 | 0 |
+| B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
+| C Hooks | 98 | 18 | 36 | 44 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 457 | 205 | 70 | 178 | 3 | 1 | 0 | 0 |
+| **Total** | 474 | 209 | 80 | 181 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -95,7 +95,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-two-islands-one-file | two react islands from one file on one page | static | static | ssr, ssr | ok | 3.8 | — | R34.11: each export is its own island id; one module instance of the file per chunk set (browser test: shared module state) |
 | b-island-via-index | react island re-exported through an index (export { X } from) | static | static | ssr | ok | 3.8 | — | R34.11: the barrel is followed to the declaring module; the island has the same id however it is imported |
 | b-export-alias-island | react island exported under another name (export { X as Y }) | static | static | ssr | ok | 3.8 | — | R34.11: imported as `Panel`, declared as `Inner` |
-| b-export-const-island | react island declared as export const (arrow function) | static | static | ssr | ok | 3.8 | fallback:child-component | R34.11/R34.10: a binding the compiler does not read stays an island (fail closed); the build imports `{ Panel }` |
+| b-export-const-island | react island declared as export const (arrow function) | static | static | ssr | ok | 3.8 | — | R34.11/R34.10: a binding the compiler does not read stays an island (fail closed); the build imports `{ Panel }` |
 | b-island-children-text | text children into a react island | static | static | ssr | ok | 3.8 | — | R34.21 (F138e): constant children lower to a JSON tree in the island props and the page stays static; hydrates in tests/server/island-children.chromium.test.ts |
 | b-island-children-tree | element tree as children of a react island | static | static | ssr | ok | 3.8 | — | R34.21: host elements, attributes and text lower; the island revives them with createElement |
 | b-island-children-component | static and react components inside an island's children | static | static | ssr | ok | 3.8 | — | R34.22: the tree names components by id; the island entry and the SSR job import them (a registry) and revive one tree |
@@ -302,6 +302,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-pkg-dynamic-spread | a package leaf spreading an object computed by a call | static | static | ssr | ok | 3.8 | fallback:external-component | F153c fail closed: spread-props in the source, so the island of the published export |
 | b-absent-prop-default | a native child whose defaulted prop the call site omits (`<Ch />`, `defaultOpen = false`), in a static page | static | static | 0 | ok | 4.4 | — | F234: an omitted prop is left out of the x-props seed (the default applies on the client as on the server); an explicit null stays null |
 | b-pkg-namespace-barrel | a component reached through a package barrel (`export * as X from`) | static | static | 0 | ok | 0 | — | F153c: the `radix-ui` barrel shape (`export * as Label from '@radix-ui/react-label'`) is followed to the member |
+| b-arrow-const-component | `const X: React.FC<P> = (props) => …` exported by name and under an alias, used by a parent | static | static | 0 | ok | 4.4 | — | F284: an arrow-const component is read as the function declaration of that name |
+| b-arrow-const-async | an async arrow-const component | static | static | ssr | ok | 3.8 | fallback:child-component | F284: only a plain arrow is read as a function declaration; an async one stays the island that imports the binding |
+| b-arrow-const-arguments | an arrow-const component that reads `arguments` | static | static | ssr | ok | 3.8 | fallback:child-component | F284: an arrow has no `arguments` of its own (a ReferenceError at module level), so it is not read as a function declaration |
 
 ## C. Hooks
 
@@ -315,7 +318,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useref | useRef bound with ref= | native | native | 0 | ok | 4.4 | — | spec §4.3 useRef |
 | c-useid | useId read in render | static | static | 0 | ok | 0 | — | spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static |
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | 4.4 | — | spec §4.3 useLayoutEffect |
-| c-usereducer | useReducer | react | react | ssr | ok | 3.8 | fallback:hook-unsupported |  |
+| c-usereducer | useReducer | native | native | 0 | ok | 4.4 | — | F285: a state cell and one stable dispatch handler (was react, hook-unsupported) |
 | c-usecontext | useContext | react | react | ssr | ok | 3.8 | fallback:context-escape |  |
 | c-custom-hook | custom hook | native | native | 0 | ok | 4.4 | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
 | c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | 4.4 | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
@@ -391,6 +394,20 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-native-provider-outer-frame | a consumer of an outer Provider inside another Provider's content | static | static | ssr | ok | 5.1 | info:specialise-unsupported | A1: the outer frame's expressions would be read against the inner clone's members |
 | c-native-provider-ctx-in-effect | a consumer that reads the context inside an effect | static | static | ssr | ok | 3.8 | info:specialise-unsupported | context-escape: a context local is not a value in code printed as written |
 | c-handler-binding-named-a | a handler that reads a component binding named a | native | native | 0 | ok | 4.4 | — | F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array |
+| c-usereducer-inline | useReducer with an inline reducer | native | native | 0 | ok | 4.4 | — | F285: a state cell and ONE dispatch handler (stable identity) that applies the reducer inside the setter's updater |
+| c-usereducer-module-switch | useReducer with a module reducer (switch over action.type, object spread) | native | native | 0 | ok | 4.4 | — | F285: the pure-reducer proof reads a switch, a spread and a member read |
+| c-usereducer-init-fn | useReducer(reducer, arg, init) | native | native | 0 | ok | 4.4 | — | F285: the initial state is init(arg) |
+| c-usereducer-custom-hook | a custom hook that returns useReducer(...) (Radix useStateMachine) | native | native | 0 | ok | 4.4 | — | F285 + F286: the returned useReducer is the pair the call site destructures |
+| c-usereducer-impure | useReducer whose reducer writes a module variable | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: reducer-impure, named; an impure reducer would run once where React may run it twice |
+| c-usereducer-imported-reducer | useReducer with a reducer imported from another module | react | react | ssr | ok | 3.8 | fallback:reducer-shape | F285: reducer-shape, named; the compiler reads the reducer it proves pure, in this module |
+| c-hook-hoist-object | a custom hook returning an object whose properties are hook calls | native | native | 0 | ok | 4.4 | — | F286: an unconditional hook call in a returned object property is hoisted before the return, in source order |
+| c-hook-hoist-return | custom hooks that return useState(...) and useCallback(...) | native | native | 0 | ok | 4.4 | — | F286: a hook call in the return position is the pair or the value the call site binds |
+| c-hook-hoist-conditional | a hook call in a conditional property of a returned object | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | F286: only unconditional positions are hoisted; a conditional hook call stays refused |
+| c-hook-hoist-function | a hook call inside a function property of a returned object | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | F286: a hook call inside a function is not a render-time call; refused |
+| c-includes-literals-state | [literals].includes(state) over state seeded from a prop the page changes | native | native | 0 | ok | 4.4 | — | F287: the strict-equality chain the template and the chunk already print, so no per-instance server job |
+| c-includes-literals-mixed | [strings, null, 0, true].includes(prop) | static | static | 0 | ok | 0 | — | F287: strict equality over every literal kind (null, 0, true included) |
+| c-includes-nan-member | [NaN, 1].includes(state) | native | native | precompute | ok | 4.4 | — | F287: a NaN member is SameValueZero, not ===: the call is left to JS (a job), never rewritten |
+| c-includes-string-receiver | 'abc'.includes(state): a string receiver | native | native | precompute | ok | 4.4 | — | F287: a substring test is not a membership chain; only an array literal receiver is rewritten |
 
 ## D. API surface
 
@@ -512,10 +529,10 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 
 | Status | Entries |
 |---|---|
-| native | 11 |
+| native | 12 |
 | static | 11 |
 | partial | 4 |
-| island | 27 |
+| island | 26 |
 | unsupported | 0 |
 | n/a | 5 |
 | **Total** | 58 |
@@ -537,7 +554,7 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 | [`useLayoutEffect`](https://react.dev/reference/react/useLayoutEffect) | native | c-uselayouteffect | spec §4.3 useLayoutEffect |
 | [`useMemo`](https://react.dev/reference/react/useMemo) | native | c-usememo | spec §4.3 useMemo |
 | [`useOptimistic`](https://react.dev/reference/react/useOptimistic) | island | c-useoptimistic | spec §3 react tier: any hook outside §4.3 |
-| [`useReducer`](https://react.dev/reference/react/useReducer) | island | c-usereducer | useReducer |
+| [`useReducer`](https://react.dev/reference/react/useReducer) | native | c-usereducer, c-usereducer-inline | F285: a state cell and one stable dispatch handler (was react, hook-unsupported) |
 | [`useRef`](https://react.dev/reference/react/useRef) | native | c-useref | spec §4.3 useRef |
 | [`useState`](https://react.dev/reference/react/useState) | native | c-usestate, c-usestate-functional | spec §4.3 useState |
 | [`useSyncExternalStore`](https://react.dev/reference/react/useSyncExternalStore) | island | c-usesyncexternalstore | useSyncExternalStore |
