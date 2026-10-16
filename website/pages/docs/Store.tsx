@@ -41,8 +41,9 @@ export default function TeamBadge() {
   return <p>Team <b>{s.members.length}</b> / {s.max}</p>
 }`
 
-const ISLAND = `// components/demos/TeamIsland.tsx: react (useReducer makes it an island)
+const ISLAND = `// components/demos/TeamIsland.tsx: react (useTransition makes it an island)
 const { members, max } = useStore(team)   // plain values, not signals
+useTransition()                           // a hook the native tier does not lower
 const [open, toggle] = useReducer(flip, true)`
 
 const PICK = [25, 1, 4, 7, 133, 143, 150, 94]
@@ -94,7 +95,7 @@ export default function Store({ blocks, candidates }: StoreData) {
       <CodeBlock code={blocks.native.code} lang={blocks.native.lang} file={blocks.native.file} html={blocks.native.html} />
       <CodeBlock code={blocks.island.code} lang={blocks.island.lang} file={blocks.island.file} html={blocks.island.html} />
       <p>
-        <code>useStore</code> alone compiles to the native tier. An island needs another React feature to be React, here <code>useReducer</code>.
+        <code>useStore</code> alone compiles to the native tier. An island needs another React feature to be React, here <code>useTransition</code>. (<code>useReducer</code> compiles natively.)
       </p>
 
       <h2 id="try">Try it</h2>
