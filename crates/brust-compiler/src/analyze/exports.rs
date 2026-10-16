@@ -63,8 +63,10 @@ pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
                                 return Binding::Member(mr);
                             }
                             // `export const X = forwardRef(function (props, ref) {…})` (R34.63)
-                            if matches!(module_component(ast, export), Some(FoundFn::ForwardRef(_)))
-                            {
+                            if matches!(
+                                module_component(ast, export),
+                                Some(FoundFn::ForwardRef(_) | FoundFn::Arrow(_))
+                            ) {
                                 return Binding::Fn(export.to_string());
                             }
                             return match d.value.map(|v| v.data) {
@@ -121,7 +123,7 @@ pub fn find(ast: &js_ast::Ast<'_>, export: &str) -> Binding {
             }
         }
     }
-    if let Some(FoundFn::ForwardRef(_)) = module_component(ast, export) {
+    if let Some(FoundFn::ForwardRef(_) | FoundFn::Arrow(_)) = module_component(ast, export) {
         return Binding::Local(export.to_string());
     }
     if let Some(f) = module_fn(ast, export) {
