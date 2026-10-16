@@ -80,6 +80,7 @@ const CALLBACK_METHODS: &[&str] = &[
     "every",
     "flatMap",
     "reduce",
+    "toSorted",
 ];
 
 /// Whether the function with parameters `args` and body `stmts` is a pure reducer. The parameters count: a default
@@ -160,6 +161,7 @@ impl Proof<'_, '_> {
             E::EFunction(f) => {
                 !f.func.flags.contains(js_ast::flags::Function::IsAsync)
                     && !f.func.flags.contains(js_ast::flags::Function::IsGenerator)
+                    && self.params(f.func.args.slice())
                     && self.stmts(f.func.body.stmts.slice())
             }
             _ => self.expr(a),
@@ -235,6 +237,49 @@ impl Proof<'_, '_> {
                     && self.expr(&d.target)
             }
             _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CALLBACK_METHODS, NON_MUTATING};
+
+    /// Every method of the allowlist that CALLS one of its arguments is a callback method, so its first argument has to
+    /// be an inline function the proof reads. A method added to `NON_MUTATING` that takes a function must be added to
+    /// `CALLBACK_METHODS` too: this list is the sweep of the Array and String methods that take one.
+    #[test]
+    fn every_allowed_method_that_takes_a_function_is_a_callback_method() {
+        const TAKE_A_FUNCTION: &[&str] = &[
+            "map",
+            "filter",
+            "find",
+            "findIndex",
+            "findLast",
+            "findLastIndex",
+            "some",
+            "every",
+            "flatMap",
+            "reduce",
+            "reduceRight",
+            "forEach",
+            "sort",
+            "toSorted",
+            "replace",
+            "replaceAll",
+            "group",
+            "groupBy",
+        ];
+        for m in NON_MUTATING {
+            if TAKE_A_FUNCTION.contains(m) {
+                assert!(CALLBACK_METHODS.contains(m), "{m} calls its argument");
+            }
+        }
+        for m in CALLBACK_METHODS {
+            assert!(
+                TAKE_A_FUNCTION.contains(m),
+                "{m} is not a known callback method"
+            );
         }
     }
 }

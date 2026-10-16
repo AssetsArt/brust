@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 103 | 18 | 36 | 49 | 0 | 0 | 0 | 0 |
+| C Hooks | 105 | 18 | 36 | 51 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 479 | 209 | 80 | 186 | 3 | 1 | 0 | 0 |
+| **Total** | 481 | 209 | 80 | 188 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -408,6 +408,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-usereducer-default-param | useReducer whose reducer has a parameter default that calls a function | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: a default runs on every call like the body: reducer-impure |
 | c-usereducer-default-pattern | useReducer whose reducer destructures with a default that calls a function | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: a destructuring default is checked like a parameter default |
 | c-usereducer-default-callback | useReducer whose reducer maps with a callback parameter default that calls a function | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: the proof walks the parameters of every inline callback too |
+| c-usereducer-sorted-comparator | useReducer whose reducer sorts with a comparator that calls a function | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: toSorted calls its comparator: the proof reads it like every callback (reducer-impure) |
+| c-usereducer-function-expression-default | useReducer whose reducer maps with a function expression whose parameter default calls a function | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: a function expression callback has its parameters read, like an arrow |
 | c-hook-hoist-function | a hook call inside a function property of a returned object | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | F286: a hook call inside a function is not a render-time call; refused |
 | c-includes-literals-state | [literals].includes(state) over state seeded from a prop the page changes | native | native | 0 | ok | 4.4 | — | F287: the strict-equality chain the template and the chunk already print, so no per-instance server job |
 | c-includes-literals-mixed | [strings, null, 0, true].includes(prop) | static | static | 0 | ok | 0 | — | F287: strict equality over every literal kind (null, 0, true included) |

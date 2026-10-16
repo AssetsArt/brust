@@ -91,6 +91,8 @@ fn use_reducer_is_a_state_cell_and_one_dispatch() {
         "reducer_child.tsx",
         // a callback written inline is read by the proof
         "reducer_callback_inline.tsx",
+        "reducer_sorted_inline.tsx",
+        "reducer_function_ok.tsx",
         // a default that is itself pure (a literal) is read
         "reducer_default_pure.tsx",
     ] {
@@ -117,6 +119,14 @@ fn a_reducer_that_is_not_provably_pure_or_not_visible_is_a_named_refusal() {
         ("reducer_call.tsx", "reducer-impure"),
         // `.map(bump)` names a function the proof cannot see
         ("reducer_callback_name.tsx", "reducer-impure"),
+        // `toSorted(cmp)` calls its comparator: by name it is a function the proof cannot see
+        ("reducer_sorted_name.tsx", "reducer-impure"),
+        // an inline comparator is read like any other callback body: this one calls a function the proof cannot see
+        ("reducer_sorted_tick.tsx", "reducer-impure"),
+        // a function EXPRESSION callback has its parameters (and their defaults) read, like an arrow's
+        ("reducer_function_default.tsx", "reducer-impure"),
+        // a destructuring default in a callback's parameter pattern
+        ("reducer_callback_pattern.tsx", "reducer-impure"),
         // a default value runs on every call, like the body: parameter, destructuring pattern, callback parameter
         ("reducer_default_param.tsx", "reducer-impure"),
         ("reducer_default_pattern.tsx", "reducer-impure"),
