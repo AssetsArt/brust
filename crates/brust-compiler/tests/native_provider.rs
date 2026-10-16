@@ -260,3 +260,12 @@ fn a_typeof_function_helper_guards_the_render_prop_like_typeof_does() {
     assert_eq!(clones(&all).len(), 1, "{:?}", root.ir.diagnostics);
     assert!(root.jinja.contains(">on</p>"), "{}", root.jinja);
 }
+
+// Mellow F1 (3b): a Provider written in a render body must not leak into the writer's own `{children}`.
+#[test]
+fn a_provider_in_a_render_body_does_not_provide_to_the_writers_children() {
+    let all = compile("render_provider.tsx");
+    for i in &all {
+        assert!(!i.jinja.contains("inner"), "{}: {}", i.ir.id, i.jinja);
+    }
+}

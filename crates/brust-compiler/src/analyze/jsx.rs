@@ -624,7 +624,12 @@ fn read_render_arrow(
     if !is_jsx(&body_expr) {
         return None;
     }
+    // The body is read a second time (the prop itself stays the client-only value), so nothing it does to the reader
+    // may stay: diagnostics, hoisted handlers, `useId` hoists, nested render props and, above all, the Providers it
+    // would hand to the CALLER's own children.
     let (diags, handlers) = (r.diagnostics.len(), r.pending_handlers.len());
+    let (provides, renders) = (r.provides.len(), r.render_props.len());
+    let hoisted = r.hoisted_calls.clone();
     for (_, b) in &params {
         r.names.mark_loop_binding(*b);
         r.loop_scope.push(r.names.name(*b));
@@ -636,9 +641,16 @@ fn read_render_arrow(
         r.names.unmark_loop_binding(*b);
     }
     // Reading this body again is not allowed to leave anything behind.
-    let clean = r.diagnostics.len() == diags && r.pending_handlers.len() == handlers;
+    // A Provider in the body would have to scope its consumers to the body: not supported, the prop stays as it was.
+    let clean = r.diagnostics.len() == diags
+        && r.pending_handlers.len() == handlers
+        && r.provides.len() == provides
+        && r.hoisted_calls == hoisted;
     r.diagnostics.truncate(diags);
     r.pending_handlers.truncate(handlers);
+    r.provides.truncate(provides);
+    r.render_props.truncate(renders);
+    r.hoisted_calls = hoisted;
     clean.then(|| crate::ir::RenderProp {
         loc,
         key: key.to_string(),

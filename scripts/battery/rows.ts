@@ -50,6 +50,8 @@ const NATIVE_PROV = readFileSync(join(import.meta.dir, '../../crates/brust-compi
 
 const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
 
+const NATIVE_WRAP = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Wrap.tsx'), 'utf8')
+
 const PKG_LEAF = `import * as React from 'react'\nimport { Primitive } from '@radix-ui/react-primitive'\nexport const Root = React.forwardRef(function Root(props: any, forwardedRef: any) { return <Primitive.div {...props} ref={forwardedRef} /> })`
 const SLOT_BTN = `import { Slot } from 'radix-ui'\nexport default function Btn({ asChild = false, variant = 'default', className, ...props }: any) { const Comp = asChild ? Slot.Root : 'button'; return <Comp data-slot="btn" data-variant={variant} className={'base ' + (className ?? '')} {...props} /> }`
 // F149: shadcn's Badge (cva + cn).
@@ -1538,6 +1540,10 @@ export const rows: Row[] = [
     snippet: `import { RG, RT } from './Rend'\nexport default function C() { return <main><RG render={({ on: shown }) => (<><RT>go</RT>{[1, 2].map((on) => (<i key={on}>{shown ? on : 0}</i>))}</>)} /></main> }`,
     files: { 'Rend.tsx': NATIVE_REND },
     note: 'B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported)' },
+  { id: 'c-render-prop-provider-in-body', category: 'C', authoring: 'a render body holding a Provider, next to the writer\'s own children', expect: 'static', jobs: 1,
+    snippet: `import { Wrapper, LC } from './Wrap'\nexport default function C() { return <main><Wrapper><LC /></Wrapper></main> }`,
+    files: { 'Rend.tsx': NATIVE_REND, 'Wrap.tsx': NATIVE_WRAP },
+    note: 'B7 (Mellow F1): a Provider written inside a render arrow must not provide to the writer\'s own children (they read the context default)' },
   { id: 'c-render-prop-computed-arg', category: 'C', authoring: 'a render prop called with a computed argument', expect: 'react',
     snippet: `import { RK, RT } from './Rend'\nexport default function C() { return <main><RK render={({ on }) => (<><RT>go</RT>{on && <p>on</p>}</>)} /></main> }`,
     files: { 'Rend.tsx': NATIVE_REND },

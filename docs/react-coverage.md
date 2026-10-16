@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 65 | 9 | 22 | 34 | 0 | 0 | 0 | 0 |
+| C Hooks | 66 | 10 | 22 | 34 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 429 | 197 | 59 | 169 | 3 | 1 | 0 | 0 |
+| **Total** | 430 | 198 | 59 | 169 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -363,6 +363,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
 | c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |
+| c-render-prop-provider-in-body | a render body holding a Provider, next to the writer's own children | static | static | ssr | ok | 3.8 | — | B7 (Mellow F1): a Provider written inside a render arrow must not provide to the writer's own children (they read the context default) |
 | c-render-prop-computed-arg | a render prop called with a computed argument | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Mellow S3): an argument that is not a plain read is not substituted; the Provider stays an island |
 | c-native-provider-two-sites | two call sites of a state Provider with different text | static | static | 0 | ok | 4.8 | — | R34.124: one clone per call site (own jinja and ids), one shared factory module for the equal chunks |
 | c-native-provider-handler-in-content | a page handler written in the content of a state Provider | react | react | ssr | ok | 5.1 | fallback:island-children, info:specialise-unsupported | R34.125: a page-owned handler in the content cannot move into the clone (specialise-unsupported; the island keeps it) |
