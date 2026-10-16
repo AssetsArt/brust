@@ -20,6 +20,9 @@ pub struct PropDecl {
 pub struct ProvideDecl {
     pub context: String,
     pub fields: Vec<(String, RawExpr)>,
+    /// W1d PR 2: the Provider element names a `scope` (anything but absent or `undefined`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scoped: bool,
 }
 
 /// B7 (R34.122 b): a function prop a component passes to a child, written as an arrow whose body is JSX
