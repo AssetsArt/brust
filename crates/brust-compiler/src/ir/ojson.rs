@@ -36,7 +36,9 @@ impl OJson {
         }
     }
 
-    /// An object from `(key, value)` entries: a repeated key keeps its first place and its last value, as JS does.
+    /// An object from `(key, value)` entries: a repeated key keeps its first place and its last value, as JS does, and
+    /// the keys enumerate in JS's own-property order: array-index keys ascending first (`{"10":…,"2":…}` is `2`, `10`),
+    /// then the others as they were first set (F321).
     pub fn object(entries: impl IntoIterator<Item = (String, OJson)>) -> OJson {
         let mut out: Vec<(String, OJson)> = Vec::new();
         for (k, v) in entries {
@@ -45,8 +47,22 @@ impl OJson {
                 None => out.push((k, v)),
             }
         }
+        // (stable: the other keys keep their insertion order)
+        out.sort_by_key(|(k, _)| array_index(k).map_or((1, 0), |n| (0, n)));
         OJson::Obj(out)
     }
+}
+
+/// The canonical array index a property key names (`"0"`, `"7"`, up to `2^32 - 2`), which JS enumerates first, ascending.
+fn array_index(k: &str) -> Option<u64> {
+    if k.is_empty()
+        || k.len() > 10
+        || !k.bytes().all(|b| b.is_ascii_digit())
+        || (k.len() > 1 && k.starts_with('0'))
+    {
+        return None;
+    }
+    k.parse::<u64>().ok().filter(|n| *n < u32::MAX as u64)
 }
 
 /// A `serde_json::Value` as an ordered one: its objects keep the order the `Value` iterates (sorted).
@@ -228,6 +244,17 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&o.to_value()).unwrap(),
             r#"{"color":"red","margin":0,"marginTop":5}"#
+        );
+    }
+
+    #[test]
+    fn integer_like_keys_come_first_and_ascending_as_in_js() {
+        let o = OJson::object(
+            ["b", "10", "a", "2", "01", "-1", "1"].map(|k| (k.to_string(), OJson::Null)),
+        );
+        assert_eq!(
+            serde_json::to_string(&o).unwrap(),
+            r#"{"1":null,"2":null,"10":null,"b":null,"a":null,"01":null,"-1":null}"#
         );
     }
 

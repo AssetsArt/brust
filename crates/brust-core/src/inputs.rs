@@ -374,7 +374,14 @@ pub fn canonical(v: &Node) -> Vec<u8> {
     serde_json::to_vec(v).expect("Node serialises")
 }
 
-/// blake3 hex of canonical(inputs_value); `component_id`/`job_id` are mixed in as length-prefixed fields so (a,bc) != (ab,c).
+/// F322: like [`canonical`], but an object that carries a key-order hint (the loader's JSON text order, F318) is written
+/// in that order. Order is observable output (a style's cascade, `Object.entries` rows), so two inputs that differ only
+/// in key order must not share a cache entry. An object without a hint is sorted, so its bytes are `canonical`'s.
+pub fn canonical_ordered(v: &Node) -> Vec<u8> {
+    serde_json::to_vec(&brust_jinja::ctx::Ordered(v)).expect("Node serialises")
+}
+
+/// blake3 hex of canonical_ordered(inputs_value) (F322: key order is part of the key); `component_id`/`job_id` are mixed in as length-prefixed fields so (a,bc) != (ab,c).
 ///
 /// The hashed bytes are `len(cid) cid len(jid) jid len(json) json` (each
 /// length a `u32` LE), laid out in one reused per-thread buffer and hashed in
@@ -392,7 +399,8 @@ pub fn job_key(component_id: &str, job_id: &str, inputs_value: &Node) -> String 
         }
         let at = buf.len();
         buf.extend_from_slice(&[0; 4]);
-        serde_json::to_writer(&mut *buf, inputs_value).expect("Node serialises");
+        serde_json::to_writer(&mut *buf, &brust_jinja::ctx::Ordered(inputs_value))
+            .expect("Node serialises");
         let n = (buf.len() - at - 4) as u32;
         buf[at..at + 4].copy_from_slice(&n.to_le_bytes());
         let key = blake3::hash(buf).to_hex().to_string();
@@ -670,6 +678,26 @@ mod tests {
         .eval(&ctx, None)
         .unwrap();
         assert_ne!(job_key("c", "j0", &a), job_key("c", "j0", &b));
+    }
+
+    // F322: two loader payloads that differ only in key order are different inputs (a style's declaration order is
+    // observable), so they must not share a cache entry; the same text order still does; an object with no hint is
+    // keyed exactly as before.
+    #[test]
+    fn job_keys_include_the_key_order_of_the_loader_text() {
+        let node = |t: &str| -> Node { serde_json::from_str(t).unwrap() };
+        let a = node(r#"{"style":{"marginTop":5,"margin":0}}"#);
+        let b = node(r#"{"style":{"margin":0,"marginTop":5}}"#);
+        assert_eq!(a, b, "same content");
+        assert_ne!(job_key("c", "j0", &a), job_key("c", "j0", &b));
+        assert_eq!(
+            job_key("c", "j0", &a),
+            job_key("c", "j0", &node(r#"{"style":{"marginTop":5,"margin":0}}"#))
+        );
+        // sorted text carries no hint: its bytes are the canonical form's
+        let s = node(r#"{"a":1,"b":{"c":2,"d":3}}"#);
+        assert_eq!(canonical_ordered(&s), canonical(&s));
+        assert_ne!(canonical_ordered(&a), canonical(&a));
     }
 
     #[test]

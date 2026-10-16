@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use minijinja::value::{Enumerator, Object, ObjectRepr, Value};
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
-use serde::ser::{Serialize, Serializer};
+use serde::ser::{Serialize, SerializeMap, Serializer};
 
 pub type MapInner = BTreeMap<Arc<str>, Node>;
 
@@ -336,9 +336,19 @@ impl Serialize for Ordered<'_> {
         match self.0 {
             Node::Arr(a) => s.collect_seq(a.0.iter().map(Ordered)),
             Node::Map(m) => {
-                let mut entries: Vec<(&str, Ordered<'_>)> = Vec::with_capacity(m.0.len());
-                m.each_ordered(|k, v| entries.push((&**k, Ordered(v))));
-                s.collect_map(entries)
+                let mut map = s.serialize_map(Some(m.0.len()))?;
+                let mut err = None;
+                m.each_ordered(|k, v| {
+                    if err.is_none()
+                        && let Err(e) = map.serialize_entry(&**k, &Ordered(v))
+                    {
+                        err = Some(e);
+                    }
+                });
+                match err {
+                    Some(e) => Err(e),
+                    None => map.end(),
+                }
             }
             other => other.serialize(s),
         }
@@ -461,7 +471,28 @@ impl<'de> Visitor<'de> for NodeVisitor {
                 .collect::<Vec<_>>()
                 .join("\0");
         }
-        let order = order.filter(|_| !skip).map(String::into_boxed_str);
+        let mut order = order.filter(|_| !skip).map(String::into_boxed_str);
+        // F321: JS enumerates array-index keys ("2", "10") first, ascending, whatever order the text gave them. Text
+        // from `JSON.stringify` is already in that order; text from anywhere else (a literal written in insertion
+        // order) is brought to it. Only an object with such a key pays for it.
+        if !skip
+            && m.keys()
+                .any(|k| k.as_bytes().first().is_some_and(u8::is_ascii_digit))
+            && m.keys().any(|k| crate::spread::is_array_index(k))
+        {
+            let keys: Vec<&str> = match &order {
+                Some(o) => o.split('\0').collect(),
+                None => m.keys().map(|k| &**k).collect(),
+            };
+            let (mut idx, rest): (Vec<&str>, Vec<&str>) = keys
+                .into_iter()
+                .partition(|k| crate::spread::is_array_index(k));
+            idx.sort_by_key(|k| k.parse::<u64>().unwrap_or(0));
+            idx.extend(rest);
+            // the hint is needed only when this differs from the sorted order
+            let sorted = idx.iter().zip(m.keys()).all(|(a, b)| *a == &**b);
+            order = (!sorted).then(|| idx.join("\0").into_boxed_str());
+        }
         Ok(Node::Map(Arc::new(CtxMap(m, order))))
     }
 }
@@ -644,6 +675,20 @@ mod tests {
             .unwrap(),
             "{&quot;z&quot;:1,&quot;m&quot;:2,&quot;a&quot;:3}"
         );
+        // F321: array-index keys come first, ascending, whatever order the text gave them
+        for text in [
+            r#"{"b":1,"10":2,"2":3,"a":4}"#,
+            r#"{"10":1,"2":2}"#,
+            r#"{"2":2,"10":1}"#,
+        ] {
+            let n: Node = serde_json::from_str(text).unwrap();
+            let js = if text.contains(r#""b""#) {
+                r#"{"2":3,"10":2,"b":1,"a":4}"#
+            } else {
+                r#"{"2":2,"10":1}"#
+            };
+            assert_eq!(serde_json::to_string(&Ordered(&n)).unwrap(), js, "{text}");
+        }
         // equality is the content, not the order
         let other: Node = serde_json::from_str(r#"{"a":2,"b":1}"#).unwrap();
         let again: Node = serde_json::from_str(r#"{"b":1,"a":2}"#).unwrap();

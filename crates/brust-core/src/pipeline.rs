@@ -1650,7 +1650,7 @@ fn plan_key(
         let user = match expr.get(props, None) {
             Node::Null => None,
             Node::Str(s) => Some(s.to_string()),
-            v => Some(String::from_utf8(inputs::canonical(v)).expect("JSON is UTF-8")),
+            v => Some(String::from_utf8(inputs::canonical_ordered(v)).expect("JSON is UTF-8")),
         };
         if let Some(u) = user {
             return (JobKey(format!("k:{cid}/{key_job}/{u}")), Some(u));
