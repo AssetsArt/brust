@@ -18,6 +18,8 @@ pub const BROWSER_GLOBALS: &[&str] = &[
     "screen",
     "matchMedia",
     "requestAnimationFrame",
+    // R34.140: the items of a collection exist only in the browser (`useCollection(scope)`)
+    crate::ir::COLLECTION_ITEMS,
 ];
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -366,6 +368,16 @@ impl Walker<'_> {
                 self.raw(index, out);
             }
             RawKind::Call { callee, args } => {
+                // R34.140: calling the items function (`getItems()`) in a render needs the browser's list.
+                if let RawKind::Ident {
+                    name,
+                    kind: IdentKind::Local,
+                } = &callee.kind
+                    && matches!(self.cx.locals.get(name.as_str()), Some(LocalDef::Value(h)) if is_items_arrow(h))
+                {
+                    out.browser = true;
+                    out.globals.insert(crate::ir::COLLECTION_ITEMS.into());
+                }
                 // A method call reads its receiver, not a member named like the method.
                 match &callee.kind {
                     RawKind::Member { target, .. } => self.raw(target, out),
@@ -559,6 +571,7 @@ impl Walker<'_> {
                         Attr::Dynamic { value, .. }
                         | Attr::Spread(value)
                         | Attr::InnerHtml { value } => self.expr(value, out),
+                        Attr::CollectionItem { data } => self.expr(data, out),
                         Attr::Static { .. }
                         | Attr::Event { .. }
                         | Attr::Ref { .. }
@@ -608,4 +621,17 @@ impl Walker<'_> {
             self.node(n, out);
         }
     }
+}
+
+/// The handler `useCollection(scope)` declares: `() => __brust_items()`.
+fn is_items_arrow(h: &RawExpr) -> bool {
+    let RawKind::Arrow {
+        body: ArrowBody::Expr(b),
+        ..
+    } = &h.kind
+    else {
+        return false;
+    };
+    matches!(&b.kind, RawKind::Call { callee, .. }
+        if matches!(&callee.kind, RawKind::Ident { name, .. } if name == crate::ir::COLLECTION_ITEMS))
 }

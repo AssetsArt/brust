@@ -192,6 +192,7 @@
       "model": "client/rt-model-<hash>.js",
       "html": "client/rt-html-<hash>.js",
       "island": "client/rt-island-<hash>.js",
+      "collection": "client/rt-collection-<hash>.js",
       "store": "client/rt-store-<hash>.js"
     }
   },

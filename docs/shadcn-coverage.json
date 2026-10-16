@@ -12,9 +12,9 @@
     "measured": 64,
     "analysisOnly": 0,
     "tier": {
-      "static": 57,
+      "static": 56,
       "native": 1,
-      "react": 6
+      "react": 7
     },
     "islands": 36,
     "pagesWithNoJs": 25,
@@ -42,7 +42,7 @@
       "classification": "survey truth (today's rule; R34.7 removes it)",
       "measuredRows": 38,
       "analysisOnlyRows": 0,
-      "appComponents": 130,
+      "appComponents": 125,
       "libraryComponents": 167
     },
     {
@@ -51,8 +51,8 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 33,
       "analysisOnlyRows": 0,
-      "appComponents": 119,
-      "libraryComponents": 190
+      "appComponents": 114,
+      "libraryComponents": 189
     },
     {
       "blocker": "fallback:island-prop",
@@ -60,8 +60,8 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 31,
       "analysisOnlyRows": 0,
-      "appComponents": 83,
-      "libraryComponents": 192
+      "appComponents": 79,
+      "libraryComponents": 190
     },
     {
       "blocker": "fallback:island-children",
@@ -79,7 +79,16 @@
       "measuredRows": 7,
       "analysisOnlyRows": 0,
       "appComponents": 8,
-      "libraryComponents": 34
+      "libraryComponents": 35
+    },
+    {
+      "blocker": "fallback:context-island",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 5,
+      "analysisOnlyRows": 0,
+      "appComponents": 7,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:hook-unsupported",
@@ -88,7 +97,7 @@
       "measuredRows": 4,
       "analysisOnlyRows": 0,
       "appComponents": 4,
-      "libraryComponents": 175
+      "libraryComponents": 172
     },
     {
       "blocker": "fallback:jsx-expression",
@@ -98,15 +107,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 4,
       "libraryComponents": 8
-    },
-    {
-      "blocker": "fallback:context-island",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
-      "analysisOnlyRows": 0,
-      "appComponents": 6,
-      "libraryComponents": 0
     },
     {
       "blocker": "fallback:nested-instance",
@@ -142,7 +142,7 @@
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 17
+      "libraryComponents": 16
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -169,7 +169,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 34
+      "libraryComponents": 32
     },
     {
       "blocker": "fallback:hook-shape",
@@ -197,6 +197,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 1,
       "libraryComponents": 5
+    },
+    {
+      "blocker": "fallback:key-outside-list",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 4
     },
     {
       "blocker": "fallback:context-value",
@@ -331,7 +340,7 @@
       "measuredRows": 0,
       "analysisOnlyRows": 0,
       "appComponents": 0,
-      "libraryComponents": 54
+      "libraryComponents": 51
     },
     {
       "blocker": "error:unresolved-import (published .js/.mjs module is not followed)",
@@ -350,15 +359,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 45
-    },
-    {
-      "blocker": "fallback:context-scope",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 27
     },
     {
       "blocker": "Presence",
@@ -415,6 +415,15 @@
       "libraryComponents": 12
     },
     {
+      "blocker": "fallback:context-escape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 10
+    },
+    {
       "blocker": "fallback:browser-global",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -424,15 +433,6 @@
       "libraryComponents": 9
     },
     {
-      "blocker": "fallback:context-escape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 7
-    },
-    {
       "blocker": "useImperativeHandle",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
@@ -440,6 +440,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 5
+    },
+    {
+      "blocker": "fallback:context-scope",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 4
     },
     {
       "blocker": "fallback:prop-quoted-key",
@@ -545,13 +554,14 @@
     {
       "id": "alert-dialog",
       "basis": "measured",
-      "tier": "static",
+      "tier": "react",
       "islands": 1,
-      "components": 22,
-      "reactComponents": 18,
+      "components": 29,
+      "reactComponents": 12,
       "jsGzipKb": 100,
       "workerCalls": 1,
       "codes": [
+        "context-island",
         "external-component",
         "island-children",
         "island-prop",
@@ -799,6 +809,7 @@
         "island-prop",
         "jsx-const-child",
         "jsx-expression",
+        "key-outside-list",
         "nested-instance",
         "slot-dynamic",
         "spread-props"
@@ -1044,8 +1055,8 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 16,
-      "reactComponents": 14,
+      "components": 18,
+      "reactComponents": 12,
       "jsGzipKb": 117,
       "workerCalls": 1,
       "codes": [
@@ -1104,7 +1115,7 @@
       "islands": 1,
       "components": 15,
       "reactComponents": 14,
-      "jsGzipKb": 99,
+      "jsGzipKb": 100,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1361,7 +1372,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 8,
-      "jsGzipKb": 94,
+      "jsGzipKb": 95,
       "workerCalls": 1,
       "codes": [
         "external-component",

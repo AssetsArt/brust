@@ -406,7 +406,7 @@ fn chunk_in(
     }
     // The context's names are the allocator's (`__el`, `props`, … unless the component spells one).
     let ctx = format!(
-        "{{ el: {}, {}, effect: {}, onCleanup: {}, ref: {}{} }}",
+        "{{ el: {}, {}, effect: {}, onCleanup: {}, ref: {}{}{} }}",
         n.el,
         if n.props == "props" {
             "props".to_string()
@@ -418,6 +418,12 @@ fn chunk_in(
         n.ref_,
         if ir.state.iter().any(|s| s.late) {
             format!(", late: {}", n.late)
+        } else {
+            String::new()
+        },
+        // R34.140: `useCollection(scope)` lowered to a handler that calls this
+        if ir.uses_collection {
+            format!(", items: {}", crate::ir::COLLECTION_ITEMS)
         } else {
             String::new()
         }

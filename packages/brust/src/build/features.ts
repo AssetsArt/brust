@@ -5,7 +5,7 @@
 import { BuildError } from './errors'
 
 /** Feature modules of `@brust/runtime-dom/features/*` the browser build ships, in load order. */
-export const RUNTIME_FEATURES = ['basics', 'if', 'for', 'model', 'html', 'island'] as const
+export const RUNTIME_FEATURES = ['basics', 'if', 'for', 'model', 'html', 'island', 'collection'] as const
 export type RuntimeFeature = (typeof RUNTIME_FEATURES)[number]
 
 /** Directive attribute → the module that binds it. `null`: handled by the core (host, props, inert-markup marker). */
@@ -25,6 +25,10 @@ export function featureOfAttr(attr: string): RuntimeFeature | null | undefined {
     case 'x-model':
     case 'x-html':
       return attr.slice(2) as RuntimeFeature
+    case 'x-collection-root':
+    case 'x-collection-item':
+    case 'x-collection-use':
+      return 'collection'
     default:
       return /^x-(bind|on)-/.test(attr) ? 'basics' : undefined
   }

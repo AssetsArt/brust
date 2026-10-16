@@ -72,6 +72,14 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
     if (row.packages) {
       for (const [name, pkg] of Object.entries(row.packages)) writeStubPackage(join(dir, 'node_modules', name), name, pkg)
       preparePackageSources(dir, Object.keys(row.packages))
+      // `vouch`: the build's version+hash check is pinned in the pkg-src tests; a stub cannot carry the published bytes, so the
+      // row says the verified version the build would have recorded (R34.140).
+      if (row.vouch) {
+        const idx = join(dir, '.brust/pkg-src/index.json')
+        const j = JSON.parse(readFileSync(idx, 'utf8'))
+        for (const [name, version] of Object.entries(row.vouch)) j.recognised[name] = version
+        writeFileSync(idx, JSON.stringify(j))
+      }
       extra.push('--packages', join(dir, '.brust/pkg-src/index.json'))
     }
     const p = spawnSync(brustc, ['input.tsx', '--emit', 'ir', ...extra], { cwd: dir, encoding: 'utf8' })

@@ -7,7 +7,7 @@ test('every directive maps to one module, in load order', () => {
   expect(featuresOf('c', tpl, false)).toEqual(['basics', 'if', 'for', 'model', 'html'])
   expect(featuresOf('c', '<div x-data="a" x-props-bind="m"><p x-raw></p></div>', false)).toEqual([])
   expect(featuresOf('c', '<brust-island data-id="x"></brust-island>', true)).toEqual(['island'])
-  expect([...RUNTIME_FEATURES]).toEqual(['basics', 'if', 'for', 'model', 'html', 'island'])
+  expect([...RUNTIME_FEATURES]).toEqual(['basics', 'if', 'for', 'model', 'html', 'island', 'collection'])
 })
 
 test('prose that spells a directive binds nothing; only attributes on tags count', () => {
