@@ -8,12 +8,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
+| A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 92 | 18 | 31 | 43 | 0 | 0 | 0 | 0 |
-| D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
+| C Hooks | 99 | 23 | 32 | 44 | 0 | 0 | 0 | 0 |
+| D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 465 | 206 | 75 | 180 | 3 | 1 | 0 | 0 |
+| **Total** | 474 | 212 | 77 | 181 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -61,6 +61,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-spread-then-override | spread, then an attribute that overrides it | static | static | 0 | ok | 0 | — | shadcn S1.2 R34.15: later wins (id is never the spread one) |
 | a-override-then-spread | an attribute, then a spread that may override it | static | static | 0 | ok | 0 | — | shadcn S1.2 R34.15: later wins (the spread replaces id/className when it has them) |
 | a-spread-alias-after | React names after a spread that may carry their HTML aliases (class, for, tabindex) | static | static | 0 | ok | 0 | — | shadcn S1.2 review F1: aliases merge on the HTML attribute (one class/for/tabindex), the later React name wins |
+| a-spread-const-plain-call | a const object spread into a component, one entry calls a module function that only reads its argument (F280) | native | native | 0 | ok | 4.5 | — | F280: plain_object accepts a call of a function plain_fn proves effect-free over plain reads |
+| a-spread-const-effect-call | the same, but the function calls author code (not proven plain) | react | react | ssr | ok | 3.9 | fallback:spread-props | F280: an entry that calls a function that is not proven plain keeps the spread a fallback (spread-props) |
 | a-spread-alias-before | React names before a spread that may carry their HTML aliases | static | static | 0 | ok | 0 | — | shadcn S1.2 review F1: the spread's class/for/tabindex replace the earlier React names (one attribute each) |
 | a-spread-props-path | spread of an object of unknown keys (a props path) | static | static | 0 | ok | 0 | — | shadcn S1.2 R34.15 (b): the runtime path (spread_attrs) |
 | a-spread-hostile-names | object keys that are not attribute names, in a spread | static | static | 0 | ok | 0 | warning:unsafe-attr | shadcn S1.2 R34.17: dropped and warned (unsafe-attr); spread_attrs drops the same names at render |
@@ -183,8 +185,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-helper | a Provider value computed by helpers of its own module, used from another module | react | react | ssr | ok | 3.9 | fallback:context-no-provider, fallback:context-value | S2: a frame value that calls a helper is not a literal (lead ruling on 84a4650a), so the page renders with React (context-value; F174 narrows it to helpers proven to return primitives) |
 | b-context-radix-scope | Radix createContextScope: Provider props, a default, a consumer | static | static | 0 | ok | 0 | — | S2 R34.100/101: the second structural recogniser (Radix createContextScope); a scope that is a pass-through is ignored |
 | b-context-no-provider | a consumer with no Provider above it, at the route | react | react | ssr | ok | 3.9 | fallback:context-no-provider | S2 context-no-provider: fail closed (the default of a createContext is not read in v1) |
-| b-context-escape | a context value used as a whole | react | react | ssr | ok | 3.9 | fallback:context-island | S2 context-escape: the consumer reads the whole object, so it is a React island; under a lowered Provider that keeps the page React (F3 context-island) |
-| b-context-scalar-value | a Provider whose value is not an object literal | static | static | ssr | ok | 3.9 | — | S2 context-value: the Provider is a React island (the page stays static) |
+| b-context-escape | a context value used as a whole | react | react | ssr | ok | 3.9 | fallback:context-shape | S2 context-escape: the consumer reads the whole object, so it is a React island; under a lowered Provider that keeps the page React (F3 context-island) |
+| b-context-scalar-value | a Provider whose value is not an object literal, for a context with a literal default | static | static | 0 | ok | 0 | — | R34.142: a context declared with a literal default is one whole value: the Provider's `value` is any expression and the consumer reads it as a value (was S2 context-value, a React island) |
 | b-context-same-name | two modules each declare their own Ctx; a consumer of B under A's Provider | react | react | ssr | ok | 3.9 | fallback:context-no-provider | Mellow F2: a context is (declaring module, name); B reads its own default in React, never A's value (context-no-provider, fail closed) |
 | b-context-field-quoted | a context field that is not a plain identifier ('x-y') | static | static | ssr | ok | 3.9 | — | Mellow F1 context-shape: the field is part of an identifier (__ctx_Ctx_x-y was a syntax error / a subtraction); the components are React islands now (the page stays static) |
 | b-context-island-under | an interactive consumer (useTransition) under a Provider component | react | react | ssr | ok | 3.9 | fallback:context-island | Mellow F3 context-island: a lowered Provider no longer shares a React tree with an island under it (it would read the createContext default); the page is React, as on main. Served and compared with React in scripts/shadcn/context-parity.test.ts |
@@ -225,11 +227,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-jsx-const-child-shadowed | a prop that shadows an imported JSX const name (control) | static | static | 0 | ok | 0 | — | control: the child is the prop, not the import; it lowers |
 | b-context-console-if | an if whose branches only call console.* | static | static | 0 | ok | 0 | — | S2 R34.104: a diagnostic-only statement is not part of the render (Radix Progress validates its props this way) |
 | b-props-quoted-key | a quoted hyphen key bound to a local in the props pattern | static | static | ssr | ok | 3.9 | — | F161 prop-quoted-key: the template read `data-x` as a subtraction and every render failed (500); the component is a React island now (the page stays static). Native support is a later F-row |
-| b-props-jinja-own-name | a prop named loop (a name the server template binds itself) | static | static | ssr | ok | 3.9 | — | props-pattern N2, prop-jinja-name: loop, range, namespace, caller and self shadow template names; the component is a React island now |
+| b-props-jinja-own-name | a prop named loop (a name the server template binds itself) | static | static | 0 | ok | 0 | — | R34.142 (was props-pattern N2 prop-jinja-name): loop, range, namespace, caller and self are template names; the standalone template reads such a prop as `_props.<name>`, an inlined instance binds it by value, so the component compiles with no job and no island |
 | b-props-jinja-keyword | a prop whose key is a template keyword, renamed to a local | static | static | ssr | ok | 3.9 | — | props-pattern N1, prop-jinja-name: the message names a keyword (not "a plain identifier"); the component is a React island now |
 | b-props-body-tdz | a body-pattern name used before the pattern statement | static | static | ssr | ok | 3.9 | — | F162 prop-pattern-tdz: React throws (TDZ); brust rendered a defined prop. The component is a React island now (so it fails like React) |
-| b-props-jinja-member-loop | props.loop read as a member inside a .map | static | static | ssr | ok | 3.9 | — | F168 prop-jinja-name on a member read: the template printed `loop`, which is jinja's own loop object inside the for; the component is a React island now |
-| b-props-jinja-member-range | props.range read as a member | static | static | ssr | ok | 3.9 | — | F168 prop-jinja-name on a member read: `range` printed as the built-in function; the component is a React island now |
+| b-props-jinja-member-loop | props.loop read as a member inside a .map | static | static | 0 | ok | 0 | — | R34.142 (was F168 prop-jinja-name): `loop` inside a for was jinja's own loop object; the prop is read as `_props.loop` (standalone) or by value (inlined), so the component compiles |
+| b-props-jinja-member-range | props.range read as a member | static | static | 0 | ok | 0 | — | R34.142 (was F168 prop-jinja-name): `range` printed as the built-in function; the prop is read as `_props.range` (standalone) or by value (inlined), so the component compiles |
 | b-props-body-quoted-key | a quoted hyphen key in a body pattern const { ... } = props | static | static | ssr | ok | 3.9 | — | F161 prop-quoted-key, body pattern (R34.66 reads it like the parameter pattern): the component is a React island now |
 | b-props-body-iife | an immediately-invoked default in a body pattern | static | static | ssr | ok | 3.9 | — | F161 prop-default-iife, body pattern: the component is a React island now |
 | b-props-default-iife | a destructuring default that is an immediately-invoked function | static | static | ssr, ssr | ok | 3.9 | — | F161 prop-default-iife: the default printed as none, so the page rendered without it; the component is a React island now |
@@ -316,7 +318,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid | useId read in render | static | static | 0 | ok | 0 | — | spec §4.3 useId: the server seeds _id0 (F39); no state or handler, so the tier is static |
 | c-uselayouteffect | useLayoutEffect | native | native | 0 | ok | 4.5 | — | spec §4.3 useLayoutEffect |
 | c-usereducer | useReducer | react | react | ssr | ok | 3.9 | fallback:hook-unsupported |  |
-| c-usecontext | useContext | react | react | ssr | ok | 3.9 | fallback:context-escape |  |
+| c-usecontext | useContext | static | static | 0 | ok | 0 | — | R34.142: a context with a literal default read as a value, with no Provider above the page, is its default (React's own rule) |
 | c-custom-hook | custom hook | native | native | 0 | ok | 4.5 | — | G3: inlined at the call site, locals renamed <local>_<hook><n> |
 | c-custom-hook-import | custom hook imported from a relative module | native | native | 0 | ok | 4.5 | — | G3: an imported hook may use React hooks and globals, not its own module's bindings |
 | c-hook-relax-all | custom hook with an object-pattern parameter, a plain module function, a dev-only log block and a React hook alias | native | native | 0 | ok | 4.5 | — | R34.105: the shapes of a published controllable-state hook, each general |
@@ -384,6 +386,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-native-provider-rest-input | a component spreads its own ...rest into a consumer under the Provider it renders | static | static | 0 | ok | 4.5 | — | F278: the rest crosses into the clone as the hidden input __in_rest and is spread there; F279: getState(checked) is its expression, so the consumer has no job |
 | c-native-provider-rest-input-live | a native page passes a live attribute to a component that spreads its rest into a clone | react | react | ssr | ok | 5.2 | fallback:spread-props | F278 (Mellow F1): a live rest cannot be re-spread by the clone on the client, so the call that passes one stays React |
 | c-pure-helper-call-inlined | a single-return module helper called with a state read | native | native | 0 | ok | 4.5 | — | F279: the call is replaced by the helper's expression (a plain-read argument), so no precompute job runs it |
+| c-hook-radix-useid-callbackref | Radix's useId and useCallbackRef (imported hooks with React-version fallbacks) | static | static | 0 | ok | 4.5 | info:build-eval-instance | R34.142: `typeof <React hook alias> === "function"` is decided (React exports its hooks as functions) and only the branch that runs is read; `setId(r => r ?? ...)` on a state seeded by useId() is an identity update, so the client-only counter fallback and its effect are dropped and the state is the server-seeded id |
+| c-arrow-rest-param-kept | a component function with a rest parameter called from a handler | native | native | 0 | ok | 4.5 | — | an arrow's `(...xs)` was read as `(xs)` (the IR has no rest parameter): a call passing none spread undefined; read verbatim now |
+| c-context-field-named-loop | a state Provider whose context has a field named loop | static | static | 0 | ok | 4.5 | — | R34.142: the hidden prop is `__ctx_<ctx>_loop`, so the template name `loop` is not shadowed; the field was refused (context-shape) |
+| c-context-scalar-imported-hook | Radix's useDirection: a literal-default context read through an imported hook, no Provider | static | static | 0 | ok | 4.5 | — | R34.142: the hook's module declares the context and a `const Direction = { LTR: 'ltr' }` it reads; the constant is folded into the hook, the context's value is the hidden prop `__whole`, and with no Provider above the page it is the default (undefined, so `ltr`) |
+| c-context-scalar-provider | Radix's DirectionProvider over a native consumer | static | static | 0 | ok | 4.5 | — | R34.142: the Provider's `value={dir}` is the whole value of the context (a `__whole` frame field); the consumer's own `dir` still wins |
+| c-context-whole-vs-fields | a consumer reads the whole value of a context whose Provider hands out fields | react | react | ssr | ok | 3.9 | fallback:context-shape | R34.142: the two frame shapes differ (context-shape): never `undefined` for a value the Provider did hand out |
+| c-context-fields-vs-whole | a consumer reads a field of a context whose Provider hands out one value | react | react | ssr | ok | 3.9 | fallback:context-shape | R34.142: the reverse mismatch (context-shape) |
 | c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.9 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
 | c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.2 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.2 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |
@@ -406,7 +415,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 |---|---|---|---|---|---|---|---|---|
 | d-cache | cache() around a server helper | static | static | precompute | ok | 0 | — | spec §3.4 cache() |
 | d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | 3.9 | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
-| d-createcontext | createContext provider | react | react | ssr | ok | 3.9 | fallback:context-value |  |
+| d-createcontext | createContext provider | static | static | 0 | ok | 0 | — |  |
 | d-clone-element | cloneElement | react | react | ssr | ok | 3.9 | fallback:hook-unsupported |  |
 | d-children-map | Children.map | react | react | ssr | ok | 3.9 | fallback:jsx-expression |  |
 | d-suspense-static | <Suspense> around static content | static | static | ssr | ok | 3.9 | fallback:external-component | spec §3 react tier: Suspense is a React island; since R34.52 its constant `fallback` element travels as an element prop, so the page is static (shadcn S1, constant-slots) |
@@ -521,9 +530,9 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 | Status | Entries |
 |---|---|
 | native | 11 |
-| static | 11 |
-| partial | 4 |
-| island | 27 |
+| static | 12 |
+| partial | 5 |
+| island | 25 |
 | unsupported | 0 |
 | n/a | 5 |
 | **Total** | 58 |
@@ -534,7 +543,7 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 |---|---|---|---|
 | [`useActionState`](https://react.dev/reference/react/useActionState) | island | c-useactionstate | spec §3 react tier: any hook outside §4.3 |
 | [`useCallback`](https://react.dev/reference/react/useCallback) | native | c-usecallback | spec §4.3 useCallback |
-| [`useContext`](https://react.dev/reference/react/useContext) | island | c-usecontext | useContext |
+| [`useContext`](https://react.dev/reference/react/useContext) | static | c-usecontext | R34.142: a context with a literal default read as a value, with no Provider above the page, is its default (React's own rule) |
 | [`useDebugValue`](https://react.dev/reference/react/useDebugValue) | island | c-usedebugvalue | spec §3 react tier: any hook outside §4.3 |
 | [`useDeferredValue`](https://react.dev/reference/react/useDeferredValue) | island | c-usedeferredvalue | spec §3 react tier: any hook outside §4.3 |
 | [`useEffect`](https://react.dev/reference/react/useEffect) | native | c-useeffect-cleanup, c-useeffect-missing-dep, c-useeffect-nocleanup | spec §8.1 effect-deps: the deps array is complete, so no warning (F41) |
@@ -571,7 +580,7 @@ Every entry of the React reference (react.dev, fetched 2026-10-13; the list is `
 | [`cache`](https://react.dev/reference/react/cache) | static | d-cache | spec §3.4 cache() |
 | [`cacheSignal`](https://react.dev/reference/react/cacheSignal) | static | d-cachesignal | spec §3.4 cache(): the call is a precompute job on the server |
 | [`captureOwnerStack`](https://react.dev/reference/react/captureOwnerStack) | island | d-captureownerstack | captureOwnerStack in a handler |
-| [`createContext`](https://react.dev/reference/react/createContext) | island | d-createcontext, d-createcontext-consumer | createContext provider |
+| [`createContext`](https://react.dev/reference/react/createContext) | partial | d-createcontext, d-createcontext-consumer | native/static: d-createcontext; island: d-createcontext-consumer |
 | [`experimental_taintObjectReference`](https://react.dev/reference/react/experimental_taintObjectReference) | island | d-taint-object | experimental_taintObjectReference |
 | [`experimental_taintUniqueValue`](https://react.dev/reference/react/experimental_taintUniqueValue) | island | d-taint-unique | experimental_taintUniqueValue |
 | [`lazy`](https://react.dev/reference/react/lazy) | island | d-lazy-suspense, d-lazy-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
