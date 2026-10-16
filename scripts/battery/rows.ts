@@ -1573,6 +1573,12 @@ export const rows: Row[] = [
     snippet: `import { useState } from 'react'\nimport Sized from './Sized'\nexport default function C() { const [w, setW] = useState(10); return <div><button onClick={() => setW(w + 10)}>t</button><Sized name="s" style={{ width: w }} /></div> }`,
     files: { 'Sized.tsx': `export default function Sized({ style, ...props }: any) { return <input type="checkbox" {...props} tabIndex={-1} style={{ ...style, position: 'absolute', opacity: 0 }} /> }` },
     note: 'F277: Object.assign({}, …) is in the template subset: the merged style binds as an object (x-bind-style), no job to go stale' },
+  { id: 'c-dead-arm-null-state', category: 'C', authoring: 'a derived value whose arm on a useState(null) cell calls a method (`control ? control.closest(…) : true`)', expect: 'native', jobs: 0,
+    snippet: `import { useState } from 'react'\nexport default function C({ form }: any) { const [control, setControl] = useState<HTMLButtonElement | null>(null); const isFormControl = control ? !!form || !!control.closest('form') : true; return <button ref={setControl} data-form={isFormControl ? 'y' : 'n'}>b</button> }`,
+    note: 'F297: the server renders control at null, so it prints the true arm (no job); the chunk keeps the whole expression' },
+  { id: 'c-live-arm-null-state', category: 'C', authoring: 'the same shape whose arm the server takes calls a method', expect: 'native', jobs: 1,
+    snippet: `import { useState } from 'react'\nexport default function C({ label }: any) { const [c, setC] = useState(null); const v = c ? 'set' : JSON.stringify(label); return <b onClick={() => setC(1 as any)}>{v}</b> }`,
+    note: 'F297: only an arm the server never takes is dropped; the taken arm keeps its precompute job' },
 
   { id: 'c-useid-in-attribute', category: 'C', authoring: 'useId() called in attribute values of the returned tree', expect: 'native', jobs: 0,
     snippet: `import { useId, useState } from 'react'\nexport default function C({ label }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}><label htmlFor={useId()}>{label}</label><input id={useId()} /><span>{n}</span></div> }`,

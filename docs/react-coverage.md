@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 97 | 23 | 30 | 44 | 0 | 0 | 0 | 0 |
+| C Hooks | 99 | 23 | 32 | 44 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 472 | 212 | 75 | 181 | 3 | 1 | 0 | 0 |
+| **Total** | 474 | 212 | 77 | 181 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -364,6 +364,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-fixed-cell-from-prop | a useState with no setter seeded from a prop | native | native | 0 | ok | 4.5 | — | F277 (Mellow F1): an instance that mounts again (an x-if, a row) re-reads the prop, so the cell stays state |
 | c-fixed-cell-prop-unlinked | a parent's state passed to a child that reads it only as a never-written ref's first value | native | native | 0 | ok | 4.5 | — | F277: the child takes the prop once (React keeps the first render too): no link, no directive |
 | c-live-style-child-element | a parent's state in a style object a static child spreads onto its element | native | native | 0 | ok | 4.5 | — | F277: Object.assign({}, …) is in the template subset: the merged style binds as an object (x-bind-style), no job to go stale |
+| c-dead-arm-null-state | a derived value whose arm on a useState(null) cell calls a method (`control ? control.closest(…) : true`) | native | native | 0 | ok | 4.5 | — | F297: the server renders control at null, so it prints the true arm (no job); the chunk keeps the whole expression |
+| c-live-arm-null-state | the same shape whose arm the server takes calls a method | native | native | precompute | ok | 4.5 | — | F297: only an arm the server never takes is dropped; the taken arm keeps its precompute job |
 | c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | 4.5 | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
 | c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | 3.9 | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
 | c-useid-comma-call | useId called through a comma (`(0, useId)()`, bundler output) | static | static | 0 | ok | 0 | — | F237: the comma spelling is the hook (was a per-request job calling useId outside a render) |
@@ -377,7 +379,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-render-prop-local-object-computed | a render prop called with a local const object holding a computation | react | react | ssr | ok | 5.2 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | F266: a field that is a computation is not a plain read; the Provider stays an island |
 | c-spread-const-object | a spread of a local const object literal into a component | static | static | 0 | ok | 4.5 | — | F266: <Impl {...ctx}> with const ctx = { a, b } is read as the entries (components only; an element spread stays as it was) |
 | c-native-provider-derived-frame | a state Provider whose frame field is a derived value over a prop and state | static | static | 0 | ok | 4.5 | — | F269: the frame hands out the derived value as written (Radix useControllableState), not its precomputed slot |
-| c-native-provider-negated-method | a render prop reading a boolean made with !! of a method of an element held in state | static | static | 0 | ok | 4.9 | info:build-eval-instance | F269: Radix's isFormControl; !x prints a boolean whatever x is, so the allowlist does not judge x |
+| c-native-provider-negated-method | a render prop reading a boolean made with !! of a method of an element held in state | static | static | 0 | ok | 4.9 | — | F269: Radix's isFormControl; !x prints a boolean whatever x is, so the allowlist does not judge x |
 | c-forwardref-child-ref-cell | a useRef passed as ref to an inlined forwardRef child that hands it to its one element | native | native | 0 | ok | 4.5 | — | F267: the parent binds x-ref on the child's own element, in its scope; the child stays static and unlinked |
 | c-forwardref-child-ref-callback | a state setter passed as ref to an inlined forwardRef child | native | native | 0 | ok | 4.5 | — | F267: a callback ref is the same mount effect as on an element, its ref cell bound on the child's element |
 | c-forwardref-child-ref-conditional-child | a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes | react | react | ssr | ok | 3.9 | fallback:forwardref-ref | F267: the child may not render the element at all; the call site keeps the React fallback |
