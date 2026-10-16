@@ -237,6 +237,8 @@ fn a_render_prop_that_cannot_be_spliced_keeps_the_island_provider() {
         ("render_used.tsx", "render"),
         ("render_calc.tsx", "computation"),
         ("render_free.tsx", "title"),
+        // capture: the row binds `on`, which the substituted argument (the Provider's state `on`) also names
+        ("render_capture.tsx", "binds `on`"),
     ] {
         let all = compile(file);
         assert!(clones(&all).is_empty(), "{file}: nothing was specialised");

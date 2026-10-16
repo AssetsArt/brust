@@ -959,6 +959,22 @@ fn subst_params(
             {
                 return Err("a list in the render body binds a name the arrow also takes".into());
             }
+            // Capture avoidance: an argument substituted into the row would read the row's binding instead of the
+            // callee's own value of the same name (`({ on: c }) => xs.map((on) => c ? on : 0)`).
+            let binds = |n: &str| item == n || index.as_deref() == Some(n);
+            let mut captured = None;
+            for v in map.values() {
+                crate::lower::common::visit_idents(v, &mut |n, _| {
+                    if binds(n) {
+                        captured = Some(n.to_string());
+                    }
+                });
+            }
+            if let Some(n) = captured {
+                return Err(format!(
+                    "a list in the render body binds `{n}`, which an argument of the call reads"
+                ));
+            }
             ex(key, map)?;
             body.iter_mut().try_for_each(|c| subst_params(c, map))
         }
