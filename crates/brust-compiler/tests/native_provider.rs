@@ -770,6 +770,33 @@ fn rest_children_a_native_trigger_would_bind_keep_todays_refusal_and_say_why() {
         .unwrap_or_default();
     assert!(why.contains("its own host element"), "{why}");
 }
+// F324: a state Provider that spreads its `...rest` onto an element and never prints `{children}` gets the call site's
+// children through that spread in React. The clone has no `{children}` to put them in, so it is refused: the call site
+// keeps the Provider as an island, which carries them. Without children the clone is still taken.
+#[test]
+fn jsx_children_given_to_a_provider_that_spreads_its_rest_are_not_dropped_by_the_clone() {
+    let all = compile("spec_drop.tsx");
+    assert!(clones(&all).is_empty(), "no clone");
+    let root = &all[0];
+    assert!(
+        root.ir
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == "specialise-unsupported" && d.message.contains("as `children`")),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    assert!(
+        root.jinja.contains("brust-island") && root.jinja.contains("hello"),
+        "{}",
+        root.jinja
+    );
+
+    let all = compile("spec_drop_none.tsx");
+    assert_eq!(clones(&all).len(), 1, "{:?}", all[0].ir.diagnostics);
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+}
+
 // R34.143: `useSyncExternalStore(subscribe, () => true, () => false)` with a `subscribe` that subscribes to nothing (Radix's
 // `useIsHydrated`) is false on the server and true once mounted; every other store stays `hook-unsupported`.
 #[test]

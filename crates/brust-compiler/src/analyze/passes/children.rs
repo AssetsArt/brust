@@ -779,6 +779,14 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         return Err("the component reads its children as a value, not only as markup".into());
     }
     match count(&ir.template) {
+        // F324: the component never prints its `{children}`, so React drops the call site's content, unless the rest
+        // (or the whole props) it spreads carries it as `children` onto an element or a component. The clone cannot
+        // say where that lands (`splice_rest_children` is the forwarder's), so it is refused and the call site keeps
+        // its React island, which carries the content.
+        0 if !content.is_empty() && reads_rest_or_props(ir) => Err(
+            "the component spreads its `...rest` (or props) and the content given to it would reach that spread as `children`"
+                .into(),
+        ),
         0 => Ok(()),
         1 => {
             put(&mut ir.template, &mut Some(content));
@@ -786,6 +794,16 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         }
         n => Err(format!("the component reads its children {n} times")),
     }
+}
+
+/// F324: whether the template (or a render prop's body) of `ir` reads its `...rest` or its whole props anywhere.
+fn reads_rest_or_props(ir: &ComponentIR) -> bool {
+    let cx = super::deps::DepsCx::new(ir);
+    let mut nodes: Vec<&Node> = vec![&ir.template];
+    nodes.extend(ir.render_props.iter().flat_map(|rp| rp.body.iter()));
+    nodes
+        .into_iter()
+        .any(|n| cx.deps_node(n, &[]).props.iter().any(|p| p == "*"))
 }
 
 /// F309: the template of `ir` prints `{children}` somewhere.
