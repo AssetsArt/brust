@@ -370,13 +370,18 @@ fn write_json_attr(out: &mut String, v: &Value) -> Result<(), Bail> {
                 }
             }
             // serde_json's map is ordered by the key string (minijinja's
-            // own map usually iterates in that order already).
-            let sorted =
-                |m: &[(Value, Value)]| m.windows(2).all(|w| *key_str(&w[0].0) < *key_str(&w[1].0));
-            if !sorted(&members) {
-                members.sort_by(|a, b| key_str(&a.0).cmp(&key_str(&b.0)));
+            // own map usually iterates in that order already). F282: an object the compiler built in source
+            // order (`obj_lit` / `obj_assign`, JS key order, unique keys) keeps it, as `JSON.stringify` writes it:
+            // the order of a style's declarations decides a shorthand against its longhand.
+            if v.downcast_object_ref::<spread::OrderedMap>().is_none() {
+                let sorted = |m: &[(Value, Value)]| {
+                    m.windows(2).all(|w| *key_str(&w[0].0) < *key_str(&w[1].0))
+                };
                 if !sorted(&members) {
-                    return Err(Bail); // a key string repeats
+                    members.sort_by(|a, b| key_str(&a.0).cmp(&key_str(&b.0)));
+                    if !sorted(&members) {
+                        return Err(Bail); // a key string repeats
+                    }
                 }
             }
             out.push('{');
@@ -1314,6 +1319,33 @@ mod tests {
                 Value::from_object(Pairs(pairs))
             }
         }
+    }
+
+    /// F282: an object built by `obj_lit` / `obj_assign` crosses as JSON in its insertion order, as `JSON.stringify`
+    /// writes it (a style's declaration order decides a shorthand against its longhand); a plain map stays sorted.
+    #[test]
+    fn json_attr_keeps_the_order_of_an_ordered_object() {
+        let ctx = Value::from(());
+        assert_eq!(
+            render(
+                "{{ {\"style\": obj_lit(\"marginTop\", 5, \"margin\", 0, \"color\", \"red\")} | json_attr }}",
+                ctx.clone()
+            ),
+            "{&quot;style&quot;:{&quot;marginTop&quot;:5,&quot;margin&quot;:0,&quot;color&quot;:&quot;red&quot;}}"
+        );
+        // a later assignment keeps its place and takes the new value; an undefined member is left out
+        assert_eq!(
+            render(
+                "{{ obj_assign(obj_lit(\"b\", 1, \"a\", 2), obj_lit(\"b\", 3, \"c\", undefined)) | json_attr }}",
+                ctx.clone()
+            ),
+            "{&quot;b&quot;:3,&quot;a&quot;:2}"
+        );
+        // a plain jinja map is still sorted (serde_json without preserve_order)
+        assert_eq!(
+            render("{{ {\"b\": 1, \"a\": 2} | json_attr }}", ctx),
+            "{&quot;a&quot;:2,&quot;b&quot;:1}"
+        );
     }
 
     #[test]
