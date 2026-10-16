@@ -19,7 +19,8 @@
 //! an expression statement, `let` / `var`, a load-time call of this module's own code, a coercion of a module value)
 //! makes the module unclean. Only the component's own module is judged: an
 //! app module or a package it imports is imported for real by the job and the chunk, so its own statements run (lead
-//! ruling e2962f7f; the residual class, a third module mutating an imported one at load, is ledger F219).
+//! ruling e2962f7f; the residual class, a third module mutating an imported one at load, is ledger F219, closed by the
+//! build-wide scan of F230, `load_writes`).
 use crate::analyze::expr::{Walk, chain_root};
 use crate::analyze::names::NameTable;
 use bun_ast as js_ast;
