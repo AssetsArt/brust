@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | pages with no worker call | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|---|
-| 64 | 57 | 1 | 6 | 36 | 25 | 21 | 0 / 87 / 240 KiB |
+| 64 | 57 | 1 | 6 | 36 | 25 | 22 | 0 / 87 / 240 KiB |
 
 ### Analysis-only (0 of 64 pages refused)
 
@@ -37,7 +37,7 @@ One line per thing that keeps a row or a library component off the static/native
 | # | Blocker | Kind | Classification | Measured rows | Analysis-only rows | App components | Library components | Why |
 |---|---|---|---|---|---|---|---|---|
 | 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 37 | 0 | 133 | 151 | `external-component` diagnostic (docs/react-coverage.md) |
-| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 121 | 178 | `spread-props` diagnostic (docs/react-coverage.md) |
+| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 121 | 177 | `spread-props` diagnostic (docs/react-coverage.md) |
 | 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 31 | 0 | 87 | 176 | `island-prop` diagnostic (docs/react-coverage.md) |
 | 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 19 | 0 | 20 | 55 | `island-children` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 7 | 0 | 8 | 29 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
@@ -46,7 +46,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 8 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 154 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 9 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 36 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 10 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 6 | `jsx-expression` diagnostic (docs/react-coverage.md) |
-| 11 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 12 | `context-state` diagnostic (docs/react-coverage.md) |
+| 11 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 13 | `context-state` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 6 | `child-component` diagnostic (docs/react-coverage.md) |
 | 13 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
 | 14 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
@@ -109,10 +109,10 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 
 | Row | Basis | Tier | Islands | Components | Client JS gzip KiB | Worker | Fallback codes | Outcome |
 |---|---|---|---|---|---|---|---|---|
-| accordion | measured | static | 1 | 11 (8) | 94 | 1 | external-component, island-children, island-prop, spread-props | built |
+| accordion | measured | static | 1 | 11 (8) | 95 | 1 | external-component, island-children, island-prop, spread-props | built |
 | alert | measured | static | 0 | 4 (0) | 0 | 0 | — | built |
 | alert-dialog | measured | static | 1 | 22 (18) | 100 | 1 | external-component, island-children, island-prop, slot-child-component, spread-props | built |
-| aspect-ratio | measured | static | 0 | 4 (0) | 0 | 1 | — | built |
+| aspect-ratio | measured | static | 0 | 4 (0) | 0 | 0 | — | built |
 | attachment | measured | static | 0 | 7 (0) | 0 | 0 | — | built |
 | avatar | measured | static | 2 | 8 (5) | 87 | 2 | external-component, instance-prop-path, island-prop, nested-instance, spread-props | built |
 | badge | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
@@ -123,14 +123,14 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | button-alias | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | button-aschild | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | button-group | measured | static | 0 | 7 (0) | 0 | 1 | — | built |
-| calendar | measured | static | 1 | 3 (2) | 107 | 1 | external-component, island-prop, jsx-const-child, jsx-expression, spread-props | built |
+| calendar | measured | static | 1 | 3 (2) | 108 | 1 | external-component, island-prop, jsx-const-child, jsx-expression, spread-props | built |
 | card | measured | static | 0 | 9 (0) | 0 | 0 | — | built |
 | carousel | measured | static | 1 | 9 (5) | 97 | 1 | context-state, control-flow, event-capture, external-component, hook-unsupported, jsx-const-child, ref-shape, spread-handler | built |
 | chart | measured | static | 1 | 9 (8) | 240 | 1 | control-flow, external-component, hook-shape, island-prop, jsx-const-child, local-component, use-id-in-render | built |
 | checkbox | measured | static | 1 | 7 (3) | 91 | 1 | external-component, island-prop, spread-props | built |
 | collapsible | measured | react | 1 | 9 (5) | 89 | 1 | context-island, external-component, spread-props | built |
-| combobox | measured | react | 1 | 22 (16) | 157 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, nested-instance, slot-dynamic, spread-props | built |
-| command | measured | static | 1 | 16 (14) | 104 | 1 | external-component, island-prop, spread-props | built |
+| combobox | measured | react | 1 | 22 (16) | 158 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, nested-instance, slot-dynamic, spread-props | built |
+| command | measured | static | 1 | 16 (14) | 105 | 1 | external-component, island-prop, spread-props | built |
 | context-menu | measured | static | 1 | 13 (11) | 116 | 1 | external-component, island-children, island-prop, spread-props | built |
 | dialog | measured | react | 1 | 25 (14) | 101 | 1 | context-island, external-component, island-children, island-prop, nested-instance, slot-dynamic, spread-props | built |
 | direction | measured | static | 1 | 3 (2) | 70 | 1 | external-component, island-prop | built |
@@ -154,13 +154,13 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | navigation-menu | measured | static | 1 | 15 (14) | 99 | 1 | external-component, island-prop, spread-props | built |
 | pagination | measured | static | 0 | 8 (0) | 0 | 3 | external-component | built |
 | popover | measured | static | 1 | 9 (7) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
-| progress | measured | static | 1 | 5 (2) | 85 | 1 | external-component, island-children, island-prop, spread-props | built |
+| progress | measured | static | 1 | 5 (2) | 86 | 1 | external-component, island-children, island-prop, spread-props | built |
 | radio-group | measured | static | 1 | 9 (5) | 98 | 1 | external-component, island-prop, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
 | scroll-area | measured | static | 1 | 11 (7) | 92 | 1 | external-component, island-prop, spread-props | built |
 | select | measured | react | 1 | 26 (20) | 117 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | separator | measured | static | 0 | 4 (0) | 0 | 2 | — | built |
-| sheet | measured | react | 1 | 21 (13) | 100 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
+| sheet | measured | react | 1 | 21 (13) | 101 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | sidebar | measured | static | 1 | 14 (6) | 117 | 1 | context-state, control-flow, external-component, island-children, jsx-const-child, linked-prop-precompute, spread-handler, spread-props | built |
 | skeleton | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | slider | measured | static | 1 | 7 (4) | 93 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
@@ -171,7 +171,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | tabs | measured | static | 1 | 9 (8) | 94 | 1 | external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | toggle | measured | static | 0 | 4 (0) | 5 | 0 | — | built |
-| toggle-group | measured | static | 1 | 5 (4) | 93 | 1 | external-component, island-prop, jsx-const-child, spread-props | built |
+| toggle-group | measured | static | 1 | 5 (4) | 94 | 1 | external-component, island-prop, jsx-const-child, spread-props | built |
 | tooltip | measured | static | 1 | 12 (10) | 106 | 1 | external-component, island-children, island-prop, spread-props | built |
 
 ## App components that block
@@ -494,7 +494,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
-| src/checkbox.tsx | CheckboxProvider | function | react (fallback:hook-unsupported, fallback:jsx-const-child, fallback:spread-props) | Context.Provider / *Provider, useControllableState, useState |
+| src/checkbox.tsx | CheckboxProvider | function | react (fallback:context-state, fallback:hook-unsupported, fallback:jsx-const-child) | Context.Provider / *Provider, useControllableState, useState |
 | src/checkbox.tsx | CheckboxTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, addEventListener |
 | src/checkbox.tsx | Checkbox | forwardRef | not exported | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/checkbox.tsx | CheckboxIndicator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, Presence, rest-props spread |
