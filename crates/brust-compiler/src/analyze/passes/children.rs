@@ -843,6 +843,14 @@ fn reads_rest_or_props(ir: &ComponentIR) -> bool {
         .any(|n| cx.deps_node(n, &[]).props.iter().any(|p| p == "*"))
 }
 
+/// F342: the children a call site gives reach the component's markup only through its `...rest` (or whole props)
+/// spread: it prints no `{children}` and does not name `children` (which a rest would then leave out).
+fn carries_children_by_rest(ir: &ComponentIR) -> bool {
+    !prints_children_slot(ir)
+        && !ir.props.iter().any(|p| p.name == "children")
+        && reads_rest_or_props(ir)
+}
+
 /// F309: the template of `ir` prints `{children}` somewhere.
 fn prints_children_slot(ir: &ComponentIR) -> bool {
     fn any(n: &Node) -> bool {
@@ -5157,7 +5165,13 @@ impl Walker<'_, '_> {
         // write the child's members. Directives are owned by the component whose scope resolves their names; until a
         // frame can say otherwise (a native Provider), the only owner of slot content is its caller, and the caller
         // stays on React.
-        if child.hosts_children && !matches!(child.tier, Tier::React { .. }) && !children.is_empty()
+        // F342: the same for a native child whose `...rest` (or whole props) carries the children onto an element of its
+        // own: everything a native child prints is under its host.
+        let rest_hosts = matches!(child.tier, Tier::Native)
+            && child.ir.as_deref().is_some_and(carries_children_by_rest);
+        if (child.hosts_children || rest_hosts)
+            && !matches!(child.tier, Tier::React { .. })
+            && !children.is_empty()
         {
             if children.iter().any(template_reads_children) {
                 self.passes_to_host = true;
@@ -5179,7 +5193,10 @@ impl Walker<'_, '_> {
         if link.is_some()
             && matches!(child.tier, Tier::Static)
             && !children.is_empty()
-            && child.ir.as_deref().is_some_and(prints_children_slot)
+            && child
+                .ir
+                .as_deref()
+                .is_some_and(|c| prints_children_slot(c) || carries_children_by_rest(c))
             && let Some(what) = children.iter().find_map(|c| self.owned_directive(c))
         {
             self.diagnostics.push(Diagnostic::fallback(

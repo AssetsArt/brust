@@ -271,6 +271,15 @@
       "libraryComponents": 0
     },
     {
+      "blocker": "fallback:slot-owner",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
       "blocker": "fallback:use-id-in-render",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -839,6 +848,7 @@
         "key-outside-list",
         "nested-instance",
         "slot-dynamic",
+        "slot-owner",
         "spread-props"
       ]
     },
