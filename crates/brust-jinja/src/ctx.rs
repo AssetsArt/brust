@@ -28,8 +28,52 @@ pub enum Node {
 }
 
 /// A string-keyed, sorted map: a minijinja `Object` with repr `Map`.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct CtxMap(pub MapInner);
+///
+/// F318: the second field is the order the keys had in the parsed JSON text, kept ONLY when it differs from the sorted
+/// one (`None` for a map that arrived sorted, which is every map built in Rust). The worker writes its objects with
+/// `JSON.stringify`, so the text order is JS's own, and it decides what React prints for a style object (a later
+/// shorthand overrides an earlier longhand). Lookups, `{% for %}`, `keys` and `entries` stay SORTED (the server's own
+/// logic and the byte-compatibility with the `serde_json` path rely on it); only [`CtxMap::each_ordered`] reads the
+/// hint: the `json_attr` writer and the style printers. The hint is the keys in text order joined by `\0` (one
+/// allocation, no refcounts, so parsing a response whose objects are unsorted stays cheap); an object with a `\0` in a
+/// key carries no hint (sorted). A key written after the parse (a map edited in place) is not in
+/// it and follows the hinted ones, sorted.
+#[derive(Debug, Clone, Default)]
+pub struct CtxMap(pub MapInner, pub Option<Box<str>>);
+
+impl PartialEq for CtxMap {
+    /// The content, not the text order: two maps with the same entries are equal.
+    fn eq(&self, other: &CtxMap) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl CtxMap {
+    /// Calls `f` for every entry in the order the JSON text gave (see the type's docs), the sorted order when there is
+    /// no hint. No allocation.
+    pub fn each_ordered<'a>(&'a self, mut f: impl FnMut(&'a Arc<str>, &'a Node)) {
+        let Some(order) = &self.1 else {
+            for (k, v) in &self.0 {
+                f(k, v);
+            }
+            return;
+        };
+        let mut seen = 0;
+        for k in order.split('\0') {
+            if let Some((k, v)) = self.0.get_key_value(k) {
+                f(k, v);
+                seen += 1;
+            }
+        }
+        if seen < self.0.len() {
+            for (k, v) in &self.0 {
+                if !order.split('\0').any(|o| o == &**k) {
+                    f(k, v);
+                }
+            }
+        }
+    }
+}
 
 /// A list: a minijinja `Object` with repr `Seq`.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -37,7 +81,7 @@ pub struct CtxArr(pub Vec<Node>);
 
 impl Node {
     pub fn map(m: MapInner) -> Node {
-        Node::Map(Arc::new(CtxMap(m)))
+        Node::Map(Arc::new(CtxMap(m, None)))
     }
     pub fn arr(v: Vec<Node>) -> Node {
         Node::Arr(Arc::new(CtxArr(v)))
@@ -234,7 +278,7 @@ pub(crate) fn write_node(out: &mut String, n: &Node) {
         }
         Node::Str(s) => crate::write_json_attr_str(out, s),
         Node::Arr(a) => write_arr(out, a),
-        Node::Map(m) => write_map(out, &m.0, &[]),
+        Node::Map(m) => write_map(out, m, &[]),
     }
 }
 
@@ -249,12 +293,12 @@ pub(crate) fn write_arr(out: &mut String, a: &CtxArr) {
     out.push(']');
 }
 
-pub(crate) fn write_map(out: &mut String, m: &MapInner, hidden: &[&str]) {
+pub(crate) fn write_map(out: &mut String, m: &CtxMap, hidden: &[&str]) {
     out.push('{');
     let mut first = true;
-    for (k, v) in m {
+    m.each_ordered(|k, v| {
         if hidden.contains(&&**k) {
-            continue;
+            return;
         }
         if !first {
             out.push(',');
@@ -263,7 +307,7 @@ pub(crate) fn write_map(out: &mut String, m: &MapInner, hidden: &[&str]) {
         crate::write_json_attr_str(out, k);
         out.push(':');
         write_node(out, v);
-    }
+    });
     out.push('}');
 }
 
@@ -278,6 +322,25 @@ impl Serialize for Node {
             Node::Str(x) => s.serialize_str(x),
             Node::Arr(a) => s.collect_seq(a.0.iter()),
             Node::Map(m) => s.collect_map(m.0.iter().map(|(k, v)| (&**k, v))),
+        }
+    }
+}
+
+/// A node serialised in the order its objects had in the JSON text they were parsed from (F318): what a job's inputs
+/// need so the worker's `JSON.stringify` and React see the loader's own key order (a style's declaration order decides
+/// the cascade). [`Node`]'s own `Serialize` stays SORTED: it is the canonical form job cache keys hash.
+pub struct Ordered<'a>(pub &'a Node);
+
+impl Serialize for Ordered<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Node::Arr(a) => s.collect_seq(a.0.iter().map(Ordered)),
+            Node::Map(m) => {
+                let mut entries: Vec<(&str, Ordered<'_>)> = Vec::with_capacity(m.0.len());
+                m.each_ordered(|k, v| entries.push((&**k, Ordered(v))));
+                s.collect_map(entries)
+            }
+            other => other.serialize(s),
         }
     }
 }
@@ -345,11 +408,61 @@ impl<'de> Visitor<'de> for NodeVisitor {
     }
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Node, A::Error> {
         let mut m = MapInner::new();
-        // Last value wins on a repeated key, as serde_json::Map does.
+        // F318: the text order, recorded only once a key breaks the sorted order (the keys so far were ascending, so
+        // they are exactly the map's keys at that point). A repeated key keeps its first place, its last value. The
+        // sorted case (a key above the map's last) costs one comparison against the last key, nothing else.
+        let mut order: Option<String> = None;
+        let mut pushed = 0usize;
+        let mut skip = false; // a key holds the separator: no hint for this object
         while let Some((Key(k), v)) = map.next_entry::<Key, Node>()? {
+            match &mut order {
+                Some(o) => {
+                    // a repeated key is pushed too; the end of the object drops the repeats
+                    skip |= k.contains('\0');
+                    o.push('\0');
+                    o.push_str(&k);
+                    pushed += 1;
+                }
+                None => {
+                    if let Some((last, _)) = m.last_key_value()
+                        && **last >= *k
+                        && **last != *k
+                    {
+                        let mut o = String::with_capacity(64);
+                        for (i, key) in m.keys().enumerate() {
+                            skip |= key.contains('\0');
+                            if i > 0 {
+                                o.push('\0');
+                            }
+                            o.push_str(key);
+                        }
+                        if !m.contains_key(&k) {
+                            skip |= k.contains('\0');
+                            o.push('\0');
+                            o.push_str(&k);
+                        }
+                        pushed = m.len() + usize::from(!m.contains_key(&k));
+                        order = Some(o);
+                    }
+                    // (a repeat of the last key keeps the sorted order: its place is the same)
+                }
+            }
+            // Last value wins on a repeated key, as serde_json::Map does.
             m.insert(k, v);
         }
-        Ok(Node::map(m))
+        // Repeats (a key written twice) keep their first place: only an object that repeated pays this.
+        if let Some(o) = &mut order
+            && pushed != m.len()
+        {
+            let mut seen = std::collections::HashSet::new();
+            *o = o
+                .split('\0')
+                .filter(|k| seen.insert(*k))
+                .collect::<Vec<_>>()
+                .join("\0");
+        }
+        let order = order.filter(|_| !skip).map(String::into_boxed_str);
+        Ok(Node::Map(Arc::new(CtxMap(m, order))))
     }
 }
 
@@ -447,6 +560,94 @@ mod tests {
                 assert_eq!(got, want, "#{i} template {t}: {src}\n{json}");
             }
         }
+    }
+
+    /// F318: an object parsed from the worker's JSON text keeps the text order for the two printers that React's order
+    /// decides (`json_attr` crossing to the client, the style printers); iteration stays sorted.
+    #[test]
+    fn a_parsed_object_keeps_its_text_order_for_json_and_style_but_iterates_sorted() {
+        let n: Node = serde_json::from_str(
+            r#"{"style":{"marginTop":5,"margin":0,"color":"red"},"o":{"b":1,"a":2}}"#,
+        )
+        .unwrap();
+        let env = env();
+        let ctx = n.to_value();
+        // crossing as JSON: the text order
+        assert_eq!(
+            env.render_str("{{ style | json_attr }}", ctx.clone())
+                .unwrap(),
+            "{&quot;marginTop&quot;:5,&quot;margin&quot;:0,&quot;color&quot;:&quot;red&quot;}"
+        );
+        // printed as a style attribute: the longhand first, so `margin: 0` wins as in React
+        assert_eq!(
+            env.render_str("{{ style | style_attr }}", ctx.clone())
+                .unwrap(),
+            " style=\"margin-top:5px;margin:0;color:red\""
+        );
+        assert_eq!(
+            env.render_str("{{ style | style_css }}", ctx.clone())
+                .unwrap(),
+            "margin-top:5px;margin:0;color:red"
+        );
+        // `{% for %}` and lookups stay sorted; `keys` / `entries` (Object.keys / Object.entries) follow the JS (text) order
+        // json_attr sends, so server, client and React iterate alike (F318 F1)
+        assert_eq!(
+            env.render_str("{% for k in o %}{{ k }}{% endfor %}|{{ style.margin }}|{{ style | keys | join(',') }}|{% for p in style | entries %}{{ p[0] }}={{ p[1] }};{% endfor %}", ctx.clone())
+                .unwrap(),
+            "ab|0|marginTop,margin,color|marginTop=5;margin=0;color=red;"
+        );
+        // a spread of a runtime object keeps its order too (F2): obj_assign over a parsed style
+        assert_eq!(
+            env.render_str(
+                "{{ obj_assign(style, obj_lit('position', 'absolute')) | style_attr }}",
+                ctx.clone()
+            )
+            .unwrap(),
+            " style=\"margin-top:5px;margin:0;color:red;position:absolute\""
+        );
+        // a map that arrived sorted has no hint; a repeated key keeps its first place and its last value
+        let sorted: Node = serde_json::from_str(r#"{"a":1,"b":2}"#).unwrap();
+        assert!(sorted.as_map().unwrap().1.is_none());
+        // a repeat of an EARLIER key (not the last): first place, last value, no duplicate in the order
+        let dup2: Node = serde_json::from_str(r#"{"a":1,"b":2,"a":3,"c":4}"#).unwrap();
+        assert_eq!(
+            env.render_str(
+                "{{ d | json_attr }}",
+                minijinja::context! { d => dup2.to_value() }
+            )
+            .unwrap(),
+            "{&quot;a&quot;:3,&quot;b&quot;:2,&quot;c&quot;:4}"
+        );
+        // a key holding the separator carries no hint (sorted)
+        let nul: Node = serde_json::from_str(r#"{"b\u0000x":1,"a":2}"#).unwrap();
+        assert!(nul.as_map().unwrap().1.is_none());
+        let dup: Node = serde_json::from_str(r#"{"b":1,"a":2,"b":3}"#).unwrap();
+        assert_eq!(
+            env.render_str(
+                "{{ d | json_attr }}",
+                minijinja::context! { d => dup.to_value() }
+            )
+            .unwrap(),
+            "{&quot;b&quot;:3,&quot;a&quot;:2}"
+        );
+        // a key written after the parse follows the hinted ones
+        let mut edited: Node = serde_json::from_str(r#"{"z":1,"m":2}"#).unwrap();
+        edited
+            .map_mut()
+            .unwrap()
+            .insert(Arc::from("a"), Node::Num(3.into()));
+        assert_eq!(
+            env.render_str(
+                "{{ d | json_attr }}",
+                minijinja::context! { d => edited.to_value() }
+            )
+            .unwrap(),
+            "{&quot;z&quot;:1,&quot;m&quot;:2,&quot;a&quot;:3}"
+        );
+        // equality is the content, not the order
+        let other: Node = serde_json::from_str(r#"{"a":2,"b":1}"#).unwrap();
+        let again: Node = serde_json::from_str(r#"{"b":1,"a":2}"#).unwrap();
+        assert_eq!(other, again);
     }
 
     #[test]

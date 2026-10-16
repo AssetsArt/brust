@@ -123,35 +123,25 @@ pub fn register(env: &mut Environment<'_>) {
         if v.kind() != ValueKind::Map {
             return String::new();
         }
-        let pairs: Vec<(String, Value)> = v
-            .try_iter()
-            .map(|it| {
-                it.map(|k| {
-                    let val = v.get_item(&k).unwrap_or(Value::UNDEFINED);
-                    (k.to_string(), val)
-                })
-                .collect()
-            })
-            .unwrap_or_default();
-        style_attr_text(&style_obj_to_css(&pairs))
+        style_attr_text(&style_obj_to_css(&style_pairs(&v)))
     });
     env.add_filter("style_css", |v: Value| {
         // Only a style object has declarations (React throws on a string).
         if v.kind() != ValueKind::Map {
             return String::new();
         }
-        let pairs: Vec<(String, Value)> = v
-            .try_iter()
-            .map(|it| {
-                it.map(|k| {
-                    let val = v.get_item(&k).unwrap_or(Value::UNDEFINED);
-                    (k.to_string(), val)
-                })
-                .collect()
-            })
-            .unwrap_or_default();
-        style_obj_to_css(&pairs)
+        style_obj_to_css(&style_pairs(&v))
     });
+}
+
+/// The declarations of a style object in the order React prints them: an object parsed from the worker's JSON text keeps
+/// that text order (F318, `CtxMap::each_ordered`), an `obj_lit` object its insertion order, any other map the order it
+/// iterates (sorted).
+fn style_pairs(v: &Value) -> Vec<(String, Value)> {
+    map_entries(v)
+        .into_iter()
+        .map(|(k, val)| (k.to_string(), val))
+        .collect()
 }
 
 /// JS `ToNumber` for the operands of `%` and `/`.
@@ -344,7 +334,7 @@ fn write_json_attr(out: &mut String, v: &Value) -> Result<(), Bail> {
     // The render tree writes itself (M3-P P2): sorted string keys, no undefined
     // members, serde_json's own number text — never a bail-out.
     if let Some(m) = v.downcast_object_ref::<ctx::CtxMap>() {
-        ctx::write_map(out, &m.0, &[]);
+        ctx::write_map(out, m, &[]);
         return Ok(());
     }
     if let Some(a) = v.downcast_object_ref::<ctx::CtxArr>() {
@@ -352,7 +342,7 @@ fn write_json_attr(out: &mut String, v: &Value) -> Result<(), Bail> {
         return Ok(());
     }
     if let Some(p) = v.downcast_object_ref::<ctx::MapView>() {
-        ctx::write_map(out, &p.map.0, p.hidden);
+        ctx::write_map(out, &p.map, p.hidden);
         return Ok(());
     }
     match v.kind() {
@@ -370,13 +360,18 @@ fn write_json_attr(out: &mut String, v: &Value) -> Result<(), Bail> {
                 }
             }
             // serde_json's map is ordered by the key string (minijinja's
-            // own map usually iterates in that order already).
-            let sorted =
-                |m: &[(Value, Value)]| m.windows(2).all(|w| *key_str(&w[0].0) < *key_str(&w[1].0));
-            if !sorted(&members) {
-                members.sort_by(|a, b| key_str(&a.0).cmp(&key_str(&b.0)));
+            // own map usually iterates in that order already). F282: an object the compiler built in source
+            // order (`obj_lit` / `obj_assign`, JS key order, unique keys) keeps it, as `JSON.stringify` writes it:
+            // the order of a style's declarations decides a shorthand against its longhand.
+            if v.downcast_object_ref::<spread::OrderedMap>().is_none() {
+                let sorted = |m: &[(Value, Value)]| {
+                    m.windows(2).all(|w| *key_str(&w[0].0) < *key_str(&w[1].0))
+                };
                 if !sorted(&members) {
-                    return Err(Bail); // a key string repeats
+                    members.sort_by(|a, b| key_str(&a.0).cmp(&key_str(&b.0)));
+                    if !sorted(&members) {
+                        return Err(Bail); // a key string repeats
+                    }
                 }
             }
             out.push('{');
@@ -543,13 +538,15 @@ fn join(list: Value, sep: Option<String>, _kw: Kwargs) -> String {
         .unwrap_or_default()
 }
 
-/// `Object.keys`.
+/// `Object.keys`. F318: an object parsed from the worker's JSON keeps the text order, which is JS's own, so server, client
+/// (x-props JSON) and React iterate alike; any other map iterates as it always did (sorted).
 fn keys(v: Value) -> Value {
     match v.kind() {
         ValueKind::Map => Value::from(
-            v.try_iter()
-                .map(|it| it.collect::<Vec<_>>())
-                .unwrap_or_default(),
+            map_entries(&v)
+                .into_iter()
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>(),
         ),
         ValueKind::Seq => Value::from(
             (0..v.len().unwrap_or(0))
@@ -560,19 +557,41 @@ fn keys(v: Value) -> Value {
     }
 }
 
+/// The `(key, value)` entries of a map value in the order JS iterates it (F318): the text order of a parsed object, else
+/// the order the map yields.
+pub(crate) fn map_entries(v: &Value) -> Vec<(Value, Value)> {
+    if let Some(m) = v.downcast_object_ref::<ctx::CtxMap>() {
+        let mut out = Vec::with_capacity(m.0.len());
+        m.each_ordered(|k, n| out.push((Value::from(std::sync::Arc::clone(k)), n.to_value())));
+        return out;
+    }
+    if let Some(p) = v.downcast_object_ref::<ctx::MapView>() {
+        let mut out = Vec::new();
+        p.map.each_ordered(|k, n| {
+            if !p.hidden.contains(&&**k) {
+                out.push((Value::from(std::sync::Arc::clone(k)), n.to_value()));
+            }
+        });
+        return out;
+    }
+    v.try_iter()
+        .map(|it| {
+            it.map(|k| {
+                let val = v.get_item(&k).unwrap_or(Value::UNDEFINED);
+                (k, val)
+            })
+            .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// `Object.entries`: a list of `[key, value]`.
 fn entries(v: Value) -> Value {
     let pairs: Vec<Value> = match v.kind() {
-        ValueKind::Map => v
-            .try_iter()
-            .map(|it| {
-                it.map(|k| {
-                    let val = v.get_item(&k).unwrap_or(Value::UNDEFINED);
-                    Value::from(vec![k, val])
-                })
-                .collect()
-            })
-            .unwrap_or_default(),
+        ValueKind::Map => map_entries(&v)
+            .into_iter()
+            .map(|(k, val)| Value::from(vec![k, val]))
+            .collect(),
         ValueKind::Seq => v
             .try_iter()
             .map(|it| {
@@ -1314,6 +1333,33 @@ mod tests {
                 Value::from_object(Pairs(pairs))
             }
         }
+    }
+
+    /// F282: an object built by `obj_lit` / `obj_assign` crosses as JSON in its insertion order, as `JSON.stringify`
+    /// writes it (a style's declaration order decides a shorthand against its longhand); a plain map stays sorted.
+    #[test]
+    fn json_attr_keeps_the_order_of_an_ordered_object() {
+        let ctx = Value::from(());
+        assert_eq!(
+            render(
+                "{{ {\"style\": obj_lit(\"marginTop\", 5, \"margin\", 0, \"color\", \"red\")} | json_attr }}",
+                ctx.clone()
+            ),
+            "{&quot;style&quot;:{&quot;marginTop&quot;:5,&quot;margin&quot;:0,&quot;color&quot;:&quot;red&quot;}}"
+        );
+        // a later assignment keeps its place and takes the new value; an undefined member is left out
+        assert_eq!(
+            render(
+                "{{ obj_assign(obj_lit(\"b\", 1, \"a\", 2), obj_lit(\"b\", 3, \"c\", undefined)) | json_attr }}",
+                ctx.clone()
+            ),
+            "{&quot;b&quot;:3,&quot;a&quot;:2}"
+        );
+        // a plain jinja map is still sorted (serde_json without preserve_order)
+        assert_eq!(
+            render("{{ {\"b\": 1, \"a\": 2} | json_attr }}", ctx),
+            "{&quot;a&quot;:2,&quot;b&quot;:1}"
+        );
     }
 
     #[test]

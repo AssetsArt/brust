@@ -20,6 +20,8 @@ interface RowBase {
    * `dist/index.mjs` transpiled from them and a source map carrying them (`sourcesContent`), unless `publish` says
    * otherwise. The runner writes the package sources the way `brust build` does and passes them to `brustc`. */
   packages?: Record<string, StubPackage>
+  /** R34.140: packages the compiler is told are the pinned release (name → version), as the build's hash check would record. */
+  vouch?: Record<string, string>
   note?: string
   /** react.dev reference entries (`react-api.ts` names) this row is evidence for. Every entry needs at least one row. */
   api?: string[]
@@ -51,6 +53,12 @@ const PKG_PRIMITIVE: StubPackage = { files: { 'src/primitive.tsx': RADIX_PRIMITI
 // The state Providers the native-provider rows use (2c-2): one source, shared with the compiler's tests.
 const NATIVE_PROV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Prov.tsx'), 'utf8')
 
+const CTXV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/CtxV.tsx'), 'utf8')
+
+const CTXTHIS = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/CtxThis.tsx'), 'utf8')
+
+const scopeFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/scope-${n}.tsx`), 'utf8').trimEnd()
+
 const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
 
 const NATIVE_FWD = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Fwd.tsx'), 'utf8')
@@ -71,6 +79,12 @@ const ICARD = `import { useReducer, useTransition } from 'react'\nexport functio
 const TIP = `\nexport function Tip(props: any) { useTransition(); const [n, bump] = useReducer((x: number) => x + 1, 0); return <div onClick={() => bump()}>{props.content}{props.children}{n}</div> }`
 const ST = `import { useStore } from 'brust/store/react'\nimport { cart } from './cart'\n`
 const CART = `import { defineStore, signal, computed } from 'brust/store'\nexport const cart = defineStore('cart', () => { const count = signal(0); const dbl = computed(() => count() * 2); return { count, dbl } })`
+
+// R34.140: the collection fixtures of the compiler's tests (one source). The stub carries only the export's name; the
+// build's version+hash check that vouches for the real release is pinned in the pkg-src tests, so rows say `vouch`.
+const collFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/native-provider/coll_${n}.tsx`), 'utf8').trimEnd()
+const COLL_PKG: Record<string, StubPackage> = { '@radix-ui/react-collection': { files: { 'src/index.tsx': 'export const createCollection = (name: string): any => [name]' } } }
+const COLL_VOUCH = { '@radix-ui/react-collection': '1.2.0' }
 
 export const CATEGORIES: Record<Row['category'], string> = {
   A: 'JSX basics',
@@ -1245,6 +1259,22 @@ export const rows: Row[] = [
     snippet: `import Mid from './mid'\nexport default function C() { return <main><Mid on={true} /></main> }`,
     files: { 'mid.tsx': `import { useState } from 'react'\nfunction Thumb({ on }: any) { return <i data-state={on ? 'checked' : 'unchecked'} /> }\nfunction Fwd(props: any) { return <i {...props} /> }\nexport default function Mid({ on }: any) { const [n, setN] = useState(0); return <div data-n={n} onClick={() => setN(n + 1)}>{[1, 2].map((i) => <b key={i}>{on ? i : -i}</b>)}</div> }` },
     note: 'F319: a value that does not change satisfies the requirement' },
+  { id: 'c-rest-children-consumer', category: 'C', authoring: 'a context consumer passed as children of a component that spreads its rest (children included) under its own Provider', expect: 'static', jobs: 0,
+    snippet: `import { Root, Thumb } from './kit'\nexport default function C() { return <main><Root data-x="1"><Thumb /></Root></main> }`,
+    files: { 'kit.tsx': `import { createContext, useContext, useState } from 'react'\nconst K = createContext({ on: false, flip: () => {} })\nfunction KProvider({ children }: any) { const [on, setOn] = useState(false); return <K.Provider value={{ on, flip: () => setOn((o) => !o) }}>{children}</K.Provider> }\nfunction Flip() { const c = useContext(K); return <button onClick={c.flip}>flip</button> }\nfunction Label({ children, ...rest }: any) { return <span {...rest}>{children}</span> }\nfunction LiveLabel({ children, ...rest }: any) { const c = useContext(K); return <span {...rest} data-on={String(c.on)}>{children}</span> }\nexport function Thumb() { const c = useContext(K); return <i data-state={c.on ? 'checked' : 'unchecked'} /> }\nexport function Root({ ...rest }: any) { return <KProvider><Flip /><Label {...rest} /></KProvider> }\nexport function LiveRoot({ ...rest }: any) { return <KProvider><Flip /><LiveLabel {...rest} /></KProvider> }` },
+    note: 'F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider)' },
+  { id: 'c-rest-children-linked-host', category: 'C', authoring: 'the same, where the element the rest is spread into reads the context itself', expect: 'static', jobs: 1,
+    snippet: `import { LiveRoot, Thumb } from './kit'\nexport default function C() { return <main><LiveRoot data-x="1"><Thumb /></LiveRoot></main> }`,
+    files: { 'kit.tsx': `import { createContext, useContext, useState } from 'react'\nconst K = createContext({ on: false, flip: () => {} })\nfunction KProvider({ children }: any) { const [on, setOn] = useState(false); return <K.Provider value={{ on, flip: () => setOn((o) => !o) }}>{children}</K.Provider> }\nfunction Flip() { const c = useContext(K); return <button onClick={c.flip}>flip</button> }\nfunction Label({ children, ...rest }: any) { return <span {...rest}>{children}</span> }\nfunction LiveLabel({ children, ...rest }: any) { const c = useContext(K); return <span {...rest} data-on={String(c.on)}>{children}</span> }\nexport function Thumb() { const c = useContext(K); return <i data-state={c.on ? 'checked' : 'unchecked'} /> }\nexport function Root({ ...rest }: any) { return <KProvider><Flip /><Label {...rest} /></KProvider> }\nexport function LiveRoot({ ...rest }: any) { return <KProvider><Flip /><LiveLabel {...rest} /></KProvider> }` },
+    note: 'F298 + F309: that element is linked, so it would host the Thumb (slot-owner): no clone, LiveRoot stays a React island with its children (F307 relaxes it)' },
+  { id: 'c-spec-rest-children', category: 'C', authoring: 'JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children', expect: 'static', jobs: 1,
+    snippet: `import { Root } from './kit'\nexport default function C() { return <main><Root><span>hello</span></Root></main> }`,
+    files: { 'kit.tsx': `import { createContext, useState } from 'react'\nconst K = createContext({ on: false })\nexport function Root({ ...rest }: any) { const [on, setOn] = useState(false); return <K.Provider value={{ on }}><button type="button" onClick={() => setOn(!on)} {...rest} /></K.Provider> }` },
+    note: 'F324: the children reach the button through the rest in React; the clone has no children slot, so it is refused and the Provider stays an island that carries them (info specialise-unsupported; was: children silently dropped, alpha.16)' },
+  { id: 'c-spec-rest-no-children', category: 'C', authoring: 'the same Provider component called without children', expect: 'static', jobs: 0,
+    snippet: `import { Root } from './kit'\nexport default function C() { return <main><Root data-x="1" /></main> }`,
+    files: { 'kit.tsx': `import { createContext, useState } from 'react'\nconst K = createContext({ on: false })\nexport function Root({ ...rest }: any) { const [on, setOn] = useState(false); return <K.Provider value={{ on }}><button type="button" onClick={() => setOn(!on)} {...rest} /></K.Provider> }` },
+    note: 'F324: nothing to drop, so the clone is still taken' },
   { id: 'c-slot-owner-prop', category: 'C', authoring: 'a prop the client changes, read in the slot of a native child', expect: 'react',
     snippet: `import { useState } from 'react'\nimport Mid from './mid'\nexport default function C() { const [on, setOn] = useState(false); return <section><button onClick={() => setOn(!on)}>flip</button><Mid label={on ? 'yes' : 'no'} /></section> }`,
     files: { 'mid.tsx': `import { useState } from 'react'\nfunction Box({ children }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)} data-n={n}>{children}</div> }\nexport default function Mid({ label }: any) { return <Box><p>{label}</p></Box> }` },
@@ -1819,13 +1849,73 @@ export const rows: Row[] = [
     snippet: `import { P, PTrigger, Q, QTrigger } from './Prov'\nexport default function C() { return <main><P><Q><PTrigger>outer reader</PTrigger><QTrigger>inner</QTrigger></Q></P></main> }`,
     files: { 'Prov.tsx': NATIVE_PROV },
     note: 'A1: the outer frame\'s expressions would be read against the inner clone\'s members' },
-  { id: 'c-native-provider-ctx-in-effect', category: 'C', authoring: 'a consumer that reads the context inside an effect', expect: 'static', jobs: 1,
+  { id: 'c-native-provider-ctx-in-effect', category: 'C', authoring: 'a consumer that reads a context field inside an effect', expect: 'static', jobs: 0,
     snippet: `import { P, PEffect } from './Prov'\nexport default function C() { return <main><P><PEffect>note</PEffect></P></main> }`,
     files: { 'Prov.tsx': NATIVE_PROV },
-    note: 'context-escape: a context local is not a value in code printed as written' },
+    note: 'F304: c.open in an effect is the hidden prop of that field (bound to a local around the printed code); was context-escape' },
   { id: 'c-handler-binding-named-a', category: 'C', authoring: 'a handler that reads a component binding named a', expect: 'native', jobs: 0,
     snippet: `import { useRef, useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); const a = useRef<HTMLButtonElement>(null); return <button ref={a} onClick={() => { setN(n + 1); console.log(a.current) }}>{n}</button> }`,
     note: 'F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array' },
+  { id: 'c-collection-basic', category: 'C', authoring: 'a createCollection list: Provider, Slot, ItemSlot and useCollection (roving focus shape)', expect: 'static', jobs: 0,
+    snippet: collFx('basic'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'R34.140 (W1c): the vouched package lowers to x-collection-root / data-radix-collection-item markers and the runtime items function' },
+  { id: 'c-collection-unvouched', category: 'C', authoring: 'createCollection from a package that is not the pinned release', expect: 'static', jobs: 1,
+    snippet: collFx('basic'), packages: COLL_PKG,
+    note: 'R34.140 (Mellow gate): without index.json#recognised (version + sha256 mismatch) the import stays the React island' },
+  { id: 'c-collection-other-package', category: 'C', authoring: 'a createCollection export of another package', expect: 'static', jobs: 1,
+    snippet: collFx('other_pkg'), packages: { 'some-other-package': { files: { 'src/index.tsx': 'export const createCollection = (name: string): any => [name]' } } }, vouch: COLL_VOUCH,
+    note: 'R34.140: the recogniser is by package name, never by export name alone' },
+  { id: 'c-collection-scope', category: 'C', authoring: 'an ItemSlot whose scope is not the component\'s own pass-through', expect: 'static', jobs: 1,
+    snippet: collFx('scope'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'R34.140: fallback collection-scope (the component is a React island under a static page); a literal scope names another collection' },
+  { id: 'c-collection-shape', category: 'C', authoring: 'collection elements that are not the library\'s shape (extra prop, two Slot children, component child of an ItemSlot)', expect: 'static', jobs: 2,
+    snippet: collFx('shape'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'R34.140: fallback collection-shape' },
+  { id: 'c-collection-render', category: 'C', authoring: 'the items function called while rendering', expect: 'static', jobs: 1,
+    snippet: collFx('render'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'R34.140: the list exists only in the browser; a render-time call has no server value (client-only)' },
+  { id: 'c-collection-static-slot', category: 'C', authoring: 'a Collection.Slot around a component that holds no state', expect: 'static', jobs: 1,
+    snippet: collFx('static_slot'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'R34.140 (Afrojack): the root marker needs a native host; a hostless component would drop it and getItems() would find nothing: fallback collection-shape' },
+  { id: 'c-collection-data-keys', category: 'C', authoring: 'an ItemSlot whose data names the feature\'s own key (element)', expect: 'static', jobs: 1,
+    snippet: collFx('data_keys'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'R34.140 (Mellow N1): ref, element and __proto__ are not item data keys: fallback collection-shape (Item is a React island under a static page)' },
+  { id: 'c-ctx-verbatim-handler', category: 'C', authoring: 'a handler that calls one context field and reads two others (c.f(), c?.f)', expect: 'static', jobs: 0,
+    snippet: `import { CP, CHandler } from './CtxV'\nexport default function C() { return <main><CP><CHandler /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304: a consumer in printed code reads only c.f: the object of field locals stands for it (this of c.f() is that object); the consumer stays native' },
+  { id: 'c-ctx-verbatim-computed', category: 'C', authoring: 'a handler that reads the context with a computed key', expect: 'static', jobs: 1,
+    snippet: `import { CP, CComputed } from './CtxV'\nexport default function C() { return <main><CP><CComputed /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
+  { id: 'c-ctx-verbatim-destruct', category: 'C', authoring: 'a handler that destructures the context', expect: 'static', jobs: 1,
+    snippet: `import { CP, CDestruct } from './CtxV'\nexport default function C() { return <main><CP><CDestruct /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
+  { id: 'c-ctx-verbatim-whole', category: 'C', authoring: 'a handler that passes the whole context on', expect: 'static', jobs: 1,
+    snippet: `import { CP, CWhole } from './CtxV'\nexport default function C() { return <main><CP><CWhole /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
+  { id: 'c-ctx-verbatim-write', category: 'C', authoring: 'a handler that writes through a context field', expect: 'static', jobs: 1,
+    snippet: `import { CP, CWrite } from './CtxV'\nexport default function C() { return <main><CP><CWrite /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
+  { id: 'c-ctx-verbatim-delete', category: 'C', authoring: 'a handler that deletes a context field', expect: 'static', jobs: 1,
+    snippet: `import { CP, CDelete } from './CtxV'\nexport default function C() { return <main><CP><CDelete /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
+  { id: 'c-ctx-verbatim-proto', category: 'C', authoring: 'a handler that reads constructor off the context', expect: 'static', jobs: 1,
+    snippet: `import { CP, CProto } from './CtxV'\nexport default function C() { return <main><CP><CProto /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative)' },
+  { id: 'c-ctx-verbatim-this-method', category: 'C', authoring: 'a consumer calls a context method whose Provider value reads this', expect: 'static', jobs: 1,
+    snippet: `import { TP, TC } from './CtxThis'\nexport default function C() { return <main><TP><TC>x</TC></TP></main> }`,
+    files: { 'CtxThis.tsx': CTXTHIS },
+    note: 'F304 (c): c.f() runs with this = the object of the fields the consumer reads; a Provider value that reads this stays a React island (context-state)' },
+  { id: 'c-ctx-verbatim-class-value', category: 'C', authoring: 'a consumer calls a method of a class-instance Provider value', expect: 'static', jobs: 1,
+    snippet: `import { KP, KC } from './CtxThis'\nexport default function C() { return <main><KP><KC>x</KC></KP></main> }`,
+    files: { 'CtxThis.tsx': CTXTHIS },
+    note: 'F304 (c): a class instance is not an object literal of closures: the Provider stays a React island (context-value)' },
   // F284-F287 (lane presence-general): the four general rules the F229 spike found. Served == React for each:
   // tests/server/presence-general.chromium.test.ts.
   { id: 'b-arrow-const-component', category: 'B', authoring: '`const X: React.FC<P> = (props) => …` exported by name and under an alias, used by a parent', expect: 'static', jobs: 0,
@@ -1904,4 +1994,25 @@ export const rows: Row[] = [
   { id: 'c-includes-string-receiver', category: 'C', authoring: "'abc'.includes(state): a string receiver", expect: 'native', jobs: 1,
     snippet: `import { useState } from 'react'\nexport default function C() { const [s, setS] = useState('abc'); return <button type="button" onClick={() => setS('b')} data-hit={'abc'.includes(s) ? 'y' : 'n'}>{s}</button> }`,
     note: 'F287: a substring test is not a membership chain; only an array literal receiver is rewritten' },
+  { id: 'c-scope-props', category: 'C', authoring: 'a context hook and a scope hook read props.__scopeX, the token spread on a component', expect: 'static', jobs: 0,
+    snippet: scopeFx('props'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-sibling', category: 'C', authoring: 'two sibling Providers of one scoped context, one consumer each', expect: 'static', jobs: 0,
+    snippet: scopeFx('sibling'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-nested', category: 'C', authoring: 'a scoped Provider nested in another of the same context', expect: 'react',
+    snippet: scopeFx('nested'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-call-site', category: 'C', authoring: 'a call site that hands a __scope attribute to a native component', expect: 'react',
+    snippet: scopeFx('guard'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-token-host', category: 'C', authoring: 'a scope token spread on a host element', expect: 'react',
+    snippet: scopeFx('token-host'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-token-value', category: 'C', authoring: 'a scope token read as a value', expect: 'react',
+    snippet: scopeFx('token-value'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-by-name', category: 'C', authoring: 'a hook named like a scope hook that createContextScope did not make', expect: 'react',
+    snippet: scopeFx('by-name'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
 ]

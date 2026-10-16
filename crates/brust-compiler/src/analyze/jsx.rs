@@ -46,6 +46,17 @@ enum Tag {
         ctx: String,
         react: bool,
     },
+    /// `<Collection.Provider>`, `<Collection.Slot>` or `<Collection.ItemSlot>` of a recognised `createCollection`
+    /// declaration (R34.140).
+    Collection(CollectionPart),
+}
+
+/// The three elements a recognised `createCollection` makes.
+#[derive(Clone, Copy, PartialEq)]
+enum CollectionPart {
+    Provider,
+    Slot,
+    ItemSlot,
 }
 
 fn tag_ref(tag: &js_ast::Expr) -> Option<js_ast::Ref> {
@@ -137,6 +148,19 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
                 source,
                 imported,
             }
+        }
+        // `<Collection.Provider>` / `.Slot` / `.ItemSlot` of a recognised `createCollection` (R34.140).
+        E::EDot(d)
+            if let Some(x) = crate::analyze::names::ident_ref(&d.target)
+                && r.names.collection_object(x)
+                && let Some(part) = match d.name.slice() {
+                    b"Provider" => Some(CollectionPart::Provider),
+                    b"Slot" => Some(CollectionPart::Slot),
+                    b"ItemSlot" => Some(CollectionPart::ItemSlot),
+                    _ => None,
+                } =>
+        {
+            Tag::Collection(part)
         }
         // `<C.Provider>` of a React context declared in this module.
         E::EDot(d)
@@ -246,6 +270,16 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     for p in obj.properties.iter() {
         let Some(value) = &p.value else { continue };
         if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
+            // W1d PR 2 (Mellow C3): a scope token spread on a COMPONENT is dropped (a native child resolves its frame by
+            // position, never by scope); on a host element it would print as attributes, so it is refused
+            if let E::EIdentifier(id) = &value.data
+                && r.names.is_scope_token(id.ref_)
+            {
+                if matches!(tag, Tag::Host(_)) && r.names.scope_token_escape.get().is_none() {
+                    r.names.scope_token_escape.set(Some(loc_of(value)));
+                }
+                continue;
+            }
             match spread_source(r, value, matches!(tag, Tag::Host(_))) {
                 // An object literal is a known shape here: its entries are ordinary attributes
                 // and props, read as if written one by one (React: later wins, which the
@@ -550,6 +584,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                 Err(children) => Node::Fragment(children),
             }
         }
+        Tag::Collection(part) => read_collection_part(r, part, props_out, children, loc),
         Tag::Component {
             name,
             source,
@@ -589,6 +624,208 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             link: None,
             tier: crate::ir::Tier::Pending,
             forwarded_ref,
+        },
+    }
+}
+
+/// A recognised collection element as the template it stands for (R34.140):
+/// - `Provider`: transparent (`scope` only);
+/// - `Slot`: its one child, marked as the collection root (an element gets `x-collection-root`, a component child is
+///   handed the reserved prop and its host carries the marker);
+/// - `ItemSlot`: its one child element, marked `data-radix-collection-item` with the item data (every prop but `scope`).
+fn read_collection_part(
+    r: &mut Reader<'_, '_>,
+    part: CollectionPart,
+    props: Vec<(String, Expr)>,
+    children: Vec<Node>,
+    loc: u32,
+) -> Node {
+    let what = match part {
+        CollectionPart::Provider => "Provider",
+        CollectionPart::Slot => "Slot",
+        CollectionPart::ItemSlot => "ItemSlot",
+    };
+    let refuse = |r: &mut Reader<'_, '_>, why: String| {
+        r.diagnostics.push(Diagnostic::fallback(
+            "collection-shape",
+            format!("<Collection.{what}> {why}"),
+            loc,
+            "write the collection element the way the library does, or keep this component in React",
+        ));
+    };
+    // `scope` is the nesting disambiguation: a pass-through of the component's own scope prop (or absent), like a context's
+    let mut data: Vec<(String, RawExpr)> = Vec::new();
+    for (k, v) in props {
+        if k == "scope" {
+            // only the component's own scope prop (or none) passes through: anything else is another collection's
+            let pass = matches!(
+                &v,
+                Expr::Raw(RawExpr {
+                    kind: RawKind::Lit(crate::ir::Literal::Undefined)
+                        | RawKind::Ident {
+                            kind: IdentKind::Prop,
+                            ..
+                        },
+                    ..
+                })
+            );
+            if !pass {
+                r.diagnostics.push(Diagnostic::fallback(
+                    "collection-scope",
+                    format!("<Collection.{what}> is given a scope other than the component's own scope prop"),
+                    loc,
+                    "pass the scope prop through unchanged, or keep this component in React",
+                ));
+                return Node::Fragment(children);
+            }
+            continue;
+        }
+        if part != CollectionPart::ItemSlot {
+            refuse(r, format!("takes only `scope` (found `{k}`)"));
+            return Node::Fragment(children);
+        }
+        let valid = k
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && k != crate::ir::SPREAD_KEY
+            // the item is `{ ...data, ref, element }`: those two are the feature's, and `__proto__` in an object literal
+            // sets a prototype instead of a key
+            && !matches!(k.as_str(), "__proto__" | "element" | "ref");
+        match v {
+            Expr::Raw(raw) if valid => data.push((k, raw)),
+            _ => {
+                refuse(
+                    r,
+                    format!("has an item data prop `{k}` that is not a plain named value"),
+                );
+                return Node::Fragment(children);
+            }
+        }
+    }
+    let only = |children: Vec<Node>| -> Result<Node, Vec<Node>> {
+        // JSX whitespace between tags is not a child; anything else beside the one node is
+        let mut it = children
+            .into_iter()
+            .filter(|c| !matches!(c, Node::Text(t) if t.trim().is_empty()));
+        match (it.next(), it.next()) {
+            (Some(one), None) => Ok(one),
+            (first, second) => Err(first.into_iter().chain(second).chain(it).collect()),
+        }
+    };
+    match part {
+        CollectionPart::Provider => match only(children) {
+            Ok(one @ Node::Element { .. }) => one,
+            Ok(other) => Node::Fragment(vec![other]),
+            Err(children) => Node::Fragment(children),
+        },
+        CollectionPart::Slot => match only(children) {
+            Ok(Node::Element {
+                loc: l,
+                tag,
+                mut attrs,
+                children,
+                host,
+                ref_name,
+                synthetic,
+                poly,
+            }) => {
+                attrs.push(Attr::Static {
+                    name: "x-collection-root".into(),
+                    value: String::new(),
+                });
+                Node::Element {
+                    loc: l,
+                    tag,
+                    attrs,
+                    children,
+                    host,
+                    ref_name,
+                    synthetic,
+                    poly,
+                }
+            }
+            Ok(Node::Component {
+                loc: l,
+                name,
+                source,
+                imported,
+                member,
+                mut props,
+                children,
+                link,
+                tier,
+                forwarded_ref,
+            }) => {
+                props.push((
+                    crate::ir::COLLECTION_ROOT_PROP.to_string(),
+                    Expr::Raw(RawExpr {
+                        loc,
+                        kind: RawKind::Lit(crate::ir::Literal::Bool(true)),
+                    }),
+                ));
+                Node::Component {
+                    loc: l,
+                    name,
+                    source,
+                    imported,
+                    member,
+                    props,
+                    children,
+                    link,
+                    tier,
+                    forwarded_ref,
+                }
+            }
+            Ok(other) => {
+                refuse(
+                    r,
+                    "has a child that is neither an element nor a component".into(),
+                );
+                other
+            }
+            Err(children) => {
+                refuse(r, "needs exactly one child".into());
+                Node::Fragment(children)
+            }
+        },
+        CollectionPart::ItemSlot => match only(children) {
+            Ok(Node::Element {
+                loc: l,
+                tag,
+                mut attrs,
+                children,
+                host,
+                ref_name,
+                synthetic,
+                poly,
+            }) => {
+                attrs.push(Attr::CollectionItem {
+                    data: Expr::Raw(RawExpr {
+                        loc,
+                        kind: RawKind::Object(data),
+                    }),
+                });
+                Node::Element {
+                    loc: l,
+                    tag,
+                    attrs,
+                    children,
+                    host,
+                    ref_name,
+                    synthetic,
+                    poly,
+                }
+            }
+            Ok(other) => {
+                refuse(r, "needs one element child".into());
+                other
+            }
+            Err(children) => {
+                refuse(r, "needs exactly one element child".into());
+                Node::Fragment(children)
+            }
         },
     }
 }
@@ -687,6 +924,17 @@ fn read_provider(
     loc: u32,
 ) {
     let mut fields: Vec<(String, RawExpr)> = Vec::new();
+    // W1d PR 2: a Provider that names a scope (anything but absent or `undefined`), for the nested-frame refusal
+    let scoped = props.iter().any(|(k, v)| {
+        k == "scope"
+            && !matches!(
+                v,
+                Expr::Raw(RawExpr {
+                    kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                    ..
+                })
+            )
+    });
     let check = |r: &mut Reader<'_, '_>, k: &str| match crate::analyze::context::field_problem(k) {
         Some(what) => {
             r.diagnostics.push(Diagnostic::fallback(
@@ -744,6 +992,7 @@ fn read_provider(
     r.provides.push(crate::ir::ProvideDecl {
         context: ctx.to_string(),
         fields,
+        scoped,
     });
 }
 

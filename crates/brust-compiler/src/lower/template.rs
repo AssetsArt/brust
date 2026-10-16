@@ -116,6 +116,14 @@ impl Inline {
         cur
     }
 
+    /// The call site WRITES prop `name` (a named attribute, never one a spread may carry): what a compiler-reserved prop
+    /// needs, since `get` answers `spread_get(…)` for any name once a spread is among the segments.
+    pub fn writes(&self, name: &str) -> bool {
+        self.segs
+            .iter()
+            .any(|s| matches!(s, Seg::Named(k, _) if k == name))
+    }
+
     /// The parent's ref cell bound on this instance (F267).
     pub fn ref_binding(&self) -> Option<&str> {
         self.segs.iter().rev().find_map(|s| match s {
@@ -541,6 +549,18 @@ impl<'a, 'c> Printer<'a, 'c> {
     /// Whether a painted value changes after first paint (needs a directive),
     /// and the loop bindings it reads.
     fn reactive(&self, raw: Option<&RawExpr>, placed: &Expr) -> Option<Vec<String>> {
+        self.reactive_as(raw, placed, false)
+    }
+
+    /// [`Self::reactive`]; `always`: the value is wanted as a client member even when nothing in it changes (a collection
+    /// item's data is read by the runtime on demand, whatever it reads). Still `None` when the value is not computable
+    /// in the chunk or the component is not native.
+    fn reactive_as(
+        &self,
+        raw: Option<&RawExpr>,
+        placed: &Expr,
+        always: bool,
+    ) -> Option<Vec<String>> {
         let raw = raw?;
         // `{children}` is markup the parent printed; it has no client value.
         if matches!(&raw.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children")
@@ -570,7 +590,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             !self.f.ir.fixed_props.iter().any(|f| f == root)
         });
         let prop_read = live_props && client_ok && (deps.loop_bindings.is_empty() || in_row);
-        if !(self.native && (sd || loop_read || prop_read)) {
+        if !(self.native && (always && client_ok || sd || loop_read || prop_read)) {
             return None;
         }
         // Seeded through x-props so the chunk starts from the painted value.
@@ -854,6 +874,16 @@ impl<'a, 'c> Printer<'a, 'c> {
             None => (ir.id.clone(), None),
         };
         let mut s = format!(" x-data=\"{x_data}\"");
+        // R34.140: this component asks for its collection's items (the runtime feature loads); a `<Collection.Slot>` made
+        // this instance's host the collection root.
+        if ir.uses_collection {
+            s.push_str(" x-collection-use=\"\"");
+        }
+        if let Some(i) = &self.inline
+            && i.writes(crate::ir::COLLECTION_ROOT_PROP)
+        {
+            s.push_str(" x-collection-root=\"\"");
+        }
         // A whole-props read seeds every prop.
         let dict: Vec<String> = if seed.contains("*") {
             vec![]
@@ -1047,6 +1077,18 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
             }
             Attr::Spread(_) => {}
+            // R34.140: the item marker React prints too, and the runtime's directive that hands over the item's data.
+            Attr::CollectionItem { data } => {
+                open.push_str(" data-radix-collection-item=\"\"");
+                let raw = match sa {
+                    Attr::CollectionItem { data: sd } => raw_of(data, Some(sd)),
+                    _ => None,
+                };
+                if let Some(b) = self.reactive_as(raw, data, true) {
+                    let d = self.value_member(raw.unwrap(), b, Paint::Raw);
+                    open.push_str(&format!(" x-collection-item=\"{d}\""));
+                }
+            }
             Attr::InnerHtml { value } => {
                 // The one raw sink (`html_raw`): the element body is the value, unescaped.
                 let raw = match sa {
@@ -2146,7 +2188,14 @@ impl<'a, 'c> Printer<'a, 'c> {
         let items: Vec<String> = props
             .iter()
             .filter(|(_, v)| !matches!(v, Expr::ClientOnly { .. }))
-            .map(|(k, v)| format!("{}: {}", jinja_string(k), self.value(v)))
+            // F282: an object literal crosses as JSON in source order, as `JSON.stringify` writes it
+            .map(|(k, v)| {
+                format!(
+                    "{}: {}",
+                    jinja_string(k),
+                    crate::lower::server_expr::with_ordered_objects(|| self.value(v))
+                )
+            })
             .collect();
         format!("{{{}}}", items.join(", "))
     }
