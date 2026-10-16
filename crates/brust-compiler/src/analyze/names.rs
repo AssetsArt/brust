@@ -142,6 +142,11 @@ pub struct NameTable<'a> {
     ctx_fields: std::cell::RefCell<Vec<(String, String)>>,
     /// Where a context local is used as a bare value (not `context.field`): brust cannot narrow it (fail closed).
     pub ctx_escape: std::cell::Cell<Option<u32>>,
+    /// F289: `const t = useHook()` where the hook returns an object literal: symbol key → its members, read one by one
+    /// (`t.key`), like a destructuring. The object itself is not a value in the chunk.
+    hook_objects: HashMap<u32, Vec<(String, crate::ir::RawExpr)>>,
+    /// Where a hook object is used as a bare value (not `t.key`): the members cannot be named in a job (fail closed).
+    pub hook_object_escape: std::cell::Cell<Option<u32>>,
     /// W1d PR 2: contexts a hook was called for with a scope argument.
     ctx_scoped: std::cell::RefCell<Vec<String>>,
     /// W1d PR 2: locals bound to a Radix scope hook's result (a scope token), by symbol key.
@@ -428,6 +433,8 @@ impl<'a> NameTable<'a> {
             collections_recognised: false,
             scalars_adopted: std::cell::RefCell::new(Vec::new()),
             ctx_locals: HashMap::new(),
+            hook_objects: HashMap::new(),
+            hook_object_escape: std::cell::Cell::new(None),
             ctx_fields: std::cell::RefCell::new(Vec::new()),
             ctx_escape: std::cell::Cell::new(None),
             ctx_scoped: std::cell::RefCell::new(Vec::new()),
@@ -1027,6 +1034,16 @@ impl<'a> NameTable<'a> {
     pub fn bind_ctx_local(&mut self, r: js_ast::Ref, context: &str) {
         let k = self.key(r);
         self.ctx_locals.insert(k, context.to_string());
+    }
+
+    pub fn bind_hook_object(&mut self, r: js_ast::Ref, members: Vec<(String, crate::ir::RawExpr)>) {
+        let k = self.key(r);
+        self.hook_objects.insert(k, members);
+    }
+
+    /// The members of the hook object a local is bound to.
+    pub fn hook_object(&self, r: js_ast::Ref) -> Option<&[(String, crate::ir::RawExpr)]> {
+        self.hook_objects.get(&self.key(r)).map(Vec::as_slice)
     }
 
     /// The context a local is bound to.

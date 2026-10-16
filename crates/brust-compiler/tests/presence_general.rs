@@ -179,19 +179,6 @@ fn a_hook_in_a_conditional_or_a_function_is_still_refused() {
     }
 }
 
-#[test]
-fn a_hoisted_hook_result_bound_whole_at_the_call_site_stays_refused() {
-    // `const t = useToggle()` would make `t` one derived value naming the hoisted handler: a per-request job that cannot
-    // (F289), so it stays refused, named, until that lands. Destructuring it is `hoist_object.tsx`.
-    let all = compile("hoist_whole.tsx");
-    assert!(react(&all[0].ir), "{:?}", all[0].ir.tier);
-    assert!(
-        rules(&all).contains(&"hook-return-shape".to_string()),
-        "{:?}",
-        rules(&all)
-    );
-}
-
 // F287 ----------------------------------------------------------------------------------------------------------
 
 #[test]

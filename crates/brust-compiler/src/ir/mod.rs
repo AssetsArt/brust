@@ -337,6 +337,10 @@ pub struct ComponentIR {
     /// props). A call site that passes a value that changes on the client for one of them falls back (`frozen-prop`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frozen_props: Vec<String>,
+    /// F320: props read only as the first value of a cell nothing sets (F277, F295): taken once at mount, as React does,
+    /// so they never count as changing (`props_are_signal`). Filled by the children pass, read by lowering.
+    #[serde(skip)]
+    pub seed_props: Vec<String>,
     /// W1d PR 3 (ruling A, condition 3): the props read by the tests of an early-return chain that ends in a throw. A
     /// discriminant that changes after mount stays refused: they are frozen (a call site that passes a changing value falls
     /// back, `frozen-prop`), whatever the children pass decides about the rest.
@@ -447,6 +451,15 @@ pub struct Structural {
 }
 
 impl ComponentIR {
+    /// F320: the chunk has an instance (state, effects, handlers or refs), so it reads its props as a signal wherever
+    /// it renders: a named prop the call site does not fix changes on the client.
+    pub fn props_are_signal(&self) -> bool {
+        !self.state.is_empty()
+            || !self.effects.is_empty()
+            || !self.handlers.is_empty()
+            || !self.refs.is_empty()
+    }
+
     pub fn new(id: String, source: String) -> Self {
         Self {
             id,
@@ -488,6 +501,7 @@ impl ComponentIR {
             hosts_children: false,
             mount_once: None,
             frozen_props: Vec::new(),
+            seed_props: Vec::new(),
             throw_props: Vec::new(),
             state: vec![],
             derived: vec![],

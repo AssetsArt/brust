@@ -34,12 +34,31 @@ fn null_and_empty_object_hash_differently() {
     assert_eq!(a.len(), 64);
 }
 
+/// F322: key order is part of the key only where the loader's text carried it (an order hint, F318). Inputs with no
+/// hint (built from `json!`, or text whose keys were already sorted) are keyed by the sorted canonical form, so equal
+/// content shares an entry; inputs that differ ONLY in hinted order (observable output: a style's cascade,
+/// `Object.entries` rows) do not.
 #[test]
-fn key_is_independent_of_object_key_order() {
+fn key_depends_on_hinted_object_key_order_only() {
+    // no hint: sorted text, and the same content built another way, share a key
+    let sorted: Node = serde_json::from_str(r#"{"a":{"x":1,"y":2},"b":1}"#).unwrap();
+    let built = n(json!({"b":1,"a":{"y":2,"x":1}}));
+    assert_eq!(canonical(&sorted), canonical(&built));
+    assert_eq!(job_key("c", "j", &sorted), job_key("c", "j", &built));
+
+    // hinted: the same content in two text orders is two different inputs
     let a: Node = serde_json::from_str(r#"{"b":1,"a":{"y":2,"x":1}}"#).unwrap();
-    let b: Node = serde_json::from_str(r#"{"a":{"x":1,"y":2},"b":1}"#).unwrap();
-    assert_eq!(canonical(&a), canonical(&b));
-    assert_eq!(job_key("c", "j", &a), job_key("c", "j", &b));
+    let b: Node = serde_json::from_str(r#"{"a":{"y":2,"x":1},"b":1}"#).unwrap();
+    assert_eq!(a, b, "same content");
+    assert_eq!(
+        canonical(&a),
+        canonical(&b),
+        "the canonical form is still sorted"
+    );
+    assert_ne!(job_key("c", "j", &a), job_key("c", "j", &b));
+    // the same hinted text twice is one key
+    let again: Node = serde_json::from_str(r#"{"b":1,"a":{"y":2,"x":1}}"#).unwrap();
+    assert_eq!(job_key("c", "j", &a), job_key("c", "j", &again));
 }
 
 #[test]
