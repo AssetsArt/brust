@@ -52,6 +52,8 @@ const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compi
 
 const NATIVE_FWD = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Fwd.tsx'), 'utf8')
 
+const NATIVE_RESTHLP = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/RestHlp.tsx'), 'utf8')
+
 const NATIVE_WRAP = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Wrap.tsx'), 'utf8')
 
 const PKG_LEAF = `import * as React from 'react'\nimport { Primitive } from '@radix-ui/react-primitive'\nexport const Root = React.forwardRef(function Root(props: any, forwardedRef: any) { return <Primitive.div {...props} ref={forwardedRef} /> })`
@@ -1578,6 +1580,13 @@ export const rows: Row[] = [
     snippet: `import { useRef, useState } from 'react'\nimport { Fc } from './Fwd'\nexport default function C() { const r = useRef<HTMLButtonElement>(null); const [n, setN] = useState(0); return <main><Fc ref={r} show={n > 0} /><button onClick={() => setN(n + 1)}>{n}</button></main> }`,
     files: { 'Fwd.tsx': NATIVE_FWD },
     note: 'F267: the child may not render the element at all; the call site keeps the React fallback' },
+  { id: 'c-native-provider-rest-input', category: 'C', authoring: 'a component spreads its own ...rest into a consumer under the Provider it renders', expect: 'static', jobs: 0,
+    snippet: `import { Outer } from './RestHlp'\nexport default function C() { return <main><Outer data-x="1" aria-label="switch" /></main> }`,
+    files: { 'RestHlp.tsx': NATIVE_RESTHLP },
+    note: 'F278: the rest crosses into the clone as the hidden input __in_rest and is spread there; F279: getState(checked) is its expression, so the consumer has no job' },
+  { id: 'c-pure-helper-call-inlined', category: 'C', authoring: 'a single-return module helper called with a state read', expect: 'native', jobs: 0,
+    snippet: `import { useState } from 'react'\nfunction lbl(on: boolean) { return on ? 'on' : 'off' }\nexport default function C() { const [on, setOn] = useState(false); return <button data-s={lbl(on)} onClick={() => setOn(!on)}>x</button> }`,
+    note: 'F279: the call is replaced by the helper\'s expression (a plain-read argument), so no precompute job runs it' },
   { id: 'c-render-prop-is-function-helper', category: 'C', authoring: 'a render prop a state Provider guards with a typeof helper (isFunction(render))', expect: 'static', jobs: 0,
     snippet: `import { RH, RT } from './Rend'\nexport default function C() { return <main><RH render={({ on }) => (<><RT>go</RT>{on && <p>on</p>}</>)} /></main> }`,
     files: { 'Rend.tsx': NATIVE_REND },

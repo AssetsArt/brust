@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 216 | 113 | 15 | 88 | 0 | 0 | 0 | 0 |
-| C Hooks | 81 | 16 | 25 | 40 | 0 | 0 | 0 | 0 |
+| C Hooks | 83 | 17 | 26 | 40 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 69 | 31 | 10 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 447 | 204 | 63 | 176 | 3 | 1 | 0 | 0 |
+| **Total** | 449 | 205 | 64 | 176 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -371,6 +371,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-forwardref-child-ref-cell | a useRef passed as ref to an inlined forwardRef child that hands it to its one element | native | native | 0 | ok | 4.4 | — | F267: the parent binds x-ref on the child's own element, in its scope; the child stays static and unlinked |
 | c-forwardref-child-ref-callback | a state setter passed as ref to an inlined forwardRef child | native | native | 0 | ok | 4.4 | — | F267: a callback ref is the same mount effect as on an element, its ref cell bound on the child's element |
 | c-forwardref-child-ref-conditional-child | a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes | react | react | ssr | ok | 3.8 | fallback:forwardref-ref | F267: the child may not render the element at all; the call site keeps the React fallback |
+| c-native-provider-rest-input | a component spreads its own ...rest into a consumer under the Provider it renders | static | static | 0 | ok | 4.4 | — | F278: the rest crosses into the clone as the hidden input __in_rest and is spread there; F279: getState(checked) is its expression, so the consumer has no job |
+| c-pure-helper-call-inlined | a single-return module helper called with a state read | native | native | 0 | ok | 4.4 | — | F279: the call is replaced by the helper's expression (a plain-read argument), so no precompute job runs it |
 | c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
 | c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |

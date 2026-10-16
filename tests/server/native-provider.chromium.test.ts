@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderFwd, renderGate, renderInputs, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderFwd, renderGate, renderInputs, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -273,6 +273,28 @@ test('content written in the Provider\'s own module is specialised and toggles',
   await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'false')
   await trigger.click()
   await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'true')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('the call site\'s rest spread into the content crosses as an input and a plain helper paints without a job', async () => {
+  const html = await (await fetch(`${base}/rest`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(html).toContain('data-x="1"')
+  // the order of attributes carries no meaning (the spread keys come sorted)
+  const sorted = (h: string): string => h.replace(/<(\w+)((?: [\w-]+="[^"]*")+)>/g, (_, tag: string, a: string) => `<${tag}${(a.match(/ [\w-]+="[^"]*"/g) ?? []).sort().join('')}>`)
+  expect(sorted(plain(html))).toBe(sorted(plain(renderRest())))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/rest`, { waitUntil: 'domcontentloaded' })
+  const button = page.locator('button[data-x="1"]')
+  await page.waitForFunction(() => document.querySelector('button[data-x="1"]')?.getAttribute('data-state') === 'unchecked')
+  expect(await button.getAttribute('aria-label')).toBe('switch')
+  await button.click()
+  await page.waitForFunction(() => document.querySelector('button[data-x="1"]')?.getAttribute('data-state') === 'checked')
+  expect(await button.getAttribute('aria-pressed')).toBe('true')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

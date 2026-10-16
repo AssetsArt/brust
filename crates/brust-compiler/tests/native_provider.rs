@@ -476,3 +476,58 @@ fn content_written_in_the_providers_own_module_is_specialised() {
             .collect::<Vec<_>>()
     );
 }
+
+// F278: the call site's `...rest` spread into the content crosses as ONE hidden input and is spread there.
+// F279: a call of a single-return module helper with a plain-read argument is its expression, so the consumer has no job.
+#[test]
+fn a_rest_spread_in_the_content_crosses_and_a_plain_helper_call_needs_no_job() {
+    let all = compile("rest_input.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert_eq!(
+        clones(&all).len(),
+        1,
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.diagnostics))
+            .collect::<Vec<_>>()
+    );
+    assert!(root.jinja.contains("data-x"), "{}", root.jinja);
+    // the component that renders the Provider is native too (no island of it is left)
+    assert!(
+        all.iter()
+            .filter(|i| i.ir.id.starts_with("outer_"))
+            .all(|i| !is_react(&i.ir)),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.tier))
+            .collect::<Vec<_>>()
+    );
+    for i in &all {
+        assert!(
+            !i.ir
+                .jobs
+                .iter()
+                .any(|j| matches!(j.kind, JobKind::Precompute)),
+            "{}: {:?}",
+            i.ir.id,
+            i.ir.jobs
+        );
+    }
+}
+
+#[test]
+fn a_helper_called_with_a_computation_keeps_its_job() {
+    let all = compile("helper_neg.tsx");
+    assert!(
+        all.iter().any(|i| i
+            .ir
+            .jobs
+            .iter()
+            .any(|j| matches!(j.kind, JobKind::Precompute))),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.jobs))
+            .collect::<Vec<_>>()
+    );
+}

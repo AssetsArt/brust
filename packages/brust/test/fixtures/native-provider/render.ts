@@ -5,6 +5,7 @@ import Nested from './Nested'
 import NestedIds from './NestedIds'
 import InputsPage from './InputsPage'
 import Page from './Page'
+import RestPage from './RestPage'
 import SamePage from './SamePage'
 import RenderPage from './RenderPage'
 import PolyPage from './PolyPage'
@@ -22,3 +23,4 @@ export const renderInputs = (): string => html(InputsPage)
 export const renderPoly = (): string => html(PolyPage)
 export const renderFwd = (): string => html(FwdPage)
 export const renderSame = (): string => html(SamePage)
+export const renderRest = (): string => html(RestPage)

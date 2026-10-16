@@ -68,7 +68,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 30 | Primitive.* | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 113 | fallback:member-tag |
 | 31 | composeRefs | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 77 | ref shapes other than ref={x}: fallback:ref-shape |
 | 32 | Slot / asChild | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 58 | no battery row: cloneElement-based |
-| 33 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 54 | `module-side-effect` diagnostic (docs/react-coverage.md) |
+| 33 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 53 | `module-side-effect` diagnostic (docs/react-coverage.md) |
 | 34 | error:unresolved-import (published .js/.mjs module is not followed) | compile error | survey truth (compiler refusal) | 0 | 0 | 0 | 50 | the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy) |
 | 35 | DOM globals (document / window) | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 45 | fallback:browser-global in render |
 | 36 | Presence | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 27 | external component |
@@ -639,7 +639,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/menu.tsx | MenuCheckboxItem | forwardRef | react (fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child, fallback:module-side-effect, fallback:spread-props) | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/menu.tsx | MenuRadioGroup | forwardRef | react (fallback:context-state, fallback:forwardref-ref, fallback:hook-unsupported, fallback:spread-props) | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/menu.tsx | MenuRadioItem | forwardRef | react (fallback:context-scope, fallback:context-state, fallback:forwardref-ref, fallback:island-prop, fallback:jsx-const-child, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, rest-props spread |
-| src/menu.tsx | MenuItemIndicator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, Presence, rest-props spread |
+| src/menu.tsx | MenuItemIndicator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, Presence, rest-props spread |
 | src/menu.tsx | MenuSeparator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:spread-props) | forwardRef, Primitive.*, rest-props spread |
 | src/menu.tsx | MenuArrow | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, rest-props spread |
 | src/menu.tsx | MenuSub | function | react | useContext / use*Context, Context.Provider / *Provider, useEffect, useState, useId |

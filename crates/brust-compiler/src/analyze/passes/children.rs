@@ -755,6 +755,9 @@ type Specialised = (String, String, Vec<(String, Expr)>);
 /// written in the content (`onClick={() => …}`) becomes a handler of the clone that calls the carried function.
 /// What cannot cross is refused by name: the caller's whole props or `...rest`, a ref, a list row's bindings, imports,
 /// stores, module-level functions, and a name read inside code printed as written.
+/// The hidden input that carries the call site's whole `...rest` into a clone (F278).
+const REST_INPUT: &str = "__in_rest";
+
 struct Carry<'a> {
     native: &'a [(u32, String, usize)],
     owner: usize,
@@ -817,6 +820,40 @@ impl<'a> Carry<'a> {
             }),
         ));
         Ok(hidden)
+    }
+
+    /// F278: `{...rest}` of the call site's component, spread into an element or a component of the content: its keys
+    /// are known per instance, so the clone takes the whole object as one hidden input (`__in_rest`) and spreads
+    /// that (a props path), exactly as the call site would have spread its own rest.
+    fn rest_spread(&mut self, e: &mut Expr) -> Result<bool, String> {
+        let (Expr::Raw(r) | Expr::Server(ServerExpr(r))) = e else {
+            return Ok(false);
+        };
+        let RawKind::Ident {
+            name,
+            kind: IdentKind::Prop,
+        } = &r.kind
+        else {
+            return Ok(false);
+        };
+        if name != crate::ir::REST_PROPS {
+            return Ok(false);
+        }
+        let hidden = REST_INPUT.to_string();
+        if !self.inputs.iter().any(|(h, _)| *h == hidden) {
+            if self.taken.contains(&hidden) {
+                return Err(format!("the component already has a prop `{hidden}`"));
+            }
+            self.inputs.push((hidden.clone(), Expr::Raw(r.clone())));
+        }
+        *r = RawExpr {
+            loc: r.loc,
+            kind: RawKind::Ident {
+                name: hidden,
+                kind: IdentKind::Prop,
+            },
+        };
+        Ok(true)
     }
 
     fn raw(&mut self, r: &mut RawExpr, bound: &[String], what: &str) -> Result<(), String> {
@@ -928,7 +965,9 @@ impl<'a> Carry<'a> {
                             self.expr(value, bound, &what)?
                         }
                         Attr::InnerHtml { value } | Attr::Spread(value) => {
-                            self.expr(value, bound, "an attribute")?
+                            if !self.rest_spread(value)? {
+                                self.expr(value, bound, "an attribute")?
+                            }
                         }
                         Attr::Event { handler, .. } => {
                             let h = handler.clone();
@@ -1007,6 +1046,9 @@ impl<'a> Carry<'a> {
                         .iter()
                         .any(|(l, kk, o)| l == loc && kk == k && *o == self.owner)
                     {
+                        continue;
+                    }
+                    if k == crate::ir::SPREAD_KEY && self.rest_spread(v)? {
                         continue;
                     }
                     let what = format!("the prop `{k}`");
@@ -1193,7 +1235,7 @@ fn mentions_prop(e: &RawExpr, key: &str) -> bool {
 }
 
 /// `a`, `a.b.c`, a literal, an object literal of those: a read with no effect and one value.
-fn pure_read(e: &RawExpr) -> bool {
+pub(crate) fn pure_read(e: &RawExpr) -> bool {
     match &e.kind {
         RawKind::Lit(_) => true,
         RawKind::Ident { .. } => true,
@@ -3498,11 +3540,18 @@ impl Walker<'_, '_> {
     fn spread_carries(&self, key: &str, props: &[(String, Expr)]) -> Result<bool, ()> {
         let mut carries = false;
         for (k, v) in props {
-            if k != crate::ir::SPREAD_KEY {
+            // F278: the call site's whole rest handed to a clone as its hidden input behaves as the spread of it.
+            let rest_input = k == REST_INPUT;
+            if k != crate::ir::SPREAD_KEY && !rest_input {
                 continue;
             }
             match v {
                 Expr::Raw(r) | Expr::Server(ServerExpr(r)) => match &r.kind {
+                    // inside the clone: the spread of that input, whose keys are the caller's rest
+                    RawKind::Ident {
+                        name,
+                        kind: IdentKind::Prop,
+                    } if name == REST_INPUT && !rest_input => carries = true,
                     RawKind::Ident {
                         name,
                         kind: IdentKind::Prop,
@@ -5533,7 +5582,16 @@ impl Walker<'_, '_> {
             }
             // Props spread in carry keys known only at render: a linked instance next to them could
             // repaint an attribute the spread set.
-            if k == crate::ir::SPREAD_KEY || spreads_in || child.spread.lands(k) {
+            // F278: a prop the compiler wrote (`__ctx_…`, `__in_…`) AFTER the last spread is not replaced by it (React:
+            // the later key wins) and no caller can name it, so the spread cannot repaint what it binds.
+            let after_spreads = (k.starts_with("__ctx_") || k.starts_with("__in_"))
+                && props
+                    .iter()
+                    .rposition(|(o, _)| o == crate::ir::SPREAD_KEY)
+                    .zip(props.iter().position(|(o, _)| o == k))
+                    .is_none_or(|(spread, at)| spread < at);
+            if k == crate::ir::SPREAD_KEY || (spreads_in && !after_spreads) || child.spread.lands(k)
+            {
                 let function = matches!(v, Expr::ClientOnly { .. });
                 if function && crate::analyze::jsx::event_name(k).is_none() {
                     // R34.19: not an event, so no element binding can stand for it (a render prop).

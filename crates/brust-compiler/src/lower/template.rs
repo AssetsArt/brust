@@ -339,8 +339,15 @@ impl<'a, 'c> Printer<'a, 'c> {
             IdentKind::Prop => {
                 let base = match &self.inline {
                     None if name == "*" => "_props".into(),
+                    // F278: the rest object as a VALUE (the hidden input of a clone), the props the pattern names left out
+                    None if name == crate::ir::REST_PROPS => {
+                        format!("({})", omit_jinja("_props", &self.rest_omits()))
+                    }
                     None => name.to_string(),
                     Some(i) if name == "*" => format!("({})", i.object(&[])),
+                    Some(i) if name == crate::ir::REST_PROPS => {
+                        format!("({})", i.object(&self.rest_omits()))
+                    }
                     Some(i) => match i.get(name) {
                         Some(PropBinding::Expr(e)) => format!("({e})"),
                         _ => UNDEFINED.into(),
