@@ -57,6 +57,8 @@ const CTXV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tes
 
 const CTXTHIS = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/CtxThis.tsx'), 'utf8')
 
+const scopeFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/scope-${n}.tsx`), 'utf8').trimEnd()
+
 const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
 
 const NATIVE_FWD = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Fwd.tsx'), 'utf8')
@@ -1261,6 +1263,14 @@ export const rows: Row[] = [
     snippet: `import { LiveRoot, Thumb } from './kit'\nexport default function C() { return <main><LiveRoot data-x="1"><Thumb /></LiveRoot></main> }`,
     files: { 'kit.tsx': `import { createContext, useContext, useState } from 'react'\nconst K = createContext({ on: false, flip: () => {} })\nfunction KProvider({ children }: any) { const [on, setOn] = useState(false); return <K.Provider value={{ on, flip: () => setOn((o) => !o) }}>{children}</K.Provider> }\nfunction Flip() { const c = useContext(K); return <button onClick={c.flip}>flip</button> }\nfunction Label({ children, ...rest }: any) { return <span {...rest}>{children}</span> }\nfunction LiveLabel({ children, ...rest }: any) { const c = useContext(K); return <span {...rest} data-on={String(c.on)}>{children}</span> }\nexport function Thumb() { const c = useContext(K); return <i data-state={c.on ? 'checked' : 'unchecked'} /> }\nexport function Root({ ...rest }: any) { return <KProvider><Flip /><Label {...rest} /></KProvider> }\nexport function LiveRoot({ ...rest }: any) { return <KProvider><Flip /><LiveLabel {...rest} /></KProvider> }` },
     note: 'F298 + F309: that element is linked, so it would host the Thumb (slot-owner): no clone, LiveRoot stays a React island with its children (F307 relaxes it)' },
+  { id: 'c-spec-rest-children', category: 'C', authoring: 'JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children', expect: 'static', jobs: 1,
+    snippet: `import { Root } from './kit'\nexport default function C() { return <main><Root><span>hello</span></Root></main> }`,
+    files: { 'kit.tsx': `import { createContext, useState } from 'react'\nconst K = createContext({ on: false })\nexport function Root({ ...rest }: any) { const [on, setOn] = useState(false); return <K.Provider value={{ on }}><button type="button" onClick={() => setOn(!on)} {...rest} /></K.Provider> }` },
+    note: 'F324: the children reach the button through the rest in React; the clone has no children slot, so it is refused and the Provider stays an island that carries them (info specialise-unsupported; was: children silently dropped, alpha.16)' },
+  { id: 'c-spec-rest-no-children', category: 'C', authoring: 'the same Provider component called without children', expect: 'static', jobs: 0,
+    snippet: `import { Root } from './kit'\nexport default function C() { return <main><Root data-x="1" /></main> }`,
+    files: { 'kit.tsx': `import { createContext, useState } from 'react'\nconst K = createContext({ on: false })\nexport function Root({ ...rest }: any) { const [on, setOn] = useState(false); return <K.Provider value={{ on }}><button type="button" onClick={() => setOn(!on)} {...rest} /></K.Provider> }` },
+    note: 'F324: nothing to drop, so the clone is still taken' },
   { id: 'c-slot-owner-prop', category: 'C', authoring: 'a prop the client changes, read in the slot of a native child', expect: 'react',
     snippet: `import { useState } from 'react'\nimport Mid from './mid'\nexport default function C() { const [on, setOn] = useState(false); return <section><button onClick={() => setOn(!on)}>flip</button><Mid label={on ? 'yes' : 'no'} /></section> }`,
     files: { 'mid.tsx': `import { useState } from 'react'\nfunction Box({ children }: any) { const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)} data-n={n}>{children}</div> }\nexport default function Mid({ label }: any) { return <Box><p>{label}</p></Box> }` },
@@ -1980,4 +1990,25 @@ export const rows: Row[] = [
   { id: 'c-includes-string-receiver', category: 'C', authoring: "'abc'.includes(state): a string receiver", expect: 'native', jobs: 1,
     snippet: `import { useState } from 'react'\nexport default function C() { const [s, setS] = useState('abc'); return <button type="button" onClick={() => setS('b')} data-hit={'abc'.includes(s) ? 'y' : 'n'}>{s}</button> }`,
     note: 'F287: a substring test is not a membership chain; only an array literal receiver is rewritten' },
+  { id: 'c-scope-props', category: 'C', authoring: 'a context hook and a scope hook read props.__scopeX, the token spread on a component', expect: 'static', jobs: 0,
+    snippet: scopeFx('props'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-sibling', category: 'C', authoring: 'two sibling Providers of one scoped context, one consumer each', expect: 'static', jobs: 0,
+    snippet: scopeFx('sibling'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-nested', category: 'C', authoring: 'a scoped Provider nested in another of the same context', expect: 'react',
+    snippet: scopeFx('nested'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-call-site', category: 'C', authoring: 'a call site that hands a __scope attribute to a native component', expect: 'react',
+    snippet: scopeFx('guard'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-token-host', category: 'C', authoring: 'a scope token spread on a host element', expect: 'react',
+    snippet: scopeFx('token-host'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-token-value', category: 'C', authoring: 'a scope token read as a value', expect: 'react',
+    snippet: scopeFx('token-value'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-by-name', category: 'C', authoring: 'a hook named like a scope hook that createContextScope did not make', expect: 'react',
+    snippet: scopeFx('by-name'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
 ]

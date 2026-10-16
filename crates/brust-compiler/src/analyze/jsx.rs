@@ -270,6 +270,16 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     for p in obj.properties.iter() {
         let Some(value) = &p.value else { continue };
         if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
+            // W1d PR 2 (Mellow C3): a scope token spread on a COMPONENT is dropped (a native child resolves its frame by
+            // position, never by scope); on a host element it would print as attributes, so it is refused
+            if let E::EIdentifier(id) = &value.data
+                && r.names.is_scope_token(id.ref_)
+            {
+                if matches!(tag, Tag::Host(_)) && r.names.scope_token_escape.get().is_none() {
+                    r.names.scope_token_escape.set(Some(loc_of(value)));
+                }
+                continue;
+            }
             match spread_source(r, value, matches!(tag, Tag::Host(_))) {
                 // An object literal is a known shape here: its entries are ordinary attributes
                 // and props, read as if written one by one (React: later wins, which the
@@ -914,6 +924,17 @@ fn read_provider(
     loc: u32,
 ) {
     let mut fields: Vec<(String, RawExpr)> = Vec::new();
+    // W1d PR 2: a Provider that names a scope (anything but absent or `undefined`), for the nested-frame refusal
+    let scoped = props.iter().any(|(k, v)| {
+        k == "scope"
+            && !matches!(
+                v,
+                Expr::Raw(RawExpr {
+                    kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                    ..
+                })
+            )
+    });
     let check = |r: &mut Reader<'_, '_>, k: &str| match crate::analyze::context::field_problem(k) {
         Some(what) => {
             r.diagnostics.push(Diagnostic::fallback(
@@ -971,6 +992,7 @@ fn read_provider(
     r.provides.push(crate::ir::ProvideDecl {
         context: ctx.to_string(),
         fields,
+        scoped,
     });
 }
 

@@ -574,6 +574,7 @@ fn read_function_as(
     ir.poly = body.poly;
     // S2: the context fields this component reads are hidden props the call site fills from the Provider frame.
     ir.ctx_uses = reader.names.ctx_uses();
+    ir.ctx_scoped = reader.names.ctx_scoped();
     ir.ctx_pkg =
         !ir.ctx_uses.is_empty() && ir.source.starts_with(crate::analyze::modules::PKG_SRC_DIR);
     ir.ctx_defaults = reader
@@ -597,6 +598,14 @@ fn read_function_as(
                 });
             }
         }
+    }
+    if let Some(loc) = reader.names.scope_token_escape.get() {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "context-scope",
+            "a Radix scope hook's result is used other than as `{...scope}` on a component or as a scope argument",
+            loc,
+            "spread it on a component, or keep this component in React",
+        ));
     }
     if let Some(loc) = reader.names.ctx_escape.get() {
         ir.diagnostics.push(Diagnostic::fallback(

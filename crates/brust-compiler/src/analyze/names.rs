@@ -140,6 +140,12 @@ pub struct NameTable<'a> {
     ctx_fields: std::cell::RefCell<Vec<(String, String)>>,
     /// Where a context local is used as a bare value (not `context.field`): brust cannot narrow it (fail closed).
     pub ctx_escape: std::cell::Cell<Option<u32>>,
+    /// W1d PR 2: contexts a hook was called for with a scope argument.
+    ctx_scoped: std::cell::RefCell<Vec<String>>,
+    /// W1d PR 2: locals bound to a Radix scope hook's result (a scope token), by symbol key.
+    scope_tokens: std::cell::RefCell<HashSet<u32>>,
+    /// W1d PR 2: where a scope token was used other than as a `{...token}` JSX spread or a scope argument.
+    pub scope_token_escape: std::cell::Cell<Option<u32>>,
 }
 
 /// Every `import` binding of the module: local symbol (`Ref::inner_index`) → (module path,
@@ -421,6 +427,9 @@ impl<'a> NameTable<'a> {
             ctx_locals: HashMap::new(),
             ctx_fields: std::cell::RefCell::new(Vec::new()),
             ctx_escape: std::cell::Cell::new(None),
+            ctx_scoped: std::cell::RefCell::new(Vec::new()),
+            scope_tokens: std::cell::RefCell::new(HashSet::new()),
+            scope_token_escape: std::cell::Cell::new(None),
         };
         table.contexts = crate::analyze::context::scan(&table, ast);
         table.collections = crate::analyze::collection::scan(&table, ast);
@@ -1028,6 +1037,37 @@ impl<'a> NameTable<'a> {
         if !f.iter().any(|(c, n)| c == context && n == field) {
             f.push((context.to_string(), field.to_string()));
         }
+    }
+
+    pub fn note_ctx_scoped(&self, context: &str) {
+        let mut v = self.ctx_scoped.borrow_mut();
+        if !v.iter().any(|c| c == context) {
+            v.push(context.to_string());
+        }
+    }
+
+    pub fn ctx_scoped(&self) -> Vec<String> {
+        self.ctx_scoped.borrow().clone()
+    }
+
+    /// W1d PR 2: `props.__scopeX` of the non-destructured props parameter: the component's own scope pass-through.
+    pub fn is_scope_prop_member(&self, e: &js_ast::Expr) -> bool {
+        match &e.data {
+            js_ast::expr::Data::EDot(d) => {
+                d.name.slice().starts_with(b"__scope")
+                    && matches!(&d.target.data, js_ast::expr::Data::EIdentifier(t)
+                        if self.props_ident == Some(self.key(t.ref_)))
+            }
+            _ => false,
+        }
+    }
+
+    pub fn bind_scope_token(&self, r: js_ast::Ref) {
+        self.scope_tokens.borrow_mut().insert(self.key(r));
+    }
+
+    pub fn is_scope_token(&self, r: js_ast::Ref) -> bool {
+        self.scope_tokens.borrow().contains(&self.key(r))
     }
 
     /// The fields read, grouped by context (first-use order).
