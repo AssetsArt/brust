@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
-| B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 78 | 16 | 23 | 39 | 0 | 0 | 0 | 0 |
+| B Composition | 216 | 113 | 15 | 88 | 0 | 0 | 0 | 0 |
+| C Hooks | 81 | 16 | 25 | 40 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 69 | 31 | 10 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 444 | 204 | 60 | 176 | 3 | 1 | 0 | 0 |
+| **Total** | 447 | 204 | 63 | 176 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -170,7 +170,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-forwardref-const | `const X = forwardRef(function (props, ref) {…})` exported by name, used by a parent | static | static | 0 | ok | 0 | — |  |
 | b-forwardref-arrow | forwardRef with an arrow callback and rest props | static | static | 0 | ok | 0 | — |  |
 | b-forwardref-alias-export | `const X = forwardRef(…)` then `export { X, X as Root }` | static | static | 0 | ok | 0 | — |  |
-| b-forwardref-callsite-ref | a call site passes `ref` to a forwardRef component | react | react | ssr | ok | 3.8 | fallback:forwardref-ref, fallback:ref-in-render | R34.64: forwardref-ref on the caller |
+| b-forwardref-callsite-ref | a call site passes `ref` to a forwardRef component | native | native | 0 | ok | 4.4 | — | R34.64: forwardref-ref on the caller; F267: a ref cell of the caller is bound on the one element the child hands its ref to (see c-forwardref-child-ref-conditional-child for the React case) |
 | b-forwardref-ref-read | the forwarded ref is read (`useImperativeHandle`) | react | react | ssr | ok | 3.8 | fallback:forwardref-ref, fallback:hook-unsupported |  |
 | b-forwardref-ref-passed | the forwarded ref is passed on to a child component | react | react | ssr | ok | 3.8 | fallback:forwardref-ref |  |
 | b-forwardref-ref-destructured | the second parameter is destructured | react | react | ssr | ok | 3.8 | fallback:forwardref-ref |  |
@@ -292,7 +292,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-pkg-primitive-aschild | Primitive.button asChild with one host child, written in the app | static | static | 0 | ok | 0 | — | F153c R34.65: asChild on a Primitive tag merges into the one host child (the R34.28 Button rule) |
 | b-pkg-aschild-through-spread | asChild passed to a package leaf that spreads it into Primitive | react | react | ssr | ok | 3.8 | fallback:slot-dynamic | F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles |
 | b-pkg-aschild-dynamic | a dynamic asChild on a package leaf | react | react | ssr | ok | 3.8 | fallback:slot-dynamic | F153c fail closed: slot-dynamic |
-| b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | react | react | ssr | ok | 3.8 | fallback:forwardref-ref, fallback:ref-in-render | F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none) |
+| b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | react | react | ssr | ok | 3.8 | fallback:forwardref-ref | F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none) |
 | b-pkg-ref-read | a package leaf that reads its forwarded ref | static | static | ssr | ok | 3.8 | fallback:external-component | F153c fail closed: the leaf needs React (forwardref-ref), so the app keeps the island of the published export |
 | b-pkg-no-map | a package that publishes no source map | static | static | ssr | ok | 3.8 | fallback:external-component | F153c G1: no sourcesContent, no analysis: the island of the published export (external-component, reason named) |
 | b-pkg-drift | a package whose published JS was not built from its map | static | static | ssr | ok | 3.8 | fallback:external-component | F153c R34.62: the integrity check fails: the island of the published export |
@@ -368,6 +368,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-spread-const-object | a spread of a local const object literal into a component | static | static | 0 | ok | 4.4 | — | F266: <Impl {...ctx}> with const ctx = { a, b } is read as the entries (components only; an element spread stays as it was) |
 | c-native-provider-derived-frame | a state Provider whose frame field is a derived value over a prop and state | static | static | 0 | ok | 4.4 | — | F269: the frame hands out the derived value as written (Radix useControllableState), not its precomputed slot |
 | c-native-provider-negated-method | a render prop reading a boolean made with !! of a method of an element held in state | static | static | 0 | ok | 4.8 | info:build-eval-instance | F269: Radix's isFormControl; !x prints a boolean whatever x is, so the allowlist does not judge x |
+| c-forwardref-child-ref-cell | a useRef passed as ref to an inlined forwardRef child that hands it to its one element | native | native | 0 | ok | 4.4 | — | F267: the parent binds x-ref on the child's own element, in its scope; the child stays static and unlinked |
+| c-forwardref-child-ref-callback | a state setter passed as ref to an inlined forwardRef child | native | native | 0 | ok | 4.4 | — | F267: a callback ref is the same mount effect as on an element, its ref cell bound on the child's element |
+| c-forwardref-child-ref-conditional-child | a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes | react | react | ssr | ok | 3.8 | fallback:forwardref-ref | F267: the child may not render the element at all; the call site keeps the React fallback |
 | c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
 | c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |

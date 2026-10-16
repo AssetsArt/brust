@@ -50,6 +50,8 @@ const NATIVE_PROV = readFileSync(join(import.meta.dir, '../../crates/brust-compi
 
 const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
 
+const NATIVE_FWD = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Fwd.tsx'), 'utf8')
+
 const NATIVE_WRAP = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Wrap.tsx'), 'utf8')
 
 const PKG_LEAF = `import * as React from 'react'\nimport { Primitive } from '@radix-ui/react-primitive'\nexport const Root = React.forwardRef(function Root(props: any, forwardedRef: any) { return <Primitive.div {...props} ref={forwardedRef} /> })`
@@ -534,10 +536,10 @@ export const rows: Row[] = [
   { id: 'b-forwardref-alias-export', category: 'B', authoring: '`const X = forwardRef(…)` then `export { X, X as Root }`', expect: 'static', jobs: 0,
     files: { 'X.tsx': `import { forwardRef } from 'react'\nconst X = forwardRef<HTMLDivElement, any>(function X(props, ref) { return <div ref={ref} {...props} /> })\nexport { X, X as Root }` },
     snippet: `import { Root } from './X'\nexport default function C() { return <Root id="r" /> }` },
-  { id: 'b-forwardref-callsite-ref', category: 'B', authoring: 'a call site passes `ref` to a forwardRef component', expect: 'react',
+  { id: 'b-forwardref-callsite-ref', category: 'B', authoring: 'a call site passes `ref` to a forwardRef component', expect: 'native', jobs: 0,
     files: { 'X.tsx': `import { forwardRef } from 'react'\nexport const X = forwardRef<HTMLDivElement, any>(function X(props, ref) { return <div ref={ref} /> })` },
     snippet: `import { useRef } from 'react'\nimport { X } from './X'\nexport default function C() { const r = useRef<HTMLDivElement>(null); return <X ref={r} /> }`,
-    note: 'R34.64: forwardref-ref on the caller' },
+    note: 'R34.64: forwardref-ref on the caller; F267: a ref cell of the caller is bound on the one element the child hands its ref to (see c-forwardref-child-ref-conditional-child for the React case)' },
   { id: 'b-forwardref-ref-read', category: 'B', authoring: 'the forwarded ref is read (`useImperativeHandle`)', expect: 'react',
     snippet: `import { forwardRef, useImperativeHandle } from 'react'\nexport default forwardRef<any, any>(function F(props, ref) { useImperativeHandle(ref, () => ({})); return <div /> })` },
   { id: 'b-forwardref-ref-passed', category: 'B', authoring: 'the forwarded ref is passed on to a child component', expect: 'react',
@@ -1564,6 +1566,18 @@ export const rows: Row[] = [
     snippet: `import { RF, RT } from './Rend'\nexport default function C() { return <main><RF render={({ inForm }) => (<><RT>go</RT>{inForm && <p>free</p>}</>)} /></main> }`,
     files: { 'Rend.tsx': NATIVE_REND },
     note: 'F269: Radix\'s isFormControl; !x prints a boolean whatever x is, so the allowlist does not judge x' },
+  { id: 'c-forwardref-child-ref-cell', category: 'C', authoring: 'a useRef passed as ref to an inlined forwardRef child that hands it to its one element', expect: 'native', jobs: 0,
+    snippet: `import { useEffect, useRef, useState } from 'react'\nimport { Fb } from './Fwd'\nexport default function C() { const r = useRef<HTMLButtonElement>(null); const [n, setN] = useState(0); useEffect(() => { r.current?.setAttribute('data-bound', 'yes') }, []); return <main><Fb ref={r} onClick={() => setN(n + 1)}>go <i>{n}</i></Fb></main> }`,
+    files: { 'Fwd.tsx': NATIVE_FWD },
+    note: 'F267: the parent binds x-ref on the child\'s own element, in its scope; the child stays static and unlinked' },
+  { id: 'c-forwardref-child-ref-callback', category: 'C', authoring: 'a state setter passed as ref to an inlined forwardRef child', expect: 'native', jobs: 0,
+    snippet: `import { useEffect, useState } from 'react'\nimport { Fb } from './Fwd'\nexport default function C() { const [el, setEl] = useState<HTMLButtonElement | null>(null); useEffect(() => { el?.setAttribute('data-bound', 'yes') }, [el]); return <main><Fb ref={setEl}>go</Fb></main> }`,
+    files: { 'Fwd.tsx': NATIVE_FWD },
+    note: 'F267: a callback ref is the same mount effect as on an element, its ref cell bound on the child\'s element' },
+  { id: 'c-forwardref-child-ref-conditional-child', category: 'C', authoring: 'a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes', expect: 'react',
+    snippet: `import { useRef, useState } from 'react'\nimport { Fc } from './Fwd'\nexport default function C() { const r = useRef<HTMLButtonElement>(null); const [n, setN] = useState(0); return <main><Fc ref={r} show={n > 0} /><button onClick={() => setN(n + 1)}>{n}</button></main> }`,
+    files: { 'Fwd.tsx': NATIVE_FWD },
+    note: 'F267: the child may not render the element at all; the call site keeps the React fallback' },
   { id: 'c-render-prop-is-function-helper', category: 'C', authoring: 'a render prop a state Provider guards with a typeof helper (isFunction(render))', expect: 'static', jobs: 0,
     snippet: `import { RH, RT } from './Rend'\nexport default function C() { return <main><RH render={({ on }) => (<><RT>go</RT>{on && <p>on</p>}</>)} /></main> }`,
     files: { 'Rend.tsx': NATIVE_REND },

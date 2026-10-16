@@ -423,3 +423,56 @@ fn a_const_object_that_is_written_is_not_spread_as_its_literal() {
         );
     }
 }
+
+// F267: a `ref` of the component's own bound on the one element an inlined forwardRef child hands its ref to.
+#[test]
+fn a_ref_passed_to_an_inlined_forward_ref_child_binds_on_its_element() {
+    for file in ["fwd_ref.tsx", "fwd_cb.tsx"] {
+        let all = compile(file);
+        let root = &all[0];
+        assert!(!is_react(&root.ir), "{file}: {:?}", root.ir.diagnostics);
+        assert!(
+            !has(&root.ir, DiagClass::Fallback, "forwardref-ref"),
+            "{file}: {:?}",
+            root.ir.diagnostics
+        );
+        // the parent binds its ref cell on the child's own button
+        assert!(
+            root.jinja.contains("<button") && root.jinja.contains("x-ref=\"_rf")
+                || root.jinja.contains("x-ref=\"r\""),
+            "{file}: {}",
+            root.jinja
+        );
+    }
+}
+
+#[test]
+fn a_ref_passed_to_a_forward_ref_child_that_may_not_render_stays_react() {
+    // a callback under a condition; a child that renders its element sometimes; a spread after the ref
+    for file in ["fwd_cond.tsx", "fwd_child_cond.tsx", "fwd_spread_after.tsx"] {
+        let all = compile(file);
+        assert!(
+            has(&all[0].ir, DiagClass::Fallback, "forwardref-ref"),
+            "{file}: {:?}",
+            all[0].ir.diagnostics
+        );
+    }
+}
+
+// F267: the content is written in the module of the Provider (Radix's `Switch` renders `SwitchProvider` and
+// `SwitchTrigger`): the clone is compiled where the content was written, so a component of that module is reachable.
+#[test]
+fn content_written_in_the_providers_own_module_is_specialised() {
+    let all = compile("same_module.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    let c = clones(&all);
+    assert_eq!(
+        c.len(),
+        1,
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.diagnostics))
+            .collect::<Vec<_>>()
+    );
+}

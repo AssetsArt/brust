@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderGate, renderInputs, renderNested, renderNestedIds, renderPage, renderPoly, renderRender } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderFwd, renderGate, renderInputs, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -237,6 +237,42 @@ test('an asChild consumer makes the caller\'s element the toggle', async () => {
   await link.click()
   await page.waitForFunction(() => document.querySelector('a[data-from="child"]')?.getAttribute('aria-expanded') === 'false')
   expect(await page.getByText('poly body').isVisible()).toBe(false)
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('a ref passed to an inlined forwardRef child is bound on its element', async () => {
+  const html = await (await fetch(`${base}/fwd`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderFwd()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/fwd`, { waitUntil: 'domcontentloaded' })
+  // the ref cell and the callback each reached their own button once mounted
+  await page.waitForFunction(() => document.querySelector('button[data-bound="ref"]') !== null && document.querySelector('button[data-bound="callback"]') !== null)
+  expect(await page.locator('button[data-bound="ref"]').textContent()).toContain('one')
+  expect(await page.locator('button[data-bound="callback"]').textContent()).toContain('two')
+  await page.locator('button[data-bound="ref"]').click()
+  await page.waitForFunction(() => document.querySelector('button[data-bound="ref"] i')?.textContent === '1')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('content written in the Provider\'s own module is specialised and toggles', async () => {
+  const html = await (await fetch(`${base}/same`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderSame()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/same`, { waitUntil: 'domcontentloaded' })
+  const trigger = page.getByRole('button', { name: 'go' })
+  await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'false')
+  await trigger.click()
+  await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'true')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
