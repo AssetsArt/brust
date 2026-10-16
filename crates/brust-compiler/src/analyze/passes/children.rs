@@ -84,6 +84,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         slot_depth: 0,
         spec_salt: ir.rest_clone_of.as_ref().map(|_| ir.id.clone()),
         mount_once: None,
+        frozen: BTreeSet::new(),
         state_inits: ir
             .state
             .iter()
@@ -295,6 +296,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         "every RowOnly link is visited by resolve_row_only"
     );
     ir.template = template;
+    ir.frozen_props = std::mem::take(&mut w.frozen).into_iter().collect();
     // A list or condition the children lowered folded its slot away: the precompute job no longer
     // computes what no node reads (the server would warn about the missing output on every request).
     let mut live = BTreeSet::new();
@@ -426,6 +428,8 @@ struct Walker<'s, 'c> {
     spec_salt: Option<String>,
     /// F295: what makes an instance of this component unable to mount again (`ComponentIR::mount_once`).
     mount_once: Option<String>,
+    /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
+    frozen: BTreeSet<String>,
     /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
     state_inits: HashMap<String, Expr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
@@ -3976,6 +3980,20 @@ impl Walker<'_, '_> {
         d
     }
 
+    /// F319: the roots of the props `d` reads that can change on the client (this component's props can, and the call
+    /// site did not fix the prop). `children` is left out: slot content is the caller's markup, bound in its scope.
+    /// A read of the rest or of the whole props object is the root `*` (deps): every prop that lands there.
+    fn changing_prop_roots(&self, d: &Deps) -> Vec<String> {
+        if !self.props_reactive {
+            return Vec::new();
+        }
+        d.props
+            .iter()
+            .map(|p| p.split(['.', '[']).next().unwrap_or(p).to_string())
+            .filter(|r| r != "children" && !self.fixed_props.contains(r))
+            .collect()
+    }
+
     fn reads_state(&self, e: &Expr) -> bool {
         match e {
             Expr::Precomputed {
@@ -4108,6 +4126,15 @@ impl Walker<'_, '_> {
             match n {
                 Node::For { source, body, .. } => {
                     let r = self.row_reactive(source, body, reactive);
+                    if !r {
+                        // F319: rows printed once (no x-for): a prop they read would not be followed.
+                        let mut exprs = Vec::new();
+                        node_exprs(body, &mut exprs);
+                        for e in exprs {
+                            let roots = self.changing_prop_roots(&self.deps_of(&e));
+                            self.frozen.extend(roots);
+                        }
+                    }
                     self.resolve_row_only(body, r);
                 }
                 Node::Component { link, children, .. } => {
@@ -4769,6 +4796,53 @@ impl Walker<'_, '_> {
                 } else {
                     BTreeSet::new()
                 };
+                // F319 (fail closed): the child reads these props where it would not follow a change. A value that
+                // changes here refuses; one of this component's own props passes the requirement up.
+                if let Some(c) = child.ir.as_deref() {
+                    let named: BTreeSet<&str> = c.props.iter().map(|p| p.name.as_str()).collect();
+                    let mut checks: Vec<(&str, &Expr)> = Vec::new();
+                    for root in &c.frozen_props {
+                        if root == "*" {
+                            // The child reads its rest (or its whole props object) where it would not follow a change:
+                            // every key that lands there (a spread passed to it is never a named key).
+                            for (k, v) in props.iter() {
+                                if k != "children"
+                                    && (c.props_rest.is_none() || !named.contains(k.as_str()))
+                                {
+                                    checks.push((k.as_str(), v));
+                                }
+                            }
+                            continue;
+                        }
+                        // The last written key, and any spread after it that may carry the key over it.
+                        let last = props.iter().rposition(|(k, _)| k == root);
+                        for (i, (k, v)) in props.iter().enumerate() {
+                            if Some(i) == last
+                                || (k == crate::ir::SPREAD_KEY && last.is_none_or(|l| i > l))
+                            {
+                                checks.push((root.as_str(), v));
+                            }
+                        }
+                    }
+                    for (root, v) in checks {
+                        if matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v) {
+                            let what = if root == crate::ir::SPREAD_KEY {
+                                "a prop spread into it".to_string()
+                            } else {
+                                format!("its prop `{root}`")
+                            };
+                            self.diagnostics.push(Diagnostic::fallback(
+                                "frozen-prop",
+                                format!("<{name}> reads {what} where it would not follow a change (the rows of a list printed once, a prop of a child it does not link, or a key printed once through a spread), and this call site passes a value that changes on the client"),
+                                *loc,
+                                "pass a value that does not change, or keep this component in React",
+                            ));
+                        } else {
+                            let roots = self.changing_prop_roots(&self.deps_of(v));
+                            self.frozen.extend(roots);
+                        }
+                    }
+                }
                 // F295: the child prints a value it took at mount where the client never re-applies it. Here it mounts
                 // with this component and never again, so this component inherits the promise from its own callers;
                 // anywhere else a later mount would print the server's value where React takes the current one.
@@ -4799,6 +4873,24 @@ impl Walker<'_, '_> {
                     })
                     .collect();
                 let need = instance_needs_link(&child.tier, link_props);
+                // F319: a child this component does not link takes its props once: a prop of this component it is
+                // given would not be followed.
+                // A prop the child reads only as the first value of a cell nothing sets (F277, F295) is taken once in
+                // React too: not frozen.
+                if need == LinkNeed::None {
+                    let seeds = child
+                        .ir
+                        .as_deref()
+                        .map(snapshot_only_props)
+                        .unwrap_or_default();
+                    for (k, v) in kept.iter() {
+                        if seeds.contains(k) {
+                            continue;
+                        }
+                        let roots = self.changing_prop_roots(&self.deps_of(v));
+                        self.frozen.extend(roots);
+                    }
+                }
                 if need == LinkNeed::Always && child.prop_precompute {
                     // Fail closed (F96d): the child computed values from its props once, on the
                     // server; a linked prop that changes would leave them stale with no warning.
@@ -6466,6 +6558,48 @@ mod tests {
                 want,
                 "{tier:?} {props:?}"
             );
+        }
+    }
+}
+
+/// F319: every expression the markup of `nodes` prints or passes (slots, attribute values, conditions, list sources,
+/// component props), at any depth.
+fn node_exprs(nodes: &[Node], out: &mut Vec<Expr>) {
+    for n in nodes {
+        match n {
+            Node::Slot(e) => out.push(e.clone()),
+            Node::Element {
+                attrs, children, ..
+            } => {
+                for a in attrs {
+                    if let Attr::Dynamic { value, .. }
+                    | Attr::InnerHtml { value }
+                    | Attr::Spread(value) = a
+                    {
+                        out.push(value.clone());
+                    }
+                }
+                node_exprs(children, out);
+            }
+            Node::Component {
+                props, children, ..
+            } => {
+                out.extend(props.iter().map(|(_, v)| v.clone()));
+                node_exprs(children, out);
+            }
+            Node::If {
+                cond, then, else_, ..
+            } => {
+                out.push(cond.clone());
+                node_exprs(then, out);
+                node_exprs(else_, out);
+            }
+            Node::For { source, body, .. } => {
+                out.push(source.clone());
+                node_exprs(body, out);
+            }
+            Node::Fragment(cs) => node_exprs(cs, out),
+            Node::Text(_) | Node::Outlet => {}
         }
     }
 }
