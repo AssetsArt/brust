@@ -1,0 +1,1950 @@
+// F233: every name brust's client chunk generates on its own (runtime imports, the behaviour context, the paint
+// helpers, the handler wrapper's rest parameter, member names), taken by a component's state, derived value, handler
+// and ref. Each component paints with every helper, has a keyed list, a useId, an effect with deps and a linked child,
+// so its chunk prints every generated name. Served, each one counts like React (click: +1, the derived value doubles).
+// One component per (name, role); the table is generated (scratchpad gen.py in the F233 lane), keep it in sync with
+// tests/server/generated-names.chromium.test.ts.
+import { useEffect, useId, useRef, useState } from 'react'
+
+function Show({ v }: { v: number }) {
+  return <i data-testid="show">{v}</i>
+}
+
+function Csignal_state() {
+  const [n, setN] = useState(0)
+  const [signal, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(signal)
+  }, [signal])
+  return (
+    <div id={id} data-testid="signal-state">
+      <b onClick={() => setV(signal + 1)} title={'t' + signal} style={{ width: signal }} aria-label={signal > 1} download={signal > 2} hidden={signal > 3}>
+        {signal}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + signal}</li>
+        ))}
+      </ul>
+      <Show v={signal} />
+    </div>
+  )
+}
+
+function Csignal_derived() {
+  const [n, setN] = useState(0)
+  const signal = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="signal-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {signal}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Csignal_handler() {
+  const [n, setN] = useState(0)
+  const signal = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="signal-handler">
+      <b onClick={signal} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Csignal_ref() {
+  const [n, setN] = useState(0)
+  const signal = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="signal-ref">
+      <b onClick={() => setN(n + (signal.current ? 1 : 100))} ref={signal} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Ccomputed_state() {
+  const [n, setN] = useState(0)
+  const [computed, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(computed)
+  }, [computed])
+  return (
+    <div id={id} data-testid="computed-state">
+      <b onClick={() => setV(computed + 1)} title={'t' + computed} style={{ width: computed }} aria-label={computed > 1} download={computed > 2} hidden={computed > 3}>
+        {computed}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + computed}</li>
+        ))}
+      </ul>
+      <Show v={computed} />
+    </div>
+  )
+}
+
+function Ccomputed_derived() {
+  const [n, setN] = useState(0)
+  const computed = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="computed-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {computed}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Ccomputed_handler() {
+  const [n, setN] = useState(0)
+  const computed = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="computed-handler">
+      <b onClick={computed} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Ccomputed_ref() {
+  const [n, setN] = useState(0)
+  const computed = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="computed-ref">
+      <b onClick={() => setN(n + (computed.current ? 1 : 100))} ref={computed} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Cuntracked_state() {
+  const [n, setN] = useState(0)
+  const [untracked, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(untracked)
+  }, [untracked])
+  return (
+    <div id={id} data-testid="untracked-state">
+      <b onClick={() => setV(untracked + 1)} title={'t' + untracked} style={{ width: untracked }} aria-label={untracked > 1} download={untracked > 2} hidden={untracked > 3}>
+        {untracked}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + untracked}</li>
+        ))}
+      </ul>
+      <Show v={untracked} />
+    </div>
+  )
+}
+
+function Cuntracked_derived() {
+  const [n, setN] = useState(0)
+  const untracked = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="untracked-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {untracked}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Cuntracked_handler() {
+  const [n, setN] = useState(0)
+  const untracked = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="untracked-handler">
+      <b onClick={untracked} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Cuntracked_ref() {
+  const [n, setN] = useState(0)
+  const untracked = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="untracked-ref">
+      <b onClick={() => setN(n + (untracked.current ? 1 : 100))} ref={untracked} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function CdefineBehavior_state() {
+  const [n, setN] = useState(0)
+  const [defineBehavior, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(defineBehavior)
+  }, [defineBehavior])
+  return (
+    <div id={id} data-testid="defineBehavior-state">
+      <b onClick={() => setV(defineBehavior + 1)} title={'t' + defineBehavior} style={{ width: defineBehavior }} aria-label={defineBehavior > 1} download={defineBehavior > 2} hidden={defineBehavior > 3}>
+        {defineBehavior}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + defineBehavior}</li>
+        ))}
+      </ul>
+      <Show v={defineBehavior} />
+    </div>
+  )
+}
+
+function CdefineBehavior_derived() {
+  const [n, setN] = useState(0)
+  const defineBehavior = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="defineBehavior-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {defineBehavior}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function CdefineBehavior_handler() {
+  const [n, setN] = useState(0)
+  const defineBehavior = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="defineBehavior-handler">
+      <b onClick={defineBehavior} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function CdefineBehavior_ref() {
+  const [n, setN] = useState(0)
+  const defineBehavior = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="defineBehavior-ref">
+      <b onClick={() => setN(n + (defineBehavior.current ? 1 : 100))} ref={defineBehavior} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Cprops_state() {
+  const [n, setN] = useState(0)
+  const [props, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(props)
+  }, [props])
+  return (
+    <div id={id} data-testid="props-state">
+      <b onClick={() => setV(props + 1)} title={'t' + props} style={{ width: props }} aria-label={props > 1} download={props > 2} hidden={props > 3}>
+        {props}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + props}</li>
+        ))}
+      </ul>
+      <Show v={props} />
+    </div>
+  )
+}
+
+function Cprops_derived() {
+  const [n, setN] = useState(0)
+  const props = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="props-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {props}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Cprops_handler() {
+  const [n, setN] = useState(0)
+  const props = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="props-handler">
+      <b onClick={props} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function Cprops_ref() {
+  const [n, setN] = useState(0)
+  const props = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="props-ref">
+      <b onClick={() => setN(n + (props.current ? 1 : 100))} ref={props} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__el_state() {
+  const [n, setN] = useState(0)
+  const [__el, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__el)
+  }, [__el])
+  return (
+    <div id={id} data-testid="__el-state">
+      <b onClick={() => setV(__el + 1)} title={'t' + __el} style={{ width: __el }} aria-label={__el > 1} download={__el > 2} hidden={__el > 3}>
+        {__el}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __el}</li>
+        ))}
+      </ul>
+      <Show v={__el} />
+    </div>
+  )
+}
+
+function C__el_derived() {
+  const [n, setN] = useState(0)
+  const __el = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__el-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__el}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__el_handler() {
+  const [n, setN] = useState(0)
+  const __el = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__el-handler">
+      <b onClick={__el} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__el_ref() {
+  const [n, setN] = useState(0)
+  const __el = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__el-ref">
+      <b onClick={() => setN(n + (__el.current ? 1 : 100))} ref={__el} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__effect_state() {
+  const [n, setN] = useState(0)
+  const [__effect, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__effect)
+  }, [__effect])
+  return (
+    <div id={id} data-testid="__effect-state">
+      <b onClick={() => setV(__effect + 1)} title={'t' + __effect} style={{ width: __effect }} aria-label={__effect > 1} download={__effect > 2} hidden={__effect > 3}>
+        {__effect}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __effect}</li>
+        ))}
+      </ul>
+      <Show v={__effect} />
+    </div>
+  )
+}
+
+function C__effect_derived() {
+  const [n, setN] = useState(0)
+  const __effect = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__effect-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__effect}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__effect_handler() {
+  const [n, setN] = useState(0)
+  const __effect = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__effect-handler">
+      <b onClick={__effect} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__effect_ref() {
+  const [n, setN] = useState(0)
+  const __effect = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__effect-ref">
+      <b onClick={() => setN(n + (__effect.current ? 1 : 100))} ref={__effect} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__onCleanup_state() {
+  const [n, setN] = useState(0)
+  const [__onCleanup, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__onCleanup)
+  }, [__onCleanup])
+  return (
+    <div id={id} data-testid="__onCleanup-state">
+      <b onClick={() => setV(__onCleanup + 1)} title={'t' + __onCleanup} style={{ width: __onCleanup }} aria-label={__onCleanup > 1} download={__onCleanup > 2} hidden={__onCleanup > 3}>
+        {__onCleanup}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __onCleanup}</li>
+        ))}
+      </ul>
+      <Show v={__onCleanup} />
+    </div>
+  )
+}
+
+function C__onCleanup_derived() {
+  const [n, setN] = useState(0)
+  const __onCleanup = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__onCleanup-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__onCleanup}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__onCleanup_handler() {
+  const [n, setN] = useState(0)
+  const __onCleanup = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__onCleanup-handler">
+      <b onClick={__onCleanup} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__onCleanup_ref() {
+  const [n, setN] = useState(0)
+  const __onCleanup = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__onCleanup-ref">
+      <b onClick={() => setN(n + (__onCleanup.current ? 1 : 100))} ref={__onCleanup} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__ref_state() {
+  const [n, setN] = useState(0)
+  const [__ref, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__ref)
+  }, [__ref])
+  return (
+    <div id={id} data-testid="__ref-state">
+      <b onClick={() => setV(__ref + 1)} title={'t' + __ref} style={{ width: __ref }} aria-label={__ref > 1} download={__ref > 2} hidden={__ref > 3}>
+        {__ref}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __ref}</li>
+        ))}
+      </ul>
+      <Show v={__ref} />
+    </div>
+  )
+}
+
+function C__ref_derived() {
+  const [n, setN] = useState(0)
+  const __ref = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__ref-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__ref}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__ref_handler() {
+  const [n, setN] = useState(0)
+  const __ref = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__ref-handler">
+      <b onClick={__ref} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__ref_ref() {
+  const [n, setN] = useState(0)
+  const __ref = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__ref-ref">
+      <b onClick={() => setN(n + (__ref.current ? 1 : 100))} ref={__ref} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__text_state() {
+  const [n, setN] = useState(0)
+  const [__text, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__text)
+  }, [__text])
+  return (
+    <div id={id} data-testid="__text-state">
+      <b onClick={() => setV(__text + 1)} title={'t' + __text} style={{ width: __text }} aria-label={__text > 1} download={__text > 2} hidden={__text > 3}>
+        {__text}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __text}</li>
+        ))}
+      </ul>
+      <Show v={__text} />
+    </div>
+  )
+}
+
+function C__text_derived() {
+  const [n, setN] = useState(0)
+  const __text = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__text-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__text}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__text_handler() {
+  const [n, setN] = useState(0)
+  const __text = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__text-handler">
+      <b onClick={__text} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__text_ref() {
+  const [n, setN] = useState(0)
+  const __text = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__text-ref">
+      <b onClick={() => setN(n + (__text.current ? 1 : 100))} ref={__text} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__attr_state() {
+  const [n, setN] = useState(0)
+  const [__attr, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__attr)
+  }, [__attr])
+  return (
+    <div id={id} data-testid="__attr-state">
+      <b onClick={() => setV(__attr + 1)} title={'t' + __attr} style={{ width: __attr }} aria-label={__attr > 1} download={__attr > 2} hidden={__attr > 3}>
+        {__attr}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __attr}</li>
+        ))}
+      </ul>
+      <Show v={__attr} />
+    </div>
+  )
+}
+
+function C__attr_derived() {
+  const [n, setN] = useState(0)
+  const __attr = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__attr-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__attr}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__attr_handler() {
+  const [n, setN] = useState(0)
+  const __attr = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__attr-handler">
+      <b onClick={__attr} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__attr_ref() {
+  const [n, setN] = useState(0)
+  const __attr = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__attr-ref">
+      <b onClick={() => setN(n + (__attr.current ? 1 : 100))} ref={__attr} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__attrs_state() {
+  const [n, setN] = useState(0)
+  const [__attrs, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__attrs)
+  }, [__attrs])
+  return (
+    <div id={id} data-testid="__attrs-state">
+      <b onClick={() => setV(__attrs + 1)} title={'t' + __attrs} style={{ width: __attrs }} aria-label={__attrs > 1} download={__attrs > 2} hidden={__attrs > 3}>
+        {__attrs}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __attrs}</li>
+        ))}
+      </ul>
+      <Show v={__attrs} />
+    </div>
+  )
+}
+
+function C__attrs_derived() {
+  const [n, setN] = useState(0)
+  const __attrs = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__attrs-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__attrs}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__attrs_handler() {
+  const [n, setN] = useState(0)
+  const __attrs = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__attrs-handler">
+      <b onClick={__attrs} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__attrs_ref() {
+  const [n, setN] = useState(0)
+  const __attrs = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__attrs-ref">
+      <b onClick={() => setN(n + (__attrs.current ? 1 : 100))} ref={__attrs} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__attro_state() {
+  const [n, setN] = useState(0)
+  const [__attro, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__attro)
+  }, [__attro])
+  return (
+    <div id={id} data-testid="__attro-state">
+      <b onClick={() => setV(__attro + 1)} title={'t' + __attro} style={{ width: __attro }} aria-label={__attro > 1} download={__attro > 2} hidden={__attro > 3}>
+        {__attro}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __attro}</li>
+        ))}
+      </ul>
+      <Show v={__attro} />
+    </div>
+  )
+}
+
+function C__attro_derived() {
+  const [n, setN] = useState(0)
+  const __attro = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__attro-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__attro}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__attro_handler() {
+  const [n, setN] = useState(0)
+  const __attro = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__attro-handler">
+      <b onClick={__attro} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__attro_ref() {
+  const [n, setN] = useState(0)
+  const __attro = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__attro-ref">
+      <b onClick={() => setN(n + (__attro.current ? 1 : 100))} ref={__attro} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__css_state() {
+  const [n, setN] = useState(0)
+  const [__css, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__css)
+  }, [__css])
+  return (
+    <div id={id} data-testid="__css-state">
+      <b onClick={() => setV(__css + 1)} title={'t' + __css} style={{ width: __css }} aria-label={__css > 1} download={__css > 2} hidden={__css > 3}>
+        {__css}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __css}</li>
+        ))}
+      </ul>
+      <Show v={__css} />
+    </div>
+  )
+}
+
+function C__css_derived() {
+  const [n, setN] = useState(0)
+  const __css = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__css-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__css}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__css_handler() {
+  const [n, setN] = useState(0)
+  const __css = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__css-handler">
+      <b onClick={__css} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__css_ref() {
+  const [n, setN] = useState(0)
+  const __css = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__css-ref">
+      <b onClick={() => setN(n + (__css.current ? 1 : 100))} ref={__css} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__unitless_state() {
+  const [n, setN] = useState(0)
+  const [__unitless, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__unitless)
+  }, [__unitless])
+  return (
+    <div id={id} data-testid="__unitless-state">
+      <b onClick={() => setV(__unitless + 1)} title={'t' + __unitless} style={{ width: __unitless }} aria-label={__unitless > 1} download={__unitless > 2} hidden={__unitless > 3}>
+        {__unitless}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __unitless}</li>
+        ))}
+      </ul>
+      <Show v={__unitless} />
+    </div>
+  )
+}
+
+function C__unitless_derived() {
+  const [n, setN] = useState(0)
+  const __unitless = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__unitless-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__unitless}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__unitless_handler() {
+  const [n, setN] = useState(0)
+  const __unitless = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__unitless-handler">
+      <b onClick={__unitless} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__unitless_ref() {
+  const [n, setN] = useState(0)
+  const __unitless = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__unitless-ref">
+      <b onClick={() => setN(n + (__unitless.current ? 1 : 100))} ref={__unitless} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__bool_state() {
+  const [n, setN] = useState(0)
+  const [__bool, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__bool)
+  }, [__bool])
+  return (
+    <div id={id} data-testid="__bool-state">
+      <b onClick={() => setV(__bool + 1)} title={'t' + __bool} style={{ width: __bool }} aria-label={__bool > 1} download={__bool > 2} hidden={__bool > 3}>
+        {__bool}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __bool}</li>
+        ))}
+      </ul>
+      <Show v={__bool} />
+    </div>
+  )
+}
+
+function C__bool_derived() {
+  const [n, setN] = useState(0)
+  const __bool = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__bool-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__bool}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__bool_handler() {
+  const [n, setN] = useState(0)
+  const __bool = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__bool-handler">
+      <b onClick={__bool} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__bool_ref() {
+  const [n, setN] = useState(0)
+  const __bool = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__bool-ref">
+      <b onClick={() => setN(n + (__bool.current ? 1 : 100))} ref={__bool} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__args_state() {
+  const [n, setN] = useState(0)
+  const [__args, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(__args)
+  }, [__args])
+  return (
+    <div id={id} data-testid="__args-state">
+      <b onClick={() => setV(__args + 1)} title={'t' + __args} style={{ width: __args }} aria-label={__args > 1} download={__args > 2} hidden={__args > 3}>
+        {__args}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + __args}</li>
+        ))}
+      </ul>
+      <Show v={__args} />
+    </div>
+  )
+}
+
+function C__args_derived() {
+  const [n, setN] = useState(0)
+  const __args = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__args-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {__args}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__args_handler() {
+  const [n, setN] = useState(0)
+  const __args = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__args-handler">
+      <b onClick={__args} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C__args_ref() {
+  const [n, setN] = useState(0)
+  const __args = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="__args-ref">
+      <b onClick={() => setN(n + (__args.current ? 1 : 100))} ref={__args} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_c1_state() {
+  const [n, setN] = useState(0)
+  const [_c1, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(_c1)
+  }, [_c1])
+  return (
+    <div id={id} data-testid="_c1-state">
+      <b onClick={() => setV(_c1 + 1)} title={'t' + _c1} style={{ width: _c1 }} aria-label={_c1 > 1} download={_c1 > 2} hidden={_c1 > 3}>
+        {_c1}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + _c1}</li>
+        ))}
+      </ul>
+      <Show v={_c1} />
+    </div>
+  )
+}
+
+function C_c1_derived() {
+  const [n, setN] = useState(0)
+  const _c1 = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_c1-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {_c1}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_c1_handler() {
+  const [n, setN] = useState(0)
+  const _c1 = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_c1-handler">
+      <b onClick={_c1} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_c1_ref() {
+  const [n, setN] = useState(0)
+  const _c1 = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_c1-ref">
+      <b onClick={() => setN(n + (_c1.current ? 1 : 100))} ref={_c1} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_l1_state() {
+  const [n, setN] = useState(0)
+  const [_l1, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(_l1)
+  }, [_l1])
+  return (
+    <div id={id} data-testid="_l1-state">
+      <b onClick={() => setV(_l1 + 1)} title={'t' + _l1} style={{ width: _l1 }} aria-label={_l1 > 1} download={_l1 > 2} hidden={_l1 > 3}>
+        {_l1}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + _l1}</li>
+        ))}
+      </ul>
+      <Show v={_l1} />
+    </div>
+  )
+}
+
+function C_l1_derived() {
+  const [n, setN] = useState(0)
+  const _l1 = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_l1-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {_l1}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_l1_handler() {
+  const [n, setN] = useState(0)
+  const _l1 = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_l1-handler">
+      <b onClick={_l1} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_l1_ref() {
+  const [n, setN] = useState(0)
+  const _l1 = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_l1-ref">
+      <b onClick={() => setN(n + (_l1.current ? 1 : 100))} ref={_l1} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_k1_state() {
+  const [n, setN] = useState(0)
+  const [_k1, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(_k1)
+  }, [_k1])
+  return (
+    <div id={id} data-testid="_k1-state">
+      <b onClick={() => setV(_k1 + 1)} title={'t' + _k1} style={{ width: _k1 }} aria-label={_k1 > 1} download={_k1 > 2} hidden={_k1 > 3}>
+        {_k1}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + _k1}</li>
+        ))}
+      </ul>
+      <Show v={_k1} />
+    </div>
+  )
+}
+
+function C_k1_derived() {
+  const [n, setN] = useState(0)
+  const _k1 = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_k1-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {_k1}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_k1_handler() {
+  const [n, setN] = useState(0)
+  const _k1 = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_k1-handler">
+      <b onClick={_k1} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_k1_ref() {
+  const [n, setN] = useState(0)
+  const _k1 = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_k1-ref">
+      <b onClick={() => setN(n + (_k1.current ? 1 : 100))} ref={_k1} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_p1_state() {
+  const [n, setN] = useState(0)
+  const [_p1, setV] = useState(0)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(_p1)
+  }, [_p1])
+  return (
+    <div id={id} data-testid="_p1-state">
+      <b onClick={() => setV(_p1 + 1)} title={'t' + _p1} style={{ width: _p1 }} aria-label={_p1 > 1} download={_p1 > 2} hidden={_p1 > 3}>
+        {_p1}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + _p1}</li>
+        ))}
+      </ul>
+      <Show v={_p1} />
+    </div>
+  )
+}
+
+function C_p1_derived() {
+  const [n, setN] = useState(0)
+  const _p1 = n * 2
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_p1-derived">
+      <b onClick={() => setN(n + 1)} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {_p1}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_p1_handler() {
+  const [n, setN] = useState(0)
+  const _p1 = () => setN(n + 1)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_p1-handler">
+      <b onClick={_p1} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+function C_p1_ref() {
+  const [n, setN] = useState(0)
+  const _p1 = useRef<HTMLElement>(null)
+  const id = useId()
+  useEffect(() => {
+    document.body.dataset.last = String(n)
+  }, [n])
+  return (
+    <div id={id} data-testid="_p1-ref">
+      <b onClick={() => setN(n + (_p1.current ? 1 : 100))} ref={_p1} title={'t' + n} style={{ width: n }} aria-label={n > 1} download={n > 2} hidden={n > 3}>
+        {n}
+      </b>
+      <ul>
+        {[1, 2].map((i) => (
+          <li key={i}>{i + n}</li>
+        ))}
+      </ul>
+      <Show v={n} />
+    </div>
+  )
+}
+
+export default function Page() {
+  return (
+    <main>
+      <Csignal_state />
+      <Csignal_derived />
+      <Csignal_handler />
+      <Csignal_ref />
+      <Ccomputed_state />
+      <Ccomputed_derived />
+      <Ccomputed_handler />
+      <Ccomputed_ref />
+      <Cuntracked_state />
+      <Cuntracked_derived />
+      <Cuntracked_handler />
+      <Cuntracked_ref />
+      <CdefineBehavior_state />
+      <CdefineBehavior_derived />
+      <CdefineBehavior_handler />
+      <CdefineBehavior_ref />
+      <Cprops_state />
+      <Cprops_derived />
+      <Cprops_handler />
+      <Cprops_ref />
+      <C__el_state />
+      <C__el_derived />
+      <C__el_handler />
+      <C__el_ref />
+      <C__effect_state />
+      <C__effect_derived />
+      <C__effect_handler />
+      <C__effect_ref />
+      <C__onCleanup_state />
+      <C__onCleanup_derived />
+      <C__onCleanup_handler />
+      <C__onCleanup_ref />
+      <C__ref_state />
+      <C__ref_derived />
+      <C__ref_handler />
+      <C__ref_ref />
+      <C__text_state />
+      <C__text_derived />
+      <C__text_handler />
+      <C__text_ref />
+      <C__attr_state />
+      <C__attr_derived />
+      <C__attr_handler />
+      <C__attr_ref />
+      <C__attrs_state />
+      <C__attrs_derived />
+      <C__attrs_handler />
+      <C__attrs_ref />
+      <C__attro_state />
+      <C__attro_derived />
+      <C__attro_handler />
+      <C__attro_ref />
+      <C__css_state />
+      <C__css_derived />
+      <C__css_handler />
+      <C__css_ref />
+      <C__unitless_state />
+      <C__unitless_derived />
+      <C__unitless_handler />
+      <C__unitless_ref />
+      <C__bool_state />
+      <C__bool_derived />
+      <C__bool_handler />
+      <C__bool_ref />
+      <C__args_state />
+      <C__args_derived />
+      <C__args_handler />
+      <C__args_ref />
+      <C_c1_state />
+      <C_c1_derived />
+      <C_c1_handler />
+      <C_c1_ref />
+      <C_l1_state />
+      <C_l1_derived />
+      <C_l1_handler />
+      <C_l1_ref />
+      <C_k1_state />
+      <C_k1_derived />
+      <C_k1_handler />
+      <C_k1_ref />
+      <C_p1_state />
+      <C_p1_derived />
+      <C_p1_handler />
+      <C_p1_ref />
+    </main>
+  )
+}

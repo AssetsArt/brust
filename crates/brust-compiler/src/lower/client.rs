@@ -5,13 +5,19 @@ use super::common::{
     DerivedShape, Facts, arrow_body, client_fn, client_js, import_lines, imports_in, module_code,
     module_names_in, store_client_js, visit_idents, visit_verbatim_captures,
 };
+use super::names::Names;
 use super::{Member, MemberDef, Paint};
 use crate::ir::{Attr, ComponentIR, Expr, IdentKind, Literal, Node, RawExpr, RawKind};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 /// The chunk source and its members in export order.
-pub fn chunk(ir: &ComponentIR, members: &[Member], runtime_import: &str) -> (String, Vec<String>) {
-    chunk_in(ir, members, runtime_import, false)
+pub fn chunk(
+    ir: &ComponentIR,
+    members: &[Member],
+    runtime_import: &str,
+    seed: &HashSet<String>,
+) -> (String, Vec<String>) {
+    chunk_in(ir, members, runtime_import, seed, false)
 }
 
 /// R34.124: the part of a specialised clone's chunk that does not name the clone: a module that exports the behaviour
@@ -21,8 +27,9 @@ pub fn factory_module(
     ir: &ComponentIR,
     members: &[Member],
     runtime_import: &str,
+    seed: &HashSet<String>,
 ) -> (String, Vec<String>) {
-    chunk_in(ir, members, runtime_import, true)
+    chunk_in(ir, members, runtime_import, seed, true)
 }
 
 /// A clone's own chunk: it registers the shared factory under the clone's id.
@@ -39,12 +46,31 @@ fn chunk_in(
     ir: &ComponentIR,
     members: &[Member],
     runtime_import: &str,
+    seed: &HashSet<String>,
     shared: bool,
 ) -> (String, Vec<String>) {
     let Some(structural) = ir.structural.as_deref() else {
         return (String::new(), Vec::new());
     };
-    let f = Facts::new(ir, structural);
+    let mut f = Facts::new(ir, structural);
+    // F233: every name the chunk declares on its own, renamed away from the component's names and the members'.
+    let mut names = Names::new(seed);
+    for m in members {
+        names.reserve(&m.name);
+        if let MemberDef::Value { bindings, .. }
+        | MemberDef::List { bindings, .. }
+        | MemberDef::Link { bindings, .. } = &m.def
+        {
+            bindings.iter().for_each(|b| names.reserve(b));
+        }
+        if let MemberDef::Key { item, .. } = &m.def {
+            names.reserve(item);
+        }
+    }
+    let n = ChunkNames::new(&mut names);
+    f.rest = n.args.clone();
+    f.props_fn = n.props.clone();
+    let f = f;
 
     // Code roots: everything the chunk runs.
     let mut roots: Vec<&RawExpr> = Vec::new();
@@ -119,7 +145,10 @@ fn chunk_in(
     for (k, name) in ir.id_bindings.iter().enumerate() {
         decls.push((
             0,
-            format!("const {name} = JSON.parse(__el.getAttribute(\"x-props\") ?? \"{{}}\")._id{k}"),
+            format!(
+                "const {name} = JSON.parse({}.getAttribute(\"x-props\") ?? \"{{}}\")._id{k}",
+                n.el
+            ),
         ));
     }
     for (i, s) in ir.state.iter().enumerate() {
@@ -127,7 +156,7 @@ fn chunk_in(
             .as_ref()
             .map_or("undefined".to_string(), |r| client_js(r, &f));
         let loc = structural.state[i].init.raw_loc().unwrap_or_default();
-        decls.push((loc, format!("const {} = signal({init})", s.name)));
+        decls.push((loc, format!("const {} = {}({init})", s.name, n.signal)));
         uses_signal = true;
     }
     for (i, r) in ir.refs.iter().enumerate() {
@@ -149,8 +178,9 @@ fn chunk_in(
         decls.push((
             loc,
             format!(
-                "const {} = __ref({}{init})",
+                "const {} = {}({}{init})",
                 r.name,
+                n.ref_,
                 crate::ir::expr::js_string(&r.name)
             ),
         ));
@@ -166,8 +196,9 @@ fn chunk_in(
             DerivedShape::Value => {
                 uses_computed = true;
                 format!(
-                    "const {} = computed(() => {})",
+                    "const {} = {}(() => {})",
                     d.name,
+                    n.computed,
                     arrow_body(&client_js(raw, &f))
                 )
             }
@@ -200,7 +231,7 @@ fn chunk_in(
     }
     decls.sort_by_key(|d| d.0);
 
-    let mut helpers: BTreeSet<&'static str> = BTreeSet::new();
+    let mut helpers: BTreeSet<Helper> = BTreeSet::new();
     let mut uses_untracked = false;
     let mut body: Vec<String> = decls.into_iter().map(|d| d.1).collect();
     let mut exported: Vec<String> = Vec::new();
@@ -236,35 +267,21 @@ fn chunk_in(
                 let js = if *negate { format!("!({js})") } else { js };
                 // Written the way the server painted it (the runtime writes String(v)).
                 let js = match paint {
-                    Paint::Text => {
-                        helpers.insert("__text");
-                        format!("__text({js})")
-                    }
-                    Paint::Attr => {
-                        helpers.insert("__attr");
-                        format!("__attr({js})")
-                    }
-                    Paint::AttrStr => {
-                        helpers.insert("__attrs");
-                        format!("__attrs({js})")
-                    }
-                    Paint::AttrOver => {
-                        helpers.insert("__attro");
-                        format!("__attro({js})")
-                    }
-                    Paint::Style => {
-                        helpers.insert("__css");
-                        format!("__css({js})")
-                    }
-                    Paint::Bool => {
-                        helpers.insert("__bool");
-                        format!("__bool({js})")
-                    }
                     Paint::Raw => js,
+                    p => {
+                        let h = Helper::of(*p);
+                        helpers.insert(h);
+                        format!("{}({js})", n.helper(h))
+                    }
                 };
                 if bindings.is_empty() {
                     uses_computed = true;
-                    format!("const {} = computed(() => {})", m.name, arrow_body(&js))
+                    format!(
+                        "const {} = {}(() => {})",
+                        m.name,
+                        n.computed,
+                        arrow_body(&js)
+                    )
                 } else {
                     format!(
                         "const {} = ({}) => {}",
@@ -277,8 +294,9 @@ fn chunk_in(
             MemberDef::List { raw, bindings } if bindings.is_empty() => {
                 uses_computed = true;
                 format!(
-                    "const {} = computed(() => {})",
+                    "const {} = {}(() => {})",
                     m.name,
+                    n.computed,
                     arrow_body(&client_js(raw, &f))
                 )
             }
@@ -321,7 +339,7 @@ fn chunk_in(
                 let obj = format!("({{ {} }})", fields.join(", "));
                 if bindings.is_empty() {
                     uses_computed = true;
-                    format!("const {} = computed(() => {obj})", m.name)
+                    format!("const {} = {}(() => {obj})", m.name, n.computed)
                 } else {
                     format!("const {} = ({}) => {obj}", m.name, bindings.join(", "))
                 }
@@ -335,14 +353,16 @@ fn chunk_in(
         let run = format!("({})()", client_js(&e.body, &f));
         body.push(match &e.deps {
             // React re-runs it on every render: track every read.
-            None => format!("__effect(() => {run})"),
+            None => format!("{}(() => {run})", n.effect),
             // Re-run only when a dependency changes; the body is untracked.
             Some(deps) => {
                 uses_untracked = true;
                 let d: Vec<String> = deps.iter().map(|d| client_js(d, &f)).collect();
                 format!(
-                    "__effect(() => {{ void [{}]; return untracked(() => {run}) }})",
-                    d.join(", ")
+                    "{}(() => {{ void [{}]; return {}(() => {run}) }})",
+                    n.effect,
+                    d.join(", "),
+                    n.untracked
                 )
             }
         });
@@ -352,16 +372,16 @@ fn chunk_in(
 
     let mut rt = Vec::new();
     if uses_signal {
-        rt.push("signal");
+        rt.push(import_as("signal", &n.signal));
     }
     if uses_computed {
-        rt.push("computed");
+        rt.push(import_as("computed", &n.computed));
     }
     if uses_untracked {
-        rt.push("untracked");
+        rt.push(import_as("untracked", &n.untracked));
     }
     if !shared {
-        rt.push("defineBehavior");
+        rt.push(import_as("defineBehavior", &n.define));
     }
     let mut out = if shared {
         "// generated by brust v2 — shared client factory\n".to_string()
@@ -376,16 +396,32 @@ fn chunk_in(
     out.push_str(&import_lines(&imports));
     out.push_str(&module);
     for h in &helpers {
-        out.push_str(helper(h));
+        out.push_str(&helper(*h, &n));
         out.push('\n');
     }
-    // Context names the user's code could shadow get a reserved spelling;
-    // `props` keeps its name (the printer reads `props()`).
+    // The context's names are the allocator's (`__el`, `props`, … unless the component spells one).
+    let ctx = format!(
+        "{{ el: {}, {}, effect: {}, onCleanup: {}, ref: {} }}",
+        n.el,
+        if n.props == "props" {
+            "props".to_string()
+        } else {
+            format!("props: {}", n.props)
+        },
+        n.effect,
+        n.on_cleanup,
+        n.ref_
+    );
     if shared {
-        out.push_str("export const behavior = ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {\n");
+        if n.behavior == "behavior" {
+            out.push_str(&format!("export const behavior = ({ctx}) => {{\n"));
+        } else {
+            out.push_str(&format!("const {} = ({ctx}) => {{\n", n.behavior));
+        }
     } else {
         out.push_str(&format!(
-            "export default defineBehavior({}, ({{ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }}) => {{\n",
+            "export default {}({}, ({ctx}) => {{\n",
+            n.define,
             crate::ir::expr::js_string(&ir.id)
         ));
     }
@@ -399,35 +435,143 @@ fn chunk_in(
         exported.join(", "),
         if shared { "" } else { ")" }
     ));
+    if shared && n.behavior != "behavior" {
+        out.push_str(&format!("export {{ {} as behavior }}\n", n.behavior));
+    }
     (out, exported)
 }
 
-/// Module-level helpers that write a value the way the server painted it.
-fn helper(name: &str) -> &'static str {
-    match name {
-        // x-text: booleans paint as nothing, arrays concatenate (React).
-        "__text" => {
-            "const __text = (v) => (typeof v === \"boolean\" ? \"\" : Array.isArray(v) ? v.map(__text).join(\"\") : v)"
+/// A module-level helper that writes a value the way the server painted it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Helper {
+    // In the order the chunk prints them.
+    Attr,
+    Attro,
+    Attrs,
+    Bool,
+    Css,
+    Text,
+}
+
+impl Helper {
+    fn of(p: Paint) -> Helper {
+        match p {
+            Paint::Text => Helper::Text,
+            Paint::Attr => Helper::Attr,
+            Paint::AttrStr => Helper::Attrs,
+            Paint::AttrOver => Helper::Attro,
+            Paint::Style => Helper::Css,
+            Paint::Bool | Paint::Raw => Helper::Bool,
         }
-        // x-bind: a boolean removes the attribute, like null (React omits true and false on a plain attribute).
-        "__attr" => "const __attr = (v) => (typeof v === \"boolean\" ? null : v)",
-        // boolean attributes: truthy sets it, falsy (0, "", null) removes it, as React does.
-        "__bool" => "const __bool = (v) => !!v",
-        // aria-*, data-*, draggable, ...: React writes the booleans as the strings.
-        "__attrs" => "const __attrs = (v) => (typeof v === \"boolean\" ? String(v) : v)",
-        // download, capture: true is the empty value, false removes it.
-        "__attro" => "const __attro = (v) => (v === true ? \"\" : v === false ? null : v)",
-        // x-bind-style of a style object: brust-jinja's style_obj_to_css rule.
-        "__css" => concat!(
-            "const __unitless = new Set([\"zIndex\", \"opacity\", \"flex\", \"flexGrow\", \"flexShrink\", \"fontWeight\", \"lineHeight\", \"order\", \"zoom\"])\n",
-            "const __css = (o) => Object.entries(o !== null && typeof o === \"object\" ? o : {})\n",
-            "  .filter(([k, v]) => v != null && v !== false && /^(--[A-Za-z0-9_-]+|[A-Za-z][A-Za-z0-9_-]*)$/.test(k))\n",
-            "  .map(([k, v]) => [k, typeof v === \"number\" ? (v === 0 || __unitless.has(k) || k.startsWith(\"--\") ? String(v) : v + \"px\") : typeof v === \"boolean\" ? \"\" : String(v)])\n",
-            "  .filter(([, v]) => v !== \"\" && !/[;{}\\\\\\n\\r]|\\/\\*|expression\\(|@import/i.test(v))\n",
-            "  .map(([k, v]) => (k.startsWith(\"--\") ? k : k.replace(/[A-Z]/g, (c) => \"-\" + c.toLowerCase())) + \":\" + v)\n",
-            "  .join(\";\")"
+    }
+}
+
+/// F233: the names the chunk declares itself, each the allocator's (the plain spelling unless the component spells it).
+struct ChunkNames {
+    signal: String,
+    computed: String,
+    untracked: String,
+    define: String,
+    behavior: String,
+    el: String,
+    props: String,
+    effect: String,
+    on_cleanup: String,
+    ref_: String,
+    text: String,
+    attr: String,
+    attrs: String,
+    attro: String,
+    css: String,
+    unitless: String,
+    bool_: String,
+    args: String,
+}
+
+impl ChunkNames {
+    fn new(n: &mut Names) -> Self {
+        ChunkNames {
+            signal: n.fresh("signal"),
+            computed: n.fresh("computed"),
+            untracked: n.fresh("untracked"),
+            define: n.fresh("defineBehavior"),
+            behavior: n.fresh("behavior"),
+            el: n.fresh("__el"),
+            props: n.fresh("props"),
+            effect: n.fresh("__effect"),
+            on_cleanup: n.fresh("__onCleanup"),
+            ref_: n.fresh("__ref"),
+            text: n.fresh("__text"),
+            attr: n.fresh("__attr"),
+            attrs: n.fresh("__attrs"),
+            attro: n.fresh("__attro"),
+            css: n.fresh("__css"),
+            unitless: n.fresh("__unitless"),
+            bool_: n.fresh("__bool"),
+            args: n.fresh("__args"),
+        }
+    }
+
+    fn helper(&self, h: Helper) -> &str {
+        match h {
+            Helper::Text => &self.text,
+            Helper::Attr => &self.attr,
+            Helper::Attrs => &self.attrs,
+            Helper::Attro => &self.attro,
+            Helper::Css => &self.css,
+            Helper::Bool => &self.bool_,
+        }
+    }
+}
+
+/// `signal`, or `signal as signal1` when the chunk renamed it.
+fn import_as(name: &str, local: &str) -> String {
+    if name == local {
+        name.to_string()
+    } else {
+        format!("{name} as {local}")
+    }
+}
+
+/// The source of helper `h` under the chunk's names.
+fn helper(h: Helper, n: &ChunkNames) -> String {
+    match h {
+        // x-text: booleans paint as nothing, arrays concatenate (React).
+        Helper::Text => format!(
+            "const {t} = (v) => (typeof v === \"boolean\" ? \"\" : Array.isArray(v) ? v.map({t}).join(\"\") : v)",
+            t = n.text
         ),
-        _ => "",
+        // x-bind: a boolean removes the attribute, like null (React omits true and false on a plain attribute).
+        Helper::Attr => format!(
+            "const {} = (v) => (typeof v === \"boolean\" ? null : v)",
+            n.attr
+        ),
+        // boolean attributes: truthy sets it, falsy (0, "", null) removes it, as React does.
+        Helper::Bool => format!("const {} = (v) => !!v", n.bool_),
+        // aria-*, data-*, draggable, ...: React writes the booleans as the strings.
+        Helper::Attrs => format!(
+            "const {} = (v) => (typeof v === \"boolean\" ? String(v) : v)",
+            n.attrs
+        ),
+        // download, capture: true is the empty value, false removes it.
+        Helper::Attro => format!(
+            "const {} = (v) => (v === true ? \"\" : v === false ? null : v)",
+            n.attro
+        ),
+        // x-bind-style of a style object: brust-jinja's style_obj_to_css rule.
+        Helper::Css => format!(
+            concat!(
+                "const {u} = new Set([\"zIndex\", \"opacity\", \"flex\", \"flexGrow\", \"flexShrink\", \"fontWeight\", \"lineHeight\", \"order\", \"zoom\"])\n",
+                "const {c} = (o) => Object.entries(o !== null && typeof o === \"object\" ? o : {{}})\n",
+                "  .filter(([k, v]) => v != null && v !== false && /^(--[A-Za-z0-9_-]+|[A-Za-z][A-Za-z0-9_-]*)$/.test(k))\n",
+                "  .map(([k, v]) => [k, typeof v === \"number\" ? (v === 0 || {u}.has(k) || k.startsWith(\"--\") ? String(v) : v + \"px\") : typeof v === \"boolean\" ? \"\" : String(v)])\n",
+                "  .filter(([, v]) => v !== \"\" && !/[;{{}}\\\\\\n\\r]|\\/\\*|expression\\(|@import/i.test(v))\n",
+                "  .map(([k, v]) => (k.startsWith(\"--\") ? k : k.replace(/[A-Z]/g, (c) => \"-\" + c.toLowerCase())) + \":\" + v)\n",
+                "  .join(\";\")"
+            ),
+            u = n.unitless,
+            c = n.css
+        ),
     }
 }
 
@@ -484,7 +628,7 @@ fn spread_js(r: &RawExpr, f: &Facts<'_>) -> String {
         crate::ir::RawKind::Ident {
             name,
             kind: crate::ir::IdentKind::Prop,
-        } if name == "*" => "props()".into(),
+        } if name == "*" => format!("{}()", f.props_fn),
         crate::ir::RawKind::Ident {
             name,
             kind: crate::ir::IdentKind::Prop,
@@ -496,8 +640,9 @@ fn spread_js(r: &RawExpr, f: &Facts<'_>) -> String {
                     .map(|(i, p)| format!("{}: _{i}", crate::ir::expr::js_string(&p.name)))
                     .collect();
             format!(
-                "(({{ {}...r }}) => r)(props())",
-                named.iter().map(|n| format!("{n}, ")).collect::<String>()
+                "(({{ {}...r }}) => r)({}())",
+                named.iter().map(|n| format!("{n}, ")).collect::<String>(),
+                f.props_fn
             )
         }
         _ => format!("({})", client_js(r, f)),
