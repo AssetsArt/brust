@@ -82,6 +82,7 @@ test('layout: one file per page, 404.html, assets at their URL paths, _headers/_
     '_brust/client/layout_255371d6.js',
     '_brust/client/react-counter_f1dc72be.js',
     '_brust/client/rt-basics.js',
+    '_brust/client/rt-collection.js',
     '_brust/client/rt-for.js',
     '_brust/client/rt-html.js',
     '_brust/client/rt-if.js',

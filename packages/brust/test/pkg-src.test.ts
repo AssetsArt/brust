@@ -2,7 +2,7 @@
 // written under `.brust/pkg-src`; every package that cannot be proven is refused with its reason (the compiler then keeps
 // its React island). Stub packages, so the rules do not depend on a release.
 import { afterAll, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { integrityGaps, PKG_SRC_DIR, preparePackageSources, skeleton } from '../src/build/pkg-src'
@@ -112,7 +112,7 @@ test('fail closed: each package that cannot be proven is refused with its reason
   expect(refusedFor(root, 'leafy/sub')).toBe('a package subpath import is not followed')
   // React and brust are never followed (no entry, no refusal).
   const r = preparePackageSources(root, ['react', '@brust/core', 'lucide-react'])
-  expect(r).toEqual({ scopes: {}, refused: {}, dirs: {} })
+  expect(r).toEqual({ scopes: {}, refused: {}, dirs: {}, recognised: {} })
 })
 
 test('a multi-module source map names its entry by `source` or as the one unimported module', () => {
@@ -335,4 +335,41 @@ test('W1b bounds: an alias of a name the published file lacks, a bare-specifier 
   // text that only LOOKS like an import declaration (inside a template literal, indented) adds no alias
   const fake = "export const useIsHydrated = `x ${1}\n  import { useIsHydrated as useIsHydratedLegacy } from './legacy'`\nconst y = useIsHydratedLegacy\n"
   expect(integrityGaps(src(fake), BUNDLED).join()).toContain('name `useIsHydratedLegacy`')
+})
+
+// R34.140 (W1c): a recognised package is pinned by version AND the SHA-256 of its published ESM entry.
+import { verifyRecognised } from '../src/build/recognised'
+const collectionDir = (): string => {
+  const store = join(import.meta.dir, '../../../node_modules/.bun')
+  const d = readdirSync(store).find((n) => n.startsWith('@radix-ui+react-collection@1.2.0'))
+  if (!d) throw new Error('@radix-ui/react-collection@1.2.0 is not installed')
+  return join(store, d, 'node_modules/@radix-ui/react-collection')
+}
+test('recognised packages: only the pinned (version, entry bytes) pair verifies', () => {
+  const dir = collectionDir()
+  const bytes = readFileSync(join(dir, 'dist/index.mjs'))
+  const version = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).version
+  expect(verifyRecognised('@radix-ui/react-collection', version, bytes)).toBe(version)
+  // another version, one changed byte, another package, a non-string version: none verifies
+  expect(verifyRecognised('@radix-ui/react-collection', '1.2.1', bytes)).toBeNull()
+  expect(verifyRecognised('@radix-ui/react-collection', version, Buffer.concat([bytes, Buffer.from(' ')]))).toBeNull()
+  expect(verifyRecognised('@radix-ui/react-slot', version, bytes)).toBeNull()
+  expect(verifyRecognised('@radix-ui/react-collection', undefined, bytes)).toBeNull()
+  expect(verifyRecognised('@radix-ui/react-collection', '__proto__', bytes)).toBeNull()
+})
+
+test('a build reports a recognised package only when every copy verified, and still refuses to read it', () => {
+  const root = app()
+  const fixture = join(root, 'node_modules/@radix-ui/react-collection')
+  const real = collectionDir()
+  mkdirSync(join(fixture, 'dist'), { recursive: true })
+  writeFileSync(join(fixture, 'package.json'), readFileSync(join(real, 'package.json')))
+  writeFileSync(join(fixture, 'dist/index.mjs'), readFileSync(join(real, 'dist/index.mjs')))
+  writeFileSync(join(root, 'index.tsx'), "import { createCollection } from '@radix-ui/react-collection'\nexport default function C() { return null }\n")
+  const ok = preparePackageSources(root, ['@radix-ui/react-collection'])
+  expect(ok.recognised).toEqual({ '@radix-ui/react-collection': '1.2.0' })
+  expect(Object.values(ok.refused['']!)[0]).toContain('recognised by the compiler')
+  // one changed byte: not recognised
+  writeFileSync(join(fixture, 'dist/index.mjs'), `${readFileSync(join(real, 'dist/index.mjs'), 'utf8')}\n// x`)
+  expect(preparePackageSources(root, ['@radix-ui/react-collection']).recognised).toEqual({})
 })

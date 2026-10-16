@@ -217,6 +217,10 @@ pub struct ComponentIR {
     /// shares one factory module with every clone whose chunk is equal (R34.124).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub specialised: bool,
+    /// F298: a clone made for one call site whose children were put where the component spreads its rest: the clones
+    /// made inside it are keyed by its id too (the same Provider call of the same module holds other content there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_clone_of: Option<String>,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (shadcn S1.2, R34.14): the props minus every
@@ -275,6 +279,10 @@ pub struct ComponentIR {
     /// consumer revived from its source would not share the Provider island's `createContext` (the published dist).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ctx_pkg: bool,
+    /// R34.140: this component asks for the items of its nearest collection (`useCollection(scope)`): its host carries
+    /// `x-collection-use` (the runtime feature loads) and its chunk reads `ctx.items`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uses_collection: bool,
     /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -448,6 +456,7 @@ impl ComponentIR {
             export: None,
             unexported: false,
             specialised: false,
+            rest_clone_of: None,
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,
@@ -465,6 +474,7 @@ impl ComponentIR {
             ctx_uses: Vec::new(),
             ctx_scoped: Vec::new(),
             ctx_pkg: false,
+            uses_collection: false,
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),

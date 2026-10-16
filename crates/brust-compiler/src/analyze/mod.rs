@@ -1,4 +1,5 @@
 pub mod aliases;
+pub mod collection;
 pub mod component;
 pub mod const_fold;
 pub mod context;

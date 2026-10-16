@@ -19,3 +19,4 @@ tests/fixtures/shadcn/dist/
 # a build killed mid-way leaves its temp output next to dist (build/index.ts); never commit it
 **/.dist.brust-tmp/
 **/.brust/resolve-cache-*.json
+crates/*/target

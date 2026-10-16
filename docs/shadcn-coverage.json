@@ -181,6 +181,15 @@
       "libraryComponents": 7
     },
     {
+      "blocker": "fallback:key-outside-list",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 6
+    },
+    {
       "blocker": "fallback:ref-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -809,6 +818,7 @@
         "island-prop",
         "jsx-const-child",
         "jsx-expression",
+        "key-outside-list",
         "nested-instance",
         "slot-dynamic",
         "spread-props"
@@ -1114,7 +1124,7 @@
       "islands": 1,
       "components": 15,
       "reactComponents": 14,
-      "jsGzipKb": 99,
+      "jsGzipKb": 100,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1373,7 +1383,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 8,
-      "jsGzipKb": 94,
+      "jsGzipKb": 95,
       "workerCalls": 1,
       "codes": [
         "external-component",

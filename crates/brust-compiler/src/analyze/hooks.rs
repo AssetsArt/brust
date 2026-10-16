@@ -39,6 +39,8 @@ pub struct BodyDecls {
     pub throw_unless: Option<Vec<RawExpr>>,
     /// The props those tests read (frozen: see `ComponentIR::throw_props`).
     pub throw_props: Vec<String>,
+    /// R34.140: the component asks for the items of its collection (`useCollection(scope)`).
+    pub uses_collection: bool,
     pub return_expr: Option<Expr>,
     /// `useStore(handle)` bindings in source order (M3-F D7).
     pub stores: Vec<StoreUse>,
@@ -1983,6 +1985,69 @@ fn hydrated_state(out: &mut BodyDecls, name: String, loc: u32) {
     });
 }
 
+/// R34.140: `const getItems = useCollection(scope)`: `getItems()` lists the items under this component's nearest collection
+/// root (the runtime's `ctx.items`, `collection` feature), in document order, each as the data its item handed over plus
+/// `ref.current` and `element`. `getItems` is a function the component may call from handlers and effects, never in the
+/// render (the list exists only in the browser). `scope` is the component's own pass-through (a prop local or absent).
+fn read_use_collection(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    ident: Option<String>,
+    args: &[js_ast::Expr],
+    vloc: u32,
+) {
+    let Some(name) = ident else {
+        return out.fallback(
+            "collection-shape",
+            "useCollection(scope) must be bound: const getItems = useCollection(scope)".into(),
+            vloc,
+            "write const getItems = useCollection(scope)",
+        );
+    };
+    if args.len() > 1
+        || args.first().is_some_and(|a| {
+            !matches!(
+                &a.data,
+                E::EIdentifier(_) | E::EImportIdentifier(_) | E::EUndefined(_)
+            )
+        })
+    {
+        return out.fallback(
+            "collection-scope",
+            "useCollection is called with a scope other than the component's own scope prop".into(),
+            vloc,
+            "pass the scope prop through unchanged, or keep this component in React",
+        );
+    }
+    let _ = r;
+    out.uses_collection = true;
+    out.handlers.push(HandlerDecl {
+        name,
+        body: RawExpr {
+            loc: vloc,
+            kind: RawKind::Arrow {
+                params: Vec::new(),
+                body: ArrowBody::Expr(Box::new(RawExpr {
+                    loc: vloc,
+                    kind: RawKind::Call {
+                        callee: Box::new(RawExpr {
+                            loc: vloc,
+                            kind: RawKind::Ident {
+                                name: crate::ir::COLLECTION_ITEMS.into(),
+                                kind: IdentKind::Global,
+                            },
+                        }),
+                        args: Vec::new(),
+                    },
+                })),
+                captures: Vec::new(),
+            },
+        },
+        item_scoped: Vec::new(),
+        forwarded: None,
+    });
+}
+
 /// A statement the hook keeps: itself, or, for an `if` whose test `hook_presence_test` decides, the statements of the
 /// branch that runs (so a hook of the branch that never runs is not seen at all).
 fn decided_branch(st: &js_ast::Stmt, names: &NameTable<'_>) -> Vec<js_ast::Stmt> {
@@ -2107,6 +2172,12 @@ fn read_decl(
         let args: Vec<js_ast::Expr> = call.args.to_vec();
         if is_use_store(&call.target, r.names) {
             return read_use_store(r, out, decl, &args, vloc);
+        }
+        // R34.140: `const getItems = useCollection(scope)` of a recognised `createCollection`
+        if let Some(callee) = crate::analyze::names::ident_ref(&call.target)
+            && r.names.collection_hook(callee)
+        {
+            return read_use_collection(r, out, ident, &args, vloc);
         }
         if !from_react {
             let site = Site {

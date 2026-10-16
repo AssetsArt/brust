@@ -131,6 +131,9 @@ pub struct NameTable<'a> {
     printed: Aliases,
     /// The context declarations of the module (S2): Providers, hooks, React contexts.
     pub contexts: crate::analyze::context::Contexts,
+    /// R34.140: the module's `createCollection` declarations, honoured only once the build vouched for the package.
+    collections: crate::analyze::collection::Collections,
+    collections_recognised: bool,
     /// Scalar contexts adopted from the hooks this module inlined (`adopt_scalar`).
     scalars_adopted: std::cell::RefCell<Vec<(String, crate::ir::Literal)>>,
     /// `const context = useXContext(…)` locals (symbol key → context name): `context.field` reads a hidden prop.
@@ -421,6 +424,8 @@ impl<'a> NameTable<'a> {
             aliases: HashMap::new(),
             printed: HashMap::new(),
             contexts: Default::default(),
+            collections: Default::default(),
+            collections_recognised: false,
             scalars_adopted: std::cell::RefCell::new(Vec::new()),
             ctx_locals: HashMap::new(),
             ctx_fields: std::cell::RefCell::new(Vec::new()),
@@ -430,6 +435,7 @@ impl<'a> NameTable<'a> {
             scope_token_escape: std::cell::Cell::new(None),
         };
         table.contexts = crate::analyze::context::scan(&table, ast);
+        table.collections = crate::analyze::collection::scan(&table, ast);
         table.jsx_runtime = table.collect_jsx_runtime(ast);
         table.member_aliases = table.collect_member_aliases(ast);
         for part in ast.parts.iter() {
@@ -922,6 +928,31 @@ impl<'a> NameTable<'a> {
             .providers
             .get(&self.key(r))
             .map(String::as_str)
+    }
+
+    /// The build verified `@radix-ui/react-collection` (version + entry hash): its `createCollection` declarations count.
+    pub fn set_collections_recognised(&mut self, yes: bool) {
+        self.collections_recognised = yes;
+    }
+
+    /// The module declares a `createCollection` of the package (recognised or not yet): the build is asked to verify it.
+    pub fn declares_collection(&self) -> bool {
+        !self.collections.is_empty()
+    }
+
+    /// `r` is the `Collection` object of a recognised `createCollection` declaration.
+    pub fn collection_object(&self, r: js_ast::Ref) -> bool {
+        self.collections_recognised && self.collections.objects.contains(&self.key(r))
+    }
+
+    /// `r` is the `useCollection` of a recognised `createCollection` declaration.
+    pub fn collection_hook(&self, r: js_ast::Ref) -> bool {
+        self.collections_recognised && self.collections.hooks.contains(&self.key(r))
+    }
+
+    /// `r` is the `createCollectionScope` of a recognised `createCollection` declaration.
+    pub fn collection_scope(&self, r: js_ast::Ref) -> bool {
+        self.collections_recognised && self.collections.scopes.contains(&self.key(r))
     }
 
     /// The context a Radix hook (`useXContext`) reads.
