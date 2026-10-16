@@ -718,6 +718,10 @@ fn read_provider(
                     }
                 }
             }
+            // R34.142: a scalar context's Provider hands out one whole value.
+            Some(raw) if r.names.scalar_default(ctx).is_some() => {
+                fields.push((crate::analyze::hooks::WHOLE_FIELD.to_string(), raw));
+            }
             _ => r.diagnostics.push(Diagnostic::fallback(
                 "context-value",
                 "a context Provider's `value` is not an object literal with plain keys",

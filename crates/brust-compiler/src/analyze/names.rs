@@ -129,6 +129,8 @@ pub struct NameTable<'a> {
     printed: Aliases,
     /// The context declarations of the module (S2): Providers, hooks, React contexts.
     pub contexts: crate::analyze::context::Contexts,
+    /// Scalar contexts adopted from the hooks this module inlined (`adopt_scalar`).
+    scalars_adopted: std::cell::RefCell<Vec<(String, crate::ir::Literal)>>,
     /// `const context = useXContext(…)` locals (symbol key → context name): `context.field` reads a hidden prop.
     ctx_locals: HashMap<u32, String>,
     /// The fields read per context by this component (first-use order).
@@ -173,7 +175,7 @@ pub fn module_imports(ast: &js_ast::Ast<'_>) -> HashMap<u32, (String, String)> {
 }
 
 /// The hooks React 19 exports from `react`: functions, so truthy, and hooks by their name.
-const REACT_HOOKS: &[&str] = &[
+pub(crate) const REACT_HOOKS: &[&str] = &[
     "useActionState",
     "useCallback",
     "useContext",
@@ -410,6 +412,7 @@ impl<'a> NameTable<'a> {
             aliases: HashMap::new(),
             printed: HashMap::new(),
             contexts: Default::default(),
+            scalars_adopted: std::cell::RefCell::new(Vec::new()),
             ctx_locals: HashMap::new(),
             ctx_fields: std::cell::RefCell::new(Vec::new()),
             ctx_escape: std::cell::Cell::new(None),
@@ -645,6 +648,11 @@ impl<'a> NameTable<'a> {
             Some(("react", h)) if h != "default" && h != "*" => Some(h.to_string()),
             _ => None,
         }
+    }
+
+    /// R34.142: this table is a hook module's: a constant of it read as `NAME.key` (a primitive literal) is foldable.
+    pub fn literal_reads_are_safe(&mut self, ast: &js_ast::Ast<'_>) {
+        self.object_unsafe = crate::analyze::use_scan::unsafe_objects_literal_reads(ast, self);
     }
 
     /// `r` (an import local of another module) is React's own hook `hook` (F268).
@@ -933,6 +941,37 @@ impl<'a> NameTable<'a> {
                 *v = format!("{v}_{tag}");
             }
         }
+        for (n, _) in &mut self.contexts.scalar {
+            *n = format!("{n}_{tag}");
+        }
+    }
+
+    /// R34.142: the literal default of the scalar context `context` (see `Contexts::scalar`).
+    pub fn scalar_default(&self, context: &str) -> Option<&crate::ir::Literal> {
+        self.contexts
+            .scalar
+            .iter()
+            .find(|(n, _)| n == context)
+            .map(|(_, d)| d)
+    }
+
+    /// A scalar context of an inlined hook's module, met while reading its body.
+    pub fn adopt_scalar(&self, context: &str, default: &crate::ir::Literal) {
+        let mut found = self.scalars_adopted.borrow_mut();
+        if !found.iter().any(|(n, _)| n == context) {
+            found.push((context.to_string(), default.clone()));
+        }
+    }
+
+    /// Every scalar context this module declares or adopted from a hook it inlined, with its default.
+    pub fn scalar_defaults(&self) -> Vec<(String, crate::ir::Literal)> {
+        let mut v = self.contexts.scalar.clone();
+        for a in self.scalars_adopted.borrow().iter() {
+            if !v.iter().any(|(n, _)| n == &a.0) {
+                v.push(a.clone());
+            }
+        }
+        v
     }
 
     /// A destructured context field (`const { value } = useXContext(…)`): the local reads the hidden prop.
@@ -1093,6 +1132,17 @@ impl<'a> NameTable<'a> {
         self.snapshot_refs.contains(&self.key(r))
     }
 
+    /// `r` is not a state after all (`hooks.rs`, `drop_inert_id_effects`: the state is a plain id).
+    pub fn unmark_state(&mut self, r: js_ast::Ref) {
+        let k = self.key(r);
+        self.state.remove(&k);
+    }
+
+    pub fn unmark_setter(&mut self, r: js_ast::Ref) {
+        let k = self.key(r);
+        self.setters.remove(&k);
+    }
+
     pub fn mark_setter(&mut self, r: js_ast::Ref) {
         let k = self.key(r);
         self.setters.insert(k);
@@ -1246,16 +1296,19 @@ fn literal_shape(e: &js_ast::Expr, depth: u32) -> bool {
     }
 }
 
+/// `loop`, `range`, `namespace`, `caller` and `self` are names the template itself binds or calls (a loop variable,
+/// `Array.from` lowers to `range(...)`). A prop of that name is read as `_props.<name>` in the standalone template, so it
+/// cannot shadow them (R34.142, the roving group's `loop`).
+pub const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
+
 /// Why a prop named `name` cannot be a plain template variable, as `(code, what)`; `None` = it can. A key that is not
 /// an identifier prints as an expression (`data-x` reads as a subtraction); a jinja keyword is a syntax error or the
-/// wrong value; `loop`, `range`, `namespace`, `caller` and `self` are names the template itself binds or calls (a loop
-/// variable, `Array.from` lowers to `range(...)`), so a prop of that name would shadow them.
+/// wrong value. The template's own names (`TEMPLATE_OWN`) are fine: they print through `_props`.
 pub fn template_name_problem(name: &str) -> Option<(&'static str, &'static str)> {
     const KEYWORDS: &[&str] = &[
         "true", "false", "none", "True", "False", "None", "and", "or", "not", "in", "is", "if",
         "else",
     ];
-    const TEMPLATE_OWN: &[&str] = &["loop", "range", "namespace", "caller", "self"];
     if name.starts_with("__ctx_") {
         return Some((
             "context-shape",
@@ -1276,11 +1329,6 @@ pub fn template_name_problem(name: &str) -> Option<(&'static str, &'static str)>
         Some((
             "prop-jinja-name",
             "is a keyword of the server template language, so it cannot name a template variable",
-        ))
-    } else if TEMPLATE_OWN.contains(&name) {
-        Some((
-            "prop-jinja-name",
-            "is a name the server template uses itself (a loop variable or a built-in), so a prop of that name would shadow it",
         ))
     } else {
         None

@@ -477,6 +477,21 @@ fn content_written_in_the_providers_own_module_is_specialised() {
     );
 }
 
+// R34.142: a context field named like a template name (`loop`) is a hidden prop `__ctx_<ctx>_loop`: nothing to shadow.
+#[test]
+fn a_context_field_named_loop_is_lowered_like_any_other() {
+    let all = compile("ctx_loop.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", root.ir.diagnostics);
+    assert!(
+        !all.iter()
+            .any(|i| i.ir.diagnostics.iter().any(|d| d.rule == "context-shape")),
+        "{:?}",
+        all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+    );
+}
+
 // F278: the call site's `...rest` spread into the content crosses as ONE hidden input and is spread there.
 // F279: a call of a single-return module helper with a plain-read argument is its expression, so the consumer has no job.
 #[test]
@@ -545,6 +560,109 @@ fn a_live_caller_rest_is_never_carried_into_a_clone() {
         root.jinja
     );
     assert!(!root.jinja.contains("data-n=\"0\""), "{}", root.jinja);
+}
+
+// R34.142: Radix's `useId` (a React 18 id with a client-only counter fallback) and `useCallbackRef` (`typeof` of React's
+// insertion effect picks the effect), imported from other modules, lower with no island: the fallbacks are decided, not read.
+#[test]
+fn radix_use_id_and_use_callback_ref_lower_without_their_react_version_fallbacks() {
+    let all = compile("hooks_page.tsx");
+    let panel = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("panel"))
+        .expect("the Panel component");
+    assert!(!is_react(&panel.ir), "{:?}", panel.ir.diagnostics);
+    assert!(
+        !panel
+            .ir
+            .diagnostics
+            .iter()
+            .any(|d| d.class == DiagClass::Fallback),
+        "{:?}",
+        panel.ir.diagnostics
+    );
+    // the id is the server's: one seeded value, and the counter fallback (`count++`) is gone with its effect
+    assert_eq!(panel.ir.id_bindings.len(), 1, "{:?}", panel.ir.id_bindings);
+    let client = panel.client.as_deref().expect("a client chunk");
+    assert!(!client.contains("count"), "{client}");
+}
+
+// An arrow's rest parameter is part of its meaning (`(...xs) => xs.length`): the reader kept only the name, so the chunk
+// declared `(xs) => ...` and a call spread an `undefined` where the original took none. It is read verbatim now.
+#[test]
+fn an_arrow_with_a_rest_parameter_keeps_its_rest() {
+    let all = compile("rest_arrow.tsx");
+    let client = all[0].client.as_deref().expect("a client chunk");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(client.contains("...xs"), "{client}");
+}
+
+// R34.142: a context declared with a literal default (`createContext(undefined)`) read as a VALUE through an imported hook
+// (Radix's `useDirection`): the Provider's `value` is the whole value; with no Provider above the page it is the default.
+#[test]
+fn a_scalar_context_read_through_an_imported_hook_is_the_providers_value_or_its_default() {
+    for (file, provided) in [("dir_none.tsx", false), ("dir_provider.tsx", true)] {
+        let all = compile(file);
+        assert!(!is_react(&all[0].ir), "{file}: {:?}", all[0].ir.diagnostics);
+        assert!(
+            !all.iter().any(|i| i
+                .ir
+                .diagnostics
+                .iter()
+                .any(|d| d.class == DiagClass::Fallback)),
+            "{file}: {:?}",
+            all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+        );
+        assert!(
+            !all[0].jinja.contains("brust-island"),
+            "{file}: {}",
+            all[0].jinja
+        );
+        // the call site's own `dir` wins, then the Provider's value, then the default `ltr`
+        let want = if provided { "rtl" } else { "ltr" };
+        assert!(all[0].jinja.contains(want), "{file}: {}", all[0].jinja);
+    }
+}
+
+// R34.142: a scalar context's whole value and an object context's fields are different frame shapes: a consumer that reads
+// one while the Provider hands out the other is refused (never silently `undefined`).
+#[test]
+fn a_consumer_reading_a_whole_value_or_fields_the_provider_does_not_hand_out_falls_back() {
+    for file in ["ctx_whole_fields.tsx", "ctx_fields_whole.tsx"] {
+        let all = compile(file);
+        assert!(
+            all.iter()
+                .any(|i| has(&i.ir, DiagClass::Fallback, "context-shape")),
+            "{file}: {:?}",
+            all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+        );
+        assert!(is_react(&all[0].ir), "{file}: {:?}", all[0].ir.tier);
+    }
+}
+
+// Review (Afrojack): only React's HOOKS are known to be functions; `typeof version === 'function'` (a string) is not decided.
+#[test]
+fn typeof_of_a_react_export_that_is_not_a_hook_is_not_decided() {
+    let all = compile("typeof_not_hook.tsx");
+    assert!(
+        all.iter()
+            .any(|i| has(&i.ir, DiagClass::Fallback, "control-flow")),
+        "{:?}",
+        all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+    );
+}
+
+// Review (Mellow F1): the `if` test of an identity-update effect runs with it; one with a side effect keeps the effect.
+#[test]
+fn an_identity_update_effect_whose_test_has_a_side_effect_is_not_dropped() {
+    let all = compile("hooks_side.tsx");
+    assert!(
+        all.iter()
+            .any(|i| has(&i.ir, DiagClass::Fallback, "hook-shape")),
+        "{:?}",
+        all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+    );
+    assert!(is_react(&all[0].ir), "{:?}", all[0].ir.tier);
 }
 
 // F280: an entry of a const object that calls a module function proven plain (reads its argument, changes nothing)

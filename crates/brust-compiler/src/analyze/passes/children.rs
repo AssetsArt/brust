@@ -109,6 +109,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         no_spec: Default::default(),
         spec_failure: None,
         bubbled_pkg: false,
+        ctx_defaults: Vec::new(),
         foreign: Default::default(),
     }
 }
@@ -204,6 +205,12 @@ pub fn contexts(
         ));
     }
     ir.ctx_pkg |= w.bubbled_pkg;
+    // R34.142: a whole-value need no Provider answers is, at the page, the context's default (React's own rule)
+    let defaulted = |c: &str, f: &str| {
+        ctx.is_root
+            && f == crate::analyze::hooks::WHOLE_FIELD
+            && w.ctx_defaults.iter().any(|(x, _)| x == c)
+    };
     for (c, f) in &bubbled {
         let name = crate::ir::ctx_prop(c, f);
         if !ir.props.iter().any(|p| p.name == name) {
@@ -211,7 +218,15 @@ pub fn contexts(
                 name: name.clone(),
                 local: name,
                 ts_type: None,
-                default: None,
+                default: w
+                    .ctx_defaults
+                    .iter()
+                    .find(|(x, _)| x == c)
+                    .filter(|_| defaulted(c, f))
+                    .map(|(_, d)| RawExpr {
+                        loc: 0,
+                        kind: RawKind::Lit(d.clone()),
+                    }),
             });
         }
         match ir.ctx_uses.iter_mut().find(|u| &u.context == c) {
@@ -223,13 +238,17 @@ pub fn contexts(
             }),
         }
     }
-    if ctx.is_root && !bubbled.is_empty() {
+    for (c, d) in &w.ctx_defaults {
+        if bubbled.iter().any(|(x, _)| x == c) && !ir.ctx_defaults.iter().any(|(x, _)| x == c) {
+            ir.ctx_defaults.push((c.clone(), d.clone()));
+        }
+    }
+    if let Some((c, _)) = bubbled.iter().find(|(c, f)| !defaulted(c, f))
+        && ctx.is_root
+    {
         diags.push(Diagnostic::fallback(
             "context-no-provider",
-            format!(
-                "`{}` reads a context that no Provider above it provides",
-                bubbled[0].0
-            ),
+            format!("`{c}` reads a context that no Provider above it provides"),
             0,
             "render it inside the Provider component, or keep this component in React",
         ));
@@ -369,6 +388,8 @@ struct Walker<'s, 'c> {
     spec_failure: Option<(u32, String)>,
     /// A need bubbled out of a package-source consumer ([`ComponentIR::ctx_pkg`]).
     bubbled_pkg: bool,
+    /// R34.142: the literal defaults of the scalar contexts the bubbled needs name.
+    ctx_defaults: Vec<(String, crate::ir::Literal)>,
     /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
     /// of its module scope in this component's jobs, the component, the names).
     foreign: std::cell::RefCell<ForeignModules>,
@@ -2166,6 +2187,26 @@ impl Walker<'_, '_> {
                         if props.iter().any(|(k, _)| k == &hidden) {
                             continue;
                         }
+                        let whole = f == crate::analyze::hooks::WHOLE_FIELD;
+                        if let Some(fr) = frames.iter().rev().find(|fr| fr.context == u.context)
+                            && whole
+                                != fr
+                                    .fields
+                                    .iter()
+                                    .any(|(k, _)| k == crate::analyze::hooks::WHOLE_FIELD)
+                            && (whole || !fr.fields.is_empty())
+                        {
+                            diags.push(Diagnostic::fallback(
+                                "context-shape",
+                                format!(
+                                    "<{name}> reads a context {} and its Provider hands out {}",
+                                    if whole { "as a whole value" } else { "by field" },
+                                    if whole { "fields" } else { "a whole value" },
+                                ),
+                                *loc,
+                                "read the context the way its Provider writes the value, or keep this component in React",
+                            ));
+                        }
                         let value = match frames.iter().rev().find(|fr| fr.context == u.context) {
                             Some(fr) => Expr::Raw(
                                 fr.fields
@@ -2179,6 +2220,12 @@ impl Walker<'_, '_> {
                             ),
                             None => {
                                 self.bubbled_pkg |= cir.ctx_pkg;
+                                if let Some((_, d)) =
+                                    cir.ctx_defaults.iter().find(|(c, _)| c == &u.context)
+                                    && !self.ctx_defaults.iter().any(|(c, _)| c == &u.context)
+                                {
+                                    self.ctx_defaults.push((u.context.clone(), d.clone()));
+                                }
                                 if !bubbled.iter().any(|(c, g)| c == &u.context && g == f) {
                                     bubbled.push((u.context.clone(), f.clone()));
                                 }
