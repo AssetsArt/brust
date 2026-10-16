@@ -237,7 +237,10 @@ fn react_child_in_a_row_maps_with_idx_and_literals_go_to_literals() {
         !props.contains_key("limit"),
         "a literal prop is not in props: {props:?}"
     );
-    assert_eq!(jobs[0].literals.get("limit"), Some(&serde_json::json!(3)));
+    assert_eq!(
+        jobs[0].literals.get("limit").map(|v| v.to_value()),
+        Some(serde_json::json!(3))
+    );
     assert_eq!(jobs[0].per_item.as_deref(), Some("it"));
 }
 
@@ -315,12 +318,21 @@ export default function P(props: { a: { id: string } }) { return <Reviews item={
         !props.contains_key("limit") && !props.contains_key("title"),
         "literals are not in props: {props:?}"
     );
-    assert_eq!(job.literals.get("limit"), Some(&serde_json::json!(3)));
-    assert_eq!(job.literals.get("title"), Some(&serde_json::json!("x")));
-    assert_eq!(job.literals.get("on"), Some(&serde_json::json!(true)));
     assert_eq!(
-        job.literals.get("meta"),
-        Some(&serde_json::json!({"a": 1, "b": ["x"]}))
+        job.literals.get("limit").map(|v| v.to_value()),
+        Some(serde_json::json!(3))
+    );
+    assert_eq!(
+        job.literals.get("title").map(|v| v.to_value()),
+        Some(serde_json::json!("x"))
+    );
+    assert_eq!(
+        job.literals.get("on").map(|v| v.to_value()),
+        Some(serde_json::json!(true))
+    );
+    assert_eq!(
+        job.literals.get("meta").map(|v| v.to_value()),
+        Some(serde_json::json!({"a": 1, "b": ["x"]}))
     );
     assert!(job.literals.keys().all(|k| !props.contains_key(k)));
 }
@@ -428,7 +440,10 @@ fn a_package_component_gets_an_island_id_and_an_ssr_job() {
         .find(|j| matches!(j.kind, JobKind::Ssr { .. }))
         .expect("an ssr job renders the island");
     assert_eq!(job.outputs, vec![format!("_ssr_{id}")]);
-    assert_eq!(job.literals.get("size"), Some(&serde_json::json!(16)));
+    assert_eq!(
+        job.literals.get("size").map(|v| v.to_value()),
+        Some(serde_json::json!(16))
+    );
     // The same export is the same island from another parent; another package or export is not.
     let again = analyze(
         "import { Heart } from 'tiny-icons'\nexport default function Q() { return <b><Heart /></b> }",

@@ -2171,7 +2171,14 @@ impl<'a, 'c> Printer<'a, 'c> {
         let items: Vec<String> = props
             .iter()
             .filter(|(_, v)| !matches!(v, Expr::ClientOnly { .. }))
-            .map(|(k, v)| format!("{}: {}", jinja_string(k), self.value(v)))
+            // F282: an object literal crosses as JSON in source order, as `JSON.stringify` writes it
+            .map(|(k, v)| {
+                format!(
+                    "{}: {}",
+                    jinja_string(k),
+                    crate::lower::server_expr::with_ordered_objects(|| self.value(v))
+                )
+            })
             .collect();
         format!("{{{}}}", items.join(", "))
     }

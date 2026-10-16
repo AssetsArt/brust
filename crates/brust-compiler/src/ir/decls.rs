@@ -153,7 +153,7 @@ pub struct JobDecl {
     /// `Ssr` job for a react child: props passed as JSON literals (`limit={3}`), constant per
     /// job. Disjoint from `props`. Empty (and omitted) on other jobs.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub literals: std::collections::BTreeMap<String, serde_json::Value>,
+    pub literals: std::collections::BTreeMap<String, crate::ir::OJson>,
 }
 
 /// Filled by M1b-2.
@@ -186,7 +186,7 @@ pub struct InstanceRecord {
     pub props: std::collections::BTreeMap<String, Option<String>>,
     /// Constant props (`code="a"`): part of the child's job inputs and keys (F105).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub literals: std::collections::BTreeMap<String, serde_json::Value>,
+    pub literals: std::collections::BTreeMap<String, crate::ir::OJson>,
     /// Props the server computes from the parent's props: jinja over `__props`, and in a row
     /// `__row` (the item) and `__idx` (F105, ledger F60).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -283,7 +283,7 @@ pub struct BuildEvalInstance {
     pub child_id: String,
     pub k: u32,
     /// The job's props: constant inputs only; an omitted prop is absent.
-    pub inputs: serde_json::Value,
+    pub inputs: crate::ir::OJson,
     /// The job's output slots, all of which must come back for the instance to fold.
     pub outputs: Vec<String>,
     /// Relative imports of the job module the evaluation replaces with a folded constant (rule 3).

@@ -101,21 +101,18 @@ test('after a click the live DOM equals React for every style shape, and a live 
   }
   const want = styles(renderCases(true))
   await flip((await read())[0]!)
-  // the binder writes an empty value as `style=""` / `className = ""` (what a hand-written bound attribute does too),
-  // where React omits the attribute: no declaration and no class either way, so a DOM compare takes empty as absent
-  // (first paint, from the server, is compared strictly above)
-  const norm = (a: string[]) => a.map((s) => s.replace('style=|', 'style=null|').replace(/class=$/, 'class=null'))
-  expect(norm(await read())).toEqual(norm(want as string[]))
+  // F311: the binder removes `style`/`class` where React has none, so the live DOM equals React's render exactly
+  expect(await read()).toEqual(want)
   // case 9: the live `undefined` replaced the forwarder's own `style` with nothing (React keeps no own style either)
   expect(want[9]).toBe('style=null|class=null')
-  expect(norm(await read())[9]).toBe('style=null|class=null')
+  expect((await read())[9]).toBe('style=null|class=null')
   // case 13: the same for `className`: a live `undefined` drops the forwarder's own class
   expect(want[13]).toBe('style=null|class=null')
-  expect(norm(await read())[13]).toBe('style=null|class=null')
+  expect((await read())[13]).toBe('style=null|class=null')
   // and back: the first state again
   const back = styles(renderCases(false))
   await flip((await read())[0]!)
-  expect(norm(await read())).toEqual(norm(back as string[]))
+  expect(await read()).toEqual(back)
   expect(errors).toEqual([])
   await page.close()
 })

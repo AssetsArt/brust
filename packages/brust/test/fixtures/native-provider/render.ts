@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import CtxVPage from './CtxVPage'
 import DirNonePage from './DirNonePage'
 import DirProvPage from './DirProvPage'
 import CollPage from './CollPage'
@@ -36,3 +37,4 @@ export const renderDir = (): string => html(DirNonePage)
 export const renderDirProvider = (): string => html(DirProvPage)
 export const renderHydr = (): string => html(HydrPage)
 export const renderColl = (): string => html(CollPage)
+export const renderCtxV = (): string => html(CtxVPage)

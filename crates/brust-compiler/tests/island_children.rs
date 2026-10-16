@@ -43,7 +43,7 @@ fn is_react(ir: &ComponentIR) -> bool {
 fn children_literals(ir: &ComponentIR) -> Vec<serde_json::Value> {
     ir.jobs
         .iter()
-        .filter_map(|j| j.literals.get("children").cloned())
+        .filter_map(|j| j.literals.get("children").map(|v| v.to_value()))
         .collect()
 }
 
@@ -153,8 +153,8 @@ fn arithmetic_on_literals_is_a_literal_prop() {
         .find(|j| matches!(j.kind, JobKind::Ssr { .. }))
         .expect("the island job");
     assert_eq!(
-        job.literals.get("ratio"),
-        Some(&serde_json::json!(16.0 / 9.0))
+        job.literals.get("ratio").map(|v| v.to_value()),
+        Some(serde_json::json!(16.0 / 9.0))
     );
     assert!(!job.props.as_ref().unwrap().contains_key("ratio"));
 }
@@ -200,7 +200,7 @@ fn props_read_by_the_children_are_holes_of_the_island() {
     assert_eq!(items[1]["c"][0]["t"], "u");
     assert_eq!(items[1]["e"], serde_json::json!([]));
     // `cond && <X/>`: React renders a falsy number as text there, so the node says which form it is.
-    assert_eq!(items[1]["a"], true);
+    assert_eq!(items[1]["a"], serde_json::json!(true));
     // The same prop read twice is one hole.
     assert_eq!(
         items[2]["p"]["disabled"],
@@ -249,8 +249,8 @@ fn a_wrapper_with_children_in_its_island_stays_static() {
     let records: Vec<_> = root.instances.iter().collect();
     assert_eq!(records.len(), 2, "{records:?}");
     assert_eq!(
-        records[0].literals.get("__ch"),
-        Some(&serde_json::json!({"$brust": "el", "t": "p", "p": {}, "c": ["hi"]}))
+        records[0].literals.get("__ch").map(|v| v.to_value()),
+        Some(serde_json::json!({"$brust": "el", "t": "p", "p": {}, "c": ["hi"]}))
     );
     assert!(records[1].literals.get("__ch").is_none());
     // The registry for the island names what the caller's tree names (here: nothing, but the ref is a host).

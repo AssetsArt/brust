@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderColl, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderColl, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -420,6 +420,10 @@ test('a recognised createCollection (R34.140): the markup equals React\'s, getIt
   const html = await (await fetch(`${base}/coll`)).text()
   expect(html).not.toContain('brust-island')
   expect(plain(html)).toBe(plain(renderColl()))
+test('F304: a context field called in a handler and read in an effect: no island, markup equals React, the toggle and the effect follow the Provider', async () => {
+  const html = await (await fetch(`${base}/ctxv`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderCtxV()))
   const page = await browser.newPage()
   const errors: string[] = []
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
@@ -434,6 +438,13 @@ test('a recognised createCollection (R34.140): the markup equals React\'s, getIt
   expect(await page.locator('ul').getAttribute('data-n')).toBe('2')
   await page.keyboard.press('ArrowDown')
   expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('A')
+  await page.goto(`${base}/ctxv`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('main p')?.getAttribute('data-seen') === 'n')
+  await page.getByRole('button', { name: 't' }).click()
+  await page.waitForFunction(() => document.querySelector('main section')?.getAttribute('data-open') === 'y')
+  await page.waitForFunction(() => document.querySelector('main p')?.getAttribute('data-seen') === 'y')
+  await page.getByRole('button', { name: 't' }).click()
+  await page.waitForFunction(() => document.querySelector('main p')?.getAttribute('data-seen') === 'n')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
