@@ -61,7 +61,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         // linked by its parent (x-props-bind), a component with state of its own is a host whose
         // props are settable. Only a stateless root (a route component) has fixed props.
         props_reactive: !ctx.is_root
-            || ir.has_live_state()
+            || !ir.state.is_empty()
             || !ir.effects.is_empty()
             || !ir.handlers.is_empty()
             || !ir.refs.is_empty(),
@@ -80,6 +80,12 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .iter()
             .any(|j| matches!(j.kind, crate::ir::JobKind::Precompute)),
         guard_depth: 0,
+        slot_depth: 0,
+        state_inits: ir
+            .state
+            .iter()
+            .map(|s| (s.name.clone(), s.init.clone()))
+            .collect(),
         fused: Vec::new(),
         fused_counts: HashMap::new(),
         holds_island: false,
@@ -368,6 +374,10 @@ struct Walker<'s, 'c> {
     own_job: bool,
     /// Open `If` branches: a fused child's job would run whether or not the branch renders (v1: refused).
     guard_depth: u32,
+    /// F277: open component children (slot content): the host may print them conditionally, or once per row.
+    slot_depth: u32,
+    /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
+    state_inits: HashMap<String, Expr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
     fused: Vec<crate::ir::FusedInstance>,
     fused_counts: HashMap<String, u32>,
@@ -2365,6 +2375,31 @@ impl Walker<'_, '_> {
         Ok(RawExpr { loc: raw.loc, kind })
     }
 
+    /// F277: `v` has the same value whenever this component mounts: it reads literals, module names, fixed cells, the
+    /// props of a route component (fixed for the page), and state cells whose initial value is itself such a value
+    /// (a cell is its initial value at mount). A prop of any other component, a store, a list item, a browser global or
+    /// opaque code may differ at a later mount (an `x-if` of the caller re-creates this component).
+    fn same_at_every_mount(&self, v: &Expr) -> bool {
+        let mut seen = BTreeSet::new();
+        self.mount_value(&self.deps_of(v), &mut seen)
+    }
+
+    fn mount_value(&self, d: &Deps, seen: &mut BTreeSet<String>) -> bool {
+        (d.props.is_empty() || self.ctx.is_root)
+            && d.stores.is_empty()
+            && d.loop_bindings.is_empty()
+            && !d.browser
+            && !d.opaque
+            && d.state.iter().all(|s| {
+                if !seen.insert(s.clone()) {
+                    return false;
+                }
+                self.state_inits
+                    .get(s)
+                    .is_some_and(|init| self.mount_value(&self.st.cx.deps_expr(init, &[]), seen))
+            })
+    }
+
     fn deps_of(&self, e: &Expr) -> Deps {
         match e {
             Expr::Precomputed { slot, per_item, .. } => {
@@ -3473,7 +3508,9 @@ impl Walker<'_, '_> {
             return;
         };
         if name == "<member>" {
+            self.slot_depth += 1;
             children.iter_mut().for_each(|c| self.node(c));
+            self.slot_depth -= 1;
             return;
         }
         let child = self.resolve_child(name, source.as_deref(), imported.as_deref(), member, *loc);
@@ -4045,16 +4082,26 @@ impl Walker<'_, '_> {
                     }
                 }
                 // Native / static child (§7.4, F70): see `instance_needs_link`. F277: a prop the child reads only as
-                // the first value of a cell nothing sets is read once; what it becomes later never reaches the child.
-                let snapshot = child
-                    .ir
-                    .as_deref()
-                    .map(snapshot_only_props)
-                    .unwrap_or_default();
+                // the first value of a cell nothing sets is read once, when the instance mounts. Where the instance
+                // mounts with this component and never again (not under a condition, in a row or in slot content),
+                // and the value is the same at every mount of this component, what it becomes later never reaches the
+                // child: no link for it.
+                let snapshot = if self.guard_depth == 0
+                    && self.loop_scope.is_empty()
+                    && self.slot_depth == 0
+                {
+                    child
+                        .ir
+                        .as_deref()
+                        .map(snapshot_only_props)
+                        .unwrap_or_default()
+                } else {
+                    BTreeSet::new()
+                };
                 let need = instance_needs_link(
                     &child.tier,
                     kept.iter()
-                        .filter(|(k, _)| !snapshot.contains(k))
+                        .filter(|(k, v)| !(snapshot.contains(k) && self.same_at_every_mount(v)))
                         .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
                 );
                 if need == LinkNeed::Always && child.prop_precompute {
@@ -4109,7 +4156,9 @@ impl Walker<'_, '_> {
         }
         // After this node's own link id: `_pN` follow document order.
         let fed_before = self.instances.len();
+        self.slot_depth += 1;
         children.iter_mut().for_each(|c| self.node(c));
+        self.slot_depth -= 1;
         if let Some(inner) = &child.inner
             && let Err(why) = self.rebase(inner, props)
         {

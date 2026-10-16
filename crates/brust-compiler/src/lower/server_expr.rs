@@ -223,8 +223,27 @@ fn call(callee: &RawExpr, args: &[RawExpr], ctx: &JinjaCtx<'_>) -> String {
         return match (obj.as_str(), name.as_str()) {
             ("Object", "keys") => format!("({} | keys)", a[0]),
             ("Object", "entries") => format!("({} | entries)", a[0]),
-            // F277: `Object.assign({}, …)` (the subset admits only a fresh target): the sources merged as JS does.
-            ("Object", "assign") => format!("obj_assign({})", a[1..].join(", ")),
+            // F277: `Object.assign({}, …)` (the subset admits only a fresh target): the sources merged as JS does, in
+            // order. An object literal source is `obj_lit` (a jinja map literal would sort its keys, and a style's
+            // declaration order decides a shorthand against its longhand).
+            ("Object", "assign") => format!(
+                "obj_assign({})",
+                args[1..]
+                    .iter()
+                    .map(|x| match &x.kind {
+                        RawKind::Object(props) => format!(
+                            "obj_lit({})",
+                            props
+                                .iter()
+                                .map(|(k, v)| format!("{}, {}", jinja_string(k), raw(v, ctx)))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        _ => raw(x, ctx),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             ("Array", "from") => match &args[0].kind {
                 RawKind::Object(p) => format!("range({})", raw(&p[0].1, ctx)),
                 _ => "[]".into(),

@@ -404,11 +404,6 @@ pub struct Structural {
 }
 
 impl ComponentIR {
-    /// F277: the component holds a state cell something sets (a fixed cell never changes after first paint).
-    pub fn has_live_state(&self) -> bool {
-        self.state.iter().any(|s| !s.is_fixed())
-    }
-
     pub fn new(id: String, source: String) -> Self {
         Self {
             id,

@@ -47,25 +47,33 @@ fn with_state(props: &str) -> String {
 const BUBBLE: &str = "import { useRef } from 'react'\nexport default function C({ checked, defaultChecked }: any) { const snap = useRef(checked); return <input type=\"checkbox\" defaultChecked={defaultChecked ?? snap.current} /> }";
 
 #[test]
-fn a_cell_nothing_sets_does_not_make_a_component_native() {
+fn a_cell_nothing_sets_with_the_same_value_at_every_mount_is_not_reactive() {
     for child in [
-        BUBBLE,
-        "import { useState } from 'react'\nexport default function C({ checked }: any) { const [first] = useState(checked); return <b>{first ? 'y' : 'n'}</b> }",
+        "import { useRef, useState } from 'react'\nconst HUGE = 1 / 0\nexport default function C() { const [h] = useState(HUGE); const r = useRef(3); return <b data-r={r.current}>{h}</b> }",
+        "import { useState } from 'react'\nexport default function C() { const [first] = useState(() => 'x'.toUpperCase()); return <b>{first}</b> }",
     ] {
         // The child compiled as the entry.
         let ir = tree(child, "export default function Unused() { return null }");
-        assert!(fallbacks(&ir).is_empty(), "{:?}", fallbacks(&ir));
+        assert!(fallbacks(&ir).is_empty(), "{child}: {:?}", fallbacks(&ir));
         assert!(matches!(ir.tier, Tier::Static), "{child}: {:?}", ir.tier);
-        assert!(
-            ir.state.iter().all(|s| s.setter.is_none()) && !ir.state.is_empty(),
-            "{:?}",
-            ir.state
-        );
+    }
+}
+
+/// Mellow F1: a cell seeded from a prop is re-read when the instance mounts again (an `x-if`, a row), so it stays state.
+#[test]
+fn a_cell_seeded_from_a_prop_stays_state() {
+    for child in [
+        BUBBLE,
+        "import { useState } from 'react'\nexport default function C({ label }: any) { const [initial] = useState(label); return <p>{initial}</p> }",
+    ] {
+        let ir = tree(child, "export default function Unused() { return null }");
+        assert!(fallbacks(&ir).is_empty(), "{:?}", fallbacks(&ir));
+        assert!(matches!(ir.tier, Tier::Native), "{child}: {:?}", ir.tier);
     }
 }
 
 #[test]
-fn a_changing_prop_read_only_for_a_fixed_cell_links_nothing() {
+fn a_changing_prop_read_only_for_a_fixed_cell_links_nothing_where_the_child_mounts_once() {
     for child in [
         BUBBLE,
         // A native child (state of its own): `first` keeps the first `checked`.
@@ -74,6 +82,32 @@ fn a_changing_prop_read_only_for_a_fixed_cell_links_nothing() {
         let ir = tree(&with_state("checked={on}"), child);
         assert!(fallbacks(&ir).is_empty(), "{:?}", fallbacks(&ir));
         assert!(ir.child_links.is_empty(), "{child}: {:?}", ir.child_links);
+    }
+}
+
+/// Mellow F1: an instance that may mount after first paint reads the CURRENT prop: it stays linked.
+#[test]
+fn a_child_that_may_mount_later_stays_linked() {
+    for (parent, label) in [
+        (
+            "import { useState } from 'react'\nimport C from './C'\nexport default function T() { const [on, setOn] = useState(true); const [open, setOpen] = useState(false); return <div><button onClick={() => { setOn(!on); setOpen(!open) }}>t</button>{open && <C checked={on} />}</div> }",
+            "under a condition",
+        ),
+        (
+            "import { useState } from 'react'\nimport C from './C'\nexport default function T() { const [on, setOn] = useState(true); const [xs, setXs] = useState([1]); return <div><button onClick={() => { setOn(!on); setXs(xs.concat([1])) }}>t</button>{xs.map((x) => <C key={x} checked={on} />)}</div> }",
+            "in a row",
+        ),
+        (
+            "import { useState } from 'react'\nimport C from './C'\nfunction Box({ children }: any) { return <section>{children}</section> }\nexport default function T() { const [on, setOn] = useState(true); return <div><button onClick={() => setOn(!on)}>t</button><Box><C checked={on} /></Box></div> }",
+            "in slot content",
+        ),
+    ] {
+        let ir = tree(parent, BUBBLE);
+        assert!(
+            !ir.child_links.is_empty(),
+            "{label}: no link, {:?}",
+            fallbacks(&ir)
+        );
     }
 }
 

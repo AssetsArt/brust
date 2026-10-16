@@ -240,18 +240,92 @@ pub fn spread_merge(segs: Rest<Value>) -> Value {
     Value::from(merge(&segs).into_iter().collect::<BTreeMap<_, _>>())
 }
 
+/// An object built by `obj_lit` / `obj_assign` (F277): its keys enumerate in JS order (array-index keys ascending,
+/// then the others in the order they were first set), so a style object prints its declarations in source order and a
+/// later shorthand still overrides an earlier longhand (`{ marginTop: 5, margin: 0 }`), as React prints them. A plain
+/// jinja map sorts its keys.
+#[derive(Debug, Default)]
+pub struct OrderedMap {
+    entries: Vec<(String, Value)>,
+    index: std::collections::HashMap<String, usize>,
+}
+
+impl OrderedMap {
+    /// Sets `k` as a JS property assignment does: a new key goes last, an existing one keeps its place.
+    fn set(&mut self, k: String, v: Value) {
+        match self.index.get(&k) {
+            Some(&i) => self.entries[i].1 = v,
+            None => {
+                self.index.insert(k.clone(), self.entries.len());
+                self.entries.push((k, v));
+            }
+        }
+    }
+
+    fn keys(&self) -> Vec<Value> {
+        let is_index = |k: &str| {
+            k == "0"
+                || (!k.starts_with('0')
+                    && k.len() <= 10
+                    && k.bytes().all(|b| b.is_ascii_digit())
+                    && k.parse::<u64>().is_ok_and(|n| n < u32::MAX as u64))
+        };
+        let mut idx: Vec<&str> = self
+            .entries
+            .iter()
+            .map(|(k, _)| k.as_str())
+            .filter(|k| is_index(k))
+            .collect();
+        idx.sort_by_key(|k| k.parse::<u64>().unwrap_or(0));
+        idx.into_iter()
+            .chain(
+                self.entries
+                    .iter()
+                    .map(|(k, _)| k.as_str())
+                    .filter(|k| !is_index(k)),
+            )
+            .map(Value::from)
+            .collect()
+    }
+}
+
+impl minijinja::value::Object for OrderedMap {
+    fn get_value(self: &std::sync::Arc<Self>, key: &Value) -> Option<Value> {
+        let i = *self.index.get(key.as_str()?)?;
+        Some(self.entries[i].1.clone())
+    }
+
+    fn enumerate(self: &std::sync::Arc<Self>) -> minijinja::value::Enumerator {
+        minijinja::value::Enumerator::Values(self.keys())
+    }
+}
+
+/// `obj_lit(k, v, …)`: an object literal written in the source, in its order (F277); a jinja map literal sorts.
+pub fn obj_lit(kv: Rest<Value>) -> Value {
+    let mut out = OrderedMap::default();
+    for pair in kv.chunks(2) {
+        if let [k, v] = pair {
+            out.set(k.to_string(), v.clone());
+        }
+    }
+    Value::from_object(out)
+}
+
 /// `obj_assign(source, …)`: `Object.assign({}, source, …)` (F277): each source's own enumerable keys in turn, a later
-/// one replacing an earlier one; a list or a string gives its indices, anything else (`null`, `undefined`, a number, a
-/// boolean) nothing.
+/// one replacing an earlier one in place; a list or a string gives its indices, anything else (`null`, `undefined`, a
+/// number, a boolean) nothing. Linear in the sources' size; the keys keep JS order ([`OrderedMap`]).
 pub fn obj_assign(sources: Rest<Value>) -> Value {
-    // Keyed straight into the (key-sorted) result: linear in the sources' size, whatever their keys.
-    let mut out: BTreeMap<String, Value> = BTreeMap::new();
+    let mut out = OrderedMap::default();
     for s in sources.iter() {
         match s.kind() {
-            ValueKind::Map => out.extend(map_pairs(s)),
+            ValueKind::Map => {
+                for (k, v) in map_pairs(s) {
+                    out.set(k, v);
+                }
+            }
             ValueKind::Seq => {
                 for i in 0..s.len().unwrap_or(0) {
-                    out.insert(
+                    out.set(
                         i.to_string(),
                         s.get_item(&Value::from(i)).unwrap_or(Value::UNDEFINED),
                     );
@@ -259,13 +333,13 @@ pub fn obj_assign(sources: Rest<Value>) -> Value {
             }
             ValueKind::String => {
                 for (i, c) in s.as_str().unwrap_or_default().encode_utf16().enumerate() {
-                    out.insert(i.to_string(), Value::from(String::from_utf16_lossy(&[c])));
+                    out.set(i.to_string(), Value::from(String::from_utf16_lossy(&[c])));
                 }
             }
             _ => {}
         }
     }
-    Value::from(out)
+    Value::from_object(out)
 }
 
 #[cfg(test)]
@@ -306,7 +380,15 @@ mod tests {
                 "{{ obj_assign(s, {'position': 'absolute'}) | style_css }}",
                 json!({"s": {"width": "3px"}})
             ),
-            "position:absolute;width:3px"
+            "width:3px;position:absolute"
+        );
+        // A later shorthand overrides an earlier longhand, as React prints the declarations in source order.
+        assert_eq!(
+            render(
+                "{{ obj_assign(obj_lit('marginTop', 5, 'margin', 0)) | style_css }}",
+                json!({})
+            ),
+            "margin-top:5px;margin:0"
         );
     }
 

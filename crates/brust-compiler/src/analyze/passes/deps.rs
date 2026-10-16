@@ -57,6 +57,17 @@ impl Deps {
         self.stores.extend(o.stores.iter().cloned());
     }
 
+    /// F277: the value is the same whenever it is read at a mount: no prop, state, store, list item, browser global
+    /// or opaque code (literals, module names and fixed cells only).
+    pub fn mount_invariant(&self) -> bool {
+        self.props.is_empty()
+            && self.state.is_empty()
+            && self.stores.is_empty()
+            && self.loop_bindings.is_empty()
+            && !self.browser
+            && !self.opaque
+    }
+
     /// Reads something that changes on the client after first paint (state or a store).
     pub fn reactive(&self) -> bool {
         !self.state.is_empty() || !self.stores.is_empty()
@@ -140,7 +151,9 @@ pub struct DepsCx {
     module: HashMap<String, Vec<(String, IdentKind)>>,
     /// `useStore` bindings by handle (`StoreUse.resolved` names the store).
     stores: HashMap<String, StoreUse>,
-    /// F277: the state cells nothing sets, by name: what their initial value reads.
+    /// F277: the state cells nothing sets whose initial value is the same at every mount (it reads no prop, state,
+    /// store, browser global or opaque code), by name: what that value reads. Only such a cell is its server value
+    /// for good; one seeded from a prop is re-read when the instance mounts again (an `x-if`, a row), so it stays state.
     fixed: HashMap<String, LocalDef>,
 }
 
@@ -164,7 +177,7 @@ impl DepsCx {
         for id in &ir.id_bindings {
             locals.insert(id.clone(), LocalDef::Placed(Deps::default()));
         }
-        DepsCx {
+        let mut cx = DepsCx {
             locals,
             module: ir.module_scope.iter().cloned().collect(),
             stores: ir
@@ -172,20 +185,30 @@ impl DepsCx {
                 .iter()
                 .map(|u| (u.handle.clone(), u.clone()))
                 .collect(),
-            fixed: ir
-                .state
-                .iter()
-                .filter(|s| s.is_fixed())
-                .map(|s| {
-                    let def = match &s.init {
-                        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => LocalDef::Value(r.clone()),
-                        Expr::Precomputed { inputs, .. } => LocalDef::Placed(split_inputs(inputs)),
-                        Expr::ClientOnly { .. } => LocalDef::Opaque,
-                    };
-                    (s.name.clone(), def)
-                })
-                .collect(),
-        }
+            fixed: HashMap::new(),
+        };
+        let fixed = ir
+            .state
+            .iter()
+            .filter(|s| s.is_fixed())
+            .filter_map(|s| {
+                let def = match &s.init {
+                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => LocalDef::Value(r.clone()),
+                    Expr::Precomputed { inputs, .. } => LocalDef::Placed(split_inputs(inputs)),
+                    Expr::ClientOnly { .. } => LocalDef::Opaque,
+                };
+                cx.deps_expr(&s.init, &[])
+                    .mount_invariant()
+                    .then(|| (s.name.clone(), def))
+            })
+            .collect();
+        cx.fixed = fixed;
+        cx
+    }
+
+    /// F277: `name` is a state cell nothing sets whose initial value is the same at every mount.
+    pub fn is_fixed(&self, name: &str) -> bool {
+        self.fixed.contains_key(name)
     }
 
     /// This table with every props-only precomputed derived value replaced by

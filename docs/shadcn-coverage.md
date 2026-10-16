@@ -110,7 +110,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 
 | Row | Basis | Tier | Islands | Components | Client JS gzip KiB | Worker | Fallback codes | Outcome |
 |---|---|---|---|---|---|---|---|---|
-| accordion | measured | static | 1 | 11 (8) | 94 | 1 | external-component, island-children, island-prop, spread-props | built |
+| accordion | measured | static | 1 | 11 (8) | 95 | 1 | external-component, island-children, island-prop, spread-props | built |
 | alert | measured | static | 0 | 4 (0) | 0 | 0 | — | built |
 | alert-dialog | measured | static | 1 | 22 (18) | 100 | 1 | external-component, island-children, island-prop, slot-child-component, spread-props | built |
 | aspect-ratio | measured | static | 0 | 4 (0) | 0 | 0 | — | built |
@@ -124,14 +124,14 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | button-alias | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | button-aschild | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | button-group | measured | static | 0 | 7 (0) | 0 | 1 | — | built |
-| calendar | measured | static | 1 | 3 (2) | 107 | 1 | external-component, island-prop, jsx-const-child, jsx-expression, spread-props | built |
+| calendar | measured | static | 1 | 3 (2) | 108 | 1 | external-component, island-prop, jsx-const-child, jsx-expression, spread-props | built |
 | card | measured | static | 0 | 9 (0) | 0 | 0 | — | built |
 | carousel | measured | static | 1 | 9 (5) | 97 | 1 | context-state, control-flow, event-capture, external-component, hook-unsupported, jsx-const-child, ref-shape, spread-handler | built |
 | chart | measured | static | 1 | 9 (8) | 240 | 1 | control-flow, external-component, hook-shape, island-prop, jsx-const-child, local-component, use-id-in-render | built |
 | checkbox | measured | static | 1 | 7 (3) | 91 | 1 | external-component, island-prop, spread-props | built |
 | collapsible | measured | react | 1 | 9 (5) | 89 | 1 | context-island, external-component, spread-props | built |
-| combobox | measured | react | 1 | 22 (16) | 157 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, nested-instance, slot-dynamic, spread-props | built |
-| command | measured | static | 1 | 16 (14) | 104 | 1 | external-component, island-prop, spread-props | built |
+| combobox | measured | react | 1 | 22 (16) | 158 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, nested-instance, slot-dynamic, spread-props | built |
+| command | measured | static | 1 | 16 (14) | 105 | 1 | external-component, island-prop, spread-props | built |
 | context-menu | measured | static | 1 | 13 (11) | 116 | 1 | external-component, island-children, island-prop, spread-props | built |
 | dialog | measured | react | 1 | 25 (16) | 101 | 1 | context-island, external-component, island-children, island-prop, nested-instance, slot-dynamic, spread-props | built |
 | direction | measured | static | 1 | 3 (2) | 70 | 1 | external-component, island-prop | built |
@@ -155,7 +155,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | navigation-menu | measured | static | 1 | 15 (14) | 99 | 1 | external-component, island-prop, spread-props | built |
 | pagination | measured | static | 0 | 8 (0) | 0 | 3 | external-component | built |
 | popover | measured | static | 1 | 9 (7) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
-| progress | measured | static | 1 | 5 (2) | 85 | 1 | external-component, island-children, island-prop, spread-props | built |
+| progress | measured | static | 1 | 5 (2) | 86 | 1 | external-component, island-children, island-prop, spread-props | built |
 | radio-group | measured | static | 1 | 9 (5) | 98 | 1 | external-component, island-prop, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
 | scroll-area | measured | static | 1 | 11 (7) | 92 | 1 | external-component, island-prop, spread-props | built |
@@ -172,7 +172,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | tabs | measured | static | 1 | 9 (8) | 94 | 1 | external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | toggle | measured | static | 0 | 4 (0) | 5 | 0 | — | built |
-| toggle-group | measured | static | 1 | 5 (4) | 93 | 1 | external-component, island-prop, jsx-const-child, spread-props | built |
+| toggle-group | measured | static | 1 | 5 (4) | 94 | 1 | external-component, island-prop, jsx-const-child, spread-props | built |
 | tooltip | measured | static | 1 | 12 (10) | 106 | 1 | external-component, island-children, island-prop, spread-props | built |
 
 ## App components that block
