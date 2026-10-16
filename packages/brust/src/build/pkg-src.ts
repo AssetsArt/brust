@@ -228,11 +228,11 @@ export function integrityGaps(sources: { path: string; text: string }[], publish
 
 /** R34.142 (W1b): `import { X as Y } from './sibling'` names the same binding as `X` under a local name. A bundler resolves
  * the binding to the sibling's declaration, so `Y` is not in the published file; `X` is. `Y` is dropped from the name check
- * ONLY for a RELATIVE import (a sibling of the same package, bundled in) whose imported name `X` the published file has.
+ * ONLY for a RELATIVE import DECLARATION at the start of a line (a sibling of the same package, bundled in) whose imported name `X` the published file has.
  * An alias of anything else stays a name difference. */
 function importAliases(js: string, pubNames: Set<string>): Set<string> {
   const out = new Set<string>()
-  for (const m of js.matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*["'](\.[^"']*)["']/g)) {
+  for (const m of js.matchAll(/^import\s*\{([^}]*)\}\s*from\s*["'](\.[^"']*)["']/gm)) {
     for (const item of m[1]!.split(',')) {
       const parts = item.trim().split(/\s+as\s+/)
       if (parts.length === 2 && /^[A-Za-z_$][\w$]*$/.test(parts[1]!) && pubNames.has(parts[0]!)) out.add(parts[1]!)

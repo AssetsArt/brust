@@ -669,23 +669,32 @@ fn an_identity_update_effect_whose_test_has_a_side_effect_is_not_dropped() {
 // `useIsHydrated`) is false on the server and true once mounted; every other store stays `hook-unsupported`.
 #[test]
 fn use_is_hydrated_lowers_to_a_state_that_a_mount_effect_sets() {
-    let all = compile("HydrBox.tsx");
-    let b = all
-        .iter()
-        .find(|i| i.ir.id.starts_with("hydrBox"))
-        .expect("the component");
-    assert!(!is_react(&b.ir), "{:?}", b.ir.diagnostics);
-    // false in the server markup (React's `getServerSnapshot`), set on mount in the chunk
-    assert!(
-        b.jinja.contains("data-h=\"n\"") || b.jinja.contains("'n'") || b.jinja.contains("\"n\""),
-        "{}",
-        b.jinja
-    );
-    let client = b.client.as_deref().expect("a client chunk");
-    assert!(
-        client.contains("(!0)") || client.contains("(true)"),
-        "{client}"
-    );
+    for (file, id) in [("HydrBox.tsx", "hydrBox"), ("HydrBoxNeg.tsx", "hydrBoxNeg")] {
+        let all = compile(file);
+        let b = all
+            .iter()
+            .find(|i| i.ir.id.starts_with(id))
+            .expect("the component");
+        assert!(!is_react(&b.ir), "{file}: {:?}", b.ir.diagnostics);
+        // false in the server markup (React's `getServerSnapshot`)
+        assert!(
+            b.jinja
+                .contains("{% set ret1_useSyncExternalStore = false %}"),
+            "{file}: {}",
+            b.jinja
+        );
+        let client = b.client.as_deref().expect("a client chunk");
+        // seeded from the instance's `late` flag (mounted after the page booted), set true by a mount effect in a microtask
+        assert!(client.contains("late:"), "{file}: {client}");
+        assert!(
+            client.contains("queueMicrotask(() => ret1_useSyncExternalStore.set(true))"),
+            "{file}: {client}"
+        );
+        assert!(
+            client.contains("const ret1_useSyncExternalStore = signal(__late)"),
+            "{file}: {client}"
+        );
+    }
 }
 
 #[test]

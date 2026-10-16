@@ -395,3 +395,23 @@ test('useIsHydrated (useSyncExternalStore of the hydration shape): false in the 
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
+
+test('useIsHydrated: an instance that mounts after the page booted (an x-if clone) starts true, like a React client mount; the server-rendered one runs its effect with false then true', async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/hydr-if`, { waitUntil: 'domcontentloaded' })
+  const first = page.locator('output[data-name="first"]')
+  await page.waitForFunction(() => document.querySelector('output[data-name="first"]')?.getAttribute('data-log') === '01')
+  expect(await first.getAttribute('data-h')).toBe('y')
+  await page.getByRole('button', { name: 'toggle' }).click()
+  const late = page.locator('output[data-name="late"]')
+  await late.waitFor()
+  // true from its first render, and its effect ran once, with true
+  await page.waitForFunction(() => document.querySelector('output[data-name="late"]')?.getAttribute('data-log') === '1')
+  expect(await late.getAttribute('data-h')).toBe('y')
+  expect(await first.getAttribute('data-log')).toBe('01')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)

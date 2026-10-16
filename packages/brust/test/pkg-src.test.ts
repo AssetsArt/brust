@@ -323,7 +323,7 @@ test('W1b: a relative import alias of a name the published file has is not a dif
   expect(integrityGaps(src, BUNDLED)).toEqual([])
 })
 
-test('W1b bounds: an alias of a name the published file lacks, a bare-specifier alias, or an alias used elsewhere stays a refusal', () => {
+test('W1b bounds: an alias of a name the published file lacks, a bare-specifier alias, or an import-looking string stays a refusal', () => {
   const src = (main: string) => [
     { path: 'src/main.ts', text: main },
     { path: 'src/legacy.ts', text: SIB },
@@ -332,4 +332,7 @@ test('W1b bounds: an alias of a name the published file lacks, a bare-specifier 
   expect(integrityGaps(src(MAIN.replace('{ useIsHydrated as', '{ other as')), BUNDLED).join()).toContain('name `useIsHydratedLegacy`')
   // a package import (not a bundled sibling)
   expect(integrityGaps(src(MAIN.replace("'./legacy'", "'legacy-pkg'")), BUNDLED).join()).toContain('name `useIsHydratedLegacy`')
+  // text that only LOOKS like an import declaration (inside a template literal, indented) adds no alias
+  const fake = "export const useIsHydrated = `x ${1}\n  import { useIsHydrated as useIsHydratedLegacy } from './legacy'`\nconst y = useIsHydratedLegacy\n"
+  expect(integrityGaps(src(fake), BUNDLED).join()).toContain('name `useIsHydratedLegacy`')
 })

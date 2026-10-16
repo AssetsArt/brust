@@ -66,6 +66,10 @@ pub struct StateDecl {
     pub name: String,
     pub setter: Option<String>,
     pub init: Expr,
+    /// R34.143: the CLIENT seeds this state with the instance's `late` flag (true when the instance mounts after the page
+    /// booted, so nothing of it was server-rendered); the server markup and a hydrated mount still start at `init`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub late: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

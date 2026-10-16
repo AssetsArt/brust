@@ -895,6 +895,7 @@ fn simple_hook(
                     name,
                     setter: None,
                     init: Expr::Raw(init),
+                    late: false,
                 });
             } else {
                 out.refs.push(RefDecl {
@@ -1469,8 +1470,11 @@ fn hydrated_state(out: &mut BodyDecls, name: String, loc: u32) {
         name,
         setter: Some(set.clone()),
         init: Expr::Raw(lit(false)),
+        late: true,
     });
     out.effects.push(EffectDecl {
+        // set in a microtask: the effects of the component that start with this one see the render's value (`false`)
+        // first, as in React, where an effect closes over the render it ran for; the browser does not paint in between
         body: RawExpr {
             loc,
             kind: RawKind::Arrow {
@@ -1481,11 +1485,30 @@ fn hydrated_state(out: &mut BodyDecls, name: String, loc: u32) {
                         callee: Box::new(RawExpr {
                             loc,
                             kind: RawKind::Ident {
-                                name: set.clone(),
-                                kind: IdentKind::Setter,
+                                name: "queueMicrotask".into(),
+                                kind: IdentKind::Global,
                             },
                         }),
-                        args: vec![lit(true)],
+                        args: vec![RawExpr {
+                            loc,
+                            kind: RawKind::Arrow {
+                                params: Vec::new(),
+                                body: ArrowBody::Expr(Box::new(RawExpr {
+                                    loc,
+                                    kind: RawKind::Call {
+                                        callee: Box::new(RawExpr {
+                                            loc,
+                                            kind: RawKind::Ident {
+                                                name: set.clone(),
+                                                kind: IdentKind::Setter,
+                                            },
+                                        }),
+                                        args: vec![lit(true)],
+                                    },
+                                })),
+                                captures: vec![(set.clone(), IdentKind::Setter)],
+                            },
+                        }],
                     },
                 })),
                 captures: vec![(set, IdentKind::Setter)],
@@ -1651,6 +1674,7 @@ fn read_decl(
                     name,
                     setter,
                     init: Expr::Raw(init),
+                    late: false,
                 });
             }
             // R34.143: `useSyncExternalStore(subscribe, () => true, () => false)` (Radix's `useIsHydrated`): false on the
