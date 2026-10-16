@@ -104,7 +104,25 @@ fn react_named(names: &NameTable<'_>, r: js_ast::Ref) -> Option<String> {
     }
 }
 
+/// F237: the callee of a comma call (`(0, useId)()`, what bundlers emit to call an import without a `this`): the
+/// right side, when what precedes it is a literal (nothing runs). The call is the hook it names.
+fn comma_callee(target: &js_ast::Expr) -> &js_ast::Expr {
+    match &target.data {
+        E::EBinary(b)
+            if b.op == js_ast::OpCode::BinComma
+                && matches!(
+                    b.left.data,
+                    E::ENumber(_) | E::EString(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_)
+                ) =>
+        {
+            comma_callee(&b.right)
+        }
+        _ => target,
+    }
+}
+
 fn react_hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<String> {
+    let target = comma_callee(target);
     match &target.data {
         E::EImportIdentifier(id) => react_named(names, id.ref_),
         // A module const read as React's own hook (`names.rs`, `collect_react_hook_aliases`).
@@ -146,6 +164,7 @@ fn hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<(String, 
     if let Some(name) = react_hook_target(target, names) {
         return Some((name, true));
     }
+    let target = comma_callee(target);
     if is_use_store(target, names) {
         return Some(("useStore".into(), false));
     }
@@ -875,13 +894,17 @@ fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) 
 }
 
 /// The calls of `e` that run on every evaluation of it, in source order: not inside a function, the branches of a
-/// conditional, the right side of a short-circuit operator, or an optional chain.
+/// conditional, the right side of a short-circuit operator (or of `||=`, `&&=`, `??=`), an optional chain, or an
+/// element's `key`.
 fn unconditional_calls<'e>(e: &'e js_ast::Expr, out: &mut Vec<&'e js_ast::E::Call>) {
     match &e.data {
         E::ECall(c) => {
             unconditional_calls(&c.target, out);
             if c.optional_chain.is_none() {
-                for a in c.args.iter() {
+                // F235: an element's `key` (the third argument of a lowered JSX call) is evaluated after its props by
+                // the JSX runtime, not in source order: a hook there is left to `nested_hooks` (refused).
+                let n = if c.was_jsx_element { 2 } else { usize::MAX };
+                for a in c.args.iter().take(n) {
                     unconditional_calls(a, out);
                 }
             }
@@ -909,11 +932,15 @@ fn unconditional_calls<'e>(e: &'e js_ast::Expr, out: &mut Vec<&'e js_ast::E::Cal
         E::EUnary(u) => unconditional_calls(&u.value, out),
         E::EBinary(b) => {
             unconditional_calls(&b.left, out);
+            // F236: the right side of `a ||= b`, `a &&= b`, `a ??= b` runs only when the short circuit lets it.
             if !matches!(
                 b.op,
                 js_ast::OpCode::BinLogicalAnd
                     | js_ast::OpCode::BinLogicalOr
                     | js_ast::OpCode::BinNullishCoalescing
+                    | js_ast::OpCode::BinLogicalAndAssign
+                    | js_ast::OpCode::BinLogicalOrAssign
+                    | js_ast::OpCode::BinNullishCoalescingAssign
             ) {
                 unconditional_calls(&b.right, out);
             }

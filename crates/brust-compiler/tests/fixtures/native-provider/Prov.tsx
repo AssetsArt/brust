@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { createContext, useContext, useState } from 'react'
+import { Slot } from '@radix-ui/react-slot'
 
 const A = createContext<{ open: boolean; toggle: () => void }>({ open: false, toggle: () => {} })
 const B = createContext<{ on: boolean; flip: () => void }>({ on: false, flip: () => {} })
@@ -48,4 +49,18 @@ export function Gated({ children }: { children?: React.ReactNode }) {
       <div>{open ? children : null}</div>
     </A.Provider>
   )
+}
+
+// The asChild consumer (Radix CollapsibleTrigger): its host is the element the caller passes.
+export function PAs({ asChild, children }: { asChild?: boolean; children?: React.ReactNode }) {
+  const c = useContext(A)
+  const Comp = asChild ? Slot : 'button'
+  return <Comp type="button" aria-expanded={c.open} onClick={c.toggle}>{children}</Comp>
+}
+// An asChild consumer with a state of its own is not a frame consumer only: it keeps `slot-native`.
+export function PAsOwn({ asChild, children }: { asChild?: boolean; children?: React.ReactNode }) {
+  const c = useContext(A)
+  const [n, setN] = useState(0)
+  const Comp = asChild ? Slot : 'button'
+  return <Comp aria-expanded={c.open} data-n={n} onClick={() => { c.toggle(); setN(n + 1) }}>{children}</Comp>
 }

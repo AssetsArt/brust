@@ -16,7 +16,7 @@ import { cssPlugin } from './css'
 import { BuildError } from './errors'
 import { isServerOnlyMarker, serverOnlyEmptyPlugin } from './server-only'
 import { RUNTIME_FEATURES } from './features'
-import { type ResolveTarget, resolveNative } from './esm-resolve'
+import { RELATIVE_SPEC, type ResolveTarget, resolveNative } from './esm-resolve'
 import { packageDirOf } from './pkg-src'
 
 const REACT_EXTERNALS = ['react', 'react/*', 'react-dom', 'react-dom/*']
@@ -75,7 +75,7 @@ export function sourceDirPlugin(sourceOf: SourceOf, appRoot: string, external: s
     name: 'brust-source-dir',
     setup(b) {
       // `.` and `..` name a directory like `./x` does (F218): one filter, so none of them reaches a package branch.
-      b.onResolve({ filter: /^\.\.?(\/|$)/ }, (a) => {
+      b.onResolve({ filter: RELATIVE_SPEC }, (a) => {
         const src = sourceOf.get(a.importer)
         return src === undefined ? undefined : { path: Bun.resolveSync(a.path, dirname(src)) }
       })
