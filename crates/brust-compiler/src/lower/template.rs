@@ -189,6 +189,8 @@ struct Frame {
     index_used: Cell<bool>,
     /// The row carries `x-for`: loop reads inside it get directives.
     directive: bool,
+    /// F325: the list's source reads module-level data (`module_source`): props do not make its rows reactive.
+    module: bool,
 }
 
 pub struct Printer<'a, 'c> {
@@ -1497,13 +1499,19 @@ impl<'a, 'c> Printer<'a, 'c> {
         // F96d: a linked child's props change on the client (x-props-bind), so a list over a prop
         // is reactive, exactly as `x-text` over a prop is (`reactive`). A route component's props
         // are fixed: its prop-fed lists stay plain rows.
+        // F325: rows over module-level data (an import, a module const) count no prop as changing, here or in any
+        // list inside them, so a constant caller's page ships no more of that data than before (F319's freeze).
+        let module = self.frames.iter().any(|fr| fr.module)
+            || src_raw
+                .as_ref()
+                .is_some_and(|r| module_source(&self.f.deps(r, &self.scope())));
         let directive_row = self.native
             && (src_raw
                 .as_ref()
                 .is_some_and(|r| self.f.deps(r, &self.scope()).reactive())
                 || ((self.ctx.linked)(&self.f.ir.id)
                     && self.reactive(src_raw.as_ref(), source).is_some())
-                || body.iter().any(|b| needs_directives(b, &self.f)));
+                || body.iter().any(|b| needs_directives(b, &self.f, !module)));
         let var = {
             let own = self.seeds.of(self.f.ir);
             let root = self.seeds.of(self.inst_ir);
@@ -1581,6 +1589,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             // An `x-for` bind names the index in the row's directive.
             index_used: Cell::new(!x_for.is_empty() && index.is_some()),
             directive: !x_for.is_empty(),
+            module,
         });
         let (row, empty) = if x_for.is_empty() {
             (self.row(body, sb, &x_for, false), String::new())
@@ -2341,24 +2350,34 @@ fn model_pair(attrs: &[Attr], f: &Facts<'_>) -> Option<String> {
     }
 }
 
-/// Whether a list body needs `x-for` (it carries directives).
-fn needs_directives(n: &Node, f: &Facts<'_>) -> bool {
+/// Whether a list body needs `x-for` (it carries directives). `props` (F320): a prop read counts as changing.
+fn needs_directives(n: &Node, f: &Facts<'_>, props: bool) -> bool {
     match n {
         Node::Element {
             attrs, children, ..
         } => {
             attrs.iter().any(|a| match a {
                 Attr::Event { .. } | Attr::Ref { .. } => true,
-                Attr::Dynamic { value, .. } | Attr::InnerHtml { value } => expr_reactive(value, f),
+                Attr::Dynamic { value, .. } | Attr::InnerHtml { value } => {
+                    expr_reactive(value, f, props)
+                }
                 _ => false,
-            }) || children.iter().any(|c| needs_directives(c, f))
+            }) || children.iter().any(|c| needs_directives(c, f, props))
         }
-        Node::Slot(e) => expr_reactive(e, f),
+        Node::Slot(e) => expr_reactive(e, f, props),
         Node::If {
             cond, then, else_, ..
-        } => expr_reactive(cond, f) || then.iter().chain(else_).any(|c| needs_directives(c, f)),
+        } => {
+            expr_reactive(cond, f, props)
+                || then
+                    .iter()
+                    .chain(else_)
+                    .any(|c| needs_directives(c, f, props))
+        }
         Node::For { body, source, .. } => {
-            expr_reactive(source, f) || body.iter().any(|c| needs_directives(c, f))
+            let props = props
+                && !matches!(source, Expr::Server(ServerExpr(r)) if module_source(&f.deps(r, &[])));
+            expr_reactive(source, f, props) || body.iter().any(|c| needs_directives(c, f, props))
         }
         Node::Component {
             loc,
@@ -2372,16 +2391,16 @@ fn needs_directives(n: &Node, f: &Facts<'_>) -> bool {
                     .handlers
                     .iter()
                     .any(|h| h.forwarded.as_ref().is_some_and(|w| w.loc == *loc))
-                || children.iter().any(|c| needs_directives(c, f))
+                || children.iter().any(|c| needs_directives(c, f, props))
         }
-        Node::Fragment(cs) => cs.iter().any(|c| needs_directives(c, f)),
+        Node::Fragment(cs) => cs.iter().any(|c| needs_directives(c, f, props)),
         Node::Text(_) | Node::Outlet => false,
     }
 }
 
 /// Whether `e` changes on the client, for `needs_directives`: state, a store, or (F320) a named prop the call site does
 /// not fix in a component whose props are a signal (`ComponentIR::props_are_signal`, as the analysis's row decision).
-fn expr_reactive(e: &Expr, f: &Facts<'_>) -> bool {
+fn expr_reactive(e: &Expr, f: &Facts<'_>, props: bool) -> bool {
     match e {
         Expr::Precomputed {
             state_dependent, ..
@@ -2389,7 +2408,8 @@ fn expr_reactive(e: &Expr, f: &Facts<'_>) -> bool {
         Expr::Server(ServerExpr(r)) => {
             let d = f.deps(r, &[]);
             d.reactive()
-                || f.ir.props_are_signal()
+                || props
+                    && f.ir.props_are_signal()
                     && d.props.iter().any(|p| {
                         let root = p.split(['.', '[']).next().unwrap_or(p);
                         !matches!(root, "children" | "*")
@@ -2399,6 +2419,12 @@ fn expr_reactive(e: &Expr, f: &Facts<'_>) -> bool {
         }
         _ => false,
     }
+}
+
+/// F325: a list source that reads module-level data (an imported binding or a module const): its rows count no prop as
+/// changing (`ComponentIR::props_are_signal`), so the client chunk never imports that data for them (F319's freeze).
+pub(crate) fn module_source(d: &crate::analyze::passes::deps::Deps) -> bool {
+    !d.imports.is_empty() || !d.module_locals.is_empty()
 }
 
 impl Expr {

@@ -67,6 +67,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             || !ir.refs.is_empty(),
         props_live: ir.props_are_signal(),
         hold_link: false,
+        module_rows: std::cell::Cell::new(0),
         seed_props: if ir.props_are_signal() {
             snapshot_only_props(ir)
         } else {
@@ -383,6 +384,9 @@ struct Walker<'s, 'c> {
     /// F320: the call site being walked keeps F319's freeze instead of a link that only a changing prop would ask for,
     /// because the child binds a handler on its own element (`forward_handlers`), which needs an unlinked instance.
     hold_link: bool,
+    /// F325: lists being walked whose source reads module-level data (`lower::template::module_source`): inside them no
+    /// prop counts as changing, so their rows keep F319's freeze and the chunk ships none of that data.
+    module_rows: std::cell::Cell<usize>,
     /// Handlers hoisted from props a static child spreads onto an element (shadcn S1.3).
     handlers: Vec<crate::ir::HandlerDecl>,
     /// This component's named props (its `...rest` holds every other key).
@@ -1996,7 +2000,12 @@ impl Walker<'_, '_> {
                 self.list_uses.push(use_);
                 self.items.push(item.clone());
                 self.indexes.push(index.clone());
+                let module = self.module_list(source);
+                self.module_rows
+                    .set(self.module_rows.get() + usize::from(module));
                 body.iter_mut().for_each(|c| self.node(c));
+                self.module_rows
+                    .set(self.module_rows.get() - usize::from(module));
                 self.indexes.pop();
                 self.items.pop();
                 self.loop_sources.pop();
@@ -3791,6 +3800,11 @@ impl Walker<'_, '_> {
                 }))
     }
 
+    /// F325: the list source reads module-level data (an import, a module const).
+    fn module_list(&self, source: &Expr) -> bool {
+        crate::lower::template::module_source(&self.deps_of(source))
+    }
+
     /// F320: `e` changes on the client: state, or a prop of a component whose props are a signal (`props_live`).
     fn live(&self, e: &Expr) -> bool {
         self.reads_state(e) || self.reads_changing_prop(&self.deps_of(e))
@@ -3800,6 +3814,7 @@ impl Walker<'_, '_> {
     /// the prop is not one its call site fixed.
     fn reads_changing_prop(&self, d: &Deps) -> bool {
         self.props_live
+            && self.module_rows.get() == 0
             && d.props.iter().any(|p| {
                 let root = p.split(['.', '[']).next().unwrap_or(p);
                 // The rest or the whole props object (`*`) stays with F319's freeze, answered per call site: counting it
@@ -3846,7 +3861,13 @@ impl Walker<'_, '_> {
                 cond, then, else_, ..
             } => self.live(cond) || then.iter().chain(else_).any(|c| self.body_directive(c)),
             Node::For { source, body, .. } => {
-                self.source_reactive(source) || body.iter().any(|c| self.body_directive(c))
+                let module = self.module_list(source);
+                self.module_rows
+                    .set(self.module_rows.get() + usize::from(module));
+                let r = self.source_reactive(source) || body.iter().any(|c| self.body_directive(c));
+                self.module_rows
+                    .set(self.module_rows.get() - usize::from(module));
+                r
             }
             Node::Component { link, children, .. } => {
                 link.is_some_and(|id| !self.row_only.contains_key(&id))
@@ -3931,6 +3952,9 @@ impl Walker<'_, '_> {
         for n in nodes {
             match n {
                 Node::For { source, body, .. } => {
+                    let module = self.module_list(source);
+                    self.module_rows
+                        .set(self.module_rows.get() + usize::from(module));
                     let r = self.row_reactive(source, body, reactive);
                     if !r {
                         // F319: rows printed once (no x-for): a prop they read would not be followed.
@@ -3942,6 +3966,8 @@ impl Walker<'_, '_> {
                         }
                     }
                     self.resolve_row_only(body, r);
+                    self.module_rows
+                        .set(self.module_rows.get() - usize::from(module));
                 }
                 Node::Component { link, children, .. } => {
                     if let Some(id) = *link
