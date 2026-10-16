@@ -321,15 +321,16 @@ fn f257_a_body_local_named_like_a_prop_read_off_the_parameter() {
     for (label, src) in [
         (
             "Object.assign",
-            "import { useState } from 'react'\nexport default function D(props: any) {\n  const [n, setN] = useState(0)\n  const style = Object.assign({}, props.style, { color: 'red' })\n  return <div style={style} onClick={() => setN(n + 1)}>{n}</div>\n}\n",
+            "import { useState } from 'react'\nexport default function D(props: any) {\n  const [n, setN] = useState(0)\n  const style = Object.assign({}, props.style, { color: 'red', zIndex: Math.max(1, 2) })\n  return <div style={style} onClick={() => setN(n + 1)}>{n}</div>\n}\n",
         ),
         (
             "object spread",
-            "import { useState } from 'react'\nexport default function B(props: any) {\n  const [n, setN] = useState(0)\n  const style = { ...props.style, color: 'red' }\n  return <div style={style} onClick={() => setN(n + 1)}>{n}</div>\n}\n",
+            "import { useState } from 'react'\nexport default function B(props: any) {\n  const [n, setN] = useState(0)\n  const style = { ...props.style, color: 'red', zIndex: Math.max(1, 2) }\n  return <div style={style} onClick={() => setN(n + 1)}>{n}</div>\n}\n",
         ),
     ] {
         let a = lower(src);
-        let Some(job) = a.server_ts else { continue };
+        // `Math.max` keeps a precompute job (a plain merge prints in the template since F277).
+        let job = a.server_ts.unwrap_or_else(|| panic!("{label}: no job"));
         parses(&format!("f257-{}.ts", label.replace(' ', "-")), &job)
             .unwrap_or_else(|e| panic!("{label}: the job does not parse\n{e}\n{job}"));
         let decls = job
@@ -345,13 +346,13 @@ fn f257_a_body_local_named_like_a_prop_read_off_the_parameter() {
         }
     }
     let job = lower(
-        "import { useState } from 'react'\nexport default function D(props: any) {\n  const [n, setN] = useState(0)\n  const style = Object.assign({}, props.style, { color: 'red' })\n  return <div style={style} onClick={() => setN(n + 1)}>{n}</div>\n}\n",
+        "import { useState } from 'react'\nexport default function D(props: any) {\n  const [n, setN] = useState(0)\n  const style = Object.assign({}, props.style, { color: 'red', zIndex: Math.max(1, 2) })\n  return <div style={style} onClick={() => setN(n + 1)}>{n}</div>\n}\n",
     )
     .server_ts
     .unwrap();
     assert!(job.contains("  const { style: style1 } = props\n"), "{job}");
     assert!(
-        job.contains("Object.assign({}, style1, { color: \"red\" })"),
+        job.contains("Object.assign({}, style1, { color: \"red\", zIndex: Math.max(1, 2) })"),
         "{job}"
     );
 }
@@ -360,7 +361,7 @@ fn f257_a_body_local_named_like_a_prop_read_off_the_parameter() {
 #[test]
 fn the_job_parameter_avoids_a_state_named_props() {
     let job = lower(
-        "import { useState } from 'react'\nexport default function D(p: any) {\n  const [props, setProps] = useState(0)\n  const s = Object.assign({}, p.style, { n: props })\n  return <div style={s} onClick={() => setProps(props + 1)}>{props}</div>\n}\n",
+        "import { useState } from 'react'\nexport default function D(p: any) {\n  const [props, setProps] = useState(0)\n  const s = Object.assign({}, p.style, { n: props, zIndex: Math.max(1, 2) })\n  return <div style={s} onClick={() => setProps(props + 1)}>{props}</div>\n}\n",
     )
     .server_ts
     .unwrap();

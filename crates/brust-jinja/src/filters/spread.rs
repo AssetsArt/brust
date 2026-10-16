@@ -244,37 +244,28 @@ pub fn spread_merge(segs: Rest<Value>) -> Value {
 /// one replacing an earlier one; a list or a string gives its indices, anything else (`null`, `undefined`, a number, a
 /// boolean) nothing.
 pub fn obj_assign(sources: Rest<Value>) -> Value {
-    let mut out: Vec<(String, Value)> = Vec::new();
+    // Keyed straight into the (key-sorted) result: linear in the sources' size, whatever their keys.
+    let mut out: BTreeMap<String, Value> = BTreeMap::new();
     for s in sources.iter() {
-        let pairs: Vec<(String, Value)> = match s.kind() {
-            ValueKind::Map => map_pairs(s),
-            ValueKind::Seq => (0..s.len().unwrap_or(0))
-                .map(|i| {
-                    (
+        match s.kind() {
+            ValueKind::Map => out.extend(map_pairs(s)),
+            ValueKind::Seq => {
+                for i in 0..s.len().unwrap_or(0) {
+                    out.insert(
                         i.to_string(),
                         s.get_item(&Value::from(i)).unwrap_or(Value::UNDEFINED),
-                    )
-                })
-                .collect(),
-            ValueKind::String => s
-                .as_str()
-                .unwrap_or_default()
-                .encode_utf16()
-                .collect::<Vec<u16>>()
-                .iter()
-                .enumerate()
-                .map(|(i, c)| (i.to_string(), Value::from(String::from_utf16_lossy(&[*c]))))
-                .collect(),
-            _ => Vec::new(),
-        };
-        for (k, v) in pairs {
-            match out.iter_mut().find(|(n, _)| *n == k) {
-                Some(slot) => slot.1 = v,
-                None => out.push((k, v)),
+                    );
+                }
             }
+            ValueKind::String => {
+                for (i, c) in s.as_str().unwrap_or_default().encode_utf16().enumerate() {
+                    out.insert(i.to_string(), Value::from(String::from_utf16_lossy(&[c])));
+                }
+            }
+            _ => {}
         }
     }
-    Value::from(out.into_iter().collect::<BTreeMap<_, _>>())
+    Value::from(out)
 }
 
 #[cfg(test)]
