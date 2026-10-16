@@ -42,7 +42,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-17">2.0.0-alpha.17 · 17 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#311 including #304 and #306 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
+      {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#311 including #304, #306 and #312 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
       <p>This version closes several cases where a compiled component showed stale or missing output, including a regression from 2.0.0-alpha.16, and it compiles more Radix patterns to native code. Upgrade if you use a Provider that spreads its props or a component whose props change while the page is open.</p>
 
       <h3>New</h3>
@@ -86,6 +86,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #298 (F298) */}
         <li>
           <strong>Children passed to a component that spreads <code>...rest</code> are placed under the specialised Provider.</strong> The children can then read the Provider&rsquo;s context. This covers an unlinked static trigger; a native or linked trigger keeps rendering with React.
+        </li>
+        {/* source: PR #312 (W1d PR 4a, F326) */}
+        <li>
+          <strong>A local object that spreads the props can itself be spread onto a component.</strong> <code>const commonProps = {'{'} ...props, pressed {'}'}</code> followed by <code>&lt;Item {'{'}...commonProps{'}'} /&gt;</code> is read as the props spread plus the named entries, under the same rules as props written out. A local object that is reassigned or mutated, or that has an entry that is not a plain value, still renders with React.
         </li>
         {/* source: PR #289 (F297) */}
         <li>
