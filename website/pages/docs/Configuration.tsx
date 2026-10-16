@@ -59,7 +59,8 @@ credentials = false                     # true with origin "*" is an error
 max_age_seconds = 600`
 
 const BUILD = `[build]
-server_only = ["lib/db", "bun:sqlite"]   # import prefixes or app-relative paths kept out of the browser`
+server_only = ["lib/db", "bun:sqlite"]   # import prefixes or app-relative paths kept out of the browser
+source_roots = ["../shared"]             # monorepo: directories beside the app that relative imports may reach`
 
 const CACHE = `[cache]
 adapter = "redis"                 # redis | dragonfly | cloudflare-kv | cloudflare-do | custom
@@ -254,6 +255,9 @@ export default function Configuration({ blocks }: ConfigurationData) {
         <code>[build] server_only</code> names modules that must never reach the browser; reaching one from client code fails the build with <code>server-only-in-client</code>.
       </p>
       <CodeBlock code={blocks.build.code} lang={blocks.build.lang} file={blocks.build.file} html={blocks.build.html} />
+      <p>
+        <code>[build] source_roots</code> lists directories outside the app, relative to the app root, that its relative imports may reach: in a monorepo, <code>import Button from &quot;../shared/Button&quot;</code> compiles when <code>../shared</code> is listed. Without it brust reads only the app&rsquo;s own directory, and the import fails the build with <code>unresolved-import</code> (&ldquo;it leaves the app root&rdquo;). Each entry must be an existing directory; <code>..</code> chains are normalised. The check is on the path as written, so an import that climbs out of a listed directory (<code>../shared/../secret</code>) is refused as well. Symbolic links are not followed when checking.
+      </p>
       <p>
         <code>[cache]</code> configures a shared cache adapter (see <a href="/docs/cache-adapters/overview">Cache adapters</a>), and <code>[cloudflare]</code> the Workers target (see <a href="/docs/cloudflare/workers">Workers target</a>).
       </p>
