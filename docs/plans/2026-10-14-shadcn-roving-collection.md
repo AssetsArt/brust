@@ -153,3 +153,17 @@ owner: Detoro · authority: in-loop. R-numbers R34.140–R34.155 are confirmed (
 - **Q4: F178 is opened now as its own small lane, separate from this plan.** A build failure on valid React breaks R34.97, so it comes before wave B.
 - **Q5: yes.** W1 (tabs), then W2 (toggle-group, radio-group), then W3 (accordion), one PR each. All of them start after wave A PR 3. R34.150's stop rule binds: if tabs measures over about 15 KB gzip, the lane stops and reports before W2.
 - Reviewers: Mellow is a security gate on the recogniser and the runtime feature. Afrojack does the code review. Illenium runs the gates, including the keyboard parity tests (R34.145) in Chromium.
+
+## 14. Amendment: W1 split and first page flip (2026-10-16)
+
+owner: Detoro · authority: in-loop. This records the ruling on Tiësto's challenge on task `roving-collection` (step 0 tripped §10 risk 2). It amends §13 Q5. Q1-Q4 stand.
+
+- **Step 0 measured.** Compiling RovingFocusGroup (Root and Item) on main, after wave A, leaves more than three blocker classes: `hook-shape` (an imported `useId` that reads a module counter; `useDirection` reading `DirectionContext`), `hook-unsupported` (`useCollection`, `useIsHydrated`, `useCallbackRef`), `body-shape` (destructuring in the Item body), `member-tag`, `context-escape`/`context-state`/`context-shape` (a context field named `loop`), `prop-jinja-name`, `jsx-const-child` (`composeEventHandlers` under a Provider), `forwardref-ref` and `browser-global`. Tabs also needs Presence for `TabsContent`.
+- **Presence stays an island** (F229 ruling, ledger F288, parked). So does any shape built for tabs only: that would be a Presence recogniser by another name.
+- **W1 is split into generic PRs,** in order. Each has battery rows, served == React, and mutation checks; none flips a page by itself.
+  - W1a: imported-hook shapes and the `loop` name.
+  - W1b: the `useIsHydrated` shape, body destructuring, `composeEventHandlers` as a `jsx-const-child`.
+  - W1c: the `createCollection` recogniser and the collection feature, with `b-collection-nested`.
+- **W1d, the first page flip, is toggle-group,** not tabs. It uses RovingFocusGroup and no Presence. R34.150's stop rule moves to it: over about 15 KB gzip, stop and report. W1d also reports how far tabs gets with `TabsContent` refused.
+- **Tabs and radio-group wait on F288** (radio-group's Indicator uses Presence). W3 (accordion) waits on F288 too.
+- **Hook calls inside an expression belong to F286** (lane `presence-general`, knock2): a hook in a returned object property or in the return position. W1a does not reimplement it. A `useCallback` in any other expression position is a new W1a row. Both lanes edit `analyze/hooks.rs` and agree the split on the task before editing.
