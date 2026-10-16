@@ -891,6 +891,9 @@ pub struct Walk {
     /// F230: only code that runs where it stands: a function's body is not walked unless the function is called right
     /// there (`(() => { … })()`); a nested function in it is not walked either.
     pub shallow: bool,
+    /// `(base, member, base start)` of each `base.member` / `base['member']` read whose base is an identifier; the member
+    /// is empty for a computed one (`base[key]`). The base is also in `used_at`.
+    pub member_reads: Vec<(js_ast::Ref, String, i32)>,
     /// B4: the start of each identifier expression that is the object of a `.current` member read.
     pub current_reads: Vec<i32>,
     /// B4: identifiers read inside a nested function (a handler, an effect, a callback), where a ref is not a render read.
@@ -1186,6 +1189,17 @@ impl Walk {
                 c.args.iter().for_each(|x| self.call_arg(x));
             }
             E::EDot(d) => {
+                if let Some(base) = match &d.target.data {
+                    E::EIdentifier(id) => Some(id.ref_),
+                    E::EImportIdentifier(id) => Some(id.ref_),
+                    _ => None,
+                } {
+                    self.member_reads.push((
+                        base,
+                        String::from_utf8_lossy(d.name.slice()).into_owned(),
+                        d.target.loc.start,
+                    ));
+                }
                 if d.name.slice() == b"current"
                     && let E::EIdentifier(_) = &d.target.data
                 {
@@ -1194,6 +1208,17 @@ impl Walk {
                 self.expr(&d.target)
             }
             E::EIndex(i) => {
+                if let Some(base) = match &i.target.data {
+                    E::EIdentifier(id) => Some(id.ref_),
+                    E::EImportIdentifier(id) => Some(id.ref_),
+                    _ => None,
+                } {
+                    let member = match &i.index.data {
+                        E::EString(s) => estring(s),
+                        _ => String::new(),
+                    };
+                    self.member_reads.push((base, member, i.target.loc.start));
+                }
                 self.expr(&i.target);
                 self.expr(&i.index);
             }

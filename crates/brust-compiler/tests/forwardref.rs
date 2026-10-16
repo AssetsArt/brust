@@ -89,8 +89,9 @@ fn forwardref_from_somewhere_else_is_not_react_forwardref() {
 }
 
 #[test]
-fn a_call_site_ref_makes_the_caller_react() {
-    // tests/fixtures/forwardref-fallback: `<Plain ref={r} />`
+fn a_call_site_ref_is_bound_on_the_element_the_child_hands_it_to() {
+    // tests/fixtures/forwardref-fallback: `<Plain ref={r} />` (F267; the shapes that cannot take a ref stay React in
+    // tests/native_provider.rs)
     let path = "tests/fixtures/forwardref-fallback/input.tsx".to_string();
     let ir = run_on_compiler_thread(move || {
         brust_compiler::analyze::component::analyze_file(
@@ -102,8 +103,8 @@ fn a_call_site_ref_makes_the_caller_react() {
         )
         .unwrap()
     });
-    assert!(has(&ir, "forwardref-ref"));
-    assert!(matches!(ir.tier, Tier::React { .. }));
+    assert!(!has(&ir, "forwardref-ref"));
+    assert!(!matches!(ir.tier, Tier::React { .. }));
 }
 
 #[test]

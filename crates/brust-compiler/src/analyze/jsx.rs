@@ -1070,7 +1070,7 @@ fn read_attr(
             && r.names.is_forwarded_ref(id.ref_)
         {
             r.names.note_forwarded_ref_dropped(value.loc.start);
-            return None;
+            return Some(Attr::ForwardRef);
         }
         if let E::EIdentifier(id) = &value.data {
             let n = r.names.name(id.ref_);

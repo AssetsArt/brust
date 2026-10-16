@@ -1,6 +1,7 @@
 import * as React from 'react'
 
-// each shape below keeps the forwardRef component React (R34.64)
+// each shape below but `Plain` keeps the forwardRef component React (R34.64); `Plain` hands its ref to one element, so
+// a call site's `ref={r}` is bound on that element (F267)
 const Reads = React.forwardRef<HTMLDivElement, any>(function Reads(props, ref) {
   React.useImperativeHandle(ref, () => ({ focus() {} }))
   return <div {...props} />
