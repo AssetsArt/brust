@@ -246,12 +246,13 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     for p in obj.properties.iter() {
         let Some(value) = &p.value else { continue };
         if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
-            match spread_source(r, value) {
+            match spread_source(r, value, matches!(tag, Tag::Host(_))) {
                 // An object literal is a known shape here: its entries are ordinary attributes
                 // and props, read as if written one by one (React: later wins, which the
                 // lowering applies to the merged list, `lower::template::merge_attrs`).
                 Spread::Literal(entries) => {
                     for (name, v) in entries {
+                        let v = &v;
                         // Object keys are any string, unlike JSX attribute names (R34.17).
                         if matches!(tag, Tag::Host(_)) && !brust_jinja::spread::attr_name_ok(&name)
                         {
@@ -481,7 +482,17 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                     forwarded_ref = true;
                     continue;
                 }
+                let rendered = if let E::EArrow(arrow) = &value.data
+                    && let Some(rp) = read_render_arrow(r, arrow, loc, &name)
+                {
+                    r.render_props.push(rp);
+                    true
+                } else {
+                    false
+                };
+                r.verbatim_unused = rendered;
                 let v = r.expr(value);
+                r.verbatim_unused = false;
                 match union_names
                     .contains(&name)
                     .then(|| props_out.iter().position(|(n, _)| *n == name))
@@ -582,6 +593,89 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     }
 }
 
+/// B7: `render={({ a, b }) => <jsx/>}` (or `render={() => <jsx/>}`) on a component, read as a template: the keys the
+/// arrow destructures, and its JSX body with those names bound as loop bindings (values the callee supplies). `None`
+/// for any other shape (a pattern with a default, a rest, a nested pattern or a computed key; an `async` arrow; a block
+/// body; a body that is not JSX; a body that needs a hoisted handler or reports a diagnostic): the prop stays the
+/// client-only value it always was.
+fn read_render_arrow(
+    r: &mut Reader<'_, '_>,
+    arrow: &js_ast::E::Arrow,
+    loc: u32,
+    key: &str,
+) -> Option<crate::ir::RenderProp> {
+    if arrow.is_async || arrow.args.len() > 1 {
+        return None;
+    }
+    let mut params: Vec<(String, js_ast::Ref)> = Vec::new();
+    if let Some(p) = arrow.args.slice().first() {
+        if p.default.is_some() {
+            return None;
+        }
+        let B::BObject(obj) = p.binding.data else {
+            return None;
+        };
+        for prop in obj.properties() {
+            if prop.flags.contains(js_ast::flags::Property::IsSpread)
+                || prop.flags.contains(js_ast::flags::Property::IsComputed)
+                || prop.default_value.is_some()
+            {
+                return None;
+            }
+            let (E::EString(k), B::BIdentifier(id)) = (&prop.key.data, prop.value.data) else {
+                return None;
+            };
+            params.push((estring(k), id.r#ref));
+        }
+    }
+    let [only] = arrow.body.stmts.slice() else {
+        return None;
+    };
+    let S::SReturn(ret) = &only.data else {
+        return None;
+    };
+    let body_expr = ret.value?;
+    if !is_jsx(&body_expr) {
+        return None;
+    }
+    // The body is read a second time (the prop itself stays the client-only value), so nothing it does to the reader
+    // may stay: diagnostics, hoisted handlers, `useId` hoists, nested render props and, above all, the Providers it
+    // would hand to the CALLER's own children.
+    let (diags, handlers) = (r.diagnostics.len(), r.pending_handlers.len());
+    let (provides, renders) = (r.provides.len(), r.render_props.len());
+    let hoisted = r.hoisted_calls.clone();
+    for (_, b) in &params {
+        r.names.mark_loop_binding(*b);
+        r.loop_scope.push(r.names.name(*b));
+    }
+    let mut body = Vec::new();
+    read_child(r, &body_expr, &mut body);
+    r.loop_scope.truncate(r.loop_scope.len() - params.len());
+    for (_, b) in &params {
+        r.names.unmark_loop_binding(*b);
+    }
+    // Reading this body again is not allowed to leave anything behind.
+    // A Provider in the body would have to scope its consumers to the body: not supported, the prop stays as it was.
+    let clean = r.diagnostics.len() == diags
+        && r.pending_handlers.len() == handlers
+        && r.provides.len() == provides
+        && r.hoisted_calls == hoisted;
+    r.diagnostics.truncate(diags);
+    r.pending_handlers.truncate(handlers);
+    r.provides.truncate(provides);
+    r.render_props.truncate(renders);
+    r.hoisted_calls = hoisted;
+    clean.then(|| crate::ir::RenderProp {
+        loc,
+        key: key.to_string(),
+        params: params
+            .into_iter()
+            .map(|(k, b)| (k, r.names.name(b)))
+            .collect(),
+        body,
+    })
+}
+
 /// A Provider element (S2): its value fields are what the consumers under it read. Radix's Provider takes them as
 /// props (`scope` is the nesting disambiguation: a pass-through is ignored, R34.101); React's takes one `value`, an
 /// object literal (a value that is not one is read whole by consumers, which brust refuses: `context-value`).
@@ -650,9 +744,9 @@ fn read_provider(
 }
 
 /// What a JSX spread spreads (shadcn S1.2, R34.15).
-enum Spread<'e> {
+enum Spread {
     /// `{...{ a: 1, 'data-x': v }}`: the entries, in order (keys are plain strings).
-    Literal(Vec<(String, &'e js_ast::Expr)>),
+    Literal(Vec<(String, js_ast::Expr)>),
     /// The whole props object, its `...rest`, or a props path: keys known only per call site
     /// (an inlined instance) or at render (`spread_attrs`).
     Props(RawExpr),
@@ -794,7 +888,7 @@ impl Union {
     }
 }
 
-fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<'e> {
+fn spread_source(r: &mut Reader<'_, '_>, value: &js_ast::Expr, host: bool) -> Spread {
     match &value.data {
         E::EIdentifier(id) if r.names.is_rest(id.ref_) => Spread::Props(RawExpr {
             loc: loc_of(value),
@@ -817,9 +911,17 @@ fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<
                 {
                     return Spread::Other;
                 }
-                entries.push((estring(k), v));
+                entries.push((estring(k), *v));
             }
             Spread::Literal(entries)
+        }
+        // F266: on a component, a `const` holding an object literal of plain reads spreads as that literal (the names it reads are
+        // consts of the same render, so reading them here is reading them where the object was built).
+        E::EIdentifier(id) if !host && r.names.object_const(id.ref_).is_some() => {
+            match r.names.object_const(id.ref_).and_then(plain_object) {
+                Some(entries) => Spread::Literal(entries),
+                None => Spread::Other,
+            }
         }
         E::EIdentifier(_) | E::EIf(_) | E::EBinary(_) if union_root(r, value) => {
             let mut nodes = 0;
@@ -837,6 +939,45 @@ fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<
             }
         }
     }
+}
+
+/// The entries of an object literal whose keys are plain strings and whose values are reads with no effect (an
+/// identifier, a member path of one, a literal): what a spread or an argument may stand for.
+fn plain_object(e: js_ast::Expr) -> Option<Vec<(String, js_ast::Expr)>> {
+    fn read(e: &js_ast::Expr) -> bool {
+        match &e.data {
+            E::EIdentifier(_)
+            | E::EString(_)
+            | E::ENumber(_)
+            | E::EBoolean(_)
+            | E::ENull(_)
+            | E::EUndefined(_) => true,
+            E::EDot(d) => d.optional_chain.is_none() && read(&d.target),
+            _ => false,
+        }
+    }
+    let E::EObject(obj) = &e.data else {
+        return None;
+    };
+    let mut entries = Vec::new();
+    for p in obj.properties.iter() {
+        let (Some(k), Some(v)) = (&p.key, &p.value) else {
+            return None;
+        };
+        let E::EString(k) = &k.data else {
+            return None;
+        };
+        if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
+            || p.flags.contains(js_ast::flags::Property::IsComputed)
+            // N1: `__proto__: x` in a literal sets the prototype, it is not an entry
+            || k.slice8() == b"__proto__"
+            || !read(v)
+        {
+            return None;
+        }
+        entries.push((estring(k), *v));
+    }
+    Some(entries)
 }
 
 fn union_refused(value: &js_ast::Expr, why: &str) -> Diagnostic {

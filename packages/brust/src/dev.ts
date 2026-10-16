@@ -3,7 +3,8 @@
 // process: a failed build keeps the old wrangler, and module caches never leak between builds.
 import { join, relative, resolve } from 'node:path'
 import { BuildError } from './build/errors'
-import { defaultIgnored, type WatchLoop, watchLoop } from './dev/watch'
+import { loadBuildConfig } from './build/config'
+import { broadRootWarnings, defaultIgnored, type WatchLoop, watchLoop } from './dev/watch'
 
 export interface DevOptions {
   appRoot: string
@@ -65,8 +66,11 @@ export async function runDev(o: DevOptions): Promise<number> {
   }
 
   // The shared watch/build loop (dev/watch.ts): one rebuild at a time, edits during a rebuild are kept for the next.
+  const extraRoots = await loadBuildConfig(appRoot).then((c) => c.sourceRoots.map((r) => resolve(appRoot, r)), () => [] as string[])
+  for (const w of broadRootWarnings(extraRoots, appRoot)) o.log(w)
   const loop: WatchLoop = watchLoop({
     root: appRoot,
+    extraRoots,
     ignored: (rel) => defaultIgnored(rel, relative(appRoot, dist)),
     debounceMs: DEBOUNCE_MS,
     async run() {

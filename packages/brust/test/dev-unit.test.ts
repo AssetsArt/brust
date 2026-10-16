@@ -8,7 +8,7 @@ import { parseBuildError, parseWarnings } from '../src/dev/diag'
 import { contrast, tierCounts } from '../src/dev/devtools-data'
 import { allowedHosts, inject, sameOriginOrNone } from '../src/dev/proxy'
 import { HOTKEYS, MAX_STATUS_LINES, renderStatus, rowsFor, Tui, tuiMode } from '../src/dev/tui'
-import { defaultIgnored, watchLoop } from '../src/dev/watch'
+import { broadRootWarnings, countFiles, defaultIgnored, watchLoop } from '../src/dev/watch'
 
 const base = { url: 'http://localhost:1337', gen: 3, buildMs: 412, warnings: [] as string[] }
 
@@ -209,4 +209,69 @@ test('devtools data: tierCounts reads dev.json tiers (unknown ids are not counte
   expect(contrast([0, 0, 0], [255, 255, 255])).toBeCloseTo(21, 5)
   expect(contrast([119, 119, 119], [255, 255, 255])).toBeCloseTo(4.48, 1)
   expect(contrast([255, 255, 255], [255, 255, 255])).toBe(1)
+})
+
+test('F273: watchLoop also watches a source root outside the app; its change is reported app-relative', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'brust-roots-'))
+  try {
+    const app = join(base, 'app')
+    const shared = join(base, 'shared')
+    mkdirSync(app)
+    mkdirSync(shared)
+    const seen = new Set<string>()
+    const loop = watchLoop({ root: app, extraRoots: [shared], ignored: (r) => defaultIgnored(r, 'dist'), debounceMs: 20, run: async (c) => void c.forEach((x) => seen.add(x)) })
+    // the watchers arm asynchronously: re-write until the edit is seen
+    for (let i = 0; !seen.has('../shared/util.ts') && i < 60; i++) {
+      writeFileSync(join(shared, 'util.ts'), String(i))
+      await Bun.sleep(50)
+    }
+    expect(seen.has('../shared/util.ts')).toBe(true)
+    // dependency dirs inside a root stay ignored
+    mkdirSync(join(shared, 'node_modules'))
+    writeFileSync(join(shared, 'node_modules', 'x.js'), '1')
+    await Bun.sleep(200)
+    await loop.idle()
+    expect([...seen].some((x) => x.includes('node_modules'))).toBe(false)
+    loop.close()
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test('F273: without extraRoots a file outside the app is not seen (control)', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'brust-roots-'))
+  try {
+    mkdirSync(join(base, 'app'))
+    mkdirSync(join(base, 'shared'))
+    const seen: string[] = []
+    const loop = watchLoop({ root: join(base, 'app'), ignored: () => false, debounceMs: 20, run: async (c) => void seen.push(...c) })
+    for (let i = 0; i < 6; i++) {
+      writeFileSync(join(base, 'shared', 'util.ts'), String(i))
+      await Bun.sleep(50)
+    }
+    await loop.idle()
+    expect(seen).toEqual([])
+    loop.close()
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test('F273: a source root with more than the limit of files is warned about; a small one and node_modules are not counted', () => {
+  const base = mkdtempSync(join(tmpdir(), 'brust-roots-'))
+  try {
+    const big = join(base, 'big')
+    mkdirSync(join(big, 'sub'), { recursive: true })
+    mkdirSync(join(big, 'node_modules'))
+    for (let i = 0; i < 8; i++) writeFileSync(join(big, i % 2 ? 'sub' : '.', `f${i}.ts`), '')
+    for (let i = 0; i < 20; i++) writeFileSync(join(big, 'node_modules', `n${i}.js`), '')
+    expect(countFiles(big, 100)).toBe(8)
+    const warn = broadRootWarnings([big], base, 5)
+    expect(warn.length).toBe(1)
+    expect(warn[0]).toContain('big')
+    expect(warn[0]).toContain('more than 5 files')
+    expect(broadRootWarnings([big], base, 8)).toEqual([])
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
 })

@@ -231,7 +231,7 @@ fn a_rest_spread_on_an_icon_lands_on_the_svg_root() {
 /// R34.77: a spread of anything but the component's own props keeps the island.
 #[test]
 fn a_spread_of_an_unknown_value_on_an_icon_keeps_the_island() {
-    let src = "import { Heart } from 'lucide-react'\nconst x = { id: 'a' }\nexport default function C() { return <p><Heart {...x} /></p> }";
+    let src = "import { Heart } from 'lucide-react'\nfunction make() { return { id: 'a' } }\nconst x = make()\nexport default function C() { return <p><Heart {...x} /></p> }";
     let ir = analyze(src, HashMap::new(), true);
     assert!(!ir.icon_spread);
     assert!(
