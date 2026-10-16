@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import CtxVPage from './CtxVPage'
 import DirNonePage from './DirNonePage'
 import DirProvPage from './DirProvPage'
+import CollPage from './CollPage'
 import FwdPage from './FwdPage'
 import GatePage from './GatePage'
 import HydrPage from './HydrPage'
@@ -35,4 +36,5 @@ export const renderHooks = (): string => html(HooksPage)
 export const renderDir = (): string => html(DirNonePage)
 export const renderDirProvider = (): string => html(DirProvPage)
 export const renderHydr = (): string => html(HydrPage)
+export const renderColl = (): string => html(CollPage)
 export const renderCtxV = (): string => html(CtxVPage)

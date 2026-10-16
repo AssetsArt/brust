@@ -51,14 +51,18 @@ function react(file: string): string {
   return r.stdout.toString()
 }
 
-test('the label is compiled: no island, no Radix or React in the client', () => {
+test('the label is compiled: no island, no Radix or React in the client', async () => {
   const m = JSON.parse(readFileSync(join(app, dist, 'manifest.json'), 'utf8'))
   const tiers = Object.fromEntries(Object.entries(m.components).map(([id, c]: [string, any]) => [id.replace(/_[0-9a-f]+$/, ''), c.tier]))
   // The page, shadcn's Label and Input, Radix's Label.Root (`Root`, native) and `Primitive.label`.
   expect(tiers).toEqual({ page: 'static', label: 'static', input: 'static', root: 'native', primitive: 'static' })
   const client = readdirSync(join(app, dist, 'client')).filter((f) => f.endsWith('.js'))
   expect(client.some((f) => /^island|react/.test(f))).toBe(false)
-  for (const f of client) expect(readFileSync(join(app, dist, 'client', f), 'utf8')).not.toMatch(/radix|createSlot|forwardRef/)
+  // The runtime's feature modules (`rt-*.js`) are all written, and a page links only the ones it uses: `rt-collection.js`
+  // names the DOM attribute `data-radix-collection-item`, which is not Radix code. The page must not link it (load-on-use).
+  const html = await (await fetch(`${base}/`)).text()
+  expect(html).not.toMatch(/rt-collection/)
+  for (const f of client.filter((f) => !/^rt-/.test(f))) expect(readFileSync(join(app, dist, 'client', f), 'utf8')).not.toMatch(/radix|createSlot|forwardRef/)
 })
 
 test("the served HTML is React's, apart from the native host and its x-* attributes", async () => {

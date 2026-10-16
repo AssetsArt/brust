@@ -279,6 +279,10 @@ pub struct ComponentIR {
     /// consumer revived from its source would not share the Provider island's `createContext` (the published dist).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ctx_pkg: bool,
+    /// R34.140: this component asks for the items of its nearest collection (`useCollection(scope)`): its host carries
+    /// `x-collection-use` (the runtime feature loads) and its chunk reads `ctx.items`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uses_collection: bool,
     /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -465,6 +469,7 @@ impl ComponentIR {
             ctx_uses: Vec::new(),
             ctx_scoped: Vec::new(),
             ctx_pkg: false,
+            uses_collection: false,
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),
