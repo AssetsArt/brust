@@ -797,10 +797,19 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         // (or the whole props) it spreads carries it as `children` onto an element or a component. The clone cannot
         // say where that lands (`splice_rest_children` is the forwarder's), so it is refused and the call site keeps
         // its React island, which carries the content.
-        0 if !content.is_empty() && reads_rest_or_props(ir) => Err(
-            "the component spreads its `...rest` (or props) and the content given to it would reach that spread as `children`"
-                .into(),
-        ),
+        // W1d (progress): ONE host element with no children of its own that spreads the rest (or the props) is where React puts
+        // them (explicit JSX children win over a spread's `children`, none are written): the content is that element's.
+        0 if !content.is_empty() && reads_rest_or_props(ir) => {
+            let mut content = Some(content);
+            if put_into_rest_host(&mut ir.template, &mut content) == 1 && content.is_none() {
+                Ok(())
+            } else {
+                Err(
+                    "the component spreads its `...rest` (or props) and the content given to it would reach that spread as `children`"
+                        .into(),
+                )
+            }
+        }
         0 => Ok(()),
         1 => {
             put(&mut ir.template, &mut Some(content));
@@ -808,6 +817,74 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         }
         n => Err(format!("the component reads its children {n} times")),
     }
+}
+
+/// The elements of `n` that spread the rest or the props among their attributes: how many there are, and the content moved
+/// into the first when it has no children of its own and it is the only one (the caller checks the count).
+fn put_into_rest_host(n: &mut Node, content: &mut Option<Vec<Node>>) -> usize {
+    fn spreads_rest(attrs: &[Attr]) -> bool {
+        attrs.iter().any(|a| {
+            matches!(a, Attr::Spread(Expr::Raw(r))
+                if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop }
+                    if name == crate::ir::REST_PROPS || name == "*"))
+        })
+    }
+    fn comp_spreads_rest(props: &[(String, Expr)]) -> bool {
+        props.iter().any(|(k, v)| {
+            k == crate::ir::SPREAD_KEY
+                && matches!(v, Expr::Raw(r)
+                    if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop }
+                        if name == crate::ir::REST_PROPS || name == "*"))
+        })
+    }
+    fn count(n: &Node) -> usize {
+        match n {
+            Node::Element { attrs, children, .. } => {
+                usize::from(spreads_rest(attrs)) + children.iter().map(count).sum::<usize>()
+            }
+            Node::Component { props, children, .. } => {
+                usize::from(comp_spreads_rest(props)) + children.iter().map(count).sum::<usize>()
+            }
+            Node::Fragment(children) => children.iter().map(count).sum(),
+            Node::If { then, else_, .. } => then.iter().chain(else_).map(count).sum(),
+            Node::For { body, .. } => body.iter().map(count).sum(),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => 0,
+        }
+    }
+    fn put(n: &mut Node, content: &mut Option<Vec<Node>>) {
+        match n {
+            Node::Element { attrs, children, .. } => {
+                if spreads_rest(attrs) && children.is_empty() {
+                    if let Some(c) = content.take() {
+                        *children = c;
+                    }
+                } else {
+                    children.iter_mut().for_each(|c| put(c, content));
+                }
+            }
+            Node::Component { props, children, .. } => {
+                if comp_spreads_rest(props) && children.is_empty() {
+                    if let Some(c) = content.take() {
+                        *children = c;
+                    }
+                } else {
+                    children.iter_mut().for_each(|c| put(c, content));
+                }
+            }
+            Node::Fragment(children) => children.iter_mut().for_each(|c| put(c, content)),
+            Node::If { then, else_, .. } => then
+                .iter_mut()
+                .chain(else_.iter_mut())
+                .for_each(|c| put(c, content)),
+            Node::For { body, .. } => body.iter_mut().for_each(|c| put(c, content)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    let total = count(n);
+    if total == 1 {
+        put(n, content);
+    }
+    total
 }
 
 /// F324: whether the template (or a render prop's body) of `ir` reads its `...rest` or its whole props anywhere.
