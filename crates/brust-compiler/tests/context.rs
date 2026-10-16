@@ -1170,3 +1170,48 @@ fn a_rest_aliased_in_each_branch_of_a_type_switch_lowers() {
         page.2
     );
 }
+
+/// W1d PR 3 (ruling A, condition 3; Mellow F1): the props a throwing chain tests are frozen, so a call site that passes a value
+/// that changes on the client falls back (`frozen-prop`), and a literal passes.
+#[test]
+fn the_props_a_throwing_chain_tests_are_frozen_against_a_changing_call_site() {
+    let all = compile("chain-throw-live.tsx");
+    let sw = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("switch"))
+        .expect("switch");
+    assert!(
+        sw.1.frozen_props.iter().any(|p| p == "type"),
+        "{:?}",
+        sw.1.frozen_props
+    );
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.to_lowercase().starts_with("chainthrowlive"))
+        .expect("page");
+    assert!(
+        is_react(&page.1) && page.1.diagnostics.iter().any(|d| d.rule == "frozen-prop"),
+        "{:?} {:?}",
+        page.1.tier,
+        page.1.diagnostics
+    );
+    // a literal at the call site is fine (chain-throw.tsx)
+    let ok = compile("chain-throw.tsx");
+    assert!(ok.iter().all(|(_, ir, _)| !is_react(ir)));
+}
+
+/// N1 (Mellow, Afrojack): only a `const` can alias the rest object.
+#[test]
+fn a_let_alias_of_the_rest_object_is_not_an_alias() {
+    let all = compile("chain-rest-let.tsx");
+    let sw = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("switch"))
+        .expect("switch");
+    assert!(
+        is_react(&sw.1) && sw.1.diagnostics.iter().any(|d| d.rule == "let-var"),
+        "{:?} {:?}",
+        sw.1.tier,
+        sw.1.diagnostics
+    );
+}

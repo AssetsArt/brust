@@ -37,6 +37,8 @@ pub struct BodyDecls {
     /// W1d PR 3: the tests of an early-return chain (`if (a) return A; if (b) return B; throw …`) whose last statement
     /// throws: the render is valid only when one of them holds. `None`: no throw.
     pub throw_unless: Option<Vec<RawExpr>>,
+    /// The props those tests read (frozen: see `ComponentIR::throw_props`).
+    pub throw_props: Vec<String>,
     pub return_expr: Option<Expr>,
     /// `useStore(handle)` bindings in source order (M3-F D7).
     pub stores: Vec<StoreUse>,
@@ -852,6 +854,13 @@ fn read_stmts(
                     out.throw_unless
                         .get_or_insert_with(Vec::new)
                         .push(test.clone());
+                    let mut roots = Vec::new();
+                    prop_roots(&test, &mut roots);
+                    for p in roots {
+                        if !out.throw_props.contains(&p) {
+                            out.throw_props.push(p);
+                        }
+                    }
                     // ruling A (3): a test that can change after mount would make the error a client-side one
                     let body_locals: Vec<&str> = out
                         .derived
@@ -3966,5 +3975,27 @@ fn test_is_static(e: &RawExpr, body_locals: &[&str]) -> bool {
         RawKind::Binary { left, right, .. } => st(left) && st(right),
         RawKind::Cond { test, yes, no } => st(test) && st(yes) && st(no),
         _ => false,
+    }
+}
+
+/// The props `e` reads (`Ident` of kind `Prop`, the root before any path).
+fn prop_roots(e: &RawExpr, out: &mut Vec<String>) {
+    match &e.kind {
+        RawKind::Ident {
+            name,
+            kind: IdentKind::Prop,
+        } => out.push(name.split(['.', '[']).next().unwrap_or(name).to_string()),
+        RawKind::Member { target, .. } => prop_roots(target, out),
+        RawKind::Unary { value, .. } => prop_roots(value, out),
+        RawKind::Binary { left, right, .. } => {
+            prop_roots(left, out);
+            prop_roots(right, out);
+        }
+        RawKind::Cond { test, yes, no } => {
+            prop_roots(test, out);
+            prop_roots(yes, out);
+            prop_roots(no, out);
+        }
+        _ => {}
     }
 }
