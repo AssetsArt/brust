@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderFwd, renderGate, renderInputs, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -51,7 +51,7 @@ const plain = (html: string): string => {
     .replace(/<\/?brust-if\b[^>]*>/g, '')
     .replace(/ (?:x-[\w-]+|data-id)="[^"]*"/g, '')
     .replace(/ x-[\w-]+='[^']*'/g, '')
-    .replace(/(aria-controls|id)="([^"]*)"/g, (_, k: string, v: string) => {
+    .replace(/(aria-controls|aria-describedby|id)="([^"]*)"/g, (_, k: string, v: string) => {
       if (!ids.has(v)) ids.set(v, `ID${ids.size}`)
       return `${k}="${ids.get(v)}"`
     })
@@ -308,6 +308,110 @@ test('a live caller rest reaches the spread attributes after a click (Mellow F1)
   await page.waitForFunction(() => document.querySelector('button[data-n]')?.getAttribute('data-n') === '0')
   await page.getByRole('button', { name: 'inc' }).click()
   await page.waitForFunction(() => document.querySelector('button[data-n]')?.getAttribute('data-n') === '1')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('a prop named like a template name (`loop`, `range`) prints through the props object and equals React', async () => {
+  const html = await (await fetch(`${base}/loop/XYZ`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderLoop('XYZ')))
+  expect(html).toContain('page:XYZ')
+  expect(html).toContain('a:L:R')
+  expect(html).toContain('x-XYZ')
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/loop/XYZ`, { waitUntil: 'domcontentloaded' })
+  const button = page.locator('main button')
+  await page.waitForFunction(() => document.querySelector('main button')?.textContent === '0')
+  await button.click()
+  await page.waitForFunction(() => document.querySelector('main button')?.textContent === '2')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('Radix\'s useId and useCallbackRef (imported, with their React-version fallbacks) lower natively and equal React', async () => {
+  const html = await (await fetch(`${base}/hooks`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderHooks()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/hooks`, { waitUntil: 'domcontentloaded' })
+  const out = page.locator('output')
+  await page.waitForFunction(() => document.querySelectorAll('output')[1]?.textContent === 'idle')
+  await page.getByRole('button', { name: 'b' }).click()
+  await page.waitForFunction(() => document.querySelectorAll('output')[1]?.textContent === 'done')
+  expect(await out.nth(0).textContent()).toBe('idle')
+  // the id and its description stay paired
+  const pair = await page.locator('button').nth(1).evaluate((b) => [b.id, b.getAttribute('aria-describedby')])
+  expect(pair[1]).toBe(`${pair[0]}-log`)
+  expect(pair[0]).toMatch(/^radix-/)
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('a context with a literal default read as a value (Radix\'s useDirection): the default without a Provider, the Provider\'s value under one, equal to React', async () => {
+  for (const [path, want, expected] of [['/dir', ['ltr', 'rtl'], renderDir], ['/dir-provider', ['rtl', 'ltr'], renderDirProvider]] as const) {
+    const html = await (await fetch(`${base}${path}`)).text()
+    expect(html).not.toContain('brust-island')
+    expect(plain(html)).toBe(plain(expected()))
+    const page = await browser.newPage()
+    const errors: string[] = []
+    page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+    await page.goto(`${base}${path}`, { waitUntil: 'domcontentloaded' })
+    const boxes = page.locator('main > div')
+    await page.waitForFunction(() => document.querySelectorAll('main > div').length === 2)
+    expect(await boxes.nth(0).getAttribute('dir')).toBe(want[0])
+    expect(await boxes.nth(1).getAttribute('dir')).toBe(want[1])
+    await boxes.nth(0).click()
+    await page.waitForFunction(() => document.querySelector('main > div')?.getAttribute('data-n') === '1')
+    // the direction survives the update
+    expect(await boxes.nth(0).getAttribute('dir')).toBe(want[0])
+    expect(errors).toEqual([])
+    await page.close()
+  }
+}, 60_000)
+
+test('useIsHydrated (useSyncExternalStore of the hydration shape): false in the server markup like React, true once mounted, and the effect sees it', async () => {
+  const html = await (await fetch(`${base}/hydr`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderHydr()))
+  expect(html).toContain('data-h="n"')
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/hydr`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('main button')?.getAttribute('data-h') === 'y')
+  await page.waitForFunction(() => document.querySelector('main button')?.getAttribute('data-seen') === 'effect')
+  await page.locator('main button').click()
+  await page.waitForFunction(() => document.querySelector('main button')?.textContent === '1')
+  expect(await page.locator('main button').getAttribute('data-h')).toBe('y')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('useIsHydrated: an instance that mounts after the page booted (an x-if clone) starts true, like a React client mount; the server-rendered one runs its effect with false then true', async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/hydr-if`, { waitUntil: 'domcontentloaded' })
+  const first = page.locator('output[data-name="first"]')
+  await page.waitForFunction(() => document.querySelector('output[data-name="first"]')?.getAttribute('data-log') === '01')
+  expect(await first.getAttribute('data-h')).toBe('y')
+  await page.getByRole('button', { name: 'toggle' }).click()
+  const late = page.locator('output[data-name="late"]')
+  await late.waitFor()
+  // true from its first render, and its effect ran once, with true
+  await page.waitForFunction(() => document.querySelector('output[data-name="late"]')?.getAttribute('data-log') === '1')
+  expect(await late.getAttribute('data-h')).toBe('y')
+  expect(await first.getAttribute('data-log')).toBe('01')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

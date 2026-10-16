@@ -270,6 +270,10 @@ pub struct ComponentIR {
     /// consumer revived from its source would not share the Provider island's `createContext` (the published dist).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ctx_pkg: bool,
+    /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
+    /// reads or passes on: with no Provider above the page, the context's value is that default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctx_defaults: Vec<(String, Literal)>,
     /// F174: module functions proven to return a primitive (`analyze::plain_fn`), callable under a lowered Provider.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plain_fns: Vec<String>,
@@ -310,6 +314,11 @@ pub struct ComponentIR {
     /// transitive): directives in the slot content its caller gives would be bound by that host, not by the caller.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hosts_children: bool,
+    /// F295: this component prints a value it took once at mount (a snapshot cell) where nothing re-applies it on the
+    /// client (through a spread), so an instance of it must mount with its caller and never again (transitive). The
+    /// text says what, for the call site that cannot promise it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount_once: Option<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -440,6 +449,7 @@ impl ComponentIR {
             fixed_props: Vec::new(),
             ctx_uses: Vec::new(),
             ctx_pkg: false,
+            ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),
             bound_names: Default::default(),
@@ -450,6 +460,7 @@ impl ComponentIR {
             live_forwards: Vec::new(),
             repeats_children: false,
             hosts_children: false,
+            mount_once: None,
             state: vec![],
             derived: vec![],
             effects: vec![],

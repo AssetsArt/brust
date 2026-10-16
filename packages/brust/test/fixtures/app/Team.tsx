@@ -1,7 +1,8 @@
 // useReducer ⇒ react tier ⇒ ssr job on ItemPage.
-import { useReducer } from 'react'
+import { useReducer, useTransition } from 'react'
 
 export default function Team(props: { team: string[]; title: string }) {
+  useTransition()
   const [n, bump] = useReducer((x: number) => x + 1, 0)
   return (
     <div className="team">

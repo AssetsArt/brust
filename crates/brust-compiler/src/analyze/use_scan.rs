@@ -30,19 +30,31 @@ const PRIMITIVE_RESULT: &[&str] = &["some", "every", "includes", "indexOf", "joi
 
 /// Inner indexes of the bindings with a use that is not proven read-only.
 pub fn unsafe_to_fold(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u32> {
-    scan(ast, names, false)
+    scan(ast, names, false, false)
 }
 
 /// F266: the bindings with a use that is not a spread, a member read or an argument of a function the component was
 /// given (a prop): a `const` object literal outside this set is never written, handed on or aliased, so its literal
 /// stands for it wherever it is read.
 pub fn unsafe_objects(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u32> {
-    scan(ast, names, true)
+    scan(ast, names, true, false)
 }
 
-fn scan(ast: &js_ast::Ast<'_>, names: &NameTable<'_>, objects: bool) -> HashSet<u32> {
+/// [`unsafe_objects`] where a member read of a primitive literal out of a module-level object literal (`Direction.LTR`)
+/// is not an escape of the object (R34.142, for the constants an inlined hook of another module reads).
+pub fn unsafe_objects_literal_reads(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u32> {
+    scan(ast, names, true, true)
+}
+
+fn scan(
+    ast: &js_ast::Ast<'_>,
+    names: &NameTable<'_>,
+    objects: bool,
+    literal_reads: bool,
+) -> HashSet<u32> {
     let mut s = Scan {
         objects,
+        literal_reads,
         top: HashSet::new(),
         names,
         bad: HashSet::new(),
@@ -124,6 +136,8 @@ struct Scan<'x, 'a> {
     names: &'x NameTable<'a>,
     /// F266 mode: an argument of a function that is not declared at module level (a prop of the component) is a read.
     objects: bool,
+    /// A member read of a primitive literal of a module-level object literal does not make the object escape.
+    literal_reads: bool,
     /// Bindings declared at module level (functions, consts).
     top: HashSet<u32>,
     bad: HashSet<u32>,
@@ -316,6 +330,9 @@ impl Scan<'_, '_> {
                     self.mark(id.ref_)
                 }
             }
+            // `X.a` reading a primitive literal out of a module-level object literal (`Direction.LTR`): a primitive aliases
+            // nothing, so the object does not escape through it. A write still marks it (`writing`).
+            E::EDot(_) if self.literal_reads && esc && !self.writing && self.reads_literal(e) => {}
             E::EDot(d) => self.expr(
                 &d.target,
                 esc && (self.writing || d.name.slice() != b"length"),

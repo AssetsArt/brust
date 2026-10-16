@@ -98,7 +98,7 @@ function polyfillApp(pkg: string, spec: string, use: string): string {
   writeFileSync(join(dir, 'node_modules', pkg, 'index.js'), 'export const readFileSync = () => "", EventEmitter = class {}\n')
   writeFileSync(
     join(dir, 'Island.tsx'),
-    `import { ${use} } from '${spec}'\nimport { useReducer } from 'react'\nexport default function Island() {\n  const [n, bump] = useReducer((x: number) => x + 1, 0)\n  return <b onClick={bump} title={String(${use})}>{n}</b>\n}\n`,
+    `import { ${use} } from '${spec}'\nimport { useReducer, useTransition } from 'react'\nexport default function Island() {\n  useTransition(); const [n, bump] = useReducer((x: number) => x + 1, 0)\n  return <b onClick={bump} title={String(${use})}>{n}</b>\n}\n`,
   )
   writeFileSync(join(dir, 'routes.tsx'), "import Island from './Island'\nexport const routes = [{ path: '/', Component: Island }]\n")
   return dir

@@ -436,14 +436,14 @@ fn hook_calling_hook_and_recursion() {
 #[test]
 fn unsupported_hook_inside_a_custom_hook_names_the_chain() {
     let ir = ir(
-        "import { useReducer } from 'react'\nfunction useCart() {\n  const [s, d] = useReducer((a: number, b: number) => a + b, 0)\n  return s\n}\nexport default function C() { const s = useCart(); return <p>{s}</p> }",
+        "import { useTransition } from 'react'\nfunction useCart() {\n  const [s, d] = useTransition()\n  return s\n}\nexport default function C() { const s = useCart(); return <p>{s}</p> }",
     );
     let f = fallbacks(&ir);
     assert_eq!(f.len(), 1, "{f:?}");
     assert_eq!(f[0].rule, "hook-unsupported");
     assert_eq!(
         f[0].message,
-        "hook useReducer is not supported (in custom hook useCart, H.tsx:3)"
+        "hook useTransition is not supported (in custom hook useCart, H.tsx:3)"
     );
     assert_eq!((f[0].line, f[0].col), (6, 41));
 }
@@ -550,11 +550,27 @@ fn a_hook_inside_an_imported_module_keeps_that_modules_rules() {
     assert!(fallbacks(&ok).is_empty(), "{:?}", ok.diagnostics);
     assert_eq!(ok.tier, Tier::Native);
     assert_eq!(ok.state[0].name, "n_useInner1");
-    let bad = project(
+    // R34.142: a never-written module `const` of a literal is folded into the hook that reads it ...
+    let folded = project(
         &[
             (
                 "h.ts",
                 "const LIMIT = 3\nfunction useInner() { return LIMIT }\nexport function useOuter() { const l = useInner(); return l }\n",
+            ),
+            (
+                "C.tsx",
+                "import { useOuter } from './h'\nexport default function C() { const l = useOuter(); return <p>{l}</p> }",
+            ),
+        ],
+        "C.tsx",
+    );
+    assert!(fallbacks(&folded).is_empty(), "{:?}", folded.diagnostics);
+    // ... any other module name is still not the component's to read: a `let` can change between calls
+    let bad = project(
+        &[
+            (
+                "h.ts",
+                "let LIMIT = 3\nfunction useInner() { return LIMIT }\nexport function useOuter() { const l = useInner(); return l }\n",
             ),
             (
                 "C.tsx",

@@ -57,6 +57,10 @@ pub struct Module<'m, 'x> {
     pub foreign: bool,
 }
 
+/// R34.142: the field a context's whole value travels as, for a context declared with a literal default that a consumer
+/// reads as a value (`const dir = useContext(DirectionContext)`, not `ctx.field`) and a Provider hands one expression to.
+pub(crate) const WHOLE_FIELD: &str = "__whole";
+
 /// How deep custom hooks may call custom hooks.
 const MAX_HOOK_DEPTH: usize = 8;
 
@@ -76,6 +80,13 @@ struct Inline {
     /// Every name the component's module declares (imports included): a global a foreign
     /// hook reads must not be among them, or the inlined code would read that binding.
     root_module: HashSet<String>,
+    /// F286 / F285: the generated locals that stand for a hook call hoisted out of a returned expression (a handler, a
+    /// state cell or its setter, a dispatch). A hook result handed out inside an object or array that the call site binds
+    /// WHOLE (`const t = useToggle()`) would be one derived value naming them, which a per-request job cannot (F289).
+    hook_results: HashSet<String>,
+    /// R34.142: addresses of the `useId()` calls that seed a state nothing updates (`drop_inert_id_effects`); the state
+    /// is that id.
+    inert_id_states: HashSet<usize>,
 }
 
 impl BodyDecls {
@@ -338,14 +349,18 @@ pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
             let E::ECall(call) = &value.data else {
                 continue;
             };
-            if react_hook_name(call, names).as_deref() != Some("useState") {
+            // F285: a reducer's state is a state cell; its dispatch is a handler, not a setter.
+            let hook = react_hook_name(call, names);
+            if !matches!(hook.as_deref(), Some("useState" | "useReducer")) {
                 continue;
             }
             let items = arr.items();
             if let Some(B::BIdentifier(id)) = items.first().map(|i| i.binding.data) {
                 names.mark_state(id.r#ref);
             }
-            if let Some(B::BIdentifier(id)) = items.get(1).map(|i| i.binding.data) {
+            if hook.as_deref() == Some("useState")
+                && let Some(B::BIdentifier(id)) = items.get(1).map(|i| i.binding.data)
+            {
                 names.mark_setter(id.r#ref);
             }
         }
@@ -719,11 +734,55 @@ fn read_stmts(
                 if let Some(v) = &ret.value {
                     hoist_ids(v, r, out);
                 }
-                returned = Some(ret.value.map(|v| returned_value(&v, r, out)));
+                returned = Some(ret.value.map(|v| {
+                    // R34.143: `return useSyncExternalStore(...)` of the hydration shape is the hook's one state
+                    if !out.inline.stack.is_empty()
+                        && let Some((_, call, true)) = hook_call(&v, r.names)
+                        && react_hook_name(call, r.names).as_deref() == Some("useSyncExternalStore")
+                        && hydration_shape(call, m, r.names)
+                        && !out.classified_hooks.contains(&call_addr(call))
+                    {
+                        out.classified_hooks.insert(call_addr(call));
+                        let mut n = 1;
+                        let name = loop {
+                            let name = format!("ret{n}_useSyncExternalStore");
+                            if out.inline.taken.insert(name.clone()) {
+                                break name;
+                            }
+                            n += 1;
+                        };
+                        let vloc = loc_of(&v);
+                        hydrated_state(out, name.clone(), vloc);
+                        return RawExpr {
+                            loc: vloc,
+                            kind: RawKind::Ident {
+                                name,
+                                kind: IdentKind::State,
+                            },
+                        };
+                    }
+                    returned_value(&v, r, out, m)
+                }));
             }
             // S2 (R34.104): `if (cond) { console.error(…) }` only logs (Radix's dev validation of its props): it is not
             // part of the render, so it is left out; any other effect of a branch keeps the control-flow fallback.
             S::SIf(i) if console_only_if(i, r.names) => {}
+            // R34.142: `if (typeof useReactInsertionEffect === 'function') { A } else { B }` where the name is React's own
+            // hook (a module const read off the React namespace): React exports its hooks as functions, so the test is
+            // decided and only the branch that runs is read (Radix's `useCallbackRef`, written for React versions that
+            // lack `useInsertionEffect`).
+            S::SIf(i) if let Some(taken) = hook_presence_test(&i.test, r.names) => {
+                let branch = if taken { Some(i.yes) } else { i.no };
+                if let Some(b) = branch {
+                    let inner: Vec<js_ast::Stmt> = match &b.data {
+                        S::SBlock(blk) => blk.stmts.slice().to_vec(),
+                        _ => vec![b],
+                    };
+                    if let Some(v) = read_stmts(&inner, r, out, m) {
+                        returned = Some(v);
+                    }
+                }
+            }
             S::SIf(_)
             | S::SFor(_)
             | S::SForIn(_)
@@ -758,7 +817,12 @@ fn read_stmts(
 /// The value a `return` hands out. B2: inside a custom hook, `return React.useCallback(…)` (Radix's `useComposedRefs`)
 /// is the same hook as `const x = useCallback(…); return x`: the call is read under a generated name that the return
 /// then reads. Any other returned expression is read as it is.
-fn returned_value(v: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) -> RawExpr {
+fn returned_value(
+    v: &js_ast::Expr,
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+) -> RawExpr {
     if !out.inline.stack.is_empty()
         && let Some((hook, call, true)) = hook_call(v, r.names)
         && matches!(
@@ -786,6 +850,73 @@ fn returned_value(v: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls)
                 name,
                 kind: IdentKind::Local,
             },
+        };
+    }
+    // F286 / F285: `return useState(…)` / `return useReducer(…)` of a custom hook is the pair the call site destructures.
+    if !out.inline.stack.is_empty()
+        && let Some((hook, call, true)) = hook_call(v, r.names)
+        && matches!(hook.as_str(), "useState" | "useReducer")
+        && !out.classified_hooks.contains(&call_addr(call))
+    {
+        out.classified_hooks.insert(call_addr(call));
+        let vloc = loc_of(v);
+        let args: Vec<js_ast::Expr> = call.args.to_vec();
+        let mut n = 1;
+        let (state, set) = loop {
+            let state = format!("ret{n}_{}", clean_name(&hook));
+            let set = format!("{state}_set");
+            if !out.inline.taken.contains(&state) && !out.inline.taken.contains(&set) {
+                out.inline.taken.insert(state.clone());
+                out.inline.taken.insert(set.clone());
+                break (state, set);
+            }
+            n += 1;
+        };
+        let ident = |name: &str, kind: IdentKind| RawExpr {
+            loc: vloc,
+            kind: RawKind::Ident {
+                name: name.to_string(),
+                kind,
+            },
+        };
+        out.inline.hook_results.insert(state.clone());
+        out.inline.hook_results.insert(set.clone());
+        if hook == "useState" {
+            let init = match args.first() {
+                Some(a) => r.expr(a),
+                None => undefined_at(vloc),
+            };
+            out.state.push(StateDecl {
+                name: state.clone(),
+                setter: Some(set.clone()),
+                init: Expr::Raw(init),
+                late: false,
+            });
+            return RawExpr {
+                loc: vloc,
+                kind: RawKind::Array(vec![
+                    ident(&state, IdentKind::State),
+                    ident(&set, IdentKind::Setter),
+                ]),
+            };
+        }
+        // A reducer: the second slot is the dispatch handler (a plain local to its readers).
+        let dispatch = set;
+        reducer_hook(
+            r,
+            out,
+            m,
+            &args,
+            state.clone(),
+            Some(dispatch.clone()),
+            vloc,
+        );
+        return RawExpr {
+            loc: vloc,
+            kind: RawKind::Array(vec![
+                ident(&state, IdentKind::State),
+                ident(&dispatch, IdentKind::Local),
+            ]),
         };
     }
     r.expr(v)
@@ -853,6 +984,7 @@ fn simple_hook(
                     name,
                     setter: None,
                     init: Expr::Raw(init),
+                    late: false,
                 });
             } else {
                 out.refs.push(RefDecl {
@@ -872,34 +1004,234 @@ fn simple_hook(
     }
 }
 
-/// R34.120: a `useId()` in the returned expression that runs on every render (`contentId={useId()}`) is the same hook
-/// call as `const id = useId()` before the return, in source order. Each is given a generated local (a name no module
-/// symbol takes) that the reader prints in its place. A call in a conditional, short-circuited or looped position is
-/// left alone, and `nested_hooks` refuses it (`hook-in-expression`).
+/// F285: `useReducer(reducer, init[, initFn])` as a state cell and a dispatch handler:
+/// `const [s, set] = useState(init); const dispatch = (a) => set((p) => reducer(p, a))`. The handler is one declaration
+/// of the component, so `dispatch` keeps one identity across renders, like a setter. `reducer` is declared once as a
+/// handler of its own (so it reads the instance's current props and state, as React's latest-render reducer does) and is
+/// required to be a PURE function the compiler can read (`reducer::is_pure`): an inline arrow or function, or a function
+/// declared in this module. Anything else is the named refusal `reducer-shape` / `reducer-impure` (the component stays
+/// React).
+fn reducer_hook(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+    args: &[js_ast::Expr],
+    state: String,
+    dispatch: Option<String>,
+    vloc: u32,
+) {
+    let refuse = |out: &mut BodyDecls, rule: &str, why: &str| {
+        out.fallback(
+            rule,
+            format!("useReducer: {why}"),
+            vloc,
+            "pass an inline reducer, or one declared in this module, that returns the next state from (state, action) without side effects",
+        )
+    };
+    let (Some(reducer), true) = (args.first(), args.len() <= 3) else {
+        return refuse(out, "reducer-shape", "needs a reducer and an initial state");
+    };
+    // The reducer's own function: inline, or a module-level declaration or const arrow.
+    let names = &*r.names;
+    let verdict = |f_args: &[js_ast::G::Arg], f_body: &[js_ast::Stmt]| {
+        crate::analyze::reducer::is_pure(names, f_args, f_body)
+    };
+    let pure: Option<bool> = match &reducer.data {
+        E::EArrow(a) if !a.is_async => Some(verdict(a.args.slice(), a.body.stmts.slice())),
+        E::EFunction(f)
+            if !f.func.flags.contains(js_ast::flags::Function::IsAsync)
+                && !f.func.flags.contains(js_ast::flags::Function::IsGenerator) =>
+        {
+            Some(verdict(f.func.args.slice(), f.func.body.stmts.slice()))
+        }
+        E::EIdentifier(id) if !m.foreign => {
+            let id = id.ref_;
+            match module_fn(m.ast, names, id) {
+                Some((_, f)) => Some(verdict(f.args.slice(), f.body.stmts.slice())),
+                None => match crate::analyze::stores::Module::new(m.ast).const_value(id) {
+                    Some(js_ast::Expr {
+                        data: E::EArrow(a), ..
+                    }) if !a.is_async => Some(verdict(a.args.slice(), a.body.stmts.slice())),
+                    _ => None,
+                },
+            }
+        }
+        _ => None,
+    };
+    let Some(pure) = pure else {
+        return refuse(
+            out,
+            "reducer-shape",
+            "the reducer is not an inline function or a function declared in this module",
+        );
+    };
+    if !pure {
+        return refuse(
+            out,
+            "reducer-impure",
+            "the reducer is not provably pure (an assignment, a loop, `throw`, `new`, a default value or a call it cannot see)",
+        );
+    }
+    let init = match (args.get(1), args.get(2)) {
+        (Some(a), None) => r.expr(a),
+        (None, _) => undefined_at(vloc),
+        // `useReducer(reducer, arg, init)`: the initial state is `init(arg)`.
+        (Some(a), Some(f)) => {
+            let callee = r.expr(f);
+            if !matches!(callee.kind, RawKind::Ident { .. }) {
+                return refuse(
+                    out,
+                    "reducer-shape",
+                    "the init function is not a named function",
+                );
+            }
+            RawExpr {
+                loc: vloc,
+                kind: RawKind::Call {
+                    callee: Box::new(callee),
+                    args: vec![r.expr(a)],
+                },
+            }
+        }
+    };
+    let mut taken = |base: &str| {
+        let mut n = 1;
+        loop {
+            let name = format!("rd{n}_{base}");
+            if out.inline.taken.insert(name.clone()) {
+                break name;
+            }
+            n += 1;
+        }
+    };
+    let dispatch_name = dispatch.clone().unwrap_or_else(|| "dispatch".into());
+    let set = taken(&format!("{}_set", clean_name(&dispatch_name)));
+    let reduce = taken(&format!("{}_fn", clean_name(&dispatch_name)));
+    out.state.push(StateDecl {
+        name: state,
+        setter: Some(set.clone()),
+        init: Expr::Raw(init),
+        late: false,
+    });
+    let reducer_body = r.expr(reducer);
+    out.handlers.push(HandlerDecl {
+        name: reduce.clone(),
+        body: reducer_body,
+        item_scoped: Vec::new(),
+        forwarded: None,
+    });
+    let Some(dispatch) = dispatch else { return };
+    let id = |name: &str, kind: IdentKind| RawExpr {
+        loc: vloc,
+        kind: RawKind::Ident {
+            name: name.to_string(),
+            kind,
+        },
+    };
+    let next = RawExpr {
+        loc: vloc,
+        kind: RawKind::Arrow {
+            params: vec!["_p".into()],
+            body: ArrowBody::Expr(Box::new(RawExpr {
+                loc: vloc,
+                kind: RawKind::Call {
+                    callee: Box::new(id(&reduce, IdentKind::Local)),
+                    args: vec![id("_p", IdentKind::Unknown), id("_a", IdentKind::Unknown)],
+                },
+            })),
+            captures: vec![(reduce.clone(), IdentKind::Local)],
+        },
+    };
+    let call = RawExpr {
+        loc: vloc,
+        kind: RawKind::Arrow {
+            params: vec!["_a".into()],
+            body: ArrowBody::Expr(Box::new(RawExpr {
+                loc: vloc,
+                kind: RawKind::Call {
+                    callee: Box::new(id(&set, IdentKind::Setter)),
+                    args: vec![next],
+                },
+            })),
+            captures: vec![
+                (set.clone(), IdentKind::Setter),
+                (reduce.clone(), IdentKind::Local),
+            ],
+        },
+    };
+    out.handlers.push(HandlerDecl {
+        name: dispatch,
+        body: call,
+        item_scoped: Vec::new(),
+        forwarded: None,
+    });
+}
+
+/// R34.120 / F286: a hook call in the returned expression that runs on every render (`contentId={useId()}`, a custom
+/// hook's `return { ref: useCallback(…) }`, `return useCallback(…)`) is the same hook call as `const x = useHook(…)`
+/// before the return, in source order. Each is given a generated local (a name no module symbol takes) that the reader
+/// prints in its place. The hooks are the ones whose result is one named value (`useId`, `useCallback`, `useMemo`,
+/// `useRef`). A call in a conditional, short-circuited or looped position, or inside a function, is left alone, and
+/// `nested_hooks` refuses it (`hook-in-expression`).
 fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) {
     let mut found = Vec::new();
     unconditional_calls(value, &mut found);
     for call in found {
-        if react_hook_name(call, r.names).as_deref() != Some("useId") {
+        let Some(hook) = react_hook_name(call, r.names) else {
+            continue;
+        };
+        if !matches!(
+            hook.as_str(),
+            "useId" | "useCallback" | "useMemo" | "useRef"
+        ) {
             continue;
         }
         let addr = call_addr(call);
-        if !call.args.is_empty() || r.hoisted_calls.contains_key(&addr) {
+        if (hook == "useId" && !call.args.is_empty()) || r.hoisted_calls.contains_key(&addr) {
             continue;
         }
-        let mut n = out.id_bindings.len() + 1;
+        if hook == "useId" {
+            let mut n = out.id_bindings.len() + 1;
+            let name = loop {
+                let name = format!("_id{n}");
+                if out.inline.taken.insert(name.clone()) {
+                    break name;
+                }
+                n += 1;
+            };
+            out.classified_hooks.insert(addr);
+            out.uses_id = true;
+            out.id_bindings.push(name.clone());
+            r.hoisted_calls.insert(addr, name);
+            continue;
+        }
+        // Not `use…`: the name must not read as a hook call where the caller invokes the result.
+        let mut n = 1;
         let name = loop {
-            let name = format!("_id{n}");
+            let name = format!("hoist{n}_{}", clean_name(&hook));
             if out.inline.taken.insert(name.clone()) {
                 break name;
             }
             n += 1;
         };
         out.classified_hooks.insert(addr);
-        out.uses_id = true;
-        out.id_bindings.push(name.clone());
+        let args: Vec<js_ast::Expr> = call.args.to_vec();
+        simple_hook(
+            r,
+            out,
+            &hook,
+            Some(name.clone()),
+            &args,
+            loc_of_call(call),
+            false,
+        );
+        out.inline.hook_results.insert(name.clone());
         r.hoisted_calls.insert(addr, name);
     }
+}
+
+fn loc_of_call(call: &js_ast::E::Call) -> u32 {
+    call.target.loc.start.max(0) as u32
 }
 
 /// The calls of `e` that run on every evaluation of it, in source order: not inside a function, the branches of a
@@ -1306,6 +1638,273 @@ fn console_only(stmt: &js_ast::Stmt, names: &NameTable<'_>) -> bool {
 }
 
 /// `if (test) A else B` where every branch only logs.
+/// R34.142: Radix's `useId` seeds `const [id, setId] = useState(useReactId())` (React's `useId`, always a string) and keeps a
+/// client-only fallback for React versions without it: `useLayoutEffect(() => { if (!x) setId((r) => r ?? String(count++)) })`.
+/// `setId((r) => r ?? …)` returns `r` untouched while `r` is not nullish, and a state seeded by `useId()` never is, so
+/// such an effect changes nothing (React bails out of the update). When every use of the setter is in effects of exactly
+/// that shape, the effects are dropped (the module counter they read goes with them) and the state is the id
+/// (`inert_id_states`). Anything else, any other use of the setter, leaves the body as written.
+fn drop_inert_id_effects(
+    body: Vec<js_ast::Stmt>,
+    names: &NameTable<'_>,
+    inert: &mut HashSet<usize>,
+) -> (Vec<js_ast::Stmt>, Vec<(Option<js_ast::Ref>, js_ast::Ref)>) {
+    // the setters of `useState(useId())`, with the address of that `useId()` call
+    let mut setters: Vec<(js_ast::Ref, usize)> = Vec::new();
+    let mut pairs: Vec<(Option<js_ast::Ref>, js_ast::Ref)> = Vec::new();
+    for st in &body {
+        let S::SLocal(l) = &st.data else { continue };
+        for d in l.decls.iter() {
+            let (Some(v), B::BArray(arr)) = (&d.value, d.binding.data) else {
+                continue;
+            };
+            let E::ECall(c) = &v.data else { continue };
+            if react_hook_name(c, names).as_deref() != Some("useState") {
+                continue;
+            }
+            let Some(E::ECall(seed)) = c.args.first().map(|a| &a.data) else {
+                continue;
+            };
+            if !seed.args.is_empty() || react_hook_name(seed, names).as_deref() != Some("useId") {
+                continue;
+            }
+            if let Some(B::BIdentifier(id)) = arr.items().get(1).map(|i| i.binding.data) {
+                setters.push((id.r#ref, call_addr(seed)));
+                let state = match arr.items().first().map(|i| i.binding.data) {
+                    Some(B::BIdentifier(v)) => Some(v.r#ref),
+                    _ => None,
+                };
+                pairs.push((state, id.r#ref));
+            }
+        }
+    }
+    if setters.is_empty() {
+        return (body, Vec::new());
+    }
+    let is_setter = |e: &js_ast::Expr| {
+        crate::analyze::names::ident_ref(e)
+            .is_some_and(|r| setters.iter().any(|(s, _)| names.same(*s, r)))
+    };
+    // `setId((r) => r ?? X)`
+    let identity_update = |e: &js_ast::Expr| -> bool {
+        let E::ECall(c) = &e.data else { return false };
+        if !is_setter(&c.target) || c.args.len() != 1 {
+            return false;
+        }
+        let E::EArrow(a) = &c.args[0].data else {
+            return false;
+        };
+        let [arg] = a.args.slice() else { return false };
+        let (B::BIdentifier(p), None) = (arg.binding.data, arg.default) else {
+            return false;
+        };
+        let Some(body) = expr_body(a) else {
+            return false;
+        };
+        matches!(&body.data, E::EBinary(b)
+            if b.op == js_ast::OpCode::BinNullishCoalescing
+                && crate::analyze::names::ident_ref(&b.left).is_some_and(|l| names.same(l, p.r#ref)))
+    };
+    fn update_stmt(st: &js_ast::Stmt, f: &dyn Fn(&js_ast::Expr) -> bool) -> bool {
+        match &st.data {
+            S::SExpr(x) => f(&x.value),
+            // the test runs with the update: only an effect-free one may go with it
+            // the test runs with the update: only an effect-free one may go with it
+            S::SIf(i) => pure_expr(&i.test) && update_stmt(&i.yes, f) && i.no.is_none(),
+            S::SBlock(b) => b.stmts.slice().iter().all(|x| update_stmt(x, f)),
+            _ => false,
+        }
+    }
+    let inert_effect = |st: &js_ast::Stmt| -> bool {
+        let S::SExpr(x) = &st.data else { return false };
+        let E::ECall(c) = &x.value.data else {
+            return false;
+        };
+        if !matches!(
+            react_hook_name(c, names).as_deref(),
+            Some("useEffect" | "useLayoutEffect" | "useInsertionEffect")
+        ) {
+            return false;
+        }
+        let Some(E::EArrow(a)) = c.args.first().map(|a| &a.data) else {
+            return false;
+        };
+        let stmts = a.body.stmts.slice();
+        !stmts.is_empty() && stmts.iter().all(|s| update_stmt(s, &identity_update))
+    };
+    let kept: Vec<js_ast::Stmt> = body.iter().filter(|s| !inert_effect(s)).copied().collect();
+    if kept.len() == body.len() {
+        return (body, Vec::new());
+    }
+    // every use of a setter that remains is a real update: leave the hook as written
+    let declares_setter = |st: &js_ast::Stmt| {
+        matches!(&st.data, S::SLocal(l) if l.decls.iter().any(|d| matches!(d.binding.data,
+            B::BArray(arr) if matches!(arr.items().get(1).map(|i| i.binding.data),
+                Some(B::BIdentifier(id)) if setters.iter().any(|(s, _)| names.same(*s, id.r#ref))))))
+    };
+    let mut w = Walk::default();
+    let rest: Vec<js_ast::Stmt> = kept
+        .iter()
+        .filter(|s| !declares_setter(s))
+        .copied()
+        .collect();
+    w.stmts(&rest);
+    if setters
+        .iter()
+        .any(|(s, _)| w.used.iter().any(|u| names.same(*u, *s)))
+    {
+        return (body, Vec::new());
+    }
+    inert.extend(setters.iter().map(|(_, a)| *a));
+    (kept, pairs)
+}
+
+/// R34.143: the call is `useSyncExternalStore(subscribe, () => true, () => false)` with a `subscribe` that subscribes to
+/// nothing (returns a no-op unsubscribe): the snapshot is `false` where there is no client (the server render and the
+/// hydration pass) and `true` once mounted. This is the only shape lowered; any other store stays `hook-unsupported`.
+fn hydration_shape(call: &js_ast::E::Call, m: Module<'_, '_>, names: &NameTable<'_>) -> bool {
+    let [subscribe, client, server] = call.args.as_slice() else {
+        return false;
+    };
+    let returns = |e: &js_ast::Expr, want: bool| match &e.data {
+        E::EArrow(a) if a.args.is_empty() && !a.is_async => {
+            expr_body(a).is_some_and(|b| matches!(&b.data, E::EBoolean(x) if x.value == want))
+        }
+        _ => false,
+    };
+    // `subscribe` returns an unsubscribe that does nothing
+    let returns_noop = |stmts: &[js_ast::Stmt]| {
+        matches!(stmts, [only] if matches!(&only.data, S::SReturn(r)
+            if r.value.as_ref().is_some_and(crate::analyze::names::is_noop_fn)))
+    };
+    let silent = match &subscribe.data {
+        E::EArrow(a) => a.args.is_empty() && !a.is_async && returns_noop(a.body.stmts.slice()),
+        E::EFunction(f) => f.func.args.is_empty() && returns_noop(f.func.body.stmts.slice()),
+        _ => crate::analyze::names::ident_ref(subscribe)
+            .and_then(|id| module_fn(m.ast, names, id))
+            .is_some_and(|(_, f)| f.args.is_empty() && returns_noop(f.body.stmts.slice())),
+    };
+    silent && returns(client, true) && returns(server, false)
+}
+
+/// R34.143: a state `name` that is `false` until the component is mounted and `true` after: React's `isHydrated`.
+fn hydrated_state(out: &mut BodyDecls, name: String, loc: u32) {
+    let mut n = 1;
+    let set = loop {
+        let set = format!("{name}_set{n}");
+        if out.inline.taken.insert(set.clone()) {
+            break set;
+        }
+        n += 1;
+    };
+    let lit = |b: bool| RawExpr {
+        loc,
+        kind: RawKind::Lit(crate::ir::Literal::Bool(b)),
+    };
+    out.state.push(StateDecl {
+        name,
+        setter: Some(set.clone()),
+        init: Expr::Raw(lit(false)),
+        late: true,
+    });
+    out.effects.push(EffectDecl {
+        // set in a microtask: the effects of the component that start with this one see the render's value (`false`)
+        // first, as in React, where an effect closes over the render it ran for; the browser does not paint in between
+        body: RawExpr {
+            loc,
+            kind: RawKind::Arrow {
+                params: Vec::new(),
+                body: ArrowBody::Expr(Box::new(RawExpr {
+                    loc,
+                    kind: RawKind::Call {
+                        callee: Box::new(RawExpr {
+                            loc,
+                            kind: RawKind::Ident {
+                                name: "queueMicrotask".into(),
+                                kind: IdentKind::Global,
+                            },
+                        }),
+                        args: vec![RawExpr {
+                            loc,
+                            kind: RawKind::Arrow {
+                                params: Vec::new(),
+                                body: ArrowBody::Expr(Box::new(RawExpr {
+                                    loc,
+                                    kind: RawKind::Call {
+                                        callee: Box::new(RawExpr {
+                                            loc,
+                                            kind: RawKind::Ident {
+                                                name: set.clone(),
+                                                kind: IdentKind::Setter,
+                                            },
+                                        }),
+                                        args: vec![lit(true)],
+                                    },
+                                })),
+                                captures: vec![(set.clone(), IdentKind::Setter)],
+                            },
+                        }],
+                    },
+                })),
+                captures: vec![(set, IdentKind::Setter)],
+            },
+        },
+        deps: Some(Vec::new()),
+        layout: false,
+    });
+}
+
+/// A statement the hook keeps: itself, or, for an `if` whose test `hook_presence_test` decides, the statements of the
+/// branch that runs (so a hook of the branch that never runs is not seen at all).
+fn decided_branch(st: &js_ast::Stmt, names: &NameTable<'_>) -> Vec<js_ast::Stmt> {
+    let S::SIf(i) = &st.data else {
+        return vec![*st];
+    };
+    let Some(taken) = hook_presence_test(&i.test, names) else {
+        return vec![*st];
+    };
+    match if taken { Some(i.yes) } else { i.no } {
+        None => Vec::new(),
+        Some(b) => match &b.data {
+            S::SBlock(blk) => blk
+                .stmts
+                .slice()
+                .iter()
+                .flat_map(|x| decided_branch(x, names))
+                .collect(),
+            _ => decided_branch(&b, names),
+        },
+    }
+}
+
+/// `typeof X === 'function'` (or `!==`, `==`, `!=`) where `X` is a local bound to one of React's own hooks (`names.rs`,
+/// `collect_react_hook_aliases`): what the test evaluates to, since React's exported hooks are functions. `None` for any
+/// other test.
+fn hook_presence_test(test: &js_ast::Expr, names: &NameTable<'_>) -> Option<bool> {
+    use js_ast::OpCode as Op;
+    let E::EBinary(b) = &test.data else {
+        return None;
+    };
+    let equal = match b.op {
+        Op::BinStrictEq | Op::BinLooseEq => true,
+        Op::BinStrictNe | Op::BinLooseNe => false,
+        _ => return None,
+    };
+    let is_function = |e: &js_ast::Expr| matches!(&e.data, E::EString(s) if crate::analyze::expr::estring(s) == "function");
+    let typeof_hook = |e: &js_ast::Expr| {
+        let E::EUnary(u) = &e.data else {
+            return false;
+        };
+        u.op == Op::UnTypeof
+            && crate::analyze::names::ident_ref(&u.value).is_some_and(
+                |r| matches!(names.import_of(r), Some(("react", h)) if crate::analyze::names::REACT_HOOKS.contains(&h)),
+            )
+    };
+    ((typeof_hook(&b.left) && is_function(&b.right))
+        || (typeof_hook(&b.right) && is_function(&b.left)))
+    .then_some(equal)
+}
+
 fn console_only_if(i: &js_ast::S::If, names: &NameTable<'_>) -> bool {
     console_only(&i.yes, names) && i.no.as_ref().is_none_or(|n| console_only(n, names))
 }
@@ -1335,7 +1934,14 @@ fn read_decl(
     if let Some(ctx) = context_read(value, r.names) {
         return read_context_use(r, out, decl, value, &ctx, vloc);
     }
-    adopt_react_alias(r, m, value);
+    // R34.144: `const { a, b } = context` of a context local (Radix's `const { onFocusableItemAdd, ... } = context`), or
+    // `const c2 = context`: read like the hook's own result
+    if let E::EIdentifier(id) = &value.data
+        && let Some(ctx) = r.names.ctx_local(id.ref_).map(str::to_string)
+    {
+        return read_context_use(r, out, decl, value, &ctx, vloc);
+    }
+    adopt_react_alias(r.names, m, value);
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
         out.classified_hooks.insert(call_addr(call));
         let args: Vec<js_ast::Expr> = call.args.to_vec();
@@ -1388,6 +1994,13 @@ fn read_decl(
                 // it apart from the precompute slots `_sN`.
                 let name = name_at(0).unwrap_or_else(|| format!("_st{}", out.state.len() + 1));
                 let setter = name_at(1);
+                // R34.142: `useState(useId())` whose state nothing updates is the id itself.
+                if let Some(E::ECall(inner)) = args.first().map(|a| &a.data)
+                    && out.inline.inert_id_states.contains(&call_addr(inner))
+                {
+                    out.classified_hooks.insert(call_addr(inner));
+                    return simple_hook(r, out, "useId", Some(name), &[], vloc, false);
+                }
                 let init = match args.first() {
                     Some(a) => r.expr(a),
                     None => undefined_at(vloc),
@@ -1396,11 +2009,54 @@ fn read_decl(
                     name,
                     setter,
                     init: Expr::Raw(init),
+                    late: false,
                 });
+            }
+            // R34.143: `useSyncExternalStore(subscribe, () => true, () => false)` (Radix's `useIsHydrated`): false on the
+            // server, true once mounted.
+            (true, "useSyncExternalStore") if hydration_shape(call, m, r.names) => {
+                let Some(name) = ident else {
+                    return hook_binding_shape(out, "useSyncExternalStore", vloc);
+                };
+                if let B::BIdentifier(id) = decl.binding.data {
+                    r.names.mark_state(id.r#ref);
+                }
+                hydrated_state(out, name, vloc);
             }
             (true, "useMemo" | "useCallback" | "useRef" | "useId") => {
                 let snapshot = matches!(decl.binding.data, B::BIdentifier(id) if r.names.is_snapshot_ref(id.r#ref));
                 simple_hook(r, out, &hook, ident, &args, vloc, snapshot)
+            }
+            // F285: `const [state, dispatch] = useReducer(reducer, init[, initFn])`.
+            (true, "useReducer") => {
+                let B::BArray(arr) = decl.binding.data else {
+                    return out.fallback(
+                        "hook-shape",
+                        "useReducer result used without destructuring".into(),
+                        vloc,
+                        "write const [state, dispatch] = useReducer(reducer, init)",
+                    );
+                };
+                let items = arr.items();
+                let name_at = |i: usize| match items.get(i).map(|x| x.binding.data) {
+                    Some(B::BIdentifier(id)) => Some(r.names.name(id.r#ref)),
+                    _ => None,
+                };
+                if arr.has_spread
+                    || items.len() > 2
+                    || items
+                        .iter()
+                        .any(|x| !matches!(x.binding.data, B::BIdentifier(_) | B::BMissing(_)))
+                {
+                    return out.fallback(
+                        "hook-shape",
+                        "useReducer destructuring must be [state, dispatch]".into(),
+                        vloc,
+                        "write const [state, dispatch] = useReducer(reducer, init)",
+                    );
+                }
+                let state = name_at(0).unwrap_or_else(|| format!("_st{}", out.state.len() + 1));
+                reducer_hook(r, out, m, &args, state, name_at(1), vloc);
             }
             _ => out.fallback(
                 "hook-unsupported",
@@ -1592,7 +2248,7 @@ fn read_expr_stmt(
     value: &js_ast::Expr,
 ) {
     let vloc = loc_of(value);
-    adopt_react_alias(r, m, value);
+    adopt_react_alias(r.names, m, value);
     let hook = hook_call(value, r.names);
     if let Some((_, call, _)) = &hook {
         out.classified_hooks.insert(call_addr(call));
@@ -1678,7 +2334,7 @@ const HOOK_REMEDY: &str = "keep custom hooks to const declarations, React hooks 
 /// (`export const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}`) is React's hook for every
 /// reader of the call, by symbol: the caller's import is recorded as an import of `react`. Nothing is recognised by the
 /// package's name; only the module's own declaration (`NameTable::exported_react_hook`) decides.
-fn adopt_react_alias(r: &mut Reader<'_, '_>, m: Module<'_, '_>, value: &js_ast::Expr) {
+fn adopt_react_alias(names: &mut NameTable<'_>, m: Module<'_, '_>, value: &js_ast::Expr) {
     let E::ECall(call) = &value.data else {
         return;
     };
@@ -1687,8 +2343,7 @@ fn adopt_react_alias(r: &mut Reader<'_, '_>, m: Module<'_, '_>, value: &js_ast::
         E::EImportIdentifier(id) => id.ref_,
         _ => return,
     };
-    let Some((source, imported)) = r
-        .names
+    let Some((source, imported)) = names
         .import_of(target)
         .map(|(s, i)| (s.to_string(), i.to_string()))
     else {
@@ -1713,7 +2368,7 @@ fn adopt_react_alias(r: &mut Reader<'_, '_>, m: Module<'_, '_>, value: &js_ast::
     };
     let hook = parsed.with_ast(|ast| NameTable::for_hook(ast).exported_react_hook(ast, &imported));
     if let Some(hook) = hook {
-        r.names.adopt_react_hook(target, &hook);
+        names.adopt_react_hook(target, &hook);
     }
 }
 
@@ -1883,6 +2538,21 @@ fn exported_fn<'x>(ast: &'x js_ast::Ast<'_>, export: &str) -> Option<&'x js_ast:
                 {
                     return Some(&f.func);
                 }
+                // R34.143: `export const useX = typeof reactHook === 'function' ? useModern : useLegacy` (Radix's
+                // `useIsHydrated`): the test is decided (`hook_presence_test`), the export is the branch that runs.
+                S::SLocal(l) if l.is_export && matches!(l.kind, js_ast::S::Kind::KConst) => {
+                    for d in l.decls.iter() {
+                        if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                            && names.name(id.r#ref) == export
+                            && let E::EIf(i) = &v.data
+                            && let Some(taken) = hook_presence_test(&i.test, &names)
+                            && let Some(target) =
+                                crate::analyze::names::ident_ref(if taken { &i.yes } else { &i.no })
+                        {
+                            return local_fn(ast, &names, target);
+                        }
+                    }
+                }
                 S::SExportDefault(ed) if export == "default" => {
                     if let js_ast::StmtOrExpr::Stmt(inner) = &ed.value
                         && let S::SFunction(f) = &inner.data
@@ -1932,6 +2602,11 @@ fn read_hook(
         out.fallback(rule, why, vloc, HOOK_REMEDY);
     };
     let mut hnames = NameTable::for_hook(hm.ast);
+    if imported {
+        hnames.literal_reads_are_safe(hm.ast);
+    }
+    // the contexts of the hook's module are named by that module (the same tag its own components get)
+    hnames.tag_contexts(&path);
     let fn_name = func
         .name
         .as_ref()
@@ -2050,8 +2725,24 @@ fn read_hook(
                 .collect();
             !dev_only_block(st, &rest, &hnames)
         })
-        .map(|(_, st)| *st)
+        .flat_map(|(_, st)| decided_branch(st, &hnames))
         .collect();
+    // a hook imported under another name may be React's own (`useLayoutEffect` of `use-layout-effect`): decided before the
+    // statements are looked at, as reading each one would
+    for st in &body {
+        if let S::SExpr(x) = &st.data {
+            adopt_react_alias(&mut hnames, hm, &x.value);
+        }
+    }
+    let (body, inert_states) =
+        drop_inert_id_effects(body, &hnames, &mut out.inline.inert_id_states);
+    // such a state is a plain id: its reads are not state reads
+    for (state, setter) in inert_states {
+        if let Some(state) = state {
+            hnames.unmark_state(state);
+        }
+        hnames.unmark_setter(setter);
+    }
 
     let mut w = Walk::default();
     for arg in func.args.slice() {
@@ -2122,6 +2813,18 @@ fn read_hook(
         }
     }
     let mut import_aliases: Vec<(js_ast::Ref, Alias)> = Vec::new();
+    let mut module_consts: Vec<(String, js_ast::Ref)> = Vec::new();
+    // R34.143: the `subscribe` of a hydration-shaped `useSyncExternalStore` is never run: it is not a free name of the hook
+    let mut silent_subscribers: Vec<js_ast::Ref> = Vec::new();
+    for c in &w.calls {
+        if let E::ECall(call) = &c.data
+            && react_hook_name(call, &hnames).as_deref() == Some("useSyncExternalStore")
+            && hydration_shape(call, hm, &hnames)
+            && let Some(s) = call.args.first().and_then(crate::analyze::names::ident_ref)
+        {
+            silent_subscribers.push(s);
+        }
+    }
     for u in &w.used {
         if hnames.is_jsx_runtime(*u)
             || w.declared.iter().any(|d| hnames.same(*d, *u))
@@ -2182,6 +2885,23 @@ fn read_hook(
                 "hook-shape",
                 format!("custom hook {hook} reads `arguments`"),
             );
+        }
+        if silent_subscribers.iter().any(|s| hnames.same(*s, *u)) {
+            continue;
+        }
+        // R34.142: the argument of `useContext(C)`, a context the hook's module declares: the frames pass carries it
+        if hnames.react_context(*u).is_some() {
+            continue;
+        }
+        // R34.142: a never-written `const` of literal shape of the hook's module (`Direction.LTR`) is read as its value:
+        // folded into what the hook reads; any use that does not fold fails the hook below.
+        if imported
+            && (hnames.module_inits().contains_key(&spelled) || hnames.object_const(*u).is_some())
+        {
+            if !module_consts.iter().any(|(n, _)| n == &spelled) {
+                module_consts.push((spelled.clone(), *u));
+            }
+            continue;
         }
         if imported && !matches!(kind, IdentKind::Global) {
             return fail(
@@ -2440,7 +3160,28 @@ fn read_hook(
                 expr: Expr::Raw(e),
             });
         }
-        let returned = read_stmts(&body, &mut hr, out, hm);
+        let mut returned = read_stmts(&body, &mut hr, out, hm);
+        if !module_consts.is_empty() {
+            let values: HashMap<String, RawExpr> = module_consts
+                .iter()
+                .filter_map(|(n, u)| {
+                    let e = match hr.names.module_inits().get(n) {
+                        Some(e) => *e,
+                        None => hr.names.object_const(*u)?,
+                    };
+                    Some((n.clone(), hr.expr(&e)))
+                })
+                .collect();
+            if !fold_module_consts(&values, &start, out, &mut returned) {
+                fail(
+                    out,
+                    "hook-shape",
+                    format!(
+                        "custom hook {hook} reads a constant of {path} other than as `NAME` or `NAME.key` of a literal"
+                    ),
+                );
+            }
+        }
         nested_hooks_in(func, &body, hr.names, out);
         out.diagnostics.append(&mut hr.diagnostics);
         if !hr.pending_handlers.is_empty() {
@@ -2454,6 +3195,15 @@ fn read_hook(
     };
     out.inline.stack.pop();
     out.classified_hooks = saved;
+    // the context fields the hook read are this component's own needs (hidden props), with their defaults
+    for u in hnames.ctx_uses() {
+        for f in &u.fields {
+            r.names.note_ctx_field(&u.context, f);
+        }
+    }
+    for (c, d) in hnames.scalar_defaults() {
+        r.names.adopt_scalar(&c, &d);
+    }
 
     // What went wrong inside is reported at the call site, naming the hook (R0.2).
     let text = hm.parsed.text();
@@ -2638,6 +3388,83 @@ fn relocate(e: &mut RawExpr, loc: u32) {
     }
 }
 
+/// R34.142: replaces each read of a module constant of a literal shape in what the hook read since `start` by its value
+/// (`Direction.LTR` becomes `'ltr'`, a literal `NAME` itself). `false` when a use is left that does not fold (the constant
+/// as a whole object, a key it has no entry for): the hook then reads a name the component does not have.
+fn fold_module_consts(
+    values: &HashMap<String, RawExpr>,
+    start: &Marks,
+    out: &mut BodyDecls,
+    returned: &mut Option<Option<RawExpr>>,
+) -> bool {
+    let left = std::cell::Cell::new(false);
+    let name_of = |e: &RawExpr| match &e.kind {
+        RawKind::Ident { name, kind } if !matches!(kind, IdentKind::Prop | IdentKind::State) => {
+            Some(name.clone())
+        }
+        _ => None,
+    };
+    let f = |e: &RawExpr| -> Option<RawExpr> {
+        match &e.kind {
+            RawKind::Member { target, name, .. } => {
+                let c = values.get(&name_of(target)?)?;
+                let RawKind::Object(props) = &c.kind else {
+                    return None;
+                };
+                match props.iter().find(|(k, _)| k == name) {
+                    Some((_, v)) if matches!(v.kind, RawKind::Lit(_)) => Some(RawExpr {
+                        loc: e.loc,
+                        kind: v.kind.clone(),
+                    }),
+                    _ => {
+                        left.set(true);
+                        None
+                    }
+                }
+            }
+            RawKind::Ident { .. } => {
+                let c = values.get(&name_of(e)?)?;
+                if matches!(c.kind, RawKind::Lit(_)) {
+                    Some(RawExpr {
+                        loc: e.loc,
+                        kind: c.kind.clone(),
+                    })
+                } else {
+                    left.set(true);
+                    None
+                }
+            }
+            _ => None,
+        }
+    };
+    let fold = |e: &mut RawExpr| *e = crate::analyze::const_fold::map_pre(e, &f);
+    let fold_expr = |e: &mut Expr| {
+        if let Expr::Raw(r) = e {
+            fold(r)
+        }
+    };
+    out.state[start.state..]
+        .iter_mut()
+        .for_each(|s| fold_expr(&mut s.init));
+    out.derived[start.derived..]
+        .iter_mut()
+        .for_each(|d| fold_expr(&mut d.expr));
+    out.refs[start.refs..]
+        .iter_mut()
+        .for_each(|d| fold_expr(&mut d.init));
+    out.handlers[start.handlers..]
+        .iter_mut()
+        .for_each(|h| fold(&mut h.body));
+    for e in &mut out.effects[start.effects..] {
+        fold(&mut e.body);
+        e.deps.iter_mut().flatten().for_each(&fold);
+    }
+    if let Some(Some(r)) = returned {
+        fold(r);
+    }
+    !left.get()
+}
+
 /// A value whose computation can be dropped: no call, nothing opaque.
 fn inert(e: &RawExpr) -> bool {
     match &e.kind {
@@ -2676,7 +3503,18 @@ fn bind_result(
     };
     let value = returned.unwrap_or_else(|| undefined_at(vloc));
     match binding.data {
-        B::BIdentifier(id) => bind_one(r, out, site, id.r#ref, value),
+        B::BIdentifier(id) => {
+            // F286: kept refused until F289: the whole object is one derived value that names a hoisted hook result.
+            if let Some(name) = whole_hook_result(&value, &out.inline.hook_results) {
+                return shape(
+                    out,
+                    format!(
+                        "custom hook {hook} returns `{name}`, a hook call, inside an object or array that is bound whole at the call site"
+                    ),
+                );
+            }
+            bind_one(r, out, site, id.r#ref, value)
+        }
         B::BMissing(_) => {}
         B::BArray(arr) => {
             let RawKind::Array(items) = value.kind else {
@@ -2757,6 +3595,20 @@ fn bind_result(
             }
         }
     }
+}
+
+/// The first generated hook-result local (see [`Inline::hook_results`]) that the object or array `value` holds directly.
+fn whole_hook_result(value: &RawExpr, results: &HashSet<String>) -> Option<String> {
+    let items: Vec<&RawExpr> = match &value.kind {
+        RawKind::Object(props) => props.iter().map(|(_, v)| v).collect(),
+        RawKind::Array(items) => items.iter().collect(),
+        _ => return None,
+    };
+    items.into_iter().find_map(|v| match &v.kind {
+        RawKind::Ident { name, .. } if results.contains(name) => Some(name.clone()),
+        RawKind::Object(_) | RawKind::Array(_) => whole_hook_result(v, results),
+        _ => None,
+    })
 }
 
 /// `binding` is the returned `value`: an identifier the hook returns is the same binding

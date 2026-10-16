@@ -112,3 +112,32 @@ test('F256: the setting is validated: array of existing relative directories', (
   for (const p of ['.', 'src/..', '..', '../..', '../app/..', '../shared/../..']) expect(rule([p])).toContain('contains it')
   expect(rule(['../shared', '..'])).toContain('contains it')
 })
+
+// F276: the F230 scan of load-time writes covers the source roots, so a writer in `../shared` is seen.
+const LABELS_PAGE = `import { LABELS } from '../shared/labels'
+
+export default function Page() {
+  return <p data-testid="label">{LABELS.a}</p>
+}
+`
+
+test('F276: a load-time writer in a source root makes the page that reads the written export fall back (served == React)', () => {
+  const app = variant('app-labels', {
+    'Page.tsx': LABELS_PAGE,
+    'routes.tsx': `import { defineRoutes } from '@brust/core/routes'\nimport '../shared/labels-patch'\nimport Page from './Page'\n\nexport const routes = defineRoutes([{ path: '/', Component: Page }])\n`,
+  })
+  const b = build(app)
+  expect(b.code, b.out).toBe(0)
+  const html = readFileSync(b.html, 'utf8')
+  // React renders "patched": the writer ran when routes.tsx loaded. Before F276 the page was compiled from the declared value.
+  expect(html).toContain('patched')
+  expect(html).not.toContain('>one<')
+  expect(b.out).toContain('module-written')
+})
+
+test('F276: without the writer the same page is compiled from the declared value', () => {
+  const app = variant('app-labels-clean', { 'Page.tsx': LABELS_PAGE })
+  const b = build(app)
+  expect(b.code, b.out).toBe(0)
+  expect(readFileSync(b.html, 'utf8')).toContain('>one<')
+})
