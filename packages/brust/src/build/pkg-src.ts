@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { BuildError } from './errors'
+import { RELATIVE_SPEC } from './esm-resolve'
 
 /** What the compiler reads (`AnalyzeOptions.packages`): per importing scope (`""` = the app, else the root-relative
  * directory of a written package), each bare specifier → the root-relative path of its written entry source, or the
@@ -353,9 +354,11 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
       // The JSX transform's own runtime import (the transpiler adds it), and React itself.
       if (NEVER(im.path)) continue
       if (im.kind === 'dynamic-import' || im.kind === 'require-call' || im.kind === 'require-resolve') return { ok: false, reason: `${f.path} has a ${im.kind} (${im.path})` }
-      if (im.path.startsWith('./') || im.path.startsWith('../')) {
+      if (RELATIVE_SPEC.test(im.path)) {
         const base = posix.normalize(posix.join(posix.dirname(f.path), im.path))
-        const hit = [base, `${base}.tsx`, `${base}.ts`, `${base}/index.tsx`, `${base}/index.ts`].find((c) => have.has(c))
+        // `.` and `..` name a directory (F244): only its index answers, never a sibling file of the same name.
+        const dirOnly = im.path === '.' || im.path === '..'
+        const hit = [...(dirOnly ? [] : [base, `${base}.tsx`, `${base}.ts`]), posix.join(base, 'index.tsx'), posix.join(base, 'index.ts')].find((c) => have.has(c))
         if (hit) imported.add(hit)
         else return { ok: false, reason: `${f.path} imports ${im.path}, which the source map does not carry` }
       } else if (im.path.startsWith('/') || /^[a-z]+:/i.test(im.path)) return { ok: false, reason: `${f.path} imports ${im.path}` }
