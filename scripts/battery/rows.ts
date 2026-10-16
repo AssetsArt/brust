@@ -44,6 +44,9 @@ const R = `import { useState } from 'react'\n`
 // F153c: the Radix sources as `@radix-ui/react-primitive` 2.2.0 and `@radix-ui/react-label` 2.1.17 publish them.
 const RADIX_PRIMITIVE = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/primitive.tsx'), 'utf8')
 const RADIX_LABEL = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/label.tsx'), 'utf8')
+// F268: the Radix `use-size` and `use-layout-effect` sources (the latter exports a SSR-guard alias of React's hook).
+const RADIX_USE_SIZE = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/use-size.tsx'), 'utf8')
+const RADIX_USE_LAYOUT_EFFECT = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/use-layout-effect.tsx'), 'utf8')
 const PKG_PRIMITIVE: StubPackage = { files: { 'src/primitive.tsx': RADIX_PRIMITIVE } }
 // The state Providers the native-provider rows use (2c-2): one source, shared with the compiler's tests.
 const NATIVE_PROV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Prov.tsx'), 'utf8')
@@ -1035,6 +1038,14 @@ export const rows: Row[] = [
     snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root asChild><a href="/y">y</a></Root></section> }`,
     packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
     note: 'F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles' },
+  { id: 'b-pkg-hook-alias-use-size', category: 'B', authoring: 'the Radix useSize hook, whose useLayoutEffect is an exported SSR-guard alias of React\'s', expect: 'native', jobs: 0,
+    snippet: `import { useSize } from '@radix-ui/react-use-size'\nexport default function C({ el }: any) { const size = useSize(el); return <p>{size ? size.width : 0}</p> }`,
+    packages: { '@radix-ui/react-use-size': { files: { 'src/use-size.tsx': RADIX_USE_SIZE } }, '@radix-ui/react-use-layout-effect': { files: { 'src/use-layout-effect.tsx': RADIX_USE_LAYOUT_EFFECT } } },
+    note: 'F268: `const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}` (exported) is React\'s useLayoutEffect, by the module\'s own declaration, not by package name' },
+  { id: 'b-hook-alias-value-hook', category: 'B', authoring: 'an exported conditional alias of a hook that returns a value (useState or a no-op)', expect: 'react',
+    snippet: `import { useTwo } from './use-two'\nexport default function C() { const [n, setN] = useTwo(); return <button onClick={() => setN(n + 1)}>{n}</button> }`,
+    files: { 'use-two.ts': `import { useCounter } from './alias'\nexport function useTwo() { const [n, setN] = useCounter(0); return [n, setN] as const }`, 'alias.tsx': `import * as React from 'react'\nexport const useCounter = globalThis?.document ? React.useState : () => {}` },
+    note: 'F268 fail closed: only an effect hook (it returns nothing) can stand beside a no-op; useState would be undefined where the guard is false' },
   { id: 'b-pkg-aschild-dynamic', category: 'B', authoring: 'a dynamic asChild on a package leaf', expect: 'react',
     snippet: `import { Root } from 'leafy'\nexport default function C({ on }: any) { return <section><Root asChild={on}><a href="/y">y</a></Root></section> }`,
     packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
@@ -1249,6 +1260,21 @@ export const rows: Row[] = [
     note: 'F156: any read of a runtime builder is jsx-runtime-call, not an opaque server slot' },
   { id: 'e-jsx-runtime-local-name', category: 'E', authoring: 'a local function named `jsx` is not the runtime', expect: 'static',
     snippet: `const jsx = (s: string) => s\nexport default function C() { return <p>{jsx('a')}</p> }` },
+  { id: 'e-name-signal-state', category: 'E', authoring: 'a state named like a runtime import (`const [signal, setSignal] = useState(0)`)', expect: 'native', jobs: 0,
+    snippet: `import { useState } from 'react'\nexport default function C() { const [signal, setSignal] = useState(0); const computed = signal * 2; return <button onClick={() => setSignal(signal + 1)}>{computed}</button> }`,
+    note: 'F233: the chunk imports the runtime under other names (`signal as signal1`), the component keeps its own' },
+  { id: 'e-name-props-derived', category: 'E', authoring: 'a derived value named `props` beside a prop read', expect: 'native', jobs: 0,
+    snippet: `import { useState } from 'react'\nexport default function C({ title }: any) { const [n, setN] = useState(0); const props = n + 1; return <button title={title} onClick={() => setN(n + 1)}>{props}</button> }`,
+    note: 'F233: the behaviour context\'s props signal is renamed (`props: props1`), so the prop read is not the derived value' },
+  { id: 'e-name-text-helper', category: 'E', authoring: 'a handler named like a paint helper (`const __text = () => …`)', expect: 'native', jobs: 0,
+    snippet: `import { useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); const __text = () => setN(n + 1); return <button onClick={__text}>{n}</button> }`,
+    note: 'F233: the helper is declared under another name; before, the chunk declared `__text` twice (a SyntaxError)' },
+  { id: 'e-job-prop-local-assign', category: 'E', authoring: 'a body local named like a prop the job reads off `props` (`const style = Object.assign({}, props.style, …)`)', expect: 'native', jobs: 1,
+    snippet: `import { useState } from 'react'\nexport default function C(props: any) { const [n, setN] = useState(0); const style = Object.assign({}, props.style, { color: 'red' }); return <div style={style} onClick={() => setN(n + 1)}>{n}</div> }`,
+    note: 'F257: the job destructures the prop under another name (`style: style1`); it declared `style` twice' },
+  { id: 'e-job-prop-local-spread', category: 'E', authoring: 'the same through an object spread (`const style = { ...props.style, … }`)', expect: 'native', jobs: 1,
+    snippet: `import { useState } from 'react'\nexport default function C(props: any) { const [n, setN] = useState(0); const style = { ...props.style, color: 'red' }; return <div style={style} onClick={() => setN(n + 1)}>{n}</div> }`,
+    note: 'F257: the B5 spelling of the same shape' },
   { id: 'e-list-block-body', category: 'E', authoring: '.map with a block body names list-shape', expect: 'react',
     snippet: `export default function C({ xs }: any) { return <ul>{xs.map((x: any) => { const t = x.t; return <li key={x.id}>{t}</li> })}</ul> }`,
     note: 'L6: block bodies stay React with a list-shape fallback naming the reason' },

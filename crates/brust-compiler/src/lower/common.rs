@@ -44,9 +44,12 @@ pub struct Facts<'a> {
     pub prop_defaults: HashMap<String, RawExpr>,
     /// `useStore` bindings by handle (M3-F D7).
     pub stores: HashMap<String, &'a StoreUse>,
-    /// F232: the rest parameter of the wrapper a handler body is called through (`(...rest) => (BODY)(...rest)`), a
-    /// name that occurs nowhere in the component's IR, so no name the component binds or reads can be captured by it.
+    /// F232: the rest parameter of the wrapper a handler body is called through (`(...rest) => (BODY)(...rest)`). The
+    /// chunk allocates it (F233, [`super::names`]), so no name the component binds or reads can be captured by it.
     pub rest: String,
+    /// F233: the chunk's name of the behaviour context's props signal, the job's name of its props parameter (`props`
+    /// unless the component spells it).
+    pub props_fn: String,
 }
 
 const FUNCTION_WHYS: &[&str] = &[
@@ -119,7 +122,8 @@ impl<'a> Facts<'a> {
                 .filter_map(|p| p.default.clone().map(|d| (p.name.clone(), d)))
                 .collect(),
             stores: ir.stores.iter().map(|u| (u.handle.clone(), u)).collect(),
-            rest: fresh_name(ir, "__args"),
+            rest: "__args".into(),
+            props_fn: "props".into(),
         }
     }
 
@@ -485,20 +489,6 @@ pub fn arrow_body(js: &str) -> String {
     }
 }
 
-/// A name built on `base` that occurs nowhere in `ir`'s serialised form (every name the component declares, reads or
-/// captures, and every verbatim source it carries, appears there), so a generated binding of that name can neither
-/// capture nor shadow anything the component means.
-pub fn fresh_name(ir: &ComponentIR, base: &str) -> String {
-    let text = serde_json::to_string(ir).unwrap_or_default();
-    let mut name = base.to_string();
-    let mut n = 0;
-    while text.contains(&name) {
-        n += 1;
-        name = format!("{base}{n}");
-    }
-    name
-}
-
 pub fn client_fn(r: &RawExpr, f: &Facts<'_>) -> String {
     match &r.kind {
         RawKind::Arrow {
@@ -515,10 +505,10 @@ pub fn client_fn(r: &RawExpr, f: &Facts<'_>) -> String {
 
 fn client_ident(name: &str, kind: &IdentKind, f: &Facts<'_>) -> Option<String> {
     match kind {
-        IdentKind::Prop => f
-            .prop_defaults
-            .get(name)
-            .map(|d| prop_with_default(name, d, f)),
+        IdentKind::Prop => Some(match f.prop_defaults.get(name) {
+            Some(d) => prop_with_default(name, d, f),
+            None => prop_read(name, f),
+        }),
         IdentKind::Local => match f.derived.get(name) {
             Some((_, DerivedShape::Value)) => Some(format!("{name}()")),
             _ => None,
@@ -559,9 +549,9 @@ pub fn store_jinja(name: &str, key: Option<&str>) -> String {
 }
 
 /// Precompute job (D7: inputs carry the value; jobs never import a store module).
-pub fn store_server_js(name: &str, key: Option<&str>) -> String {
+pub fn store_server_js(props: &str, name: &str, key: Option<&str>) -> String {
     let js = crate::ir::expr::js_string;
-    let view = format!("(props.{STORE_INPUT}?.[{}] ?? {{}})", js(name));
+    let view = format!("({props}.{STORE_INPUT}?.[{}] ?? {{}})", js(name));
     match key {
         Some(k) if crate::ir::expr::is_js_ident(k) => format!("{view}.{k}"),
         Some(k) => format!("{view}[{}]", js(k)),
@@ -569,9 +559,21 @@ pub fn store_server_js(name: &str, key: Option<&str>) -> String {
     }
 }
 
+/// A prop read in the chunk: `props()` for the whole props (`*`), `props().n` / `props()["data-x"]` for one.
+fn prop_read(name: &str, f: &Facts<'_>) -> String {
+    let p = &f.props_fn;
+    if name == "*" {
+        format!("{p}()")
+    } else if crate::ir::expr::is_js_ident(name) {
+        format!("{p}().{name}")
+    } else {
+        format!("{p}()[{}]", crate::ir::expr::js_string(name))
+    }
+}
+
 /// `props().n`, or its destructuring default when it is undefined.
 fn prop_with_default(name: &str, d: &RawExpr, f: &Facts<'_>) -> String {
-    let read = format!("props()[{}]", crate::ir::expr::js_string(name));
+    let read = format!("{}()[{}]", f.props_fn, crate::ir::expr::js_string(name));
     format!("({read} === undefined ? {} : {read})", client_js(d, f))
 }
 
@@ -587,9 +589,14 @@ pub fn server_js(r: &RawExpr, f: &Facts<'_>) -> String {
         _ => r.to_js_with(JsCtx::Server, &|name, kind| match kind {
             // The job destructures every prop under its local name.
             IdentKind::Prop if name != "*" => f.prop_locals.get(name).cloned(),
-            IdentKind::Prop => Some(f.prop_locals.get("*").cloned().unwrap_or("props".into())),
+            IdentKind::Prop => Some(
+                f.prop_locals
+                    .get("*")
+                    .cloned()
+                    .unwrap_or(f.props_fn.clone()),
+            ),
             IdentKind::Store { handle, key } => Some(match f.store_name(handle) {
-                Some(n) => store_server_js(n, key.as_deref()),
+                Some(n) => store_server_js(&f.props_fn, n, key.as_deref()),
                 None => "undefined".into(),
             }),
             _ => None,
@@ -612,11 +619,11 @@ fn wrap_source(
             IdentKind::Prop => {
                 let local = f.prop_locals.get(name).cloned().unwrap_or(name.clone());
                 let arg = if name == "*" {
-                    "props()".to_string()
+                    format!("{}()", f.props_fn)
                 } else if let Some(d) = f.prop_defaults.get(name) {
                     prop_with_default(name, d, f)
                 } else {
-                    format!("props()[{}]", crate::ir::expr::js_string(name))
+                    format!("{}()[{}]", f.props_fn, crate::ir::expr::js_string(name))
                 };
                 (local, arg)
             }

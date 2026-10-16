@@ -92,6 +92,9 @@ pub struct NameTable<'a> {
     forwarded_ref_dropped: std::cell::RefCell<HashSet<i32>>,
     /// Module-level `const X = BASE.MEMBER` (never reassigned) with `BASE` imported from a package.
     member_aliases: HashMap<u32, MemberRef>,
+    /// Module `const`s that are a DOM-presence test (`const canUseDOM = typeof window !== 'undefined'`), and what a truthy
+    /// value means (`browser_test`).
+    dom_consts: HashMap<u32, bool>,
     /// `const x = c ? {…} : {…}` at module level or at the top of the component body: the initialiser, for
     /// a union spread `{...x}` (R34.66). Only a conditional is kept; a `const` is never reassigned.
     cond_consts: HashMap<u32, js_ast::Expr>,
@@ -177,6 +180,18 @@ const REACT_HOOKS: &[&str] = &[
     "useSyncExternalStore",
     "useTransition",
 ];
+
+/// The React hooks that return nothing: a no-op function stands in for them without changing any value.
+const EFFECT_HOOKS: &[&str] = &["useEffect", "useInsertionEffect", "useLayoutEffect"];
+
+/// `() => {}` / `function () {}`: a function whose body does nothing.
+fn is_noop_fn(e: &js_ast::Expr) -> bool {
+    match &e.data {
+        E::EArrow(a) => a.body.stmts.is_empty(),
+        E::EFunction(f) => f.func.body.stmts.is_empty(),
+        _ => false,
+    }
+}
 
 /// A string a key expression always evaluates to: a literal, or `.trim()` / `.toString()` of one (the same pure
 /// string methods the constant folder knows).
@@ -366,6 +381,7 @@ impl<'a> NameTable<'a> {
             forwarded_ref: None,
             forwarded_ref_dropped: std::cell::RefCell::new(HashSet::new()),
             member_aliases: HashMap::new(),
+            dom_consts: HashMap::new(),
             cond_consts: HashMap::new(),
             module_inits: HashMap::new(),
             poly: HashMap::new(),
@@ -388,6 +404,7 @@ impl<'a> NameTable<'a> {
             table.add_cond_consts(part.stmts.slice());
         }
         table.collect_module_inits(ast);
+        table.collect_dom_consts(ast);
         table.collect_react_hook_aliases(ast);
         table
     }
@@ -437,9 +454,148 @@ impl<'a> NameTable<'a> {
                 String::from_utf8_lossy(d.name.slice()).into_owned()
             }
             E::EIndex(i) if on_react(&i.target) => const_string(&i.index)?,
+            // F268: `cond ? React.useLayoutEffect : () => {}` (an SSR guard: `useLayoutEffect` warns on a server). The
+            // other branch does nothing, so the const is the hook where the code runs: effects only run in a browser.
+            // Only a hook that returns nothing can swap for a no-op without changing a value.
+            E::EIf(i) => {
+                // Only a DOM-presence test says the hook is wanted exactly where effects can run, and the hook must be
+                // on the browser side. Any other condition (a debug flag, `NODE_ENV`, an env read) can run the no-op
+                // in a browser, where React would run nothing and brust would run the hook: not an alias.
+                let browser = self.browser_test(&i.test)?;
+                let hook = match (
+                    self.react_member_hook(&i.yes),
+                    self.react_member_hook(&i.no),
+                ) {
+                    (Some(h), None) if browser && is_noop_fn(&i.no) => h,
+                    (None, Some(h)) if !browser && is_noop_fn(&i.yes) => h,
+                    _ => return None,
+                };
+                return EFFECT_HOOKS.contains(&hook).then_some(hook);
+            }
             _ => return None,
         };
         REACT_HOOKS.iter().find(|h| **h == key).copied()
+    }
+
+    /// Module-level `const x = <DOM-presence test>`: `x` is that test wherever it is read.
+    fn collect_dom_consts(&mut self, ast: &js_ast::Ast<'_>) {
+        let mut found = Vec::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
+                    continue;
+                };
+                if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                    continue;
+                }
+                for d in l.decls.iter() {
+                    if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                        && let Some(b) = self.browser_test(&v)
+                    {
+                        found.push((id.r#ref, b));
+                    }
+                }
+            }
+        }
+        for (r, b) in found {
+            let k = self.key(r);
+            self.dom_consts.insert(k, b);
+        }
+    }
+
+    /// What truthiness of `test` says about where the code runs: `Some(true)` = a truthy test means a browser,
+    /// `Some(false)` = a truthy test means a server, `None` = not a DOM-presence test. Recognised: the unbound global
+    /// `document` / `window`, read directly or off `globalThis` / `window` / `self` (`?.` allowed), `typeof` one of
+    /// those compared with `'undefined'`, and `!` of any of these.
+    fn browser_test(&self, test: &js_ast::Expr) -> Option<bool> {
+        if let Some(r) = ident_ref(test)
+            && let Some(b) = self.dom_consts.get(&self.key(r))
+        {
+            return Some(*b);
+        }
+        let global = |e: &js_ast::Expr| -> Option<String> {
+            match self.kind_of(ident_ref(e)?) {
+                (name, IdentKind::Global) => Some(name),
+                _ => None,
+            }
+        };
+        let dom_name = |name: &str| name == "document" || name == "window";
+        let dom = |e: &js_ast::Expr| -> bool {
+            if let Some(n) = global(e) {
+                return dom_name(&n);
+            }
+            matches!(&e.data, E::EDot(d)
+                if dom_name(&String::from_utf8_lossy(d.name.slice()))
+                    && global(&d.target).is_some_and(|n| matches!(n.as_str(), "globalThis" | "window" | "self")))
+        };
+        match &test.data {
+            _ if dom(test) => Some(true),
+            E::EUnary(u) if u.op == js_ast::OpCode::UnNot => {
+                self.browser_test(&u.value).map(|b| !b)
+            }
+            E::EBinary(b) => {
+                let eq = matches!(
+                    b.op,
+                    js_ast::OpCode::BinStrictEq | js_ast::OpCode::BinLooseEq
+                );
+                let ne = matches!(
+                    b.op,
+                    js_ast::OpCode::BinStrictNe | js_ast::OpCode::BinLooseNe
+                );
+                if !(eq || ne) {
+                    return None;
+                }
+                let undefined =
+                    |e: &js_ast::Expr| const_string(e).is_some_and(|s| s == "undefined");
+                let typeof_dom = |e: &js_ast::Expr| matches!(&e.data, E::EUnary(u) if u.op == js_ast::OpCode::UnTypeof && dom(&u.value));
+                let ok = (typeof_dom(&b.left) && undefined(&b.right))
+                    || (typeof_dom(&b.right) && undefined(&b.left));
+                // `typeof document !== 'undefined'` is a browser; `=== 'undefined'` a server.
+                ok.then_some(ne)
+            }
+            _ => None,
+        }
+    }
+
+    /// The React hook the module's export `export` is (a `const` alias, directly or through an `export { … }` clause),
+    /// by the same reading as [`collect_react_hook_aliases`]. `None` for anything else.
+    pub fn exported_react_hook(&self, ast: &js_ast::Ast<'_>, export: &str) -> Option<String> {
+        let mut local = None;
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                match &stmt.data {
+                    js_ast::stmt::Data::SLocal(l)
+                        if l.is_export && matches!(l.kind, js_ast::S::Kind::KConst) =>
+                    {
+                        for d in l.decls.iter() {
+                            if let B::BIdentifier(id) = d.binding.data
+                                && self.name(id.r#ref) == export
+                            {
+                                local = Some(id.r#ref);
+                            }
+                        }
+                    }
+                    js_ast::stmt::Data::SExportClause(c) => {
+                        for item in c.items.slice() {
+                            if item.alias.slice() == export.as_bytes() {
+                                local = Some(item.name.ref_);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        match self.import_of(local?) {
+            Some(("react", h)) if h != "default" && h != "*" => Some(h.to_string()),
+            _ => None,
+        }
+    }
+
+    /// `r` (an import local of another module) is React's own hook `hook` (F268).
+    pub fn adopt_react_hook(&mut self, r: js_ast::Ref, hook: &str) {
+        let k = self.key(r);
+        self.imports.insert(k, ("react".into(), hook.into()));
     }
 
     /// The module-level `const`s whose initialiser has a literal shape (see `module_inits`).

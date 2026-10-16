@@ -646,3 +646,53 @@ fn a_component_only_a_package_reaches_has_no_published_export() {
     assert_eq!(has("leaf.tsx"), Some(true));
     assert_eq!(has("inner.tsx"), Some(false));
 }
+
+// F268: the real `@radix-ui/react-use-size` source, whose `useLayoutEffect` comes from the real
+// `@radix-ui/react-use-layout-effect` source (`globalThis?.document ? React.useLayoutEffect : () => {}`).
+const USE_LAYOUT_EFFECT: &str =
+    include_str!("../../../tests/fixtures/package-source/use-layout-effect.tsx");
+const USE_SIZE: &str = include_str!("../../../tests/fixtures/package-source/use-size.tsx");
+const ULE_DIR: &str = ".brust/pkg-src/@radix-ui+react-use-layout-effect@1.1.4-00000005";
+const SIZE_DIR: &str = ".brust/pkg-src/@radix-ui+react-use-size@1.1.5-00000006";
+
+fn size_app() -> App {
+    let mut app = App::new();
+    app.file(
+        &format!("{ULE_DIR}/src/use-layout-effect.tsx"),
+        USE_LAYOUT_EFFECT,
+    )
+    .file(&format!("{SIZE_DIR}/src/use-size.tsx"), USE_SIZE)
+    .map(
+        "",
+        "@radix-ui/react-use-size",
+        &format!("{SIZE_DIR}/src/use-size.tsx"),
+    )
+    .map(
+        SIZE_DIR,
+        "@radix-ui/react-use-layout-effect",
+        &format!("{ULE_DIR}/src/use-layout-effect.tsx"),
+    );
+    app
+}
+
+#[test]
+fn the_real_use_size_reaches_the_layout_effect_alias() {
+    let mut app = size_app();
+    let tree = app.compile(
+        "import { useSize } from '@radix-ui/react-use-size'\nexport default function C({ el }: any) { const size = useSize(el); return <p>{size ? size.width : 0}</p> }\n",
+    );
+    let (_, ir, _) = root_of(&tree);
+    let fallbacks: Vec<_> = ir
+        .diagnostics
+        .iter()
+        .filter(|d| d.class == brust_compiler::ir::DiagClass::Fallback)
+        .map(|d| format!("{}: {}", d.rule, d.message))
+        .collect();
+    assert!(fallbacks.is_empty(), "{fallbacks:?}");
+    assert_eq!(ir.tier, Tier::Native);
+    assert!(
+        ir.effects.iter().any(|e| e.layout),
+        "{:?}",
+        ir.effects.len()
+    );
+}
