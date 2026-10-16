@@ -15,26 +15,12 @@ struct Item {
 }
 
 fn compile(file: &str) -> Vec<Item> {
-    compile_with(file, false)
-}
-
-/// `compile`, with the build having vouched for `@radix-ui/react-collection` (version + entry hash, R34.140).
-fn compile_collection(file: &str) -> Vec<Item> {
-    compile_with(file, true)
-}
-
-fn compile_with(file: &str, collection: bool) -> Vec<Item> {
     let file = file.to_string();
     run_on_compiler_thread(move || {
-        let mut opts = AnalyzeOptions {
+        let opts = AnalyzeOptions {
             root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
             ..Default::default()
         };
-        if collection {
-            opts.packages
-                .recognised
-                .insert("@radix-ui/react-collection".into(), "1.2.0".into());
-        }
         compile_tree(
             &format!("crates/brust-compiler/tests/fixtures/native-provider/{file}"),
             None,
@@ -848,6 +834,126 @@ fn a_context_local_destructured_or_aliased_in_the_body_reads_its_fields() {
     );
 }
 
+// F304: a context field read in code printed as written (a handler, an effect) is the hidden prop of that field, bound to
+// a local around the code; the consumer stays native
+#[test]
+fn context_fields_read_in_a_handler_or_an_effect_are_hidden_props_of_the_consumer() {
+    for (file, consumer, needles) in [
+        (
+            "ctxv_handler.tsx",
+            "cHandler_",
+            ["_toggle", "_label", "_open"].as_slice(),
+        ),
+        ("ctxv_effect.tsx", "cEffect_", ["_open"].as_slice()),
+    ] {
+        let all = compile(file);
+        let c = all
+            .iter()
+            .find(|i| i.ir.id.starts_with(consumer))
+            .unwrap_or_else(|| panic!("{file}: the consumer"));
+        assert!(
+            !has(&c.ir, DiagClass::Fallback, "context-escape") && !is_react(&c.ir),
+            "{file}: {:?} {:?}",
+            c.ir.tier,
+            c.ir.diagnostics
+        );
+        let js = c.client.as_deref().unwrap_or_default();
+        for n in needles {
+            assert!(
+                js.contains(&format!("__ctx_")) && js.contains(n),
+                "{file} {n}: {js}"
+            );
+        }
+        // the context local itself is not a name in the chunk: it is the object of the field locals
+        assert!(!js.contains("useContext"), "{file}: {js}");
+    }
+}
+
+// F304 (conditions a, b): only non-computed reads of identifier fields qualify; every other use keeps the escape
+#[test]
+fn every_other_use_of_a_context_in_printed_code_keeps_context_escape() {
+    for (file, consumer) in [
+        ("ctxv_computed.tsx", "cComputed_"),
+        ("ctxv_destruct.tsx", "cDestruct_"),
+        ("ctxv_whole.tsx", "cWhole_"),
+        ("ctxv_write.tsx", "cWrite_"),
+        ("ctxv_delete.tsx", "cDelete_"),
+        ("ctxv_proto.tsx", "cProto_"),
+    ] {
+        let all = compile(file);
+        let c = all
+            .iter()
+            .find(|i| i.ir.id.starts_with(consumer))
+            .unwrap_or_else(|| panic!("{file}: the consumer"));
+        assert!(
+            has(&c.ir, DiagClass::Fallback, "context-escape"),
+            "{file}: {:?}",
+            c.ir.diagnostics
+        );
+    }
+}
+
+// F304 (condition c): the consumer's `c.f()` runs with `this` = the object of the fields the consumer reads, so a Provider
+// value whose methods read `this`, or a class instance, must never reach a native consumer: the Provider stays React
+#[test]
+fn a_provider_value_that_reads_this_or_is_a_class_instance_stays_react() {
+    for (file, provider, rule) in [
+        ("ctxthis_method.tsx", "tP_", "context-state"),
+        ("ctxthis_class.tsx", "kP_", "context-value"),
+    ] {
+        let all = compile(file);
+        let p = all
+            .iter()
+            .find(|i| i.ir.id.starts_with(provider))
+            .unwrap_or_else(|| panic!("{file}: the Provider"));
+        assert!(
+            is_react(&p.ir) && has(&p.ir, DiagClass::Fallback, rule),
+            "{file}: {:?} {:?}",
+            p.ir.tier,
+            p.ir.diagnostics
+        );
+        assert!(
+            clones(&all).is_empty(),
+            "{file}: no native clone of the Provider"
+        );
+    }
+}
+
+/// `compile`, with the build having vouched for `@radix-ui/react-collection` (version + entry hash, R34.140).
+fn compile_collection(file: &str) -> Vec<Item> {
+    compile_with(file, true)
+}
+
+fn compile_with(file: &str, collection: bool) -> Vec<Item> {
+    let file = file.to_string();
+    run_on_compiler_thread(move || {
+        let mut opts = AnalyzeOptions {
+            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            ..Default::default()
+        };
+        if collection {
+            opts.packages
+                .recognised
+                .insert("@radix-ui/react-collection".into(), "1.2.0".into());
+        }
+        compile_tree(
+            &format!("crates/brust-compiler/tests/fixtures/native-provider/{file}"),
+            None,
+            &opts,
+            "/_brust/client/runtime.js",
+        )
+        .unwrap()
+        .into_iter()
+        .map(|l| Item {
+            ir: (*l.ir).clone(),
+            jinja: l.artifacts.jinja.clone(),
+            client: l.artifacts.client_js.clone(),
+            modules: l.artifacts.client_modules.clone(),
+        })
+        .collect()
+    })
+}
+
 // R34.140: a recognised `createCollection` (the build vouched for the package): Provider is transparent, Slot makes its
 // component child's host the collection root, ItemSlot marks its element an item with its data, `useCollection(scope)` is
 // the function that lists the items.
@@ -950,61 +1056,6 @@ fn collection_elements_that_are_not_the_librarys_shape_fall_back_with_a_named_co
         assert!(
             !all.iter().any(|i| i.jinja.contains("x-collection-")),
             "{file}"
-// F304: a context field read in code printed as written (a handler, an effect) is the hidden prop of that field, bound to
-// a local around the code; the consumer stays native
-#[test]
-fn context_fields_read_in_a_handler_or_an_effect_are_hidden_props_of_the_consumer() {
-    for (file, consumer, needles) in [
-        (
-            "ctxv_handler.tsx",
-            "cHandler_",
-            ["_toggle", "_label", "_open"].as_slice(),
-        ),
-        ("ctxv_effect.tsx", "cEffect_", ["_open"].as_slice()),
-    ] {
-        let all = compile(file);
-        let c = all
-            .iter()
-            .find(|i| i.ir.id.starts_with(consumer))
-            .unwrap_or_else(|| panic!("{file}: the consumer"));
-        assert!(
-            !has(&c.ir, DiagClass::Fallback, "context-escape") && !is_react(&c.ir),
-            "{file}: {:?} {:?}",
-            c.ir.tier,
-            c.ir.diagnostics
-        );
-        let js = c.client.as_deref().unwrap_or_default();
-        for n in needles {
-            assert!(
-                js.contains(&format!("__ctx_")) && js.contains(n),
-                "{file} {n}: {js}"
-            );
-        }
-        // the context local itself is not a name in the chunk: it is the object of the field locals
-        assert!(!js.contains("useContext"), "{file}: {js}");
-    }
-}
-
-// F304 (conditions a, b): only non-computed reads of identifier fields qualify; every other use keeps the escape
-#[test]
-fn every_other_use_of_a_context_in_printed_code_keeps_context_escape() {
-    for (file, consumer) in [
-        ("ctxv_computed.tsx", "cComputed_"),
-        ("ctxv_destruct.tsx", "cDestruct_"),
-        ("ctxv_whole.tsx", "cWhole_"),
-        ("ctxv_write.tsx", "cWrite_"),
-        ("ctxv_delete.tsx", "cDelete_"),
-        ("ctxv_proto.tsx", "cProto_"),
-    ] {
-        let all = compile(file);
-        let c = all
-            .iter()
-            .find(|i| i.ir.id.starts_with(consumer))
-            .unwrap_or_else(|| panic!("{file}: the consumer"));
-        assert!(
-            has(&c.ir, DiagClass::Fallback, "context-escape"),
-            "{file}: {:?}",
-            c.ir.diagnostics
         );
     }
 }
@@ -1025,28 +1076,4 @@ fn the_items_function_is_not_callable_in_the_render() {
         count.ir.tier,
         count.ir.diagnostics
     );
-// F304 (condition c): the consumer's `c.f()` runs with `this` = the object of the fields the consumer reads, so a Provider
-// value whose methods read `this`, or a class instance, must never reach a native consumer: the Provider stays React
-#[test]
-fn a_provider_value_that_reads_this_or_is_a_class_instance_stays_react() {
-    for (file, provider, rule) in [
-        ("ctxthis_method.tsx", "tP_", "context-state"),
-        ("ctxthis_class.tsx", "kP_", "context-value"),
-    ] {
-        let all = compile(file);
-        let p = all
-            .iter()
-            .find(|i| i.ir.id.starts_with(provider))
-            .unwrap_or_else(|| panic!("{file}: the Provider"));
-        assert!(
-            is_react(&p.ir) && has(&p.ir, DiagClass::Fallback, rule),
-            "{file}: {:?} {:?}",
-            p.ir.tier,
-            p.ir.diagnostics
-        );
-        assert!(
-            clones(&all).is_empty(),
-            "{file}: no native clone of the Provider"
-        );
-    }
 }
