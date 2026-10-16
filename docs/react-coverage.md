@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 147 | 37 | 49 | 61 | 0 | 0 | 0 | 0 |
+| C Hooks | 153 | 38 | 49 | 66 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 525 | 229 | 94 | 198 | 3 | 1 | 0 | 0 |
+| **Total** | 531 | 230 | 94 | 203 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -264,7 +264,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-spread-handler-row | a handler reading the row, through a child's spread in a list | native | native | 0 | ok | 5.6 | — | shadcn S1.3 R34.18: the row is client-rendered (x-for) and the binding names the row (x-on-click="_h1:it"), as a hand-written handler |
 | b-spread-handler-input | onChange through a text field's spread (shadcn Input) | native | native | 0 | ok | 4.6 | — | shadcn S1.3 R34.18: React's onChange on a text field is the input event (x-on-input) |
 | b-spread-handler-native-child | a handler through the spread of a child with state of its own | react | react | ssr | ok | 5.3 | fallback:spread-handler | shadcn S1.3 R34.19: only a static child's element can carry the parent's binding (fallback spread-handler) |
-| b-spread-handler-onward | a handler a child passes on through a second spread | react | react | ssr | ok | 4.0 | fallback:spread-handler | shadcn S1.3 R34.19: bound one level deep only (fallback spread-handler) |
+| b-spread-handler-onward | a handler a child passes on through a second spread | react | react | ssr | ok | 4.0 | fallback:spread-handler, fallback:frozen-prop | shadcn S1.3 R34.19: bound one level deep only (fallback spread-handler) |
 | b-spread-handler-row-prop | a handler through a child's spread next to a prop that reads the row | react | react | ssr | ok | 4.0 | fallback:spread-handler | shadcn S1.3 R34.19: the handler makes the client render the row, so a row-reading prop would link the child (fallback spread-handler); pass row values as children instead |
 | b-spread-render-prop | a function that is not an event handler, through a child's spread | react | react | ssr | ok | 4.0 | fallback:spread-function | shadcn S1.3 R34.19: a render prop has no element binding (fallback spread-function) |
 | b-aschild-default | a component with `asChild ? Slot.Root : "button"`, used without asChild | static | static | 0 | ok | 0 | — | shadcn S1.4 R34.29 (a): the host element prints; the component is static (was local-component) |
@@ -344,6 +344,12 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-forward-class-slot | a live className through a child that may render a Slot (asChild) | react | react | ssr | ok | 4.0 | fallback:spread-props | F299: a Slot merges class lists, so the replace rule does not hold: refused |
 | c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | 5.3 | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
 | c-slot-owner-linked-static | a linked prop in the slot of a static child that is itself linked | react | react | ssr | ok | 4.0 | fallback:slot-owner | F309: the linked static child gets a host of its own, which would bind the slot content (it never updated): slot-owner |
+| c-frozen-prop-rows | a native child reading the page's changing prop in the rows of a constant list | react | react | ssr | ok | 5.3 | fallback:frozen-prop | F319: the child would keep the first value (it was stale on main): frozen-prop, the page renders with React |
+| c-frozen-prop-child | a native child reading the page's changing prop in a prop of a child it does not link | react | react | ssr | ok | 5.3 | fallback:frozen-prop | F319: the child would keep the first value (it was stale on main): frozen-prop, the page renders with React |
+| c-frozen-prop-spread | a native child reading the page's changing prop in a key printed once through a forwarder's spread | react | react | ssr | ok | 5.3 | fallback:frozen-prop | F319: the child would keep the first value (it was stale on main): frozen-prop, the page renders with React |
+| c-frozen-prop-rest | a native wrapper passing its own changing prop into a native child's rest, handed to a static child it does not link | react | react | ssr | ok | 5.3 | fallback:frozen-prop | F319 (Mellow F1): a read of the rest freezes every key that lands there, passed up through the wrapper's own prop: frozen-prop (it was native and stale; the direct page call site was already refused by spread-props) |
+| c-frozen-prop-call-spread | the page's state object spread into a native child that reads the key in a constant list | react | react | ssr | ok | 5.3 | fallback:spread-props, fallback:frozen-prop | F319 (Afrojack): a spread at the call site may carry a frozen key: frozen-prop (spread-props refuses it too) |
+| c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 4.6 | — | F319: a value that does not change satisfies the requirement |
 | c-rest-children-consumer | a context consumer passed as children of a component that spreads its rest (children included) under its own Provider | static | static | 0 | ok | 4.6 | — | F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider) |
 | c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | ssr | ok | 5.3 | info:rest-children-unsupported | F298 + F309: that element is linked, so it would host the Thumb (slot-owner): no clone, LiveRoot stays a React island with its children (F307 relaxes it) |
 | c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.3 | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
@@ -402,7 +408,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-forwardref-child-ref-callback | a state setter passed as ref to an inlined forwardRef child | native | native | 0 | ok | 4.6 | — | F267: a callback ref is the same mount effect as on an element, its ref cell bound on the child's element |
 | c-forwardref-child-ref-conditional-child | a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes | react | react | ssr | ok | 4.0 | fallback:forwardref-ref | F267: the child may not render the element at all; the call site keeps the React fallback |
 | c-native-provider-rest-input | a component spreads its own ...rest into a consumer under the Provider it renders | static | static | 0 | ok | 4.6 | — | F278: the rest crosses into the clone as the hidden input __in_rest and is spread there; F279: getState(checked) is its expression, so the consumer has no job |
-| c-native-provider-rest-input-live | a native page passes a live attribute to a component that spreads its rest into a clone | react | react | ssr | ok | 5.3 | fallback:spread-props | F278 (Mellow F1): a live rest cannot be re-spread by the clone on the client, so the call that passes one stays React |
+| c-native-provider-rest-input-live | a native page passes a live attribute to a component that spreads its rest into a clone | react | react | ssr | ok | 5.3 | fallback:spread-props, fallback:frozen-prop | F278 (Mellow F1): a live rest cannot be re-spread by the clone on the client, so the call that passes one stays React |
 | c-pure-helper-call-inlined | a single-return module helper called with a state read | native | native | 0 | ok | 4.6 | — | F279: the call is replaced by the helper's expression (a plain-read argument), so no precompute job runs it |
 | c-hook-radix-useid-callbackref | Radix's useId and useCallbackRef (imported hooks with React-version fallbacks) | static | static | 0 | ok | 4.6 | info:build-eval-instance | R34.142: `typeof <React hook alias> === "function"` is decided (React exports its hooks as functions) and only the branch that runs is read; `setId(r => r ?? ...)` on a state seeded by useId() is an identity update, so the client-only counter fallback and its effect are dropped and the state is the server-seeded id |
 | c-arrow-rest-param-kept | a component function with a rest parameter called from a handler | native | native | 0 | ok | 4.6 | — | an arrow's `(...xs)` was read as `(xs)` (the IR has no rest parameter): a call passing none spread undefined; read verbatim now |
