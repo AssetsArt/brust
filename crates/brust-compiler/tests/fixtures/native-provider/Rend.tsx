@@ -66,3 +66,20 @@ export function RD({ checked, children }: { checked?: boolean; children?: React.
   const on = checked !== undefined ? checked : own
   return <C.Provider value={{ on, flip: () => setOwn((o) => !o) }}>{children}</C.Provider>
 }
+
+// F269: a boolean over a method of an element held in state (Radix's `isFormControl`): `!x` prints a boolean whatever `x` is
+export function RF({ render }: { render: (s: { inForm: boolean }) => React.ReactNode }) {
+  const [on, setOn] = useState(false)
+  const [el, setEl] = useState<HTMLElement | null>(null)
+  const inForm = el ? !!el.closest('form') : true
+  const ctx = { inForm }
+  return <C.Provider value={{ on, flip: () => { setOn((o) => !o); setEl(document.body) } }}>{render(ctx)}</C.Provider>
+}
+// the method's own result is read (an element or null), not a boolean made of it: still not provably plain
+export function RM({ render }: { render: (s: { inForm: unknown }) => React.ReactNode }) {
+  const [on, setOn] = useState(false)
+  const [el, setEl] = useState<HTMLElement | null>(null)
+  const inForm = el ? el.closest('form') : true
+  const ctx = { inForm }
+  return <C.Provider value={{ on, flip: () => { setOn((o) => !o); setEl(document.body) } }}>{render(ctx)}</C.Provider>
+}

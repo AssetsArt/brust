@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 77 | 15 | 23 | 39 | 0 | 0 | 0 | 0 |
+| C Hooks | 78 | 16 | 23 | 39 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 69 | 31 | 10 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 443 | 203 | 60 | 176 | 3 | 1 | 0 | 0 |
+| **Total** | 444 | 204 | 60 | 176 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -367,6 +367,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-render-prop-local-object-computed | a render prop called with a local const object holding a computation | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | F266: a field that is a computation is not a plain read; the Provider stays an island |
 | c-spread-const-object | a spread of a local const object literal into a component | static | static | 0 | ok | 4.4 | — | F266: <Impl {...ctx}> with const ctx = { a, b } is read as the entries (components only; an element spread stays as it was) |
 | c-native-provider-derived-frame | a state Provider whose frame field is a derived value over a prop and state | static | static | 0 | ok | 4.4 | — | F269: the frame hands out the derived value as written (Radix useControllableState), not its precomputed slot |
+| c-native-provider-negated-method | a render prop reading a boolean made with !! of a method of an element held in state | static | static | 0 | ok | 4.8 | info:build-eval-instance | F269: Radix's isFormControl; !x prints a boolean whatever x is, so the allowlist does not judge x |
 | c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
 | c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |

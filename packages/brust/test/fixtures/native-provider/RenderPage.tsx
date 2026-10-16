@@ -4,10 +4,11 @@ export default function RenderPage() {
   return (
     <main>
       <RProvider
-        render={({ checked }) => (
+        render={({ checked, inForm }) => (
           <>
             <RTrigger />
             {checked && <RMirror />}
+            {inForm && <small>free</small>}
           </>
         )}
       />

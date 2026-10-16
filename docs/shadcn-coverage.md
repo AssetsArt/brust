@@ -37,7 +37,7 @@ One line per thing that keeps a row or a library component off the static/native
 | # | Blocker | Kind | Classification | Measured rows | Analysis-only rows | App components | Library components | Why |
 |---|---|---|---|---|---|---|---|---|
 | 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 37 | 0 | 135 | 151 | `external-component` diagnostic (docs/react-coverage.md) |
-| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 123 | 180 | `spread-props` diagnostic (docs/react-coverage.md) |
+| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 123 | 178 | `spread-props` diagnostic (docs/react-coverage.md) |
 | 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 31 | 0 | 87 | 176 | `island-prop` diagnostic (docs/react-coverage.md) |
 | 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 19 | 0 | 20 | 55 | `island-children` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 7 | 0 | 8 | 29 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
@@ -51,7 +51,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 13 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
 | 14 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
 | 15 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 36 | `body-shape` diagnostic (docs/react-coverage.md) |
-| 16 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 10 | `context-state` diagnostic (docs/react-coverage.md) |
+| 16 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 12 | `context-state` diagnostic (docs/react-coverage.md) |
 | 17 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `local-component` diagnostic (docs/react-coverage.md) |
 | 18 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `ref-shape` diagnostic (docs/react-coverage.md) |
 | 19 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
@@ -842,7 +842,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/slider.tsx | SliderImpl | forwardRef | not exported | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |
 | src/slider.tsx | SliderTrack | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |
 | src/slider.tsx | SliderRange | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useRef |
-| src/slider.tsx | SliderThumbProvider | function | react (fallback:context-escape, fallback:hook-unsupported, fallback:jsx-const-child, fallback:spread-props) | useContext / use*Context, Context.Provider / *Provider, useEffect, useState, useMemo / useCallback |
+| src/slider.tsx | SliderThumbProvider | function | react (fallback:context-escape, fallback:context-state, fallback:hook-unsupported, fallback:jsx-const-child) | useContext / use*Context, Context.Provider / *Provider, useEffect, useState, useMemo / useCallback |
 | src/slider.tsx | SliderThumbTrigger | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:member-tag, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread |
 | src/slider.tsx | SliderThumb | forwardRef | react (fallback:island-prop, fallback:prop-pattern) | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/slider.tsx | SliderBubbleInput | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
@@ -851,7 +851,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
-| src/switch.tsx | SwitchProvider | function | react (fallback:hook-unsupported, fallback:jsx-const-child, fallback:spread-props) | Context.Provider / *Provider, useControllableState, useState |
+| src/switch.tsx | SwitchProvider | function | react (fallback:context-state, fallback:hook-unsupported, fallback:jsx-const-child) | Context.Provider / *Provider, useControllableState, useState |
 | src/switch.tsx | SwitchTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, addEventListener |
 | src/switch.tsx | Switch | forwardRef | not exported | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/switch.tsx | SwitchThumb | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |

@@ -212,6 +212,8 @@ fn a_render_prop_the_provider_only_calls_is_spliced_into_the_clone() {
         "render_noparams.tsx",
         // F266: `render(ctx)` with `const ctx = { on }`
         "render_ctx.tsx",
+        // F269: `!!el.closest('form')` over state is a boolean
+        "render_not.tsx",
     ] {
         let all = compile(file);
         let root = &all[0];
