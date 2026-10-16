@@ -136,6 +136,11 @@ struct Placer<'s> {
     read_memo: std::cell::RefCell<std::collections::HashMap<String, Option<String>>>,
     /// F197: bare specifiers of helpers the predicate asked to prove whose package source the build has not written.
     package_requests: std::cell::RefCell<BTreeSet<String>>,
+    /// The props whose destructuring default is a module function proven plain (`getValueLabel = defaultGetValueLabel`):
+    /// calling one in the render is the plain function while the call site passes nothing for it.
+    fn_default_props: Vec<String>,
+    /// The ones a render actually calls (they become `ComponentIR::callable_props`).
+    called_props: std::cell::RefCell<BTreeSet<String>>,
     slot_values: &'s std::collections::HashMap<String, serde_json::Value>,
     opts: &'s crate::analyze::component::AnalyzeOptions,
 }
@@ -296,6 +301,16 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
             .collect(),
         read_memo: Default::default(),
         package_requests: Default::default(),
+        fn_default_props: ir
+            .props
+            .iter()
+            .filter(|p| {
+                matches!(&p.default, Some(RawExpr { kind: RawKind::Ident { name, kind: IdentKind::Local }, .. })
+                    if ir.plain_fns.contains(name))
+            })
+            .map(|p| p.name.clone())
+            .collect(),
+        called_props: Default::default(),
         slot_values: &ctx.opts.slot_values,
         opts: ctx.opts,
     };
@@ -330,6 +345,7 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
     }
     ir.diagnostics.append(&mut p.diagnostics);
     ir.package_requests = p.package_requests.take().into_iter().collect();
+    ir.callable_props = p.called_props.take().into_iter().collect();
     ir.build_eval = std::mem::take(&mut p.st.build_eval);
     for d in p.css_errors.take() {
         if !ir
@@ -681,6 +697,16 @@ impl Placer<'_> {
                         kind: IdentKind::Global,
                         ..
                     } => true,
+                    // W1d (progress): a PROP whose default is a plain module function, called in the render: it is that
+                    // function while the call site passes nothing for it (a call site that passes one is refused through
+                    // `frozen_props`, which `callable_props` joins).
+                    RawKind::Ident {
+                        name,
+                        kind: IdentKind::Prop,
+                    } if self.fn_default_props.contains(name) => {
+                        self.called_props.borrow_mut().insert(name.clone());
+                        true
+                    }
                     // F174: a module function proven to return a primitive; its arguments are judged below.
                     RawKind::Ident {
                         name,

@@ -333,6 +333,10 @@ pub struct ComponentIR {
     /// props). A call site that passes a value that changes on the client for one of them falls back (`frozen-prop`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frozen_props: Vec<String>,
+    /// A prop whose default is a plain module function and which the render calls (`getValueLabel(value, max)`): the call site
+    /// must pass nothing for it, so they join `frozen_props` (a passed value, a function or a changing one, falls back).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub callable_props: Vec<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -478,6 +482,7 @@ impl ComponentIR {
             hosts_children: false,
             mount_once: None,
             frozen_props: Vec::new(),
+            callable_props: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],
