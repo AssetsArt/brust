@@ -77,6 +77,8 @@ pub struct NameTable<'a> {
     /// F327: body `const`s that hold an object literal spreading the rest or the props and are used ONLY as JSX spreads,
     /// by symbol key: they are never values, so the rest inside is never read as one.
     spread_only: HashSet<u32>,
+    /// W1d PR 3: locals that are the `...rest` object itself (`const singleProps = rest`), by symbol key.
+    rest_aliases: std::cell::RefCell<HashSet<u32>>,
     /// The keys the props pattern names (what `rest` leaves out).
     named_props: Vec<String>,
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
@@ -467,6 +469,7 @@ impl<'a> NameTable<'a> {
             props_ident: None,
             rest: None,
             spread_only: HashSet::new(),
+            rest_aliases: std::cell::RefCell::new(HashSet::new()),
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
             use_before_pattern: std::cell::Cell::new(None),
@@ -1133,6 +1136,12 @@ impl<'a> NameTable<'a> {
         }
     }
 
+    /// W1d PR 3: `const alias = rest` (the `...rest` object itself, e.g. Radix's `const singleProps = toggleGroupProps`):
+    /// the alias reads as the rest object.
+    pub fn alias_rest(&self, r: js_ast::Ref) {
+        self.rest_aliases.borrow_mut().insert(self.key(r));
+    }
+
     pub fn bind_scope_token(&self, r: js_ast::Ref) {
         self.scope_tokens.borrow_mut().insert(self.key(r));
     }
@@ -1196,7 +1205,10 @@ impl<'a> NameTable<'a> {
         // The whole (non-destructured) props object: the root `*` (F20). A capture of the rest
         // object reads it too (a superset: the deps cover every prop); code that is printed as
         // written never sees it (the reader falls back first, `Reader::rest_escapes`).
-        if self.props_ident == Some(k) || self.rest == Some(k) {
+        if self.props_ident == Some(k)
+            || self.rest == Some(k)
+            || self.rest_aliases.borrow().contains(&k)
+        {
             return ("*".into(), IdentKind::Prop);
         }
         let name = self.name(r);
@@ -1238,7 +1250,8 @@ impl<'a> NameTable<'a> {
     }
 
     pub fn is_rest(&self, r: js_ast::Ref) -> bool {
-        self.rest.is_some() && self.rest == Some(self.key(r))
+        self.rest.is_some()
+            && (self.rest == Some(self.key(r)) || self.rest_aliases.borrow().contains(&self.key(r)))
     }
 
     /// The keys the props pattern names (what `...rest` leaves out).

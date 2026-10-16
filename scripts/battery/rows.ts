@@ -60,6 +60,8 @@ const CTXTHIS = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/
 const lsFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/${n}.tsx`), 'utf8').trimEnd()
 const scopeFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/scope-${n}.tsx`), 'utf8').trimEnd()
 
+const chainFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/${n}.tsx`), 'utf8').trimEnd()
+
 const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
 
 const NATIVE_FWD = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Fwd.tsx'), 'utf8')
@@ -1720,6 +1722,10 @@ export const rows: Row[] = [
   { id: 'c-key-live-through-spread', category: 'C', authoring: 'a changing key written through a spread of an object literal', expect: 'react',
     snippet: `import { useState } from 'react'\nfunction Counter() { const [n, setN] = useState(0); return <button type="button" onClick={() => setN(n + 1)}>{n}</button> }\nexport default function C() { const [k, setK] = useState(0); return <div><Counter {...{ key: k }} /><button type="button" onClick={() => setK(k + 1)}>swap</button></div> }`,
     note: 'F334: a key through a spread is React\'s key: a changing one remounts, so key-outside-list refuses' },
+  { id: 'c-key-path-spread-component', category: 'C', authoring: 'a props path spread onto a component (may carry a changing key)', expect: 'react',
+    snippet: `import Child from './Child'\nexport default function C({ cfg }: { cfg: object }) { return <div><Child {...cfg} /></div> }`,
+    note: 'F335: the object may hold a key that changes (React remounts the child): key-outside-list; on a host element it stays native (known limit)',
+    files: { 'Child.tsx': `export default function Child() { return <p>c</p> }` } },
   { id: 'c-useid-in-key', category: 'C', authoring: 'useId() called in an element key', expect: 'react',
     snippet: `import { useId } from 'react'\nexport default function C() { return <p><i key={useId()}>x</i></p> }`,
     note: 'F235: the JSX runtime evaluates key after the props, so the hook is refused there (hook-in-expression)' },
@@ -2045,4 +2051,22 @@ export const rows: Row[] = [
   { id: 'c-scope-by-name', category: 'C', authoring: 'a hook named like a scope hook that createContextScope did not make', expect: 'react',
     snippet: scopeFx('by-name'),
     note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-chain', category: 'C', authoring: 'an early return chain of two ifs and a final return, with a const in each branch', expect: 'static', jobs: 0,
+    snippet: chainFx('chain'),
+    note: 'W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React' },
+  { id: 'c-chain-throw', category: 'C', authoring: 'an early return chain on a prop that ends in throw new Error(literal) (Radix ToggleGroup root)', expect: 'static', jobs: 0,
+    snippet: chainFx('chain-throw'),
+    note: 'W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React' },
+  { id: 'c-chain-rest', category: 'C', authoring: 'a rest aliased in each branch of a type switch (const singleProps = rest) with a module const object as discriminant', expect: 'static', jobs: 0,
+    snippet: chainFx('chain-rest'),
+    note: 'W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React' },
+  { id: 'c-chain-throw-state', category: 'C', authoring: 'an early return chain that ends in a throw, tested on state', expect: 'static', jobs: 1,
+    snippet: chainFx('chain-throw-state'),
+    note: 'W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React' },
+  { id: 'c-chain-throw-msg', category: 'C', authoring: 'a chain that ends in throw new Error(prop)', expect: 'static', jobs: 1,
+    snippet: chainFx('chain-throw-msg'),
+    note: 'W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React' },
+  { id: 'c-chain-throw-value', category: 'C', authoring: 'a chain that ends in throw of a string', expect: 'static', jobs: 1,
+    snippet: chainFx('chain-throw-value'),
+    note: 'W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React' },
 ]
