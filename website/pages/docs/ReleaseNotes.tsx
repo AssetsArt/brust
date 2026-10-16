@@ -103,9 +103,9 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         <li>
           <strong>A Provider that spreads its props no longer drops the children you pass it.</strong> In 2.0.0-alpha.16, <code>&lt;Root&gt;&lt;span&gt;hello&lt;/span&gt;&lt;/Root&gt;</code> printed an empty <code>&lt;button&gt;</code> when <code>Root</code> is a Provider that spreads its rest props onto the button. Such a call site now renders with React and shows the children. If you used this pattern on alpha.16, upgrade.
         </li>
-        {/* source: PR #300 (F319); the bug is present in every alpha since 2.0.0-alpha.1 (bisected on the published addons) */}
+        {/* source: PR #300 (F319) and PR #304 (F320); the bug is present in every alpha since 2.0.0-alpha.1 (bisected on the published addons) */}
         <li>
-          <strong>A prop that changes while the page is open no longer stays stale in a compiled component.</strong> The old value stayed in the rows of a list that is printed once, in a child component that brust does not link to its parent, and in a prop forwarded through a component&rsquo;s <code>{'{'}...props{'}'}</code> spread. It has been present since alpha.1 and printed no warning. A call site that passes a changing value (state, a store value or a function) to such a prop now renders with React; a constant is unaffected.
+          <strong>A prop that changes while the page is open no longer stays stale in a compiled component.</strong> The old value stayed in the rows of a list that is printed once, in a child component that brust does not link to its parent, and in a prop forwarded through a component&rsquo;s <code>{'{'}...props{'}'}</code> spread. It has been present since alpha.1 and printed no warning. A component with state, effects, handlers or refs now follows its changing props in all three places and stays native. For a component without state, and for <code>children</code> or the whole props object, a call site that passes a changing value (state, a store value or a function) renders with React; a constant is unaffected. A list whose source is an imported value or a module constant keeps that rule too.
         </li>
         {/* source: PR #293 (F309) */}
         <li>
