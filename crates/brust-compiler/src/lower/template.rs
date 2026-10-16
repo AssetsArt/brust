@@ -116,6 +116,14 @@ impl Inline {
         cur
     }
 
+    /// The call site WRITES prop `name` (a named attribute, never one a spread may carry): what a compiler-reserved prop
+    /// needs, since `get` answers `spread_get(…)` for any name once a spread is among the segments.
+    pub fn writes(&self, name: &str) -> bool {
+        self.segs
+            .iter()
+            .any(|s| matches!(s, Seg::Named(k, _) if k == name))
+    }
+
     /// The parent's ref cell bound on this instance (F267).
     pub fn ref_binding(&self) -> Option<&str> {
         self.segs.iter().rev().find_map(|s| match s {
@@ -870,7 +878,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             s.push_str(" x-collection-use=\"\"");
         }
         if let Some(i) = &self.inline
-            && i.get(crate::ir::COLLECTION_ROOT_PROP).is_some()
+            && i.writes(crate::ir::COLLECTION_ROOT_PROP)
         {
             s.push_str(" x-collection-root=\"\"");
         }

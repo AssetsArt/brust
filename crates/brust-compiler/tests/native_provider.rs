@@ -1077,3 +1077,16 @@ fn the_items_function_is_not_callable_in_the_render() {
         count.ir.diagnostics
     );
 }
+
+// A rest spread among a call site's props answers every prop name (`spread_get`), but the reserved collection-root prop is only
+// ever written by the compiler: a Label-like instance with a rest spread must NOT become a collection root (it linked the
+// collection feature on pages that use no collection, and differed between the fold on and off).
+#[test]
+fn a_rest_spread_instance_is_not_a_collection_root() {
+    let all = compile_collection("coll_rest_spread.tsx");
+    assert!(
+        all.iter().all(|i| !i.jinja.contains("x-collection-")),
+        "{:?}",
+        all.iter().map(|i| &i.jinja).collect::<Vec<_>>()
+    );
+}
