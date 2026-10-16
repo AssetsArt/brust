@@ -53,6 +53,24 @@ impl V {
         })
     }
 
+    /// [`V::to_json`], objects in source order (F282); `None` in the same cases.
+    pub fn to_ojson(&self) -> Option<crate::ir::OJson> {
+        use crate::ir::OJson;
+        Some(match self {
+            V::Undef => return None,
+            V::Null => OJson::Null,
+            V::Bool(b) => OJson::Bool(*b),
+            V::Num(n) => OJson::from(num_json(*n)?),
+            V::Str(s) => OJson::Str(s.clone()),
+            V::Arr(a) => OJson::Arr(a.iter().map(V::to_ojson).collect::<Option<_>>()?),
+            V::Obj(o) => OJson::object(
+                o.iter()
+                    .map(|(k, v)| Some((k.clone(), v.to_ojson()?)))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+        })
+    }
+
     /// The value as a JS literal, key order kept (F149: a folded `cva(...)` config re-emitted for
     /// build evaluation); `None` when any part is `undefined` or a number JS would print otherwise.
     pub fn to_js(&self) -> Option<String> {

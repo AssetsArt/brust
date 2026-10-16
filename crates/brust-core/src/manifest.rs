@@ -154,7 +154,9 @@ pub struct ChildRecord {
     #[serde(default)]
     pub props: BTreeMap<String, String>,
     #[serde(default)]
-    pub literals: BTreeMap<String, serde_json::Value>,
+    /// Constant child props, as `Node`s: the manifest text's key order survives (the compiler wrote it in source order,
+    /// F282), so a style literal feeds a job and the page in the order React prints it (F318).
+    pub literals: BTreeMap<String, brust_jinja::ctx::Node>,
     #[serde(default)]
     pub exprs: BTreeMap<String, String>,
     /// The rows of a `per-row-literal` instance: a constant list the compiler read from the
@@ -713,6 +715,31 @@ mod tests {
         assert!(e.to_string().contains("rebuild"), "{e}");
     }
 
+    /// F318 F3: a child literal object keeps the manifest text's key order (the compiler wrote it in source order, F282)
+    /// when the manifest is loaded, so it reaches the page and the jobs in the order React prints it.
+    #[test]
+    fn child_literals_keep_the_manifest_key_order() {
+        let (mut m, files) = parts();
+        let ch = &mut m["components"]["detailPage_c3"]["children"][0];
+        ch["props"] = serde_json::json!({});
+        ch["exprs"] = serde_json::json!({});
+        ch["literals"] = serde_json::json!({"move": {"x": 1}});
+        // `serde_json::Value` sorts its objects, so the ordered literal is spliced into the manifest TEXT
+        let text = m
+            .to_string()
+            .replace(r#"{"x":1}"#, r#"{"marginTop":5,"margin":0}"#);
+        let ok = Manifest::from_parts(&text, &files).unwrap();
+        let rec = &ok.manifest.components["detailPage_c3"].children[0];
+        let sent =
+            serde_json::to_string(&brust_jinja::ctx::Ordered(&rec.literals["move"])).unwrap();
+        assert_eq!(sent, r#"{"marginTop":5,"margin":0}"#);
+        // the canonical (sorted) form is unchanged
+        assert_eq!(
+            serde_json::to_string(&rec.literals["move"]).unwrap(),
+            r#"{"margin":0,"marginTop":5}"#
+        );
+    }
+
     /// F105: a child bound by literals and expressions round-trips, and covers its job inputs.
     #[test]
     fn child_literals_and_exprs_round_trip() {
@@ -723,7 +750,10 @@ mod tests {
         ch["literals"] = serde_json::json!({"size": 2});
         let ok = Manifest::from_parts(&m.to_string(), &files).unwrap();
         let rec = &ok.manifest.components["detailPage_c3"].children[0];
-        assert_eq!(rec.literals["size"], serde_json::json!(2));
+        assert_eq!(
+            rec.literals["size"],
+            brust_jinja::ctx::Node::from(serde_json::json!(2))
+        );
         assert!(rec.exprs.contains_key("move"));
         // A prop bound twice, and an expression that does not compile, are refused at load.
         let mut twice = m.clone();

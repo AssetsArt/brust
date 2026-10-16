@@ -654,3 +654,26 @@ fn a_forwarded_class_name_replaces_the_childs_own_and_a_slot_refuses_it() {
     );
     refused_any_of(&slot, "x-bind-class");
 }
+// ---- F282: an object literal crossing as PROPS-JSON keeps its source order ----
+
+#[test]
+fn a_style_object_given_to_an_island_crosses_in_source_order() {
+    let o = page(
+        "import Box from './IslandBox'",
+        &format!(
+            "{FLIP} return <div><Box style={{{{ marginTop: 5, margin: 0, color: 'red' }}}} tone={{{{ z: 1, a: 2 }}}} /><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    assert_eq!(o.tier, Tier::Native, "{:?}", o.diags);
+    let html = render(&o.jinja, serde_json::json!({}));
+    // the declarations a React render of this object prints: the longhand first, so `margin: 0` wins
+    assert!(
+        html.contains("&quot;style&quot;:{&quot;marginTop&quot;:5,&quot;margin&quot;:0,&quot;color&quot;:&quot;red&quot;}"),
+        "{html}"
+    );
+    // any other object literal is JSON.stringify's order too, not sorted
+    assert!(
+        html.contains("&quot;tone&quot;:{&quot;z&quot;:1,&quot;a&quot;:2}"),
+        "{html}"
+    );
+}
