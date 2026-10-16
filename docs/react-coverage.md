@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
-| B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
+| B Composition | 218 | 113 | 15 | 90 | 0 | 0 | 0 | 0 |
 | C Hooks | 65 | 9 | 22 | 34 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 69 | 31 | 10 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 431 | 197 | 59 | 171 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
+| **Total** | 438 | 197 | 65 | 172 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -291,6 +291,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-pkg-aschild-false | a package Primitive leaf with asChild={false} | static | static | 0 | ok | 0 | — | F153c: a literal false is the host element (the leaf spreads its props into Primitive.div, so it requires `asChild` absent or false) |
 | b-pkg-primitive-aschild | Primitive.button asChild with one host child, written in the app | static | static | 0 | ok | 0 | — | F153c R34.65: asChild on a Primitive tag merges into the one host child (the R34.28 Button rule) |
 | b-pkg-aschild-through-spread | asChild passed to a package leaf that spreads it into Primitive | react | react | ssr | ok | 3.8 | fallback:slot-dynamic | F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles |
+| b-pkg-hook-alias-use-size | the Radix useSize hook, whose useLayoutEffect is an exported SSR-guard alias of React's | native | native | 0 | ok | 4.4 | — | F268: `const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}` (exported) is React's useLayoutEffect, by the module's own declaration, not by package name |
+| b-hook-alias-value-hook | an exported conditional alias of a hook that returns a value (useState or a no-op) | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | F268 fail closed: only an effect hook (it returns nothing) can stand beside a no-op; useState would be undefined where the guard is false |
 | b-pkg-aschild-dynamic | a dynamic asChild on a package leaf | react | react | ssr | ok | 3.8 | fallback:slot-dynamic | F153c fail closed: slot-dynamic |
 | b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | react | react | ssr | ok | 3.8 | fallback:forwardref-ref, fallback:ref-in-render | F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none) |
 | b-pkg-ref-read | a package leaf that reads its forwarded ref | static | static | ssr | ok | 3.8 | fallback:external-component | F153c fail closed: the leaf needs React (forwardref-ref), so the app keeps the island of the published export |
@@ -448,6 +450,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-jsx-runtime-alias-value | the runtime builder read as a value (`const h = jsx; h(…)`) | react | react | ssr | ok | 3.8 | fallback:jsx-runtime-call | F156: any read of a runtime builder is jsx-runtime-call, not an opaque server slot |
 | e-jsx-runtime-comma-call | the runtime builder called through a comma (`(0, jsx)(…)`, bundler output) | react | react | ssr | ok | 3.8 | fallback:jsx-runtime-call | F156: any read of a runtime builder is jsx-runtime-call, not an opaque server slot |
 | e-jsx-runtime-local-name | a local function named `jsx` is not the runtime | static | static | precompute | ok | 0 | — |  |
+| e-name-signal-state | a state named like a runtime import (`const [signal, setSignal] = useState(0)`) | native | native | 0 | ok | 4.4 | — | F233: the chunk imports the runtime under other names (`signal as signal1`), the component keeps its own |
+| e-name-props-derived | a derived value named `props` beside a prop read | native | native | 0 | ok | 4.4 | — | F233: the behaviour context's props signal is renamed (`props: props1`), so the prop read is not the derived value |
+| e-name-text-helper | a handler named like a paint helper (`const __text = () => …`) | native | native | 0 | ok | 4.4 | — | F233: the helper is declared under another name; before, the chunk declared `__text` twice (a SyntaxError) |
+| e-job-prop-local-assign | a body local named like a prop the job reads off `props` (`const style = Object.assign({}, props.style, …)`) | native | native | precompute | ok | 4.4 | — | F257: the job destructures the prop under another name (`style: style1`); it declared `style` twice |
+| e-job-prop-local-spread | the same through an object spread (`const style = { ...props.style, … }`) | native | native | precompute | ok | 4.4 | — | F257: the B5 spelling of the same shape |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | 3.8 | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | 3.8 | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | 3.8 | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |
