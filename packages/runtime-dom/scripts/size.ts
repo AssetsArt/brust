@@ -8,7 +8,7 @@ import { gzipSync } from 'node:zlib'
 
 const src = resolve(import.meta.dir, '../src')
 export const BUDGET_FILE = resolve(import.meta.dir, '../../../docs/runtime-budget.json')
-export const FEATURES = ['basics', 'if', 'for', 'model', 'html', 'island', 'store'] as const
+export const FEATURES = ['basics', 'if', 'for', 'model', 'html', 'island', 'collection', 'store'] as const
 
 export async function bundle(entry: string, coreExternal: boolean): Promise<string> {
   const r = await Bun.build({

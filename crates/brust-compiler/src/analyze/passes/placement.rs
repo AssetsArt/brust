@@ -329,7 +329,10 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         }
     }
     ir.diagnostics.append(&mut p.diagnostics);
-    ir.package_requests = p.package_requests.take().into_iter().collect();
+    let mut requests: std::collections::BTreeSet<String> =
+        ir.package_requests.iter().cloned().collect();
+    requests.extend(p.package_requests.take());
+    ir.package_requests = requests.into_iter().collect();
     ir.build_eval = std::mem::take(&mut p.st.build_eval);
     for d in p.css_errors.take() {
         if !ir
@@ -1879,6 +1882,7 @@ impl Placer<'_> {
                         Attr::Dynamic { value, .. }
                         | Attr::Spread(value)
                         | Attr::InnerHtml { value } => self.expr(value),
+                        Attr::CollectionItem { data } => self.expr(data),
                         Attr::Event { .. } => self.reactive += 1,
                         Attr::Static { .. } | Attr::Ref { .. } | Attr::ForwardRef => {}
                     }

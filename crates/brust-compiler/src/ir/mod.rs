@@ -2,6 +2,7 @@
 pub mod decls;
 pub mod expr;
 pub mod fold;
+pub mod ojson;
 pub mod template;
 #[cfg(test)]
 mod tests;
@@ -9,6 +10,7 @@ mod tests;
 pub use decls::*;
 pub use expr::*;
 pub use fold::{FoldEnv, V, is_js_space};
+pub use ojson::OJson;
 pub use template::*;
 
 use serde::{Deserialize, Serialize};
@@ -215,6 +217,10 @@ pub struct ComponentIR {
     /// shares one factory module with every clone whose chunk is equal (R34.124).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub specialised: bool,
+    /// F298: a clone made for one call site whose children were put where the component spreads its rest: the clones
+    /// made inside it are keyed by its id too (the same Provider call of the same module holds other content there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_clone_of: Option<String>,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (shadcn S1.2, R34.14): the props minus every
@@ -266,10 +272,17 @@ pub struct ComponentIR {
     /// The context fields this component reads, each as a hidden prop (see `CtxUse`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ctx_uses: Vec<CtxUse>,
+    /// W1d PR 2: the contexts of `ctx_uses` that a hook reads (or a descendant bubbled up) with a `scope` argument.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctx_scoped: Vec<String>,
     /// `ctx_uses` reach a context read in a package source (this component's own, or a descendant's it passes on): such a
     /// consumer revived from its source would not share the Provider island's `createContext` (the published dist).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ctx_pkg: bool,
+    /// R34.140: this component asks for the items of its nearest collection (`useCollection(scope)`): its host carries
+    /// `x-collection-use` (the runtime feature loads) and its chunk reads `ctx.items`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uses_collection: bool,
     /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -319,6 +332,11 @@ pub struct ComponentIR {
     /// text says what, for the call site that cannot promise it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mount_once: Option<String>,
+    /// F319 (fail closed): props this component reads where a change would not be followed: the rows of a list that is
+    /// printed once, a prop of a child it does not link, a key printed once through a spread (transitive through its own
+    /// props). A call site that passes a value that changes on the client for one of them falls back (`frozen-prop`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frozen_props: Vec<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -433,6 +451,7 @@ impl ComponentIR {
             export: None,
             unexported: false,
             specialised: false,
+            rest_clone_of: None,
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,
@@ -448,7 +467,9 @@ impl ComponentIR {
             inline_fns: Vec::new(),
             fixed_props: Vec::new(),
             ctx_uses: Vec::new(),
+            ctx_scoped: Vec::new(),
             ctx_pkg: false,
+            uses_collection: false,
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),
@@ -461,6 +482,7 @@ impl ComponentIR {
             repeats_children: false,
             hosts_children: false,
             mount_once: None,
+            frozen_props: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],

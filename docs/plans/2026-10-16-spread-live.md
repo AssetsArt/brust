@@ -157,3 +157,13 @@ owner: Detoro · authority: in-loop. Mellow and Afrojack both PASS on the note. 
 - **Q3: option B stays parked** until a roving page (wave B, W1d toggle-group) measures a linked forwarder. **Option C: never.**
 - **Afrojack's five non-blocking concerns are lane work:** row ids and category; the stale `live_key_ok` comment; `css_decls` vs `style_css` plus the own-before served case; ci.yml wiring of the new tests; a string-`style` row.
 - **Gate and review:** PR CI. Reviews: Afrojack (parity), Mellow (the sink and C1-C3).
+
+## 13. Implementation record (lane `spread-live`, Guetta; F296 style, F299 className)
+
+Shipped as option A with the §12 conditions. What the lane found beyond the note, all measured against react-dom 19 in `tests/server/live-style.chromium.test.ts`:
+
+- **The gate:** `live_key_ok` no longer refuses `style` or `className`; `style_may_merge` refuses both when the child may render a Slot (C1; without it a literal `asChild` instance is a compile error, mutation-checked).
+- **First paint was not React's for literal styles, also hand-written ones (C3):** the printer sorted a literal object's declarations by key (a later `margin: 0` came before `marginTop: 5`, so the longhand won), listed only nine unitless properties (`aspectRatio: 1` printed `1px`; `WebkitLineClamp` too), did not trim string values, printed `msTransform` as `ms-transform`, and printed `style=""` for an empty object. Now: source order (a repeated key keeps its first place and its last value, `obj_lit`), react-dom's unitless list (also vendor-prefixed; the client's `__css` helper is generated from the same Rust list), trimmed strings, `-ms-`, and no attribute when no declaration is left (`css_attr`, `style_attr`).
+- **Cost:** the unitless list adds about 0.6 KB raw to a chunk that binds a style; the real `SwitchBubbleInput` chunk is the §6 figure plus that.
+- **C2:** a live `style`/`className` that becomes `undefined` drops the forwarder's own value (React does): the first paint omits it, the binder writes it empty (a hand-written bound attribute does the same), so the DOM compare treats an empty `style`/`class` as absent.
+- **Not done, stated:** option B and C stay parked/never; a string `style` is not an error (React throws): brust writes nothing, as for a hand-written element.

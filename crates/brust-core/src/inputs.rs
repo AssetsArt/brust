@@ -301,7 +301,7 @@ impl PropsMap {
     /// A child record's bindings: paths, literals and expressions (`rows` = its per-row list).
     pub fn child(
         props: &BTreeMap<String, String>,
-        literals: &BTreeMap<String, serde_json::Value>,
+        literals: &BTreeMap<String, Node>,
         exprs: &BTreeMap<String, String>,
         rows: Option<Rows>,
     ) -> Result<PropsMap, String> {
@@ -310,7 +310,7 @@ impl PropsMap {
             out.push((name.clone(), Bound::Path(Path::parse(src)?, src.clone())));
         }
         for (name, v) in literals {
-            out.push((name.clone(), Bound::Lit(Node::from(v.clone()))));
+            out.push((name.clone(), Bound::Lit(v.clone())));
         }
         for (name, src) in exprs {
             let e = compile_expr(src).map_err(|e| format!("child prop {name:?} = {src:?}: {e}"))?;
@@ -620,7 +620,7 @@ mod tests {
         let ctx = n(json!({"src": "a\nb", "n": 2, "items": [{"code": "x"}, {"code": "y"}]}));
         let pm = PropsMap::child(
             &map(&[("n", "n")]),
-            &map(&[("lang", json!("ts")), ("opts", json!({"wrap": true}))]),
+            &map(&[("lang", n(json!("ts"))), ("opts", n(json!({"wrap": true})))]),
             &map(&[("code", "(__props.src ~ \"!\")"), ("gone", "__undefined")]),
             None,
         )

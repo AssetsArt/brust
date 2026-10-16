@@ -47,7 +47,7 @@ fn rule<'a>(ir: &'a ComponentIR, rule: &str) -> Option<&'a Diagnostic> {
 fn literal(ir: &ComponentIR, key: &str) -> Vec<Value> {
     ir.jobs
         .iter()
-        .filter_map(|j| j.literals.get(key).cloned())
+        .filter_map(|j| j.literals.get(key).map(|v| v.to_value()))
         .collect()
 }
 

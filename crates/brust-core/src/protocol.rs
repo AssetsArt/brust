@@ -197,6 +197,7 @@ pub struct JobCall<'a> {
     pub id: String,
     pub component_id: &'a str,
     pub kind: JobKind,
+    #[serde(serialize_with = "ordered_inputs")]
     pub inputs: &'a Node,
     /// `ssr`: the react component to render (`jobs[target].ssr(inputs)`),
     /// copied from the manifest job record; absent when the record has none.
@@ -205,6 +206,11 @@ pub struct JobCall<'a> {
     /// `per_instance` jobs: the 0-based row of the list this call renders.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub row: Option<usize>,
+}
+
+/// F318: a job's inputs go to the worker in the key order the loader's JSON text had (not the sorted canonical form).
+fn ordered_inputs<S: serde::Serializer>(n: &&Node, s: S) -> Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&brust_jinja::ctx::Ordered(n), s)
 }
 
 /// `jobs` call response: `{ results: [{ id, value | error }] }`.
@@ -473,6 +479,35 @@ mod tests {
                 "{bad} must not deserialize"
             );
         }
+    }
+
+    /// F318: job inputs reach the worker in the key order of the loader's JSON text, not sorted; the canonical (sorted)
+    /// serialisation of the same `Node`, which job cache keys hash, is unchanged.
+    #[test]
+    fn job_inputs_keep_the_loader_key_order_but_the_canonical_form_is_sorted() {
+        let inputs: Node = serde_json::from_str(
+            r#"{"style":{"marginTop":5,"margin":0},"b":1,"a":[{"z":1,"y":2}]}"#,
+        )
+        .unwrap();
+        let call = JobCall {
+            id: "c/j0".into(),
+            component_id: "c",
+            kind: JobKind::Ssr,
+            inputs: &inputs,
+            target: Some("t"),
+            row: None,
+        };
+        let sent = serde_json::to_string(&call).unwrap();
+        assert!(
+            sent.contains(
+                r#""inputs":{"style":{"marginTop":5,"margin":0},"b":1,"a":[{"z":1,"y":2}]}"#
+            ),
+            "{sent}"
+        );
+        assert_eq!(
+            serde_json::to_string(&inputs).unwrap(),
+            r#"{"a":[{"y":2,"z":1}],"b":1,"style":{"margin":0,"marginTop":5}}"#
+        );
     }
 
     #[test]

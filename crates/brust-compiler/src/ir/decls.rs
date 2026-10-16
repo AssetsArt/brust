@@ -20,6 +20,9 @@ pub struct PropDecl {
 pub struct ProvideDecl {
     pub context: String,
     pub fields: Vec<(String, RawExpr)>,
+    /// W1d PR 2: the Provider element names a `scope` (anything but absent or `undefined`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scoped: bool,
 }
 
 /// B7 (R34.122 b): a function prop a component passes to a child, written as an arrow whose body is JSX
@@ -53,6 +56,14 @@ pub struct CtxUse {
     pub context: String,
     pub fields: Vec<String>,
 }
+
+/// R34.140: the reserved prop a `<Collection.Slot>` hands a component child: that child's host is the collection root.
+/// Written by the JSX reader only (a static name an author could write too: it adds the marker to the author's own
+/// component and nothing else, request data cannot name a prop).
+pub const COLLECTION_ROOT_PROP: &str = "__collection_root";
+
+/// R34.140: the name the chunk binds `ctx.items` to; `useCollection(scope)` lowers to a handler that calls it.
+pub const COLLECTION_ITEMS: &str = "__brust_items";
 
 /// The hidden prop a context field travels as (a plain identifier: it is printed like any prop).
 pub fn ctx_prop(context: &str, field: &str) -> String {
@@ -145,7 +156,7 @@ pub struct JobDecl {
     /// `Ssr` job for a react child: props passed as JSON literals (`limit={3}`), constant per
     /// job. Disjoint from `props`. Empty (and omitted) on other jobs.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub literals: std::collections::BTreeMap<String, serde_json::Value>,
+    pub literals: std::collections::BTreeMap<String, crate::ir::OJson>,
 }
 
 /// Filled by M1b-2.
@@ -178,7 +189,7 @@ pub struct InstanceRecord {
     pub props: std::collections::BTreeMap<String, Option<String>>,
     /// Constant props (`code="a"`): part of the child's job inputs and keys (F105).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub literals: std::collections::BTreeMap<String, serde_json::Value>,
+    pub literals: std::collections::BTreeMap<String, crate::ir::OJson>,
     /// Props the server computes from the parent's props: jinja over `__props`, and in a row
     /// `__row` (the item) and `__idx` (F105, ledger F60).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -275,7 +286,7 @@ pub struct BuildEvalInstance {
     pub child_id: String,
     pub k: u32,
     /// The job's props: constant inputs only; an omitted prop is absent.
-    pub inputs: serde_json::Value,
+    pub inputs: crate::ir::OJson,
     /// The job's output slots, all of which must come back for the instance to fold.
     pub outputs: Vec<String>,
     /// Relative imports of the job module the evaluation replaces with a folded constant (rule 3).

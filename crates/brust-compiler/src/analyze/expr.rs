@@ -38,6 +38,14 @@ pub struct Reader<'r, 'a> {
     pub hoisted_calls: std::collections::HashMap<usize, String>,
 }
 
+/// A context local read in code printed as written (F304): the fields it reads, or its whole value.
+struct CtxVerb {
+    r: js_ast::Ref,
+    ctx: String,
+    fields: Vec<String>,
+    whole: bool,
+}
+
 impl<'r, 'a> Reader<'r, 'a> {
     pub fn new(names: &'r mut NameTable<'a>, print: &'r Printer<'r>) -> Self {
         Reader {
@@ -55,11 +63,115 @@ impl<'r, 'a> Reader<'r, 'a> {
     }
 
     pub fn print(&self, e: &js_ast::Expr) -> String {
-        (self.print)(Js::Expr(e), self.names.print_aliases())
+        let mut w = Walk::default();
+        w.expr(e);
+        match self.ctx_aliases(&w) {
+            Some(al) => (self.print)(Js::Expr(e), &al),
+            None => (self.print)(Js::Expr(e), self.names.print_aliases()),
+        }
     }
 
     pub fn print_stmt(&self, s: &js_ast::Stmt) -> String {
-        (self.print)(Js::Stmt(s), self.names.print_aliases())
+        let mut w = Walk::default();
+        w.stmt(s);
+        match self.ctx_aliases(&w) {
+            Some(al) => (self.print)(Js::Stmt(s), &al),
+            None => (self.print)(Js::Stmt(s), self.names.print_aliases()),
+        }
+    }
+
+    /// F304: how code printed as written (a handler, an effect) reads a context local. The chunk has the context's fields
+    /// as hidden props, bound to locals of the same name around such code (its captures, `captured`); the local itself
+    /// prints as an object of those locals (`({ toggle: __ctx_A_toggle })`), so `c.toggle(...)` runs with `this` = that
+    /// object. Only non-computed member reads qualify (`c.f`, `c?.f`, `c.f(...)`), on identifier field names that are not
+    /// the prototype's; a scalar-default context (`createContext(undefined)`) reads as its whole value. Every other use
+    /// (a write, `c[k]`, a destructure, the local as a value) is `None` here and keeps `context-escape`.
+    ///
+    /// Pinned dependency (F304, Mellow N1; Afrojack condition c): the object is rebuilt at every read and holds only the
+    /// fields THIS consumer reads, so a `this`-reading method or a stateful field of the Provider value would see a
+    /// different object than in React. That never happens today because such a Provider value (a method shorthand that
+    /// reads `this`, a class instance) is refused before a consumer is native (`context-state` / `context-value`, test
+    /// `a_provider_value_that_reads_this_or_is_a_class_instance_stays_react`). Loosening those refusals must revisit this.
+    fn ctx_verbatim(&self, w: &Walk) -> (Vec<CtxVerb>, bool) {
+        let mut out: Vec<CtxVerb> = Vec::new();
+        let mut ok = true;
+        for r in &w.used {
+            let Some(ctx) = self.names.ctx_local(*r).map(str::to_string) else {
+                continue;
+            };
+            if w.declared.iter().any(|d| self.names.same(*d, *r))
+                || out.iter().any(|o| self.names.same(o.r, *r))
+            {
+                continue;
+            }
+            let same = |x: &js_ast::Ref| self.names.same(*x, *r);
+            let written = w.assigned.iter().any(same)
+                || w.member_written.iter().any(same)
+                || w.member_writes.iter().any(|(x, _)| same(x));
+            let mut c = CtxVerb {
+                r: *r,
+                ctx: ctx.clone(),
+                fields: Vec::new(),
+                whole: false,
+            };
+            if written {
+                ok = false;
+            } else if self.names.scalar_default(&ctx).is_some() {
+                c.whole = true;
+            } else {
+                let uses = w.used.iter().filter(|x| same(x)).count();
+                let reads: Vec<&str> = w
+                    .member_reads
+                    .iter()
+                    .filter(|(b, m, _)| same(b) && !m.is_empty())
+                    .map(|(_, m, _)| m.as_str())
+                    .collect();
+                let plain = |f: &str| {
+                    !matches!(f, "__proto__" | "constructor" | "prototype")
+                        && crate::analyze::context::field_problem(f).is_none()
+                };
+                if reads.len() != uses || !reads.iter().all(|f| plain(f)) {
+                    ok = false;
+                } else {
+                    for f in reads {
+                        if !c.fields.iter().any(|x| x == f) {
+                            c.fields.push(f.to_string());
+                        }
+                    }
+                }
+            }
+            out.push(c);
+        }
+        (out, ok)
+    }
+
+    /// The printer's aliases with each qualifying context local standing for its object (see [`Self::ctx_verbatim`]);
+    /// `None` when the code reads no context. The fields it names are recorded, so the hidden props exist.
+    fn ctx_aliases(&self, w: &Walk) -> Option<Aliases> {
+        let (uses, ok) = self.ctx_verbatim(w);
+        if uses.is_empty() || !ok {
+            return None;
+        }
+        let mut al = self.names.print_aliases().clone();
+        for c in uses {
+            let text = if c.whole {
+                self.names
+                    .note_ctx_field(&c.ctx, crate::analyze::hooks::WHOLE_FIELD);
+                crate::ir::ctx_prop(&c.ctx, crate::analyze::hooks::WHOLE_FIELD)
+            } else {
+                let members: Vec<String> = c
+                    .fields
+                    .iter()
+                    .map(|f| {
+                        self.names.note_ctx_field(&c.ctx, f);
+                        format!("{f}: {}", crate::ir::ctx_prop(&c.ctx, f))
+                    })
+                    .collect();
+                format!("({{ {} }})", members.join(", "))
+            };
+            al.insert(self.names.key_of(c.r), text);
+        }
+        Some(al)
     }
 
     /// `e` as printed JS. Its captures come from the same walk as an arrow's;
@@ -125,6 +237,13 @@ impl<'r, 'a> Reader<'r, 'a> {
                     name: crate::ir::ctx_prop(&ctx, crate::analyze::hooks::WHOLE_FIELD),
                     kind: IdentKind::Prop,
                 }
+            }
+            // W1d PR 2: a scope token read as a value
+            E::EIdentifier(id) if self.names.is_scope_token(id.ref_) => {
+                if self.names.scope_token_escape.get().is_none() {
+                    self.names.scope_token_escape.set(Some(loc));
+                }
+                return self.opaque(e, "scope token");
             }
             E::EIdentifier(id) if self.names.ctx_local(id.ref_).is_some() => {
                 if self.names.ctx_escape.get().is_none() {
@@ -471,8 +590,14 @@ impl<'r, 'a> Reader<'r, 'a> {
         }
         // A context local (`const c = useContext(Ctx)`) is not a value in the chunk: `c.field` is read as a hidden prop
         // by the structured reader only. Printed as written it would be an undefined name (R34.103).
+        if self.names.scope_token_escape.get().is_none()
+            && w.used.iter().any(|r| self.names.is_scope_token(*r))
+        {
+            self.names.scope_token_escape.set(Some(loc));
+        }
         if self.names.ctx_escape.get().is_none()
             && w.used.iter().any(|r| self.names.ctx_local(*r).is_some())
+            && !self.ctx_verbatim(w).1
         {
             self.names.ctx_escape.set(Some(loc));
         }
@@ -620,6 +745,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             .calls
             .iter()
             .any(|c| matches!(&c.data, E::ECall(call) if call.was_jsx_element));
+        let (ctx_uses, ctx_ok) = self.ctx_verbatim(&w);
         let mut seen: Vec<js_ast::Ref> = Vec::new();
         let mut out = Vec::new();
         if w.import_meta {
@@ -634,6 +760,19 @@ impl<'r, 'a> Reader<'r, 'a> {
                 continue;
             }
             seen.push(r);
+            // F304: a context local read as `c.f` is captured as the hidden props of those fields
+            if ctx_ok && let Some(c) = ctx_uses.iter().find(|c| self.names.same(c.r, r)) {
+                if c.whole {
+                    out.push((
+                        crate::ir::ctx_prop(&c.ctx, crate::analyze::hooks::WHOLE_FIELD),
+                        IdentKind::Prop,
+                    ));
+                }
+                for f in &c.fields {
+                    out.push((crate::ir::ctx_prop(&c.ctx, f), IdentKind::Prop));
+                }
+                continue;
+            }
             out.push(self.names.kind_of(r));
         }
         (out, jsx)
@@ -1199,6 +1338,11 @@ impl Walk {
                     OpCode::unary_assign_target(u.op),
                     js_ast::AssignTarget::None
                 ) {
+                    self.assign_target(&u.value);
+                } else if matches!(u.op, OpCode::UnDelete)
+                    && matches!(u.value.data, E::EDot(_) | E::EIndex(_))
+                {
+                    // `delete x.a` writes through `x` (F304: a context local is never written through)
                     self.assign_target(&u.value);
                 }
                 self.expr(&u.value)

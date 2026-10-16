@@ -314,8 +314,6 @@ fn a_live_value_the_child_could_also_consume_elsewhere_stays_refused() {
 #[test]
 fn keys_that_merge_set_a_property_or_are_not_attributes_stay_refused() {
     for attr in [
-        "className={on ? 'a' : 'b'}",
-        "style={{ color: on ? 'red' : 'blue' }}",
         "value={on ? 'a' : 'b'}",
         "checked={on}",
         "x-html={on ? 'a' : 'b'}",
@@ -338,7 +336,6 @@ fn keys_that_merge_set_a_property_or_are_not_attributes_stay_refused() {
         );
         assert!(
             !o.jinja.contains("x-bind-x-html")
-                && !o.jinja.contains("x-bind-class")
                 && !o.jinja.contains("x-bind-value")
                 && !o.jinja.contains("x-bind-checked"),
             "{attr}: {}",
@@ -472,4 +469,211 @@ fn a_live_url_through_a_spread_is_never_bound_by_the_parent() {
         ),
     );
     refused_any_of(&o, "x-bind-href");
+}
+
+// ---- F296 (spread-live, option A): a live `style` through a static child's spread ----
+
+const STYLE: &str = "style={{ width: on ? 5 : 0, '--gap': 7, opacity: on ? 1 : 0.5 }}";
+
+#[test]
+fn a_live_style_through_a_static_childs_spread_prints_like_the_hand_written_element() {
+    let o = page(
+        "import Btn from './Btn'",
+        &format!(
+            "{FLIP} return <div><Btn {STYLE}>x</Btn><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    assert_eq!(o.tier, Tier::Native, "{:?}", o.diags);
+    let hand = page(
+        "",
+        &format!(
+            "{FLIP} return <div><button data-slot=\"button\" data-variant=\"default\" {STYLE}>x</button><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    assert_eq!(o.chunk, hand.chunk);
+    assert_eq!(
+        render(&o.jinja, serde_json::json!({})),
+        render(&hand.jinja, serde_json::json!({}))
+    );
+    let html = render(&o.jinja, serde_json::json!({}));
+    assert!(html.contains(" x-bind-style="), "{html}");
+    assert!(!html.contains("x-props-bind"), "{html}");
+}
+
+#[test]
+fn the_forwarded_style_replaces_the_childs_own_before_the_spread_and_never_lands_after_it() {
+    // own before the spread: the call site's `style` replaces it, printed once and bound
+    let o = page(
+        "import B from './StyleBefore'",
+        &format!("{FLIP} return <div><B {STYLE} /><i onClick={{() => setOn(!on)}}>flip</i></div>"),
+    );
+    assert_eq!(o.tier, Tier::Native, "{:?}", o.diags);
+    let html = render(&o.jinja, serde_json::json!({}));
+    assert!(html.contains(" x-bind-style="), "{html}");
+    assert_eq!(html.matches(" style=").count(), 1, "{html}");
+    assert!(!html.contains("color:red"), "{html}");
+    // own after the spread: the child's value wins, nothing is bound for the call site's
+    let o = page(
+        "import A from './StyleAfter'",
+        &format!("{FLIP} return <div><A {STYLE} /><i onClick={{() => setOn(!on)}}>flip</i></div>"),
+    );
+    assert!(!o.jinja.contains("x-bind-style"), "{}", o.jinja);
+    let html = render(&o.jinja, serde_json::json!({}));
+    assert!(
+        html.contains("color:red") && !html.contains("width"),
+        "{html}"
+    );
+}
+
+#[test]
+fn a_style_that_could_merge_or_that_the_child_also_reads_stays_refused_or_unbound() {
+    // C1: a Slot merges the call site's style with its child element's own: refused unless the host is certain
+    for slot in ["asChild", "asChild={true}"] {
+        let o = page(
+            "import B from './BtnSlot'",
+            &format!(
+                "{FLIP} return <div><B {slot} {STYLE}><a href=\"/x\" style={{{{ color: 'red' }}}}>go</a></B><i onClick={{() => setOn(!on)}}>flip</i></div>"
+            ),
+        );
+        refused_any_of(&o, "x-bind-style");
+    }
+    // a dynamic flag may select the Slot as well
+    let o = page(
+        "import B from './BtnSlot'",
+        &format!(
+            "{FLIP} return <div><B asChild={{on}} {STYLE}><a href=\"/x\">go</a></B><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    refused_any_of(&o, "x-bind-style");
+    // asChild absent or false: the host element, the style is bound
+    for flag in ["", "asChild={false}"] {
+        let o = page(
+            "import B from './BtnSlot'",
+            &format!(
+                "{FLIP} return <div><B {flag} {STYLE}>x</B><i onClick={{() => setOn(!on)}}>flip</i></div>"
+            ),
+        );
+        assert_eq!(o.tier, Tier::Native, "{flag}: {:?}", o.diags);
+        assert!(o.jinja.contains("x-bind-style"), "{flag}: {}", o.jinja);
+    }
+    // the child spreads on two elements / reads `style` by name / is native with state of its own
+    let o = page(
+        "import T from './Twice'",
+        &format!("{FLIP} return <div><T {STYLE} /><i onClick={{() => setOn(!on)}}>flip</i></div>"),
+    );
+    refused_any_of(&o, "x-bind-style");
+    let o = page(
+        "import N from './NativeFwd'",
+        &format!("{FLIP} return <div><N {STYLE} /><i onClick={{() => setOn(!on)}}>flip</i></div>"),
+    );
+    refused_any_of(&o, "x-bind-style");
+    // a later spread of unknown keys may replace it (a literal `{}` spread is inlined away, so it is not one)
+    let o = lower(
+        "P.tsx",
+        &format!(
+            "{STATE}import Btn from './Btn'\nexport default function P(props: any) {{ {FLIP} return <div><Btn {STYLE} {{...props}} /><i onClick={{() => setOn(!on)}}>flip</i></div> }}"
+        ),
+    );
+    refused_any_of(&o, "x-bind-style");
+}
+
+#[test]
+fn a_style_given_as_a_string_is_never_written_through_a_spread() {
+    // React throws for a string `style`; brust must not bind it as if it were an object
+    let o = page(
+        "import Btn from './Btn'",
+        &format!(
+            "{FLIP} return <div><Btn style={{on ? 'color:red' : 'color:blue'}} /><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    // brust prints no declaration for a non-object (the same as a hand-written `<button style={str}>`): the string is
+    // never written into the attribute, on the server or by the binder.
+    let html = render(&o.jinja, serde_json::json!({}));
+    assert!(!html.contains("color:"), "{html}");
+    assert!(!html.contains(" style=\""), "{html}");
+}
+
+// ---- F299 (spread-live): a live `className` through a static child's spread, the same rules as `style` ----
+
+const CLASS: &str = "className={on ? 'on big' : 'off'}";
+
+#[test]
+fn a_live_class_name_through_a_static_childs_spread_prints_like_the_hand_written_element() {
+    let o = page(
+        "import Btn from './Btn'",
+        &format!(
+            "{FLIP} return <div><Btn {CLASS}>x</Btn><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    assert_eq!(o.tier, Tier::Native, "{:?}", o.diags);
+    let hand = page(
+        "",
+        &format!(
+            "{FLIP} return <div><button data-slot=\"button\" data-variant=\"default\" {CLASS}>x</button><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    assert_eq!(o.chunk, hand.chunk);
+    assert_eq!(
+        render(&o.jinja, serde_json::json!({})),
+        render(&hand.jinja, serde_json::json!({}))
+    );
+    let html = render(&o.jinja, serde_json::json!({}));
+    assert!(html.contains(" x-bind-class="), "{html}");
+    assert!(html.contains(" class=\"off\""), "{html}");
+    assert!(!html.contains("x-props-bind"), "{html}");
+}
+
+#[test]
+fn a_forwarded_class_name_replaces_the_childs_own_and_a_slot_refuses_it() {
+    // React replaces: a child's own className before the spread is replaced; after it, it wins and nothing is bound
+    let own_before = page(
+        "import B from './ClassBefore'",
+        &format!("{FLIP} return <div><B {CLASS} /><i onClick={{() => setOn(!on)}}>flip</i></div>"),
+    );
+    assert_eq!(own_before.tier, Tier::Native, "{:?}", own_before.diags);
+    let html = render(&own_before.jinja, serde_json::json!({}));
+    assert!(html.contains(" x-bind-class="), "{html}");
+    assert_eq!(html.matches(" class=").count(), 1, "{html}");
+    assert!(!html.contains("own"), "{html}");
+    let own_after = page(
+        "import A from './ClassAfter'",
+        &format!("{FLIP} return <div><A {CLASS} /><i onClick={{() => setOn(!on)}}>flip</i></div>"),
+    );
+    assert!(
+        !own_after.jinja.contains("x-bind-class"),
+        "{}",
+        own_after.jinja
+    );
+    assert!(render(&own_after.jinja, serde_json::json!({})).contains("own"));
+    // a Slot merges class lists
+    let slot = page(
+        "import B from './BtnSlot'",
+        &format!(
+            "{FLIP} return <div><B asChild {CLASS}><a href=\"/x\" className=\"link\">go</a></B><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    refused_any_of(&slot, "x-bind-class");
+}
+// ---- F282: an object literal crossing as PROPS-JSON keeps its source order ----
+
+#[test]
+fn a_style_object_given_to_an_island_crosses_in_source_order() {
+    let o = page(
+        "import Box from './IslandBox'",
+        &format!(
+            "{FLIP} return <div><Box style={{{{ marginTop: 5, margin: 0, color: 'red' }}}} tone={{{{ z: 1, a: 2 }}}} /><i onClick={{() => setOn(!on)}}>flip</i></div>"
+        ),
+    );
+    assert_eq!(o.tier, Tier::Native, "{:?}", o.diags);
+    let html = render(&o.jinja, serde_json::json!({}));
+    // the declarations a React render of this object prints: the longhand first, so `margin: 0` wins
+    assert!(
+        html.contains("&quot;style&quot;:{&quot;marginTop&quot;:5,&quot;margin&quot;:0,&quot;color&quot;:&quot;red&quot;}"),
+        "{html}"
+    );
+    // any other object literal is JSON.stringify's order too, not sorted
+    assert!(
+        html.contains("&quot;tone&quot;:{&quot;z&quot;:1,&quot;a&quot;:2}"),
+        "{html}"
+    );
 }

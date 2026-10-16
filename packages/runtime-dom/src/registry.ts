@@ -8,6 +8,8 @@ export interface BehaviorCtx {
   ref: <E extends Element = HTMLElement>(name: string, init?: unknown) => { current: E | null }
   /** True when this instance mounted after the page booted (an x-if clone, an x-for row, a navigation): nothing of it was server-rendered. */
   late: boolean
+  /** The collection items under the nearest collection root of this instance, in document order (R34.141). */
+  items: () => Array<{ ref: { current: Element }; element: Element } & Record<string, unknown>>
 }
 export type BehaviorInstance = Record<string, unknown>
 export type BehaviorFactory = (ctx: BehaviorCtx) => BehaviorInstance | void
