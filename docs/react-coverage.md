@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 223 | 117 | 16 | 90 | 0 | 0 | 0 | 0 |
+| B Composition | 225 | 119 | 16 | 90 | 0 | 0 | 0 | 0 |
 | C Hooks | 173 | 50 | 51 | 72 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 553 | 243 | 96 | 210 | 3 | 1 | 0 | 0 |
+| **Total** | 555 | 245 | 96 | 210 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -182,7 +182,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-nested | two Providers of one context: the nearest wins | static | static | 0 | ok | 0 | — | S2 R34.102: frames are a stack (1, 2, then 1 again) |
 | b-context-wrapper | a consumer inside a wrapper component, under a Provider | static | static | 0 | ok | 0 | — | S2 R34.104: the need bubbles up through the wrapper and is filled where the Provider is |
 | b-context-rest-wrapper | a shadcn-style wrapper forwarding its ...rest into a Provider component | static | static | ssr | ok | 4.0 | — | S2: frame values must be literals (lead ruling on 84a4650a): this wrapper's Provider reads props, so it stays a React island (context-value; F174 narrows it); the page stays static |
-| b-context-helper | a Provider value computed by helpers of its own module, used from another module | react | react | ssr | ok | 4.0 | fallback:context-no-provider, fallback:context-value | S2: a frame value that calls a helper is not a literal (lead ruling on 84a4650a), so the page renders with React (context-value; F174 narrows it to helpers proven to return primitives) |
+| b-context-helper | a Provider value computed by helpers of its own module, used from another module | static | static | 0 | ok | 0 | — | W1d progress-flip (ruling 2c9522ea, option C): a frame value that calls a helper proven plain (clamp) is not a literal, and a call site cannot substitute a call into a lowered frame (84a4650a cut stays), so the Provider's own native clone evaluates it: the page lowers, no island |
+| b-context-plain-call-field | a Provider field that is a call of a plain module function (pct: clamp(value)) | static | static | 0 | ok | 0 | info:build-eval-instance | W1d progress-flip: the Provider's native clone evaluates the call; the call site never prints it (mutation: with the rule off the call is substituted at the call site) |
+| b-context-fn-prop-passed | a Provider whose helper call may run a function prop (getValueLabel), called with a function | react | react | ssr | ok | 4.0 | fallback:frozen-prop, fallback:linked-prop-precompute, info:build-eval-instance | W1d progress-flip: a call site that passes the function freezes the prop (frozen-prop): the job would run the module default, so the page stays React (mutation: without callable_props frozen the page is native and prints the default label) |
 | b-context-rest-children | a component that passes its whole ...rest to a specialised state Provider, called with JSX children | react | react | ssr | ok | 5.4 | fallback:children-rest | F300/F324: the clone takes the caller's ...rest as data (__in_rest) and markup is not data, so the JSX children would vanish: children-rest keeps the caller React (mutation: without the fallback the page is native and prints the button without them) |
 | b-context-rest-no-children | the same component called without children | static | static | 0 | ok | 4.6 | — | F300: the children-rest guard fires only on the dropped-children shape; with no children the rest crosses as data and stays native |
 | b-context-radix-scope | Radix createContextScope: Provider props, a default, a consumer | static | static | 0 | ok | 0 | — | S2 R34.100/101: the second structural recogniser (Radix createContextScope); a scope that is a pass-through is ignored |
@@ -354,7 +356,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 4.6 | — | F319: a value that does not change satisfies the requirement |
 | c-rest-children-consumer | a context consumer passed as children of a component that spreads its rest (children included) under its own Provider | static | static | 0 | ok | 4.6 | — | F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider) |
 | c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | ssr | ok | 5.4 | info:rest-children-unsupported | F298 + F309: that element is linked, so it would host the Thumb (slot-owner): no clone, LiveRoot stays a React island with its children (F307 relaxes it) |
-| c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F324: the children reach the button through the rest in React; the clone has no children slot, so it is refused and the Provider stays an island that carries them (info specialise-unsupported; was: children silently dropped, alpha.16) |
+| c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | 0 | ok | 4.6 | — | F324 (real fix, progress-flip): the children reach the button through the rest in React; the clone puts the call site's content into the one element that spreads the rest (explicit children win in React; this Provider writes none), so the markup carries them and no island is needed (was: refused to an island after the alpha.16 silent drop) |
 | c-spec-rest-no-children | the same Provider component called without children | static | static | 0 | ok | 4.6 | — | F324: nothing to drop, so the clone is still taken |
 | c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | 4.6 | — | F214: static slot content has no directive to misbind |
