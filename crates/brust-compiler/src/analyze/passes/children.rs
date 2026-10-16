@@ -2862,6 +2862,17 @@ impl Walker<'_, '_> {
         Ok((clone, (id, key, inputs)))
     }
 
+    /// F342: a spread at this call site of this component's whole props, or of its `...rest` while it does not name
+    /// `children`: the call site's children given to this component travel in it.
+    fn spreads_own_children(&self, props: &[(String, Expr)]) -> bool {
+        props.iter().any(|(k, v)| {
+            k == crate::ir::SPREAD_KEY
+                && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                    RawKind::Ident { name, kind: IdentKind::Prop }
+                        if name == "*" || (name == crate::ir::REST_PROPS && !self.own_named.contains("children"))))
+        })
+    }
+
     /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
     /// read the clone's own members by name. Refused.
     fn check_owner(&self, content: &[Node], owner: usize) -> Result<(), String> {
@@ -5169,6 +5180,20 @@ impl Walker<'_, '_> {
         // own: everything a native child prints is under its host.
         let rest_hosts = matches!(child.tier, Tier::Native)
             && child.ir.as_deref().is_some_and(carries_children_by_rest);
+        // F342 (Mellow F1): THIS component's own children travel in its rest or props, spread at this call site into a
+        // child that hosts what it is given (a native host, or a static child linked here): they reach that host
+        // whatever this component is, so it hosts its children too (`hosts_children`, read by its callers' guard).
+        if self.spreads_own_children(props)
+            && ((!matches!(child.tier, Tier::React { .. }) && (child.hosts_children || rest_hosts))
+                || (link.is_some()
+                    && matches!(child.tier, Tier::Static)
+                    && child
+                        .ir
+                        .as_deref()
+                        .is_some_and(|c| prints_children_slot(c) || carries_children_by_rest(c))))
+        {
+            self.passes_to_host = true;
+        }
         if (child.hosts_children || rest_hosts)
             && !matches!(child.tier, Tier::React { .. })
             && !children.is_empty()
