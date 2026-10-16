@@ -489,6 +489,9 @@ struct Child {
     /// The compiled child reads `children` as a value (`children ?? <X/>`, `children ? a : b`), not only as `{children}`:
     /// an inlined instance has the markup, not a value to test.
     reads_children_value: bool,
+    /// F300: the component hands its whole `...rest` to a specialised Provider as data (`__in_rest`, F278), and JSX
+    /// children are not data: the ones a caller gives would be dropped from what the clone spreads.
+    rest_as_data: bool,
     /// The compiled child has `useId` values (the server seeds them per instance, per row).
     use_id: bool,
     /// A static child that is not fed itself but has fed children of its own (F164 re-base).
@@ -1586,6 +1589,24 @@ fn subst_raw(
             }
         }
         RawKind::Jsx(node) => subst_params(node, map),
+    }
+}
+
+/// F300: whether `n` calls a component with the hidden input that carries the caller's whole `...rest` (`__in_rest`).
+fn template_passes_rest_as_data(n: &Node) -> bool {
+    match n {
+        Node::Component {
+            props, children, ..
+        } => {
+            props.iter().any(|(k, _)| k == REST_INPUT)
+                || children.iter().any(template_passes_rest_as_data)
+        }
+        Node::Element { children, .. } | Node::Fragment(children) => {
+            children.iter().any(template_passes_rest_as_data)
+        }
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(template_passes_rest_as_data),
+        Node::For { body, .. } => body.iter().any(template_passes_rest_as_data),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
     }
 }
 
@@ -3204,6 +3225,7 @@ impl Walker<'_, '_> {
             ref_site: false,
             icon_spread: false,
             reads_children_value: false,
+            rest_as_data: false,
             use_id: false,
             has_for: false,
             hosts_children: false,
@@ -3268,6 +3290,7 @@ impl Walker<'_, '_> {
                     ref_site: false,
                     icon_spread: false,
                     reads_children_value: false,
+                    rest_as_data: false,
                     use_id: false,
                     has_for: false,
                     hosts_children: false,
@@ -3447,6 +3470,7 @@ impl Walker<'_, '_> {
                         ref_site: false,
                         icon_spread: false,
                         reads_children_value: false,
+                        rest_as_data: false,
                         use_id: false,
                         has_for: false,
                         hosts_children: false,
@@ -3509,6 +3533,7 @@ impl Walker<'_, '_> {
         let mut ref_site = false;
         let mut icon_spread = false;
         let mut reads_children_value = false;
+        let mut rest_as_data = false;
         let mut absent = Vec::new();
         let mut child_ir = None;
         let mut job_eval = None;
@@ -3528,6 +3553,8 @@ impl Walker<'_, '_> {
                     || (matches!(ir.tier, Tier::Native) && template_reads_children(&ir.template));
                 reads_children_value =
                     matches!(ir.tier, Tier::Static | Tier::Native) && reads_children_as_value(&ir);
+                rest_as_data = matches!(ir.tier, Tier::Static | Tier::Native)
+                    && template_passes_rest_as_data(&ir.template);
                 unwritten = ir.unwritten_props.clone();
                 shadowed = ir.shadowed_props.clone();
                 inner = Inner::of(&ir);
@@ -3631,6 +3658,7 @@ impl Walker<'_, '_> {
             ref_site,
             icon_spread,
             reads_children_value,
+            rest_as_data,
             use_id,
             inner,
             has_for,
@@ -4942,7 +4970,24 @@ impl Walker<'_, '_> {
                         )
                     })
                     .collect();
-                let need = instance_needs_link(&child.tier, link_props);
+                let mut need = instance_needs_link(&child.tier, link_props);
+                // F300: a snapshot the child takes from a prop of THIS (non-route) component. Where this component
+                // mounts again (an `x-if` of its caller re-creates it) the child must start from the props it is
+                // given then, which only a link carries (F277 seeds a late host from its parent's current props).
+                if need == LinkNeed::None
+                    && !self.ctx.is_root
+                    && kept.iter().any(|(k, v)| {
+                        child
+                            .ir
+                            .as_deref()
+                            .is_some_and(|c| snapshot_only_props(c).contains(k))
+                            && !matches!(v, Expr::ClientOnly { .. })
+                            && !self.deps_of(v).props.is_empty()
+                            && !self.same_at_every_mount(v)
+                    })
+                {
+                    need = LinkNeed::Always;
+                }
                 // F319: a child this component does not link takes its props once: a prop of this component it is
                 // given would not be followed.
                 // A prop the child reads only as the first value of a cell nothing sets (F277, F295) is taken once in
@@ -5883,7 +5928,7 @@ impl Walker<'_, '_> {
                 || cands.iter().any(|(c, _)| c == k)
                 || !child.spread.lands(k)
                 || !self.reads_state(v)
-                || !live_key_ok(k)
+                || !(live_key_ok(k) || self.snapshot_key_ok(k, v))
                 // F296 C1 / F299: a Slot merges the call site's `style` and `className` with its child's.
                 || (matches!(k.as_str(), "style" | "class" | "className")
                     && self.style_may_merge(props, child))
@@ -5944,6 +5989,17 @@ impl Walker<'_, '_> {
         }
         let _ = name;
         live
+    }
+
+    /// F300: `defaultChecked` / `defaultValue` (the keys `live_key_ok` refuses as property writes) of a value that
+    /// reads state only through snapshot cells. Nothing it reads changes after mount, so the computed behind
+    /// `x-bind-checked` / `x-bind-value` runs once, when the instance mounts, with the value current then (F277
+    /// reseeds a late mount from its parent's current props): the property write equals React's initial
+    /// `defaultChecked` / `defaultValue`, and nothing repaints it later. The rest of the gate is `live_key_ok`'s.
+    fn snapshot_key_ok(&self, k: &str, v: &Expr) -> bool {
+        matches!(k, "defaultChecked" | "defaultValue")
+            && matches!(v, Expr::Raw(_) | Expr::Server(_))
+            && !self.deps_of(v).changes_after_mount()
     }
 
     /// F296 C1 (and F299 for `className`): the child may render a Slot (`asChild`) at this call site, and a Slot MERGES
@@ -6136,6 +6192,14 @@ impl Walker<'_, '_> {
     /// spread but cannot be bound (`unbound`, R34.19) is, with its own code.
     /// R34.78: a static or native child that tests `children` as a value cannot be inlined with children given.
     fn check_children_read(&mut self, name: &str, given: &[Node], child: &Child, loc: u32) {
+        if child.rest_as_data && !given.is_empty() {
+            self.diagnostics.push(Diagnostic::fallback(
+                "children-rest",
+                format!("<{name}> passes its `...rest` to a component it specialises as data, and the children given to it are markup, which that object cannot carry"),
+                loc,
+                "render the children inside the component that reads them, or keep this component in React",
+            ));
+        }
         if child.reads_children_value && !given.is_empty() {
             self.diagnostics.push(Diagnostic::fallback(
                 "children-read",
