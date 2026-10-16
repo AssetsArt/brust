@@ -154,3 +154,22 @@ fn a_static_child_linked_here_hosts_its_slot_content_too() {
     refused("linked-static.tsx");
     kept("linked-static-const.tsx");
 }
+
+#[test]
+fn children_carried_by_a_rest_onto_a_host_are_refused_too() {
+    // F342: wrong output on main before this (the page's text bound by the child's instance: first-paint mismatch and the
+    // child's own counter shown), through the rest, the whole props, and a static child linked at the call site.
+    refused("rest-host.tsx");
+    refused("rest-host-props.tsx");
+    refused("rest-host-linked.tsx");
+    kept("rest-host-const.tsx");
+}
+
+#[test]
+fn children_forwarded_by_an_unlinked_static_intermediate_into_a_host_are_refused() {
+    // F342 (Mellow F1): the intermediate spreads its rest (or props) into the host; neither guard saw it, the page's text
+    // was bound by the host.
+    refused("rest-host-mid.tsx");
+    refused("rest-host-mid-slot.tsx");
+    kept("rest-host-mid-const.tsx");
+}

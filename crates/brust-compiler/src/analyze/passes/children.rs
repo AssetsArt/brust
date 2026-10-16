@@ -843,6 +843,14 @@ fn reads_rest_or_props(ir: &ComponentIR) -> bool {
         .any(|n| cx.deps_node(n, &[]).props.iter().any(|p| p == "*"))
 }
 
+/// F342: the children a call site gives reach the component's markup only through its `...rest` (or whole props)
+/// spread: it prints no `{children}` and does not name `children` (which a rest would then leave out).
+fn carries_children_by_rest(ir: &ComponentIR) -> bool {
+    !prints_children_slot(ir)
+        && !ir.props.iter().any(|p| p.name == "children")
+        && reads_rest_or_props(ir)
+}
+
 /// F309: the template of `ir` prints `{children}` somewhere.
 fn prints_children_slot(ir: &ComponentIR) -> bool {
     fn any(n: &Node) -> bool {
@@ -2852,6 +2860,17 @@ impl Walker<'_, '_> {
             return Err(format!("the specialised component needs React ({reason})"));
         }
         Ok((clone, (id, key, inputs)))
+    }
+
+    /// F342: a spread at this call site of this component's whole props, or of its `...rest` while it does not name
+    /// `children`: the call site's children given to this component travel in it.
+    fn spreads_own_children(&self, props: &[(String, Expr)]) -> bool {
+        props.iter().any(|(k, v)| {
+            k == crate::ir::SPREAD_KEY
+                && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                    RawKind::Ident { name, kind: IdentKind::Prop }
+                        if name == "*" || (name == crate::ir::REST_PROPS && !self.own_named.contains("children"))))
+        })
     }
 
     /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
@@ -5157,7 +5176,27 @@ impl Walker<'_, '_> {
         // write the child's members. Directives are owned by the component whose scope resolves their names; until a
         // frame can say otherwise (a native Provider), the only owner of slot content is its caller, and the caller
         // stays on React.
-        if child.hosts_children && !matches!(child.tier, Tier::React { .. }) && !children.is_empty()
+        // F342: the same for a native child whose `...rest` (or whole props) carries the children onto an element of its
+        // own: everything a native child prints is under its host.
+        let rest_hosts = matches!(child.tier, Tier::Native)
+            && child.ir.as_deref().is_some_and(carries_children_by_rest);
+        // F342 (Mellow F1): THIS component's own children travel in its rest or props, spread at this call site into a
+        // child that hosts what it is given (a native host, or a static child linked here): they reach that host
+        // whatever this component is, so it hosts its children too (`hosts_children`, read by its callers' guard).
+        if self.spreads_own_children(props)
+            && ((!matches!(child.tier, Tier::React { .. }) && (child.hosts_children || rest_hosts))
+                || (link.is_some()
+                    && matches!(child.tier, Tier::Static)
+                    && child
+                        .ir
+                        .as_deref()
+                        .is_some_and(|c| prints_children_slot(c) || carries_children_by_rest(c))))
+        {
+            self.passes_to_host = true;
+        }
+        if (child.hosts_children || rest_hosts)
+            && !matches!(child.tier, Tier::React { .. })
+            && !children.is_empty()
         {
             if children.iter().any(template_reads_children) {
                 self.passes_to_host = true;
@@ -5179,7 +5218,10 @@ impl Walker<'_, '_> {
         if link.is_some()
             && matches!(child.tier, Tier::Static)
             && !children.is_empty()
-            && child.ir.as_deref().is_some_and(prints_children_slot)
+            && child
+                .ir
+                .as_deref()
+                .is_some_and(|c| prints_children_slot(c) || carries_children_by_rest(c))
             && let Some(what) = children.iter().find_map(|c| self.owned_directive(c))
         {
             self.diagnostics.push(Diagnostic::fallback(

@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 223 | 117 | 16 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 196 | 62 | 59 | 75 | 0 | 0 | 0 | 0 |
+| C Hooks | 199 | 62 | 59 | 78 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 576 | 255 | 104 | 213 | 3 | 1 | 0 | 0 |
+| **Total** | 579 | 255 | 104 | 216 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -346,6 +346,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-forward-class-slot | a live className through a child that may render a Slot (asChild) | react | react | ssr | ok | 4.0 | fallback:spread-props | F299: a Slot merges class lists, so the replace rule does not hold: refused |
 | c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
 | c-slot-owner-linked-static | a linked prop in the slot of a static child that is itself linked | react | react | ssr | ok | 4.0 | fallback:slot-owner | F309: the linked static child gets a host of its own, which would bind the slot content (it never updated): slot-owner |
+| c-slot-owner-rest | the page's own state read in content a native child carries through its rest onto its host | react | react | ssr | ok | 5.4 | fallback:slot-owner | F342: children carried by the rest onto the child's host are bound by the child, as in F214 (they were: first-paint mismatch, the child's counter shown): slot-owner |
+| c-slot-owner-rest-linked | a linked prop in content a static child carries through its rest, where the page links that child | react | react | ssr | ok | 4.0 | fallback:slot-owner | F342 + F309: the linked static child hosts what its rest carries: slot-owner |
+| c-slot-owner-rest-mid | the page's own state read in content an unlinked static wrapper forwards in its rest to a native child that carries it onto its host | react | react | ssr | ok | 5.4 | fallback:slot-owner | F342 (Mellow F1): the wrapper hosts its children through the rest it forwards (transitive hosts_children): slot-owner |
 | c-frozen-prop-rows | a native child reading the page's changing prop in the rows of a constant list | native | native | 0 | ok | 5.7 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
 | c-frozen-prop-child | a native child reading the page's changing prop in a prop of a child it does not link | native | native | 0 | ok | 4.6 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
 | c-frozen-prop-spread | a native child reading the page's changing prop in a key printed once through a forwarder's spread | native | native | 0 | ok | 4.6 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
