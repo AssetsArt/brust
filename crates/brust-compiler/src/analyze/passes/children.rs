@@ -862,12 +862,40 @@ fn prints_children_slot(ir: &ComponentIR) -> bool {
     any(&ir.template)
 }
 
+/// F328b: the template spreads the whole props object (`{...props}`) into a component or an element.
+fn spreads_whole_props(n: &Node) -> bool {
+    let whole = |e: &Expr| matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "*"));
+    match n {
+        Node::Component {
+            props, children, ..
+        } => {
+            props
+                .iter()
+                .any(|(k, v)| k == crate::ir::SPREAD_KEY && whole(v))
+                || children.iter().any(spreads_whole_props)
+        }
+        Node::Element {
+            attrs, children, ..
+        } => {
+            attrs
+                .iter()
+                .any(|a| matches!(a, crate::ir::Attr::Spread(e) if whole(e)))
+                || children.iter().any(spreads_whole_props)
+        }
+        Node::Fragment(cs) => cs.iter().any(spreads_whole_props),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(spreads_whole_props),
+        Node::For { body, .. } => body.iter().any(spreads_whole_props),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
 /// F298: puts a call site's children where the component spreads its `...rest` (into a component or an element, in its
 /// template or in a render prop it passes): there they render in React, since the rest carries them as `children`.
 /// Exactly one such spread, with no children of its own, and a component that never names `children` itself.
 fn splice_rest_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), String> {
     fn is_rest(e: &Expr) -> bool {
-        matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == crate::ir::REST_PROPS))
+        // F328b: a spread of the whole props object (Radix's `{...props}` in RovingFocusGroup) carries `children` as well.
+        matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == crate::ir::REST_PROPS || name == "*"))
     }
     fn sites(n: &mut Node, out: &mut Vec<*mut Vec<Node>>) {
         match n {
@@ -2340,7 +2368,7 @@ impl Walker<'_, '_> {
                 if let Some(from) = child.path.clone()
                     && cir.provides.is_empty()
                     && !cir.specialised
-                    && cir.props_rest.is_some()
+                    && (cir.props_rest.is_some() || spreads_whole_props(&cir.template))
                     && !children.is_empty()
                     && self.reads_context_in(children)
                 {
@@ -6304,6 +6332,18 @@ impl Walker<'_, '_> {
                 format!("<{name}> passes its `...rest` to a component it specialises as data, and the children given to it are markup, which that object cannot carry"),
                 loc,
                 "render the children inside the component that reads them, or keep this component in React",
+            ));
+        }
+        // F328b: the child would call `children` if it were a function; a call site that passes one is not a node.
+        if child.ir.as_deref().is_some_and(|c| c.children_called) && given.iter().any(|g| {
+            matches!(g, Node::Slot(Expr::ClientOnly { .. }))
+                || matches!(g, Node::Slot(Expr::Raw(r)) if matches!(r.kind, RawKind::Arrow { .. }))
+        }) {
+            self.diagnostics.push(Diagnostic::fallback(
+                "children-read",
+                format!("<{name}> calls its `children` when it is a function, and this call site passes a function"),
+                loc,
+                "pass nodes as children, or keep the component interactive with React",
             ));
         }
         if child.reads_children_value && !given.is_empty() {

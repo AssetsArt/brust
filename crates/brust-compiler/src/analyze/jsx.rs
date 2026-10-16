@@ -1889,6 +1889,12 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
                 and: false,
             });
         }
+        // F328b: `typeof children === 'function' ? children(args) : children` over the destructured `children` prop: the node
+        // children branch is the value; a call site that passes a function refuses (`ComponentIR::children_called`).
+        E::EIf(i) if children_function_branch(r, i) => {
+            r.names.children_called.set(true);
+            read_child(r, &i.no, out);
+        }
         E::EIf(i) if is_jsx(&i.yes) || is_jsx(&i.no) => {
             let cond = Expr::Raw(r.expr(&i.test));
             let mut then = Vec::new();
@@ -2050,4 +2056,42 @@ fn read_list(r: &mut Reader<'_, '_>, e: &js_ast::Expr, call: &js_ast::E::Call) -
         key,
         body,
     })
+}
+
+/// `typeof children === 'function' ? children(…) : children`, `children` the destructured prop.
+fn children_function_branch(r: &Reader<'_, '_>, i: &js_ast::E::If) -> bool {
+    let children_ref = |e: &js_ast::Expr| {
+        let E::EIdentifier(id) = &e.data else {
+            return None;
+        };
+        let (name, kind) = r.names.kind_of(id.ref_);
+        (name == "children" && kind == crate::ir::IdentKind::Prop)
+            .then_some(r.names.key_of(id.ref_))
+    };
+    let E::EBinary(b) = &i.test.data else {
+        return false;
+    };
+    if !matches!(b.op, OpCode::BinStrictEq | OpCode::BinLooseEq) {
+        return false;
+    }
+    let is_function =
+        |e: &js_ast::Expr| matches!(&e.data, E::EString(s) if estring(s) == "function");
+    let typeof_of = |e: &js_ast::Expr| match &e.data {
+        E::EUnary(u) if u.op == OpCode::UnTypeof => children_ref(&u.value),
+        _ => None,
+    };
+    let Some(k) = (if is_function(&b.right) {
+        typeof_of(&b.left)
+    } else if is_function(&b.left) {
+        typeof_of(&b.right)
+    } else {
+        None
+    }) else {
+        return false;
+    };
+    let called = match &i.yes.data {
+        E::ECall(c) => children_ref(&c.target) == Some(k),
+        _ => false,
+    };
+    called && children_ref(&i.no) == Some(k)
 }
