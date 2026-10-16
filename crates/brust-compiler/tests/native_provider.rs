@@ -204,6 +204,72 @@ fn a_context_value_read_inside_an_effect_keeps_the_consumer_in_react_and_the_pro
     assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
 }
 
+// B7 (R34.122 b): a render prop the callee only calls is spliced into a clone of the callee, parameters bound to the
+// call's arguments; any other use, a computed argument or a name of the caller keeps the island Provider.
+#[test]
+fn a_render_prop_the_provider_only_calls_is_spliced_into_the_clone() {
+    for file in [
+        "render_guarded.tsx",
+        "render_bare.tsx",
+        "render_noparams.tsx",
+    ] {
+        let all = compile(file);
+        let root = &all[0];
+        assert!(!is_react(&root.ir), "{file}: {:?}", root.ir.diagnostics);
+        assert_eq!(clones(&all).len(), 1, "{file}: {:?}", root.ir.diagnostics);
+        assert!(
+            !root.jinja.contains("brust-island"),
+            "{file}: {}",
+            root.jinja
+        );
+        // the function never crosses: the clone owns the body
+        assert!(!root.jinja.contains("\"render\""), "{file}: {}", root.jinja);
+    }
+    // the parameter is the Provider's own state: the body's condition reads the clone's `on`
+    let all = compile("render_guarded.tsx");
+    assert!(all[0].jinja.contains(">on</p>"), "{}", all[0].jinja);
+    assert!(all[0].jinja.contains("x-if="), "{}", all[0].jinja);
+}
+
+#[test]
+fn a_render_prop_that_cannot_be_spliced_keeps_the_island_provider() {
+    for (file, why) in [
+        ("render_used.tsx", "render"),
+        ("render_calc.tsx", "computation"),
+        ("render_free.tsx", "title"),
+        // capture: the row binds `on`, which the substituted argument (the Provider's state `on`) also names
+        ("render_capture.tsx", "binds `on`"),
+    ] {
+        let all = compile(file);
+        assert!(clones(&all).is_empty(), "{file}: nothing was specialised");
+        let info = all[0]
+            .ir
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "specialise-unsupported")
+            .unwrap_or_else(|| panic!("{file}: {:?}", all[0].ir.diagnostics));
+        assert!(info.message.contains(why), "{file}: {}", info.message);
+    }
+}
+
+#[test]
+fn a_typeof_function_helper_guards_the_render_prop_like_typeof_does() {
+    let all = compile("render_helper.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", root.ir.diagnostics);
+    assert!(root.jinja.contains(">on</p>"), "{}", root.jinja);
+}
+
+// Mellow F1 (3b): a Provider written in a render body must not leak into the writer's own `{children}`.
+#[test]
+fn a_provider_in_a_render_body_does_not_provide_to_the_writers_children() {
+    let all = compile("render_provider.tsx");
+    for i in &all {
+        assert!(!i.jinja.contains("inner"), "{}: {}", i.ir.id, i.jinja);
+    }
+}
+
 // Q5 (R34.117): `asChild` on a consumer of the Provider the clone was made for merges the frame's bindings into the
 // child element: the page stays native and the child element is the consumer's host.
 #[test]

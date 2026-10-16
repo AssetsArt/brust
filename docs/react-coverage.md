@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 15 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 65 | 9 | 22 | 34 | 0 | 0 | 0 | 0 |
+| C Hooks | 71 | 12 | 22 | 37 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 438 | 197 | 65 | 172 | 3 | 1 | 0 | 0 |
+| **Total** | 444 | 200 | 65 | 175 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -364,6 +364,12 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid-in-key | useId() called in an element key | react | react | ssr | ok | 3.8 | fallback:hook-in-expression, warning:key-outside-list | F235: the JSX runtime evaluates key after the props, so the hook is refused there (hook-in-expression) |
 | c-useid-logical-assign | useId() on the right side of `??=` in the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | F236: the right side of \|\|=, &&=, ??= runs conditionally, so the hook is refused there (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | 4.8 | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |
+| c-render-prop-guarded | a render prop a state Provider calls under typeof, falling back to children | static | static | 0 | ok | 4.8 | — | B7/R34.122 b: the arrow body is spliced where the Provider calls it, its parameter bound to the Provider's own state; no island |
+| c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
+| c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
+| c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |
+| c-render-prop-provider-in-body | a render body holding a Provider, next to the writer's own children | static | static | ssr | ok | 3.8 | — | B7 (Mellow F1): a Provider written inside a render arrow must not provide to the writer's own children (they read the context default) |
+| c-render-prop-computed-arg | a render prop called with a computed argument | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Mellow S3): an argument that is not a plain read is not substituted; the Provider stays an island |
 | c-native-provider-as-child | asChild on a consumer of a state Provider, with a plain element child | static | static | 0 | ok | 4.8 | — | Q5/R34.117: the consumer's host is the caller's element, carrying the frame's bindings and handler |
 | c-native-provider-as-child-handler | asChild on a consumer of a state Provider, the child element has its own handler | react | react | ssr | ok | 5.1 | fallback:island-children, fallback:slot-native, fallback:slot-owner, info:specialise-unsupported | Q5: a handler on the asChild child is not composed yet (child first, then the Provider's); the Provider stays an island |
 | c-native-provider-two-sites | two call sites of a state Provider with different text | static | static | 0 | ok | 4.8 | — | R34.124: one clone per call site (own jinja and ids), one shared factory module for the equal chunks |
