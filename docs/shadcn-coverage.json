@@ -42,7 +42,7 @@
       "classification": "survey truth (today's rule; R34.7 removes it)",
       "measuredRows": 37,
       "analysisOnlyRows": 0,
-      "appComponents": 133,
+      "appComponents": 129,
       "libraryComponents": 151
     },
     {
@@ -51,7 +51,7 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 32,
       "analysisOnlyRows": 0,
-      "appComponents": 121,
+      "appComponents": 117,
       "libraryComponents": 177
     },
     {
@@ -60,7 +60,7 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 31,
       "analysisOnlyRows": 0,
-      "appComponents": 87,
+      "appComponents": 83,
       "libraryComponents": 176
     },
     {
@@ -79,7 +79,7 @@
       "measuredRows": 7,
       "analysisOnlyRows": 0,
       "appComponents": 8,
-      "libraryComponents": 29
+      "libraryComponents": 28
     },
     {
       "blocker": "fallback:context-island",
@@ -169,7 +169,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 36
+      "libraryComponents": 27
     },
     {
       "blocker": "fallback:hook-shape",
@@ -753,7 +753,7 @@
       "islands": 1,
       "components": 7,
       "reactComponents": 3,
-      "jsGzipKb": 91,
+      "jsGzipKb": 92,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -832,8 +832,8 @@
       "basis": "measured",
       "tier": "react",
       "islands": 1,
-      "components": 25,
-      "reactComponents": 14,
+      "components": 27,
+      "reactComponents": 10,
       "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
@@ -1226,8 +1226,8 @@
       "basis": "measured",
       "tier": "react",
       "islands": 1,
-      "components": 21,
-      "reactComponents": 13,
+      "components": 23,
+      "reactComponents": 9,
       "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
@@ -1373,7 +1373,7 @@
       "islands": 0,
       "components": 4,
       "reactComponents": 0,
-      "jsGzipKb": 5,
+      "jsGzipKb": 6,
       "workerCalls": 0,
       "codes": []
     },
