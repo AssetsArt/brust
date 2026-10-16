@@ -2,6 +2,8 @@
 //! once, a prop of a child it does not link, a key printed once through a spread) is a `frozen` prop. A call site that
 //! passes a value that changes on the client for it falls back (`frozen-prop`); a constant passes; one of the caller's
 //! own props passes the requirement up. Wrong output on main before (the prop stayed at its first value).
+//! F320: a component with an instance (state, effects, handlers, refs) follows a changing named prop instead, so only a
+//! stateless component and a rest / whole-props read stay frozen (F323).
 use brust_compiler::analyze::component::{AnalyzeOptions, analyze_source};
 use brust_compiler::ir::{ComponentIR, DiagClass, Tier};
 use brust_compiler::parse::run_on_compiler_thread;
@@ -50,6 +52,14 @@ fn child(body: &str) -> String {
     )
 }
 
+/// The same child without an instance (F323: a stateless component's props change only where a caller links it, which
+/// its compile cannot know, so F319's freeze still answers for it).
+fn static_child(body: &str) -> String {
+    format!(
+        "function Thumb({{ on }}: any) {{ return <i data-state={{on ? 'checked' : 'unchecked'}} /> }}\nfunction Fwd(props: any) {{ return <i {{...props}} /> }}\nexport default function C({{ on }}: any) {{ return <div>{body}</div> }}"
+    )
+}
+
 const SHAPES: [&str; 3] = [
     // the rows of a constant list
     "{[1, 2].map((i) => <b key={i}>{on ? i : -i}</b>)}",
@@ -59,10 +69,22 @@ const SHAPES: [&str; 3] = [
     "<Fwd data-state={on ? 'checked' : 'unchecked'} />",
 ];
 
+/// F320: a child with an instance follows a changing named prop in every shape: rows get x-for, the static child is
+/// linked, the forwarder's key is bound. Nothing is frozen, the page stays native (served == React:
+/// tests/server/frozen-prop.chromium.test.ts chain, more, prov).
+#[test]
+fn a_child_with_an_instance_follows_a_changing_prop() {
+    for body in SHAPES {
+        let ir = tree(PARENT, &child(body), NONE);
+        assert!(rules(&ir).is_empty(), "{body}: {:?}", rules(&ir));
+        assert!(matches!(ir.tier, Tier::Native), "{body}: {:?}", ir.tier);
+    }
+}
+
 #[test]
 fn a_live_value_for_a_frozen_prop_falls_back() {
     for body in SHAPES {
-        let ir = tree(PARENT, &child(body), NONE);
+        let ir = tree(PARENT, &static_child(body), NONE);
         assert!(
             rules(&ir).contains(&"frozen-prop".to_string()),
             "{body}: {:?}",
@@ -79,7 +101,7 @@ fn a_live_value_for_a_frozen_prop_falls_back() {
 #[test]
 fn a_constant_for_a_frozen_prop_and_a_followed_read_stay_native() {
     for body in SHAPES {
-        let ir = tree(CONST_PARENT, &child(body), NONE);
+        let ir = tree(CONST_PARENT, &static_child(body), NONE);
         assert!(
             !rules(&ir).contains(&"frozen-prop".to_string()),
             "{body}: {:?}",
@@ -94,11 +116,11 @@ fn a_constant_for_a_frozen_prop_and_a_followed_read_stay_native() {
 
 #[test]
 fn a_wrapper_passing_its_own_prop_passes_the_requirement_up() {
-    // M is native and LINKS C (it also passes its own state `k`), so C follows `on` as a prop; C itself freezes it in
+    // M is native and LINKS C (it also passes its own state `k`), so C follows `on` as a prop; C (stateless) freezes it in
     // its rows, so the requirement must pass up through M's own prop to M's caller.
     let mid = "import { useState } from 'react'\nimport C from './C'\nexport default function M({ on }: any) { const [k, setK] = useState(0); return <section onClick={() => setK(k + 1)}><C on={on} k={k} /></section> }";
     let parent = "import { useState } from 'react'\nimport M from './M'\nexport default function T() { const [on, setOn] = useState(false); return <main><button onClick={() => setOn(!on)}>f</button><M on={on} /></main> }";
-    let ir = tree(parent, &child(SHAPES[0]), mid);
+    let ir = tree(parent, &static_child(SHAPES[0]), mid);
     assert!(
         rules(&ir).contains(&"frozen-prop".to_string()),
         "{:?}",
@@ -159,7 +181,7 @@ fn a_rest_key_passes_up_and_a_live_spread_falls_back() {
         rules(&ir)
     );
     let spread = "import { useState } from 'react'\nimport C from './C'\nexport default function T() { const [o, setO] = useState({ on: false }); return <main><button onClick={() => setO({ on: !o.on })}>f</button><C {...o} /></main> }";
-    for c in [rest_child, &child(SHAPES[0])] {
+    for c in [rest_child, &static_child(SHAPES[0])] {
         let ir = tree(spread, c, NONE);
         assert!(
             rules(&ir).contains(&"frozen-prop".to_string()),
@@ -187,4 +209,18 @@ fn a_key_forwarded_by_a_wrapper_spread_never_stays_native() {
             ir.tier
         );
     }
+}
+
+/// F320 x shadcn S1.3: a child with an instance hands a named prop and a handler to a forwarder's spread (Radix's
+/// BubbleInput into Primitive.input). Linking the forwarder for the prop alone would unbind the handler
+/// (spread-handler), so that link gives way: the forwarder stays unlinked and F319's freeze answers per call site.
+#[test]
+fn a_handler_in_a_forwarders_spread_keeps_the_freeze_instead_of_a_link() {
+    let c = "import { useRef } from 'react'\nfunction Fwd(props: any) { return <input type=\"checkbox\" {...props} /> }\nexport default function C({ on }: any) { const snap = useRef(on); return <Fwd data-testid={on ? 'a' : 'b'} tabIndex={-1} defaultChecked={snap.current} onClick={(e: any) => e.stopPropagation()} /> }";
+    let ir = tree(CONST_PARENT, c, NONE);
+    assert!(rules(&ir).is_empty(), "{:?}", rules(&ir));
+    // Without the hold the forwarder would be linked while its handler is bound on its element, which needs an
+    // unlinked instance (forward_handlers): refused here instead.
+    let ir = tree(PARENT, c, NONE);
+    assert_eq!(rules(&ir), vec!["frozen-prop".to_string()]);
 }

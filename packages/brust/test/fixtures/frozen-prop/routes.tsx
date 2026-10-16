@@ -7,6 +7,7 @@ import PStatic from './p_static'
 import PRest from './p_rest'
 import PSpread from './p_spread'
 import PRestUp from './p_restup'
+import PCond from './p_cond'
 
 export const routes = defineRoutes([
   { path: '/chain', Component: PChain },
@@ -17,4 +18,5 @@ export const routes = defineRoutes([
   { path: '/rest', Component: PRest },
   { path: '/spread', Component: PSpread },
   { path: '/restup', Component: PRestUp },
+  { path: '/cond', Component: PCond },
 ])

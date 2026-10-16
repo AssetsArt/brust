@@ -2379,12 +2379,24 @@ fn needs_directives(n: &Node, f: &Facts<'_>) -> bool {
     }
 }
 
+/// Whether `e` changes on the client, for `needs_directives`: state, a store, or (F320) a named prop the call site does
+/// not fix in a component whose props are a signal (`ComponentIR::props_are_signal`, as the analysis's row decision).
 fn expr_reactive(e: &Expr, f: &Facts<'_>) -> bool {
     match e {
         Expr::Precomputed {
             state_dependent, ..
         } => *state_dependent,
-        Expr::Server(ServerExpr(r)) => f.deps(r, &[]).reactive(),
+        Expr::Server(ServerExpr(r)) => {
+            let d = f.deps(r, &[]);
+            d.reactive()
+                || f.ir.props_are_signal()
+                    && d.props.iter().any(|p| {
+                        let root = p.split(['.', '[']).next().unwrap_or(p);
+                        !matches!(root, "children" | "*")
+                            && !f.ir.fixed_props.iter().any(|x| x == root)
+                            && !f.ir.seed_props.iter().any(|x| x == root)
+                    })
+        }
         _ => false,
     }
 }
