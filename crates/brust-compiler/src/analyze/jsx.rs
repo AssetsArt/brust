@@ -1227,7 +1227,14 @@ fn spread_source(r: &mut Reader<'_, '_>, value: &js_ast::Expr, host: bool) -> Sp
         }
         _ => {
             let raw = r.expr(value);
-            if crate::analyze::passes::deps::prop_path(&raw).is_some() {
+            if let Some(path) = crate::analyze::passes::deps::prop_path(&raw) {
+                // F335: React reads a `key` from the spread object as the element key. What a named prop holds is known only
+                // per request, so on a component it may carry one that changes (F308) and brust would keep the child's
+                // instance. The whole props and `...rest` never carry one (React strips `key`). On a host element a
+                // changing key only resets DOM state, and React warns about a key in a spread: a known limit, not refused.
+                if !host && path != "*" {
+                    r.diagnostics.push(live_key_diagnostic(loc_of(value)));
+                }
                 Spread::Props(raw)
             } else {
                 Spread::Other

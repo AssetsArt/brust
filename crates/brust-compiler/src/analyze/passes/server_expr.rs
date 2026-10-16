@@ -55,6 +55,7 @@ fn check(e: &RawExpr) -> Result<(), &'static str> {
             check(no)
         }
         RawKind::Template { parts, .. } => parts.iter().try_for_each(|(p, _)| check(p)),
+        RawKind::Call { callee, args } if is_throw(callee, args) => Ok(()),
         RawKind::Call { callee, args } => call(callee, args),
         RawKind::Array(items) => items.iter().try_for_each(check),
         RawKind::Object(props) => props.iter().try_for_each(|(_, v)| check(v)),
@@ -178,4 +179,10 @@ fn literal_only(e: &RawExpr) -> bool {
         RawKind::Object(props) => props.iter().all(|(_, v)| literal_only(v)),
         _ => false,
     }
+}
+
+/// W1d PR 3: the render-error arm (`ir::THROW_FN()`).
+pub fn is_throw(callee: &RawExpr, args: &[RawExpr]) -> bool {
+    args.is_empty()
+        && matches!(&callee.kind, RawKind::Ident { name, kind: IdentKind::Global } if name == crate::ir::THROW_FN)
 }

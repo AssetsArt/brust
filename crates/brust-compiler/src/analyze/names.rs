@@ -74,6 +74,8 @@ pub struct NameTable<'a> {
     /// `...rest` of a destructured props pattern (shadcn S1.2, R34.14): `rest.k` reads prop `k`
     /// (`undefined` for a named key), `{...rest}` spreads the props minus the named keys.
     rest: Option<u32>,
+    /// W1d PR 3: locals that are the `...rest` object itself (`const singleProps = rest`), by symbol key.
+    rest_aliases: std::cell::RefCell<HashSet<u32>>,
     /// The keys the props pattern names (what `rest` leaves out).
     named_props: Vec<String>,
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
@@ -140,6 +142,11 @@ pub struct NameTable<'a> {
     ctx_fields: std::cell::RefCell<Vec<(String, String)>>,
     /// Where a context local is used as a bare value (not `context.field`): brust cannot narrow it (fail closed).
     pub ctx_escape: std::cell::Cell<Option<u32>>,
+    /// F289: `const t = useHook()` where the hook returns an object literal: symbol key → its members, read one by one
+    /// (`t.key`), like a destructuring. The object itself is not a value in the chunk.
+    hook_objects: HashMap<u32, Vec<(String, crate::ir::RawExpr)>>,
+    /// Where a hook object is used as a bare value (not `t.key`): the members cannot be named in a job (fail closed).
+    pub hook_object_escape: std::cell::Cell<Option<u32>>,
     /// W1d PR 2: contexts a hook was called for with a scope argument.
     ctx_scoped: std::cell::RefCell<Vec<String>>,
     /// W1d PR 2: locals bound to a Radix scope hook's result (a scope token), by symbol key.
@@ -396,6 +403,7 @@ impl<'a> NameTable<'a> {
             props: HashMap::new(),
             props_ident: None,
             rest: None,
+            rest_aliases: std::cell::RefCell::new(HashSet::new()),
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
             use_before_pattern: std::cell::Cell::new(None),
@@ -425,6 +433,8 @@ impl<'a> NameTable<'a> {
             collections_recognised: false,
             scalars_adopted: std::cell::RefCell::new(Vec::new()),
             ctx_locals: HashMap::new(),
+            hook_objects: HashMap::new(),
+            hook_object_escape: std::cell::Cell::new(None),
             ctx_fields: std::cell::RefCell::new(Vec::new()),
             ctx_escape: std::cell::Cell::new(None),
             ctx_scoped: std::cell::RefCell::new(Vec::new()),
@@ -1026,6 +1036,16 @@ impl<'a> NameTable<'a> {
         self.ctx_locals.insert(k, context.to_string());
     }
 
+    pub fn bind_hook_object(&mut self, r: js_ast::Ref, members: Vec<(String, crate::ir::RawExpr)>) {
+        let k = self.key(r);
+        self.hook_objects.insert(k, members);
+    }
+
+    /// The members of the hook object a local is bound to.
+    pub fn hook_object(&self, r: js_ast::Ref) -> Option<&[(String, crate::ir::RawExpr)]> {
+        self.hook_objects.get(&self.key(r)).map(Vec::as_slice)
+    }
+
     /// The context a local is bound to.
     pub fn ctx_local(&self, r: js_ast::Ref) -> Option<&str> {
         self.ctx_locals.get(&self.key(r)).map(String::as_str)
@@ -1060,6 +1080,12 @@ impl<'a> NameTable<'a> {
             }
             _ => false,
         }
+    }
+
+    /// W1d PR 3: `const alias = rest` (the `...rest` object itself, e.g. Radix's `const singleProps = toggleGroupProps`):
+    /// the alias reads as the rest object.
+    pub fn alias_rest(&self, r: js_ast::Ref) {
+        self.rest_aliases.borrow_mut().insert(self.key(r));
     }
 
     pub fn bind_scope_token(&self, r: js_ast::Ref) {
@@ -1125,7 +1151,10 @@ impl<'a> NameTable<'a> {
         // The whole (non-destructured) props object: the root `*` (F20). A capture of the rest
         // object reads it too (a superset: the deps cover every prop); code that is printed as
         // written never sees it (the reader falls back first, `Reader::rest_escapes`).
-        if self.props_ident == Some(k) || self.rest == Some(k) {
+        if self.props_ident == Some(k)
+            || self.rest == Some(k)
+            || self.rest_aliases.borrow().contains(&k)
+        {
             return ("*".into(), IdentKind::Prop);
         }
         let name = self.name(r);
@@ -1162,7 +1191,8 @@ impl<'a> NameTable<'a> {
 
     /// `r` is the `...rest` binding of the props pattern.
     pub fn is_rest(&self, r: js_ast::Ref) -> bool {
-        self.rest.is_some() && self.rest == Some(self.key(r))
+        self.rest.is_some()
+            && (self.rest == Some(self.key(r)) || self.rest_aliases.borrow().contains(&self.key(r)))
     }
 
     /// The keys the props pattern names (what `...rest` leaves out).

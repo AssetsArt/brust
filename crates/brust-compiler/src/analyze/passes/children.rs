@@ -65,6 +65,14 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             || !ir.effects.is_empty()
             || !ir.handlers.is_empty()
             || !ir.refs.is_empty(),
+        props_live: ir.props_are_signal(),
+        hold_link: false,
+        module_rows: std::cell::Cell::new(0),
+        seed_props: if ir.props_are_signal() {
+            snapshot_only_props(ir)
+        } else {
+            BTreeSet::new()
+        },
         handlers: Vec::new(),
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
         absent: BTreeSet::new(),
@@ -304,7 +312,9 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         "every RowOnly link is visited by resolve_row_only"
     );
     ir.template = template;
+    w.frozen.extend(ir.throw_props.iter().cloned());
     ir.frozen_props = std::mem::take(&mut w.frozen).into_iter().collect();
+    ir.seed_props = std::mem::take(&mut w.seed_props).into_iter().collect();
     // A list or condition the children lowered folded its slot away: the precompute job no longer
     // computes what no node reads (the server would warn about the missing output on every request).
     let mut live = BTreeSet::new();
@@ -373,6 +383,20 @@ struct Walker<'s, 'c> {
     row_only: HashMap<u32, RowOnlyLink>,
     /// Whether this component's own props can change after first paint (see `children`).
     props_reactive: bool,
+    /// F320: this component's props are a signal on the client wherever it renders: it has an instance of its own
+    /// (state, effects, handlers, refs), so its chunk reads `props()` and every caller that passes a changing value
+    /// links it (lowering binds such a read in a slot already, F96d; `lower::template::expr_reactive` agrees). A
+    /// stateless component's props change only where a caller links it, which its compile cannot know (F75: a child's
+    /// IR depends only on its own subtree): F319's freeze answers for it per call site.
+    props_live: bool,
+    /// F320: this component's props read only as a cell's first value (`ComponentIR::seed_props`).
+    seed_props: BTreeSet<String>,
+    /// F320: the call site being walked keeps F319's freeze instead of a link that only a changing prop would ask for,
+    /// because the child binds a handler on its own element (`forward_handlers`), which needs an unlinked instance.
+    hold_link: bool,
+    /// F325: lists being walked whose source reads module-level data (`lower::template::module_source`): inside them no
+    /// prop counts as changing, so their rows keep F319's freeze and the chunk ships none of that data.
+    module_rows: std::cell::Cell<usize>,
     /// Handlers hoisted from props a static child spreads onto an element (shadcn S1.3).
     handlers: Vec<crate::ir::HandlerDecl>,
     /// This component's named props (its `...rest` holds every other key).
@@ -913,7 +937,7 @@ type Specialised = (String, String, Vec<(String, Expr)>);
 /// What cannot cross is refused by name: the caller's whole props or `...rest`, a ref, a list row's bindings, imports,
 /// stores, module-level functions, and a name read inside code printed as written.
 /// The hidden input that carries the call site's whole `...rest` into a clone (F278).
-const REST_INPUT: &str = "__in_rest";
+pub(crate) const REST_INPUT: &str = "__in_rest";
 
 struct Carry<'a> {
     native: &'a [(u32, String, usize)],
@@ -2097,7 +2121,12 @@ impl Walker<'_, '_> {
                 self.list_uses.push(use_);
                 self.items.push(item.clone());
                 self.indexes.push(index.clone());
+                let module = self.module_list(source);
+                self.module_rows
+                    .set(self.module_rows.get() + usize::from(module));
                 body.iter_mut().for_each(|c| self.node(c));
+                self.module_rows
+                    .set(self.module_rows.get() - usize::from(module));
                 self.indexes.pop();
                 self.items.pop();
                 self.loop_sources.pop();
@@ -4111,6 +4140,44 @@ impl Walker<'_, '_> {
                 }))
     }
 
+    /// F325: the list source reads module-level data (an import, a module const).
+    fn module_list(&self, source: &Expr) -> bool {
+        crate::lower::template::module_source(&self.deps_of(source))
+    }
+
+    /// F320: `e` changes on the client: state, or a prop of a component whose props are a signal (`props_live`).
+    fn live(&self, e: &Expr) -> bool {
+        self.reads_state(e) || self.reads_changing_prop(&self.deps_of(e))
+    }
+
+    /// F320: `d` reads a named prop that changes on the client: this component's props are a signal (`props_live`) and
+    /// the prop is not one its call site fixed.
+    fn reads_changing_prop(&self, d: &Deps) -> bool {
+        self.props_live
+            && self.module_rows.get() == 0
+            && d.props.iter().any(|p| {
+                let root = p.split(['.', '[']).next().unwrap_or(p);
+                // The rest or the whole props object (`*`) stays with F319's freeze, answered per call site: counting it
+                // here would link every child it is spread into (and refuse a handler in that spread, spread-handler).
+                // A clone's `__in_rest` (F278/F298) is the call site's rest carried in: the same, answered at that site.
+                // A context value (`__ctx_*`) is fed by the Provider's frame, not by a caller: its own machinery binds it.
+                !matches!(root, "children" | "*" | REST_INPUT)
+                    && !root.starts_with("__ctx_")
+                    && !self.fixed_props.contains(root)
+                    && !self.seed_props.contains(root)
+            })
+    }
+
+    /// F320: one prop of a link decision (`instance_needs_link`): `(true, _)` when the value is a function or reads a
+    /// prop that changes (the child must follow it, as for state).
+    fn link_input(&self, v: &Expr, d: Deps) -> (bool, Deps) {
+        (
+            matches!(v, Expr::ClientOnly { .. })
+                || (!self.hold_link && self.reads_changing_prop(&d)),
+            d,
+        )
+    }
+
     /// Whether the client can re-create the rows of this list: an enclosing list can, its
     /// source changes (state, or props of a component whose props can change), or its body
     /// carries a directive of its own.
@@ -4127,18 +4194,23 @@ impl Walker<'_, '_> {
             } => {
                 attrs.iter().any(|a| match a {
                     Attr::Event { .. } | Attr::Ref { .. } => true,
-                    Attr::Dynamic { value, .. } | Attr::InnerHtml { value } => {
-                        self.reads_state(value)
-                    }
+                    Attr::Dynamic { value, .. } | Attr::InnerHtml { value } => self.live(value),
                     _ => false,
                 }) || children.iter().any(|c| self.body_directive(c))
             }
-            Node::Slot(e) => self.reads_state(e),
+            // F320: a prop that changes is as live as state for a row.
+            Node::Slot(e) => self.live(e),
             Node::If {
                 cond, then, else_, ..
-            } => self.reads_state(cond) || then.iter().chain(else_).any(|c| self.body_directive(c)),
+            } => self.live(cond) || then.iter().chain(else_).any(|c| self.body_directive(c)),
             Node::For { source, body, .. } => {
-                self.source_reactive(source) || body.iter().any(|c| self.body_directive(c))
+                let module = self.module_list(source);
+                self.module_rows
+                    .set(self.module_rows.get() + usize::from(module));
+                let r = self.source_reactive(source) || body.iter().any(|c| self.body_directive(c));
+                self.module_rows
+                    .set(self.module_rows.get() - usize::from(module));
+                r
             }
             Node::Component { link, children, .. } => {
                 link.is_some_and(|id| !self.row_only.contains_key(&id))
@@ -4223,6 +4295,9 @@ impl Walker<'_, '_> {
         for n in nodes {
             match n {
                 Node::For { source, body, .. } => {
+                    let module = self.module_list(source);
+                    self.module_rows
+                        .set(self.module_rows.get() + usize::from(module));
                     let r = self.row_reactive(source, body, reactive);
                     if !r {
                         // F319: rows printed once (no x-for): a prop they read would not be followed.
@@ -4234,6 +4309,8 @@ impl Walker<'_, '_> {
                         }
                     }
                     self.resolve_row_only(body, r);
+                    self.module_rows
+                        .set(self.module_rows.get() - usize::from(module));
                 }
                 Node::Component { link, children, .. } => {
                     if let Some(id) = *link
@@ -4337,6 +4414,7 @@ impl Walker<'_, '_> {
                 "drop the ref, or keep this component in React",
             ));
         }
+        self.hold_link = false;
         let live = self.forward_live(name, *loc, props, &child, ref_fwd);
         let (mut hoisted, unbound) = self.forward_handlers(name, *loc, props, &child, &live);
         // A hoisted handler is a member of this component, printed from its own declaration: the prop's slot in the
@@ -4964,10 +5042,8 @@ impl Walker<'_, '_> {
                     .collect::<Vec<_>>()
                     .into_iter()
                     .map(|(k, v)| {
-                        (
-                            matches!(v, Expr::ClientOnly { .. }),
-                            self.deps_while_mounted(&v, name, &k),
-                        )
+                        let d = self.deps_while_mounted(&v, name, &k);
+                        self.link_input(&v, d)
                     })
                     .collect();
                 let mut need = instance_needs_link(&child.tier, link_props);
@@ -5927,7 +6003,8 @@ impl Walker<'_, '_> {
                 || matches!(v, Expr::ClientOnly { .. })
                 || cands.iter().any(|(c, _)| c == k)
                 || !child.spread.lands(k)
-                || !self.reads_state(v)
+                // F320: a prop that changes is as live as state here (it is forwarded, not printed once).
+                || !self.live(v)
                 || !(live_key_ok(k) || self.snapshot_key_ok(k, v))
                 // F296 C1 / F299: a Slot merges the call site's `style` and `className` with its child's.
                 || (matches!(k.as_str(), "style" | "class" | "className")
@@ -5972,7 +6049,7 @@ impl Walker<'_, '_> {
                 .filter(|(k, v)| {
                     !keys.contains(&k) && !is_handler_prop(k, v) && !(ref_fwd && *k == "ref")
                 })
-                .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
+                .map(|(_, v)| self.link_input(v, self.deps_of(v))),
         );
         if need != LinkNeed::None {
             return live;
@@ -6140,16 +6217,20 @@ impl Walker<'_, '_> {
             .filter(|(k, _)| !want.contains(k) && !dropped.contains(k) && !live.contains(k))
             .cloned()
             .collect();
-        let rest: Vec<(bool, Deps)> = rest
+        let rest: Vec<(Expr, Deps)> = rest
             .iter()
-            .map(|(k, v)| {
-                (
-                    matches!(v, Expr::ClientOnly { .. }),
-                    self.deps_while_mounted(v, name, k),
-                )
-            })
+            .map(|(k, v)| (v.clone(), self.deps_while_mounted(v, name, k)))
             .collect();
-        let need = instance_needs_link(&child.tier, rest);
+        let need = instance_needs_link(
+            &child.tier,
+            rest.iter()
+                .map(|(v, d)| (matches!(v, Expr::ClientOnly { .. }), d.clone())),
+        );
+        // F320: a link only a changing prop would ask for gives way to the handler: the instance stays unlinked and
+        // F319's freeze answers for those props per call site (a caller passing a constant keeps the page native).
+        if need == LinkNeed::None && rest.iter().any(|(_, d)| self.reads_changing_prop(d)) {
+            self.hold_link = true;
+        }
         if need != LinkNeed::None {
             let why = match need {
                 LinkNeed::RowOnly => format!(
@@ -6543,7 +6624,7 @@ fn names_word(s: &str, name: &str) -> bool {
 }
 
 /// The link decision for one `<Child …/>` from the child's tier and what each prop reads
-/// (`function` = the prop is `Expr::ClientOnly`).
+/// (`function` = the prop is `Expr::ClientOnly`, or F320 reads a prop that changes: the child must follow it).
 pub fn instance_needs_link(tier: &Tier, props: impl IntoIterator<Item = (bool, Deps)>) -> LinkNeed {
     let mut loop_only = false;
     for (function, d) in props {
