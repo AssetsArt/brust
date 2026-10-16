@@ -42,7 +42,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-17">2.0.0-alpha.17 · 17 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#311 including #304, #306, #312 and #313 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
+      {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#311 including #304, #306, #312, #313 and #314 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
       <p>This version closes several cases where a compiled component showed stale or missing output, including a regression from 2.0.0-alpha.16, and it compiles more Radix patterns to native code. Upgrade if you use a Provider that spreads its props or a component whose props change while the page is open.</p>
 
       <h3>New</h3>
@@ -118,6 +118,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #293 (F309) */}
         <li>
           <strong>Slot content inside a static child that is linked to its parent no longer keeps its first value.</strong> <code>&lt;Label on={'{'}on{'}'}&gt;&lt;Thumb on={'{'}on{'}'} /&gt;&lt;/Label&gt;</code> kept the first <code>Thumb</code> after <code>on</code> changed; the only sign was a console warning. The call site now renders with React.
+        </li>
+        {/* source: PR #314 (F342); the bug was already on main before this version, from when it began is not measured */}
+        <li>
+          <strong>Slot content that reaches a child&rsquo;s element through the child&rsquo;s <code>...rest</code> spread no longer shows a stale or wrong value.</strong> A value of the calling component, used in content placed on the child&rsquo;s root element this way, stayed at its first value or was looked up on the child&rsquo;s instance, with no warning. Such a call site now renders with React.
         </li>
         {/* source: PR #309 (F289, F290) and PR #310 (F331) */}
         <li>
