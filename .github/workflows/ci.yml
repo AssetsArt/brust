@@ -311,6 +311,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/nested-fed.test.ts
       # F284-F287: an arrow-const component, useReducer, hoisted hooks and includes: served == React, then the interaction.
       - run: bun test --timeout 120000 tests/server/presence-general.chromium.test.ts
+      # F289: a hook's returned object bound whole at the call site (t.on / t.toggle): served == React, then the clicks.
+      - run: bun test --timeout 120000 tests/server/hook-object-bind.chromium.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
       - run: bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts
       # F142 PR 1: shadcn's table page built AND started, its HTML equal to React's.

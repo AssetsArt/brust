@@ -80,10 +80,6 @@ struct Inline {
     /// Every name the component's module declares (imports included): a global a foreign
     /// hook reads must not be among them, or the inlined code would read that binding.
     root_module: HashSet<String>,
-    /// F286 / F285: the generated locals that stand for a hook call hoisted out of a returned expression (a handler, a
-    /// state cell or its setter, a dispatch). A hook result handed out inside an object or array that the call site binds
-    /// WHOLE (`const t = useToggle()`) would be one derived value naming them, which a per-request job cannot (F289).
-    hook_results: HashSet<String>,
     /// R34.142: addresses of the `useId()` calls that seed a state nothing updates (`drop_inert_id_effects`); the state
     /// is that id.
     inert_id_states: HashSet<usize>,
@@ -879,8 +875,6 @@ fn returned_value(
                 kind,
             },
         };
-        out.inline.hook_results.insert(state.clone());
-        out.inline.hook_results.insert(set.clone());
         if hook == "useState" {
             let init = match args.first() {
                 Some(a) => r.expr(a),
@@ -1225,7 +1219,6 @@ fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) 
             loc_of_call(call),
             false,
         );
-        out.inline.hook_results.insert(name.clone());
         r.hoisted_calls.insert(addr, name);
     }
 }
@@ -3354,7 +3347,7 @@ impl Marks {
     }
 }
 
-fn relocate(e: &mut RawExpr, loc: u32) {
+pub(crate) fn relocate(e: &mut RawExpr, loc: u32) {
     e.loc = loc;
     match &mut e.kind {
         RawKind::Lit(_) | RawKind::Ident { .. } | RawKind::Opaque { .. } | RawKind::Jsx(_) => {}
@@ -3504,14 +3497,66 @@ fn bind_result(
     let value = returned.unwrap_or_else(|| undefined_at(vloc));
     match binding.data {
         B::BIdentifier(id) => {
-            // F286: kept refused until F289: the whole object is one derived value that names a hoisted hook result.
-            if let Some(name) = whole_hook_result(&value, &out.inline.hook_results) {
-                return shape(
-                    out,
-                    format!(
-                        "custom hook {hook} returns `{name}`, a hook call, inside an object or array that is bound whole at the call site"
-                    ),
-                );
+            // F289: an object literal bound whole (`const t = useToggle()`) is read member by member (`t.key`), as a
+            // destructuring is; one derived value naming a handler's local would be a job that cannot run.
+            let named: Option<Vec<(String, RawExpr)>> = match &value.kind {
+                RawKind::Object(props) => Some(props.clone()),
+                RawKind::Array(items) => Some(
+                    items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| (i.to_string(), v.clone()))
+                        .collect(),
+                ),
+                _ => None,
+            };
+            if let Some(props) = named {
+                let base = clean_name(&r.names.name(id.r#ref));
+                let mut members: Vec<(String, RawExpr)> = Vec::new();
+                for (key, v) in props {
+                    if matches!(v.kind, RawKind::Object(_) | RawKind::Array(_)) {
+                        return shape(
+                            out,
+                            format!(
+                                "custom hook {hook} returns an object or array inside the one bound whole at the call site (`{key}`)"
+                            ),
+                        );
+                    }
+                    let plain = matches!(
+                        v.kind,
+                        RawKind::Ident { .. } | RawKind::Lit(_) | RawKind::Arrow { .. }
+                    );
+                    let v = if plain {
+                        v
+                    } else {
+                        let mut n = 1;
+                        let name = loop {
+                            let name = if n == 1 {
+                                format!("{base}_{}", clean_name(&key))
+                            } else {
+                                format!("{base}_{}{n}", clean_name(&key))
+                            };
+                            if out.inline.taken.insert(name.clone()) {
+                                break name;
+                            }
+                            n += 1;
+                        };
+                        out.derived.push(DerivedDecl {
+                            name: name.clone(),
+                            expr: Expr::Raw(v.clone()),
+                        });
+                        RawExpr {
+                            loc: v.loc,
+                            kind: RawKind::Ident {
+                                name,
+                                kind: IdentKind::Local,
+                            },
+                        }
+                    };
+                    members.push((key, v));
+                }
+                r.names.bind_hook_object(id.r#ref, members);
+                return;
             }
             bind_one(r, out, site, id.r#ref, value)
         }
@@ -3595,20 +3640,6 @@ fn bind_result(
             }
         }
     }
-}
-
-/// The first generated hook-result local (see [`Inline::hook_results`]) that the object or array `value` holds directly.
-fn whole_hook_result(value: &RawExpr, results: &HashSet<String>) -> Option<String> {
-    let items: Vec<&RawExpr> = match &value.kind {
-        RawKind::Object(props) => props.iter().map(|(_, v)| v).collect(),
-        RawKind::Array(items) => items.iter().collect(),
-        _ => return None,
-    };
-    items.into_iter().find_map(|v| match &v.kind {
-        RawKind::Ident { name, .. } if results.contains(name) => Some(name.clone()),
-        RawKind::Object(_) | RawKind::Array(_) => whole_hook_result(v, results),
-        _ => None,
-    })
 }
 
 /// `binding` is the returned `value`: an identifier the hook returns is the same binding
