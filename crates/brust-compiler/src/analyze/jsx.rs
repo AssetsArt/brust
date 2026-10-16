@@ -203,12 +203,27 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     if let Some(key) = call.args.get(2)
         && !in_list_body
     {
-        r.diagnostics.push(Diagnostic::warning(
-            "key-outside-list",
-            "`key` on an element that is not the body of a list has no effect",
-            loc_of(key),
-            "remove the key",
-        ));
+        // F308: a key that can change (`key={id}`, `key={n}`) makes React remount the element when it does, resetting its
+        // state and effects; brust keeps the instance. A literal key never changes, so it only warns.
+        let fixed = matches!(
+            key.data,
+            E::EString(_) | E::ENumber(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_)
+        );
+        if fixed {
+            r.diagnostics.push(Diagnostic::warning(
+                "key-outside-list",
+                "`key` on an element that is not the body of a list has no effect",
+                loc_of(key),
+                "remove the key",
+            ));
+        } else {
+            r.diagnostics.push(Diagnostic::fallback(
+                "key-outside-list",
+                "a `key` that can change on an element that is not the body of a list: React remounts the element when it changes (state and effects reset), brust keeps the instance",
+                loc_of(key),
+                "remove the key, or keep this component in React",
+            ));
+        }
     }
     let mut tag = tag_of(r, tag);
     // R34.28: `<Comp>` of `const Comp = asChild ? Slot.Root : "button"` is the host element; the

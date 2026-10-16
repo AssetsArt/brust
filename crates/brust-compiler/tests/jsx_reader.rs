@@ -541,3 +541,32 @@ fn unsupported_list_shapes_say_why() {
     );
     assert!(d.iter().all(|d| d.rule != "list-shape"), "{d:?}");
 }
+
+/// F308: a `key` that can change on an element outside a list makes React remount it (state and effects reset); brust
+/// keeps the instance, so it is a named refusal. A literal key never changes and only warns.
+#[test]
+fn a_live_key_outside_a_list_is_refused_and_a_literal_one_only_warns() {
+    for src in [
+        "export default function T({ id }: any) { return <ul><li key={id}/></ul> }",
+        "export default function T({ id }: any) { return <ul><li key={`a${id}`}/></ul> }",
+        "export default function T({ id }: any) { return <ul><li key={id}>x</li></ul> }",
+    ] {
+        let (_, d) = tpl(src);
+        let hit = d.iter().find(|d| d.rule == "key-outside-list");
+        assert!(
+            hit.is_some_and(|d| matches!(d.class, DiagClass::Fallback)),
+            "{src}: {d:?}"
+        );
+    }
+    for src in [
+        "export default function T() { return <ul><li key=\"a\"/></ul> }",
+        "export default function T() { return <ul><li key={1}/></ul> }",
+    ] {
+        let (_, d) = tpl(src);
+        let hit = d.iter().find(|d| d.rule == "key-outside-list");
+        assert!(
+            hit.is_some_and(|d| matches!(d.class, DiagClass::Warning)),
+            "{src}: {d:?}"
+        );
+    }
+}
