@@ -28,6 +28,9 @@ pub struct Contexts {
     pub hooks: HashMap<u32, String>,
     /// React contexts (`C` of `createContext`) → the context's name (the same name `providers` maps it to).
     pub react: HashMap<u32, String>,
+    /// R34.142: the contexts declared with a literal, non-object default (`createContext(undefined)`): their value is one
+    /// whole value (a `value` field), and without a Provider it is that default. By context name.
+    pub scalar: Vec<(String, crate::ir::Literal)>,
 }
 
 impl Contexts {
@@ -91,7 +94,20 @@ pub fn scan(table: &NameTable<'_>, ast: &js_ast::Ast<'_>) -> Contexts {
                     B::BIdentifier(id) if table.is_react_call(&call.target, "createContext") => {
                         let name = table.local_name(id.r#ref);
                         out.providers.insert(table.key_of(id.r#ref), name.clone());
-                        out.react.insert(table.key_of(id.r#ref), name);
+                        out.react.insert(table.key_of(id.r#ref), name.clone());
+                        let default = match call.args.first().map(|a| &a.data) {
+                            None | Some(E::EUndefined(_)) => Some(crate::ir::Literal::Undefined),
+                            Some(E::ENull(_)) => Some(crate::ir::Literal::Null),
+                            Some(E::EBoolean(b)) => Some(crate::ir::Literal::Bool(b.value)),
+                            Some(E::ENumber(n)) => Some(crate::ir::Literal::Num(n.value())),
+                            Some(E::EString(s)) => {
+                                Some(crate::ir::Literal::Str(crate::analyze::expr::estring(s)))
+                            }
+                            _ => None,
+                        };
+                        if let Some(d) = default {
+                            out.scalar.push((name, d));
+                        }
                     }
                     _ => {}
                 }
@@ -255,5 +271,8 @@ fn calls_nothing(e: &crate::ir::RawExpr) -> bool {
 /// F1 (Mellow): a context field becomes part of an identifier (`__ctx_<ctx>_<field>`) in the job module and the
 /// template, so a key that is not a plain identifier (`'x-y'`) would print as an expression. Same rule as props.
 pub fn field_problem(field: &str) -> Option<&'static str> {
+    if field == crate::analyze::hooks::WHOLE_FIELD {
+        return Some("is the name brust gives a context's whole value");
+    }
     crate::analyze::names::template_name_problem(field).map(|(_, what)| what)
 }

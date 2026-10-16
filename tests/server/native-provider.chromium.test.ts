@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderFwd, renderGate, renderHooks, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -352,4 +352,27 @@ test('Radix\'s useId and useCallbackRef (imported, with their React-version fall
   expect(pair[0]).toMatch(/^radix-/)
   expect(errors).toEqual([])
   await page.close()
+}, 60_000)
+
+test('a context with a literal default read as a value (Radix\'s useDirection): the default without a Provider, the Provider\'s value under one, equal to React', async () => {
+  for (const [path, want, expected] of [['/dir', ['ltr', 'rtl'], renderDir], ['/dir-provider', ['rtl', 'ltr'], renderDirProvider]] as const) {
+    const html = await (await fetch(`${base}${path}`)).text()
+    expect(html).not.toContain('brust-island')
+    expect(plain(html)).toBe(plain(expected()))
+    const page = await browser.newPage()
+    const errors: string[] = []
+    page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+    await page.goto(`${base}${path}`, { waitUntil: 'domcontentloaded' })
+    const boxes = page.locator('main > div')
+    await page.waitForFunction(() => document.querySelectorAll('main > div').length === 2)
+    expect(await boxes.nth(0).getAttribute('dir')).toBe(want[0])
+    expect(await boxes.nth(1).getAttribute('dir')).toBe(want[1])
+    await boxes.nth(0).click()
+    await page.waitForFunction(() => document.querySelector('main > div')?.getAttribute('data-n') === '1')
+    // the direction survives the update
+    expect(await boxes.nth(0).getAttribute('dir')).toBe(want[0])
+    expect(errors).toEqual([])
+    await page.close()
+  }
 }, 60_000)

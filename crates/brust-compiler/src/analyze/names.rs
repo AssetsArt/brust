@@ -127,6 +127,8 @@ pub struct NameTable<'a> {
     printed: Aliases,
     /// The context declarations of the module (S2): Providers, hooks, React contexts.
     pub contexts: crate::analyze::context::Contexts,
+    /// Scalar contexts adopted from the hooks this module inlined (`adopt_scalar`).
+    scalars_adopted: std::cell::RefCell<Vec<(String, crate::ir::Literal)>>,
     /// `const context = useXContext(…)` locals (symbol key → context name): `context.field` reads a hidden prop.
     ctx_locals: HashMap<u32, String>,
     /// The fields read per context by this component (first-use order).
@@ -407,6 +409,7 @@ impl<'a> NameTable<'a> {
             aliases: HashMap::new(),
             printed: HashMap::new(),
             contexts: Default::default(),
+            scalars_adopted: std::cell::RefCell::new(Vec::new()),
             ctx_locals: HashMap::new(),
             ctx_fields: std::cell::RefCell::new(Vec::new()),
             ctx_escape: std::cell::Cell::new(None),
@@ -605,6 +608,11 @@ impl<'a> NameTable<'a> {
             Some(("react", h)) if h != "default" && h != "*" => Some(h.to_string()),
             _ => None,
         }
+    }
+
+    /// R34.142: this table is a hook module's: a constant of it read as `NAME.key` (a primitive literal) is foldable.
+    pub fn literal_reads_are_safe(&mut self, ast: &js_ast::Ast<'_>) {
+        self.object_unsafe = crate::analyze::use_scan::unsafe_objects_literal_reads(ast, self);
     }
 
     /// `r` (an import local of another module) is React's own hook `hook` (F268).
@@ -893,6 +901,37 @@ impl<'a> NameTable<'a> {
                 *v = format!("{v}_{tag}");
             }
         }
+        for (n, _) in &mut self.contexts.scalar {
+            *n = format!("{n}_{tag}");
+        }
+    }
+
+    /// R34.142: the literal default of the scalar context `context` (see `Contexts::scalar`).
+    pub fn scalar_default(&self, context: &str) -> Option<&crate::ir::Literal> {
+        self.contexts
+            .scalar
+            .iter()
+            .find(|(n, _)| n == context)
+            .map(|(_, d)| d)
+    }
+
+    /// A scalar context of an inlined hook's module, met while reading its body.
+    pub fn adopt_scalar(&self, context: &str, default: &crate::ir::Literal) {
+        let mut found = self.scalars_adopted.borrow_mut();
+        if !found.iter().any(|(n, _)| n == context) {
+            found.push((context.to_string(), default.clone()));
+        }
+    }
+
+    /// Every scalar context this module declares or adopted from a hook it inlined, with its default.
+    pub fn scalar_defaults(&self) -> Vec<(String, crate::ir::Literal)> {
+        let mut v = self.contexts.scalar.clone();
+        for a in self.scalars_adopted.borrow().iter() {
+            if !v.iter().any(|(n, _)| n == &a.0) {
+                v.push(a.clone());
+            }
+        }
+        v
     }
 
     /// A destructured context field (`const { value } = useXContext(…)`): the local reads the hidden prop.

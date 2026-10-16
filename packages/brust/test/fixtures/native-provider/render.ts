@@ -1,4 +1,6 @@
 import { createElement } from 'react'
+import DirNonePage from './DirNonePage'
+import DirProvPage from './DirProvPage'
 import FwdPage from './FwdPage'
 import GatePage from './GatePage'
 import HooksPage from './HooksPage'
@@ -28,3 +30,5 @@ export const renderSame = (): string => html(SamePage)
 export const renderRest = (): string => html(RestPage)
 export const renderLoop = (loop: string): string => server.renderToStaticMarkup(createElement(LoopPage as never, { loop } as never))
 export const renderHooks = (): string => html(HooksPage)
+export const renderDir = (): string => html(DirNonePage)
+export const renderDirProvider = (): string => html(DirProvPage)

@@ -1,4 +1,6 @@
 import { defineRoutes } from '@brust/core/routes'
+import DirNonePage from './DirNonePage'
+import DirProvPage from './DirProvPage'
 import FwdPage from './FwdPage'
 import GatePage from './GatePage'
 import HooksPage from './HooksPage'
@@ -23,6 +25,8 @@ export const routes = defineRoutes([
   { path: '/rest', Component: RestPage },
   { path: '/rest-live', Component: RestLivePage },
   { path: '/inputs', Component: InputsPage },
+  { path: '/dir', Component: DirNonePage },
+  { path: '/dir-provider', Component: DirProvPage },
   { path: '/hooks', Component: HooksPage },
   { path: '/loop/{loop}', Component: LoopPage, loader: async ({ params }: { params: { loop: string } }) => ({ loop: params.loop }) },
   { path: '/render', Component: RenderPage },

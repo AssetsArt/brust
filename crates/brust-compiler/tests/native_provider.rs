@@ -596,3 +596,46 @@ fn an_arrow_with_a_rest_parameter_keeps_its_rest() {
     assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
     assert!(client.contains("...xs"), "{client}");
 }
+
+// R34.142: a context declared with a literal default (`createContext(undefined)`) read as a VALUE through an imported hook
+// (Radix's `useDirection`): the Provider's `value` is the whole value; with no Provider above the page it is the default.
+#[test]
+fn a_scalar_context_read_through_an_imported_hook_is_the_providers_value_or_its_default() {
+    for (file, provided) in [("dir_none.tsx", false), ("dir_provider.tsx", true)] {
+        let all = compile(file);
+        assert!(!is_react(&all[0].ir), "{file}: {:?}", all[0].ir.diagnostics);
+        assert!(
+            !all.iter().any(|i| i
+                .ir
+                .diagnostics
+                .iter()
+                .any(|d| d.class == DiagClass::Fallback)),
+            "{file}: {:?}",
+            all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+        );
+        assert!(
+            !all[0].jinja.contains("brust-island"),
+            "{file}: {}",
+            all[0].jinja
+        );
+        // the call site's own `dir` wins, then the Provider's value, then the default `ltr`
+        let want = if provided { "rtl" } else { "ltr" };
+        assert!(all[0].jinja.contains(want), "{file}: {}", all[0].jinja);
+    }
+}
+
+// R34.142: a scalar context's whole value and an object context's fields are different frame shapes: a consumer that reads
+// one while the Provider hands out the other is refused (never silently `undefined`).
+#[test]
+fn a_consumer_reading_a_whole_value_or_fields_the_provider_does_not_hand_out_falls_back() {
+    for file in ["ctx_whole_fields.tsx", "ctx_fields_whole.tsx"] {
+        let all = compile(file);
+        assert!(
+            all.iter()
+                .any(|i| has(&i.ir, DiagClass::Fallback, "context-shape")),
+            "{file}: {:?}",
+            all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+        );
+        assert!(is_react(&all[0].ir), "{file}: {:?}", all[0].ir.tier);
+    }
+}

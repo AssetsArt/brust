@@ -113,6 +113,19 @@ impl<'r, 'a> Reader<'r, 'a> {
                 return self.opaque(e, "props rest object");
             }
             // A context local read as a value (not `context.field`): brust cannot narrow it (fail closed).
+            // R34.142: unless the context has a literal default (`createContext(undefined)`): its whole value is the hidden
+            // prop `__whole`, the default when no Provider is above the page.
+            E::EIdentifier(id)
+                if let Some(ctx) = self.names.ctx_local(id.ref_).map(str::to_string)
+                    && self.names.scalar_default(&ctx).is_some() =>
+            {
+                self.names
+                    .note_ctx_field(&ctx, crate::analyze::hooks::WHOLE_FIELD);
+                RawKind::Ident {
+                    name: crate::ir::ctx_prop(&ctx, crate::analyze::hooks::WHOLE_FIELD),
+                    kind: IdentKind::Prop,
+                }
+            }
             E::EIdentifier(id) if self.names.ctx_local(id.ref_).is_some() => {
                 if self.names.ctx_escape.get().is_none() {
                     self.names.ctx_escape.set(Some(loc));
@@ -468,14 +481,14 @@ impl<'r, 'a> Reader<'r, 'a> {
     fn arrow(&mut self, e: &js_ast::Expr, a: &js_ast::E::Arrow) -> RawExpr {
         let list_body = std::mem::take(&mut self.map_callback);
         let mut params = Vec::new();
-        // `(...args) => …`: the IR's parameters have no rest form, and dropping the `...` changes what the function sees
-        if a.has_rest_arg {
-            return self.opaque(e, "arrow rest parameter");
-        }
-        for arg in a.args.slice() {
+        for (i, arg) in a.args.slice().iter().enumerate() {
             match arg.binding.data {
+                // `(...args) => …`: the rest parameter keeps its `...` in the name, so it prints as written (and, as no
+                // name a body reads, an evaluator that binds parameters by name refuses a function that has one)
                 B::BIdentifier(id) if arg.default.is_none() => {
-                    params.push(self.names.name(id.r#ref))
+                    let rest = a.has_rest_arg && i + 1 == a.args.len();
+                    let name = self.names.name(id.r#ref);
+                    params.push(if rest { format!("...{name}") } else { name })
                 }
                 _ => return self.opaque(e, "arrow parameter pattern"),
             }

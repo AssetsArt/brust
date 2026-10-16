@@ -57,6 +57,10 @@ pub struct Module<'m, 'x> {
     pub foreign: bool,
 }
 
+/// R34.142: the field a context's whole value travels as, for a context declared with a literal default that a consumer
+/// reads as a value (`const dir = useContext(DirectionContext)`, not `ctx.field`) and a Provider hands one expression to.
+pub(crate) const WHOLE_FIELD: &str = "__whole";
+
 /// How deep custom hooks may call custom hooks.
 const MAX_HOOK_DEPTH: usize = 8;
 
@@ -2072,6 +2076,11 @@ fn read_hook(
         out.fallback(rule, why, vloc, HOOK_REMEDY);
     };
     let mut hnames = NameTable::for_hook(hm.ast);
+    if imported {
+        hnames.literal_reads_are_safe(hm.ast);
+    }
+    // the contexts of the hook's module are named by that module (the same tag its own components get)
+    hnames.tag_contexts(&path);
     let fn_name = func
         .name
         .as_ref()
@@ -2278,6 +2287,7 @@ fn read_hook(
         }
     }
     let mut import_aliases: Vec<(js_ast::Ref, Alias)> = Vec::new();
+    let mut module_consts: Vec<(String, js_ast::Ref)> = Vec::new();
     for u in &w.used {
         if hnames.is_jsx_runtime(*u)
             || w.declared.iter().any(|d| hnames.same(*d, *u))
@@ -2338,6 +2348,20 @@ fn read_hook(
                 "hook-shape",
                 format!("custom hook {hook} reads `arguments`"),
             );
+        }
+        // R34.142: the argument of `useContext(C)`, a context the hook's module declares: the frames pass carries it
+        if hnames.react_context(*u).is_some() {
+            continue;
+        }
+        // R34.142: a never-written `const` of literal shape of the hook's module (`Direction.LTR`) is read as its value:
+        // folded into what the hook reads; any use that does not fold fails the hook below.
+        if imported
+            && (hnames.module_inits().contains_key(&spelled) || hnames.object_const(*u).is_some())
+        {
+            if !module_consts.iter().any(|(n, _)| n == &spelled) {
+                module_consts.push((spelled.clone(), *u));
+            }
+            continue;
         }
         if imported && !matches!(kind, IdentKind::Global) {
             return fail(
@@ -2596,7 +2620,28 @@ fn read_hook(
                 expr: Expr::Raw(e),
             });
         }
-        let returned = read_stmts(&body, &mut hr, out, hm);
+        let mut returned = read_stmts(&body, &mut hr, out, hm);
+        if !module_consts.is_empty() {
+            let values: HashMap<String, RawExpr> = module_consts
+                .iter()
+                .filter_map(|(n, u)| {
+                    let e = match hr.names.module_inits().get(n) {
+                        Some(e) => *e,
+                        None => hr.names.object_const(*u)?,
+                    };
+                    Some((n.clone(), hr.expr(&e)))
+                })
+                .collect();
+            if !fold_module_consts(&values, &start, out, &mut returned) {
+                fail(
+                    out,
+                    "hook-shape",
+                    format!(
+                        "custom hook {hook} reads a constant of {path} other than as `NAME` or `NAME.key` of a literal"
+                    ),
+                );
+            }
+        }
         nested_hooks_in(func, &body, hr.names, out);
         out.diagnostics.append(&mut hr.diagnostics);
         if !hr.pending_handlers.is_empty() {
@@ -2610,6 +2655,15 @@ fn read_hook(
     };
     out.inline.stack.pop();
     out.classified_hooks = saved;
+    // the context fields the hook read are this component's own needs (hidden props), with their defaults
+    for u in hnames.ctx_uses() {
+        for f in &u.fields {
+            r.names.note_ctx_field(&u.context, f);
+        }
+    }
+    for (c, d) in hnames.scalar_defaults() {
+        r.names.adopt_scalar(&c, &d);
+    }
 
     // What went wrong inside is reported at the call site, naming the hook (R0.2).
     let text = hm.parsed.text();
@@ -2792,6 +2846,83 @@ fn relocate(e: &mut RawExpr, loc: u32) {
             }
         }
     }
+}
+
+/// R34.142: replaces each read of a module constant of a literal shape in what the hook read since `start` by its value
+/// (`Direction.LTR` becomes `'ltr'`, a literal `NAME` itself). `false` when a use is left that does not fold (the constant
+/// as a whole object, a key it has no entry for): the hook then reads a name the component does not have.
+fn fold_module_consts(
+    values: &HashMap<String, RawExpr>,
+    start: &Marks,
+    out: &mut BodyDecls,
+    returned: &mut Option<Option<RawExpr>>,
+) -> bool {
+    let left = std::cell::Cell::new(false);
+    let name_of = |e: &RawExpr| match &e.kind {
+        RawKind::Ident { name, kind } if !matches!(kind, IdentKind::Prop | IdentKind::State) => {
+            Some(name.clone())
+        }
+        _ => None,
+    };
+    let f = |e: &RawExpr| -> Option<RawExpr> {
+        match &e.kind {
+            RawKind::Member { target, name, .. } => {
+                let c = values.get(&name_of(target)?)?;
+                let RawKind::Object(props) = &c.kind else {
+                    return None;
+                };
+                match props.iter().find(|(k, _)| k == name) {
+                    Some((_, v)) if matches!(v.kind, RawKind::Lit(_)) => Some(RawExpr {
+                        loc: e.loc,
+                        kind: v.kind.clone(),
+                    }),
+                    _ => {
+                        left.set(true);
+                        None
+                    }
+                }
+            }
+            RawKind::Ident { .. } => {
+                let c = values.get(&name_of(e)?)?;
+                if matches!(c.kind, RawKind::Lit(_)) {
+                    Some(RawExpr {
+                        loc: e.loc,
+                        kind: c.kind.clone(),
+                    })
+                } else {
+                    left.set(true);
+                    None
+                }
+            }
+            _ => None,
+        }
+    };
+    let fold = |e: &mut RawExpr| *e = crate::analyze::const_fold::map_pre(e, &f);
+    let fold_expr = |e: &mut Expr| {
+        if let Expr::Raw(r) = e {
+            fold(r)
+        }
+    };
+    out.state[start.state..]
+        .iter_mut()
+        .for_each(|s| fold_expr(&mut s.init));
+    out.derived[start.derived..]
+        .iter_mut()
+        .for_each(|d| fold_expr(&mut d.expr));
+    out.refs[start.refs..]
+        .iter_mut()
+        .for_each(|d| fold_expr(&mut d.init));
+    out.handlers[start.handlers..]
+        .iter_mut()
+        .for_each(|h| fold(&mut h.body));
+    for e in &mut out.effects[start.effects..] {
+        fold(&mut e.body);
+        e.deps.iter_mut().flatten().for_each(&fold);
+    }
+    if let Some(Some(r)) = returned {
+        fold(r);
+    }
+    !left.get()
 }
 
 /// A value whose computation can be dropped: no call, nothing opaque.
