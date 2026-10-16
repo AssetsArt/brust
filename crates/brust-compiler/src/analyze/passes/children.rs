@@ -780,6 +780,25 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
     }
 }
 
+/// F309: the template of `ir` prints `{children}` somewhere.
+fn prints_children_slot(ir: &ComponentIR) -> bool {
+    fn any(n: &Node) -> bool {
+        match n {
+            Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => matches!(
+                &r.kind,
+                RawKind::Ident { name, kind: IdentKind::Prop } if name == "children"
+            ),
+            Node::Element { children, .. }
+            | Node::Component { children, .. }
+            | Node::Fragment(children) => children.iter().any(any),
+            Node::If { then, else_, .. } => then.iter().chain(else_).any(any),
+            Node::For { body, .. } => body.iter().any(any),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        }
+    }
+    any(&ir.template)
+}
+
 /// A call site's clone: its id, its module-cache key and the hidden inputs the call site must now pass (S2).
 type Specialised = (String, String, Vec<(String, Expr)>);
 
@@ -4629,6 +4648,24 @@ impl Walker<'_, '_> {
                     "move the interactive part into the component that owns its state, or keep this component interactive with React",
                 ));
             }
+        }
+        // F309 (the guard above, for a static child): a static child LINKED here gets a host of its own (`x-data` on its
+        // root), and the runtime binds the slot content it prints by that nearest host too (`nearestInstance`), so a
+        // directive of this component in it would look for its members in the child and never update. Fail closed.
+        if link.is_some()
+            && matches!(child.tier, Tier::Static)
+            && !children.is_empty()
+            && child.ir.as_deref().is_some_and(prints_children_slot)
+            && let Some(what) = children.iter().find_map(|c| self.owned_directive(c))
+        {
+            self.diagnostics.push(Diagnostic::fallback(
+                "slot-owner",
+                format!(
+                    "the children given to <{name}> contain {what}, and <{name}> is linked here, so it prints them inside a host element of its own, which would bind them to its instance instead of this component's"
+                ),
+                *loc,
+                "move the interactive part into the component that owns its state, or keep this component interactive with React",
+            ));
         }
         if child.has_for
             && !matches!(child.tier, Tier::React { .. })
