@@ -18,7 +18,7 @@
     },
     "islands": 36,
     "pagesWithNoJs": 25,
-    "pagesWithNoWorker": 21,
+    "pagesWithNoWorker": 22,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -522,7 +522,7 @@
       "islands": 1,
       "components": 11,
       "reactComponents": 8,
-      "jsGzipKb": 94,
+      "jsGzipKb": 95,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -567,7 +567,7 @@
       "components": 4,
       "reactComponents": 0,
       "jsGzipKb": 0,
-      "workerCalls": 1,
+      "workerCalls": 0,
       "codes": []
     },
     {
@@ -695,7 +695,7 @@
       "islands": 1,
       "components": 3,
       "reactComponents": 2,
-      "jsGzipKb": 107,
+      "jsGzipKb": 108,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -792,7 +792,7 @@
       "islands": 1,
       "components": 22,
       "reactComponents": 16,
-      "jsGzipKb": 157,
+      "jsGzipKb": 158,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -812,7 +812,7 @@
       "islands": 1,
       "components": 16,
       "reactComponents": 14,
-      "jsGzipKb": 104,
+      "jsGzipKb": 105,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1148,7 +1148,7 @@
       "islands": 1,
       "components": 5,
       "reactComponents": 2,
-      "jsGzipKb": 85,
+      "jsGzipKb": 86,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1237,7 +1237,7 @@
       "islands": 1,
       "components": 21,
       "reactComponents": 13,
-      "jsGzipKb": 100,
+      "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
         "context-island",
@@ -1394,7 +1394,7 @@
       "islands": 1,
       "components": 5,
       "reactComponents": 4,
-      "jsGzipKb": 93,
+      "jsGzipKb": 94,
       "workerCalls": 1,
       "codes": [
         "external-component",

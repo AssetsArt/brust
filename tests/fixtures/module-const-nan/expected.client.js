@@ -8,6 +8,5 @@ export default defineBehavior("input_6ccbd0c8", ({ el: __el, props, effect: __ef
   const h = signal(HUGE)
   const _h1 = (...__args) => (() => n.set(1))(...__args)
   const _c1 = computed(() => __text(n()))
-  const _c2 = computed(() => __text(h()))
-  return { n, h, _h1, _c1, _c2 }
+  return { n, h, _h1, _c1 }
 })

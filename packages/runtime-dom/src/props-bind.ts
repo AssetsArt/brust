@@ -9,6 +9,16 @@ function scopeOf(el: Element): Record<string, unknown> {
   return {}
 }
 
+/** F277: the props a linked host starts with: its parent's current `x-props-bind` value when the parent is mounted (a
+ * host an `x-if` or a row creates after first paint gets what the parent passes NOW, as React mounts with the current
+ * props: a `useState(prop)` starts from it), else its printed `x-props`. */
+export function initialProps(host: HTMLElement, parent: Instance | null, printed: Record<string, unknown>): Record<string, unknown> {
+  const raw = host.getAttribute('x-props-bind'); if (!raw || !parent) return printed
+  const p = parseValue(raw); if (!p) return printed
+  const r = resolve(parent.members, p, scopeOf(host))
+  return r.ok && r.value && typeof r.value === 'object' ? (r.value as Record<string, unknown>) : printed
+}
+
 export function bindPropsFromParent(inst: Instance): void {
   const raw = inst.host.getAttribute('x-props-bind'); if (!raw) return
   const p = parseValue(raw)
