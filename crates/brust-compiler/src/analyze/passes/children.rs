@@ -5388,6 +5388,9 @@ impl Walker<'_, '_> {
                 || !child.spread.lands(k)
                 || !self.reads_state(v)
                 || !live_key_ok(k)
+                // F296 C1 / F299: a Slot merges the call site's `style` and `className` with its child's.
+                || (matches!(k.as_str(), "style" | "class" | "className")
+                    && self.style_may_merge(props, child))
                 || child.onward.spread_sites != 1
                 || child.onward.components.lands(k)
                 || child
@@ -5445,6 +5448,33 @@ impl Walker<'_, '_> {
         }
         let _ = name;
         live
+    }
+
+    /// F296 C1 (and F299 for `className`): the child may render a Slot (`asChild`) at this call site, and a Slot MERGES
+    /// `style` (the call site's object over its child element's own) and `className` (both class lists), where a host
+    /// element's spread replaces them. True unless the flag is known
+    /// to select the host element: absent or a literal for the host, and no spread that could carry the flag.
+    fn style_may_merge(&self, props: &[(String, Expr)], child: &Child) -> bool {
+        let Some(poly) = &child.poly else {
+            return false;
+        };
+        let flag = props
+            .iter()
+            .rev()
+            .find(|(k, _)| k == &poly.flag)
+            .map(|(_, v)| v);
+        let value = match flag {
+            None => Some(false),
+            Some(Expr::Raw(r)) | Some(Expr::Server(ServerExpr(r))) => match r.json_literal() {
+                Some(serde_json::Value::Bool(b)) => Some(b),
+                _ => None,
+            },
+            Some(_) => None,
+        };
+        let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
+        let unknown_spread =
+            spreads_in && (poly.negate || self.spread_carries(&poly.flag, props).is_err());
+        !(value == Some(poly.negate) && !unknown_spread)
     }
 
     /// F267: whether the `ref` of this call site is a ref cell of this component and `child` is an inlined `forwardRef`
@@ -5813,9 +5843,12 @@ pub(crate) fn handler_key_ok(k: &str) -> bool {
 }
 
 /// A live prop the parent binds on a child's element prints as `x-bind-<attr>`: it must pass the gate a hand-written
-/// attribute passes (2b-handlers C3), and none of the keys that merge (`class`, `style`), that the binder sets as a
-/// property (`value`, `checked`: refused when the element has a model, which is not known here, so refused here),
-/// or that are not attributes at all.
+/// attribute passes (2b-handlers C3), and none of the keys the binder sets as a property (`value`, `checked`,
+/// `selected`: refused when the element has a model, which is not known here, so refused here), the URL attributes,
+/// or that are not attributes at all. `style` and `className` are allowed (F296, F299, spread-live option A): React
+/// REPLACES an element's own `style`/`className` with the spread's (it never merges), so the parent's binding equals
+/// what the element prints; where something merges them instead (`asChild`'s Slot), the caller of this gate refuses
+/// them (`style_may_merge`).
 pub(crate) fn live_key_ok(k: &str) -> bool {
     let html = brust_jinja::attr_name(k);
     brust_jinja::spread::attr_name_ok(k)
@@ -5827,9 +5860,8 @@ pub(crate) fn live_key_ok(k: &str) -> bool {
         && !brust_jinja::is_url_attr(&html)
         && !matches!(
             html.as_str(),
-            "class" | "style" | "value" | "checked" | "selected" | "children" | "key" | "ref"
+            "value" | "checked" | "selected" | "children" | "key" | "ref"
         )
-        && k != "className"
         && k != "dangerouslySetInnerHTML"
 }
 

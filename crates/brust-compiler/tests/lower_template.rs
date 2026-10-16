@@ -590,42 +590,41 @@ fn style_attr_of(obj: &str) -> String {
     j
 }
 
-/// M3-P P7: a literal style object is lowered to `css_decls` (pairs sorted by
-/// key bytes, last duplicate wins, CSS-unsafe keys dropped) — no per-element dict.
+/// M3-P P7 + F296 C3: a literal style object is lowered to `css_attr` (pairs in JS object order: a repeated key keeps
+/// its first place and its LAST value; CSS-unsafe keys dropped; the attribute left out when nothing is left) — no
+/// per-element dict.
 #[test]
-fn literal_style_object_lowers_to_css_decls() {
-    // 0 keys: unchanged (a dict through style_css).
+fn literal_style_object_lowers_to_css_attr() {
+    // 0 keys: no attribute at all (react-dom omits an empty `style`)
     let j = style_attr_of("");
-    assert!(j.contains("style=\"{{ {} | style_css | e }}\""), "{j}");
+    assert!(!j.contains("style"), "{j}");
     // 1 key
     let j = style_attr_of("color: x");
-    assert!(
-        j.contains("style=\"{{ css_decls(\"color\", x) | e }}\""),
-        "{j}"
-    );
+    assert!(j.contains("{{ css_attr(\"color\", x) }}"), "{j}");
     assert!(!j.contains("style_css"), "{j}");
-    // 3 keys, unsorted source order -> sorted by key bytes
+    // 3 keys: source order, so a later shorthand overrides an earlier longhand as in React
     let j = style_attr_of("zIndex: x, color: y, backgroundColor: x");
     assert!(
-        j.contains("css_decls(\"backgroundColor\", x, \"color\", y, \"zIndex\", x)"),
+        j.contains("css_attr(\"zIndex\", x, \"color\", y, \"backgroundColor\", x)"),
         "{j}"
     );
-    // duplicate key keeps the LAST value
-    let j = style_attr_of("color: x, color: y");
-    assert!(j.contains("css_decls(\"color\", y)"), "{j}");
-    assert!(!j.contains("\"color\", x"), "{j}");
+    // duplicate key: first place, LAST value
+    let j = style_attr_of("color: x, width: x, color: y");
+    assert!(j.contains("css_attr(\"color\", y, \"width\", x)"), "{j}");
     // a dashed key (custom property) is kept
     let j = style_attr_of("'--gap': x");
-    assert!(j.contains("css_decls(\"--gap\", x)"), "{j}");
-    // a rejected key is dropped exactly as style_obj_to_css drops it at render
+    assert!(j.contains("css_attr(\"--gap\", x)"), "{j}");
+    // a rejected key is dropped exactly as style_obj_to_css drops it at render; nothing left, no attribute
     let j = style_attr_of("'a b': x, color: y");
-    assert!(j.contains("css_decls(\"color\", y)"), "{j}");
+    assert!(j.contains("css_attr(\"color\", y)"), "{j}");
     assert!(!j.contains("a b"), "{j}");
-    // rendered equality, sorted + duplicate + rejected + unitless
+    let j = style_attr_of("'a b': x");
+    assert!(!j.contains("style"), "{j}");
+    // rendered: source order, duplicate (first place, last value), rejected, unitless
     let j = style_attr_of("zIndex: x, opacity: y, 'bad;key': x, zIndex: y, fontSize: x");
     let html = render(&j, serde_json::json!({ "x": 12, "y": 2 }));
     assert!(
-        html.contains("style=\"font-size:12px;opacity:2;z-index:2\""),
+        html.contains("style=\"z-index:2;opacity:2;font-size:12px\""),
         "{html}"
     );
 }
