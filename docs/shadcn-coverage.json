@@ -199,7 +199,7 @@
       "libraryComponents": 5
     },
     {
-      "blocker": "fallback:client-function-in-job",
+      "blocker": "fallback:context-value",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -208,13 +208,13 @@
       "libraryComponents": 1
     },
     {
-      "blocker": "fallback:context-value",
+      "blocker": "fallback:client-function-in-job",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 1
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:event-capture",
@@ -440,6 +440,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 9
+    },
+    {
+      "blocker": "fallback:hook-return-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 5
     },
     {
       "blocker": "useImperativeHandle",

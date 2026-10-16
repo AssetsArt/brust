@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderComp, renderCompDestruct, renderDestructured, renderMemo, renderWhole } from '../../packages/brust/test/fixtures/hook-object-bind/render'
+import { renderComp, renderCompDestruct, renderDestructured, renderMemo, renderOwn, renderOwnComputed, renderWhole } from '../../packages/brust/test/fixtures/hook-object-bind/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/hook-object-bind')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -56,6 +56,9 @@ const plain = (html: string): string =>
 const pages: [string, () => string][] = [
   ['/whole', renderWhole],
   ['/destructured', renderDestructured],
+  ['/comp', renderComp],
+  ['/comp-destruct', renderCompDestruct],
+  ['/own', renderOwn],
 ]
 
 test('/memo: a returned useMemo / spread (not a literal) is served and keeps React\'s markup', async () => {
@@ -123,21 +126,41 @@ test('/memo: the clicks work on the React-tier page', async () => {
   await page.close()
 }, 60_000)
 
-for (const [path, id, react] of [
-  ['/comp', 'comp', renderComp],
-  ['/comp-destruct', 'compd', renderCompDestruct],
+for (const [path, id] of [
+  ['/comp', 'comp'],
+  ['/comp-destruct', 'compd'],
 ] as const) {
-  test(`${path}: a value computed from a handler is served (React tier), equals React's markup, and the click works`, async () => {
-    const res = await fetch(`${base}${path}`)
-    expect(res.status).toBe(200)
-    expect(plain(await res.text())).toContain(plain(react()).replace(/^<main>|<\/main>$/g, ''))
-    const page = await browser.newPage()
-    const errors: string[] = []
-    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
-    await page.goto(`${base}${path}`, { waitUntil: 'networkidle' })
+  test(`${path}: an object holding the handler is served native and the click works`, async () => {
+    const { page, errors } = await open(path)
     await page.getByTestId(id).click()
     await page.waitForFunction((t) => document.querySelector(`[data-testid="${t}"]`)?.textContent === 'on', id)
     expect(errors).toEqual([])
     await page.close()
   }, 60_000)
 }
+
+test('/own: the component\'s own functions in an object share one state; both buttons and reset work', async () => {
+  const { page, errors } = await open('/own')
+  await page.getByTestId('own-a').click()
+  await page.getByTestId('own-b').click()
+  await page.waitForFunction(() => document.querySelector('[data-testid="own-a"]')?.textContent === 'go2')
+  await page.waitForFunction(() => document.querySelector('[data-testid="own-b"]')?.textContent === 'again2')
+  await page.getByTestId('own-r').click()
+  await page.waitForFunction(() => document.querySelector('[data-testid="own-a"]')?.textContent === 'go0')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('/own-computed: a member computed from the function is a named refusal, served React tier with React\'s markup', async () => {
+  const res = await fetch(`${base}/own-computed`)
+  expect(res.status).toBe(200)
+  expect(plain(await res.text())).toContain(plain(renderOwnComputed()).replace(/^<main>|<\/main>$/g, ''))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/own-computed`, { waitUntil: 'networkidle' })
+  await page.getByTestId('ownc').click()
+  await page.waitForFunction(() => document.querySelector('[data-testid="ownc"]')?.textContent === '2on')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)

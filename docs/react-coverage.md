@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 132 | 26 | 45 | 61 | 0 | 0 | 0 | 0 |
+| C Hooks | 134 | 26 | 48 | 60 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 510 | 218 | 90 | 198 | 3 | 1 | 0 | 0 |
+| **Total** | 512 | 218 | 93 | 197 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -431,8 +431,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-object-memo | a custom hook returning useMemo of an object with a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: not an object literal, so not read per member; a job naming the handler would 500: hook-return-shape |
 | c-hook-object-spread | a custom hook returning an object with a spread and a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: a spread makes the returned object a computed value: hook-return-shape |
 | c-hook-object-ident | a custom hook returning a local object (return obj) with a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: an identifier is not the literal: a job naming the hook-declared function would 500: hook-return-shape |
-| c-handler-in-computed-member | a value the component computes from a hook object's handler (const o = { cb: t.toggle }) | react | react | ssr | ok | 4.0 | fallback:client-function-in-job | F289: a per-request job cannot name a handler: client-function-in-job |
-| c-handler-in-computed-destructured | a value the component computes from a destructured hook handler (const o = { cb: toggle }) | react | react | ssr | ok | 4.0 | fallback:client-function-in-job | F289: the same on main before the member binding: client-function-in-job |
+| c-handler-in-computed-member | an object holding a hook object's handler (const o = { cb: t.toggle }) | native | native | 0 | ok | 4.5 | — | F331: read member by member (o.cb is t.toggle), not a per-request job naming a handler |
+| c-handler-in-computed-destructured | an object holding a destructured hook handler (const o = { cb: toggle }) | native | native | 0 | ok | 4.5 | — | F331: read member by member (was client-function-in-job after F289, a 500 before) |
+| c-own-function-in-object | an object holding the component's own arrow and function (const o = { cb: inc, off: reset }) | native | native | 0 | ok | 4.5 | — | F331: read member by member; o.cb is inc |
+| c-own-function-in-computed-member | an object whose member is computed from the component's own function | react | react | ssr | ok | 4.0 | fallback:client-function-in-job | F331: a computed member naming a client function is still a per-request job: client-function-in-job |
 | c-usereducer-callback-by-name | useReducer whose reducer maps with a named helper | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a callback passed by name is a function the purity proof cannot see: reducer-impure |
 | c-usereducer-default-param | useReducer whose reducer has a parameter default that calls a function | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a default runs on every call like the body: reducer-impure |
 | c-usereducer-default-pattern | useReducer whose reducer destructures with a default that calls a function | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a destructuring default is checked like a parameter default |
