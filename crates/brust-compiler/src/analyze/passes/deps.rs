@@ -18,6 +18,8 @@ pub const BROWSER_GLOBALS: &[&str] = &[
     "screen",
     "matchMedia",
     "requestAnimationFrame",
+    // R34.140: the items of a collection exist only in the browser (`useCollection(scope)`)
+    crate::ir::COLLECTION_ITEMS,
 ];
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -530,6 +532,7 @@ impl Walker<'_> {
                         Attr::Dynamic { value, .. }
                         | Attr::Spread(value)
                         | Attr::InnerHtml { value } => self.expr(value, out),
+                        Attr::CollectionItem { data } => self.expr(data, out),
                         Attr::Static { .. }
                         | Attr::Event { .. }
                         | Attr::Ref { .. }

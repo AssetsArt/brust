@@ -93,6 +93,12 @@ pub enum Attr {
     /// `ref={forwardedRef}` on this element (F267): where the ref a `forwardRef` component's caller passes lands. Prints
     /// nothing of its own; a caller that binds a ref of its own on an inlined instance prints `x-ref` here.
     ForwardRef,
+    /// R34.140: this element is an item of the nearest collection: it carries `data-radix-collection-item` and, native,
+    /// `x-collection-item` bound to `data` (the object of the item's data props, read by the runtime when the list is asked
+    /// for). Written by the compiler only, from a recognised `<Collection.ItemSlot>`.
+    CollectionItem {
+        data: Expr,
+    },
     Spread(Expr),
     /// `dangerouslySetInnerHTML={{ __html: v }}`: `value` is the already-unwrapped `v`
     /// (null-safe `o.__html` for a non-literal object). Printed through the one raw sink.
