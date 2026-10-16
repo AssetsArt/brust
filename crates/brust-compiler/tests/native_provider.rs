@@ -720,6 +720,70 @@ fn a_const_object_entry_calling_an_effectful_or_unproven_function_still_falls_ba
     }
 }
 
+#[test]
+fn children_carried_in_the_rest_sit_under_the_clones_provider() {
+    // F298: `<KRootStatic><KThumb/></KRootStatic>`, where KRootStatic spreads its rest (children included) into a trigger
+    // under its own Provider: the Thumb reads that Provider's frame, as in React.
+    let all = compile("rest_children.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert!(
+        all.iter().any(|i| i.ir.rest_clone_of.is_some()),
+        "{:?}",
+        all.iter().map(|i| &i.ir.id).collect::<Vec<_>>()
+    );
+    // The Thumb is printed inside the Provider's clone and linked to it (its state changes on the client).
+    let thumb = root
+        .jinja
+        .find("kThumb_")
+        .expect("the thumb is in the page's markup");
+    assert!(
+        root.jinja[thumb..].contains("x-props-bind"),
+        "{}",
+        root.jinja
+    );
+    // ... and the nearest host around it is the Provider's clone (the runtime binds by the nearest x-data): the label
+    // between them has no host of its own.
+    let clone = root
+        .jinja
+        .find("x-data=\"kProvider_")
+        .expect("the Provider's clone hosts the content");
+    let thumb_host = root
+        .jinja
+        .find("x-data=\"kThumb_")
+        .expect("the thumb's own host");
+    let between = &root.jinja[clone + 1..thumb_host];
+    assert!(!between.contains("x-data="), "{}", root.jinja);
+    assert!(
+        !root
+            .ir
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == "context-no-provider"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+}
+
+#[test]
+fn rest_children_a_native_trigger_would_bind_keep_todays_refusal_and_say_why() {
+    // The trigger has an instance of its own: content with a live prop printed inside its host would bind to it (F214).
+    let all = compile("rest_children_host.tsx");
+    let root = &all[0];
+    assert!(
+        has(&root.ir, DiagClass::Fallback, "context-no-provider"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    let why = root
+        .ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "rest-children-unsupported")
+        .map(|d| d.message.clone())
+        .unwrap_or_default();
+    assert!(why.contains("its own host element"), "{why}");
+}
 // R34.143: `useSyncExternalStore(subscribe, () => true, () => false)` with a `subscribe` that subscribes to nothing (Radix's
 // `useIsHydrated`) is false on the server and true once mounted; every other store stays `hook-unsupported`.
 #[test]
