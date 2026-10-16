@@ -8,12 +8,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
+| A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
 | C Hooks | 90 | 18 | 29 | 43 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 463 | 206 | 73 | 180 | 3 | 1 | 0 | 0 |
+| **Total** | 465 | 206 | 74 | 181 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -61,6 +61,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-spread-then-override | spread, then an attribute that overrides it | static | static | 0 | ok | 0 | — | shadcn S1.2 R34.15: later wins (id is never the spread one) |
 | a-override-then-spread | an attribute, then a spread that may override it | static | static | 0 | ok | 0 | — | shadcn S1.2 R34.15: later wins (the spread replaces id/className when it has them) |
 | a-spread-alias-after | React names after a spread that may carry their HTML aliases (class, for, tabindex) | static | static | 0 | ok | 0 | — | shadcn S1.2 review F1: aliases merge on the HTML attribute (one class/for/tabindex), the later React name wins |
+| a-spread-const-plain-call | a const object spread into a component, one entry calls a module function that only reads its argument (F280) | native | native | 0 | ok | 4.5 | — | F280: plain_object accepts a call of a function plain_fn proves effect-free over plain reads |
+| a-spread-const-effect-call | the same, but the function calls author code (not proven plain) | react | react | ssr | ok | 3.9 | fallback:spread-props | F280: an entry that calls a function that is not proven plain keeps the spread a fallback (spread-props) |
 | a-spread-alias-before | React names before a spread that may carry their HTML aliases | static | static | 0 | ok | 0 | — | shadcn S1.2 review F1: the spread's class/for/tabindex replace the earlier React names (one attribute each) |
 | a-spread-props-path | spread of an object of unknown keys (a props path) | static | static | 0 | ok | 0 | — | shadcn S1.2 R34.15 (b): the runtime path (spread_attrs) |
 | a-spread-hostile-names | object keys that are not attribute names, in a spread | static | static | 0 | ok | 0 | warning:unsafe-attr | shadcn S1.2 R34.17: dropped and warned (unsafe-attr); spread_attrs drops the same names at render |

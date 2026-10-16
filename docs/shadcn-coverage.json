@@ -52,7 +52,7 @@
       "measuredRows": 32,
       "analysisOnlyRows": 0,
       "appComponents": 121,
-      "libraryComponents": 178
+      "libraryComponents": 177
     },
     {
       "blocker": "fallback:island-prop",
@@ -178,7 +178,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 12
+      "libraryComponents": 13
     },
     {
       "blocker": "fallback:local-component",
