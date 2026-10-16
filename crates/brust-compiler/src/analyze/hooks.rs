@@ -2325,6 +2325,17 @@ fn read_decl(
         return;
     }
     let expr = r.expr(value);
+    // F331: `const o = { cb: toggle }` holding the component's own function is read member by member (`o.cb` is
+    // `toggle`), as an object a hook returns is; as one derived value it would be a job naming a client function.
+    // Not inside a hook: `const obj = {…}; return obj` hands the object out whole, which stays the named refusal.
+    if out.inline.stack.is_empty()
+        && let B::BIdentifier(id) = decl.binding.data
+        && let RawKind::Object(props) = &expr.kind
+        && names_client_function(&expr, &client_functions(out)).is_some()
+        && bind_literal_members(r, out, id.r#ref, props)
+    {
+        return;
+    }
     out.derived.push(DerivedDecl {
         name,
         expr: Expr::Raw(expr),
@@ -3495,16 +3506,7 @@ fn read_hook(
 /// The first handler, setter or hook-declared function that a derived value of `out` (from `from` on) names. A
 /// derived value is a per-request job, which does not have the client's functions: it would throw (a 500).
 fn client_function_in_derived(out: &BodyDecls, from: usize) -> Option<String> {
-    // The client's functions: the handlers, and a function declared as a const (`const toggle = () => …`).
-    let handlers: HashSet<&str> = out
-        .handlers
-        .iter()
-        .map(|h| h.name.as_str())
-        .chain(out.derived.iter().filter_map(|d| match &d.expr {
-            Expr::Raw(e) if matches!(e.kind, RawKind::Arrow { .. }) => Some(d.name.as_str()),
-            _ => None,
-        }))
-        .collect();
+    let handlers = client_functions(out);
     out.derived[from..].iter().find_map(|d| {
         // a function (`const toggle = () => setOn(…)`) is a handler the component lifts, not a job
         let Expr::Raw(e) = &d.expr else { return None };
@@ -3513,6 +3515,18 @@ fn client_function_in_derived(out: &BodyDecls, from: usize) -> Option<String> {
         }
         names_client_function(e, &handlers)
     })
+}
+
+/// The client's functions: the handlers, and a function declared as a const (`const toggle = () => …`).
+fn client_functions(out: &BodyDecls) -> HashSet<&str> {
+    out.handlers
+        .iter()
+        .map(|h| h.name.as_str())
+        .chain(out.derived.iter().filter_map(|d| match &d.expr {
+            Expr::Raw(e) if matches!(e.kind, RawKind::Arrow { .. }) => Some(d.name.as_str()),
+            _ => None,
+        }))
+        .collect()
 }
 
 /// The first handler or setter that `e` names (the client's functions, which a per-request job does not have).
@@ -3797,6 +3811,63 @@ fn inert(e: &RawExpr) -> bool {
     }
 }
 
+/// Binds `r` to the members of an object or array literal (`props`): a plain member (an identifier, a literal, an arrow)
+/// is read where `t.key` is read, any other becomes its own derived value `{base}_{key}`. An arrow written in the
+/// literal is read where `t.key` is read (each read is its own copy, like a function written inline at each use):
+/// identity across reads is not kept, as for a destructured arrow. `false`, with nothing bound, when a member is
+/// itself an object or array (not read one level deeper).
+fn bind_literal_members(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    bound: js_ast::Ref,
+    props: &[(String, RawExpr)],
+) -> bool {
+    if props
+        .iter()
+        .any(|(_, v)| matches!(v.kind, RawKind::Object(_) | RawKind::Array(_)))
+    {
+        return false;
+    }
+    let base = clean_name(&r.names.name(bound));
+    let mut members: Vec<(String, RawExpr)> = Vec::new();
+    for (key, v) in props {
+        let plain = matches!(
+            v.kind,
+            RawKind::Ident { .. } | RawKind::Lit(_) | RawKind::Arrow { .. }
+        );
+        let v = if plain {
+            v.clone()
+        } else {
+            let mut n = 1;
+            let name = loop {
+                let name = if n == 1 {
+                    format!("{base}_{}", clean_name(key))
+                } else {
+                    format!("{base}_{}{n}", clean_name(key))
+                };
+                if out.inline.taken.insert(name.clone()) {
+                    break name;
+                }
+                n += 1;
+            };
+            out.derived.push(DerivedDecl {
+                name: name.clone(),
+                expr: Expr::Raw(v.clone()),
+            });
+            RawExpr {
+                loc: v.loc,
+                kind: RawKind::Ident {
+                    name,
+                    kind: IdentKind::Local,
+                },
+            }
+        };
+        members.push((key.clone(), v));
+    }
+    r.names.bind_hook_object(bound, members);
+    true
+}
+
 /// Binds the hook's returned value to the call site's pattern.
 fn bind_result(
     r: &mut Reader<'_, '_>,
@@ -3839,55 +3910,15 @@ fn bind_result(
                 _ => None,
             };
             if let Some(props) = named {
-                let base = clean_name(&r.names.name(id.r#ref));
-                let mut members: Vec<(String, RawExpr)> = Vec::new();
-                for (key, v) in props {
-                    if matches!(v.kind, RawKind::Object(_) | RawKind::Array(_)) {
-                        return shape(
-                            out,
-                            format!(
-                                "custom hook {hook} returns an object or array inside the one bound whole at the call site (`{key}`)"
-                            ),
-                        );
-                    }
-                    // An arrow written in the returned literal is read where `t.key` is read (each read is its own copy,
-                    // like a function written inline at each use): identity across reads is not kept, as for a destructured
-                    // arrow. Only a hook call's result (a handler, a state cell) is one shared declaration.
-                    let plain = matches!(
-                        v.kind,
-                        RawKind::Ident { .. } | RawKind::Lit(_) | RawKind::Arrow { .. }
-                    );
-                    let v = if plain {
-                        v
-                    } else {
-                        let mut n = 1;
-                        let name = loop {
-                            let name = if n == 1 {
-                                format!("{base}_{}", clean_name(&key))
-                            } else {
-                                format!("{base}_{}{n}", clean_name(&key))
-                            };
-                            if out.inline.taken.insert(name.clone()) {
-                                break name;
-                            }
-                            n += 1;
-                        };
-                        out.derived.push(DerivedDecl {
-                            name: name.clone(),
-                            expr: Expr::Raw(v.clone()),
-                        });
-                        RawExpr {
-                            loc: v.loc,
-                            kind: RawKind::Ident {
-                                name,
-                                kind: IdentKind::Local,
-                            },
-                        }
-                    };
-                    members.push((key, v));
+                if bind_literal_members(r, out, id.r#ref, &props) {
+                    return;
                 }
-                r.names.bind_hook_object(id.r#ref, members);
-                return;
+                return shape(
+                    out,
+                    format!(
+                        "custom hook {hook} returns an object or array inside the one bound whole at the call site"
+                    ),
+                );
             }
             bind_one(r, out, site, id.r#ref, value)
         }
