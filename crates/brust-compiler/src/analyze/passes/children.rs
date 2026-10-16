@@ -110,6 +110,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         no_spec: Default::default(),
         spec_failure: None,
         bubbled_pkg: false,
+        bubbled_scoped: Vec::new(),
         ctx_defaults: Vec::new(),
         foreign: Default::default(),
     }
@@ -167,6 +168,8 @@ struct Frame {
     owner: Option<usize>,
     /// The location of the Provider's call site (what a specialisation failure is reported against).
     loc: u32,
+    /// W1d PR 2: the Provider named a `scope`.
+    scoped: bool,
 }
 
 /// S2 context lowering, BEFORE placement (R34.102-R34.104): a Provider component's value fields become hidden props
@@ -206,6 +209,11 @@ pub fn contexts(
         ));
     }
     ir.ctx_pkg |= w.bubbled_pkg;
+    for c in std::mem::take(&mut w.bubbled_scoped) {
+        if !ir.ctx_scoped.contains(&c) {
+            ir.ctx_scoped.push(c);
+        }
+    }
     // R34.142: a whole-value need no Provider answers is, at the page, the context's default (React's own rule)
     let defaulted = |c: &str, f: &str| {
         ctx.is_root
@@ -390,6 +398,8 @@ struct Walker<'s, 'c> {
     spec_failure: Option<(u32, String)>,
     /// A need bubbled out of a package-source consumer ([`ComponentIR::ctx_pkg`]).
     bubbled_pkg: bool,
+    /// W1d PR 2: contexts a scoped consumer bubbled up (no Provider answered it here).
+    bubbled_scoped: Vec<String>,
     /// R34.142: the literal defaults of the scalar contexts the bubbled needs name.
     ctx_defaults: Vec<(String, crate::ir::Literal)>,
     /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
@@ -2203,6 +2213,20 @@ impl Walker<'_, '_> {
                         "rename the prop",
                     ));
                 }
+                // W1d PR 2 (Mellow C4): the scope a call site would hand to a native component is never followed (frames are
+                // resolved by position), so a `__scope*` attribute on one stays an island. An unknown spread is already
+                // refused (`spread-props`); a props or rest spread can only carry what a caller wrote, which this refuses.
+                if !self.ctx.specialised
+                    && matches!(cir.tier, Tier::Static | Tier::Native)
+                    && let Some((k, _)) = props.iter().find(|(k, _)| k.starts_with("__scope"))
+                {
+                    diags.push(Diagnostic::fallback(
+                        "context-scope",
+                        format!("the prop `{k}` hands a Radix scope to <{name}>, which brust resolves by position"),
+                        *loc,
+                        "do not pass a scope to a native component, or keep this component in React",
+                    ));
+                }
                 // Consumer: each field it reads comes from the nearest frame of its context, else bubbles up.
                 for u in &cir.ctx_uses {
                     for f in &u.fields {
@@ -2229,6 +2253,32 @@ impl Walker<'_, '_> {
                                 *loc,
                                 "read the context the way its Provider writes the value, or keep this component in React",
                             ));
+                        }
+                        // W1d PR 2 (Mellow C2): with a scope anywhere in the region, nested frames of one context cannot be
+                        // told apart by position (React picks the Provider by scope): fail closed
+                        let region: Vec<&Frame> =
+                            frames.iter().filter(|fr| fr.context == u.context).collect();
+                        if region.len() >= 2
+                            && (cir.ctx_scoped.contains(&u.context)
+                                || region.iter().any(|fr| fr.scoped))
+                            && !diags
+                                .iter()
+                                .any(|d| d.rule == "context-scope" && d.loc == *loc)
+                        {
+                            diags.push(Diagnostic::fallback(
+                                "context-scope",
+                                format!(
+                                    "<{name}> reads a context under nested Providers of the same context and a scope is in play; position alone cannot tell which one its scope names"
+                                ),
+                                *loc,
+                                "do not nest scoped Providers of one context, or keep this component in React",
+                            ));
+                        }
+                        if !frames.iter().any(|fr| fr.context == u.context)
+                            && cir.ctx_scoped.contains(&u.context)
+                            && !self.bubbled_scoped.contains(&u.context)
+                        {
+                            self.bubbled_scoped.push(u.context.clone());
                         }
                         let value = match frames.iter().rev().find(|fr| fr.context == u.context) {
                             Some(fr) => Expr::Raw(
@@ -2287,6 +2337,7 @@ impl Walker<'_, '_> {
                             fields: pd.fields.clone(),
                             owner: Some(o),
                             loc: *loc,
+                            scoped: pd.scoped,
                         });
                         pushed += 1;
                         continue;
@@ -2313,6 +2364,7 @@ impl Walker<'_, '_> {
                                 fields,
                                 owner: None,
                                 loc: *loc,
+                                scoped: pd.scoped,
                             });
                             pushed += 1;
                         }

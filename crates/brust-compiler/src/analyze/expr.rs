@@ -238,6 +238,13 @@ impl<'r, 'a> Reader<'r, 'a> {
                     kind: IdentKind::Prop,
                 }
             }
+            // W1d PR 2: a scope token read as a value
+            E::EIdentifier(id) if self.names.is_scope_token(id.ref_) => {
+                if self.names.scope_token_escape.get().is_none() {
+                    self.names.scope_token_escape.set(Some(loc));
+                }
+                return self.opaque(e, "scope token");
+            }
             E::EIdentifier(id) if self.names.ctx_local(id.ref_).is_some() => {
                 if self.names.ctx_escape.get().is_none() {
                     self.names.ctx_escape.set(Some(loc));
@@ -552,6 +559,11 @@ impl<'r, 'a> Reader<'r, 'a> {
         }
         // A context local (`const c = useContext(Ctx)`) is not a value in the chunk: `c.field` is read as a hidden prop
         // by the structured reader only. Printed as written it would be an undefined name (R34.103).
+        if self.names.scope_token_escape.get().is_none()
+            && w.used.iter().any(|r| self.names.is_scope_token(*r))
+        {
+            self.names.scope_token_escape.set(Some(loc));
+        }
         if self.names.ctx_escape.get().is_none()
             && w.used.iter().any(|r| self.names.ctx_local(*r).is_some())
             && !self.ctx_verbatim(w).1

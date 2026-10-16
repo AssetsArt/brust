@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 145 | 35 | 49 | 61 | 0 | 0 | 0 | 0 |
+| C Hooks | 152 | 37 | 49 | 66 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 523 | 227 | 94 | 198 | 3 | 1 | 0 | 0 |
+| **Total** | 530 | 229 | 94 | 203 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -457,6 +457,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-includes-literals-mixed | [strings, null, 0, true].includes(prop) | static | static | 0 | ok | 0 | — | F287: strict equality over every literal kind (null, 0, true included) |
 | c-includes-nan-member | [NaN, 1].includes(state) | native | native | precompute | ok | 4.6 | — | F287: a NaN member is SameValueZero, not ===: the call is left to JS (a job), never rewritten |
 | c-includes-string-receiver | 'abc'.includes(state): a string receiver | native | native | precompute | ok | 4.6 | — | F287: a substring test is not a membership chain; only an array literal receiver is rewritten |
+| c-scope-props | a context hook and a scope hook read props.__scopeX, the token spread on a component | static | static | 0 | ok | 0 | — | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
+| c-scope-sibling | two sibling Providers of one scoped context, one consumer each | static | static | 0 | ok | 0 | — | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
+| c-scope-nested | a scoped Provider nested in another of the same context | react | react | ssr | ok | 4.0 | fallback:context-scope | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
+| c-scope-call-site | a call site that hands a __scope attribute to a native component | react | react | ssr | ok | 4.0 | fallback:context-scope | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
+| c-scope-token-host | a scope token spread on a host element | react | react | ssr | ok | 4.0 | fallback:context-island | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
+| c-scope-token-value | a scope token read as a value | react | react | ssr | ok | 4.0 | fallback:context-island | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
+| c-scope-by-name | a hook named like a scope hook that createContextScope did not make | react | react | ssr | ok | 4.0 | fallback:local-component | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
 
 ## D. API surface
 

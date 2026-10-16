@@ -268,6 +268,9 @@ pub struct ComponentIR {
     /// The context fields this component reads, each as a hidden prop (see `CtxUse`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ctx_uses: Vec<CtxUse>,
+    /// W1d PR 2: the contexts of `ctx_uses` that a hook reads (or a descendant bubbled up) with a `scope` argument.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctx_scoped: Vec<String>,
     /// `ctx_uses` reach a context read in a package source (this component's own, or a descendant's it passes on): such a
     /// consumer revived from its source would not share the Provider island's `createContext` (the published dist).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -450,6 +453,7 @@ impl ComponentIR {
             inline_fns: Vec::new(),
             fixed_props: Vec::new(),
             ctx_uses: Vec::new(),
+            ctx_scoped: Vec::new(),
             ctx_pkg: false,
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
