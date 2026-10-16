@@ -249,3 +249,12 @@ fn a_render_prop_that_cannot_be_spliced_keeps_the_island_provider() {
         assert!(info.message.contains(why), "{file}: {}", info.message);
     }
 }
+
+#[test]
+fn a_typeof_function_helper_guards_the_render_prop_like_typeof_does() {
+    let all = compile("render_helper.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", root.ir.diagnostics);
+    assert!(root.jinja.contains(">on</p>"), "{}", root.jinja);
+}

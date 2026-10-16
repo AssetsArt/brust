@@ -687,6 +687,14 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
 /// read (an `Ident`/`Member` chain), so the body never re-evaluates or reorders a computation.
 fn splice_render(ir: &mut ComponentIR, rp: crate::ir::RenderProp) -> Result<(), String> {
     let key = rp.key.clone();
+    let typeof_helpers: Vec<String> = ir
+        .module_decls
+        .iter()
+        .filter_map(|d| match d.names.as_slice() {
+            [n] if is_typeof_function_helper(&d.source, n) => Some(n.clone()),
+            _ => None,
+        })
+        .collect();
     let named = |e: &RawExpr, what: &str| matches!(&e.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == what);
     // `render(args)`
     let call_args = |e: &RawExpr| -> Option<Vec<RawExpr>> {
@@ -705,6 +713,11 @@ fn splice_render(ir: &mut ComponentIR, rp: crate::ir::RenderProp) -> Result<(), 
                 left,
                 right,
             } => (typeof_key(left) && function(right)) || (function(left) && typeof_key(right)),
+            // `isFunction(render)` of a module helper that is exactly `typeof v === "function"`
+            RawKind::Call { callee, args } => {
+                matches!(&callee.kind, RawKind::Ident { name, kind: IdentKind::Local } if typeof_helpers.contains(name))
+                    && matches!(args.as_slice(), [a] if named(a, &key))
+            }
             _ => named(e, &key),
         }
     };
@@ -795,6 +808,23 @@ fn splice_render(ir: &mut ComponentIR, rp: crate::ir::RenderProp) -> Result<(), 
         ));
     }
     Ok(())
+}
+
+/// `function name(v) { return typeof v === "function" }`: the only helper `typeof_helpers` accepts as a test.
+fn is_typeof_function_helper(source: &str, name: &str) -> bool {
+    let flat: String = source.split_whitespace().collect();
+    let Some(rest) = flat.strip_prefix(&format!("function{name}(")) else {
+        return false;
+    };
+    let Some((param, body)) = rest.split_once(')') else {
+        return false;
+    };
+    !param.is_empty()
+        && param
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        && (body == format!("{{returntypeof{param}===\"function\";}}")
+            || body == format!("{{returntypeof{param}===\"function\"}}"))
 }
 
 fn mentions_prop(e: &RawExpr, key: &str) -> bool {

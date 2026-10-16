@@ -28,3 +28,12 @@ export function RT({ children }: { children?: React.ReactNode }) {
   const c = useContext(C)
   return <button aria-pressed={c.on} onClick={c.flip}>{children}</button>
 }
+
+// the helper form Radix uses: isFunction(render) ? render(ctx) : children
+function isFunction(value: unknown): value is (...a: never[]) => unknown {
+  return typeof value === 'function'
+}
+export function RH({ children, render }: { children?: React.ReactNode; render?: R }) {
+  const [on, setOn] = useState(false)
+  return <C.Provider value={{ on, flip: () => setOn((o) => !o) }}>{isFunction(render) ? render({ on }) : children}</C.Provider>
+}
