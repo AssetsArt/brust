@@ -153,6 +153,8 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
             ));
         }
     }
+    // F230: a read of an export another app module writes (the load-time write F219 missed).
+    crate::analyze::load_writes::check(ir, &st, ctx);
     projection::projection(ir, &st);
     tier::tier(ir, &mut st, ctx);
     // Backstop: the final precompute job never imports a store handle (D8).

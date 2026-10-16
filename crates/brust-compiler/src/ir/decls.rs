@@ -72,6 +72,14 @@ pub struct StateDecl {
     pub late: bool,
 }
 
+impl StateDecl {
+    /// F277: a cell nothing sets (`const [x] = useState(init)`, or a B4 never-written ref): its value at mount for good.
+    /// Reading it is reactive only when that value can differ at a later mount (`DepsCx::is_fixed`).
+    pub fn is_fixed(&self) -> bool {
+        self.setter.is_none()
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DerivedDecl {
     pub name: String,

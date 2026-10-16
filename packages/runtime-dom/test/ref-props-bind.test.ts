@@ -173,3 +173,23 @@ test('ref(name, init) is a cell that starts at init (useRef(init)); a bound x-re
   mount()
   expect(el!.current).toBe(document.getElementById('p'))   // React attaches the element over the initial value
 })
+
+// F277 (Mellow F1): a linked host created after first paint (an x-if branch, a new row) starts from what the parent
+// passes NOW, as React mounts with the current props: a `useState(prop)` read at init sees it, not the printed seed.
+test('a linked host mounted later starts from the parent\'s current props, not its printed x-props', async () => {
+  const label = signal('a')
+  defineBehavior('par_late', () => ({ label, _p1: computed(() => ({ label: label() })) }))
+  defineBehavior('kid_late', ({ props }) => {
+    const initial = signal(props().label)
+    return { initial, _c1: computed(() => initial()) }
+  })
+  document.body.innerHTML = `<div id="par" x-data="par_late"></div>`
+  mount()
+  label.set('ax')
+  document.getElementById('par')!.innerHTML = `<p id="k" x-data="kid_late" x-props='{"label":"a"}' x-props-bind="_p1" x-text="_c1">a</p>`
+  await flush()
+  expect(document.getElementById('k')!.textContent).toBe('ax')
+  // The cell keeps its first value afterwards (nothing sets it), while the props follow the parent.
+  label.set('axx'); await flush()
+  expect(document.getElementById('k')!.textContent).toBe('ax')
+})

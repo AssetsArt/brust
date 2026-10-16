@@ -23,6 +23,9 @@ export class Instance {
   booted = false
   /** Mounted after the page booted: nothing of it was in the server markup (`BehaviorCtx.late`). */
   late = false
+  /** F277: started from props other than the ones its markup was printed with (a host an `x-if` or a row created after
+   * first paint, linked to its parent's current value): its first bind is not a first paint, so no tripwire. */
+  reseeded = false
   /** Effects the component declared while its factory ran: they start once the instance is bound (x-ref, x-on), like React's commit (F97). */
   private pending: Array<[() => void | (() => void), Dispose?]> | null = []
 

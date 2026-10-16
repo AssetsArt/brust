@@ -4,7 +4,7 @@ import { whenBehavior } from './registry'
 import { bindHost } from './directives/index'
 import { insideRaw } from './directives/common'
 import { warnOnce } from './warn'
-import { bindPropsFromParent } from './props-bind'
+import { bindPropsFromParent, initialProps } from './props-bind'
 
 let observer: MutationObserver | null = null
 /** True once the first `mount()` pass has run: a host that mounts after it is `late`. */
@@ -19,6 +19,10 @@ function readProps(host: HTMLElement): Record<string, unknown> {
   catch { warnOnce(`j:${host.outerHTML.slice(0, 80)}`, `bad x-props JSON in ${host.getAttribute('x-data')}`); return {} }
 }
 
+function sameJson(a: unknown, b: unknown): boolean {
+  try { return JSON.stringify(a) === JSON.stringify(b) } catch { return false }
+}
+
 function mountHost(host: HTMLElement): void {
   if (instances.has(host) || !host.isConnected) return
   const name = host.getAttribute('x-data')!
@@ -28,7 +32,10 @@ function mountHost(host: HTMLElement): void {
   whenBehavior(name, (factory) => {
     if (instances.has(host) || !host.isConnected) return
     const parent = nearestInstance(host)
-    const inst = new Instance(host, name, parent, readProps(host))
+    const printed = readProps(host)
+    const props = initialProps(host, parent, printed)
+    const inst = new Instance(host, name, parent, props)
+    inst.reseeded = props !== printed && !sameJson(props, printed)
     inst.late = late
     // a clone made by a binder has no server markup to compare its first paint with (a navigation's content has)
     inst.booted = cloned

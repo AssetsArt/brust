@@ -103,6 +103,8 @@ pub struct NameTable<'a> {
     object_consts: HashMap<u32, js_ast::Expr>,
     /// Bindings some use of which is not a spread, a member read or an argument of a given function (F266).
     object_unsafe: HashSet<u32>,
+    /// F280: module functions `plain_fn` proves primitive-valued and effect-free (by binding key).
+    plain_fn_keys: HashSet<u32>,
     /// Module-level `const NAME = <literal-shaped initialiser>` with no use that could write it, by name: the
     /// folder reads them for a prop default (`orientation = DEFAULT_ORIENTATION`, F153b).
     module_inits: HashMap<String, js_ast::Expr>,
@@ -397,6 +399,7 @@ impl<'a> NameTable<'a> {
             cond_consts: HashMap::new(),
             object_consts: HashMap::new(),
             object_unsafe: HashSet::new(),
+            plain_fn_keys: HashSet::new(),
             module_inits: HashMap::new(),
             poly: HashMap::new(),
             state: HashSet::new(),
@@ -424,7 +427,44 @@ impl<'a> NameTable<'a> {
         table.collect_module_inits(ast);
         table.collect_dom_consts(ast);
         table.collect_react_hook_aliases(ast);
+        table.collect_plain_fns(ast);
         table
+    }
+
+    /// F280: the module functions (a declaration, or a `const` holding a function) `plain_fn::plain_fns` proves.
+    fn collect_plain_fns(&mut self, ast: &js_ast::Ast<'_>) {
+        let proven = crate::analyze::plain_fn::plain_fns(ast, self);
+        let mut keys = HashSet::new();
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                match &stmt.data {
+                    js_ast::stmt::Data::SFunction(f) => {
+                        if let Some(n) = &f.func.name
+                            && proven.contains(&self.name(n.ref_))
+                        {
+                            keys.insert(self.key(n.ref_));
+                        }
+                    }
+                    js_ast::stmt::Data::SLocal(l) => {
+                        for d in l.decls.iter() {
+                            if let B::BIdentifier(id) = d.binding.data
+                                && proven.contains(&self.name(id.r#ref))
+                            {
+                                keys.insert(self.key(id.r#ref));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.plain_fn_keys = keys;
+    }
+
+    /// F280: `r` is a module function proven to return a primitive and change nothing (`plain_fn`): a call of it over
+    /// plain reads is a read with no effect.
+    pub fn is_plain_fn(&self, r: js_ast::Ref) -> bool {
+        self.plain_fn_keys.contains(&self.key(r))
     }
 
     /// R34.105: a module-level `const useX = React[' useX '.trim().toString()] || other` (Radix spells the name so a

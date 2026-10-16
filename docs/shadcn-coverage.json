@@ -18,7 +18,7 @@
     },
     "islands": 36,
     "pagesWithNoJs": 25,
-    "pagesWithNoWorker": 21,
+    "pagesWithNoWorker": 22,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -52,7 +52,7 @@
       "measuredRows": 32,
       "analysisOnlyRows": 0,
       "appComponents": 117,
-      "libraryComponents": 178
+      "libraryComponents": 177
     },
     {
       "blocker": "fallback:island-prop",
@@ -133,7 +133,7 @@
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 12
+      "libraryComponents": 13
     },
     {
       "blocker": "fallback:child-component",
@@ -513,7 +513,7 @@
       "islands": 1,
       "components": 11,
       "reactComponents": 8,
-      "jsGzipKb": 94,
+      "jsGzipKb": 95,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -558,7 +558,7 @@
       "components": 4,
       "reactComponents": 0,
       "jsGzipKb": 0,
-      "workerCalls": 1,
+      "workerCalls": 0,
       "codes": []
     },
     {
@@ -686,7 +686,7 @@
       "islands": 1,
       "components": 3,
       "reactComponents": 2,
-      "jsGzipKb": 107,
+      "jsGzipKb": 108,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -753,7 +753,7 @@
       "islands": 1,
       "components": 7,
       "reactComponents": 3,
-      "jsGzipKb": 91,
+      "jsGzipKb": 92,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -803,7 +803,7 @@
       "islands": 1,
       "components": 16,
       "reactComponents": 14,
-      "jsGzipKb": 104,
+      "jsGzipKb": 105,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1139,7 +1139,7 @@
       "islands": 1,
       "components": 5,
       "reactComponents": 2,
-      "jsGzipKb": 85,
+      "jsGzipKb": 86,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1373,7 +1373,7 @@
       "islands": 0,
       "components": 4,
       "reactComponents": 0,
-      "jsGzipKb": 5,
+      "jsGzipKb": 6,
       "workerCalls": 0,
       "codes": []
     },

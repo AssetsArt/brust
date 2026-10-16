@@ -83,3 +83,33 @@ export function RM({ render }: { render: (s: { inForm: unknown }) => React.React
   const ctx = { inForm }
   return <C.Provider value={{ on, flip: () => { setOn((o) => !o); setEl(document.body) } }}>{render(ctx)}</C.Provider>
 }
+
+// F280: an entry of the const object holds a call of a module function that only reads its argument (Radix's
+// `defaultChecked: isIndeterminate(defaultChecked) ? false : defaultChecked`)
+function isInd(c: unknown) {
+  return c === 'indeterminate'
+}
+export function RI({ label }: { label: string }) {
+  const [on, setOn] = useState(false)
+  const attrs = { text: label, tone: isInd(label) ? 'none' : label }
+  return <button aria-pressed={on} onClick={() => setOn((o) => !o)}><Lbl {...attrs} /></button>
+}
+
+// F280: the same shape, but the function calls author code / reads a member: not proven plain
+function noisy(c: unknown) {
+  console.log(c)
+  return c
+}
+export function RIE({ label }: { label: string }) {
+  const [on, setOn] = useState(false)
+  const attrs = { text: label, tone: noisy(label) ? 'a' : 'b' }
+  return <button aria-pressed={on} onClick={() => setOn((o) => !o)}><Lbl {...attrs} /></button>
+}
+function lenOf(c: { n: string }) {
+  return c.n
+}
+export function RIM({ label }: { label: string }) {
+  const [on, setOn] = useState(false)
+  const attrs = { text: label, tone: lenOf({ n: label }) }
+  return <button aria-pressed={on} onClick={() => setOn((o) => !o)}><Lbl {...attrs} /></button>
+}
