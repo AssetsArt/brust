@@ -290,6 +290,9 @@ fn an_exported_ssr_guard_alias_of_an_effect_hook_is_that_hook() {
         "import * as React from 'react'\nexport const useLayoutEffect = typeof document === 'undefined' ? () => {} : React.useLayoutEffect\n",
         "import * as React from 'react'\nconst useIso = globalThis?.document ? React.useLayoutEffect : function () {}\nexport { useIso as useLayoutEffect }\n",
         "import { useLayoutEffect as ule } from 'react'\nimport * as React from 'react'\nexport const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}\n",
+        "import * as React from 'react'\nexport const useLayoutEffect = typeof window !== 'undefined' ? React.useLayoutEffect : () => {}\n",
+        "import * as React from 'react'\nexport const useLayoutEffect = !(typeof document === 'undefined') ? React.useLayoutEffect : () => {}\n",
+        "import * as React from 'react'\nconst canUseDOM = typeof window !== 'undefined'\nexport const useLayoutEffect = canUseDOM ? React.useLayoutEffect : () => {}\n",
     ] {
         let ir = size_project(alias);
         assert!(fallbacks(&ir).is_empty(), "{alias}: {}", reasons(&ir));
@@ -306,6 +309,18 @@ fn only_a_no_op_beside_a_hook_that_returns_nothing_is_an_alias() {
         "import * as React from 'react'\nexport const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : React.useEffect\n",
         "import * as React from 'react'\nexport let useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}\n",
         "import * as other from './other'\nexport const useLayoutEffect = globalThis?.document ? other.useLayoutEffect : () => {}\n",
+        // F268 fix round: the condition must be a DOM-presence test with the hook on the browser side.
+        "import * as React from 'react'\nexport const useLayoutEffect = process.env.NODE_ENV !== 'production' ? React.useLayoutEffect : () => {}\n",
+        "import * as React from 'react'\nexport const useLayoutEffect = process.env.NODE_ENV === 'production' ? () => {} : React.useLayoutEffect\n",
+        "import * as React from 'react'\nconst DEBUG = false\nexport const useLayoutEffect = DEBUG ? React.useLayoutEffect : () => {}\n",
+        "import * as React from 'react'\nexport const useLayoutEffect = globalThis?.flag ? React.useLayoutEffect : () => {}\n",
+        // the hook on the SERVER side of a DOM test: the no-op would run in a browser
+        "import * as React from 'react'\nexport const useLayoutEffect = typeof document === 'undefined' ? React.useLayoutEffect : () => {}\n",
+        "import * as React from 'react'\nexport const useLayoutEffect = globalThis?.document ? () => {} : React.useLayoutEffect\n",
+        // a local named `document` is not the DOM global
+        "import * as React from 'react'\nconst document = { x: 1 }\nexport const useLayoutEffect = typeof document !== 'undefined' ? React.useLayoutEffect : () => {}\n",
+        // a const that is not a DOM test
+        "import * as React from 'react'\nconst enabled = process.env.X === '1'\nexport const useLayoutEffect = enabled ? React.useLayoutEffect : () => {}\n",
     ] {
         let ir = size_project(alias);
         assert!(
