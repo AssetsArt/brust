@@ -1658,7 +1658,7 @@ fn plan_key(
     projected: &Node,
 ) -> (JobKey, Option<String>) {
     if let Some(expr) = &j.cache_key {
-        let user = user_key(&expr.get(props, None));
+        let user = user_key(expr.get(props, None));
         if let Some(u) = user {
             return (JobKey(format!("k:{cid}/{key_job}/{u}")), Some(u));
         }
