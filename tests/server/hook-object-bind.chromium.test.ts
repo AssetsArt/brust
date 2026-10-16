@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderDestructured, renderWhole } from '../../packages/brust/test/fixtures/hook-object-bind/render'
+import { renderDestructured, renderMemo, renderWhole } from '../../packages/brust/test/fixtures/hook-object-bind/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/hook-object-bind')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -58,6 +58,13 @@ const pages: [string, () => string][] = [
   ['/destructured', renderDestructured],
 ]
 
+test('/memo: a returned useMemo / spread (not a literal) is served and keeps React\'s markup', async () => {
+  const res = await fetch(`${base}/memo`)
+  expect(res.status).toBe(200)
+  expect(plain(await res.text())).toContain(plain(renderMemo()).replace(/^<main>|<\/main>$/g, ''))
+})
+
+
 for (const [path, react] of pages) {
   test(`${path}: served 200, no React island, and first paint equals React's own render`, async () => {
     const res = await fetch(`${base}${path}`)
@@ -97,6 +104,19 @@ test('the destructured form of the same hook still works', async () => {
   const { page, errors } = await open('/destructured')
   await page.getByTestId('tog').click()
   await page.waitForFunction(() => document.querySelector('[data-testid="tog"]')?.textContent === 'on')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('/memo: the clicks work on the React-tier page', async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/memo`, { waitUntil: 'networkidle' })
+  await page.getByTestId('memo').click()
+  await page.waitForFunction(() => document.querySelector('[data-testid="memo"]')?.textContent === 'on')
+  await page.getByTestId('spread').click()
+  await page.waitForFunction(() => document.querySelector('[data-testid="spread"]')?.textContent === 'xon')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

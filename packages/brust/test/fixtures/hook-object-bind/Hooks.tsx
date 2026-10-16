@@ -17,3 +17,15 @@ export function usePairOf() {
   const flip = () => setOn(!on)
   return [on, flip] as const
 }
+
+export function useMemoToggle() {
+  const [on, setOn] = React.useState(false)
+  const toggle = React.useCallback(() => setOn((o) => !o), [])
+  return React.useMemo(() => ({ on, toggle }), [on, toggle])
+}
+
+export function useSpread(extra: { label: string }) {
+  const [on, setOn] = React.useState(false)
+  const toggle = React.useCallback(() => setOn((o) => !o), [])
+  return { ...extra, on, toggle }
+}

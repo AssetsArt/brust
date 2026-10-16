@@ -3228,6 +3228,75 @@ fn read_hook(
         return;
     }
     bind_result(r, out, site, returned);
+    // F289: a derived value the hook (or the binding of its result) added is a per-request job; the handlers and setters
+    // are the client's, so one that names them is a job that throws (a 500). Whatever shape put it there (a `useMemo`
+    // returning the object, a spread in the returned literal) is refused by name.
+    let handlers: HashSet<&str> = out.handlers.iter().map(|h| h.name.as_str()).collect();
+    for d in &out.derived[start.derived..] {
+        // a function declared in the hook (`const toggle = () => setOn(…)`) is a handler the component lifts, not a job
+        let Expr::Raw(e) = &d.expr else { continue };
+        if matches!(e.kind, RawKind::Arrow { .. }) {
+            continue;
+        }
+        if let Some(name) = names_client_function(e, &handlers) {
+            let spelled = name
+                .rsplit_once('_')
+                .filter(|(_, tail)| tail.starts_with(&clean_name(hook)))
+                .map_or(name.as_str(), |(head, _)| head)
+                .to_string();
+            return out.fallback(
+                "hook-return-shape",
+                format!(
+                    "custom hook {hook} hands out `{spelled}`, a handler or setter, inside a value the compiler computes per request"
+                ),
+                vloc,
+                "return an object or array literal the call site reads as `t.key` or destructures, or keep this component in React",
+            );
+        }
+    }
+}
+
+/// The first handler or setter that `e` names (the client's functions, which a per-request job does not have).
+fn names_client_function(e: &RawExpr, handlers: &HashSet<&str>) -> Option<String> {
+    let all = |items: &[RawExpr]| {
+        items
+            .iter()
+            .find_map(|i| names_client_function(i, handlers))
+    };
+    match &e.kind {
+        RawKind::Ident { name, kind } => (matches!(kind, IdentKind::Setter)
+            || handlers.contains(name.as_str()))
+        .then(|| name.clone()),
+        RawKind::Lit(_) | RawKind::Jsx(_) => None,
+        RawKind::Opaque { captures, .. } => captures
+            .iter()
+            .find(|(n, k)| matches!(k, IdentKind::Setter) || handlers.contains(n.as_str()))
+            .map(|(n, _)| n.clone()),
+        RawKind::Member { target, .. } => names_client_function(target, handlers),
+        RawKind::Index { target, index } => names_client_function(target, handlers)
+            .or_else(|| names_client_function(index, handlers)),
+        RawKind::Call { callee, args } => {
+            names_client_function(callee, handlers).or_else(|| all(args))
+        }
+        RawKind::Binary { left, right, .. } => {
+            names_client_function(left, handlers).or_else(|| names_client_function(right, handlers))
+        }
+        RawKind::Unary { value, .. } => names_client_function(value, handlers),
+        RawKind::Cond { test, yes, no } => names_client_function(test, handlers)
+            .or_else(|| names_client_function(yes, handlers))
+            .or_else(|| names_client_function(no, handlers)),
+        RawKind::Template { parts, .. } => parts
+            .iter()
+            .find_map(|(p, _)| names_client_function(p, handlers)),
+        RawKind::Array(items) => all(items),
+        RawKind::Object(props) => props
+            .iter()
+            .find_map(|(_, v)| names_client_function(v, handlers)),
+        RawKind::Arrow { captures, .. } => captures
+            .iter()
+            .find(|(n, k)| matches!(k, IdentKind::Setter) || handlers.contains(n.as_str()))
+            .map(|(n, _)| n.clone()),
+    }
 }
 
 /// The module-level `function` declaring `target`, with its statement.
@@ -3522,6 +3591,9 @@ fn bind_result(
                             ),
                         );
                     }
+                    // An arrow written in the returned literal is read where `t.key` is read (each read is its own copy,
+                    // like a function written inline at each use): identity across reads is not kept, as for a destructured
+                    // arrow. Only a hook call's result (a handler, a state cell) is one shared declaration.
                     let plain = matches!(
                         v.kind,
                         RawKind::Ident { .. } | RawKind::Lit(_) | RawKind::Arrow { .. }

@@ -81,7 +81,14 @@ fn destructuring_the_same_hook_is_unchanged() {
 
 #[test]
 fn a_hook_object_used_as_a_whole_or_by_a_dynamic_or_nested_key_is_a_named_refusal() {
-    for f in ["whole_bare.tsx", "whole_index.tsx", "whole_nested.tsx"] {
+    for f in [
+        "whole_bare.tsx",
+        "whole_index.tsx",
+        "whole_nested.tsx",
+        // not a literal: a useMemo of the object, a spread in it: a job would name the handler
+        "whole_memo.tsx",
+        "whole_spread.tsx",
+    ] {
         let all = compile(f);
         assert!(
             all.iter().any(|i| react(&i.ir)),

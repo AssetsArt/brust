@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 127 | 26 | 45 | 56 | 0 | 0 | 0 | 0 |
+| C Hooks | 129 | 26 | 45 | 58 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 505 | 218 | 90 | 193 | 3 | 1 | 0 | 0 |
+| **Total** | 507 | 218 | 90 | 195 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -428,6 +428,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-object-whole | a custom hook returning an object with a handler, bound whole at the call site | native | native | 0 | ok | 4.5 | — | F289: the object is read member by member (t.key), as a destructuring is; it was a job naming the handler local (500) |
 | c-hook-object-whole-array | a custom hook returning an array with a handler, bound whole at the call site | native | native | 0 | ok | 4.5 | — | F289: t[0] / t[1] with a literal index are the items of the returned array |
 | c-hook-object-whole-escapes | a custom hook's returned object bound whole and passed on as a whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: a hook object used as a value (not t.key) cannot be named in a job: hook-return-shape, the component stays React |
+| c-hook-object-memo | a custom hook returning useMemo of an object with a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: not an object literal, so not read per member; a job naming the handler would 500: hook-return-shape |
+| c-hook-object-spread | a custom hook returning an object with a spread and a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: a spread makes the returned object a computed value: hook-return-shape |
 | c-usereducer-callback-by-name | useReducer whose reducer maps with a named helper | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a callback passed by name is a function the purity proof cannot see: reducer-impure |
 | c-usereducer-default-param | useReducer whose reducer has a parameter default that calls a function | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a default runs on every call like the body: reducer-impure |
 | c-usereducer-default-pattern | useReducer whose reducer destructures with a default that calls a function | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a destructuring default is checked like a parameter default |
