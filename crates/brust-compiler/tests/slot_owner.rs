@@ -164,3 +164,12 @@ fn children_carried_by_a_rest_onto_a_host_are_refused_too() {
     refused("rest-host-linked.tsx");
     kept("rest-host-const.tsx");
 }
+
+#[test]
+fn children_forwarded_by_an_unlinked_static_intermediate_into_a_host_are_refused() {
+    // F342 (Mellow F1): the intermediate spreads its rest (or props) into the host; neither guard saw it, the page's text
+    // was bound by the host.
+    refused("rest-host-mid.tsx");
+    refused("rest-host-mid-slot.tsx");
+    kept("rest-host-mid-const.tsx");
+}

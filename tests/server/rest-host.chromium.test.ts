@@ -1,8 +1,9 @@
 // F342 in real Chromium, against React hydrating the same page in the same browser. A native child that prints no
 // `{children}` but spreads its `...rest` (rest) or its whole props (props) onto its own host element carried the page's
 // slot content there, where the runtime bound the page's directives to the CHILD's instance (first-paint mismatch, the
-// child's own counter shown as the page's text). The same through a static child the page links (linked, F309). Those
-// pages now render with React (`slot-owner`); content without a directive of the page stays native (const).
+// child's own counter shown as the page's text). The same through a static child the page links (linked, F309), and
+// through a static wrapper the page does not link that forwards its rest to such a child (mid, Mellow F1). Those pages
+// now render with React (`slot-owner`); content without a directive of the page stays native (const).
 // Run alone: `bun test --timeout 120000 tests/server/rest-host.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
@@ -84,11 +85,11 @@ const tierOf = (prefix: string) => {
 }
 
 test('slot content a child carries through its rest onto its own host renders with React; content without a directive stays native', () => {
-  expect({ rest: tierOf('pRest_'), props: tierOf('pProps_'), linked: tierOf('pLinked_'), const: tierOf('pConst_') }).toEqual({ rest: 'react', props: 'react', linked: 'react', const: 'native' })
+  expect({ rest: tierOf('pRest_'), props: tierOf('pProps_'), linked: tierOf('pLinked_'), mid: tierOf('pMid_'), const: tierOf('pConst_') }).toEqual({ rest: 'react', props: 'react', linked: 'react', mid: 'react', const: 'native' })
 })
 
 const CLICKS: Record<string, string[]> = { linked: ['f', 'f'] }
-for (const page of ['rest', 'props', 'linked', 'const']) {
+for (const page of ['rest', 'props', 'linked', 'mid', 'const']) {
   test(`${page}: every observable value equals React hydrating the same page after each click`, async () => {
     const react = await run(page, true, CLICKS[page])
     const served = await run(page, false, CLICKS[page])
