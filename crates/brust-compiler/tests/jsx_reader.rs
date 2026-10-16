@@ -603,3 +603,28 @@ fn a_live_key_through_a_spread_on_a_component_is_refused() {
         "{d:?}"
     );
 }
+
+/// F335: a props path spread on a component (`<C {...cfg}/>`) may carry a `key` React would use as the element key, so it is
+/// refused; whole props and `...rest` never carry one, and on a host element (a known limit) it stays native.
+#[test]
+fn a_props_path_spread_on_a_component_may_carry_a_key_and_is_refused() {
+    let (_, d) = tpl(
+        "import C from './c'\nexport default function T({ cfg }: any) { return <ul><C {...cfg}/></ul> }",
+    );
+    assert!(
+        d.iter()
+            .any(|d| d.rule == "key-outside-list" && matches!(d.class, DiagClass::Fallback)),
+        "{d:?}"
+    );
+    for src in [
+        "import C from './c'\nexport default function T(props: any) { return <ul><C {...props}/></ul> }",
+        "import C from './c'\nexport default function T({ a, ...rest }: any) { return <ul><C {...rest}>{a}</C></ul> }",
+        "export default function T({ cfg }: any) { return <ul><li {...cfg}>x</li></ul> }",
+    ] {
+        let (_, d) = tpl(src);
+        assert!(
+            d.iter().all(|d| d.rule != "key-outside-list"),
+            "{src}: {d:?}"
+        );
+    }
+}

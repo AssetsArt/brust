@@ -66,6 +66,9 @@ pub const COLLECTION_ROOT_PROP: &str = "__collection_root";
 pub const COLLECTION_ITEMS: &str = "__brust_items";
 
 /// The hidden prop a context field travels as (a plain identifier: it is printed like any prop).
+/// W1d PR 3: the render-error arm of an early-return chain that ends in a `throw` (a call of this global).
+pub const THROW_FN: &str = "__brust_throw";
+
 pub fn ctx_prop(context: &str, field: &str) -> String {
     format!("__ctx_{context}_{field}")
 }
