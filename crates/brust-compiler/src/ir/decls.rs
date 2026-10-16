@@ -62,6 +62,11 @@ pub struct CtxUse {
 /// component and nothing else, request data cannot name a prop).
 pub const COLLECTION_ROOT_PROP: &str = "__collection_root";
 
+/// F328b: the reserved prop a `<Collection.ItemSlot>` hands a component child (a static or native one with one host
+/// element as its root): the item's data object; the CALLER prints `data-radix-collection-item` and the item directive on
+/// that host, in its own scope, and the child never reads the prop. Written by the JSX reader only.
+pub const COLLECTION_ITEM_PROP: &str = "__collection_item";
+
 /// R34.140: the name the chunk binds `ctx.items` to; `useCollection(scope)` lowers to a handler that calls it.
 pub const COLLECTION_ITEMS: &str = "__brust_items";
 

@@ -1891,9 +1891,27 @@ impl<'a, 'c> Printer<'a, 'c> {
             Some(poly) if slot_selected(poly, props) => self.as_child_of(name, children, schildren),
             _ => None,
         };
+        // F328b: the item markers a `<Collection.ItemSlot>` over this component asks for, printed in THIS scope on the
+        // child's root element (the same data the element form prints; the child never reads the prop).
+        let item_extra: Option<String> = props
+            .iter()
+            .zip(sprops)
+            .find(|((k, _), _)| k == crate::ir::COLLECTION_ITEM_PROP)
+            .map(|((_, data), (_, sd))| {
+                let mut open = String::from(" data-radix-collection-item=\"\"");
+                let raw = raw_of(data, Some(sd));
+                if let Some(b) = self.reactive_as(raw, data, true) {
+                    let d = self.value_member(raw.unwrap(), b, Paint::Raw);
+                    open.push_str(&format!(" x-collection-item=\"{d}\""));
+                }
+                open
+            });
         let mut segs = Vec::new();
         let mut client_only = Vec::new();
         for (pname, v) in props.iter() {
+            if pname == crate::ir::COLLECTION_ITEM_PROP {
+                continue;
+            }
             if pname == crate::ir::SPREAD_KEY {
                 segs.extend(self.spread_segs(v));
                 continue;
@@ -2078,7 +2096,12 @@ impl<'a, 'c> Printer<'a, 'c> {
         p.inline_host = Some((child_ir.id.clone(), bind));
         p.preamble();
         let (ct, cs) = (&child_ir.template, &p.f.structural.template);
-        match extra {
+        let extra = match (extra, item_extra) {
+            (Some(x), Some(i)) => Some(format!("{x}{i}")),
+            (Some(x), None) => Some(x.to_string()),
+            (None, i) => i,
+        };
+        match extra.as_deref() {
             Some(x) => p.element(ct, cs, true, Some(x)),
             None => p.node(ct, cs, true),
         }

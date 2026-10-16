@@ -868,6 +868,38 @@ fn read_collection_part(
                     poly,
                 }
             }
+            Ok(Node::Component {
+                loc: l,
+                name,
+                source,
+                imported,
+                member,
+                mut props,
+                children,
+                link,
+                tier,
+                forwarded_ref,
+            }) => {
+                props.push((
+                    crate::ir::COLLECTION_ITEM_PROP.to_string(),
+                    Expr::Raw(RawExpr {
+                        loc,
+                        kind: RawKind::Object(data),
+                    }),
+                ));
+                Node::Component {
+                    loc: l,
+                    name,
+                    source,
+                    imported,
+                    member,
+                    props,
+                    children,
+                    link,
+                    tier,
+                    forwarded_ref,
+                }
+            }
             Ok(other) => {
                 refuse(r, "needs one element child".into());
                 other

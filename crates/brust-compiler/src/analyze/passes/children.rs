@@ -2376,6 +2376,7 @@ impl Walker<'_, '_> {
                     .iter()
                     .any(|(k, _)| k == crate::ir::COLLECTION_ROOT_PROP)
                     && !matches!(cir.tier, Tier::Native)
+                    && !native_prov
                 {
                     diags.push(Diagnostic::fallback(
                         "collection-shape",
@@ -2384,6 +2385,30 @@ impl Walker<'_, '_> {
                         ),
                         *loc,
                         "put the Slot around an element, or around a component that holds state",
+                    ));
+                }
+                // F328b: a `<Collection.ItemSlot>` over a component hands it the item data; the caller prints the item
+                // markers on the child's host, so the child must be a static or native component whose root is ONE
+                // host element (a React island or a fragment root has no element to carry them: fail closed).
+                if props
+                    .iter()
+                    .any(|(k, _)| k == crate::ir::COLLECTION_ITEM_PROP)
+                    && (island
+                        || !matches!(
+                            &cir.template,
+                            Node::Element {
+                                synthetic: false,
+                                ..
+                            }
+                        ))
+                {
+                    diags.push(Diagnostic::fallback(
+                        "collection-shape",
+                        format!(
+                            "<Collection.ItemSlot> wraps <{name}>, which is not a static or native component whose root is one element to carry the item markers"
+                        ),
+                        *loc,
+                        "put the ItemSlot around an element, or around a component that renders one element",
                     ));
                 }
                 // F3 (fail closed): a Provider that is lowered away no longer shares a React tree with an island
