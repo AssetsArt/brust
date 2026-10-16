@@ -995,6 +995,137 @@ fn a_local_object_with_another_spread_or_a_method_is_still_not_expanded() {
     }
 }
 
+// ---- W1d PR 2: Radix scope hooks and `props.__scopeX` (Mellow C1-C4) ----
+
+fn all_rules(file: &str) -> Vec<String> {
+    compile(file)
+        .iter()
+        .flat_map(|(_, ir, _)| ir.diagnostics.iter().map(|d| d.rule.clone()))
+        .collect()
+}
+
+fn react_with(file: &str, rule: &str) -> bool {
+    let all = compile(file);
+    all.iter()
+        .any(|(_, ir, _)| ir.diagnostics.iter().any(|d| d.rule == rule) && is_react(ir))
+}
+
+/// `props.__scopeX` is the component's own scope, a scope hook's result spread on a component is dropped, and the page stays
+/// off React.
+#[test]
+fn a_scope_read_off_the_props_parameter_and_a_scope_token_spread_on_a_component_lower() {
+    let (ir, jinja) = page("scope-props.tsx");
+    assert!(!is_react(&ir), "{:?} {:?}", ir.tier, ir.diagnostics);
+    assert!(
+        all_rules("scope-props.tsx")
+            .iter()
+            .all(|r| r != "context-scope"),
+        "{:?}",
+        all_rules("scope-props.tsx")
+    );
+    assert!(jinja.contains("(7)"), "{jinja}");
+}
+
+/// C2: sibling Providers of one context do not leak into each other.
+#[test]
+fn sibling_scoped_providers_each_serve_their_own_consumer() {
+    let (ir, jinja) = page("scope-sibling.tsx");
+    assert!(!is_react(&ir), "{:?} {:?}", ir.tier, ir.diagnostics);
+    assert!(
+        all_rules("scope-sibling.tsx")
+            .iter()
+            .all(|r| r != "context-scope")
+    );
+    let (one, two) = (jinja.find("(1)"), jinja.find("(2)"));
+    assert!(one.is_some() && two.is_some() && one < two, "{jinja}");
+}
+
+/// C2: a scoped Provider nested in another of the same context cannot be told apart by position.
+#[test]
+fn nested_scoped_providers_of_one_context_fail_closed() {
+    assert!(
+        react_with("scope-nested.tsx", "context-scope")
+            || all_rules("scope-nested.tsx")
+                .iter()
+                .any(|r| r == "context-scope")
+    );
+    let (ir, _) = page("scope-nested.tsx");
+    assert!(
+        ir.diagnostics.iter().any(|d| d.rule == "context-scope") || is_react(&ir),
+        "{:?}",
+        ir.diagnostics
+    );
+}
+
+/// C4: a call site that hands a scope to a native component keeps it an island.
+#[test]
+fn a_call_site_that_writes_a_scope_attribute_on_a_native_component_is_refused() {
+    let rules = all_rules("scope-guard.tsx");
+    assert!(rules.iter().any(|r| r == "context-scope"), "{rules:?}");
+}
+
+/// C3: a scope token spread on a host element, or read as a value, is refused.
+#[test]
+fn a_scope_token_on_a_host_element_or_read_as_a_value_is_refused() {
+    for f in ["scope-token-host.tsx", "scope-token-value.tsx"] {
+        let all = compile(f);
+        let ind = all
+            .iter()
+            .find(|(id, ..)| id.starts_with("indicator"))
+            .expect("indicator");
+        assert!(
+            ind.1.diagnostics.iter().any(|d| d.rule == "context-scope") && is_react(&ind.1),
+            "{f}: {:?} {:?}",
+            ind.1.tier,
+            ind.1.diagnostics
+        );
+    }
+}
+
+/// C1: a scope hook is found by what it was made from, never by its name.
+#[test]
+fn a_hook_named_like_a_scope_hook_that_createcontextscope_did_not_make_is_not_one() {
+    for f in ["scope-by-name.tsx", "scope-cross-fake.tsx"] {
+        let all = compile(f);
+        let ind = all
+            .iter()
+            .find(|(id, ..)| id.starts_with("indicator"))
+            .expect("indicator");
+        assert!(
+            is_react(&ind.1)
+                && ind
+                    .1
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.rule == "hook-unsupported"),
+            "{f}: {:?} {:?}",
+            ind.1.tier,
+            ind.1.diagnostics
+        );
+    }
+}
+
+/// C1: provenance through an import: `createYScope` is the second binding of createContextScope in the module it comes from.
+/// (The module-level call of an app module's function is `module-side-effect` for any component that reads a module binding,
+/// which is unrelated; the scope hook itself must be accepted: no `useYScope` refusal and no `context-scope`.)
+#[test]
+fn a_scope_factory_imported_from_a_module_that_made_it_is_followed() {
+    let all = compile("scope-cross.tsx");
+    let ind = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("indicator"))
+        .expect("indicator");
+    assert!(
+        ind.1
+            .diagnostics
+            .iter()
+            .all(|d| d.rule != "context-scope" && !d.message.contains("useYScope")),
+        "{:?} {:?}",
+        ind.1.tier,
+        ind.1.diagnostics
+    );
+}
+
 // ---- W1d PR 4b (F327): the rest inside a local object that is only ever spread ----
 
 /// Radix ToggleGroupImpl's `commonProps = { role: 'group', dir: direction, ...toggleGroupProps }`: the rest is not read as a

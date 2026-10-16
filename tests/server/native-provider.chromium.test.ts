@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderLocalSpreadRest, renderLocalSpread, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderColl, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -447,3 +447,26 @@ test('F327: the rest inside a local object that is only spread (Radix ToggleGrou
   expect(html).not.toContain('brust-island')
   expect(plain(html)).toBe(plain(renderLocalSpreadRest()))
 }, 60_000)
+
+test('a recognised createCollection (R34.140): the markup equals React\'s, getItems() lists the items in document order with their data, a disabled item is skipped', async () => {
+  const html = await (await fetch(`${base}/coll`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderColl()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/coll`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelectorAll('li[x-data]').length === 3 && document.querySelector('ul')?.getAttribute('x-data'))
+  const items = page.locator('li')
+  await items.nth(0).focus()
+  await page.keyboard.press('ArrowDown')
+  // B is disabled (focusable: false in its item data): focus goes A -> C, and the list had two focusable items
+  expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('C')
+  expect(await page.locator('ul').getAttribute('data-n')).toBe('2')
+  await page.keyboard.press('ArrowDown')
+  expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('A')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+

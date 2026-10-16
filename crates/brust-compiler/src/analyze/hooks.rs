@@ -34,6 +34,8 @@ pub struct BodyDecls {
     /// Locals bound to `useId()`.
     pub id_bindings: Vec<String>,
     pub uses_id: bool,
+    /// R34.140: the component asks for the items of its collection (`useCollection(scope)`).
+    pub uses_collection: bool,
     pub return_expr: Option<Expr>,
     /// `useStore(handle)` bindings in source order (M3-F D7).
     pub stores: Vec<StoreUse>,
@@ -1560,14 +1562,14 @@ fn read_context_use(
     if let E::ECall(call) = &value.data {
         out.classified_hooks.insert(call_addr(call));
         // R34.101: the scope argument is the component's own pass-through (a prop local), or absent.
-        if call.args.len() > 2
-            || call.args.get(1).is_some_and(|a| {
-                !matches!(
-                    &a.data,
-                    E::EIdentifier(_) | E::EImportIdentifier(_) | E::EUndefined(_)
-                )
-            })
-        {
+        // W1d PR 2: also `props.__scopeX` (the component's own scope, read off the whole props parameter)
+        let own_scope = |a: &js_ast::Expr| {
+            matches!(
+                &a.data,
+                E::EIdentifier(_) | E::EImportIdentifier(_) | E::EUndefined(_)
+            ) || r.names.is_scope_prop_member(a)
+        };
+        if call.args.len() > 2 || call.args.get(1).is_some_and(|a| !own_scope(a)) {
             out.fallback(
                 "context-scope",
                 "a context hook is called with a scope other than the component's own scope prop"
@@ -1576,6 +1578,14 @@ fn read_context_use(
                 "pass the scope prop through unchanged, or keep this component in React",
             );
             return;
+        }
+        // C2 (Mellow): a scoped read; nested same-name frames in its region are refused at the call site
+        if call
+            .args
+            .get(1)
+            .is_some_and(|a| !matches!(&a.data, E::EUndefined(_)))
+        {
+            r.names.note_ctx_scoped(ctx);
         }
     }
     match decl.binding.data {
@@ -1854,6 +1864,69 @@ fn hydrated_state(out: &mut BodyDecls, name: String, loc: u32) {
     });
 }
 
+/// R34.140: `const getItems = useCollection(scope)`: `getItems()` lists the items under this component's nearest collection
+/// root (the runtime's `ctx.items`, `collection` feature), in document order, each as the data its item handed over plus
+/// `ref.current` and `element`. `getItems` is a function the component may call from handlers and effects, never in the
+/// render (the list exists only in the browser). `scope` is the component's own pass-through (a prop local or absent).
+fn read_use_collection(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    ident: Option<String>,
+    args: &[js_ast::Expr],
+    vloc: u32,
+) {
+    let Some(name) = ident else {
+        return out.fallback(
+            "collection-shape",
+            "useCollection(scope) must be bound: const getItems = useCollection(scope)".into(),
+            vloc,
+            "write const getItems = useCollection(scope)",
+        );
+    };
+    if args.len() > 1
+        || args.first().is_some_and(|a| {
+            !matches!(
+                &a.data,
+                E::EIdentifier(_) | E::EImportIdentifier(_) | E::EUndefined(_)
+            )
+        })
+    {
+        return out.fallback(
+            "collection-scope",
+            "useCollection is called with a scope other than the component's own scope prop".into(),
+            vloc,
+            "pass the scope prop through unchanged, or keep this component in React",
+        );
+    }
+    let _ = r;
+    out.uses_collection = true;
+    out.handlers.push(HandlerDecl {
+        name,
+        body: RawExpr {
+            loc: vloc,
+            kind: RawKind::Arrow {
+                params: Vec::new(),
+                body: ArrowBody::Expr(Box::new(RawExpr {
+                    loc: vloc,
+                    kind: RawKind::Call {
+                        callee: Box::new(RawExpr {
+                            loc: vloc,
+                            kind: RawKind::Ident {
+                                name: crate::ir::COLLECTION_ITEMS.into(),
+                                kind: IdentKind::Global,
+                            },
+                        }),
+                        args: Vec::new(),
+                    },
+                })),
+                captures: Vec::new(),
+            },
+        },
+        item_scoped: Vec::new(),
+        forwarded: None,
+    });
+}
+
 /// A statement the hook keeps: itself, or, for an `if` whose test `hook_presence_test` decides, the statements of the
 /// branch that runs (so a hook of the branch that never runs is not seen at all).
 fn decided_branch(st: &js_ast::Stmt, names: &NameTable<'_>) -> Vec<js_ast::Stmt> {
@@ -1947,12 +2020,41 @@ fn read_decl(
     {
         return read_context_use(r, out, decl, value, &ctx, vloc);
     }
+    // W1d PR 2: `const scope = useXScope(props.__scopeX)`, a Radix scope hook: its result is a scope token (no code)
+    if let E::ECall(call) = &value.data
+        && is_scope_hook_call(m, r.names, call)
+    {
+        out.classified_hooks.insert(call_addr(call));
+        let own_scope = call.args.len() <= 1
+            && call.args.first().is_none_or(|a| {
+                matches!(
+                    &a.data,
+                    E::EIdentifier(_) | E::EImportIdentifier(_) | E::EUndefined(_)
+                ) || r.names.is_scope_prop_member(a)
+            });
+        match decl.binding.data {
+            B::BIdentifier(id) if own_scope => r.names.bind_scope_token(id.r#ref),
+            _ => out.fallback(
+                "context-scope",
+                "a scope hook is called with a scope other than the component's own scope prop, or its result is not bound to one name".into(),
+                vloc,
+                "write const scope = useXScope(props.__scopeX), or keep this component in React",
+            ),
+        }
+        return;
+    }
     adopt_react_alias(r.names, m, value);
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
         out.classified_hooks.insert(call_addr(call));
         let args: Vec<js_ast::Expr> = call.args.to_vec();
         if is_use_store(&call.target, r.names) {
             return read_use_store(r, out, decl, &args, vloc);
+        }
+        // R34.140: `const getItems = useCollection(scope)` of a recognised `createCollection`
+        if let Some(callee) = crate::analyze::names::ident_ref(&call.target)
+            && r.names.collection_hook(callee)
+        {
+            return read_use_collection(r, out, ident, &args, vloc);
         }
         if !from_react {
             let site = Site {
@@ -3647,4 +3749,93 @@ fn bind_one(
         name: r.names.name(binding),
         expr: Expr::Raw(value),
     });
+}
+
+/// W1d PR 2 (Mellow C1): a scope hook is identified by PROVENANCE, never by its name: `const useXScope = createXScope()` at
+/// the module level, where `createXScope` is the second binding of `createContextScope` (imported from
+/// `@radix-ui/react-context`), declared in this module or in the module it is imported from (as that module exports it).
+fn is_scope_hook_call(m: Module<'_, '_>, names: &NameTable<'_>, call: &js_ast::E::Call) -> bool {
+    let Some(hook) = crate::analyze::names::ident_ref(&call.target) else {
+        return false;
+    };
+    // `const hook = factory()` at the top level of this module
+    let factory = m.ast.parts.iter().find_map(|part| {
+        part.stmts.slice().iter().find_map(|st| {
+            let S::SLocal(l) = &st.data else { return None };
+            if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                return None;
+            }
+            l.decls.iter().find_map(|d| {
+                let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value) else {
+                    return None;
+                };
+                let E::ECall(c) = &v.data else { return None };
+                if !names.same(id.r#ref, hook) || !c.args.is_empty() {
+                    return None;
+                }
+                crate::analyze::names::ident_ref(&c.target)
+            })
+        })
+    });
+    let Some(factory) = factory else { return false };
+    match names
+        .import_of(factory)
+        .map(|(s, i)| (s.to_string(), i.to_string()))
+    {
+        None => second_binding_of_context_scope(m.ast, names, |r| names.same(r, factory)),
+        Some((source, imported)) => {
+            let Some(opts) = m.opts else { return false };
+            if imported == "*" || imported == "default" {
+                return false;
+            }
+            let Some(path) =
+                crate::analyze::modules::resolve_module(&m.parsed.path(), &source, opts)
+            else {
+                return false;
+            };
+            let (path, imported) = follow_reexports(opts, path, imported);
+            let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
+                return false;
+            };
+            let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+                return false;
+            };
+            parsed.with_ast(|ast| {
+                let other = NameTable::for_hook(ast);
+                second_binding_of_context_scope(ast, &other, |r| other.name(r) == imported)
+            })
+        }
+    }
+}
+
+/// Whether a top-level `const [createX, createXScope] = createContextScope(…)` of `ast` binds, as its second item, a name
+/// `is` accepts; `createContextScope` is the import from `@radix-ui/react-context`.
+fn second_binding_of_context_scope(
+    ast: &js_ast::Ast<'_>,
+    names: &NameTable<'_>,
+    is: impl Fn(js_ast::Ref) -> bool,
+) -> bool {
+    ast.parts.iter().any(|part| {
+        part.stmts.slice().iter().any(|st| {
+            let S::SLocal(l) = &st.data else { return false };
+            if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                return false;
+            }
+            l.decls.iter().any(|d| {
+                let (B::BArray(arr), Some(v)) = (d.binding.data, d.value) else {
+                    return false;
+                };
+                let E::ECall(c) = &v.data else { return false };
+                let items = arr.items();
+                items.len() == 2
+                    && !arr.has_spread
+                    && names.is_import_call(
+                        &c.target,
+                        "@radix-ui/react-context",
+                        "createContextScope",
+                    )
+                    && matches!(items[1].binding.data, B::BIdentifier(id) if is(id.r#ref))
+            })
+        })
+    })
 }

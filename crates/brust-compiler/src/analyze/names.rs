@@ -132,6 +132,9 @@ pub struct NameTable<'a> {
     printed: Aliases,
     /// The context declarations of the module (S2): Providers, hooks, React contexts.
     pub contexts: crate::analyze::context::Contexts,
+    /// R34.140: the module's `createCollection` declarations, honoured only once the build vouched for the package.
+    collections: crate::analyze::collection::Collections,
+    collections_recognised: bool,
     /// Scalar contexts adopted from the hooks this module inlined (`adopt_scalar`).
     scalars_adopted: std::cell::RefCell<Vec<(String, crate::ir::Literal)>>,
     /// `const context = useXContext(…)` locals (symbol key → context name): `context.field` reads a hidden prop.
@@ -140,6 +143,12 @@ pub struct NameTable<'a> {
     ctx_fields: std::cell::RefCell<Vec<(String, String)>>,
     /// Where a context local is used as a bare value (not `context.field`): brust cannot narrow it (fail closed).
     pub ctx_escape: std::cell::Cell<Option<u32>>,
+    /// W1d PR 2: contexts a hook was called for with a scope argument.
+    ctx_scoped: std::cell::RefCell<Vec<String>>,
+    /// W1d PR 2: locals bound to a Radix scope hook's result (a scope token), by symbol key.
+    scope_tokens: std::cell::RefCell<HashSet<u32>>,
+    /// W1d PR 2: where a scope token was used other than as a `{...token}` JSX spread or a scope argument.
+    pub scope_token_escape: std::cell::Cell<Option<u32>>,
 }
 
 /// Every `import` binding of the module: local symbol (`Ref::inner_index`) → (module path,
@@ -483,12 +492,18 @@ impl<'a> NameTable<'a> {
             aliases: HashMap::new(),
             printed: HashMap::new(),
             contexts: Default::default(),
+            collections: Default::default(),
+            collections_recognised: false,
             scalars_adopted: std::cell::RefCell::new(Vec::new()),
             ctx_locals: HashMap::new(),
             ctx_fields: std::cell::RefCell::new(Vec::new()),
             ctx_escape: std::cell::Cell::new(None),
+            ctx_scoped: std::cell::RefCell::new(Vec::new()),
+            scope_tokens: std::cell::RefCell::new(HashSet::new()),
+            scope_token_escape: std::cell::Cell::new(None),
         };
         table.contexts = crate::analyze::context::scan(&table, ast);
+        table.collections = crate::analyze::collection::scan(&table, ast);
         table.jsx_runtime = table.collect_jsx_runtime(ast);
         table.member_aliases = table.collect_member_aliases(ast);
         for part in ast.parts.iter() {
@@ -983,6 +998,31 @@ impl<'a> NameTable<'a> {
             .map(String::as_str)
     }
 
+    /// The build verified `@radix-ui/react-collection` (version + entry hash): its `createCollection` declarations count.
+    pub fn set_collections_recognised(&mut self, yes: bool) {
+        self.collections_recognised = yes;
+    }
+
+    /// The module declares a `createCollection` of the package (recognised or not yet): the build is asked to verify it.
+    pub fn declares_collection(&self) -> bool {
+        !self.collections.is_empty()
+    }
+
+    /// `r` is the `Collection` object of a recognised `createCollection` declaration.
+    pub fn collection_object(&self, r: js_ast::Ref) -> bool {
+        self.collections_recognised && self.collections.objects.contains(&self.key(r))
+    }
+
+    /// `r` is the `useCollection` of a recognised `createCollection` declaration.
+    pub fn collection_hook(&self, r: js_ast::Ref) -> bool {
+        self.collections_recognised && self.collections.hooks.contains(&self.key(r))
+    }
+
+    /// `r` is the `createCollectionScope` of a recognised `createCollection` declaration.
+    pub fn collection_scope(&self, r: js_ast::Ref) -> bool {
+        self.collections_recognised && self.collections.scopes.contains(&self.key(r))
+    }
+
     /// The context a Radix hook (`useXContext`) reads.
     pub fn context_of_hook(&self, r: js_ast::Ref) -> Option<&str> {
         self.contexts.hooks.get(&self.key(r)).map(String::as_str)
@@ -1068,6 +1108,37 @@ impl<'a> NameTable<'a> {
         if !f.iter().any(|(c, n)| c == context && n == field) {
             f.push((context.to_string(), field.to_string()));
         }
+    }
+
+    pub fn note_ctx_scoped(&self, context: &str) {
+        let mut v = self.ctx_scoped.borrow_mut();
+        if !v.iter().any(|c| c == context) {
+            v.push(context.to_string());
+        }
+    }
+
+    pub fn ctx_scoped(&self) -> Vec<String> {
+        self.ctx_scoped.borrow().clone()
+    }
+
+    /// W1d PR 2: `props.__scopeX` of the non-destructured props parameter: the component's own scope pass-through.
+    pub fn is_scope_prop_member(&self, e: &js_ast::Expr) -> bool {
+        match &e.data {
+            js_ast::expr::Data::EDot(d) => {
+                d.name.slice().starts_with(b"__scope")
+                    && matches!(&d.target.data, js_ast::expr::Data::EIdentifier(t)
+                        if self.props_ident == Some(self.key(t.ref_)))
+            }
+            _ => false,
+        }
+    }
+
+    pub fn bind_scope_token(&self, r: js_ast::Ref) {
+        self.scope_tokens.borrow_mut().insert(self.key(r));
+    }
+
+    pub fn is_scope_token(&self, r: js_ast::Ref) -> bool {
+        self.scope_tokens.borrow().contains(&self.key(r))
     }
 
     /// The fields read, grouped by context (first-use order).
