@@ -16,6 +16,7 @@ use super::common::{Facts, raw_of, store_jinja};
 use super::names::Seeds;
 use super::server_expr::{JinjaCtx, UNDEFINED, jinja_string, to_jinja};
 use super::{LowerCtx, Member, MemberDef, Paint};
+use crate::analyze::passes::children::REST_INPUT;
 use crate::ir::{
     Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobKind, Node, RawExpr, RawKind, ServerExpr,
     Tier, VOID,
@@ -2461,7 +2462,8 @@ fn expr_reactive(e: &Expr, f: &Facts<'_>, props: bool) -> bool {
                     && f.ir.props_are_signal()
                     && d.props.iter().any(|p| {
                         let root = p.split(['.', '[']).next().unwrap_or(p);
-                        !matches!(root, "children" | "*")
+                        !matches!(root, "children" | "*" | REST_INPUT)
+                            && !root.starts_with("__ctx_")
                             && !f.ir.fixed_props.iter().any(|x| x == root)
                             && !f.ir.seed_props.iter().any(|x| x == root)
                     })

@@ -933,7 +933,7 @@ type Specialised = (String, String, Vec<(String, Expr)>);
 /// What cannot cross is refused by name: the caller's whole props or `...rest`, a ref, a list row's bindings, imports,
 /// stores, module-level functions, and a name read inside code printed as written.
 /// The hidden input that carries the call site's whole `...rest` into a clone (F278).
-const REST_INPUT: &str = "__in_rest";
+pub(crate) const REST_INPUT: &str = "__in_rest";
 
 struct Carry<'a> {
     native: &'a [(u32, String, usize)],
@@ -4130,7 +4130,10 @@ impl Walker<'_, '_> {
                 let root = p.split(['.', '[']).next().unwrap_or(p);
                 // The rest or the whole props object (`*`) stays with F319's freeze, answered per call site: counting it
                 // here would link every child it is spread into (and refuse a handler in that spread, spread-handler).
-                !matches!(root, "children" | "*")
+                // A clone's `__in_rest` (F278/F298) is the call site's rest carried in: the same, answered at that site.
+                // A context value (`__ctx_*`) is fed by the Provider's frame, not by a caller: its own machinery binds it.
+                !matches!(root, "children" | "*" | REST_INPUT)
+                    && !root.starts_with("__ctx_")
                     && !self.fixed_props.contains(root)
                     && !self.seed_props.contains(root)
             })
