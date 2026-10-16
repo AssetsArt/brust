@@ -186,6 +186,12 @@ impl RawExpr {
         FoldEnv::empty().fold(self).ok()?.to_json()
     }
 
+    /// [`Self::json_literal`] with objects in source order (F282): what crosses to the manifest and the worker as a
+    /// prop literal, so a style object's declarations keep the order React prints them in.
+    pub fn json_literal_ordered(&self) -> Option<crate::ir::OJson> {
+        FoldEnv::empty().fold(self).ok()?.to_ojson()
+    }
+
     /// JS for the precompute job ([`JsCtx::Server`]).
     pub fn to_js(&self) -> String {
         self.to_js_in(JsCtx::Server)

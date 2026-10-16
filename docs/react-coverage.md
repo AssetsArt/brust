@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 102 | 25 | 32 | 45 | 0 | 0 | 0 | 0 |
+| C Hooks | 112 | 25 | 38 | 49 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 477 | 214 | 77 | 182 | 3 | 1 | 0 | 0 |
+| **Total** | 487 | 214 | 83 | 186 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -328,7 +328,17 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-relax-alias-unknown-key | custom hook calling a module const read off React by an unknown key | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | R34.105: the key must fold to a hook React exports |
 | c-live-forward | a live prop through a static child's spread, with a handler | native | native | 0 | ok | 4.5 | — | R34.18 extended (2b-handlers): the parent binds the live value on the child element; the child stays unlinked |
 | c-live-forward-two-spreads | a live prop through a child that spreads the same rest on two elements | react | react | ssr | ok | 4.0 | fallback:spread-props | R34.18 extended: a live value needs ONE element to bind on |
-| c-live-forward-class | a live className through a static child's spread | react | react | ssr | ok | 4.0 | fallback:spread-handler | R34.18 extended: class and style merge, they are not bound through a spread |
+| c-live-forward-class | a live className through a static child's spread, with a handler | native | native | 0 | ok | 4.5 | — | F299 (spread-live): React replaces the element's own className with the spread's, so the parent binds it like a hand-written className |
+| c-live-forward-style | a live style through a static child's spread, with a handler | native | native | 0 | ok | 4.5 | — | F296 (spread-live option A): the parent binds the live style on the child element; the child stays unlinked |
+| c-live-forward-style-own-before | a live style through a spread that comes after the child's own style | native | native | 0 | ok | 4.5 | — | F296: React replaces the element's own style with the spread's, it never merges: printed once, bound |
+| c-live-forward-style-own-after | a live style that the child's own later style overrides | native | native | 0 | ok | 4.5 | — | F296: the child's own later style wins, so the call site's never lands and nothing is bound |
+| c-live-forward-style-slot | a live style through a child that may render a Slot (asChild) | react | react | ssr | ok | 4.0 | fallback:spread-props | F296 C1: a Slot merges the call site's style with its child's, so the replace rule does not hold: refused |
+| c-live-forward-style-two-elements | a live style through a child that spreads on two elements | react | react | ssr | ok | 4.0 | fallback:spread-props | F296: a live value needs ONE element to bind on |
+| c-live-forward-style-native-child | a live style through a native child (state of its own) that forwards its rest | react | react | ssr | ok | 5.3 | fallback:spread-props | F296: option B (a linked forwarder) stays parked until a page measures one |
+| c-live-forward-style-later-spread | a live style followed by a spread of unknown keys | react | react | ssr | ok | 4.0 | fallback:spread-props | F296: a later spread may replace it (2b rule 3) |
+| c-live-forward-style-string | a style given as a string through a static child's spread | native | native | 0 | ok | 4.5 | — | F296: React throws for a string style; brust prints no declaration for a non-object (as for a hand-written element) and never writes the string into the attribute |
+| c-live-forward-class-own-before | a live className through a spread that comes after the child's own className | native | native | 0 | ok | 4.5 | — | F299: the spread's className replaces the child's own; printed once, bound |
+| c-live-forward-class-slot | a live className through a child that may render a Slot (asChild) | react | react | ssr | ok | 4.0 | fallback:spread-props | F299: a Slot merges class lists, so the replace rule does not hold: refused |
 | c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | 5.3 | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
 | c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.3 | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | 4.5 | — | F214: static slot content has no directive to misbind |

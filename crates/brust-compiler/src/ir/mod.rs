@@ -2,6 +2,7 @@
 pub mod decls;
 pub mod expr;
 pub mod fold;
+pub mod ojson;
 pub mod template;
 #[cfg(test)]
 mod tests;
@@ -9,6 +10,7 @@ mod tests;
 pub use decls::*;
 pub use expr::*;
 pub use fold::{FoldEnv, V, is_js_space};
+pub use ojson::OJson;
 pub use template::*;
 
 use serde::{Deserialize, Serialize};
