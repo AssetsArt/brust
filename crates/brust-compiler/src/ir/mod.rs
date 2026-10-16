@@ -270,6 +270,10 @@ pub struct ComponentIR {
     /// consumer revived from its source would not share the Provider island's `createContext` (the published dist).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ctx_pkg: bool,
+    /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
+    /// reads or passes on: with no Provider above the page, the context's value is that default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctx_defaults: Vec<(String, Literal)>,
     /// F174: module functions proven to return a primitive (`analyze::plain_fn`), callable under a lowered Provider.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plain_fns: Vec<String>,
@@ -440,6 +444,7 @@ impl ComponentIR {
             fixed_props: Vec::new(),
             ctx_uses: Vec::new(),
             ctx_pkg: false,
+            ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),
             bound_names: Default::default(),

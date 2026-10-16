@@ -387,3 +387,52 @@ fn a_callback_handed_to_a_load_time_call_writes_at_load() {
     // The nested write still counts for the fallback.
     assert!(lw.why("o.ts", "LABELS2").is_some());
 }
+
+/// F274: a statement that calls a function of its own module at load runs that function's body then, so the write in
+/// it makes a writer; so does a function that body calls (a fixpoint). A function nothing calls at load does not.
+#[test]
+fn a_top_level_call_of_a_same_module_function_is_a_load_writer() {
+    let (_, lw) = app(
+        "init-call",
+        &[
+            (
+                "o.ts",
+                "export const LABELS2 = { a: 1 }\nexport const LABELS3 = { a: 1 }\nexport const LABELS4 = { a: 1 }\nexport const LABELS5 = { a: 1 }\n",
+            ),
+            ("b.ts", B),
+            (
+                "decl.ts",
+                "import { LABELS } from './b'\nfunction init() { LABELS.a = 'patched' }\ninit()\n",
+            ),
+            (
+                "chain.ts",
+                "import { LABELS2 } from './o'\nfunction inner() { LABELS2.a = 2 }\nconst outer = () => { inner() }\nouter()\n",
+            ),
+            (
+                "comma.ts",
+                "import { LABELS3 } from './o'\nfunction init() { LABELS3.a = 3 }\n;(0, init)()\n",
+            ),
+            (
+                "uncalled.ts",
+                "import { LABELS4 } from './o'\nfunction init() { LABELS4.a = 4 }\nexport const handler = () => init()\n",
+            ),
+            (
+                "nested.ts",
+                "import { LABELS5 } from './o'\nfunction init() { const later = () => { LABELS5.a = 5 }; later }\ninit()\n",
+            ),
+        ],
+    );
+    let w: Vec<(&str, &[String])> = lw
+        .writers
+        .iter()
+        .map(|(p, m)| (p.as_str(), m.as_slice()))
+        .collect();
+    assert_eq!(
+        w,
+        [
+            ("chain.ts", &["o.ts".to_string()][..]),
+            ("comma.ts", &["o.ts".to_string()][..]),
+            ("decl.ts", &["b.ts".to_string()][..]),
+        ]
+    );
+}

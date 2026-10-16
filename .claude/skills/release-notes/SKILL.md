@@ -60,10 +60,11 @@ Rules:
 ## 4. Check, then open the PR
 
 ```bash
-cd website && bunx biome check pages/docs/ReleaseNotes.tsx
+cd website
 bun test test/release-notes-page.test.ts test/docs-shell.test.ts   # needs the native addon: bun install && (cd ../packages/brust && bun run build:debug)
 ```
 
+- Do not run `bunx biome`: biome is not a dependency of this repo, so it fetches an unrelated npm package named `biome` and checks nothing.
 - `release-notes-page.test.ts` checks that every published version has an entry, newest first, and that every cited path exists.
 - Open the PR as `website: 2.0.0-alpha.N release notes` from a lane branch off `origin/main`.
 - Merge it only after green CI. Then continue with the **release** skill, step 2.

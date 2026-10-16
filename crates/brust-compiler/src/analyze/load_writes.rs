@@ -168,6 +168,17 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
     let mut module_keys: HashSet<u32> = HashSet::new();
     let mut package_made_keys: HashSet<u32> = HashSet::new();
     let mut primitive_keys: HashSet<u32> = HashSet::new();
+    // F274: the code a call of a top-level function runs (its body, shallow: a function nested in it does not run),
+    // by the function's binding key: a declaration, or a `const f = () => …` / `function` expression.
+    let mut fn_bodies: HashMap<u32, Walk> = HashMap::new();
+    let shallow_body = |stmts: &[js_ast::Stmt]| {
+        let mut w = Walk {
+            shallow: true,
+            ..Default::default()
+        };
+        w.stmts(stmts);
+        w
+    };
     let package_import = |r: js_ast::Ref| {
         names
             .import_of(r)
@@ -198,6 +209,7 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
                         w.stmt(stmt);
                         module_keys.insert(key(n.ref_));
                         decls.insert(key(n.ref_), w);
+                        fn_bodies.insert(key(n.ref_), shallow_body(f.func.body.stmts.slice()));
                         if f.func.flags.contains(js_ast::flags::Function::IsExport) {
                             exports.push((names.name(n.ref_), Some(key(n.ref_))));
                         }
@@ -241,6 +253,22 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
                                     if matches!(l.kind, js_ast::S::Kind::KConst) =>
                                 {
                                     primitive_keys.insert(key(id.r#ref));
+                                }
+                                _ => {}
+                            }
+                        }
+                        if let (js_ast::b::B::BIdentifier(id), Some(v)) = (d.binding.data, &d.value)
+                        {
+                            match &v.data {
+                                E::EArrow(a) => {
+                                    fn_bodies
+                                        .insert(key(id.r#ref), shallow_body(a.body.stmts.slice()));
+                                }
+                                E::EFunction(f) => {
+                                    fn_bodies.insert(
+                                        key(id.r#ref),
+                                        shallow_body(f.func.body.stmts.slice()),
+                                    );
                                 }
                                 _ => {}
                             }
@@ -335,7 +363,35 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
             }
         }
     }
-    let load = writes_of(&load, &imports, &module_keys, &names);
+    let mut load_writes = writes_of(&load, &imports, &module_keys, &names);
+    // F274: a statement that calls a function of this module at load (`function init() { B.x = 1 }; init()`) runs its
+    // body then, and so does every function that body calls: follow top-level calls to a fixpoint.
+    let mut pending: Vec<u32> = Vec::new();
+    let callee_keys = |w: &Walk, out: &mut Vec<u32>| {
+        for c in &w.calls {
+            if let E::ECall(call) = &c.data
+                && let E::EIdentifier(id) = &comma_target(&call.target).data
+            {
+                out.push(key(id.ref_));
+            }
+        }
+    };
+    callee_keys(&load, &mut pending);
+    let mut seen: HashSet<u32> = HashSet::new();
+    while let Some(k) = pending.pop() {
+        if !seen.insert(k) {
+            continue;
+        }
+        let Some(body) = fn_bodies.get(&k) else {
+            continue;
+        };
+        let w = writes_of(body, &imports, &module_keys, &names);
+        load_writes.method.extend(w.method);
+        load_writes.other.extend(w.other);
+        load_writes.handed.extend(w.handed);
+        callee_keys(body, &mut pending);
+    }
+    let load = load_writes;
 
     let reads_of = |w: &Walk| {
         let mut imp = Vec::new();
@@ -493,6 +549,22 @@ fn runs_code_at_load(stmt: &js_ast::Stmt) -> bool {
             js_ast::StmtOrExpr::Expr(e) => !function(e),
         },
         _ => true,
+    }
+}
+
+/// The callee of `(0, f)(…)`, the comma call a bundler emits: the right side when the left is a literal.
+fn comma_target(target: &js_ast::Expr) -> &js_ast::Expr {
+    match &target.data {
+        E::EBinary(b)
+            if b.op == js_ast::OpCode::BinComma
+                && matches!(
+                    b.left.data,
+                    E::ENumber(_) | E::EString(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_)
+                ) =>
+        {
+            comma_target(&b.right)
+        }
+        _ => target,
     }
 }
 

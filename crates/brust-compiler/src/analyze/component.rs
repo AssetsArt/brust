@@ -562,6 +562,12 @@ fn read_function_as(
     ir.ctx_uses = reader.names.ctx_uses();
     ir.ctx_pkg =
         !ir.ctx_uses.is_empty() && ir.source.starts_with(crate::analyze::modules::PKG_SRC_DIR);
+    ir.ctx_defaults = reader
+        .names
+        .scalar_defaults()
+        .into_iter()
+        .filter(|(c, _)| ir.ctx_uses.iter().any(|u| &u.context == c))
+        .collect();
     ir.provides = std::mem::take(&mut reader.provides);
     ir.render_props = std::mem::take(&mut reader.render_props);
     ir.safe_objects = reader.names.safe_object_const_names();
