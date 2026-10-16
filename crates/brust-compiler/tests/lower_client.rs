@@ -87,7 +87,8 @@ fn a_binding_named_a_is_read_inside_a_handler_not_the_rest_arguments() {
 
 #[test]
 fn the_rest_parameter_avoids_a_component_binding_of_its_own_name() {
-    for (name, expect) in [("__args", "__args1"), ("__args1", "__args2")] {
+    // F233: names are whole words, so a binding `__args1` leaves `__args` free.
+    for (name, expect) in [("__args", "__args1"), ("__args1", "__args")] {
         let c = lower(&format!(
             "{STATE}export default function T() {{ const [n, setN] = useState(0); const {name} = useRef(null); return <button ref={{{name}}} onClick={{() => {{ setN(n + 1); console.log({name}.current) }}}}>{{n}}</button> }}"
         ))

@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
-| B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 68 | 10 | 24 | 34 | 0 | 0 | 0 | 0 |
+| B Composition | 218 | 113 | 15 | 90 | 0 | 0 | 0 | 0 |
+| C Hooks | 74 | 13 | 24 | 37 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 69 | 31 | 10 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 434 | 198 | 61 | 171 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
+| **Total** | 447 | 201 | 67 | 175 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -291,6 +291,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-pkg-aschild-false | a package Primitive leaf with asChild={false} | static | static | 0 | ok | 0 | — | F153c: a literal false is the host element (the leaf spreads its props into Primitive.div, so it requires `asChild` absent or false) |
 | b-pkg-primitive-aschild | Primitive.button asChild with one host child, written in the app | static | static | 0 | ok | 0 | — | F153c R34.65: asChild on a Primitive tag merges into the one host child (the R34.28 Button rule) |
 | b-pkg-aschild-through-spread | asChild passed to a package leaf that spreads it into Primitive | react | react | ssr | ok | 3.8 | fallback:slot-dynamic | F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles |
+| b-pkg-hook-alias-use-size | the Radix useSize hook, whose useLayoutEffect is an exported SSR-guard alias of React's | native | native | 0 | ok | 4.4 | — | F268: `const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}` (exported) is React's useLayoutEffect, by the module's own declaration, not by package name |
+| b-hook-alias-value-hook | an exported conditional alias of a hook that returns a value (useState or a no-op) | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | F268 fail closed: only an effect hook (it returns nothing) can stand beside a no-op; useState would be undefined where the guard is false |
 | b-pkg-aschild-dynamic | a dynamic asChild on a package leaf | react | react | ssr | ok | 3.8 | fallback:slot-dynamic | F153c fail closed: slot-dynamic |
 | b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | react | react | ssr | ok | 3.8 | fallback:forwardref-ref, fallback:ref-in-render | F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none) |
 | b-pkg-ref-read | a package leaf that reads its forwarded ref | static | static | ssr | ok | 3.8 | fallback:external-component | F153c fail closed: the leaf needs React (forwardref-ref), so the app keeps the island of the published export |
@@ -365,6 +367,12 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid-in-key | useId() called in an element key | react | react | ssr | ok | 3.8 | fallback:hook-in-expression, warning:key-outside-list | F235: the JSX runtime evaluates key after the props, so the hook is refused there (hook-in-expression) |
 | c-useid-logical-assign | useId() on the right side of `??=` in the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | F236: the right side of \|\|=, &&=, ??= runs conditionally, so the hook is refused there (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | 4.8 | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |
+| c-render-prop-guarded | a render prop a state Provider calls under typeof, falling back to children | static | static | 0 | ok | 4.8 | — | B7/R34.122 b: the arrow body is spliced where the Provider calls it, its parameter bound to the Provider's own state; no island |
+| c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
+| c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
+| c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |
+| c-render-prop-provider-in-body | a render body holding a Provider, next to the writer's own children | static | static | ssr | ok | 3.8 | — | B7 (Mellow F1): a Provider written inside a render arrow must not provide to the writer's own children (they read the context default) |
+| c-render-prop-computed-arg | a render prop called with a computed argument | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Mellow S3): an argument that is not a plain read is not substituted; the Provider stays an island |
 | c-native-provider-as-child | asChild on a consumer of a state Provider, with a plain element child | static | static | 0 | ok | 4.8 | — | Q5/R34.117: the consumer's host is the caller's element, carrying the frame's bindings and handler |
 | c-native-provider-as-child-handler | asChild on a consumer of a state Provider, the child element has its own handler | react | react | ssr | ok | 5.1 | fallback:island-children, fallback:slot-native, fallback:slot-owner, info:specialise-unsupported | Q5: a handler on the asChild child is not composed yet (child first, then the Provider's); the Provider stays an island |
 | c-native-provider-two-sites | two call sites of a state Provider with different text | static | static | 0 | ok | 4.8 | — | R34.124: one clone per call site (own jinja and ids), one shared factory module for the equal chunks |
@@ -451,6 +459,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-jsx-runtime-alias-value | the runtime builder read as a value (`const h = jsx; h(…)`) | react | react | ssr | ok | 3.8 | fallback:jsx-runtime-call | F156: any read of a runtime builder is jsx-runtime-call, not an opaque server slot |
 | e-jsx-runtime-comma-call | the runtime builder called through a comma (`(0, jsx)(…)`, bundler output) | react | react | ssr | ok | 3.8 | fallback:jsx-runtime-call | F156: any read of a runtime builder is jsx-runtime-call, not an opaque server slot |
 | e-jsx-runtime-local-name | a local function named `jsx` is not the runtime | static | static | precompute | ok | 0 | — |  |
+| e-name-signal-state | a state named like a runtime import (`const [signal, setSignal] = useState(0)`) | native | native | 0 | ok | 4.4 | — | F233: the chunk imports the runtime under other names (`signal as signal1`), the component keeps its own |
+| e-name-props-derived | a derived value named `props` beside a prop read | native | native | 0 | ok | 4.4 | — | F233: the behaviour context's props signal is renamed (`props: props1`), so the prop read is not the derived value |
+| e-name-text-helper | a handler named like a paint helper (`const __text = () => …`) | native | native | 0 | ok | 4.4 | — | F233: the helper is declared under another name; before, the chunk declared `__text` twice (a SyntaxError) |
+| e-job-prop-local-assign | a body local named like a prop the job reads off `props` (`const style = Object.assign({}, props.style, …)`) | native | native | precompute | ok | 4.4 | — | F257: the job destructures the prop under another name (`style: style1`); it declared `style` twice |
+| e-job-prop-local-spread | the same through an object spread (`const style = { ...props.style, … }`) | native | native | precompute | ok | 4.4 | — | F257: the B5 spelling of the same shape |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | 3.8 | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | 3.8 | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | 3.8 | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |

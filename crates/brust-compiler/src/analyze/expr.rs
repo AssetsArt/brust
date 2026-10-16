@@ -27,6 +27,8 @@ pub struct Reader<'r, 'a> {
     map_callback: bool,
     /// The context Providers read in the template (S2): what this component hands to its consumers.
     pub provides: Vec<crate::ir::ProvideDecl>,
+    /// B7: render-prop arrows written on components, read as templates (`ir::RenderProp`).
+    pub render_props: Vec<crate::ir::RenderProp>,
     /// `useId()` calls hoisted out of the return expression (R34.120), by call address: each reads as the local the
     /// component declares for it.
     pub hoisted_calls: std::collections::HashMap<usize, String>,
@@ -42,6 +44,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             loop_scope: Vec::new(),
             map_callback: false,
             provides: Vec::new(),
+            render_props: Vec::new(),
             hoisted_calls: std::collections::HashMap::new(),
         }
     }

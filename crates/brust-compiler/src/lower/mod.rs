@@ -5,6 +5,7 @@
 //! checks the sources).
 pub mod client;
 pub mod common;
+pub mod names;
 pub mod render_debug;
 pub mod server;
 pub mod server_expr;
@@ -131,7 +132,9 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
         ));
     }
     let loop_var = Cell::new(0);
-    let printer = template::Printer::new(ir, ctx, None, &loop_var)
+    // F233: one seed set per component for every output of this lowering (F247: computed once).
+    let seeds = names::Seeds::default();
+    let printer = template::Printer::new(ir, ctx, None, &loop_var, seeds.clone())
         .ok_or_else(|| Diagnostic::error("lower-input", "structural snapshot missing", 0, ""))?;
     let out = printer.print();
     if let Some(d) = out
@@ -149,7 +152,8 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
     } else {
         if ir.specialised {
             // R34.124: the factory is shared by every clone whose factory is equal; the chunk is a stub naming this one.
-            let (code, members) = client::factory_module(ir, &out.members, ctx.runtime_import);
+            let (code, members) =
+                client::factory_module(ir, &out.members, ctx.runtime_import, &seeds.of(ir));
             let name = format!("spec-{:016x}", fnv64(code.as_bytes()));
             client_modules.push((name.clone(), code));
             (
@@ -157,7 +161,7 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
                 members,
             )
         } else {
-            let (js, members) = client::chunk(ir, &out.members, ctx.runtime_import);
+            let (js, members) = client::chunk(ir, &out.members, ctx.runtime_import, &seeds.of(ir));
             (Some(js), members)
         }
     };
