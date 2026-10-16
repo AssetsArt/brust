@@ -1071,7 +1071,7 @@ fn splice_render(ir: &mut ComponentIR, rp: crate::ir::RenderProp) -> Result<(), 
             RawKind::Ident {
                 name,
                 kind: IdentKind::Local,
-            } => ir
+            } if ir.safe_objects.contains(name) => ir
                 .derived
                 .iter()
                 .find(|d| &d.name == name)

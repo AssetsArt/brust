@@ -969,6 +969,8 @@ fn plain_object(e: js_ast::Expr) -> Option<Vec<(String, js_ast::Expr)>> {
         };
         if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
             || p.flags.contains(js_ast::flags::Property::IsComputed)
+            // N1: `__proto__: x` in a literal sets the prototype, it is not an entry
+            || k.slice8() == b"__proto__"
             || !read(v)
         {
             return None;

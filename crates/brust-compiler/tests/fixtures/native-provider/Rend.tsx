@@ -51,7 +51,7 @@ export function RN({ render }: { render: R }) {
   return <C.Provider value={{ on, flip: () => setOn((o) => !o) }}>{render(ctx)}</C.Provider>
 }
 // F266: a const object spread into a component (Radix's `<Impl {...context}>`)
-function Lbl({ text, tone }: { text: string; tone: string }) {
+export function Lbl({ text, tone }: { text: string; tone: string }) {
   return <span data-tone={tone}>{text}</span>
 }
 export function RS({ label }: { label: string }) {

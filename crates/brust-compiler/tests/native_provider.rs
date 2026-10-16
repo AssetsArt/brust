@@ -403,3 +403,23 @@ fn a_frame_field_derived_from_a_prop_and_state_is_carried_by_the_clone() {
     assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
     assert_eq!(clones(&all).len(), 1, "{:?}", root.ir.diagnostics);
 }
+
+// Mellow F1 (switch-provider): a const object that is written (at load, through an alias, or in the body) is not its
+// literal: the spread never prints the literal's value.
+#[test]
+fn a_const_object_that_is_written_is_not_spread_as_its_literal() {
+    for file in [
+        "mut_module.tsx",
+        "mut_alias.tsx",
+        "mut_body.tsx",
+        "proto_key.tsx",
+    ] {
+        let all = compile(file);
+        let root = &all[0];
+        assert!(
+            !root.jinja.contains("\"sm\"") && !root.jinja.contains(">sm<"),
+            "{file}: {}",
+            root.jinja
+        );
+    }
+}

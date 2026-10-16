@@ -30,7 +30,20 @@ const PRIMITIVE_RESULT: &[&str] = &["some", "every", "includes", "indexOf", "joi
 
 /// Inner indexes of the bindings with a use that is not proven read-only.
 pub fn unsafe_to_fold(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u32> {
+    scan(ast, names, false)
+}
+
+/// F266: the bindings with a use that is not a spread, a member read or an argument of a function the component was
+/// given (a prop): a `const` object literal outside this set is never written, handed on or aliased, so its literal
+/// stands for it wherever it is read.
+pub fn unsafe_objects(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u32> {
+    scan(ast, names, true)
+}
+
+fn scan(ast: &js_ast::Ast<'_>, names: &NameTable<'_>, objects: bool) -> HashSet<u32> {
     let mut s = Scan {
+        objects,
+        top: HashSet::new(),
         names,
         bad: HashSet::new(),
         aliases: Vec::new(),
@@ -42,6 +55,22 @@ pub fn unsafe_to_fold(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u
     };
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
+            match &stmt.data {
+                S::SLocal(l) => {
+                    for d in l.decls.iter() {
+                        // every name a module-level declaration binds (a pattern included) is module level
+                        let mut refs = Vec::new();
+                        crate::analyze::names::binding_refs(&d.binding, &mut refs);
+                        s.top.extend(refs.iter().map(|r| r.inner_index()));
+                    }
+                }
+                S::SFunction(f) => {
+                    if let Some(n) = &f.func.name {
+                        s.top.insert(n.ref_.inner_index());
+                    }
+                }
+                _ => {}
+            }
             if let S::SLocal(l) = &stmt.data
                 && matches!(l.kind, js_ast::S::Kind::KConst)
             {
@@ -93,6 +122,10 @@ pub fn unsafe_to_fold(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> HashSet<u
 
 struct Scan<'x, 'a> {
     names: &'x NameTable<'a>,
+    /// F266 mode: an argument of a function that is not declared at module level (a prop of the component) is a read.
+    objects: bool,
+    /// Bindings declared at module level (functions, consts).
+    top: HashSet<u32>,
     bad: HashSet<u32>,
     /// `(callback parameter, bindings its elements come from)`.
     aliases: Vec<(u32, Vec<u32>)>,
@@ -486,6 +519,15 @@ impl Scan<'_, '_> {
             return;
         }
         let _ = e;
+        // F266: `render(ctx)` where `render` is a function the component was given, not one of the module: it only
+        // reads what it is handed (the call site's own function is spliced or stays React).
+        if self.objects
+            && let E::EIdentifier(id) = &c.target.data
+            && !self.top.contains(&id.ref_.inner_index())
+        {
+            c.args.iter().for_each(|a| self.expr(a, false));
+            return;
+        }
         self.expr(&c.target, true);
         c.args.iter().for_each(|a| self.expr(a, true));
     }
