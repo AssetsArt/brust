@@ -217,6 +217,10 @@ pub struct ComponentIR {
     /// shares one factory module with every clone whose chunk is equal (R34.124).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub specialised: bool,
+    /// F298: a clone made for one call site whose children were put where the component spreads its rest: the clones
+    /// made inside it are keyed by its id too (the same Provider call of the same module holds other content there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_clone_of: Option<String>,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (shadcn S1.2, R34.14): the props minus every
@@ -435,6 +439,7 @@ impl ComponentIR {
             export: None,
             unexported: false,
             specialised: false,
+            rest_clone_of: None,
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,
