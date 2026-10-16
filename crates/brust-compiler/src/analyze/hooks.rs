@@ -329,14 +329,18 @@ pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
             let E::ECall(call) = &value.data else {
                 continue;
             };
-            if react_hook_name(call, names).as_deref() != Some("useState") {
+            // F285: a reducer's state is a state cell; its dispatch is a handler, not a setter.
+            let hook = react_hook_name(call, names);
+            if !matches!(hook.as_deref(), Some("useState" | "useReducer")) {
                 continue;
             }
             let items = arr.items();
             if let Some(B::BIdentifier(id)) = items.first().map(|i| i.binding.data) {
                 names.mark_state(id.r#ref);
             }
-            if let Some(B::BIdentifier(id)) = items.get(1).map(|i| i.binding.data) {
+            if hook.as_deref() == Some("useState")
+                && let Some(B::BIdentifier(id)) = items.get(1).map(|i| i.binding.data)
+            {
                 names.mark_setter(id.r#ref);
             }
         }
@@ -710,7 +714,7 @@ fn read_stmts(
                 if let Some(v) = &ret.value {
                     hoist_ids(v, r, out);
                 }
-                returned = Some(ret.value.map(|v| returned_value(&v, r, out)));
+                returned = Some(ret.value.map(|v| returned_value(&v, r, out, m)));
             }
             // S2 (R34.104): `if (cond) { console.error(…) }` only logs (Radix's dev validation of its props): it is not
             // part of the render, so it is left out; any other effect of a branch keeps the control-flow fallback.
@@ -749,7 +753,12 @@ fn read_stmts(
 /// The value a `return` hands out. B2: inside a custom hook, `return React.useCallback(…)` (Radix's `useComposedRefs`)
 /// is the same hook as `const x = useCallback(…); return x`: the call is read under a generated name that the return
 /// then reads. Any other returned expression is read as it is.
-fn returned_value(v: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) -> RawExpr {
+fn returned_value(
+    v: &js_ast::Expr,
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+) -> RawExpr {
     if !out.inline.stack.is_empty()
         && let Some((hook, call, true)) = hook_call(v, r.names)
         && matches!(
@@ -777,6 +786,70 @@ fn returned_value(v: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls)
                 name,
                 kind: IdentKind::Local,
             },
+        };
+    }
+    // F286 / F285: `return useState(…)` / `return useReducer(…)` of a custom hook is the pair the call site destructures.
+    if !out.inline.stack.is_empty()
+        && let Some((hook, call, true)) = hook_call(v, r.names)
+        && matches!(hook.as_str(), "useState" | "useReducer")
+        && !out.classified_hooks.contains(&call_addr(call))
+    {
+        out.classified_hooks.insert(call_addr(call));
+        let vloc = loc_of(v);
+        let args: Vec<js_ast::Expr> = call.args.to_vec();
+        let mut n = 1;
+        let (state, set) = loop {
+            let state = format!("ret{n}_{}", clean_name(&hook));
+            let set = format!("{state}_set");
+            if !out.inline.taken.contains(&state) && !out.inline.taken.contains(&set) {
+                out.inline.taken.insert(state.clone());
+                out.inline.taken.insert(set.clone());
+                break (state, set);
+            }
+            n += 1;
+        };
+        let ident = |name: &str, kind: IdentKind| RawExpr {
+            loc: vloc,
+            kind: RawKind::Ident {
+                name: name.to_string(),
+                kind,
+            },
+        };
+        if hook == "useState" {
+            let init = match args.first() {
+                Some(a) => r.expr(a),
+                None => undefined_at(vloc),
+            };
+            out.state.push(StateDecl {
+                name: state.clone(),
+                setter: Some(set.clone()),
+                init: Expr::Raw(init),
+            });
+            return RawExpr {
+                loc: vloc,
+                kind: RawKind::Array(vec![
+                    ident(&state, IdentKind::State),
+                    ident(&set, IdentKind::Setter),
+                ]),
+            };
+        }
+        // A reducer: the second slot is the dispatch handler (a plain local to its readers).
+        let dispatch = set;
+        reducer_hook(
+            r,
+            out,
+            m,
+            &args,
+            state.clone(),
+            Some(dispatch.clone()),
+            vloc,
+        );
+        return RawExpr {
+            loc: vloc,
+            kind: RawKind::Array(vec![
+                ident(&state, IdentKind::State),
+                ident(&dispatch, IdentKind::Local),
+            ]),
         };
     }
     r.expr(v)
@@ -863,34 +936,228 @@ fn simple_hook(
     }
 }
 
-/// R34.120: a `useId()` in the returned expression that runs on every render (`contentId={useId()}`) is the same hook
-/// call as `const id = useId()` before the return, in source order. Each is given a generated local (a name no module
-/// symbol takes) that the reader prints in its place. A call in a conditional, short-circuited or looped position is
-/// left alone, and `nested_hooks` refuses it (`hook-in-expression`).
+/// F285: `useReducer(reducer, init[, initFn])` as a state cell and a dispatch handler:
+/// `const [s, set] = useState(init); const dispatch = (a) => set((p) => reducer(p, a))`. The handler is one declaration
+/// of the component, so `dispatch` keeps one identity across renders, like a setter. `reducer` is declared once as a
+/// handler of its own (so it reads the instance's current props and state, as React's latest-render reducer does) and is
+/// required to be a PURE function the compiler can read (`reducer::is_pure`): an inline arrow or function, or a function
+/// declared in this module. Anything else is the named refusal `reducer-shape` / `reducer-impure` (the component stays
+/// React).
+fn reducer_hook(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+    args: &[js_ast::Expr],
+    state: String,
+    dispatch: Option<String>,
+    vloc: u32,
+) {
+    let refuse = |out: &mut BodyDecls, rule: &str, why: &str| {
+        out.fallback(
+            rule,
+            format!("useReducer: {why}"),
+            vloc,
+            "pass an inline reducer, or one declared in this module, that returns the next state from (state, action) without side effects",
+        )
+    };
+    let (Some(reducer), true) = (args.first(), args.len() <= 3) else {
+        return refuse(out, "reducer-shape", "needs a reducer and an initial state");
+    };
+    // The reducer's own function: inline, or a module-level declaration or const arrow.
+    let body: Option<Vec<js_ast::Stmt>> = match &reducer.data {
+        E::EArrow(a) if !a.is_async => Some(a.body.stmts.slice().to_vec()),
+        E::EFunction(f)
+            if !f.func.flags.contains(js_ast::flags::Function::IsAsync)
+                && !f.func.flags.contains(js_ast::flags::Function::IsGenerator) =>
+        {
+            Some(f.func.body.stmts.slice().to_vec())
+        }
+        E::EIdentifier(id) if !m.foreign => {
+            let id = id.ref_;
+            match module_fn(m.ast, r.names, id) {
+                Some((_, f)) => Some(f.body.stmts.slice().to_vec()),
+                None => match crate::analyze::stores::Module::new(m.ast).const_value(id) {
+                    Some(js_ast::Expr {
+                        data: E::EArrow(a), ..
+                    }) if !a.is_async => Some(a.body.stmts.slice().to_vec()),
+                    _ => None,
+                },
+            }
+        }
+        _ => None,
+    };
+    let Some(body) = body else {
+        return refuse(
+            out,
+            "reducer-shape",
+            "the reducer is not an inline function or a function declared in this module",
+        );
+    };
+    if !crate::analyze::reducer::is_pure(r.names, &body) {
+        return refuse(
+            out,
+            "reducer-impure",
+            "the reducer is not provably pure (an assignment, a loop, `throw`, `new`, or a call it cannot see)",
+        );
+    }
+    let init = match (args.get(1), args.get(2)) {
+        (Some(a), None) => r.expr(a),
+        (None, _) => undefined_at(vloc),
+        // `useReducer(reducer, arg, init)`: the initial state is `init(arg)`.
+        (Some(a), Some(f)) => {
+            let callee = r.expr(f);
+            if !matches!(callee.kind, RawKind::Ident { .. }) {
+                return refuse(
+                    out,
+                    "reducer-shape",
+                    "the init function is not a named function",
+                );
+            }
+            RawExpr {
+                loc: vloc,
+                kind: RawKind::Call {
+                    callee: Box::new(callee),
+                    args: vec![r.expr(a)],
+                },
+            }
+        }
+    };
+    let mut taken = |base: &str| {
+        let mut n = 1;
+        loop {
+            let name = format!("rd{n}_{base}");
+            if out.inline.taken.insert(name.clone()) {
+                break name;
+            }
+            n += 1;
+        }
+    };
+    let dispatch_name = dispatch.clone().unwrap_or_else(|| "dispatch".into());
+    let set = taken(&format!("{}_set", clean_name(&dispatch_name)));
+    let reduce = taken(&format!("{}_fn", clean_name(&dispatch_name)));
+    out.state.push(StateDecl {
+        name: state,
+        setter: Some(set.clone()),
+        init: Expr::Raw(init),
+    });
+    let reducer_body = r.expr(reducer);
+    out.handlers.push(HandlerDecl {
+        name: reduce.clone(),
+        body: reducer_body,
+        item_scoped: Vec::new(),
+        forwarded: None,
+    });
+    let Some(dispatch) = dispatch else { return };
+    let id = |name: &str, kind: IdentKind| RawExpr {
+        loc: vloc,
+        kind: RawKind::Ident {
+            name: name.to_string(),
+            kind,
+        },
+    };
+    let next = RawExpr {
+        loc: vloc,
+        kind: RawKind::Arrow {
+            params: vec!["_p".into()],
+            body: ArrowBody::Expr(Box::new(RawExpr {
+                loc: vloc,
+                kind: RawKind::Call {
+                    callee: Box::new(id(&reduce, IdentKind::Local)),
+                    args: vec![id("_p", IdentKind::Unknown), id("_a", IdentKind::Unknown)],
+                },
+            })),
+            captures: vec![(reduce.clone(), IdentKind::Local)],
+        },
+    };
+    let call = RawExpr {
+        loc: vloc,
+        kind: RawKind::Arrow {
+            params: vec!["_a".into()],
+            body: ArrowBody::Expr(Box::new(RawExpr {
+                loc: vloc,
+                kind: RawKind::Call {
+                    callee: Box::new(id(&set, IdentKind::Setter)),
+                    args: vec![next],
+                },
+            })),
+            captures: vec![
+                (set.clone(), IdentKind::Setter),
+                (reduce.clone(), IdentKind::Local),
+            ],
+        },
+    };
+    out.handlers.push(HandlerDecl {
+        name: dispatch,
+        body: call,
+        item_scoped: Vec::new(),
+        forwarded: None,
+    });
+}
+
+/// R34.120 / F286: a hook call in the returned expression that runs on every render (`contentId={useId()}`, a custom
+/// hook's `return { ref: useCallback(…) }`, `return useCallback(…)`) is the same hook call as `const x = useHook(…)`
+/// before the return, in source order. Each is given a generated local (a name no module symbol takes) that the reader
+/// prints in its place. The hooks are the ones whose result is one named value (`useId`, `useCallback`, `useMemo`,
+/// `useRef`). A call in a conditional, short-circuited or looped position, or inside a function, is left alone, and
+/// `nested_hooks` refuses it (`hook-in-expression`).
 fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) {
     let mut found = Vec::new();
     unconditional_calls(value, &mut found);
     for call in found {
-        if react_hook_name(call, r.names).as_deref() != Some("useId") {
+        let Some(hook) = react_hook_name(call, r.names) else {
+            continue;
+        };
+        if !matches!(
+            hook.as_str(),
+            "useId" | "useCallback" | "useMemo" | "useRef"
+        ) {
             continue;
         }
         let addr = call_addr(call);
-        if !call.args.is_empty() || r.hoisted_calls.contains_key(&addr) {
+        if (hook == "useId" && !call.args.is_empty()) || r.hoisted_calls.contains_key(&addr) {
             continue;
         }
-        let mut n = out.id_bindings.len() + 1;
+        if hook == "useId" {
+            let mut n = out.id_bindings.len() + 1;
+            let name = loop {
+                let name = format!("_id{n}");
+                if out.inline.taken.insert(name.clone()) {
+                    break name;
+                }
+                n += 1;
+            };
+            out.classified_hooks.insert(addr);
+            out.uses_id = true;
+            out.id_bindings.push(name.clone());
+            r.hoisted_calls.insert(addr, name);
+            continue;
+        }
+        // Not `use…`: the name must not read as a hook call where the caller invokes the result.
+        let mut n = 1;
         let name = loop {
-            let name = format!("_id{n}");
+            let name = format!("hoist{n}_{}", clean_name(&hook));
             if out.inline.taken.insert(name.clone()) {
                 break name;
             }
             n += 1;
         };
         out.classified_hooks.insert(addr);
-        out.uses_id = true;
-        out.id_bindings.push(name.clone());
+        let args: Vec<js_ast::Expr> = call.args.to_vec();
+        simple_hook(
+            r,
+            out,
+            &hook,
+            Some(name.clone()),
+            &args,
+            loc_of_call(call),
+            false,
+        );
         r.hoisted_calls.insert(addr, name);
     }
+}
+
+fn loc_of_call(call: &js_ast::E::Call) -> u32 {
+    call.target.loc.start.max(0) as u32
 }
 
 /// The calls of `e` that run on every evaluation of it, in source order: not inside a function, the branches of a
@@ -1346,6 +1613,37 @@ fn read_decl(
             (true, "useMemo" | "useCallback" | "useRef" | "useId") => {
                 let snapshot = matches!(decl.binding.data, B::BIdentifier(id) if r.names.is_snapshot_ref(id.r#ref));
                 simple_hook(r, out, &hook, ident, &args, vloc, snapshot)
+            }
+            // F285: `const [state, dispatch] = useReducer(reducer, init[, initFn])`.
+            (true, "useReducer") => {
+                let B::BArray(arr) = decl.binding.data else {
+                    return out.fallback(
+                        "hook-shape",
+                        "useReducer result used without destructuring".into(),
+                        vloc,
+                        "write const [state, dispatch] = useReducer(reducer, init)",
+                    );
+                };
+                let items = arr.items();
+                let name_at = |i: usize| match items.get(i).map(|x| x.binding.data) {
+                    Some(B::BIdentifier(id)) => Some(r.names.name(id.r#ref)),
+                    _ => None,
+                };
+                if arr.has_spread
+                    || items.len() > 2
+                    || items
+                        .iter()
+                        .any(|x| !matches!(x.binding.data, B::BIdentifier(_) | B::BMissing(_)))
+                {
+                    return out.fallback(
+                        "hook-shape",
+                        "useReducer destructuring must be [state, dispatch]".into(),
+                        vloc,
+                        "write const [state, dispatch] = useReducer(reducer, init)",
+                    );
+                }
+                let state = name_at(0).unwrap_or_else(|| format!("_st{}", out.state.len() + 1));
+                reducer_hook(r, out, m, &args, state, name_at(1), vloc);
             }
             _ => out.fallback(
                 "hook-unsupported",
