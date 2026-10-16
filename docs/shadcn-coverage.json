@@ -199,6 +199,15 @@
       "libraryComponents": 5
     },
     {
+      "blocker": "fallback:client-function-in-job",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 1
+    },
+    {
       "blocker": "fallback:context-value",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -1257,6 +1266,7 @@
       "jsGzipKb": 117,
       "workerCalls": 1,
       "codes": [
+        "client-function-in-job",
         "context-state",
         "control-flow",
         "external-component",

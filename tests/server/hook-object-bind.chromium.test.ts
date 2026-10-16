@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderDestructured, renderMemo, renderWhole } from '../../packages/brust/test/fixtures/hook-object-bind/render'
+import { renderComp, renderCompDestruct, renderDestructured, renderMemo, renderWhole } from '../../packages/brust/test/fixtures/hook-object-bind/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/hook-object-bind')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -122,3 +122,22 @@ test('/memo: the clicks work on the React-tier page', async () => {
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
+
+for (const [path, id, react] of [
+  ['/comp', 'comp', renderComp],
+  ['/comp-destruct', 'compd', renderCompDestruct],
+] as const) {
+  test(`${path}: a value computed from a handler is served (React tier), equals React's markup, and the click works`, async () => {
+    const res = await fetch(`${base}${path}`)
+    expect(res.status).toBe(200)
+    expect(plain(await res.text())).toContain(plain(react()).replace(/^<main>|<\/main>$/g, ''))
+    const page = await browser.newPage()
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+    await page.goto(`${base}${path}`, { waitUntil: 'networkidle' })
+    await page.getByTestId(id).click()
+    await page.waitForFunction((t) => document.querySelector(`[data-testid="${t}"]`)?.textContent === 'on', id)
+    expect(errors).toEqual([])
+    await page.close()
+  }, 60_000)
+}

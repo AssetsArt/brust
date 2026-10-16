@@ -105,3 +105,22 @@ fn a_hook_object_used_as_a_whole_or_by_a_dynamic_or_nested_key_is_a_named_refusa
         );
     }
 }
+
+#[test]
+fn a_value_the_component_computes_from_a_handler_is_a_named_refusal() {
+    // `const o = { cb: toggle }` is a per-request job naming a handler the client owns (a 500), with `toggle` read from the
+    // hook whole (`t.toggle`) or destructured (that second one is the same on main before F289).
+    for f in ["comp_member.tsx", "comp_destruct.tsx"] {
+        let all = compile(f);
+        assert!(
+            all.iter().any(|i| react(&i.ir)),
+            "{f}: {:?}",
+            all.iter().map(|i| &i.ir.tier).collect::<Vec<_>>()
+        );
+        assert!(
+            rules(&all).contains(&"client-function-in-job".to_string()),
+            "{f}: {:?}",
+            rules(&all)
+        );
+    }
+}

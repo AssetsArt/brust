@@ -659,6 +659,19 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, m: Module<'_, '_>
     }
     out.handlers.append(&mut r.pending_handlers);
     out.diagnostics.append(&mut r.diagnostics);
+    // F289: the same rule one step outside a hook: `const o = { cb: toggle }` in the component, with `toggle` a handler.
+    if out.react_reason.is_none()
+        && let Some(name) = client_function_in_derived(&out, 0)
+    {
+        out.fallback(
+            "client-function-in-job",
+            format!(
+                "a value computed per request names `{name}`, a handler, setter or function the client owns"
+            ),
+            0,
+            "use the function only in an event handler or the JSX, or keep this component in React",
+        );
+    }
     out
 }
 
@@ -3231,7 +3244,27 @@ fn read_hook(
     // F289: a derived value the hook (or the binding of its result) added is a per-request job; the handlers and setters
     // are the client's, so one that names them is a job that throws (a 500). Whatever shape put it there (a `useMemo`
     // returning the object, a spread in the returned literal) is refused by name.
-    // The client's functions: the handlers, and a function the hook declared (`const toggle = () => …`).
+    if let Some(name) = client_function_in_derived(out, start.derived) {
+        let spelled = name
+            .rsplit_once('_')
+            .filter(|(_, tail)| tail.starts_with(&clean_name(hook)))
+            .map_or(name.as_str(), |(head, _)| head)
+            .to_string();
+        out.fallback(
+            "hook-return-shape",
+            format!(
+                "custom hook {hook} hands out `{spelled}`, a handler or setter, inside a value the compiler computes per request"
+            ),
+            vloc,
+            "return an object or array literal the call site reads as `t.key` or destructures, or keep this component in React",
+        );
+    }
+}
+
+/// The first handler, setter or hook-declared function that a derived value of `out` (from `from` on) names. A
+/// derived value is a per-request job, which does not have the client's functions: it would throw (a 500).
+fn client_function_in_derived(out: &BodyDecls, from: usize) -> Option<String> {
+    // The client's functions: the handlers, and a function declared as a const (`const toggle = () => …`).
     let handlers: HashSet<&str> = out
         .handlers
         .iter()
@@ -3241,28 +3274,14 @@ fn read_hook(
             _ => None,
         }))
         .collect();
-    for d in &out.derived[start.derived..] {
-        // a function declared in the hook (`const toggle = () => setOn(…)`) is a handler the component lifts, not a job
-        let Expr::Raw(e) = &d.expr else { continue };
+    out.derived[from..].iter().find_map(|d| {
+        // a function (`const toggle = () => setOn(…)`) is a handler the component lifts, not a job
+        let Expr::Raw(e) = &d.expr else { return None };
         if matches!(e.kind, RawKind::Arrow { .. }) {
-            continue;
+            return None;
         }
-        if let Some(name) = names_client_function(e, &handlers) {
-            let spelled = name
-                .rsplit_once('_')
-                .filter(|(_, tail)| tail.starts_with(&clean_name(hook)))
-                .map_or(name.as_str(), |(head, _)| head)
-                .to_string();
-            return out.fallback(
-                "hook-return-shape",
-                format!(
-                    "custom hook {hook} hands out `{spelled}`, a handler or setter, inside a value the compiler computes per request"
-                ),
-                vloc,
-                "return an object or array literal the call site reads as `t.key` or destructures, or keep this component in React",
-            );
-        }
-    }
+        names_client_function(e, &handlers)
+    })
 }
 
 /// The first handler or setter that `e` names (the client's functions, which a per-request job does not have).
