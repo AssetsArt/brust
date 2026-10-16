@@ -117,6 +117,8 @@ test('/memo: the clicks work on the React-tier page', async () => {
   await page.waitForFunction(() => document.querySelector('[data-testid="memo"]')?.textContent === 'on')
   await page.getByTestId('spread').click()
   await page.waitForFunction(() => document.querySelector('[data-testid="spread"]')?.textContent === 'xon')
+  await page.getByTestId('held').click()
+  await page.waitForFunction(() => document.querySelector('[data-testid="held"]')?.textContent === 'on')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

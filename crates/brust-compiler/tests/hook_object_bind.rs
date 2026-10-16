@@ -88,6 +88,9 @@ fn a_hook_object_used_as_a_whole_or_by_a_dynamic_or_nested_key_is_a_named_refusa
         // not a literal: a useMemo of the object, a spread in it: a job would name the handler
         "whole_memo.tsx",
         "whole_spread.tsx",
+        // an identifier the hook returns: an object held in a local, not the literal the call site can read
+        "whole_ident.tsx",
+        "whole_ident_fn.tsx",
     ] {
         let all = compile(f);
         assert!(

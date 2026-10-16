@@ -3231,7 +3231,16 @@ fn read_hook(
     // F289: a derived value the hook (or the binding of its result) added is a per-request job; the handlers and setters
     // are the client's, so one that names them is a job that throws (a 500). Whatever shape put it there (a `useMemo`
     // returning the object, a spread in the returned literal) is refused by name.
-    let handlers: HashSet<&str> = out.handlers.iter().map(|h| h.name.as_str()).collect();
+    // The client's functions: the handlers, and a function the hook declared (`const toggle = () => …`).
+    let handlers: HashSet<&str> = out
+        .handlers
+        .iter()
+        .map(|h| h.name.as_str())
+        .chain(out.derived.iter().filter_map(|d| match &d.expr {
+            Expr::Raw(e) if matches!(e.kind, RawKind::Arrow { .. }) => Some(d.name.as_str()),
+            _ => None,
+        }))
+        .collect();
     for d in &out.derived[start.derived..] {
         // a function declared in the hook (`const toggle = () => setOn(…)`) is a handler the component lifts, not a job
         let Expr::Raw(e) = &d.expr else { continue };

@@ -29,3 +29,10 @@ export function useSpread(extra: { label: string }) {
   const toggle = React.useCallback(() => setOn((o) => !o), [])
   return { ...extra, on, toggle }
 }
+
+export function useHeld() {
+  const [on, setOn] = React.useState(false)
+  const toggle = () => setOn(!on)
+  const obj = { on, toggle }
+  return obj
+}
