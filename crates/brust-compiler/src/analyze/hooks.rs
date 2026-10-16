@@ -1436,7 +1436,7 @@ fn hook_presence_test(test: &js_ast::Expr, names: &NameTable<'_>) -> Option<bool
         };
         u.op == Op::UnTypeof
             && crate::analyze::names::ident_ref(&u.value).is_some_and(
-                |r| matches!(names.import_of(r), Some(("react", h)) if h != "default" && h != "*"),
+                |r| matches!(names.import_of(r), Some(("react", h)) if crate::analyze::names::REACT_HOOKS.contains(&h)),
             )
     };
     ((typeof_hook(&b.left) && is_function(&b.right))

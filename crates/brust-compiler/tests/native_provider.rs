@@ -639,3 +639,15 @@ fn a_consumer_reading_a_whole_value_or_fields_the_provider_does_not_hand_out_fal
         assert!(is_react(&all[0].ir), "{file}: {:?}", all[0].ir.tier);
     }
 }
+
+// Review (Afrojack): only React's HOOKS are known to be functions; `typeof version === 'function'` (a string) is not decided.
+#[test]
+fn typeof_of_a_react_export_that_is_not_a_hook_is_not_decided() {
+    let all = compile("typeof_not_hook.tsx");
+    assert!(
+        all.iter()
+            .any(|i| has(&i.ir, DiagClass::Fallback, "control-flow")),
+        "{:?}",
+        all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+    );
+}

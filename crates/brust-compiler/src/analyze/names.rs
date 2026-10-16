@@ -173,7 +173,7 @@ pub fn module_imports(ast: &js_ast::Ast<'_>) -> HashMap<u32, (String, String)> {
 }
 
 /// The hooks React 19 exports from `react`: functions, so truthy, and hooks by their name.
-const REACT_HOOKS: &[&str] = &[
+pub(crate) const REACT_HOOKS: &[&str] = &[
     "useActionState",
     "useCallback",
     "useContext",
