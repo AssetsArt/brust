@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-17', title: '2.0.0-alpha.17' },
       { id: 'alpha-16', title: '2.0.0-alpha.16' },
       { id: 'alpha-15', title: '2.0.0-alpha.15' },
       { id: 'alpha-14', title: '2.0.0-alpha.14' },
@@ -39,6 +40,114 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-17">2.0.0-alpha.17 · 17 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#311 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
+      <p>This version closes several cases where a compiled component showed stale or missing output, including a regression from 2.0.0-alpha.16, and it compiles more Radix patterns to native code. Upgrade if you use a Provider that spreads its props or a component whose props change while the page is open.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #292 (F284–F287) */}
+        <li>
+          <strong><code>useReducer</code>, arrow-function components, hooks inside a returned expression and <code>[literals].includes(x)</code> compile.</strong> <code>const X = (props) =&gt; {'{'}…{'}'}</code> is read like a function declaration. <code>useReducer</code> becomes a state value and one dispatch handler when the reducer is an inline function or a function in the same module that brust can prove has no side effects; otherwise the call site renders with React. An unconditional <code>useCallback</code>, <code>useMemo</code>, <code>useRef</code> or <code>useId</code> anywhere in the returned expression runs before it, in source order. <code>[&quot;a&quot;, &quot;b&quot;].includes(x)</code> on a literal array of at most 16 members compiles to a chain of equality tests.
+        </li>
+        {/* source: PR #294 (F296, F299); reviewed by Mellow */}
+        <li>
+          <strong>A live <code>style</code> or <code>className</code> passed through a component that spreads its props reaches the element.</strong> A parent that changes <code>style</code> or <code>className</code> on a wrapper that forwards <code>{'{'}...props{'}'}</code> no longer keeps the component from compiling. A wrapper that may render a <code>Slot</code> still renders with React, because a Slot merges both. The first paint of <code>style</code> matches react-dom: declarations in source order, React&rsquo;s unitless properties, and no attribute at all for an empty style.
+        </li>
+        {/* source: PR #295 (W1c, R34.140–R34.141) */}
+        <li>
+          <strong><code>@radix-ui/react-collection</code> 1.2.0 compiles to a small browser feature.</strong> brust recognises that exact version by the hash of its published file, so any other version, or a changed file, stays a React island. The items of a collection are the elements in the page, read when they are needed, so they are always current. Items inside an island or raw markup are left out, so a foreign widget never joins the focus order. The feature loads only on pages that use it.
+        </li>
+        {/* source: PR #297 (F304); reviewed by Mellow */}
+        <li>
+          <strong>A context field read inside an event handler or an effect compiles.</strong> <code>context.onItemActivate(…)</code> in a handler no longer sends the component to React. The context may appear only as a field read (<code>c.f</code>, <code>c?.f</code>, <code>c.f(…)</code>). Assigning through it, a computed key, destructuring it, or passing it on as a value still renders with React.
+        </li>
+        {/* source: PR #301 (W1d PR 2); reviewed by Mellow */}
+        <li>
+          <strong>Radix scoped context hooks compile.</strong> A context hook called with <code>props.__scope&lt;Name&gt;</code> is read from the scope that Radix&rsquo;s <code>createXScope()</code> made, identified by where it comes from and never by its name. Nested frames of the same name under a scope, and call sites whose scope brust cannot prove, render with React.
+        </li>
+        {/* source: PR #290 (W1b, R34.143, R34.144) */}
+        <li>
+          <strong><code>useIsHydrated</code> and a context destructured in the component body compile.</strong> <code>useSyncExternalStore(subscribe, () =&gt; true, () =&gt; false)</code> with an empty <code>subscribe</code> is <code>false</code> in the server HTML and in the first hydrated render, then <code>true</code> after mount, and the component&rsquo;s other effects see <code>false</code> first, as in React. <code>const {'{'} on, flip {'}'} = context</code> is read field by field. Every other <code>useSyncExternalStore</code> still renders with React.
+        </li>
+        {/* source: PR #308 (W1d PR 3) */}
+        <li>
+          <strong>Early-return chains compile.</strong> <code>if (a) return &lt;A /&gt;; if (b) return &lt;B /&gt;; …</code> becomes one nested conditional, and a <code>forwardRef</code> component with such a chain is read the same way.
+        </li>
+        {/* source: PR #291 (F293, F295) and PR #305 (F300) */}
+        <li>
+          <strong>A ref that nothing writes, seeded from a live value, is bound once per mount.</strong> Radix&rsquo;s hidden checkbox input (<code>useRef(checked)</code>) reaches the element through a forwarding spread, and <code>defaultChecked</code> or <code>defaultValue</code> are bound on the element so the first value equals React&rsquo;s. A component that mounts later than its parent, under a condition for example, is seeded from the parent&rsquo;s current props.
+        </li>
+        {/* source: PR #298 (F298) */}
+        <li>
+          <strong>Children passed to a component that spreads <code>...rest</code> are placed under the specialised Provider.</strong> The children can then read the Provider&rsquo;s context. This covers an unlinked static trigger; a native or linked trigger keeps rendering with React.
+        </li>
+        {/* source: PR #289 (F297) */}
+        <li>
+          <strong>A condition on a state value whose server value is a known literal no longer needs a per-request computation.</strong> <code>const [control] = useState(null)</code> followed by <code>control ? control.closest(&quot;form&quot;) : true</code> compiles without the dead branch, while the browser still evaluates both branches live.
+        </li>
+        {/* source: PR #287 (F280) */}
+        <li>
+          <strong>A spread object may contain a conditional and calls of plain functions.</strong> A call of a function that brust has proven free of side effects, over plain reads, is read like a literal value.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #302 (F324); regression since alpha.16 (PR #265, call-site specialisation) */}
+        <li>
+          <strong>A Provider that spreads its props no longer drops the children you pass it.</strong> In 2.0.0-alpha.16, <code>&lt;Root&gt;&lt;span&gt;hello&lt;/span&gt;&lt;/Root&gt;</code> printed an empty <code>&lt;button&gt;</code> when <code>Root</code> is a Provider that spreads its rest props onto the button. Such a call site now renders with React and shows the children. If you used this pattern on alpha.16, upgrade.
+        </li>
+        {/* source: PR #300 (F319); the bug is present in every alpha since 2.0.0-alpha.1 (bisected on the published addons) */}
+        <li>
+          <strong>A prop that changes while the page is open no longer stays stale in a compiled component.</strong> The old value stayed in the rows of a list that is printed once, in a child component that brust does not link to its parent, and in a prop forwarded through a component&rsquo;s <code>{'{'}...props{'}'}</code> spread. It has been present since alpha.1 and printed no warning. A call site that passes a changing value (state, a store value or a function) to such a prop now renders with React; a constant is unaffected.
+        </li>
+        {/* source: PR #293 (F309) */}
+        <li>
+          <strong>Slot content inside a static child that is linked to its parent no longer keeps its first value.</strong> <code>&lt;Label on={'{'}on{'}'}&gt;&lt;Thumb on={'{'}on{'}'} /&gt;&lt;/Label&gt;</code> kept the first <code>Thumb</code> after <code>on</code> changed; the only sign was a console warning. The call site now renders with React.
+        </li>
+        {/* source: PR #309 (F289, F290) and PR #310 (F331) */}
+        <li>
+          <strong>A custom hook that returns an object with a handler no longer answers 500.</strong> <code>const t = useToggle()</code>, where the hook returns <code>{'{'} on, toggle {'}'}</code>, threw <code>ReferenceError: toggle_useToggle1 is not defined</code>. The object is now read member by member (<code>t.on</code>, <code>t.toggle</code>), as a destructuring is. A value the component computes from a handler a hook created, such as <code>{'{'} cb: t.toggle {'}'}</code> built per request, and a handler returned inside a computed result, render with React instead of answering 500. An object that holds the component&rsquo;s own arrow function or function declaration stays native.
+        </li>
+        {/* source: PR #296 (F282), PR #299 (F318), PR #311 (F333) */}
+        <li>
+          <strong>Objects keep JavaScript&rsquo;s key order.</strong> Keys were sorted in a style object handed to a React island, in an object read at request time (<code>Object.keys</code> and <code>Object.entries</code> over loader, job or store data), and in an object literal passed to a compiled child. <code>{'{'} marginTop: 5, margin: 0 {'}'}</code> printed <code>margin:0;margin-top:5px</code>, so the longhand won where React ends with <code>margin-top: 0</code>. The order now follows the source, and the first paint equals React&rsquo;s.
+        </li>
+        {/* source: PR #296 (F311) */}
+        <li>
+          <strong><code>className</code> or <code>style</code> set to <code>undefined</code> or <code>null</code> leaves no attribute.</strong> The browser binder wrote <code>class=&quot;&quot;</code> and <code>style=&quot;&quot;</code>. An explicit <code>className=&quot;&quot;</code> keeps its empty class.
+        </li>
+        {/* source: PR #305 (F300, children-rest) */}
+        <li>
+          <strong>JSX children given to a component that passes its whole rest to a specialised Provider are no longer lost.</strong> They vanished, and an island child threw in a server job, which answered 500. Those call sites render with React.
+        </li>
+        {/* source: PR #288 (W1a) */}
+        <li>
+          <strong>A prop named like a template word (<code>loop</code>, <code>range</code>) no longer collides.</strong> Radix&rsquo;s <code>loop</code> prop clashed with a name in the server template.
+        </li>
+      </ul>
+
+      <h3>Security</h3>
+      <ul>
+        {/* source: PR #287 (F274, F276); reviewed by Mellow and Afrojack */}
+        <li>
+          <strong>The check for modules that write other modules at load time covers <code>[build] source_roots</code> and top-level calls.</strong> A write to another module from a file in a shared source root, or from a function the module calls at its top level (<code>function init() {'{'} B.x = 1 {'}'}; init()</code>), was missed. Both are now seen.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #303 (F308, F334) and PR #307 (F335); reviewed by Mellow and Afrojack */}
+        <li>
+          <strong>A <code>key</code> that changes, written outside a list, renders the component with React.</strong> React remounts the element when its key changes, which resets its state and effects; brust kept the instance. This covers a key written on an element or component, a key inside a spread object, and a path spread on a component tag (<code>{'{'}...props.cfg{'}'}</code>) that may carry one. A constant <code>key</code> and the keys of a list are unchanged. A spread on a plain HTML element stays as before, because React itself warns when a spread carries a key.
+        </li>
+        {/* source: PR #308 (W1d PR 3, render_error) */}
+        <li>
+          <strong>A literal <code>throw</code> in a compiled component answers 500, as React&rsquo;s server render does.</strong> The production response body carries no message; the server log does. Where the value that selects the throw is a literal at the call site, the throwing branch is dropped. A value that changes after mount renders with React.
+        </li>
+      </ul>
 
       <h2 id="alpha-16">2.0.0-alpha.16 · 16 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.15: #260–#285 (wave A 2c-1, 2c-2a, 2c-2b, 3a, 3b, S2; switch blockers F266/F269/F278/F279/F277; resolver F241–F245, F256, F272, F273; F205, F230, F232–F234, F147, F213, F223, F237, F248, F255; shadcn init F192/F193, F226–F228, F249, F251–F253, F261) */}
