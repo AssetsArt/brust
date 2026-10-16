@@ -4,7 +4,7 @@ export default function Gate({ children }: { children?: React.ReactNode }) {
   const [open, setOpen] = useState(true)
   return (
     <div>
-      <button onClick={() => setOpen(!open)}>t</button>
+      <button data-testid="box" onClick={() => setOpen(!open)}>t</button>
       {open && children}
     </div>
   )
