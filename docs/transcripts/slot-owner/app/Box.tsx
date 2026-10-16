@@ -3,7 +3,7 @@ import { useState } from 'react'
 export default function Box({ children }: { children?: React.ReactNode }) {
   const [n, setN] = useState(0)
   return (
-    <div data-n={n} onClick={() => setN(n + 1)}>
+    <div data-testid="box" data-n={n} style={{ padding: 4 }} onClick={() => setN(n + 1)}>
       {children}
     </div>
   )

@@ -1,3 +1,4 @@
+// (run a copy from tests/server/ so `playwright` resolves: cp serve.ts tests/server/zz-sod-serve.ts)
 // usage: WT=<worktree> APP=<app dir under WT> bun serve.ts <page>...   (BRUST_SPIKE_B=1 for the option-B spike)
 // Builds APP with WT's brust, serves it, and for each page compares, after every click on [data-testid=f] and on
 // [data-testid=box], the page's observable state (text, data-* and checked of every element under <main>) with React
@@ -27,7 +28,7 @@ async function run(page: string, react: boolean) {
   } else await p.goto(`${base}/${page}`)
   await p.waitForTimeout(300)
   const log = [await state(p)]
-  for (const t of ['f', 'box', 'f', 'box', 'f']) { try { await p.click(`[data-testid="${t}"]`, { timeout: 3000 }) } catch (e) { log.push(`click ${t} failed: ${String(e).split('\n')[0]}`); break } await p.waitForTimeout(80); log.push(await state(p)) }
+  for (const t of ['f', 'box', 'f', 'box', 'f']) { if (!(await p.$(`[data-testid="${t}"]`))) continue; try { await p.click(`[data-testid="${t}"]`, { timeout: 3000 }) } catch (e) { log.push(`click ${t} failed: ${String(e).split('\n')[0]}`); break } await p.waitForTimeout(80); log.push(await state(p)) }
   await p.close(); return { log, warns }
 }
 for (const page of process.argv.slice(2)) {
