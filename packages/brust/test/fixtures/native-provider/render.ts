@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import FwdPage from './FwdPage'
 import GatePage from './GatePage'
+import HooksPage from './HooksPage'
 import Nested from './Nested'
 import NestedIds from './NestedIds'
 import InputsPage from './InputsPage'
@@ -26,3 +27,4 @@ export const renderFwd = (): string => html(FwdPage)
 export const renderSame = (): string => html(SamePage)
 export const renderRest = (): string => html(RestPage)
 export const renderLoop = (loop: string): string => server.renderToStaticMarkup(createElement(LoopPage as never, { loop } as never))
+export const renderHooks = (): string => html(HooksPage)

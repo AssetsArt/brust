@@ -468,6 +468,10 @@ impl<'r, 'a> Reader<'r, 'a> {
     fn arrow(&mut self, e: &js_ast::Expr, a: &js_ast::E::Arrow) -> RawExpr {
         let list_body = std::mem::take(&mut self.map_callback);
         let mut params = Vec::new();
+        // `(...args) => …`: the IR's parameters have no rest form, and dropping the `...` changes what the function sees
+        if a.has_rest_arg {
+            return self.opaque(e, "arrow rest parameter");
+        }
         for arg in a.args.slice() {
             match arg.binding.data {
                 B::BIdentifier(id) if arg.default.is_none() => {

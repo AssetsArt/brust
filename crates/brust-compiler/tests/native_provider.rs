@@ -561,3 +561,38 @@ fn a_live_caller_rest_is_never_carried_into_a_clone() {
     );
     assert!(!root.jinja.contains("data-n=\"0\""), "{}", root.jinja);
 }
+
+// R34.142: Radix's `useId` (a React 18 id with a client-only counter fallback) and `useCallbackRef` (`typeof` of React's
+// insertion effect picks the effect), imported from other modules, lower with no island: the fallbacks are decided, not read.
+#[test]
+fn radix_use_id_and_use_callback_ref_lower_without_their_react_version_fallbacks() {
+    let all = compile("hooks_page.tsx");
+    let panel = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("panel"))
+        .expect("the Panel component");
+    assert!(!is_react(&panel.ir), "{:?}", panel.ir.diagnostics);
+    assert!(
+        !panel
+            .ir
+            .diagnostics
+            .iter()
+            .any(|d| d.class == DiagClass::Fallback),
+        "{:?}",
+        panel.ir.diagnostics
+    );
+    // the id is the server's: one seeded value, and the counter fallback (`count++`) is gone with its effect
+    assert_eq!(panel.ir.id_bindings.len(), 1, "{:?}", panel.ir.id_bindings);
+    let client = panel.client.as_deref().expect("a client chunk");
+    assert!(!client.contains("count"), "{client}");
+}
+
+// An arrow's rest parameter is part of its meaning (`(...xs) => xs.length`): the reader kept only the name, so the chunk
+// declared `(xs) => ...` and a call spread an `undefined` where the original took none. It is read verbatim now.
+#[test]
+fn an_arrow_with_a_rest_parameter_keeps_its_rest() {
+    let all = compile("rest_arrow.tsx");
+    let client = all[0].client.as_deref().expect("a client chunk");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(client.contains("...xs"), "{client}");
+}

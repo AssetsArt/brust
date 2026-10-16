@@ -1,6 +1,7 @@
 import { defineRoutes } from '@brust/core/routes'
 import FwdPage from './FwdPage'
 import GatePage from './GatePage'
+import HooksPage from './HooksPage'
 import Nested from './Nested'
 import NestedIds from './NestedIds'
 import InputsPage from './InputsPage'
@@ -22,6 +23,7 @@ export const routes = defineRoutes([
   { path: '/rest', Component: RestPage },
   { path: '/rest-live', Component: RestLivePage },
   { path: '/inputs', Component: InputsPage },
+  { path: '/hooks', Component: HooksPage },
   { path: '/loop/{loop}', Component: LoopPage, loader: async ({ params }: { params: { loop: string } }) => ({ loop: params.loop }) },
   { path: '/render', Component: RenderPage },
   { path: '/poly', Component: PolyPage },

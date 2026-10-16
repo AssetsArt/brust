@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 84 | 17 | 26 | 41 | 0 | 0 | 0 | 0 |
+| C Hooks | 87 | 19 | 27 | 41 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 457 | 205 | 70 | 178 | 3 | 1 | 0 | 0 |
+| **Total** | 460 | 207 | 71 | 178 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -376,6 +376,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-native-provider-rest-input | a component spreads its own ...rest into a consumer under the Provider it renders | static | static | 0 | ok | 4.4 | — | F278: the rest crosses into the clone as the hidden input __in_rest and is spread there; F279: getState(checked) is its expression, so the consumer has no job |
 | c-native-provider-rest-input-live | a native page passes a live attribute to a component that spreads its rest into a clone | react | react | ssr | ok | 5.1 | fallback:spread-props | F278 (Mellow F1): a live rest cannot be re-spread by the clone on the client, so the call that passes one stays React |
 | c-pure-helper-call-inlined | a single-return module helper called with a state read | native | native | 0 | ok | 4.4 | — | F279: the call is replaced by the helper's expression (a plain-read argument), so no precompute job runs it |
+| c-hook-radix-useid-callbackref | Radix's useId and useCallbackRef (imported hooks with React-version fallbacks) | static | static | 0 | ok | 4.4 | info:build-eval-instance | R34.142: `typeof <React hook alias> === "function"` is decided (React exports its hooks as functions) and only the branch that runs is read; `setId(r => r ?? ...)` on a state seeded by useId() is an identity update, so the client-only counter fallback and its effect are dropped and the state is the server-seeded id |
+| c-arrow-rest-param-kept | a component function with a rest parameter called from a handler | native | native | 0 | ok | 4.4 | — | an arrow's `(...xs)` was read as `(xs)` (the IR has no rest parameter): a call passing none spread undefined; read verbatim now |
+| c-context-field-named-loop | a state Provider whose context has a field named loop | static | static | 0 | ok | 4.4 | — | R34.142: the hidden prop is `__ctx_<ctx>_loop`, so the template name `loop` is not shadowed; the field was refused (context-shape) |
 | c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
 | c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |

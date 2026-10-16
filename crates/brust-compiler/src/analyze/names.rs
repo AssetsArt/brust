@@ -1053,6 +1053,17 @@ impl<'a> NameTable<'a> {
         self.snapshot_refs.contains(&self.key(r))
     }
 
+    /// `r` is not a state after all (`hooks.rs`, `drop_inert_id_effects`: the state is a plain id).
+    pub fn unmark_state(&mut self, r: js_ast::Ref) {
+        let k = self.key(r);
+        self.state.remove(&k);
+    }
+
+    pub fn unmark_setter(&mut self, r: js_ast::Ref) {
+        let k = self.key(r);
+        self.setters.remove(&k);
+    }
+
     pub fn mark_setter(&mut self, r: js_ast::Ref) {
         let k = self.key(r);
         self.setters.insert(k);
