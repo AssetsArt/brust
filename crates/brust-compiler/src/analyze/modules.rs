@@ -281,14 +281,28 @@ fn join_relative(parent: &str, rel: &str) -> String {
     })
 }
 
-/// Whether a normalised module path lies outside the app root (F243): a leading `..`, or an absolute path that is not
-/// under `opts.root` when its importer is. (An absolute importer outside the root, as the tests analyse, has no root to
-/// stay in.) The package sources the build writes live under the root (`.brust/pkg-src`), so they are inside.
+/// Whether a normalised module path lies outside the app root and every source root (F243, F256): a leading `..` that no
+/// source root covers, or an absolute path that is not under `opts.root` when its importer is. (An absolute importer
+/// outside the root, as the tests analyse, has no root to stay in.) The package sources the build writes live under the
+/// root (`.brust/pkg-src`), so they are inside. Lexical on purpose: a source root is a path prefix of the NORMALISED
+/// module path, so `../shared/../secret` (= `../secret`) is outside `../shared`.
 fn leaves_root(parent: &str, joined: &str, opts: &AnalyzeOptions) -> bool {
     let under = |p: &str| std::path::Path::new(p).starts_with(&opts.root);
-    joined == ".."
-        || joined.starts_with("../")
-        || (joined.starts_with('/') && under(parent) && !under(joined))
+    if joined == ".." || joined.starts_with("../") {
+        return !in_source_root(joined, opts);
+    }
+    joined.starts_with('/') && under(parent) && !under(joined)
+}
+
+/// Whether the normalised root-relative `joined` is a source root or lies inside one.
+fn in_source_root(joined: &str, opts: &AnalyzeOptions) -> bool {
+    opts.source_roots.iter().any(|r| {
+        let r = normalize(r);
+        joined == r
+            || joined
+                .strip_prefix(&r)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
 }
 
 /// Whether the relative import `rel` of `parent` names a place outside the app root: such an import is refused, never
@@ -521,6 +535,68 @@ mod tests {
         let abs = root.join("a/b.tsx").to_string_lossy().into_owned();
         assert!(import_leaves_root(&abs, "../../outside", &opts));
         assert!(!import_leaves_root("/elsewhere/a.tsx", "./b", &opts));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // F256: a source root lets an import reach beside the app, confined lexically like the app root.
+    #[test]
+    fn source_roots_extend_the_root_and_confine_themselves() {
+        let base = std::env::temp_dir().join(format!("brust-f256-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("app");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(base.join("shared/ui")).unwrap();
+        std::fs::create_dir_all(base.join("secret")).unwrap();
+        for f in ["shared/Button.tsx", "shared/ui/Card.tsx", "secret/S.tsx"] {
+            std::fs::write(base.join(f), "").unwrap();
+        }
+        let with = AnalyzeOptions {
+            root: root.clone(),
+            source_roots: vec!["../shared".into()],
+            ..Default::default()
+        };
+        let without = AnalyzeOptions {
+            root: root.clone(),
+            ..Default::default()
+        };
+        // reachable only with the root
+        assert_eq!(
+            resolve("Page.tsx", "../shared/Button", &with).as_deref(),
+            Some("../shared/Button.tsx")
+        );
+        assert_eq!(resolve("Page.tsx", "../shared/Button", &without), None);
+        assert!(import_leaves_root("Page.tsx", "../shared/Button", &without));
+        assert!(!import_leaves_root("Page.tsx", "../shared/Button", &with));
+        // a file inside the root goes up and down inside it
+        assert_eq!(
+            resolve("../shared/ui/Card.tsx", "../Button", &with).as_deref(),
+            Some("../shared/Button.tsx")
+        );
+        // the root's own index, and a root written un-normalised
+        let odd = AnalyzeOptions {
+            root: root.clone(),
+            source_roots: vec!["../app/../shared/.".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve("Page.tsx", "../shared/ui/Card", &odd).as_deref(),
+            Some("../shared/ui/Card.tsx")
+        );
+        // escapes: a sibling, the root's parent, a `..` out of the root, and a prefix that only looks like it
+        assert_eq!(resolve("Page.tsx", "../secret/S", &with), None);
+        assert!(import_leaves_root(
+            "../shared/ui/Card.tsx",
+            "../../secret/S",
+            &with
+        ));
+        assert!(import_leaves_root(
+            "../shared/Button.tsx",
+            "../shared/../secret/S",
+            &with
+        ));
+        assert!(import_leaves_root("Page.tsx", "../shared-evil/x", &with));
+        assert!(import_leaves_root("Page.tsx", "..", &with));
+        assert!(import_leaves_root("Page.tsx", "../../..", &with));
         let _ = std::fs::remove_dir_all(&base);
     }
 }
