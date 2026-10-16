@@ -47,6 +47,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
 
       <h3>New</h3>
       <ul>
+        {/* source: PR #288 (W1a); code: Radix's useId and useCallbackRef React-version checks */}
+        <li>
+          <strong>A context with a literal default value, and Radix&rsquo;s React-version checks in <code>useId</code> and <code>useCallbackRef</code>, compile.</strong> A context created with a literal default is read as that value. The check that picks the hook by React version is decided when brust builds, for React&rsquo;s own hooks only. A context declared in a hook module is read the same way.
+        </li>
         {/* source: PR #292 (F284–F287) */}
         <li>
           <strong><code>useReducer</code>, arrow-function components, hooks inside a returned expression and <code>[literals].includes(x)</code> compile.</strong> <code>const X = (props) =&gt; {'{'}…{'}'}</code> is read like a function declaration. <code>useReducer</code> becomes a state value and one dispatch handler when the reducer is an inline function or a function in the same module that brust can prove has no side effects; otherwise the call site renders with React. An unconditional <code>useCallback</code>, <code>useMemo</code>, <code>useRef</code> or <code>useId</code> anywhere in the returned expression runs before it, in source order. <code>[&quot;a&quot;, &quot;b&quot;].includes(x)</code> on a literal array of at most 16 members compiles to a chain of equality tests.
@@ -141,7 +145,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <ul>
         {/* source: PR #303 (F308, F334) and PR #307 (F335); reviewed by Mellow and Afrojack */}
         <li>
-          <strong>A <code>key</code> that changes, written outside a list, renders the component with React.</strong> React remounts the element when its key changes, which resets its state and effects; brust kept the instance. This covers a key written on an element or component, a key inside a spread object, and a path spread on a component tag (<code>{'{'}...props.cfg{'}'}</code>) that may carry one. A constant <code>key</code> and the keys of a list are unchanged. A spread on a plain HTML element stays as before, because React itself warns when a spread carries a key.
+          <strong>A <code>key</code> that changes, written outside a list, renders the component with React.</strong> React remounts the element when its key changes, which resets its state and effects; brust kept the instance. This covers a key written on an element or component, a call-site spread that may carry one (<code>{'{'}...{'{'} key: id {'}'}{'}'}</code>), and a path spread on a component tag (<code>{'{'}...props.cfg{'}'}</code>) that may carry one. A constant <code>key</code> and the keys of a list are unchanged. A spread on a plain HTML element stays as before, because React itself warns when a spread carries a key.
         </li>
         {/* source: PR #308 (W1d PR 3, render_error) */}
         <li>
