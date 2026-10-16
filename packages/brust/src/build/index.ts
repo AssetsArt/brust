@@ -121,7 +121,7 @@ export async function runBuild(opts: {
   if (actions?.prefix === '/') throw new BuildError('config', 'actions.prefix "/" is only for an actions-only build (brust build --actions-only) or a page-only build that points at one')
 
   // Everything that can fail on the app's own input runs before a byte is written.
-  const { routes, componentFile, componentIssue, appModules, appGraph } = await scanRoutes(entry, appRoot)
+  const { routes, componentFile, componentIssue, appModules, appGraph } = await scanRoutes(entry, appRoot, sourceRoots)
   let leaves: ReturnType<typeof validateRoutes>
   try {
     leaves = validateRoutes(routes)
@@ -245,7 +245,7 @@ async function buildInto(
   const runtime = await buildRuntime(out, ctx)
   const runtimeUrls = { core: `/_brust/${runtime.core}`, store: `/_brust/${runtime.store}` }
   // F230: one scan per build for load-time writes into another app module's exports; every compile reads it.
-  const loadWrites = scanAppWrites(appRoot, o.appModules, o.log)
+  const loadWrites = scanAppWrites(appRoot, o.appModules, o.log, o.sourceRoots)
   // Where a React island renders, the load-time writers run first: every one in the SSR jobs bundle (server code the
   // worker runs anyway); in an island's browser chunk only a writer of a module that island's code imports (Mellow F1:
   // a writer is often a server-side setup module), with a warning.

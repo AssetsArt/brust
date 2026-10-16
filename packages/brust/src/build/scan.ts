@@ -10,6 +10,8 @@ import { installServerOnlyRuntime } from './server-only'
 export async function scanRoutes(
   entryFile: string,
   appRoot?: string,
+  /** `[build] source_roots` (F256): app-root-relative directories outside the app; their modules are part of the graph (F276). */
+  sourceRoots: string[] = [],
 ): Promise<{ routes: Route[]; componentFile: Map<Function, string>; componentIssue: Map<Function, string>; appModules: string[]; appGraph: Map<string, string[]> }> {
   // biome-ignore lint/suspicious/noExplicitAny: an arbitrary user module
   let mod: any
@@ -29,7 +31,10 @@ export async function scanRoutes(
   const componentIssue = new Map<Function, string>()
   const root = realpathSync(resolve(appRoot ?? dirname(entryFile)))
   const transpiler = new Bun.Transpiler({ loader: 'tsx' })
-  const inRoot = (f: string) => f.startsWith(root + sep) && !f.split(sep).includes('node_modules')
+  // F276: the app root and every `source_roots` directory: a module in `../shared` is as much part of the app as one in
+  // the root, so a load-time write it makes is seen by the F230 scan. Roots are real paths, as `f` is.
+  const scopes = [root, ...sourceRoots.map((r) => realpathSync(resolve(root, r)))]
+  const inRoot = (f: string) => scopes.some((s) => f.startsWith(s + sep)) && !f.split(sep).includes('node_modules')
   const visited = new Set<string>()
   // F230: each in-root module's in-root static imports (absolute paths), for the island chunks' load-time writers.
   const appGraph = new Map<string, string[]>()

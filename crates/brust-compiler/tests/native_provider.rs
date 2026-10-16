@@ -546,3 +546,40 @@ fn a_live_caller_rest_is_never_carried_into_a_clone() {
     );
     assert!(!root.jinja.contains("data-n=\"0\""), "{}", root.jinja);
 }
+
+// F280: an entry of a const object that calls a module function proven plain (reads its argument, changes nothing)
+// is a read: the object still spreads as its entries, and the call is printed (or computed by the server) at the use.
+#[test]
+fn a_const_object_entry_may_call_a_proven_plain_function() {
+    let all = compile("spread_call.tsx");
+    for it in &all {
+        assert!(!is_react(&it.ir), "{:?}", it.ir.diagnostics);
+        assert!(
+            !it.ir.diagnostics.iter().any(|d| d.rule == "spread-props"),
+            "{:?}",
+            it.ir.diagnostics
+        );
+    }
+    let ri = all
+        .iter()
+        .find(|i| i.jinja.contains("data-tone"))
+        .expect("RI's markup");
+    // the helper's comparison is printed over the call site's label (`"x" == "indeterminate"`), not run in a job
+    assert!(ri.jinja.contains(r#"== "indeterminate""#), "{}", ri.jinja);
+}
+
+// F280: a function that does anything but read its argument (a call of author code, a member read) is not proven plain,
+// so the entry that calls it keeps the spread a fallback.
+#[test]
+fn a_const_object_entry_calling_an_effectful_or_unproven_function_still_falls_back() {
+    for file in ["spread_call_effect.tsx", "spread_call_member.tsx"] {
+        let all = compile(file);
+        assert!(
+            all.iter()
+                .any(|i| is_react(&i.ir)
+                    && i.ir.diagnostics.iter().any(|d| d.rule == "spread-props")),
+            "{file}: {:?}",
+            all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+        );
+    }
+}

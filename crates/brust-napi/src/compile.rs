@@ -254,12 +254,14 @@ pub fn compile_tree(
 
 /// F230: scans the app modules the build loads (`modules`, relative to `root`) for writes into another app module's
 /// exports; the JSON result goes to every `compile_tree` of the build as `loadWrites`. `path_aliases` as for
-/// `compile_tree`; a bad one is ignored (the compile reports it).
+/// `compile_tree`; a bad one is ignored (the compile reports it). `source_roots` (F256, F276): the directories besides
+/// the app that a relative import may reach, so a module there can be scanned and an import into it resolves.
 #[napi]
 pub fn scan_load_writes(
     root: String,
     modules: Vec<String>,
     path_aliases: Option<String>,
+    source_roots: Option<Vec<String>>,
 ) -> String {
     crate::init_tracing();
     let opts = AnalyzeOptions {
@@ -267,6 +269,7 @@ pub fn scan_load_writes(
         path_aliases: path_aliases
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default(),
+        source_roots: source_roots.unwrap_or_default(),
         ..Default::default()
     };
     brust_compiler::parse::run_on_compiler_thread(|| {
