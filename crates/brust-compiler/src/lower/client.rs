@@ -576,17 +576,19 @@ fn helper(h: Helper, n: &ChunkNames) -> String {
             "const {} = (v) => (v === true ? \"\" : v === false ? null : v)",
             n.attro
         ),
-        // x-bind-style of a style object: brust-jinja's style_obj_to_css rule.
+        // x-bind-style of a style object: brust-jinja's style_obj_to_css rule (the unitless list is its `UNITLESS`;
+        // a vendor-prefixed name counts as its bare one, `msX` hyphenates as `-ms-x`, a string value is trimmed).
         Helper::Css => format!(
             concat!(
-                "const {u} = new Set([\"zIndex\", \"opacity\", \"flex\", \"flexGrow\", \"flexShrink\", \"fontWeight\", \"lineHeight\", \"order\", \"zoom\"])\n",
+                "const {u} = new Set(\"{list}\".split(\" \"))\n",
                 "const {c} = (o) => Object.entries(o !== null && typeof o === \"object\" ? o : {{}})\n",
                 "  .filter(([k, v]) => v != null && v !== false && /^(--[A-Za-z0-9_-]+|[A-Za-z][A-Za-z0-9_-]*)$/.test(k))\n",
-                "  .map(([k, v]) => [k, typeof v === \"number\" ? (v === 0 || {u}.has(k) || k.startsWith(\"--\") ? String(v) : v + \"px\") : typeof v === \"boolean\" ? \"\" : String(v)])\n",
+                "  .map(([k, v]) => [k, typeof v === \"number\" ? (v === 0 || {u}.has(k.replace(/^(Webkit|Moz|ms|O)(?=[A-Z])/, \"\").replace(/^./, (c) => c.toLowerCase())) || k.startsWith(\"--\") ? String(v) : v + \"px\") : typeof v === \"boolean\" ? \"\" : String(v).trim()])\n",
                 "  .filter(([, v]) => v !== \"\" && !/[;{{}}\\\\\\n\\r]|\\/\\*|expression\\(|@import/i.test(v))\n",
-                "  .map(([k, v]) => (k.startsWith(\"--\") ? k : k.replace(/[A-Z]/g, (c) => \"-\" + c.toLowerCase())) + \":\" + v)\n",
+                "  .map(([k, v]) => (k.startsWith(\"--\") ? k : k.replace(/[A-Z]/g, (c) => \"-\" + c.toLowerCase()).replace(/^ms-/, \"-ms-\")) + \":\" + v)\n",
                 "  .join(\";\")"
             ),
+            list = brust_jinja::UNITLESS.join(" "),
             u = n.unitless,
             c = n.css
         ),

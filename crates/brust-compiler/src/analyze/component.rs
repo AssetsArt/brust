@@ -1,5 +1,5 @@
 //! Ties the readers together into a `ComponentIR`.
-use crate::analyze::expr::{Js, Reader, print_js_with};
+use crate::analyze::expr::{Js, Reader, Walk, print_js_with};
 use crate::analyze::hooks::{Module, mark_state_bindings, read_body};
 use crate::analyze::names::Aliases;
 use crate::analyze::names::NameTable;
@@ -896,13 +896,15 @@ pub(crate) fn module_fn<'x>(ast: &'x js_ast::Ast<'_>, name: &str) -> Option<&'x 
 pub(crate) enum FoundFn<'x> {
     Decl(&'x js_ast::G::Fn),
     ForwardRef(js_ast::G::Fn),
+    /// F284: the arrow of a module-level `const X = (props) => {…}`: the same function as `function X(props) {…}`.
+    Arrow(js_ast::G::Fn),
 }
 
 impl FoundFn<'_> {
     pub(crate) fn func(&self) -> &js_ast::G::Fn {
         match self {
             FoundFn::Decl(f) => f,
-            FoundFn::ForwardRef(f) => f,
+            FoundFn::ForwardRef(f) | FoundFn::Arrow(f) => f,
         }
     }
     pub(crate) fn forwards_ref(&self) -> bool {
@@ -916,6 +918,57 @@ pub(crate) fn module_component<'x>(ast: &'x js_ast::Ast<'_>, name: &str) -> Opti
     module_fn(ast, name)
         .map(FoundFn::Decl)
         .or_else(|| forward_ref_fn(ast, name).map(FoundFn::ForwardRef))
+        .or_else(|| arrow_const_fn(ast, name).map(FoundFn::Arrow))
+}
+
+/// Whether the arrow reads the identifier `arguments` (anywhere in its parameters' defaults or body).
+fn reads_arguments(m: &crate::analyze::stores::Module<'_>, a: &js_ast::E::Arrow) -> bool {
+    let mut w = Walk::default();
+    for arg in a.args.slice() {
+        w.declare_binding(&arg.binding);
+        if let Some(d) = &arg.default {
+            w.expr(d);
+        }
+    }
+    w.stmts(a.body.stmts.slice());
+    w.used.iter().any(|r| m.name(*r) == "arguments")
+}
+
+/// F284: the arrow of a module-level `const name = (params) => …` (not async; an arrow has no `this` or `arguments` of
+/// its own, so the body reads as the body of a function declaration of that name). The TS annotation
+/// (`: React.FC<P>`) is erased by the parser.
+fn arrow_const_fn(ast: &js_ast::Ast<'_>, name: &str) -> Option<js_ast::G::Fn> {
+    let m = crate::analyze::stores::Module::new(ast);
+    for part in ast.parts.iter() {
+        for stmt in part.stmts.slice() {
+            let S::SLocal(l) = &stmt.data else { continue };
+            if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                continue;
+            }
+            for d in l.decls.iter() {
+                if let (js_ast::b::B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                    && m.name(id.r#ref) == name
+                {
+                    return match &v.data {
+                        // An arrow has no `arguments` of its own (at module level the name is a ReferenceError), where a
+                        // function declaration's body would read the call's: not the same function, so not read.
+                        E::EArrow(a) if !a.is_async && !reads_arguments(&m, a) => {
+                            Some(js_ast::G::Fn {
+                                args: a.args,
+                                body: js_ast::G::FnBody {
+                                    loc: a.body.loc,
+                                    stmts: a.body.stmts,
+                                },
+                                ..Default::default()
+                            })
+                        }
+                        _ => None,
+                    };
+                }
+            }
+        }
+    }
+    None
 }
 
 /// The function a call `forwardRef(fn)` wraps, when `e` is such a call (`forwardRef` / `React.forwardRef` from react).

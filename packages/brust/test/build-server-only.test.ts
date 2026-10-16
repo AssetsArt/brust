@@ -50,7 +50,7 @@ const refusal = async (dir: string) => {
 }
 
 const SECRET_TS = `import 'server-only'\nexport const SECRET = '${SECRET}'\nexport function label() { return 'v' + SECRET.length }\n`
-const TIP = `import { useReducer } from 'react'\nimport { label } from './lib/secret'\n\nexport default function Tip() {\n  const [n, hit] = useReducer((c: number) => c + 1, 0)\n  return <button type="button" onClick={() => hit()}>{label()}{n}</button>\n}\n`
+const TIP = `import { useReducer, useTransition } from 'react'\nimport { label } from './lib/secret'\n\nexport default function Tip() {\n  useTransition(); const [n, hit] = useReducer((c: number) => c + 1, 0)\n  return <button type="button" onClick={() => hit()}>{label()}{n}</button>\n}\n`
 const PAGE = `import Tip from './Tip'\n\nexport default function Page() {\n  return <main><Tip /></main>\n}\n`
 const ROUTES = `import { defineRoutes } from '@brust/core/routes'\nimport Page from './Page'\n\nexport const routes = defineRoutes([{ path: '/', Component: Page }])\n`
 

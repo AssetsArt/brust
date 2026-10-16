@@ -29,6 +29,9 @@ pub struct Deps {
     pub state: BTreeSet<String>,
     /// F277: state cells nothing sets, read: their first-render value, which never changes (not reactive).
     pub fixed: BTreeSet<String>,
+    /// F295: state cells nothing sets whose first value can differ between mounts (it reads a prop or live state),
+    /// read: also in `state` (an instance that mounts again re-reads them), but they never change after a mount.
+    pub snapshot: BTreeSet<String>,
     pub setters: BTreeSet<String>,
     /// `(source, imported)`.
     pub imports: BTreeSet<(String, String)>,
@@ -49,6 +52,7 @@ impl Deps {
         self.props.extend(o.props.iter().cloned());
         self.state.extend(o.state.iter().cloned());
         self.fixed.extend(o.fixed.iter().cloned());
+        self.snapshot.extend(o.snapshot.iter().cloned());
         self.setters.extend(o.setters.iter().cloned());
         self.imports.extend(o.imports.iter().cloned());
         self.globals.extend(o.globals.iter().cloned());
@@ -73,6 +77,12 @@ impl Deps {
     /// Reads something that changes on the client after first paint (state or a store).
     pub fn reactive(&self) -> bool {
         !self.state.is_empty() || !self.stores.is_empty()
+    }
+
+    /// F295: reads something that changes on the client after this instance mounted: [`Self::reactive`] without the
+    /// snapshot cells (their value at a mount, which a later mount of the instance takes again).
+    pub fn changes_after_mount(&self) -> bool {
+        self.state.iter().any(|s| !self.snapshot.contains(s)) || !self.stores.is_empty()
     }
 
     /// Prop paths with every path dropped whose prefix is also present
@@ -157,6 +167,8 @@ pub struct DepsCx {
     /// store, browser global or opaque code), by name: what that value reads. Only such a cell is its server value
     /// for good; one seeded from a prop is re-read when the instance mounts again (an `x-if`, a row), so it stays state.
     fixed: HashMap<String, LocalDef>,
+    /// F295: the state cells nothing sets that are not fixed (their first value can differ between mounts).
+    snapshot: std::collections::HashSet<String>,
 }
 
 impl DepsCx {
@@ -188,23 +200,36 @@ impl DepsCx {
                 .map(|u| (u.handle.clone(), u.clone()))
                 .collect(),
             fixed: HashMap::new(),
+            snapshot: Default::default(),
         };
-        let fixed = ir
+        // F293: to a fixpoint, so a cell seeded from another fixed cell (`const [n] = useState(0); const [first] =
+        // useState(n)`) is fixed too: a read of a fixed cell counts as `fixed`, not `state`, in `mount_invariant`.
+        loop {
+            let more: Vec<(String, LocalDef)> = ir
+                .state
+                .iter()
+                .filter(|s| s.is_fixed() && !cx.fixed.contains_key(&s.name))
+                .filter(|s| cx.deps_expr(&s.init, &[]).mount_invariant())
+                .map(|s| {
+                    let def = match &s.init {
+                        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => LocalDef::Value(r.clone()),
+                        Expr::Precomputed { inputs, .. } => LocalDef::Placed(split_inputs(inputs)),
+                        Expr::ClientOnly { .. } => LocalDef::Opaque,
+                    };
+                    (s.name.clone(), def)
+                })
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            cx.fixed.extend(more);
+        }
+        cx.snapshot = ir
             .state
             .iter()
-            .filter(|s| s.is_fixed())
-            .filter_map(|s| {
-                let def = match &s.init {
-                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => LocalDef::Value(r.clone()),
-                    Expr::Precomputed { inputs, .. } => LocalDef::Placed(split_inputs(inputs)),
-                    Expr::ClientOnly { .. } => LocalDef::Opaque,
-                };
-                cx.deps_expr(&s.init, &[])
-                    .mount_invariant()
-                    .then(|| (s.name.clone(), def))
-            })
+            .filter(|s| s.is_fixed() && !cx.fixed.contains_key(&s.name))
+            .map(|s| s.name.clone())
             .collect();
-        cx.fixed = fixed;
         cx
     }
 
@@ -232,6 +257,7 @@ impl DepsCx {
             module: self.module.clone(),
             stores: self.stores.clone(),
             fixed: self.fixed.clone(),
+            snapshot: self.snapshot.clone(),
         }
     }
 
@@ -453,6 +479,9 @@ impl Walker<'_> {
             }
             IdentKind::State => {
                 out.state.insert(name.into());
+                if self.cx.snapshot.contains(name) {
+                    out.snapshot.insert(name.into());
+                }
             }
             IdentKind::Setter => {
                 out.setters.insert(name.into());
