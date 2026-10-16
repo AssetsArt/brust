@@ -95,6 +95,9 @@ pub struct NameTable<'a> {
     /// `const x = c ? {…} : {…}` at module level or at the top of the component body: the initialiser, for
     /// a union spread `{...x}` (R34.66). Only a conditional is kept; a `const` is never reassigned.
     cond_consts: HashMap<u32, js_ast::Expr>,
+    /// `const x = { … }` at module level or at the top of the component body: the object literal, for a spread
+    /// `{...x}` or an argument `f(x)` (F266). A `const` is never reassigned.
+    object_consts: HashMap<u32, js_ast::Expr>,
     /// Module-level `const NAME = <literal-shaped initialiser>` with no use that could write it, by name: the
     /// folder reads them for a prop default (`orientation = DEFAULT_ORIENTATION`, F153b).
     module_inits: HashMap<String, js_ast::Expr>,
@@ -372,6 +375,7 @@ impl<'a> NameTable<'a> {
             forwarded_ref_dropped: std::cell::RefCell::new(HashSet::new()),
             member_aliases: HashMap::new(),
             cond_consts: HashMap::new(),
+            object_consts: HashMap::new(),
             module_inits: HashMap::new(),
             poly: HashMap::new(),
             state: HashSet::new(),
@@ -496,11 +500,17 @@ impl<'a> NameTable<'a> {
                 continue;
             }
             for d in l.decls.iter() {
-                if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
-                    && matches!(v.data, js_ast::expr::Data::EIf(_))
-                {
+                if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value) {
                     let k = self.key(id.r#ref);
-                    self.cond_consts.insert(k, v);
+                    match v.data {
+                        js_ast::expr::Data::EIf(_) => {
+                            self.cond_consts.insert(k, v);
+                        }
+                        js_ast::expr::Data::EObject(_) => {
+                            self.object_consts.insert(k, v);
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -509,6 +519,11 @@ impl<'a> NameTable<'a> {
     /// The conditional a `const` was initialised with (see `cond_consts`).
     pub fn cond_const(&self, r: js_ast::Ref) -> Option<js_ast::Expr> {
         self.cond_consts.get(&self.key(r)).copied()
+    }
+
+    /// The object literal a `const` was initialised with (see `object_consts`).
+    pub fn object_const(&self, r: js_ast::Ref) -> Option<js_ast::Expr> {
+        self.object_consts.get(&self.key(r)).copied()
     }
 
     fn collect_member_aliases(&self, ast: &js_ast::Ast<'_>) -> HashMap<u32, MemberRef> {

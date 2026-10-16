@@ -246,12 +246,13 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     for p in obj.properties.iter() {
         let Some(value) = &p.value else { continue };
         if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
-            match spread_source(r, value) {
+            match spread_source(r, value, matches!(tag, Tag::Host(_))) {
                 // An object literal is a known shape here: its entries are ordinary attributes
                 // and props, read as if written one by one (React: later wins, which the
                 // lowering applies to the merged list, `lower::template::merge_attrs`).
                 Spread::Literal(entries) => {
                     for (name, v) in entries {
+                        let v = &v;
                         // Object keys are any string, unlike JSX attribute names (R34.17).
                         if matches!(tag, Tag::Host(_)) && !brust_jinja::spread::attr_name_ok(&name)
                         {
@@ -743,9 +744,9 @@ fn read_provider(
 }
 
 /// What a JSX spread spreads (shadcn S1.2, R34.15).
-enum Spread<'e> {
+enum Spread {
     /// `{...{ a: 1, 'data-x': v }}`: the entries, in order (keys are plain strings).
-    Literal(Vec<(String, &'e js_ast::Expr)>),
+    Literal(Vec<(String, js_ast::Expr)>),
     /// The whole props object, its `...rest`, or a props path: keys known only per call site
     /// (an inlined instance) or at render (`spread_attrs`).
     Props(RawExpr),
@@ -887,7 +888,7 @@ impl Union {
     }
 }
 
-fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<'e> {
+fn spread_source(r: &mut Reader<'_, '_>, value: &js_ast::Expr, host: bool) -> Spread {
     match &value.data {
         E::EIdentifier(id) if r.names.is_rest(id.ref_) => Spread::Props(RawExpr {
             loc: loc_of(value),
@@ -910,9 +911,17 @@ fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<
                 {
                     return Spread::Other;
                 }
-                entries.push((estring(k), v));
+                entries.push((estring(k), *v));
             }
             Spread::Literal(entries)
+        }
+        // F266: on a component, a `const` holding an object literal of plain reads spreads as that literal (the names it reads are
+        // consts of the same render, so reading them here is reading them where the object was built).
+        E::EIdentifier(id) if !host && r.names.object_const(id.ref_).is_some() => {
+            match r.names.object_const(id.ref_).and_then(plain_object) {
+                Some(entries) => Spread::Literal(entries),
+                None => Spread::Other,
+            }
         }
         E::EIdentifier(_) | E::EIf(_) | E::EBinary(_) if union_root(r, value) => {
             let mut nodes = 0;
@@ -930,6 +939,43 @@ fn spread_source<'e>(r: &mut Reader<'_, '_>, value: &'e js_ast::Expr) -> Spread<
             }
         }
     }
+}
+
+/// The entries of an object literal whose keys are plain strings and whose values are reads with no effect (an
+/// identifier, a member path of one, a literal): what a spread or an argument may stand for.
+fn plain_object(e: js_ast::Expr) -> Option<Vec<(String, js_ast::Expr)>> {
+    fn read(e: &js_ast::Expr) -> bool {
+        match &e.data {
+            E::EIdentifier(_)
+            | E::EString(_)
+            | E::ENumber(_)
+            | E::EBoolean(_)
+            | E::ENull(_)
+            | E::EUndefined(_) => true,
+            E::EDot(d) => d.optional_chain.is_none() && read(&d.target),
+            _ => false,
+        }
+    }
+    let E::EObject(obj) = &e.data else {
+        return None;
+    };
+    let mut entries = Vec::new();
+    for p in obj.properties.iter() {
+        let (Some(k), Some(v)) = (&p.key, &p.value) else {
+            return None;
+        };
+        let E::EString(k) = &k.data else {
+            return None;
+        };
+        if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
+            || p.flags.contains(js_ast::flags::Property::IsComputed)
+            || !read(v)
+        {
+            return None;
+        }
+        entries.push((estring(k), *v));
+    }
+    Some(entries)
 }
 
 fn union_refused(value: &js_ast::Expr, why: &str) -> Diagnostic {

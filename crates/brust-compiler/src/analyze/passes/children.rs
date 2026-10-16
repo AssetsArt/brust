@@ -1065,6 +1065,23 @@ fn splice_render(ir: &mut ComponentIR, rp: crate::ir::RenderProp) -> Result<(), 
                 args.len()
             ));
         };
+        // F266: a `const ctx = { a, b }` of the component stands for its literal (`render(ctx)`); the names it reads are
+        // consts of the same render, so reading them where the body lands is reading them where the object was built.
+        let literal = match &arg.kind {
+            RawKind::Ident {
+                name,
+                kind: IdentKind::Local,
+            } => ir
+                .derived
+                .iter()
+                .find(|d| &d.name == name)
+                .and_then(|d| match &d.expr {
+                    Expr::Raw(e) if matches!(e.kind, RawKind::Object(_)) => Some(e.clone()),
+                    _ => None,
+                }),
+            _ => None,
+        };
+        let arg = literal.as_ref().unwrap_or(arg);
         let RawKind::Object(pairs) = &arg.kind else {
             return Err(format!(
                 "`{key}` is called with a value that is not an object literal"

@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 73 | 12 | 23 | 38 | 0 | 0 | 0 | 0 |
+| C Hooks | 77 | 15 | 23 | 39 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 69 | 31 | 10 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 439 | 200 | 60 | 175 | 3 | 1 | 0 | 0 |
+| **Total** | 443 | 203 | 60 | 176 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -363,6 +363,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid-logical-assign | useId() on the right side of `??=` in the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | F236: the right side of \|\|=, &&=, ??= runs conditionally, so the hook is refused there (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | 4.8 | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |
 | c-render-prop-guarded | a render prop a state Provider calls under typeof, falling back to children | static | static | 0 | ok | 4.8 | — | B7/R34.122 b: the arrow body is spliced where the Provider calls it, its parameter bound to the Provider's own state; no island |
+| c-render-prop-local-object-arg | a render prop called with a local const object (render(ctx)) | static | static | 0 | ok | 4.8 | — | F266: Radix's render(context): a const object literal of plain reads stands for its entries |
+| c-render-prop-local-object-computed | a render prop called with a local const object holding a computation | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | F266: a field that is a computation is not a plain read; the Provider stays an island |
+| c-spread-const-object | a spread of a local const object literal into a component | static | static | 0 | ok | 4.4 | — | F266: <Impl {...ctx}> with const ctx = { a, b } is read as the entries (components only; an element spread stays as it was) |
+| c-native-provider-derived-frame | a state Provider whose frame field is a derived value over a prop and state | static | static | 0 | ok | 4.4 | — | F269: the frame hands out the derived value as written (Radix useControllableState), not its precomputed slot |
 | c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
 | c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |
@@ -419,7 +423,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 |---|---|---|---|---|---|---|---|---|
 | e-lucide-icon-rest-spread | a lucide icon spread with the component's rest props | static | static | ssr | ok | 3.8 | — | R34.77: the rest lands on the inlined svg, after the icon's own attributes; parity in tests/server/icon-shapes.test.ts |
 | e-lucide-icon-rest-spread-size | a call site hands the spread icon a key the icon reads (size) | static | static | ssr | ok | 3.8 | — | R34.77: brustc alone leaves the icon an island; after `brust build` renders it the call site is refused (spread-props, page React): crates/brust-compiler/tests/icon_shapes.rs pins size, className, color |
-| e-lucide-icon-unknown-spread | a lucide icon spread with a computed object | react | react | ssr | ok | 3.8 | fallback:external-component, fallback:spread-props, warning:icon-dynamic-prop, warning:island-prop | R34.77: only the component's own props or rest spread onto an icon; any other spread keeps the island (icon-dynamic-prop) |
+| e-lucide-icon-unknown-spread | a lucide icon spread with a computed object | react | react | ssr | ok | 3.8 | fallback:external-component, fallback:spread-props, fallback:module-side-effect, warning:icon-dynamic-prop, warning:island-prop | R34.77: only the component's own props or rest spread onto an icon; any other spread keeps the island (icon-dynamic-prop) |
 | b-cn-fold-literal | a literal variant on a cva + cn component (shadcn Badge) | static | static | 0 | ok | 0 | — | F149 R34.88/R34.89: a candidate; `brust build` runs the job once and prints the class (R34.90) |
 | b-cn-fold-omitted | a cva + cn component with no props | static | static | 0 | ok | 0 | — | F149 R34.88: an omitted prop is an absent input |
 | b-cn-fold-module-const | a variant from a module const | static | static | 0 | ok | 0 | — | F149 R34.88: the call-site literal folds with the module consts (the constant folder) |
