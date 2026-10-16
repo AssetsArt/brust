@@ -186,28 +186,30 @@ fn rules(ir: &ComponentIR) -> Vec<String> {
 }
 
 #[test]
-fn a_snapshot_through_a_forwarding_spread_is_printed_once_where_the_instance_mounts_once() {
-    // F295: the child alone is fine (its caller must promise a single mount).
+fn a_snapshot_through_a_forwarding_spread_is_bound_at_mount_wherever_the_instance_sits() {
+    // F300: the child binds the snapshot on the forwarded element at mount (`x-bind-checked`, a computed over a cell
+    // nothing sets, evaluated once) instead of promising its callers a single mount.
     let child = tree(
         FWD_BUBBLE,
         "export default function Unused() { return null }",
     );
     assert!(fallbacks(&child).is_empty(), "{:?}", fallbacks(&child));
     assert!(
-        child.mount_once.is_some(),
-        "the child records the promise it needs"
+        child.mount_once.is_none(),
+        "no promise is asked of the callers"
     );
-    // Mounted with a stateful parent and never again: no refusal, and the parent passes the promise up.
-    let ir = tree(&with_state("checked={on}"), FWD_BUBBLE);
-    assert!(fallbacks(&ir).is_empty(), "{:?}", fallbacks(&ir));
-    assert!(matches!(ir.tier, Tier::Native), "{:?}", ir.tier);
-    assert!(ir.mount_once.is_some());
-}
-
-#[test]
-fn a_snapshot_through_a_spread_under_a_condition_or_in_a_row_is_refused() {
+    assert!(
+        child
+            .live_forwards
+            .iter()
+            .any(|f| f.key == "defaultChecked"),
+        "{:?}",
+        child.live_forwards
+    );
+    // Mounted with a stateful parent, under a condition or in a row: the same, native, no refusal.
     for site in [
-        // F295 (c): a guarded instance can mount again later, when React takes the current value.
+        "<C checked={on} />",
+        // A guarded instance can mount again later: it takes the value current then.
         "{w > 10 && <C checked={on} />}",
         // A row.
         "{[1, 2].map((i) => <C key={i} checked={on} />)}",
@@ -216,16 +218,9 @@ fn a_snapshot_through_a_spread_under_a_condition_or_in_a_row_is_refused() {
             "import {{ useState }} from 'react'\nimport C from './C'\nexport default function T() {{ const [on, setOn] = useState(true); const [w, setW] = useState(10); return <div><button onClick={{() => {{ setOn(!on); setW(w + 1) }}}}>t</button>{site}</div> }}"
         );
         let ir = tree(&parent, FWD_BUBBLE);
-        assert!(
-            rules(&ir).contains(&"snapshot-remount".to_string()),
-            "{site}: {:?}",
-            fallbacks(&ir)
-        );
-        assert!(
-            matches!(ir.tier, Tier::React { .. }),
-            "{site}: {:?}",
-            ir.tier
-        );
+        assert!(fallbacks(&ir).is_empty(), "{site}: {:?}", fallbacks(&ir));
+        assert!(matches!(ir.tier, Tier::Native), "{site}: {:?}", ir.tier);
+        assert!(ir.mount_once.is_none(), "{site}");
     }
 }
 
