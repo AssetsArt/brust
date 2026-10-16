@@ -102,6 +102,39 @@ pub fn register(env: &mut Environment<'_>) {
             style_obj_to_css(&pairs)
         },
     );
+    // F296 C3: the whole ` style="…"` attribute, or nothing when no declaration is left (react-dom omits an
+    // empty `style`, where `style=""` would be a different first paint). Same pairs as `css_decls`, in source order.
+    env.add_function(
+        "css_attr",
+        |args: minijinja::value::Rest<Value>| -> String {
+            let pairs: Vec<(String, Value)> = args
+                .chunks(2)
+                .map(|kv| {
+                    (
+                        kv[0].as_str().unwrap_or_default().to_string(),
+                        kv.get(1).cloned().unwrap_or(Value::UNDEFINED),
+                    )
+                })
+                .collect();
+            style_attr_text(&style_obj_to_css(&pairs))
+        },
+    );
+    env.add_filter("style_attr", |v: Value| {
+        if v.kind() != ValueKind::Map {
+            return String::new();
+        }
+        let pairs: Vec<(String, Value)> = v
+            .try_iter()
+            .map(|it| {
+                it.map(|k| {
+                    let val = v.get_item(&k).unwrap_or(Value::UNDEFINED);
+                    (k.to_string(), val)
+                })
+                .collect()
+            })
+            .unwrap_or_default();
+        style_attr_text(&style_obj_to_css(&pairs))
+    });
     env.add_filter("style_css", |v: Value| {
         // Only a style object has declarations (React throws on a string).
         if v.kind() != ValueKind::Map {
@@ -771,18 +804,72 @@ pub fn is_boolean_attr(html_name: &str) -> bool {
     attr_kind(html_name) == AttrKind::Boolean
 }
 
-/// React style properties whose numbers are unitless.
-const UNITLESS: &[&str] = &[
-    "zIndex",
-    "opacity",
+/// React style properties whose numbers are unitless (react-dom's `isUnitlessNumber`, read off its output by
+/// `tests/server/live-style.chromium.test.ts`); the vendor-prefixed spellings (`WebkitLineClamp`) count too. The
+/// chunk's `__css` helper (`lower/client.rs`) is generated from this list.
+pub const UNITLESS: &[&str] = &[
+    "animationIterationCount",
+    "aspectRatio",
+    "borderImageOutset",
+    "borderImageSlice",
+    "borderImageWidth",
+    "boxFlex",
+    "boxFlexGroup",
+    "boxOrdinalGroup",
+    "columnCount",
+    "columns",
     "flex",
     "flexGrow",
+    "flexPositive",
     "flexShrink",
+    "flexNegative",
+    "flexOrder",
+    "gridArea",
+    "gridRow",
+    "gridRowEnd",
+    "gridRowSpan",
+    "gridRowStart",
+    "gridColumn",
+    "gridColumnEnd",
+    "gridColumnSpan",
+    "gridColumnStart",
     "fontWeight",
+    "lineClamp",
     "lineHeight",
+    "opacity",
     "order",
+    "orphans",
+    "scale",
+    "tabSize",
+    "widows",
+    "zIndex",
     "zoom",
+    "fillOpacity",
+    "floodOpacity",
+    "stopOpacity",
+    "strokeDasharray",
+    "strokeDashoffset",
+    "strokeMiterlimit",
+    "strokeOpacity",
+    "strokeWidth",
 ];
+
+/// `prop` is a unitless number property, under its own name or a vendor-prefixed one (`WebkitLineClamp`, `msFlex`).
+fn is_unitless(prop: &str) -> bool {
+    if UNITLESS.contains(&prop) {
+        return true;
+    }
+    for prefix in ["Webkit", "Moz", "ms", "O"] {
+        if let Some(rest) = prop.strip_prefix(prefix)
+            && rest.starts_with(|c: char| c.is_ascii_uppercase())
+        {
+            let mut chars = rest.chars();
+            let first = chars.next().unwrap_or_default().to_ascii_lowercase();
+            return UNITLESS.contains(&format!("{first}{}", chars.as_str()).as_str());
+        }
+    }
+    false
+}
 
 /// A style key that is a CSS identifier (`fontSize`, `--gap`): anything else
 /// could inject declarations.
@@ -797,7 +884,8 @@ pub fn css_key(k: &str) -> bool {
     }
 }
 
-/// `backgroundColor` → `background-color`; `--custom` stays.
+/// `backgroundColor` → `background-color`; `--custom` stays; `msTransform` → `-ms-transform` (react-dom's
+/// `hyphenateStyleName`: the `ms` prefix is lowercase, so hyphenating alone leaves it without its leading dash).
 pub fn css_property(name: &str) -> String {
     if name.starts_with("--") {
         return name.to_string();
@@ -811,6 +899,9 @@ pub fn css_property(name: &str) -> String {
             out.push(c);
         }
     }
+    if out.starts_with("ms-") {
+        out.insert(0, '-');
+    }
     out
 }
 
@@ -818,7 +909,7 @@ pub fn css_property(name: &str) -> String {
 pub fn css_value(prop: &str, v: &Value) -> String {
     match number_of(v) {
         Some(n) if v.kind() == ValueKind::Number => {
-            if n == 0.0 || UNITLESS.contains(&prop) || prop.starts_with("--") {
+            if n == 0.0 || is_unitless(prop) || prop.starts_with("--") {
                 js_number(n)
             } else {
                 format!("{}px", js_number(n))
@@ -828,7 +919,8 @@ pub fn css_value(prop: &str, v: &Value) -> String {
             // A string must not end the declaration or open another construct
             // (CSS injection into the server-rendered style attribute; React
             // sets each property on its own, so nothing like it exists there).
-            let s = paint(v);
+            // react-dom prints `('' + value).trim()`
+            let s = paint(v).trim().to_string();
             let lower = s.to_ascii_lowercase();
             let breaks = s.contains([';', '{', '}', '\\', '\n', '\r'])
                 || lower.contains("/*")
@@ -836,6 +928,15 @@ pub fn css_value(prop: &str, v: &Value) -> String {
                 || lower.contains("@import");
             if breaks { String::new() } else { s }
         }
+    }
+}
+
+/// ` style="decls"`, or nothing for no declarations.
+fn style_attr_text(css: &str) -> String {
+    if css.is_empty() {
+        String::new()
+    } else {
+        format!(" style=\"{}\"", escape_attr(css))
     }
 }
 
@@ -864,6 +965,70 @@ mod tests {
         let mut env = Environment::new();
         register(&mut env);
         env.render_str(src, ctx).unwrap()
+    }
+
+    /// F296 C3: style declarations print as react-dom prints them (values read off react-dom 19 by
+    /// `tests/server/live-style.chromium.test.ts`): unitless numbers (also vendor-prefixed), `px` otherwise, custom
+    /// properties as given, the `ms` prefix with its dash, string values trimmed, booleans and nulls dropped.
+    #[test]
+    fn style_declarations_print_as_react_dom_does() {
+        let css = |pairs: &[(&str, Value)]| {
+            style_obj_to_css(
+                &pairs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let n = |x: f64| Value::from(x);
+        let s = |x: &str| Value::from(x);
+        assert_eq!(css(&[("aspectRatio", n(1.0))]), "aspect-ratio:1");
+        assert_eq!(css(&[("WebkitLineClamp", n(3.0))]), "-webkit-line-clamp:3");
+        assert_eq!(
+            css(&[("MozAnimationIterationCount", n(2.0))]),
+            "-moz-animation-iteration-count:2"
+        );
+        assert_eq!(css(&[("msFlex", n(1.0))]), "-ms-flex:1");
+        assert_eq!(
+            css(&[("msTransform", s("scale(2)"))]),
+            "-ms-transform:scale(2)"
+        );
+        assert_eq!(
+            css(&[("WebkitTransform", s("none"))]),
+            "-webkit-transform:none"
+        );
+        assert_eq!(
+            css(&[
+                ("gridRow", n(2.0)),
+                ("strokeWidth", n(3.0)),
+                ("tabSize", n(4.0))
+            ]),
+            "grid-row:2;stroke-width:3;tab-size:4"
+        );
+        assert_eq!(
+            css(&[
+                ("width", n(0.0)),
+                ("opacity", n(0.5)),
+                ("marginTop", n(-3.0)),
+                ("height", n(1.5))
+            ]),
+            "width:0;opacity:0.5;margin-top:-3px;height:1.5px"
+        );
+        assert_eq!(
+            css(&[("--gap", n(7.0)), ("--z", n(0.0)), ("--x", s("2px"))]),
+            "--gap:7;--z:0;--x:2px"
+        );
+        assert_eq!(css(&[("color", s(" red "))]), "color:red");
+        assert_eq!(
+            css(&[
+                ("color", Value::from(true)),
+                ("width", Value::from(false)),
+                ("top", s("")),
+                ("left", Value::from(()))
+            ]),
+            ""
+        );
+        assert_eq!(css(&[]), "");
     }
 
     /// C4: `t.name` must read the same key as `t["name"]` for every name the

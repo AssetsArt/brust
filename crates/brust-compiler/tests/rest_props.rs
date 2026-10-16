@@ -124,11 +124,21 @@ fn a_state_value_into_a_spread_is_bound_by_the_parent_but_a_merging_key_keeps_re
     let html = render(&s.jinja, serde_json::json!({}));
     assert!(html.contains(" x-bind-title="), "{html}");
     assert!(!html.contains("x-props-bind"), "{html}");
-    // `style` merges (the child may set its own): it is not bound through a spread, and the parent stays on React.
+    // `style` is bound too (F296, spread-live): React replaces the element's own `style` with the spread's, it never
+    // merges, so the parent's binding is what the element prints.
     let c = lower(
         "P.tsx",
         &format!(
             "{STATE}import Card from './Card'\nexport default function P() {{ const [n, setN] = useState(0); return <div><button onClick={{() => setN(n + 1)}}>+</button><Card style={{{{ color: n > 0 ? 'red' : 'blue' }}}} /></div> }}"
+        ),
+    );
+    assert_eq!(c.tier, Tier::Native, "{:?}", c.diags);
+    assert!(c.jinja.contains(" x-bind-style="), "{}", c.jinja);
+    // `value` is set as a property by the binder: it is not bound through a spread, and the parent stays on React.
+    let c = lower(
+        "P.tsx",
+        &format!(
+            "{STATE}import Card from './Card'\nexport default function P() {{ const [n, setN] = useState(0); return <div><button onClick={{() => setN(n + 1)}}>+</button><Card value={{n}} /></div> }}"
         ),
     );
     assert!(matches!(c.tier, Tier::React { .. }), "{:?}", c.diags);
