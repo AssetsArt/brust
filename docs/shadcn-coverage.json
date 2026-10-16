@@ -187,7 +187,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 6
+      "libraryComponents": 7
     },
     {
       "blocker": "fallback:ref-shape",

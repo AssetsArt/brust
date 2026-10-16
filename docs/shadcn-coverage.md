@@ -52,7 +52,7 @@ One line per thing that keeps a row or a library component off the static/native
 | 14 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
 | 15 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 37 | `body-shape` diagnostic (docs/react-coverage.md) |
 | 16 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `hook-shape` diagnostic (docs/react-coverage.md) |
-| 17 | fallback:key-outside-list | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 6 | `key-outside-list` diagnostic (docs/react-coverage.md) |
+| 17 | fallback:key-outside-list | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `key-outside-list` diagnostic (docs/react-coverage.md) |
 | 18 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 6 | `ref-shape` diagnostic (docs/react-coverage.md) |
 | 19 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `child-component` diagnostic (docs/react-coverage.md) |
 | 20 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
@@ -1117,7 +1117,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | webpack:/Recharts/src/component/Dots.tsx | DotItem | function | not exported | cloneElement, isValidElement, rest-props spread |
 | webpack:/Recharts/src/component/Dots.tsx | Dots | function | react (fallback:control-flow) | rest-props spread |
 | webpack:/Recharts/src/component/LabelList.tsx | LabelList | function | react (fallback:body-shape, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:list-shape, fallback:prop-pattern) | useContext / use*Context, rest-props spread |
-| webpack:/Recharts/src/component/LabelList.tsx | LabelListFromLabelProp | function | react (fallback:hook-unsupported, fallback:jsx-expression) | isValidElement |
+| webpack:/Recharts/src/component/LabelList.tsx | LabelListFromLabelProp | function | react (fallback:hook-unsupported, fallback:jsx-expression, fallback:key-outside-list) | isValidElement |
 | webpack:/Recharts/src/component/Legend.tsx | LegendContent | function | not exported | cloneElement, isValidElement, rest-props spread |
 | webpack:/Recharts/src/component/Legend.tsx | LegendImpl | function | not exported | createPortal / Portal, rest-props spread |
 | webpack:/Recharts/src/component/ResponsiveContainer.tsx | ResponsiveContainerContextProvider | function | not exported | Context.Provider / *Provider, useMemo / useCallback |
