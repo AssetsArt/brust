@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 98 | 18 | 36 | 44 | 0 | 0 | 0 | 0 |
+| C Hooks | 103 | 18 | 36 | 49 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 474 | 209 | 80 | 181 | 3 | 1 | 0 | 0 |
+| **Total** | 479 | 209 | 80 | 186 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -403,6 +403,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-hoist-object | a custom hook returning an object whose properties are hook calls | native | native | 0 | ok | 4.4 | — | F286: an unconditional hook call in a returned object property is hoisted before the return, in source order |
 | c-hook-hoist-return | custom hooks that return useState(...) and useCallback(...) | native | native | 0 | ok | 4.4 | — | F286: a hook call in the return position is the pair or the value the call site binds |
 | c-hook-hoist-conditional | a hook call in a conditional property of a returned object | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | F286: only unconditional positions are hoisted; a conditional hook call stays refused |
+| c-hook-hoist-whole | a custom hook returning an object with a hook call, bound whole at the call site | react | react | ssr | ok | 3.8 | fallback:hook-return-shape | F286: hook-return-shape until F289: the whole object would be a derived value naming the hoisted handler |
+| c-usereducer-callback-by-name | useReducer whose reducer maps with a named helper | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: a callback passed by name is a function the purity proof cannot see: reducer-impure |
+| c-usereducer-default-param | useReducer whose reducer has a parameter default that calls a function | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: a default runs on every call like the body: reducer-impure |
+| c-usereducer-default-pattern | useReducer whose reducer destructures with a default that calls a function | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: a destructuring default is checked like a parameter default |
+| c-usereducer-default-callback | useReducer whose reducer maps with a callback parameter default that calls a function | react | react | ssr | ok | 3.8 | fallback:module-side-effect, fallback:reducer-impure | F285: the proof walks the parameters of every inline callback too |
 | c-hook-hoist-function | a hook call inside a function property of a returned object | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | F286: a hook call inside a function is not a render-time call; refused |
 | c-includes-literals-state | [literals].includes(state) over state seeded from a prop the page changes | native | native | 0 | ok | 4.4 | — | F287: the strict-equality chain the template and the chunk already print, so no per-instance server job |
 | c-includes-literals-mixed | [strings, null, 0, true].includes(prop) | static | static | 0 | ok | 0 | — | F287: strict equality over every literal kind (null, 0, true included) |

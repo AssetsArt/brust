@@ -76,6 +76,10 @@ struct Inline {
     /// Every name the component's module declares (imports included): a global a foreign
     /// hook reads must not be among them, or the inlined code would read that binding.
     root_module: HashSet<String>,
+    /// F286 / F285: the generated locals that stand for a hook call hoisted out of a returned expression (a handler, a
+    /// state cell or its setter, a dispatch). A hook result handed out inside an object or array that the call site binds
+    /// WHOLE (`const t = useToggle()`) would be one derived value naming them, which a per-request job cannot (F289).
+    hook_results: HashSet<String>,
 }
 
 impl BodyDecls {
@@ -815,6 +819,8 @@ fn returned_value(
                 kind,
             },
         };
+        out.inline.hook_results.insert(state.clone());
+        out.inline.hook_results.insert(set.clone());
         if hook == "useState" {
             let init = match args.first() {
                 Some(a) => r.expr(a),
@@ -964,40 +970,44 @@ fn reducer_hook(
         return refuse(out, "reducer-shape", "needs a reducer and an initial state");
     };
     // The reducer's own function: inline, or a module-level declaration or const arrow.
-    let body: Option<Vec<js_ast::Stmt>> = match &reducer.data {
-        E::EArrow(a) if !a.is_async => Some(a.body.stmts.slice().to_vec()),
+    let names = &*r.names;
+    let verdict = |f_args: &[js_ast::G::Arg], f_body: &[js_ast::Stmt]| {
+        crate::analyze::reducer::is_pure(names, f_args, f_body)
+    };
+    let pure: Option<bool> = match &reducer.data {
+        E::EArrow(a) if !a.is_async => Some(verdict(a.args.slice(), a.body.stmts.slice())),
         E::EFunction(f)
             if !f.func.flags.contains(js_ast::flags::Function::IsAsync)
                 && !f.func.flags.contains(js_ast::flags::Function::IsGenerator) =>
         {
-            Some(f.func.body.stmts.slice().to_vec())
+            Some(verdict(f.func.args.slice(), f.func.body.stmts.slice()))
         }
         E::EIdentifier(id) if !m.foreign => {
             let id = id.ref_;
-            match module_fn(m.ast, r.names, id) {
-                Some((_, f)) => Some(f.body.stmts.slice().to_vec()),
+            match module_fn(m.ast, names, id) {
+                Some((_, f)) => Some(verdict(f.args.slice(), f.body.stmts.slice())),
                 None => match crate::analyze::stores::Module::new(m.ast).const_value(id) {
                     Some(js_ast::Expr {
                         data: E::EArrow(a), ..
-                    }) if !a.is_async => Some(a.body.stmts.slice().to_vec()),
+                    }) if !a.is_async => Some(verdict(a.args.slice(), a.body.stmts.slice())),
                     _ => None,
                 },
             }
         }
         _ => None,
     };
-    let Some(body) = body else {
+    let Some(pure) = pure else {
         return refuse(
             out,
             "reducer-shape",
             "the reducer is not an inline function or a function declared in this module",
         );
     };
-    if !crate::analyze::reducer::is_pure(r.names, &body) {
+    if !pure {
         return refuse(
             out,
             "reducer-impure",
-            "the reducer is not provably pure (an assignment, a loop, `throw`, `new`, or a call it cannot see)",
+            "the reducer is not provably pure (an assignment, a loop, `throw`, `new`, a default value or a call it cannot see)",
         );
     }
     let init = match (args.get(1), args.get(2)) {
@@ -1152,6 +1162,7 @@ fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) 
             loc_of_call(call),
             false,
         );
+        out.inline.hook_results.insert(name.clone());
         r.hoisted_calls.insert(addr, name);
     }
 }
@@ -2919,7 +2930,18 @@ fn bind_result(
     };
     let value = returned.unwrap_or_else(|| undefined_at(vloc));
     match binding.data {
-        B::BIdentifier(id) => bind_one(r, out, site, id.r#ref, value),
+        B::BIdentifier(id) => {
+            // F286: kept refused until F289: the whole object is one derived value that names a hoisted hook result.
+            if let Some(name) = whole_hook_result(&value, &out.inline.hook_results) {
+                return shape(
+                    out,
+                    format!(
+                        "custom hook {hook} returns `{name}`, a hook call, inside an object or array that is bound whole at the call site"
+                    ),
+                );
+            }
+            bind_one(r, out, site, id.r#ref, value)
+        }
         B::BMissing(_) => {}
         B::BArray(arr) => {
             let RawKind::Array(items) = value.kind else {
@@ -3000,6 +3022,20 @@ fn bind_result(
             }
         }
     }
+}
+
+/// The first generated hook-result local (see [`Inline::hook_results`]) that the object or array `value` holds directly.
+fn whole_hook_result(value: &RawExpr, results: &HashSet<String>) -> Option<String> {
+    let items: Vec<&RawExpr> = match &value.kind {
+        RawKind::Object(props) => props.iter().map(|(_, v)| v).collect(),
+        RawKind::Array(items) => items.iter().collect(),
+        _ => return None,
+    };
+    items.into_iter().find_map(|v| match &v.kind {
+        RawKind::Ident { name, .. } if results.contains(name) => Some(name.clone()),
+        RawKind::Object(_) | RawKind::Array(_) => whole_hook_result(v, results),
+        _ => None,
+    })
 }
 
 /// `binding` is the returned `value`: an identifier the hook returns is the same binding

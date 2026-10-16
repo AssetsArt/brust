@@ -89,6 +89,10 @@ fn use_reducer_is_a_state_cell_and_one_dispatch() {
         "reducer_hook.tsx",
         // the state is read as a child: it is a state cell (proved by its initial value), not an unknown local
         "reducer_child.tsx",
+        // a callback written inline is read by the proof
+        "reducer_callback_inline.tsx",
+        // a default that is itself pure (a literal) is read
+        "reducer_default_pure.tsx",
     ] {
         let all = compile(f);
         none_react(&all);
@@ -111,6 +115,12 @@ fn a_reducer_that_is_not_provably_pure_or_not_visible_is_a_named_refusal() {
     for (f, rule) in [
         ("reducer_impure.tsx", "reducer-impure"),
         ("reducer_call.tsx", "reducer-impure"),
+        // `.map(bump)` names a function the proof cannot see
+        ("reducer_callback_name.tsx", "reducer-impure"),
+        // a default value runs on every call, like the body: parameter, destructuring pattern, callback parameter
+        ("reducer_default_param.tsx", "reducer-impure"),
+        ("reducer_default_pattern.tsx", "reducer-impure"),
+        ("reducer_default_callback.tsx", "reducer-impure"),
         ("reducer_imported.tsx", "reducer-shape"),
     ] {
         let all = compile(f);
@@ -157,6 +167,19 @@ fn a_hook_in_a_conditional_or_a_function_is_still_refused() {
             rules(&all)
         );
     }
+}
+
+#[test]
+fn a_hoisted_hook_result_bound_whole_at_the_call_site_stays_refused() {
+    // `const t = useToggle()` would make `t` one derived value naming the hoisted handler: a per-request job that cannot
+    // (F289), so it stays refused, named, until that lands. Destructuring it is `hoist_object.tsx`.
+    let all = compile("hoist_whole.tsx");
+    assert!(react(&all[0].ir), "{:?}", all[0].ir.tier);
+    assert!(
+        rules(&all).contains(&"hook-return-shape".to_string()),
+        "{:?}",
+        rules(&all)
+    );
 }
 
 // F287 ----------------------------------------------------------------------------------------------------------

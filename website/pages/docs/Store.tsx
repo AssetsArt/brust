@@ -44,7 +44,7 @@ export default function TeamBadge() {
 const ISLAND = `// components/demos/TeamIsland.tsx: react (useTransition makes it an island)
 const { members, max } = useStore(team)   // plain values, not signals
 useTransition()                           // a hook the native tier does not lower
-const [open, toggle] = useReducer(flip, true)`
+const [open, toggle] = useReducer(flip, true)   // compiles natively; useTransition is what keeps the island`
 
 const PICK = [25, 1, 4, 7, 133, 143, 150, 94]
 
