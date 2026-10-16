@@ -142,6 +142,10 @@ pub struct PackageSources {
     pub scopes: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
     #[serde(default)]
     pub refused: std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    /// R34.140: the packages the build verified (pinned version and hash of the published entry) and the compiler
+    /// recognises by what they are instead of reading their source: name → version.
+    #[serde(default)]
+    pub recognised: std::collections::HashMap<String, String>,
 }
 
 /// Parses `source` as the module at `path` and runs the full analysis,
@@ -424,6 +428,16 @@ fn read_function_as(
     crate::analyze::expr::take_printer_panic(); // a flag left by an earlier component is not ours
     let mut names = NameTable::new(ast, func);
     names.tag_contexts(&ir.source);
+    names.set_collections_recognised(opts.is_some_and(|o| {
+        o.packages
+            .recognised
+            .contains_key(crate::analyze::collection::PACKAGE)
+    }));
+    // R34.140: the compiler cannot read this package; it asks the build to verify it (`PackageSources::recognised`)
+    if names.declares_collection() {
+        ir.package_requests
+            .push(crate::analyze::collection::PACKAGE.to_string());
+    }
     if forwards_ref {
         ir.forwards_ref = true;
         if let Some(a) = func.args.slice().get(1) {
@@ -643,6 +657,7 @@ fn read_function_as(
     ir.handlers = body.handlers;
     ir.refs = body.refs;
     ir.use_id_slots = body.id_bindings.len();
+    ir.uses_collection = body.uses_collection;
     ir.id_bindings = body.id_bindings;
     ir.stores = body.stores;
     ir.diagnostics.extend(body.diagnostics);
