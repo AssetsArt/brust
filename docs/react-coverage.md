@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 223 | 117 | 16 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 180 | 56 | 51 | 73 | 0 | 0 | 0 | 0 |
+| C Hooks | 187 | 56 | 53 | 78 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 560 | 249 | 96 | 211 | 3 | 1 | 0 | 0 |
+| **Total** | 567 | 249 | 98 | 216 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -469,7 +469,14 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-hoist-object | a custom hook returning an object whose properties are hook calls | native | native | 0 | ok | 4.6 | — | F286: an unconditional hook call in a returned object property is hoisted before the return, in source order |
 | c-hook-hoist-return | custom hooks that return useState(...) and useCallback(...) | native | native | 0 | ok | 4.6 | — | F286: a hook call in the return position is the pair or the value the call site binds |
 | c-hook-hoist-conditional | a hook call in a conditional property of a returned object | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | F286: only unconditional positions are hoisted; a conditional hook call stays refused |
-| c-hook-hoist-whole | a custom hook returning an object with a hook call, bound whole at the call site | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F286: hook-return-shape until F289: the whole object would be a derived value naming the hoisted handler |
+| c-hook-object-whole | a custom hook returning an object with a handler, bound whole at the call site | native | native | 0 | ok | 4.6 | — | F289: the object is read member by member (t.key), as a destructuring is; it was a job naming the handler local (500) |
+| c-hook-object-whole-array | a custom hook returning an array with a handler, bound whole at the call site | native | native | 0 | ok | 4.6 | — | F289: t[0] / t[1] with a literal index are the items of the returned array |
+| c-hook-object-whole-escapes | a custom hook's returned object bound whole and passed on as a whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: a hook object used as a value (not t.key) cannot be named in a job: hook-return-shape, the component stays React |
+| c-hook-object-memo | a custom hook returning useMemo of an object with a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: not an object literal, so not read per member; a job naming the handler would 500: hook-return-shape |
+| c-hook-object-spread | a custom hook returning an object with a spread and a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: a spread makes the returned object a computed value: hook-return-shape |
+| c-hook-object-ident | a custom hook returning a local object (return obj) with a handler, bound whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: an identifier is not the literal: a job naming the hook-declared function would 500: hook-return-shape |
+| c-handler-in-computed-member | a value the component computes from a hook object's handler (const o = { cb: t.toggle }) | react | react | ssr | ok | 4.0 | fallback:client-function-in-job | F289: a per-request job cannot name a handler: client-function-in-job |
+| c-handler-in-computed-destructured | a value the component computes from a destructured hook handler (const o = { cb: toggle }) | react | react | ssr | ok | 4.0 | fallback:client-function-in-job | F289: the same on main before the member binding: client-function-in-job |
 | c-usereducer-callback-by-name | useReducer whose reducer maps with a named helper | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a callback passed by name is a function the purity proof cannot see: reducer-impure |
 | c-usereducer-default-param | useReducer whose reducer has a parameter default that calls a function | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a default runs on every call like the body: reducer-impure |
 | c-usereducer-default-pattern | useReducer whose reducer destructures with a default that calls a function | react | react | ssr | ok | 4.0 | fallback:module-side-effect, fallback:reducer-impure | F285: a destructuring default is checked like a parameter default |
