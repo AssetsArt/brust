@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import CtxVPage from './CtxVPage'
 import DirNonePage from './DirNonePage'
 import DirProvPage from './DirProvPage'
 import FwdPage from './FwdPage'
@@ -34,3 +35,4 @@ export const renderHooks = (): string => html(HooksPage)
 export const renderDir = (): string => html(DirNonePage)
 export const renderDirProvider = (): string => html(DirProvPage)
 export const renderHydr = (): string => html(HydrPage)
+export const renderCtxV = (): string => html(CtxVPage)

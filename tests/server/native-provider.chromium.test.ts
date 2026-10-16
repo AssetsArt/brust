@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -412,6 +412,25 @@ test('useIsHydrated: an instance that mounts after the page booted (an x-if clon
   await page.waitForFunction(() => document.querySelector('output[data-name="late"]')?.getAttribute('data-log') === '1')
   expect(await late.getAttribute('data-h')).toBe('y')
   expect(await first.getAttribute('data-log')).toBe('01')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('F304: a context field called in a handler and read in an effect: no island, markup equals React, the toggle and the effect follow the Provider', async () => {
+  const html = await (await fetch(`${base}/ctxv`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderCtxV()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/ctxv`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('main p')?.getAttribute('data-seen') === 'n')
+  await page.getByRole('button', { name: 't' }).click()
+  await page.waitForFunction(() => document.querySelector('main section')?.getAttribute('data-open') === 'y')
+  await page.waitForFunction(() => document.querySelector('main p')?.getAttribute('data-seen') === 'y')
+  await page.getByRole('button', { name: 't' }).click()
+  await page.waitForFunction(() => document.querySelector('main p')?.getAttribute('data-seen') === 'n')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 136 | 26 | 49 | 61 | 0 | 0 | 0 | 0 |
+| C Hooks | 145 | 35 | 49 | 61 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 514 | 218 | 94 | 198 | 3 | 1 | 0 | 0 |
+| **Total** | 523 | 227 | 94 | 198 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -425,8 +425,17 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-native-provider-handler-in-content | a page handler written in the content of a state Provider | native | native | 0 | ok | 4.6 | — | S2 (F262): a page handler written in the content is called through a hidden input of the clone (the page keeps the closure) |
 | c-native-provider-caller-prop | a prop of the calling component read in the content of a state Provider | static | static | 0 | ok | 4.6 | — | S2 (F262): the caller's prop is a hidden input of the clone; fixed there, so it prints once |
 | c-native-provider-outer-frame | a consumer of an outer Provider inside another Provider's content | static | static | ssr | ok | 5.3 | info:specialise-unsupported | A1: the outer frame's expressions would be read against the inner clone's members |
-| c-native-provider-ctx-in-effect | a consumer that reads the context inside an effect | static | static | ssr | ok | 4.0 | info:specialise-unsupported | context-escape: a context local is not a value in code printed as written |
+| c-native-provider-ctx-in-effect | a consumer that reads a context field inside an effect | static | static | 0 | ok | 4.6 | — | F304: c.open in an effect is the hidden prop of that field (bound to a local around the printed code); was context-escape |
 | c-handler-binding-named-a | a handler that reads a component binding named a | native | native | 0 | ok | 4.6 | — | F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array |
+| c-ctx-verbatim-handler | a handler that calls one context field and reads two others (c.f(), c?.f) | static | static | 0 | ok | 4.6 | — | F304: a consumer in printed code reads only c.f: the object of field locals stands for it (this of c.f() is that object); the consumer stays native |
+| c-ctx-verbatim-computed | a handler that reads the context with a computed key | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative) |
+| c-ctx-verbatim-destruct | a handler that destructures the context | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative) |
+| c-ctx-verbatim-whole | a handler that passes the whole context on | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative) |
+| c-ctx-verbatim-write | a handler that writes through a context field | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative) |
+| c-ctx-verbatim-delete | a handler that deletes a context field | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative) |
+| c-ctx-verbatim-proto | a handler that reads constructor off the context | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only member reads of identifier fields qualify (a string-literal key c["f"] reads like c.f and qualifies; a variable key does not); this use keeps context-escape (the consumer is a React island). Walk now records delete x.a as a write through x for every analysis (conservative) |
+| c-ctx-verbatim-this-method | a consumer calls a context method whose Provider value reads this | static | static | ssr | ok | 5.3 | — | F304 (c): c.f() runs with this = the object of the fields the consumer reads; a Provider value that reads this stays a React island (context-state) |
+| c-ctx-verbatim-class-value | a consumer calls a method of a class-instance Provider value | static | static | ssr | ok | 5.3 | — | F304 (c): a class instance is not an object literal of closures: the Provider stays a React island (context-value) |
 | c-usereducer-inline | useReducer with an inline reducer | native | native | 0 | ok | 4.6 | — | F285: a state cell and ONE dispatch handler (stable identity) that applies the reducer inside the setter's updater |
 | c-usereducer-module-switch | useReducer with a module reducer (switch over action.type, object spread) | native | native | 0 | ok | 4.6 | — | F285: the pure-reducer proof reads a switch, a spread and a member read |
 | c-usereducer-init-fn | useReducer(reducer, arg, init) | native | native | 0 | ok | 4.6 | — | F285: the initial state is init(arg) |
