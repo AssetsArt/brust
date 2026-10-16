@@ -994,3 +994,39 @@ fn a_local_object_with_another_spread_or_a_method_is_still_not_expanded() {
         );
     }
 }
+
+// ---- W1d PR 4b (F327): the rest inside a local object that is only ever spread ----
+
+/// Radix ToggleGroupImpl's `commonProps = { role: 'group', dir: direction, ...toggleGroupProps }`: the rest is not read as a
+/// value when the object is only spread onto JSX elements; the children travel in the rest.
+#[test]
+fn a_local_object_holding_the_rest_that_is_only_spread_reads_no_rest_as_a_value() {
+    let all = compile("local-spread-rest.tsx");
+    let rules: Vec<&str> = all.iter().flat_map(|(_, ir, _)| rules(ir)).collect();
+    assert!(all.iter().all(|(_, ir, _)| !is_react(ir)), "{rules:?}");
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.to_lowercase().starts_with("localspreadrest"))
+        .expect("page");
+    assert!(
+        page.2.contains(r#"role="{{ "group""#) && page.2.contains("one"),
+        "{}",
+        page.2
+    );
+}
+
+/// The same object also read as a value stays `prop-pattern`: the rest would be printed as a value.
+#[test]
+fn the_same_object_read_as_a_value_still_refuses_the_rest() {
+    let all = compile("local-spread-rest-value.tsx");
+    let g = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("group"))
+        .expect("group");
+    assert!(
+        is_react(&g.1) && g.1.diagnostics.iter().any(|d| d.rule == "prop-pattern"),
+        "{:?} {:?}",
+        g.1.tier,
+        g.1.diagnostics
+    );
+}

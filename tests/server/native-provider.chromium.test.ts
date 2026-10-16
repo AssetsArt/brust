@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderLocalSpread, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderLocalSpreadRest, renderLocalSpread, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -440,4 +440,10 @@ test('F326: a local object that spreads the props among plain entries (Radix Tog
   expect(html).not.toContain('brust-island')
   // React prints a true boolean attribute as `disabled=""`, brust as `disabled`: the same HTML
   expect(plain(html)).toBe(plain(renderLocalSpread()).replace(/ (disabled)=""/g, ' $1'))
+}, 60_000)
+
+test('F327: the rest inside a local object that is only spread (Radix ToggleGroupImpl\'s commonProps) equals React, children included', async () => {
+  const html = await (await fetch(`${base}/local-spread-rest`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderLocalSpreadRest()))
 }, 60_000)

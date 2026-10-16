@@ -1926,6 +1926,12 @@ fn read_decl(
         );
         return;
     };
+    // F327: an object of the rest and plain entries used only as `{...x}` is expanded where it is spread, never read here
+    if let B::BIdentifier(id) = decl.binding.data
+        && r.names.is_spread_only_object(id.r#ref)
+    {
+        return;
+    }
     let vloc = loc_of(value);
     let ident = match decl.binding.data {
         B::BIdentifier(id) => Some(r.names.name(id.r#ref)),

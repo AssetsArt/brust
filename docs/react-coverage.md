@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 156 | 41 | 49 | 66 | 0 | 0 | 0 | 0 |
+| C Hooks | 158 | 43 | 49 | 66 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 534 | 233 | 94 | 203 | 3 | 1 | 0 | 0 |
+| **Total** | 536 | 235 | 94 | 203 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -468,6 +468,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-local-spread | a local object that spreads the props among plain entries ({ ...props, pressed, disabled }), spread onto a child | static | static | 0 | ok | 0 | — | W1d PR 4a (F326): Radix ToggleGroupItem's commonProps; spreads as the props spread then its own entries |
 | c-local-spread-other | a local object that spreads the props and another local object | static | static | ssr | ok | 4.0 | — | W1d PR 4a (F326): only the props or the rest may be spread inside the local object; the component is a React island under a static page |
 | c-local-spread-method | a local object with a method that spreads the props | static | static | ssr | ok | 4.0 | — | W1d PR 4a (F326): a method is not a plain entry; the component is a React island under a static page |
+| c-local-spread-rest | a local object of entries and the rest ({ role, dir, ...groupProps }) used only as a JSX spread | static | static | 0 | ok | 0 | — | W1d PR 4b (F327): Radix ToggleGroupImpl's commonProps; the rest in it is not read as a value because the object is only spread |
+| c-local-spread-rest-value | the same object also read as a value | static | static | ssr | ok | 4.0 | — | W1d PR 4b (F327): read as a value the rest would print as one: prop-pattern, the component is a React island under a static page |
 
 ## D. API surface
 

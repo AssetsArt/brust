@@ -74,6 +74,9 @@ pub struct NameTable<'a> {
     /// `...rest` of a destructured props pattern (shadcn S1.2, R34.14): `rest.k` reads prop `k`
     /// (`undefined` for a named key), `{...rest}` spreads the props minus the named keys.
     rest: Option<u32>,
+    /// F327: body `const`s that hold an object literal spreading the rest or the props and are used ONLY as JSX spreads,
+    /// by symbol key: they are never values, so the rest inside is never read as one.
+    spread_only: HashSet<u32>,
     /// The keys the props pattern names (what `rest` leaves out).
     named_props: Vec<String>,
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
@@ -372,6 +375,73 @@ impl<'a> NameTable<'a> {
         }
     }
 
+    /// F327: marks the body `const x = { …, ...rest }` (an object literal that spreads the rest or the whole props among
+    /// plain entries) whose every use is `{...x}` on a JSX element: the object itself is never read as a value, so the rest
+    /// inside it is not an escape (`jsx::spread_parts` expands it where it is spread).
+    pub fn mark_spread_only_objects(&mut self, stmts: &[js_ast::Stmt]) {
+        let mut w = crate::analyze::expr::Walk::default();
+        w.stmts(stmts);
+        // where a JSX element spreads an identifier: the start of that identifier
+        let mut spread_at: Vec<i32> = Vec::new();
+        for c in &w.calls {
+            let js_ast::expr::Data::ECall(call) = &c.data else {
+                continue;
+            };
+            if !call.was_jsx_element {
+                continue;
+            }
+            let Some(js_ast::expr::Data::EObject(props)) = call.args.get(1).map(|a| &a.data) else {
+                continue;
+            };
+            for p in props.properties.iter() {
+                if matches!(p.kind, js_ast::G::PropertyKind::Spread)
+                    && let Some(v) = &p.value
+                    && matches!(v.data, js_ast::expr::Data::EIdentifier(_))
+                {
+                    spread_at.push(v.loc.start);
+                }
+            }
+        }
+        for stmt in stmts {
+            let js_ast::stmt::Data::SLocal(l) = &stmt.data else {
+                continue;
+            };
+            if !matches!(l.kind, js_ast::S::Kind::KConst) {
+                continue;
+            }
+            for d in l.decls.iter() {
+                let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value) else {
+                    continue;
+                };
+                let js_ast::expr::Data::EObject(obj) = &v.data else {
+                    continue;
+                };
+                let spreads_props = obj.properties.iter().any(|p| {
+                    matches!(p.kind, js_ast::G::PropertyKind::Spread)
+                        && matches!(&p.value, Some(x) if matches!(&x.data, js_ast::expr::Data::EIdentifier(i)
+                            if self.is_rest(i.ref_)))
+                });
+                if !spreads_props {
+                    continue;
+                }
+                let k = self.key(id.r#ref);
+                let uses: Vec<i32> = w
+                    .used_at
+                    .iter()
+                    .filter(|(r, _)| self.key(*r) == k)
+                    .map(|(_, at)| *at)
+                    .collect();
+                if !uses.is_empty() && uses.iter().all(|at| spread_at.contains(at)) {
+                    self.spread_only.insert(k);
+                }
+            }
+        }
+    }
+
+    pub fn is_spread_only_object(&self, r: js_ast::Ref) -> bool {
+        self.spread_only.contains(&self.key(r))
+    }
+
     /// The body statement whose binding starts at `loc` was absorbed into the props pattern.
     pub fn is_absorbed(&self, loc: i32) -> bool {
         self.absorbed.contains(&loc)
@@ -387,6 +457,7 @@ impl<'a> NameTable<'a> {
             props: HashMap::new(),
             props_ident: None,
             rest: None,
+            spread_only: HashSet::new(),
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
             use_before_pattern: std::cell::Cell::new(None),
