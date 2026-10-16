@@ -938,36 +938,31 @@ impl<'a, 'c> Printer<'a, 'c> {
             _ => None,
         };
         if let Some(props) = style_obj {
-            if props.is_empty() {
-                open.push_str(" style=\"{{ {} | style_css | e }}\"");
-            } else {
-                // M3-P P7: lowered at compile time. minijinja's dict
-                // literal iterated sorted by key and kept the LAST value
-                // of a duplicate key; do the same here, and drop the
-                // keys `style_obj_to_css` drops at render (`css_key`),
-                // so no per-element dict is built. Values are pure
-                // expressions, so a dropped key loses nothing.
-                let mut sorted: std::collections::BTreeMap<&str, _> =
-                    std::collections::BTreeMap::new();
-                for (k, pv) in props.iter() {
-                    sorted.insert(k.as_str(), pv);
+            // A literal object: no declarations, no attribute (react-dom omits an empty `style`). Otherwise lowered at
+            // compile time (M3-P P7): JS object order (a repeated key keeps its first place and its LAST value, so a
+            // later shorthand overrides an earlier longhand as in React), keys `style_obj_to_css` drops at render
+            // (`css_key`) left out, so no per-element dict is built. Values are pure expressions, so a dropped key
+            // loses nothing.
+            let mut ordered: Vec<(&str, &_)> = Vec::new();
+            for (k, pv) in props.iter() {
+                match ordered.iter_mut().find(|(o, _)| *o == k.as_str()) {
+                    Some(slot) => slot.1 = pv,
+                    None => ordered.push((k.as_str(), pv)),
                 }
-                let args: Vec<String> = sorted
-                    .into_iter()
-                    .filter(|(k, _)| brust_jinja::css_key(k))
-                    .flat_map(|(k, pv)| [jinja_string(k), self.jinja(pv)])
-                    .collect();
-                open.push_str(&format!(
-                    " style=\"{{{{ css_decls({}) | e }}}}\"",
-                    args.join(", ")
-                ));
+            }
+            let args: Vec<String> = ordered
+                .into_iter()
+                .filter(|(k, _)| brust_jinja::css_key(k))
+                .flat_map(|(k, pv)| [jinja_string(k), self.jinja(pv)])
+                .collect();
+            if !args.is_empty() {
+                open.push_str(&format!("{{{{ css_attr({}) }}}}", args.join(", ")));
             }
         } else if html == "style" {
-            // A style object held in a variable or prop: the same CSS
-            // rule; an undefined/null style omits the attribute (F36).
-            open.push_str(&format!(
-                "{{% if ({v}) | present %}} style=\"{{{{ ({v}) | style_css | e }}}}\"{{% endif %}}"
-            ));
+            // A style object held in a variable or prop: the same CSS rule; an undefined/null style, or one with no
+            // declarations, omits the attribute (F36, F296).
+            let v = crate::lower::server_expr::with_ordered_objects(|| self.value(value));
+            open.push_str(&format!("{{{{ ({v}) | style_attr }}}}"));
         } else {
             open.push_str(&dynamic_attr(&html, &v, tag));
         }
@@ -1361,9 +1356,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             return;
         }
         if html == "style" {
-            open.push_str(&format!(
-                "{{% if ({v}) | present %}} style=\"{{{{ ({v}) | style_css | e }}}}\"{{% endif %}}"
-            ));
+            open.push_str(&format!("{{{{ ({v}) | style_attr }}}}"));
         } else {
             open.push_str(&dynamic_attr(&html, v, tag));
         }
@@ -1903,7 +1896,13 @@ impl<'a, 'c> Printer<'a, 'c> {
                 client_only.push(pname.clone());
                 continue;
             }
-            segs.push(Seg::Named(pname.clone(), PropBinding::Expr(self.value(v))));
+            // a `style` object keeps its source order (F296 C3), like a style written on the element
+            let value = if pname == "style" {
+                crate::lower::server_expr::with_ordered_objects(|| self.value(v))
+            } else {
+                self.value(v)
+            };
+            segs.push(Seg::Named(pname.clone(), PropBinding::Expr(value)));
         }
         if as_child.is_none() && !children.is_empty() {
             let mut saved = String::new();
