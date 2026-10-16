@@ -1,7 +1,8 @@
-import { useReducer } from 'react'
+import { useReducer, useTransition } from 'react'
 
 // useReducer keeps Card a React island; the others are what a page puts inside it.
 export function Card({ title, children }: { title?: string; children?: React.ReactNode }) {
+  useTransition()
   const [n, hit] = useReducer((x: number) => x + 1, 0)
   return (
     <section data-testid="card">
@@ -29,6 +30,7 @@ export function Wrap({ label }: { label: string }) {
 
 /** React (a reducer), takes an element in a prop. */
 export function Tip({ content, children }: { content?: React.ReactNode; children?: React.ReactNode }) {
+  useTransition()
   const [n, hit] = useReducer((x: number) => x + 1, 0)
   return (
     <div data-n={n} onClick={() => hit()}>

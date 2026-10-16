@@ -1,8 +1,8 @@
-// Demo, react tier: the same `team` store through the same hook, inside a React island (useReducer is what makes
+// Demo, react tier: the same `team` store through the same hook, inside a React island (useTransition is what makes
 // it React; useStore alone stays native). Removing a member runs the DELETE rule in the browser (team-client.ts); the
 // native badge updates too.
 import { useStore } from '@brust/core/store/react'
-import { useEffect, useReducer } from 'react'
+import { useEffect, useReducer, useTransition } from 'react'
 import { loadTeam, removeMember } from './team-client'
 import { team } from './team-store'
 
@@ -10,6 +10,7 @@ const flip = (open: boolean): boolean => !open
 
 export default function TeamIsland() {
   const s = useStore(team)
+  useTransition() // keeps this a React island: the native tier does not compile it
   const [open, toggle] = useReducer(flip, true)
   // The island hydrates against the snapshot the page was rendered with (F102), then follows the live store; loadTeam
   // fills it from storage after mount.

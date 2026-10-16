@@ -313,6 +313,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/bind-parity.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/icon-shapes.test.ts
       - run: bun test --timeout 120000 tests/server/nested-fed.test.ts
+      # F284-F287: an arrow-const component, useReducer, hoisted hooks and includes: served == React, then the interaction.
+      - run: bun test --timeout 120000 tests/server/presence-general.chromium.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
       - run: bun test --timeout 120000 tests/server/spread-handlers.chromium.test.ts
       # F142 PR 1: shadcn's table page built AND started, its HTML equal to React's.
@@ -332,8 +334,14 @@ jobs:
       - run: bun test --timeout 120000 tests/server/rest-style.chromium.test.ts
       # B4: a never-written useRef read in the render is its first value, served == React.
       - run: bun test --timeout 120000 tests/server/ref-snapshot.chromium.test.ts
+      # F309: a linked static child hosting slot content with a linked prop is refused (slot-owner); served == React.
+      - run: bun test --timeout 120000 tests/server/linked-slot.chromium.test.ts
+      # F298: a consumer passed as children through a component's rest sits under that component's Provider; served == React.
+      - run: bun test --timeout 120000 tests/server/rest-children.chromium.test.ts
       # F297: a condition on a useState(null) cell is decided at the server (no job); served == React hydrating the page.
       - run: bun test --timeout 120000 tests/server/form-control.chromium.test.ts
+      # F295: a snapshot through a forwarding spread where every instance mounts once; a guarded mount refused.
+      - run: bun test --timeout 120000 tests/server/snapshot-spread.chromium.test.ts
 
       # ledger-dew: F147 served (hoisted handler names), F219 known difference pinned until F230.
       - run: bun test --timeout 120000 tests/server/handler-names.chromium.test.ts

@@ -1,12 +1,12 @@
 // Demo (client-only): a page on one origin calling actions on another. Set both deployments' settings and see, step by
 // step, what the browser and the actions server do: the preflight, the credentials rule, the cross-site guard. The
 // rules are components/demos/cross-origin.ts, evaluated in your browser; nothing is sent.
-import { useReducer } from 'react'
+import { useReducer, useTransition } from 'react'
 import { type CrossOriginInput, checkCrossOrigin } from './cross-origin'
 
 type Action = { set: keyof CrossOriginInput; value: string | boolean }
 
-// One reducer holds the form. (useReducer is a hook the native tier does not compile, so this stays a React island: the
+// One reducer holds the form. (useTransition, a hook the native tier does not compile, keeps this a React island: the
 // check below is a call into cross-origin.ts and runs on every change.)
 function reduce(f: CrossOriginInput, a: Action): CrossOriginInput {
   return { ...f, [a.set]: a.value }
@@ -31,6 +31,7 @@ const BADGE: Record<string, string> = {
 }
 
 export default function CrossOriginCheck() {
+  useTransition() // keeps this a React island: the native tier does not compile it
   const [f, set] = useReducer(reduce, START)
   const r = checkCrossOrigin(f)
   const text = (k: keyof CrossOriginInput) => (e: { target: { value: string } }) => set({ set: k, value: e.target.value })

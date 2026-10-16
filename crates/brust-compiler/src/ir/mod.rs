@@ -217,6 +217,10 @@ pub struct ComponentIR {
     /// shares one factory module with every clone whose chunk is equal (R34.124).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub specialised: bool,
+    /// F298: a clone made for one call site whose children were put where the component spreads its rest: the clones
+    /// made inside it are keyed by its id too (the same Provider call of the same module holds other content there).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rest_clone_of: Option<String>,
     pub tier: Tier,
     pub props: Vec<PropDecl>,
     /// The local of a `...rest` in the props pattern (shadcn S1.2, R34.14): the props minus every
@@ -316,6 +320,11 @@ pub struct ComponentIR {
     /// transitive): directives in the slot content its caller gives would be bound by that host, not by the caller.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hosts_children: bool,
+    /// F295: this component prints a value it took once at mount (a snapshot cell) where nothing re-applies it on the
+    /// client (through a spread), so an instance of it must mount with its caller and never again (transitive). The
+    /// text says what, for the call site that cannot promise it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount_once: Option<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -430,6 +439,7 @@ impl ComponentIR {
             export: None,
             unexported: false,
             specialised: false,
+            rest_clone_of: None,
             tier: Tier::Pending,
             props: vec![],
             props_rest: None,
@@ -457,6 +467,7 @@ impl ComponentIR {
             live_forwards: Vec::new(),
             repeats_children: false,
             hosts_children: false,
+            mount_once: None,
             state: vec![],
             derived: vec![],
             effects: vec![],

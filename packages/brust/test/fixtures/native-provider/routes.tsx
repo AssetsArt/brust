@@ -1,4 +1,5 @@
 import { defineRoutes } from '@brust/core/routes'
+import CtxVPage from './CtxVPage'
 import DirNonePage from './DirNonePage'
 import DirProvPage from './DirProvPage'
 import FwdPage from './FwdPage'
@@ -27,6 +28,7 @@ export const routes = defineRoutes([
   { path: '/rest', Component: RestPage },
   { path: '/rest-live', Component: RestLivePage },
   { path: '/inputs', Component: InputsPage },
+  { path: '/ctxv', Component: CtxVPage },
   { path: '/hydr', Component: HydrPage },
   { path: '/hydr-if', Component: HydrIfPage },
   { path: '/dir', Component: DirNonePage },

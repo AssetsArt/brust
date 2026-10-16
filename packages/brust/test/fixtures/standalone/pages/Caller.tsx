@@ -1,10 +1,11 @@
 import { client } from '@brust/core/client'
-import { useReducer } from 'react'
+import { useReducer, useTransition } from 'react'
 import type { App } from '../api/actions'
 
 // A React island (useReducer): it calls the actions app on another origin through `client()`, which reads the page's
 // injected __BRUST_ACTION_BASE__ / __BRUST_ACTION_CREDENTIALS__.
 export default function Caller() {
+  useTransition()
   const [out, show] = useReducer((_: string, next: string) => next, 'idle')
   const api = client<App>()
   return (

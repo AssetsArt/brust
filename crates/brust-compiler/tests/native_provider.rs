@@ -184,22 +184,26 @@ fn a_consumer_of_an_outer_frame_inside_another_providers_content_is_refused() {
     );
 }
 
+// F304: a context field read inside an effect is a hidden prop of the consumer (it was `context-escape`); the Provider
+// call site is specialised as for any other native consumer
 #[test]
-fn a_context_value_read_inside_an_effect_keeps_the_consumer_in_react_and_the_provider_an_island() {
+fn a_context_field_read_inside_an_effect_keeps_the_consumer_native() {
     let all = compile("effect.tsx");
     let consumer = all
         .iter()
         .find(|i| i.ir.id.starts_with("pEffect_"))
         .expect("the consumer");
     assert!(
-        has(&consumer.ir, DiagClass::Fallback, "context-escape"),
-        "{:?}",
+        !has(&consumer.ir, DiagClass::Fallback, "context-escape") && !is_react(&consumer.ir),
+        "{:?} {:?}",
+        consumer.ir.tier,
         consumer.ir.diagnostics
     );
-    // The React consumer cannot move into a native clone (an island would not see the frame): the Provider call site
-    // keeps its island, with the consumer inside it, and the page stays what it was.
-    assert!(clones(&all).is_empty());
     assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(
+        !clones(&all).is_empty(),
+        "the Provider call site is a clone"
+    );
 }
 
 // B7 (R34.122 b): a render prop the callee only calls is spliced into a clone of the callee, parameters bound to the
@@ -702,6 +706,70 @@ fn a_const_object_entry_calling_an_effectful_or_unproven_function_still_falls_ba
     }
 }
 
+#[test]
+fn children_carried_in_the_rest_sit_under_the_clones_provider() {
+    // F298: `<KRootStatic><KThumb/></KRootStatic>`, where KRootStatic spreads its rest (children included) into a trigger
+    // under its own Provider: the Thumb reads that Provider's frame, as in React.
+    let all = compile("rest_children.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert!(
+        all.iter().any(|i| i.ir.rest_clone_of.is_some()),
+        "{:?}",
+        all.iter().map(|i| &i.ir.id).collect::<Vec<_>>()
+    );
+    // The Thumb is printed inside the Provider's clone and linked to it (its state changes on the client).
+    let thumb = root
+        .jinja
+        .find("kThumb_")
+        .expect("the thumb is in the page's markup");
+    assert!(
+        root.jinja[thumb..].contains("x-props-bind"),
+        "{}",
+        root.jinja
+    );
+    // ... and the nearest host around it is the Provider's clone (the runtime binds by the nearest x-data): the label
+    // between them has no host of its own.
+    let clone = root
+        .jinja
+        .find("x-data=\"kProvider_")
+        .expect("the Provider's clone hosts the content");
+    let thumb_host = root
+        .jinja
+        .find("x-data=\"kThumb_")
+        .expect("the thumb's own host");
+    let between = &root.jinja[clone + 1..thumb_host];
+    assert!(!between.contains("x-data="), "{}", root.jinja);
+    assert!(
+        !root
+            .ir
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == "context-no-provider"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+}
+
+#[test]
+fn rest_children_a_native_trigger_would_bind_keep_todays_refusal_and_say_why() {
+    // The trigger has an instance of its own: content with a live prop printed inside its host would bind to it (F214).
+    let all = compile("rest_children_host.tsx");
+    let root = &all[0];
+    assert!(
+        has(&root.ir, DiagClass::Fallback, "context-no-provider"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    let why = root
+        .ir
+        .diagnostics
+        .iter()
+        .find(|d| d.rule == "rest-children-unsupported")
+        .map(|d| d.message.clone())
+        .unwrap_or_default();
+    assert!(why.contains("its own host element"), "{why}");
+}
 // R34.143: `useSyncExternalStore(subscribe, () => true, () => false)` with a `subscribe` that subscribes to nothing (Radix's
 // `useIsHydrated`) is false on the server and true once mounted; every other store stays `hook-unsupported`.
 #[test]
@@ -764,4 +832,89 @@ fn a_context_local_destructured_or_aliased_in_the_body_reads_its_fields() {
         "{:?}",
         all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
     );
+}
+
+// F304: a context field read in code printed as written (a handler, an effect) is the hidden prop of that field, bound to
+// a local around the code; the consumer stays native
+#[test]
+fn context_fields_read_in_a_handler_or_an_effect_are_hidden_props_of_the_consumer() {
+    for (file, consumer, needles) in [
+        (
+            "ctxv_handler.tsx",
+            "cHandler_",
+            ["_toggle", "_label", "_open"].as_slice(),
+        ),
+        ("ctxv_effect.tsx", "cEffect_", ["_open"].as_slice()),
+    ] {
+        let all = compile(file);
+        let c = all
+            .iter()
+            .find(|i| i.ir.id.starts_with(consumer))
+            .unwrap_or_else(|| panic!("{file}: the consumer"));
+        assert!(
+            !has(&c.ir, DiagClass::Fallback, "context-escape") && !is_react(&c.ir),
+            "{file}: {:?} {:?}",
+            c.ir.tier,
+            c.ir.diagnostics
+        );
+        let js = c.client.as_deref().unwrap_or_default();
+        for n in needles {
+            assert!(
+                js.contains(&format!("__ctx_")) && js.contains(n),
+                "{file} {n}: {js}"
+            );
+        }
+        // the context local itself is not a name in the chunk: it is the object of the field locals
+        assert!(!js.contains("useContext"), "{file}: {js}");
+    }
+}
+
+// F304 (conditions a, b): only non-computed reads of identifier fields qualify; every other use keeps the escape
+#[test]
+fn every_other_use_of_a_context_in_printed_code_keeps_context_escape() {
+    for (file, consumer) in [
+        ("ctxv_computed.tsx", "cComputed_"),
+        ("ctxv_destruct.tsx", "cDestruct_"),
+        ("ctxv_whole.tsx", "cWhole_"),
+        ("ctxv_write.tsx", "cWrite_"),
+        ("ctxv_delete.tsx", "cDelete_"),
+        ("ctxv_proto.tsx", "cProto_"),
+    ] {
+        let all = compile(file);
+        let c = all
+            .iter()
+            .find(|i| i.ir.id.starts_with(consumer))
+            .unwrap_or_else(|| panic!("{file}: the consumer"));
+        assert!(
+            has(&c.ir, DiagClass::Fallback, "context-escape"),
+            "{file}: {:?}",
+            c.ir.diagnostics
+        );
+    }
+}
+
+// F304 (condition c): the consumer's `c.f()` runs with `this` = the object of the fields the consumer reads, so a Provider
+// value whose methods read `this`, or a class instance, must never reach a native consumer: the Provider stays React
+#[test]
+fn a_provider_value_that_reads_this_or_is_a_class_instance_stays_react() {
+    for (file, provider, rule) in [
+        ("ctxthis_method.tsx", "tP_", "context-state"),
+        ("ctxthis_class.tsx", "kP_", "context-value"),
+    ] {
+        let all = compile(file);
+        let p = all
+            .iter()
+            .find(|i| i.ir.id.starts_with(provider))
+            .unwrap_or_else(|| panic!("{file}: the Provider"));
+        assert!(
+            is_react(&p.ir) && has(&p.ir, DiagClass::Fallback, rule),
+            "{file}: {:?} {:?}",
+            p.ir.tier,
+            p.ir.diagnostics
+        );
+        assert!(
+            clones(&all).is_empty(),
+            "{file}: no native clone of the Provider"
+        );
+    }
 }

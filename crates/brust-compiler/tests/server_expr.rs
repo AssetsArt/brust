@@ -44,8 +44,21 @@ fn template_subset_table() {
         ("a.slice(0, 3)", Ok(())),
         ("a.startsWith('x') && a.endsWith('y')", Ok(())),
         ("xs.includes('a')", Ok(())),
+        // F287: an array of literals is a strict-equality chain over any expression the subset reads
+        ("['a', 'b'].includes(a)", Ok(())),
+        ("['a', null, 0, true].includes(a.b)", Ok(())),
+        ("[1, 2].includes(n + 1)", Ok(())),
+        // a NaN member (SameValueZero, not ===), a non-literal member or a second argument stay as they were
         (
-            "['a', 'b'].includes(a)",
+            "[NaN, 1].includes(a)",
+            Err("method arguments must be literals"),
+        ),
+        (
+            "[a, 'b'].includes(n)",
+            Err("method arguments must be literals"),
+        ),
+        (
+            "['a', 'b'].includes(a, 1)",
             Err("method arguments must be literals"),
         ),
         ("a.includes(['a', 'b'])", Ok(())),
