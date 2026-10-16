@@ -3619,7 +3619,7 @@ impl Walker<'_, '_> {
                         "`{root}` is not a props path and its child reads inside it"
                     ));
                 } else if let Some(j) = match v {
-                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
+                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal_ordered(),
                     _ => None,
                 } {
                     rec.literals.insert(n.clone(), j);
@@ -4365,7 +4365,7 @@ impl Walker<'_, '_> {
                         }
                         match lowered {
                             Ok((tree, nested)) => {
-                                literals.insert(k.clone(), tree.clone());
+                                literals.insert(k.clone(), crate::ir::OJson::from(tree.clone()));
                                 element_props.push((k.clone(), tree));
                                 self.note_nested(name, nested);
                             }
@@ -4406,7 +4406,7 @@ impl Walker<'_, '_> {
                     }
                     inputs.extend(self.paths_of(v));
                     let lit = match v {
-                        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
+                        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal_ordered(),
                         _ => None,
                     };
                     match lit {
@@ -4460,7 +4460,7 @@ impl Walker<'_, '_> {
                         }
                         r.x.sort();
                     }
-                    literals.insert(X_KEY.to_string(), names);
+                    literals.insert(X_KEY.to_string(), crate::ir::OJson::from(names));
                 }
                 if !children.is_empty() && root_host {
                     root_host_diag(&mut self.diagnostics, name, *loc);
@@ -4478,7 +4478,7 @@ impl Walker<'_, '_> {
                                 loc: *loc,
                                 kind: raw_json(&tree, *loc),
                             };
-                            literals.insert("children".to_string(), tree);
+                            literals.insert("children".to_string(), crate::ir::OJson::from(tree));
                             props.push(("children".into(), Expr::Server(ServerExpr(raw))));
                             children.clear();
                             if let Some(r) = self.refs.iter_mut().find(|r| r.name == *name) {
@@ -4682,7 +4682,7 @@ impl Walker<'_, '_> {
                         // F149 R34.88: folded with this module's consts (`const v = "outline"`).
                         let lit = match v {
                             Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {
-                                r.json_literal().or_else(|| self.fold_json(r))
+                                r.json_literal_ordered().or_else(|| self.fold_ojson(r))
                             }
                             _ => None,
                         };
@@ -5085,6 +5085,12 @@ impl Walker<'_, '_> {
     }
 
     /// `r` folded to JSON with this module's consts (`crate::ir::FoldEnv`, which runs no user code).
+    fn fold_ojson(&self, r: &RawExpr) -> Option<crate::ir::OJson> {
+        let consts = self.module_consts.clone();
+        let lookup = move |n: &str| consts.get(n).cloned();
+        crate::ir::FoldEnv::new(&lookup).fold(r).ok()?.to_ojson()
+    }
+
     fn fold_json(&self, r: &RawExpr) -> Option<serde_json::Value> {
         let consts = self.module_consts.clone();
         let lookup = move |n: &str| consts.get(n).cloned();
@@ -5148,7 +5154,7 @@ impl Walker<'_, '_> {
             key,
             child_id: record.child_id.clone(),
             k: record.k,
-            inputs: serde_json::Value::Object(
+            inputs: crate::ir::OJson::Obj(
                 record
                     .literals
                     .iter()
