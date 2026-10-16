@@ -1280,6 +1280,7 @@ fn read_decl(
     if let Some(ctx) = context_read(value, r.names) {
         return read_context_use(r, out, decl, value, &ctx, vloc);
     }
+    adopt_react_alias(r, m, value);
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
         out.classified_hooks.insert(call_addr(call));
         let args: Vec<js_ast::Expr> = call.args.to_vec();
@@ -1536,6 +1537,7 @@ fn read_expr_stmt(
     value: &js_ast::Expr,
 ) {
     let vloc = loc_of(value);
+    adopt_react_alias(r, m, value);
     let hook = hook_call(value, r.names);
     if let Some((_, call, _)) = &hook {
         out.classified_hooks.insert(call_addr(call));
@@ -1616,6 +1618,49 @@ struct Site<'s> {
 }
 
 const HOOK_REMEDY: &str = "keep custom hooks to const declarations, React hooks brust supports and one final return, or move this component to React";
+
+/// F268: a hook imported from another module that is, there, a `const` alias of one of React's own hooks
+/// (`export const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}`) is React's hook for every
+/// reader of the call, by symbol: the caller's import is recorded as an import of `react`. Nothing is recognised by the
+/// package's name; only the module's own declaration (`NameTable::exported_react_hook`) decides.
+fn adopt_react_alias(r: &mut Reader<'_, '_>, m: Module<'_, '_>, value: &js_ast::Expr) {
+    let E::ECall(call) = &value.data else {
+        return;
+    };
+    let target = match &comma_callee(&call.target).data {
+        E::EIdentifier(id) => id.ref_,
+        E::EImportIdentifier(id) => id.ref_,
+        _ => return,
+    };
+    let Some((source, imported)) = r
+        .names
+        .import_of(target)
+        .map(|(s, i)| (s.to_string(), i.to_string()))
+    else {
+        return;
+    };
+    let Some(opts) = m.opts else {
+        return;
+    };
+    if source == "react" || imported == "*" {
+        return;
+    }
+    let Some(path) = crate::analyze::modules::resolve_module(&m.parsed.path(), &source, opts)
+    else {
+        return;
+    };
+    let (path, imported) = follow_reexports(opts, path, imported);
+    let Ok(bytes) = std::fs::read(opts.root.join(&path)) else {
+        return;
+    };
+    let Ok(parsed) = crate::parse::parse_tsx(&path, bytes) else {
+        return;
+    };
+    let hook = parsed.with_ast(|ast| NameTable::for_hook(ast).exported_react_hook(ast, &imported));
+    if let Some(hook) = hook {
+        r.names.adopt_react_hook(target, &hook);
+    }
+}
 
 /// Inlines the custom hook `site` calls (G3, plan L5) and binds its result. `false` when
 /// the callee is not a function this crate can read (the caller reports
