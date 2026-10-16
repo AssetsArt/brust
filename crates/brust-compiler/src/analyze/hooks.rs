@@ -168,6 +168,15 @@ fn hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<(String, 
     if is_use_store(target, names) {
         return Some(("useStore".into(), false));
     }
+    // F255: `useId.call(null)`, `.apply(…)`, `.bind(…)()` invoke the hook through a method of the function. The reader
+    // does not follow that spelling, so the call is named as the hook it reaches and left unclassified: the body
+    // reader refuses it by name instead of compiling it with a variable nothing binds.
+    if let E::EDot(d) = &target.data
+        && matches!(d.name.slice(), b"call" | b"apply" | b"bind")
+        && let Some((inner, _)) = hook_target(&d.target, names)
+    {
+        return Some((inner, false));
+    }
     let name = match &target.data {
         E::EIdentifier(id) => names.name(id.ref_),
         E::EImportIdentifier(id) => names.name(id.ref_),

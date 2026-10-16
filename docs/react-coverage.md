@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 15 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 55 | 9 | 17 | 29 | 0 | 0 | 0 | 0 |
+| C Hooks | 56 | 9 | 17 | 30 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 428 | 197 | 60 | 167 | 3 | 1 | 0 | 0 |
+| **Total** | 429 | 197 | 60 | 168 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -351,6 +351,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | 4.4 | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
 | c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
 | c-useid-comma-call | useId called through a comma (`(0, useId)()`, bundler output) | static | static | 0 | ok | 0 | — | F237: the comma spelling is the hook (was a per-request job calling useId outside a render) |
+| c-useid-call-spelling | useId called through `.call(null)` | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | F255: a hook reached through call/apply/bind is refused by name (was Native with an unbound variable) |
 | c-useid-in-key | useId() called in an element key | react | react | ssr | ok | 3.8 | fallback:hook-in-expression, warning:key-outside-list | F235: the JSX runtime evaluates key after the props, so the hook is refused there (hook-in-expression) |
 | c-useid-logical-assign | useId() on the right side of `??=` in the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | F236: the right side of \|\|=, &&=, ??= runs conditionally, so the hook is refused there (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | 4.8 | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |

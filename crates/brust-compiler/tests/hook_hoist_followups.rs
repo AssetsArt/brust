@@ -109,3 +109,49 @@ fn the_right_side_of_a_logical_assignment_is_not_hoisted() {
         assert_eq!(a.use_id_slots, 0, "{op}");
     }
 }
+
+#[test]
+fn a_hook_called_through_call_apply_or_bind_is_refused_by_name() {
+    // F255: `useId.call(null)` compiled Native with a variable nothing binds (no diagnostic, no id slot).
+    for (src, rule) in [
+        (
+            "const id = useId.call(null); return <label htmlFor={id}>x<input id={id} /></label>",
+            "hook-unsupported",
+        ),
+        (
+            "const id = useId.apply(null, []); return <p id={id}>x</p>",
+            "hook-unsupported",
+        ),
+        (
+            "const id = useId.bind(null)(); return <p id={id}>x</p>",
+            "hook-in-expression",
+        ),
+        (
+            "return <p aria-describedby={useId.call(null)}>x</p>",
+            "hook-in-expression",
+        ),
+        (
+            "const [n, setN] = useState.call(null, 1); return <button onClick={() => setN(n + 1)}>{n}</button>",
+            "hook-unsupported",
+        ),
+    ] {
+        let a = ir(&format!("{PRE}export default function F() {{ {src} }}"));
+        assert!(rules(&a).contains(&rule), "{src}: {:?}", a.diagnostics);
+        assert_eq!(a.use_id_slots, 0, "{src}");
+    }
+    // The namespace spelling and a custom hook go the same way.
+    let a = ir(
+        "import React from 'react'\nexport default function F() { const id = React.useId.call(null); return <p id={id}>x</p> }",
+    );
+    assert!(
+        rules(&a).contains(&"hook-unsupported"),
+        "{:?}",
+        a.diagnostics
+    );
+    // The plain call is untouched.
+    let a = ir(&format!(
+        "{PRE}export default function F() {{ const id = useId(); return <p id={{id}}>x</p> }}"
+    ));
+    assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+    assert_eq!(a.use_id_slots, 1);
+}

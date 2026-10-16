@@ -87,7 +87,7 @@ test('F256: a root that does not cover the import is refused (siblings are not s
 test('F256: the setting is validated: array of existing relative directories', () => {
   const root = mkdtempSync(join(tmpdir(), 'brust-sr-'))
   made.push(root)
-  mkdirSync(join(root, 'app'))
+  mkdirSync(join(root, 'app/src'), { recursive: true })
   mkdirSync(join(root, 'shared'))
   writeFileSync(join(root, 'file.txt'), '')
   const app = join(root, 'app')
@@ -100,7 +100,7 @@ test('F256: the setting is validated: array of existing relative directories', (
     return 'ok'
   }
   expect(parseSourceRoots('brust.toml', app, undefined)).toEqual([])
-  expect(parseSourceRoots('brust.toml', app, ['../shared', '../app/../shared/', '.', 'src/..'])).toEqual(['../shared'])
+  expect(parseSourceRoots('brust.toml', app, ['../shared', '../app/../shared/', 'src/../src'])).toEqual(['../shared'])
   expect(rule('../shared')).toContain('must be an array')
   expect(rule([''])).toContain('non-empty')
   expect(rule([3])).toContain('non-empty')
@@ -108,4 +108,7 @@ test('F256: the setting is validated: array of existing relative directories', (
   expect(rule(['../file.txt'])).toContain('not an existing directory')
   expect(rule([join(root, 'shared')])).toContain('relative to the app root')
   expect(rule(['/'])).toContain('relative to the app root')
+  // F272: the app root or an ancestor of it would switch the confinement off for that whole level.
+  for (const p of ['.', 'src/..', '..', '../..', '../app/..', '../shared/../..']) expect(rule([p])).toContain('contains it')
+  expect(rule(['../shared', '..'])).toContain('contains it')
 })
