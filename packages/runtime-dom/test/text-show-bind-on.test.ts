@@ -47,6 +47,23 @@ test('x-bind-: class, value property, boolean disabled, null removes', () => {
   title.set(null); expect(i.hasAttribute('title')).toBe(false)
 })
 
+// F311: React removes `class` when `className` becomes undefined/null, and a style with no declaration has no `style`
+// attribute (first paint omits it); the binder wrote `class=""` / `style=""` instead (invisible but to [class] / [style]).
+test('F311: x-bind-class on undefined/null and x-bind-style on an empty style remove the attribute; an empty class stays empty', () => {
+  const cls = signal<string | undefined | null>('a'); const sty = signal('color:red')
+  defineBehavior('t4b', () => ({ cls, sty }))
+  document.body.innerHTML = `<div x-data="t4b"><p id="p" class="a" style="color:red" x-bind-class="cls" x-bind-style="sty"></p></div>`
+  mount()
+  const p = document.getElementById('p') as HTMLElement
+  cls.set(undefined); expect(p.hasAttribute('class')).toBe(false)
+  cls.set('b'); expect(p.getAttribute('class')).toBe('b')
+  cls.set(null); expect(p.hasAttribute('class')).toBe(false)
+  // React keeps `class=""` for className=""
+  cls.set(''); expect(p.getAttribute('class')).toBe('')
+  sty.set(''); expect(p.hasAttribute('style')).toBe(false)
+  sty.set('width:5px'); expect(p.getAttribute('style')).toBe('width:5px')
+})
+
 test('x-on-click calls the member with the event; item-scoped handler gets bindings first', () => {
   const clicks: unknown[] = []
   defineBehavior('t5', () => ({ hit: (e: Event) => clicks.push(e.type), pick: (item: unknown, e: Event) => clicks.push([item, e.type]) }))
@@ -192,5 +209,7 @@ test('F96a: x-bind-class works on SVG elements (className is a getter-only SVGAn
   Object.defineProperty(c, 'className', { get: () => ({ baseVal: 'a', animVal: 'a' }) })
   mount()
   cls.set('b b2'); expect(c.getAttribute('class')).toBe('b b2')
-  cls.set(null as unknown as string); expect(c.getAttribute('class')).toBe('')
+  // F311: null removes the attribute (React does); an empty string keeps `class=""`
+  cls.set(null as unknown as string); expect(c.hasAttribute('class')).toBe(false)
+  cls.set(''); expect(c.getAttribute('class')).toBe('')
 })

@@ -4,7 +4,7 @@ import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { BUDGET_FILE, bundle, measure } from '../scripts/size'
 
-const FEATURES = ['basics', 'if', 'for', 'model', 'html', 'island'] as const
+const FEATURES = ['basics', 'if', 'for', 'model', 'html', 'island', 'collection'] as const
 
 test('the core binds no directive by name and carries no island or store glue', async () => {
   const core = await bundle('core.ts', false)

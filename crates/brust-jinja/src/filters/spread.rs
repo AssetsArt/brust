@@ -49,16 +49,11 @@ fn map_pairs(v: &Value) -> Vec<(String, Value)> {
     if v.kind() != ValueKind::Map {
         return Vec::new();
     }
-    v.try_iter()
-        .map(|it| {
-            it.filter_map(|k| {
-                let key = k.as_str()?.to_string();
-                let val = v.get_item(&k).unwrap_or(Value::UNDEFINED);
-                Some((key, val))
-            })
-            .collect()
-        })
-        .unwrap_or_default()
+    // F318: a runtime object parsed from the worker's JSON spreads in its text (JS) order
+    crate::map_entries(v)
+        .into_iter()
+        .filter_map(|(k, val)| Some((k.as_str()?.to_string(), val)))
+        .collect()
 }
 
 /// One segment as pairs: a `[name, value]` pair, or a map's entries.

@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import Mid from './Mid'
 
-// A later mount takes the value current then (React): brust cannot re-apply a spread key at mount yet (F300), so
-// this page is refused (snapshot-remount) and renders with React.
+// A later mount takes the value current then (React): the snapshot is bound at mount (F300), so this page is native.
 export default function Guarded() {
   const [on, setOn] = useState(true)
   const [open, setOpen] = useState(false)

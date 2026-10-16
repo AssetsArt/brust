@@ -1,5 +1,5 @@
 {
-  "reason": "L33 first budget (2026-10-14): measured gzip size of each module + 10%. Raise a number only in the PR that grows that module, and say why in this line. 2026-10-15 F195/F196: basics 1022 -> 1190 (measured 1080 gzip + 10%): the five React SyntheticEvent members a DOM event lacks (isPropagationStopped, isDefaultPrevented, persist, isPersistent, nativeEvent) and no empty src/href. 2026-10-15 F201: basics 1190 -> 1450 (measured 1317 gzip + 10%): x-bind-* now knows React's 28 boolean + 2 overloaded + 8 booleanish-string attribute names (generated from the brust-jinja table, was 8 names).",
+  "reason": "L33 first budget (2026-10-14): measured gzip size of each module + 10%. Raise a number only in the PR that grows that module, and say why in this line. 2026-10-15 F195/F196: basics 1022 -> 1190 (measured 1080 gzip + 10%): the five React SyntheticEvent members a DOM event lacks (isPropagationStopped, isDefaultPrevented, persist, isPersistent, nativeEvent) and no empty src/href. 2026-10-15 F201: basics 1190 -> 1450 (measured 1317 gzip + 10%): x-bind-* now knows React's 28 boolean + 2 overloaded + 8 booleanish-string attribute names (generated from the brust-jinja table, was 8 names). 2026-10-16 W1c (R34.141): new module `collection` 473 (measured 430 gzip + 10%): the item registry as the DOM has it (x-collection-root / data-radix-collection-item / x-collection-item); core grew 3181 -> 3331 measured (the ctx.items slot and the late-bound hook), still inside the 3432 budget.",
   "core": 3432,
   "features": {
     "basics": 1450,
@@ -8,6 +8,7 @@
     "model": 648,
     "html": 339,
     "island": 843,
-    "store": 1262
+    "store": 1262,
+    "collection": 473
   }
 }

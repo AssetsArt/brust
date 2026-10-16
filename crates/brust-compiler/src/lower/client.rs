@@ -406,7 +406,7 @@ fn chunk_in(
     }
     // The context's names are the allocator's (`__el`, `props`, … unless the component spells one).
     let ctx = format!(
-        "{{ el: {}, {}, effect: {}, onCleanup: {}, ref: {}{} }}",
+        "{{ el: {}, {}, effect: {}, onCleanup: {}, ref: {}{}{} }}",
         n.el,
         if n.props == "props" {
             "props".to_string()
@@ -418,6 +418,12 @@ fn chunk_in(
         n.ref_,
         if ir.state.iter().any(|s| s.late) {
             format!(", late: {}", n.late)
+        } else {
+            String::new()
+        },
+        // R34.140: `useCollection(scope)` lowered to a handler that calls this
+        if ir.uses_collection {
+            format!(", items: {}", crate::ir::COLLECTION_ITEMS)
         } else {
             String::new()
         }
@@ -570,17 +576,19 @@ fn helper(h: Helper, n: &ChunkNames) -> String {
             "const {} = (v) => (v === true ? \"\" : v === false ? null : v)",
             n.attro
         ),
-        // x-bind-style of a style object: brust-jinja's style_obj_to_css rule.
+        // x-bind-style of a style object: brust-jinja's style_obj_to_css rule (the unitless list is its `UNITLESS`;
+        // a vendor-prefixed name counts as its bare one, `msX` hyphenates as `-ms-x`, a string value is trimmed).
         Helper::Css => format!(
             concat!(
-                "const {u} = new Set([\"zIndex\", \"opacity\", \"flex\", \"flexGrow\", \"flexShrink\", \"fontWeight\", \"lineHeight\", \"order\", \"zoom\"])\n",
+                "const {u} = new Set(\"{list}\".split(\" \"))\n",
                 "const {c} = (o) => Object.entries(o !== null && typeof o === \"object\" ? o : {{}})\n",
                 "  .filter(([k, v]) => v != null && v !== false && /^(--[A-Za-z0-9_-]+|[A-Za-z][A-Za-z0-9_-]*)$/.test(k))\n",
-                "  .map(([k, v]) => [k, typeof v === \"number\" ? (v === 0 || {u}.has(k) || k.startsWith(\"--\") ? String(v) : v + \"px\") : typeof v === \"boolean\" ? \"\" : String(v)])\n",
+                "  .map(([k, v]) => [k, typeof v === \"number\" ? (v === 0 || {u}.has(k.replace(/^(Webkit|Moz|ms|O)(?=[A-Z])/, \"\").replace(/^./, (c) => c.toLowerCase())) || k.startsWith(\"--\") ? String(v) : v + \"px\") : typeof v === \"boolean\" ? \"\" : String(v).trim()])\n",
                 "  .filter(([, v]) => v !== \"\" && !/[;{{}}\\\\\\n\\r]|\\/\\*|expression\\(|@import/i.test(v))\n",
-                "  .map(([k, v]) => (k.startsWith(\"--\") ? k : k.replace(/[A-Z]/g, (c) => \"-\" + c.toLowerCase())) + \":\" + v)\n",
+                "  .map(([k, v]) => (k.startsWith(\"--\") ? k : k.replace(/[A-Z]/g, (c) => \"-\" + c.toLowerCase()).replace(/^ms-/, \"-ms-\")) + \":\" + v)\n",
                 "  .join(\";\")"
             ),
+            list = brust_jinja::UNITLESS.join(" "),
             u = n.unitless,
             c = n.css
         ),

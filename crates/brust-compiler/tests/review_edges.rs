@@ -219,7 +219,8 @@ fn link_ids_follow_document_order() {
     );
     let ir = analyze_opts(
         "P.tsx",
-        "import { useState } from 'react'\nimport Card from './Card'\nimport Counter from './Counter'\nexport default function P() { const [n, setN] = useState(0); return <div><Card t={n}><Counter n={n} set={setN} /></Card></div> }",
+        // F309: siblings, not the Counter inside the linked Card (a linked static child hosts its slot content: refused).
+        "import { useState } from 'react'\nimport Card from './Card'\nimport Counter from './Counter'\nexport default function P() { const [n, setN] = useState(0); return <div><Card t={n}>x</Card><Counter n={n} set={setN} /></div> }",
         AnalyzeOptions {
             root: dir,
             ..Default::default()
