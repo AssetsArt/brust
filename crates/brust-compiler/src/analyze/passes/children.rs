@@ -93,6 +93,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         spec_salt: ir.rest_clone_of.as_ref().map(|_| ir.id.clone()),
         mount_once: None,
         frozen: BTreeSet::new(),
+        callable_up: false,
         state_inits: ir
             .state
             .iter()
@@ -313,6 +314,10 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     );
     ir.template = template;
     w.frozen.extend(ir.throw_props.iter().cloned());
+    if w.callable_up && !ir.callable_props.iter().any(|p| p == "*") {
+        ir.callable_props.push("*".into());
+    }
+    w.frozen.extend(ir.callable_props.iter().cloned());
     ir.frozen_props = std::mem::take(&mut w.frozen).into_iter().collect();
     ir.seed_props = std::mem::take(&mut w.seed_props).into_iter().collect();
     // A list or condition the children lowered folded its slot away: the precompute job no longer
@@ -464,6 +469,9 @@ struct Walker<'s, 'c> {
     mount_once: Option<String>,
     /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
     frozen: BTreeSet<String>,
+    /// W1d (progress): this component spreads its own props/rest onto a child that may call a function prop, so its
+    /// own callers must not pass one (`callable_props` gains `*`).
+    callable_up: bool,
     /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
     state_inits: HashMap<String, Expr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
@@ -707,6 +715,7 @@ fn rebase_sources(
     from: &str,
     to: &str,
     opts: &crate::analyze::component::AnalyzeOptions,
+    modules: &std::cell::RefCell<crate::analyze::modules::ModuleCache>,
 ) -> Result<(), String> {
     // F267: the clone is compiled in the module the content was written in: every name reads as it did.
     if from == to {
@@ -717,6 +726,8 @@ fn rebase_sources(
             Node::Component {
                 name,
                 source,
+                imported,
+                member,
                 children,
                 ..
             } => {
@@ -732,26 +743,53 @@ fn rebase_sources(
                         };
                         *s = relative_spec(to, &target);
                     }
-                    Some(_) => {
+                    Some(s) => {
                         if crate::analyze::modules::package_scope(from)
                             != crate::analyze::modules::package_scope(to)
                         {
-                            return Err(format!(
-                                "<{name}> is imported from a package of another scope than the component it is given to"
-                            ));
+                            // W1d (progress): the export is a module of the build's package sources: name that file
+                            // from the clone's module instead, when it compiles without React.
+                            let err = || {
+                                format!(
+                                    "<{name}> is imported from a package of another scope than the component it is given to"
+                                )
+                            };
+                            let (Some(imp), Ok(entry)) = (
+                                imported.as_deref(),
+                                crate::analyze::modules::resolve_package(from, s, opts),
+                            ) else {
+                                return Err(err());
+                            };
+                            let Some((path, export)) = declared_member(&entry, imp, member, opts)
+                            else {
+                                return Err(err());
+                            };
+                            if !crate::analyze::modules::is_package_source(&path) {
+                                return Err(err());
+                            }
+                            let lookup = compile(&path, &export, None, opts, modules);
+                            if package_needs_react(&lookup, &modules.borrow(), false).is_some() {
+                                return Err(err());
+                            }
+                            *s = relative_spec(to, &path);
+                            *imported = Some(match export {
+                                Export::Default => "default".to_string(),
+                                Export::Named(n) => n,
+                            });
+                            member.clear();
                         }
                     }
                 }
-                rebase_sources(children, from, to, opts)?;
+                rebase_sources(children, from, to, opts, modules)?;
             }
             Node::Element { children, .. } | Node::Fragment(children) => {
-                rebase_sources(children, from, to, opts)?
+                rebase_sources(children, from, to, opts, modules)?
             }
             Node::If { then, else_, .. } => {
-                rebase_sources(then, from, to, opts)?;
-                rebase_sources(else_, from, to, opts)?;
+                rebase_sources(then, from, to, opts, modules)?;
+                rebase_sources(else_, from, to, opts, modules)?;
             }
-            Node::For { body, .. } => rebase_sources(body, from, to, opts)?,
+            Node::For { body, .. } => rebase_sources(body, from, to, opts, modules)?,
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
@@ -820,10 +858,19 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         // (or the whole props) it spreads carries it as `children` onto an element or a component. The clone cannot
         // say where that lands (`splice_rest_children` is the forwarder's), so it is refused and the call site keeps
         // its React island, which carries the content.
-        0 if !content.is_empty() && reads_rest_or_props(ir) => Err(
-            "the component spreads its `...rest` (or props) and the content given to it would reach that spread as `children`"
-                .into(),
-        ),
+        // W1d (progress): ONE host element with no children of its own that spreads the rest (or the props) is where React puts
+        // them (explicit JSX children win over a spread's `children`, none are written): the content is that element's.
+        0 if !content.is_empty() && reads_rest_or_props(ir) => {
+            let mut content = Some(content);
+            if put_into_rest_host(&mut ir.template, &mut content) == 1 && content.is_none() {
+                Ok(())
+            } else {
+                Err(
+                    "the component spreads its `...rest` (or props) and the content given to it would reach that spread as `children`"
+                        .into(),
+                )
+            }
+        }
         0 => Ok(()),
         1 => {
             put(&mut ir.template, &mut Some(content));
@@ -831,6 +878,78 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         }
         n => Err(format!("the component reads its children {n} times")),
     }
+}
+
+/// The elements of `n` that spread the rest or the props among their attributes: how many there are, and the content moved
+/// into the first when it has no children of its own and it is the only one (the caller checks the count).
+fn put_into_rest_host(n: &mut Node, content: &mut Option<Vec<Node>>) -> usize {
+    fn spreads_rest(attrs: &[Attr]) -> bool {
+        attrs.iter().any(|a| {
+            matches!(a, Attr::Spread(Expr::Raw(r))
+                if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop }
+                    if name == crate::ir::REST_PROPS || name == "*"))
+        })
+    }
+    fn comp_spreads_rest(props: &[(String, Expr)]) -> bool {
+        props.iter().any(|(k, v)| {
+            k == crate::ir::SPREAD_KEY
+                && matches!(v, Expr::Raw(r)
+                    if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop }
+                        if name == crate::ir::REST_PROPS || name == "*"))
+        })
+    }
+    fn count(n: &Node) -> usize {
+        match n {
+            Node::Element {
+                attrs, children, ..
+            } => usize::from(spreads_rest(attrs)) + children.iter().map(count).sum::<usize>(),
+            Node::Component {
+                props, children, ..
+            } => usize::from(comp_spreads_rest(props)) + children.iter().map(count).sum::<usize>(),
+            Node::Fragment(children) => children.iter().map(count).sum(),
+            Node::If { then, else_, .. } => then.iter().chain(else_).map(count).sum(),
+            Node::For { body, .. } => body.iter().map(count).sum(),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => 0,
+        }
+    }
+    fn put(n: &mut Node, content: &mut Option<Vec<Node>>) {
+        match n {
+            Node::Element {
+                attrs, children, ..
+            } => {
+                if spreads_rest(attrs) && children.is_empty() {
+                    if let Some(c) = content.take() {
+                        *children = c;
+                    }
+                } else {
+                    children.iter_mut().for_each(|c| put(c, content));
+                }
+            }
+            Node::Component {
+                props, children, ..
+            } => {
+                if comp_spreads_rest(props) && children.is_empty() {
+                    if let Some(c) = content.take() {
+                        *children = c;
+                    }
+                } else {
+                    children.iter_mut().for_each(|c| put(c, content));
+                }
+            }
+            Node::Fragment(children) => children.iter_mut().for_each(|c| put(c, content)),
+            Node::If { then, else_, .. } => then
+                .iter_mut()
+                .chain(else_.iter_mut())
+                .for_each(|c| put(c, content)),
+            Node::For { body, .. } => body.iter_mut().for_each(|c| put(c, content)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    let total = count(n);
+    if total == 1 {
+        put(n, content);
+    }
+    total
 }
 
 /// F324: whether the template (or a render prop's body) of `ir` reads its `...rest` or its whole props anywhere.
@@ -2046,12 +2165,27 @@ fn external_component_id(source: &str, export: &str, member: &[String]) -> Strin
     named_component_id(&scope, &name)
 }
 
+/// W1d (progress): a Provider that is React in its own module only because its frame needs a native provider
+/// (`context-state`) and that a call site can specialise (`specialisable`): the call site builds a native clone, so the
+/// package component is not an island of package source.
+fn state_frame_provider(ir: &ComponentIR) -> bool {
+    !ir.provides.is_empty()
+        && !crate::analyze::context::frames_are_plain(ir)
+        && crate::analyze::context::native_provider_problem(ir).is_none()
+        && ir
+            .diagnostics
+            .iter()
+            .filter(|d| d.class == DiagClass::Fallback)
+            .all(|d| d.rule == "context-state")
+}
+
 /// Why a component compiled from package source cannot be used as compiled (F153c): it, or a component in its
 /// subtree, renders as React (an island of a package's SOURCE would run code the React build never ran), or it
 /// failed to compile. `None` = static or native all the way down.
 fn package_needs_react(
     lookup: &Lookup,
     modules: &crate::analyze::modules::ModuleCache,
+    state_frames: bool,
 ) -> Option<String> {
     let ir = match lookup {
         Lookup::Compiled(ir) => ir.clone(),
@@ -2069,7 +2203,9 @@ fn package_needs_react(
         if !seen.insert(ir.id.clone()) {
             continue;
         }
-        if let Tier::React { reason, .. } = &ir.tier {
+        if let Tier::React { reason, .. } = &ir.tier
+            && !(state_frames && state_frame_provider(&ir))
+        {
             return Some(format!(
                 "{} renders as React in its source: {reason}",
                 ir.source
@@ -2750,7 +2886,7 @@ impl Walker<'_, '_> {
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;
-        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts, ctx.modules)?;
         // B7: the render prop's body moves into the clone like the children do. Any other function the call site
         // passes cannot cross (the clone has no instance to hand it to).
         let mut render = render;
@@ -2766,7 +2902,7 @@ impl Walker<'_, '_> {
             let locals: Vec<String> = rp.params.iter().map(|(_, l)| l.clone()).collect();
             self.check_owner(&rp.body, owner)?;
             carry.nodes(&mut rp.body, &locals)?;
-            rebase_sources(&mut rp.body, ctx.path, c_path, ctx.opts)?;
+            rebase_sources(&mut rp.body, ctx.path, c_path, ctx.opts, ctx.modules)?;
         }
         let exp = cir.export.as_deref().unwrap_or("default");
         // One clone per call site: its id is built from the call site, so its jinja, jobs and instance records are the
@@ -2854,7 +2990,7 @@ impl Walker<'_, '_> {
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;
-        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts, ctx.modules)?;
         let exp = cir.export.as_deref().unwrap_or("default");
         let site = match &self.spec_salt {
             Some(salt) => format!("{}#{salt}", ctx.path),
@@ -3466,7 +3602,11 @@ impl Walker<'_, '_> {
             Export::Named(n) => named_component_id(&path, n),
         };
         let lookup = compile(&path, &export, None, ctx.opts, ctx.modules);
-        let needs_react = package_needs_react(&lookup, &ctx.modules.borrow());
+        // A state-frame Provider is not an island of package source when written in app code: a call site specialises
+        // it, and one that cannot keeps the published export's island (F188). From inside a package source there is
+        // no published spelling to fall back to.
+        let needs_react =
+            package_needs_react(&lookup, &ctx.modules.borrow(), !is_package_source(from));
         if let Some(why) = needs_react {
             // Only the outermost package import is the island: a nested one says nothing new.
             if is_package_source(from) {
@@ -4968,6 +5108,9 @@ impl Walker<'_, '_> {
                             record.literals.insert(name.clone(), j);
                         } else if let Some(e) = self.instance_expr(v) {
                             record.exprs.insert(name.clone(), e);
+                        } else if !child.job_all && !child.job_roots.contains(name.as_str()) {
+                            // F340 / F328: the child's job reads nothing of this prop (a Provider field the child only
+                            // reads on the client, a className it never feeds the job): nothing for the server to bind.
                         } else {
                             // The manifest has no binding for this value (a job's output, a call): its
                             // `instance-prop-path` build error becomes an island here (F164, R34.97).
@@ -5051,6 +5194,43 @@ impl Walker<'_, '_> {
                             {
                                 checks.push((root.as_str(), v));
                             }
+                        }
+                    }
+                    // W1d (progress): a function passed for a prop the child's helper call may run (`getValueLabel={fmt}`,
+                    // an arrow, an import) is never run by the child's job, which evaluates the module's own default:
+                    // refused whatever the value is.
+                    for root in &c.callable_props {
+                        // A key written at this call site refuses. A spread of this component's own props or rest
+                        // (`{...props}` onto the Root) carries whatever ITS callers pass: the requirement moves up
+                        // to them (`*`), and the refusal happens at the concrete call site.
+                        let mut refuse = false;
+                        for (k, v) in props.iter() {
+                            if k == crate::ir::SPREAD_KEY {
+                                if matches!(v, Expr::ClientOnly { .. })
+                                    || self.reads_state(v)
+                                    || self.deps_of(v).props.is_empty()
+                                {
+                                    refuse = true;
+                                } else {
+                                    self.callable_up = true;
+                                }
+                            } else if k == root
+                                || (root == "*"
+                                    && k != "children"
+                                    && (c.props_rest.is_none() || !named.contains(k.as_str()))
+                                    // a literal (`data-x="1"`) is not a function
+                                    && !matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if r.json_literal().is_some()))
+                            {
+                                refuse = true;
+                            }
+                        }
+                        if refuse {
+                            self.diagnostics.push(Diagnostic::fallback(
+                                "frozen-prop",
+                                format!("<{name}> may call a function prop (`{root}`), which a call site passes here; the server evaluates the module's own default, not the function passed"),
+                                *loc,
+                                "do not pass the function, or keep this component in React",
+                            ));
                         }
                     }
                     for (root, v) in checks {

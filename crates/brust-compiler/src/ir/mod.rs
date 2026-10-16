@@ -349,6 +349,10 @@ pub struct ComponentIR {
     /// back, `frozen-prop`), whatever the children pass decides about the rest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub throw_props: Vec<String>,
+    /// A prop whose default is a plain module function and which the render calls (`getValueLabel(value, max)`): the call site
+    /// must pass nothing for it, so they join `frozen_props` (a passed value, a function or a changing one, falls back).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub callable_props: Vec<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -507,6 +511,7 @@ impl ComponentIR {
             frozen_props: Vec::new(),
             seed_props: Vec::new(),
             throw_props: Vec::new(),
+            callable_props: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],
