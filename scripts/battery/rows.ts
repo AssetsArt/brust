@@ -55,6 +55,8 @@ const CTXV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tes
 
 const CTXTHIS = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/CtxThis.tsx'), 'utf8')
 
+const scopeFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/scope-${n}.tsx`), 'utf8').trimEnd()
+
 const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
 
 const NATIVE_FWD = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Fwd.tsx'), 'utf8')
@@ -1948,4 +1950,25 @@ export const rows: Row[] = [
   { id: 'c-includes-string-receiver', category: 'C', authoring: "'abc'.includes(state): a string receiver", expect: 'native', jobs: 1,
     snippet: `import { useState } from 'react'\nexport default function C() { const [s, setS] = useState('abc'); return <button type="button" onClick={() => setS('b')} data-hit={'abc'.includes(s) ? 'y' : 'n'}>{s}</button> }`,
     note: 'F287: a substring test is not a membership chain; only an array literal receiver is rewritten' },
+  { id: 'c-scope-props', category: 'C', authoring: 'a context hook and a scope hook read props.__scopeX, the token spread on a component', expect: 'static', jobs: 0,
+    snippet: scopeFx('props'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-sibling', category: 'C', authoring: 'two sibling Providers of one scoped context, one consumer each', expect: 'static', jobs: 0,
+    snippet: scopeFx('sibling'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-nested', category: 'C', authoring: 'a scoped Provider nested in another of the same context', expect: 'react',
+    snippet: scopeFx('nested'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-call-site', category: 'C', authoring: 'a call site that hands a __scope attribute to a native component', expect: 'react',
+    snippet: scopeFx('guard'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-token-host', category: 'C', authoring: 'a scope token spread on a host element', expect: 'react',
+    snippet: scopeFx('token-host'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-token-value', category: 'C', authoring: 'a scope token read as a value', expect: 'react',
+    snippet: scopeFx('token-value'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
+  { id: 'c-scope-by-name', category: 'C', authoring: 'a hook named like a scope hook that createContextScope did not make', expect: 'react',
+    snippet: scopeFx('by-name'),
+    note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
 ]
