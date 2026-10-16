@@ -260,3 +260,77 @@ fn an_insertion_effect_is_native_only_inside_a_custom_hook() {
     let ir = project(&[("C.tsx", src)], "C.tsx");
     assert!(reasons(&ir).contains("useInsertionEffect"), "{:?}", ir.tier);
 }
+
+// F268: a hook another module exports as a `const` that is React's effect hook or a no-op (an SSR guard).
+const SIZE: &str = "import * as React from 'react'\nimport { useLayoutEffect } from './use-layout-effect'\nexport function useSize(el: any) {\n  const [size, setSize] = React.useState(undefined as any)\n  useLayoutEffect(() => { setSize(el ? el.offsetWidth : undefined) }, [el])\n  return size\n}\n";
+const SIZE_USER: &str = "import { useSize } from './use-size'\nexport default function C({ el }: any) { const w = useSize(el); return <p>{w}</p> }";
+
+fn size_project(alias: &str) -> ComponentIR {
+    project(
+        &[
+            ("use-layout-effect.tsx", alias),
+            ("use-size.ts", SIZE),
+            ("C.tsx", SIZE_USER),
+        ],
+        "C.tsx",
+    )
+}
+
+const GUARDED: &str = "import * as React from 'react'\nexport const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}\n";
+
+#[test]
+fn an_exported_ssr_guard_alias_of_an_effect_hook_is_that_hook() {
+    let ir = size_project(GUARDED);
+    assert!(fallbacks(&ir).is_empty(), "{}", reasons(&ir));
+    assert_eq!(ir.tier, Tier::Native);
+    assert_eq!(ir.effects.len(), 1);
+    assert!(ir.effects[0].layout);
+    // The no-op may stand first, and be a `function`; the export may be named by a clause.
+    for alias in [
+        "import * as React from 'react'\nexport const useLayoutEffect = typeof document === 'undefined' ? () => {} : React.useLayoutEffect\n",
+        "import * as React from 'react'\nconst useIso = globalThis?.document ? React.useLayoutEffect : function () {}\nexport { useIso as useLayoutEffect }\n",
+        "import { useLayoutEffect as ule } from 'react'\nimport * as React from 'react'\nexport const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}\n",
+    ] {
+        let ir = size_project(alias);
+        assert!(fallbacks(&ir).is_empty(), "{alias}: {}", reasons(&ir));
+        assert_eq!(ir.effects.len(), 1, "{alias}");
+    }
+}
+
+#[test]
+fn only_a_no_op_beside_a_hook_that_returns_nothing_is_an_alias() {
+    // A hook that returns a value cannot swap for a no-op; the other branch must do nothing; `let`/`var` can change.
+    for alias in [
+        "import * as React from 'react'\nexport const useLayoutEffect = globalThis?.document ? React.useState : () => {}\n",
+        "import * as React from 'react'\nexport const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => { console.log('x') }\n",
+        "import * as React from 'react'\nexport const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : React.useEffect\n",
+        "import * as React from 'react'\nexport let useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}\n",
+        "import * as other from './other'\nexport const useLayoutEffect = globalThis?.document ? other.useLayoutEffect : () => {}\n",
+    ] {
+        let ir = size_project(alias);
+        assert!(
+            reasons(&ir).contains("useLayoutEffect") || !fallbacks(&ir).is_empty(),
+            "{alias}: {:?}",
+            ir.tier
+        );
+        assert!(ir.effects.is_empty(), "{alias}");
+    }
+}
+
+#[test]
+fn a_value_returning_hook_is_never_swapped_for_a_no_op() {
+    // `cond ? React.useState : () => {}` would make the state `undefined` where the guard is false: not an alias.
+    let hook = "import { useCounter } from './alias'\nexport function useTwo() {\n  const [n, setN] = useCounter(0)\n  return [n, setN] as const\n}\n";
+    let user = "import { useTwo } from './use-two'\nexport default function C() { const [n, setN] = useTwo(); return <button onClick={() => setN(n + 1)}>{n}</button> }";
+    let alias = "import * as React from 'react'\nexport const useCounter = globalThis?.document ? React.useState : () => {}\n";
+    let ir = project(
+        &[("alias.tsx", alias), ("use-two.ts", hook), ("C.tsx", user)],
+        "C.tsx",
+    );
+    assert!(
+        reasons(&ir).contains("useCounter"),
+        "{:?} {}",
+        ir.tier,
+        reasons(&ir)
+    );
+}

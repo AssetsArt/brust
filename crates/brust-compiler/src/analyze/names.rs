@@ -178,6 +178,18 @@ const REACT_HOOKS: &[&str] = &[
     "useTransition",
 ];
 
+/// The React hooks that return nothing: a no-op function stands in for them without changing any value.
+const EFFECT_HOOKS: &[&str] = &["useEffect", "useInsertionEffect", "useLayoutEffect"];
+
+/// `() => {}` / `function () {}`: a function whose body does nothing.
+fn is_noop_fn(e: &js_ast::Expr) -> bool {
+    match &e.data {
+        E::EArrow(a) => a.body.stmts.is_empty(),
+        E::EFunction(f) => f.func.body.stmts.is_empty(),
+        _ => false,
+    }
+}
+
 /// A string a key expression always evaluates to: a literal, or `.trim()` / `.toString()` of one (the same pure
 /// string methods the constant folder knows).
 fn const_string(e: &js_ast::Expr) -> Option<String> {
@@ -437,9 +449,64 @@ impl<'a> NameTable<'a> {
                 String::from_utf8_lossy(d.name.slice()).into_owned()
             }
             E::EIndex(i) if on_react(&i.target) => const_string(&i.index)?,
+            // F268: `cond ? React.useLayoutEffect : () => {}` (an SSR guard: `useLayoutEffect` warns on a server). The
+            // other branch does nothing, so the const is the hook where the code runs: effects only run in a browser.
+            // Only a hook that returns nothing can swap for a no-op without changing a value.
+            E::EIf(i) => {
+                let hook = match (
+                    self.react_member_hook(&i.yes),
+                    self.react_member_hook(&i.no),
+                ) {
+                    (Some(h), None) if is_noop_fn(&i.no) => h,
+                    (None, Some(h)) if is_noop_fn(&i.yes) => h,
+                    _ => return None,
+                };
+                return EFFECT_HOOKS.contains(&hook).then_some(hook);
+            }
             _ => return None,
         };
         REACT_HOOKS.iter().find(|h| **h == key).copied()
+    }
+
+    /// The React hook the module's export `export` is (a `const` alias, directly or through an `export { … }` clause),
+    /// by the same reading as [`collect_react_hook_aliases`]. `None` for anything else.
+    pub fn exported_react_hook(&self, ast: &js_ast::Ast<'_>, export: &str) -> Option<String> {
+        let mut local = None;
+        for part in ast.parts.iter() {
+            for stmt in part.stmts.slice() {
+                match &stmt.data {
+                    js_ast::stmt::Data::SLocal(l)
+                        if l.is_export && matches!(l.kind, js_ast::S::Kind::KConst) =>
+                    {
+                        for d in l.decls.iter() {
+                            if let B::BIdentifier(id) = d.binding.data
+                                && self.name(id.r#ref) == export
+                            {
+                                local = Some(id.r#ref);
+                            }
+                        }
+                    }
+                    js_ast::stmt::Data::SExportClause(c) => {
+                        for item in c.items.slice() {
+                            if item.alias.slice() == export.as_bytes() {
+                                local = Some(item.name.ref_);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        match self.import_of(local?) {
+            Some(("react", h)) if h != "default" && h != "*" => Some(h.to_string()),
+            _ => None,
+        }
+    }
+
+    /// `r` (an import local of another module) is React's own hook `hook` (F268).
+    pub fn adopt_react_hook(&mut self, r: js_ast::Ref, hook: &str) {
+        let k = self.key(r);
+        self.imports.insert(k, ("react".into(), hook.into()));
     }
 
     /// The module-level `const`s whose initialiser has a literal shape (see `module_inits`).

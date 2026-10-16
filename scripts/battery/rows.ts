@@ -44,6 +44,9 @@ const R = `import { useState } from 'react'\n`
 // F153c: the Radix sources as `@radix-ui/react-primitive` 2.2.0 and `@radix-ui/react-label` 2.1.17 publish them.
 const RADIX_PRIMITIVE = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/primitive.tsx'), 'utf8')
 const RADIX_LABEL = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/label.tsx'), 'utf8')
+// F268: the Radix `use-size` and `use-layout-effect` sources (the latter exports a SSR-guard alias of React's hook).
+const RADIX_USE_SIZE = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/use-size.tsx'), 'utf8')
+const RADIX_USE_LAYOUT_EFFECT = readFileSync(join(import.meta.dir, '../../tests/fixtures/package-source/use-layout-effect.tsx'), 'utf8')
 const PKG_PRIMITIVE: StubPackage = { files: { 'src/primitive.tsx': RADIX_PRIMITIVE } }
 // The state Providers the native-provider rows use (2c-2): one source, shared with the compiler's tests.
 const NATIVE_PROV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Prov.tsx'), 'utf8')
@@ -1035,6 +1038,14 @@ export const rows: Row[] = [
     snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root asChild><a href="/y">y</a></Root></section> }`,
     packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
     note: 'F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles' },
+  { id: 'b-pkg-hook-alias-use-size', category: 'B', authoring: 'the Radix useSize hook, whose useLayoutEffect is an exported SSR-guard alias of React\'s', expect: 'native', jobs: 0,
+    snippet: `import { useSize } from '@radix-ui/react-use-size'\nexport default function C({ el }: any) { const size = useSize(el); return <p>{size ? size.width : 0}</p> }`,
+    packages: { '@radix-ui/react-use-size': { files: { 'src/use-size.tsx': RADIX_USE_SIZE } }, '@radix-ui/react-use-layout-effect': { files: { 'src/use-layout-effect.tsx': RADIX_USE_LAYOUT_EFFECT } } },
+    note: 'F268: `const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}` (exported) is React\'s useLayoutEffect, by the module\'s own declaration, not by package name' },
+  { id: 'b-hook-alias-value-hook', category: 'B', authoring: 'an exported conditional alias of a hook that returns a value (useState or a no-op)', expect: 'react',
+    snippet: `import { useTwo } from './use-two'\nexport default function C() { const [n, setN] = useTwo(); return <button onClick={() => setN(n + 1)}>{n}</button> }`,
+    files: { 'use-two.ts': `import { useCounter } from './alias'\nexport function useTwo() { const [n, setN] = useCounter(0); return [n, setN] as const }`, 'alias.tsx': `import * as React from 'react'\nexport const useCounter = globalThis?.document ? React.useState : () => {}` },
+    note: 'F268 fail closed: only an effect hook (it returns nothing) can stand beside a no-op; useState would be undefined where the guard is false' },
   { id: 'b-pkg-aschild-dynamic', category: 'B', authoring: 'a dynamic asChild on a package leaf', expect: 'react',
     snippet: `import { Root } from 'leafy'\nexport default function C({ on }: any) { return <section><Root asChild={on}><a href="/y">y</a></Root></section> }`,
     packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
