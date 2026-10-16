@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 223 | 117 | 16 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 199 | 62 | 59 | 78 | 0 | 0 | 0 | 0 |
+| C Hooks | 208 | 62 | 67 | 79 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 579 | 255 | 104 | 216 | 3 | 1 | 0 | 0 |
+| **Total** | 588 | 255 | 112 | 217 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -344,8 +344,17 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-forward-style-string | a style given as a string through a static child's spread | native | native | 0 | ok | 4.6 | — | F296: React throws for a string style; brust prints no declaration for a non-object (as for a hand-written element) and never writes the string into the attribute |
 | c-live-forward-class-own-before | a live className through a spread that comes after the child's own className | native | native | 0 | ok | 4.6 | — | F299: the spread's className replaces the child's own; printed once, bound |
 | c-live-forward-class-slot | a live className through a child that may render a Slot (asChild) | react | react | ssr | ok | 4.0 | fallback:spread-props | F299: a Slot merges class lists, so the replace rule does not hold: refused |
-| c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
-| c-slot-owner-linked-static | a linked prop in the slot of a static child that is itself linked | react | react | ssr | ok | 4.0 | fallback:slot-owner | F309: the linked static child gets a host of its own, which would bind the slot content (it never updated): slot-owner |
+| c-slot-owner-state | the page's own state read in the slot of a native child | native | native | 0 | ok | 4.6 | — | F214 + F307: slot content under a native child's host would be bound by the child; the child is cloned for this call site with the content, which is then its own (was slot-owner) |
+| c-slot-owner-linked-static | a linked prop in the slot of a static child that is itself linked | native | native | 0 | ok | 4.6 | — | F309 + F307: the linked static child is cloned with the content (its inputs follow the page, §7.3), instead of a host of its own binding it (was slot-owner) |
+| c-slot-owner-handler | a handler of the page in the slot of a native child | native | native | 0 | ok | 4.6 | — | F307: the clone calls the page's handler through a carried prop |
+| c-slot-owner-list | a list over the page's state in the slot of a native child | native | native | 0 | ok | 5.7 | — | F307: the rows are the clone's own (x-for over its carried input) |
+| c-slot-owner-linked | a component given the page's state in the slot of a native child | native | native | 0 | ok | 4.6 | — | F307: the Thumb is linked by the clone |
+| c-slot-owner-two-levels | the page's state in content a static wrapper hands to a native child | native | native | 0 | ok | 4.6 | — | F307: the wrapper (which hosts its children through Box) is cloned with the content |
+| c-slot-owner-text | the page's state as the only text in the slot of a native child | native | native | 0 | ok | 4.6 | — | F307 S4: the text binds x-text on the host element (its only child), as React prints a text node |
+| c-slot-owner-text-wrapper | the page's state as bare text next to an element in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:slot-owner, info:slot-text-wrapper | F307 S4: the text would need a <span> React does not print: no clone (info slot-text-wrapper), slot-owner stands |
+| c-slot-owner-gate | the page's state in the slot of a native child that prints its children only when open | react | react | ssr | ok | 5.4 | fallback:children-read | R34.78: the child reads its children as a value (children-read); F307 does not apply |
+| c-slot-owner-carry-refused | a ref of the page on an element in the slot of a native child, next to live text | react | react | ssr | ok | 5.4 | fallback:slot-owner, info:host-specialise-unsupported | F307: Carry cannot take a ref of the page into a clone: no clone (info host-specialise-unsupported), slot-owner stands |
+| c-slot-owner-clone-react | directive content in the slot of a native child whose clone would need React | react | react | ssr | ok | 5.4 | fallback:slot-owner, info:host-specialise-unsupported | F307: the child prints its children twice, so no clone can splice them once: the refusal stands |
 | c-slot-owner-rest | the page's own state read in content a native child carries through its rest onto its host | react | react | ssr | ok | 5.4 | fallback:slot-owner | F342: children carried by the rest onto the child's host are bound by the child, as in F214 (they were: first-paint mismatch, the child's counter shown): slot-owner |
 | c-slot-owner-rest-linked | a linked prop in content a static child carries through its rest, where the page links that child | react | react | ssr | ok | 4.0 | fallback:slot-owner | F342 + F309: the linked static child hosts what its rest carries: slot-owner |
 | c-slot-owner-rest-mid | the page's own state read in content an unlinked static wrapper forwards in its rest to a native child that carries it onto its host | react | react | ssr | ok | 5.4 | fallback:slot-owner | F342 (Mellow F1): the wrapper hosts its children through the rest it forwards (transitive hosts_children): slot-owner |
@@ -361,7 +370,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F324: the children reach the button through the rest in React; the clone has no children slot, so it is refused and the Provider stays an island that carries them (info specialise-unsupported; was: children silently dropped, alpha.16) |
 | c-spec-rest-no-children | the same Provider component called without children | static | static | 0 | ok | 4.6 | — | F324: nothing to drop, so the clone is still taken |
 | c-literal-order-entries | an object literal written out of sorted order, passed to a stateful child that reads Object.entries / Object.keys | static | static | 0 | ok | 4.6 | — | F333: the literal prints through obj_lit (JS key order z,a); a jinja map literal sorted it a,z |
-| c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
+| c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:frozen-prop | F214 (Mellow F1) + F307: Mid clones Box with the content, but Mid is stateless and does not follow `label` (F323): frozen-prop |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | 4.6 | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
 | c-usetransition | useTransition | react | react | ssr | ok | 4.0 | fallback:hook-unsupported |  |
@@ -438,7 +447,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.4 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |
 | c-render-prop-provider-in-body | a render body holding a Provider, next to the writer's own children | static | static | ssr | ok | 4.0 | — | B7 (Mellow F1): a Provider written inside a render arrow must not provide to the writer's own children (they read the context default) |
 | c-render-prop-computed-arg | a render prop called with a computed argument | react | react | ssr | ok | 5.4 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Mellow S3): an argument that is not a plain read is not substituted; the Provider stays an island |
-| c-native-provider-live-name-nested | a live value of the page printed inside a consumer's own host in a state Provider's content | react | react | ssr | ok | 5.4 | fallback:island-children, fallback:slot-owner, info:specialise-unsupported | S2/O1: the input is owned by the clone but printed inside the consumer's host, which would bind it by the wrong instance; the Provider stays an island |
+| c-native-provider-live-name-nested | a live value of the page printed inside a consumer's own host in a state Provider's content | native | native | 0 | ok | 4.6 | — | S2/O1 + F307: the consumer is cloned with the value inside the Provider's clone, which then owns it (was: the Provider stayed an island) |
 | c-native-provider-ref-in-content | a ref of the page written in a state Provider's content | react | react | ssr | ok | 5.4 | fallback:island-children, info:specialise-unsupported | S2: a ref cannot cross into the clone |
 | c-native-provider-as-child | asChild on a consumer of a state Provider, with a plain element child | static | static | 0 | ok | 5.0 | — | Q5/R34.117: the consumer's host is the caller's element, carrying the frame's bindings and handler |
 | c-native-provider-as-child-handler | asChild on a consumer of a state Provider, the child element has its own handler | react | react | ssr | ok | 5.4 | fallback:island-children, fallback:slot-native, fallback:slot-owner, info:specialise-unsupported | Q5: a handler on the asChild child is not composed yet (child first, then the Provider's); the Provider stays an island |
