@@ -7,6 +7,10 @@ import { warnOnce } from './warn'
 import { bindPropsFromParent, initialProps } from './props-bind'
 
 let observer: MutationObserver | null = null
+/** True once the first `mount()` pass has run: a host that mounts after it is `late`. */
+let pageBooted = false
+/** > 0 while a binder (x-if, x-for) mounts the hosts of a clone it just created: nothing of them was server-rendered. */
+let cloning = 0
 
 function readProps(host: HTMLElement): Record<string, unknown> {
   const raw = host.getAttribute('x-props')
@@ -22,6 +26,9 @@ function sameJson(a: unknown, b: unknown): boolean {
 function mountHost(host: HTMLElement): void {
   if (instances.has(host) || !host.isConnected) return
   const name = host.getAttribute('x-data')!
+  // decided now, not when a lazy chunk arrives: a server-rendered host stays hydrated however late its code loads
+  const late = pageBooted
+  const cloned = cloning > 0
   whenBehavior(name, (factory) => {
     if (instances.has(host) || !host.isConnected) return
     const parent = nearestInstance(host)
@@ -29,6 +36,9 @@ function mountHost(host: HTMLElement): void {
     const props = initialProps(host, parent, printed)
     const inst = new Instance(host, name, parent, props)
     inst.reseeded = props !== printed && !sameJson(props, printed)
+    inst.late = late
+    // a clone made by a binder has no server markup to compare its first paint with (a navigation's content has)
+    inst.booted = cloned
     instances.set(host, inst)
     try { inst.init(factory) } catch (e) { console.error(`[brust] init threw: ${name}`, e); inst.dispose(); instances.delete(host); return }
     bindHost(inst, host, {})
@@ -51,7 +61,11 @@ function mountTree(root: ParentNode): void {
   for (const h of hosts) if (!insideRaw(h)) mountHost(h)
   islandHooks.schedule(root)
 }
-hooks.mountTree = (root) => untracked(() => mountTree(root))
+hooks.mountTree = (root) =>
+  untracked(() => {
+    cloning++
+    try { mountTree(root) } finally { cloning-- }
+  })
 
 function disposeTree(root: Node): void {
   if (!(root instanceof Element)) return
@@ -65,6 +79,7 @@ export function mount(root: ParentNode = document.body): void {
   // Observe first: binders (x-if, x-for) insert nested hosts during the initial pass.
   if (!observer) startObserver(root); else if (root !== observedRoot) observer.observe(root, { childList: true, subtree: true })
   mountTree(root)
+  pageBooted = true
 }
 let observedRoot: ParentNode | null = null
 function startObserver(root: ParentNode): void {
