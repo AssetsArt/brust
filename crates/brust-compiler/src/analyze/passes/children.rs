@@ -3740,8 +3740,8 @@ impl Walker<'_, '_> {
     }
 
     /// F319: the roots of the props `d` reads that can change on the client (this component's props can, and the call
-    /// site did not fix the prop). `children`, the whole props object and the rest are left out: the markup, and the
-    /// spread rules (`spread.lands`) already answer for them at the call site.
+    /// site did not fix the prop). `children` is left out: slot content is the caller's markup, bound in its scope.
+    /// A read of the rest or of the whole props object is the root `*` (deps): every prop that lands there.
     fn changing_prop_roots(&self, d: &Deps) -> Vec<String> {
         if !self.props_reactive {
             return Vec::new();
@@ -3749,10 +3749,7 @@ impl Walker<'_, '_> {
         d.props
             .iter()
             .map(|p| p.split(['.', '[']).next().unwrap_or(p).to_string())
-            .filter(|r| {
-                !matches!(r.as_str(), "children" | "*" | crate::ir::REST_PROPS)
-                    && !self.fixed_props.contains(r)
-            })
+            .filter(|r| r != "children" && !self.fixed_props.contains(r))
             .collect()
     }
 
@@ -4561,14 +4558,41 @@ impl Walker<'_, '_> {
                 // F319 (fail closed): the child reads these props where it would not follow a change. A value that
                 // changes here refuses; one of this component's own props passes the requirement up.
                 if let Some(c) = child.ir.as_deref() {
+                    let named: BTreeSet<&str> = c.props.iter().map(|p| p.name.as_str()).collect();
+                    let mut checks: Vec<(&str, &Expr)> = Vec::new();
                     for root in &c.frozen_props {
-                        let Some((_, v)) = props.iter().rev().find(|(k, _)| k == root) else {
+                        if root == "*" {
+                            // The child reads its rest (or its whole props object) where it would not follow a change:
+                            // every key that lands there (a spread passed to it is never a named key).
+                            for (k, v) in props.iter() {
+                                if k != "children"
+                                    && (c.props_rest.is_none() || !named.contains(k.as_str()))
+                                {
+                                    checks.push((k.as_str(), v));
+                                }
+                            }
                             continue;
-                        };
+                        }
+                        // The last written key, and any spread after it that may carry the key over it.
+                        let last = props.iter().rposition(|(k, _)| k == root);
+                        for (i, (k, v)) in props.iter().enumerate() {
+                            if Some(i) == last
+                                || (k == crate::ir::SPREAD_KEY && last.is_none_or(|l| i > l))
+                            {
+                                checks.push((root.as_str(), v));
+                            }
+                        }
+                    }
+                    for (root, v) in checks {
                         if matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v) {
+                            let what = if root == crate::ir::SPREAD_KEY {
+                                "a prop spread into it".to_string()
+                            } else {
+                                format!("its prop `{root}`")
+                            };
                             self.diagnostics.push(Diagnostic::fallback(
                                 "frozen-prop",
-                                format!("<{name}> reads its prop `{root}` where it would not follow a change (the rows of a list printed once, a prop of a child it does not link, or a key printed once through a spread), and this call site passes a value that changes on the client"),
+                                format!("<{name}> reads {what} where it would not follow a change (the rows of a list printed once, a prop of a child it does not link, or a key printed once through a spread), and this call site passes a value that changes on the client"),
                                 *loc,
                                 "pass a value that does not change, or keep this component in React",
                             ));

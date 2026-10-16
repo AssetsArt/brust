@@ -1,7 +1,7 @@
 // F319 in real Chromium, against React hydrating the same page in the same browser. A native child whose prop the page
 // changes kept it at its first value where it did not follow it: the rows of a constant list (chain), a prop of a child
 // it did not link (chain), the same through a Provider specialised per call site (prov), and a key printed once through
-// a forwarder's spread (more), all of them through a static wrapper too (static). Those pages now fall back (`frozen-prop`) and render with React; a direct read stays
+// a forwarder's spread (more), all of them through a static wrapper too (static), a prop that lands in a child's rest handed to a static child (rest), the same through a wrapper passing its own prop (restup), and a page's state object spread at the call site (spread). Those pages now fall back (`frozen-prop`) and render with React; a direct read stays
 // native (direct). Every observable value equals React after each click.
 // Run alone: `bun test --timeout 120000 tests/server/frozen-prop.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
@@ -83,10 +83,10 @@ const tierOf = (prefix: string) => {
 }
 
 test('the pages that read a changing prop where it would not be followed render with React; a direct read stays native', () => {
-  expect({ chain: tierOf('pChain_'), prov: tierOf('pProv_'), more: tierOf('pMore_'), static: tierOf('pStatic_'), direct: tierOf('pDirect_') }).toEqual({ chain: 'react', prov: 'react', more: 'react', static: 'react', direct: 'native' })
+  expect({ chain: tierOf('pChain_'), prov: tierOf('pProv_'), more: tierOf('pMore_'), static: tierOf('pStatic_'), rest: tierOf('pRest_'), restup: tierOf('pRestup_'), spread: tierOf('pSpread_'), direct: tierOf('pDirect_') }).toEqual({ chain: 'react', prov: 'react', more: 'react', static: 'react', rest: 'react', restup: 'react', spread: 'react', direct: 'native' })
 })
 
-for (const page of ['chain', 'prov', 'more', 'static', 'direct']) {
+for (const page of ['chain', 'prov', 'more', 'static', 'rest', 'restup', 'spread', 'direct']) {
   test(`${page}: every observable value equals React hydrating the same page after each click`, async () => {
     const react = await run(page, true)
     const served = await run(page, false)
