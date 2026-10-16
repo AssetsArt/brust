@@ -1,5 +1,6 @@
-// usage: bun show.ts <root> <page> [idPrefix] -- prints tier/diagnostics, and jinja + client for components whose id starts with prefix
-import { compileTree } from '/Users/detoro/code/brust/.claude/worktrees/<probe-worktree>/packages/brust/native/index.js'
+// usage: BRUST_ADDON=<addon index.js> bun show.ts <root> <page> [idPrefix] -- prints tier/diagnostics, and jinja + client for components whose id starts with prefix
+// BRUST_ADDON: path to packages/brust/native/index.js in a worktree with a built addon
+const { compileTree } = await import(process.env.BRUST_ADDON ?? '../../../packages/brust/native/index.js')
 import { readFileSync, existsSync } from 'node:fs'
 const [root, rel, want] = [process.argv[2]!, process.argv[3]!, process.argv[4]]
 const pkf = `${root}/.probe-packages.json`
