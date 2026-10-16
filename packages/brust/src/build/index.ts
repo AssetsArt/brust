@@ -14,7 +14,7 @@ import { type CfPrepared, buildCloudflare, prepareCloudflare } from './cloudflar
 import { renderIcons } from './build-icons'
 import { evaluateBuildSlots } from './build-eval'
 import { preparePackageSources } from './pkg-src'
-import { type Compiled, compileApp } from './compile'
+import { type Compiled, compileApp, scanAppWrites } from './compile'
 import { buildCss, CssGraph, directCss, resolveGlobals, routeCssSources } from './css'
 import { type ActionsBuildConfig, type CacheBuildConfig, loadBuildConfig } from './config'
 import { BuildError } from './errors'
@@ -121,7 +121,7 @@ export async function runBuild(opts: {
   if (actions?.prefix === '/') throw new BuildError('config', 'actions.prefix "/" is only for an actions-only build (brust build --actions-only) or a page-only build that points at one')
 
   // Everything that can fail on the app's own input runs before a byte is written.
-  const { routes, componentFile, componentIssue } = await scanRoutes(entry, appRoot)
+  const { routes, componentFile, componentIssue, appModules } = await scanRoutes(entry, appRoot)
   let leaves: ReturnType<typeof validateRoutes>
   try {
     leaves = validateRoutes(routes)
@@ -173,7 +173,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -206,6 +206,8 @@ async function buildInto(
     leaves: ReturnType<typeof validateRoutes>
     componentFile: Map<Function, string>
     componentIssue: Map<Function, string>
+    /** F230: every app module of the route entry's static import graph (absolute paths). */
+    appModules: string[]
     serverOnly: string[]
     actions: ActionsBuildConfig | null
     /** Absolute path of the actions entry (null when `[actions]` is off). */
@@ -238,11 +240,16 @@ async function buildInto(
   // The runtime first: its hashed URL is the `runtimeImport` every client chunk is compiled with.
   const runtime = await buildRuntime(out, ctx)
   const runtimeUrls = { core: `/_brust/${runtime.core}`, store: `/_brust/${runtime.store}` }
+  // F230: one scan per build for load-time writes into another app module's exports; every compile reads it.
+  const loadWrites = scanAppWrites(appRoot, o.appModules, o.log)
+  // Where a React island renders (the SSR jobs bundle, each island chunk), the load-time writers run first.
+  const writers = (JSON.parse(loadWrites).writers as string[]).map((w) => resolve(appRoot, w))
   const compileOpts = {
     appRoot,
     leaves,
     componentFile: o.componentFile,
     componentIssue: o.componentIssue,
+    loadWrites,
     runtimeImport: runtimeUrls.core,
     serverOnly: o.serverOnly,
     cssMaps: css.maps,
@@ -281,7 +288,7 @@ async function buildInto(
   mkdirSync(join(out, 'jinja'), { recursive: true })
   for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
 
-  const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrls)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots))])
+  const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrls)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writers))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime: { core: runtime.core, features: { ...runtime.features, store: runtime.store } }, chunks })
   // L33: a component whose chunk imports the store module (directly or through a shared chunk) has the page preload it.
   const readClient = (rel: string) => (existsSync(join(out, rel)) ? readFileSync(join(out, rel), 'utf8') : undefined)
@@ -290,7 +297,7 @@ async function buildInto(
     const files = [...new Set((routeCss.get(r.id) ?? []).flatMap((s) => (css.file.has(s) ? [css.file.get(s)!] : [])))]
     if (files.length > 0) r.css = files
   }
-  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps, routeRoots, reachedJobs(manifest))
+  await buildJobs(out, compiled, ctx.sourceOf, appRoot, storeModules(manifest), css.maps, routeRoots, reachedJobs(manifest), writers)
   manifest.actions =
     o.actions && o.actionsEntry
       ? { entry: await buildActions(out, o.actionsEntry, css.maps), prefix: o.actions.prefix, maxBodyBytes: o.actions.maxBodyBytes, maxResponseBytes: o.actions.maxResponseBytes, crossSite: o.actions.crossSite }

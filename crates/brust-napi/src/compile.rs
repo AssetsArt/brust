@@ -65,6 +65,8 @@ pub(crate) struct CompileInputs {
     pub route_roots: Vec<String>,
     pub path_aliases: Option<String>,
     pub packages: Option<String>,
+    /// F230: `scanLoadWrites`'s result (`[[module, export, why], …]`).
+    pub load_writes: Option<String>,
 }
 
 /// An optional JSON argument; one that does not parse is an error, not an empty value: `path_aliases` and `packages`
@@ -87,7 +89,8 @@ fn json_input<T: Default>(
                 line: 0,
                 col: 0,
                 remediation:
-                    "pass `pathAliases` (an array) and `packages` (an object) in that order".into(),
+                    "pass `pathAliases` (an array), `packages` (an object) and `loadWrites` (an array) in that order"
+                        .into(),
             }),
         })
     })
@@ -108,7 +111,15 @@ pub(crate) fn compile_tree_impl(
         route_roots,
         path_aliases,
         packages,
+        load_writes,
     } = inputs;
+    // F230: the exports another app module writes, scanned once per build (`scan_load_writes`).
+    let load_writes = match json_input("loadWrites", load_writes, |s| {
+        brust_compiler::analyze::load_writes::LoadWrites::from_json(s).map(Some)
+    }) {
+        Ok(v) => v.map(std::sync::Arc::new),
+        Err(e) => return *e,
+    };
     // F153c: `{ "scopes": …, "refused": … }`, the package sources the build wrote (`pkg-src.ts`).
     let packages = match json_input("packages", packages, |s| serde_json::from_str(s)) {
         Ok(v) => v,
@@ -151,6 +162,7 @@ pub(crate) fn compile_tree_impl(
         path_aliases,
         route_roots: route_roots.into_iter().collect(),
         packages,
+        load_writes,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -213,6 +225,7 @@ pub fn compile_tree(
     route_roots: Option<Vec<String>>,
     path_aliases: Option<String>,
     packages: Option<String>,
+    load_writes: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
     compile_tree_impl(
@@ -227,8 +240,31 @@ pub fn compile_tree(
             route_roots: route_roots.unwrap_or_default(),
             path_aliases,
             packages,
+            load_writes,
         },
     )
+}
+
+/// F230: scans the app modules the build loads (`modules`, relative to `root`) for writes into another app module's
+/// exports; the JSON result goes to every `compile_tree` of the build as `loadWrites`. `path_aliases` as for
+/// `compile_tree`; a bad one is ignored (the compile reports it).
+#[napi]
+pub fn scan_load_writes(
+    root: String,
+    modules: Vec<String>,
+    path_aliases: Option<String>,
+) -> String {
+    crate::init_tracing();
+    let opts = AnalyzeOptions {
+        root: std::path::PathBuf::from(root),
+        path_aliases: path_aliases
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+    brust_compiler::parse::run_on_compiler_thread(|| {
+        brust_compiler::analyze::load_writes::scan(&modules, &opts).to_json()
+    })
 }
 
 #[cfg(test)]

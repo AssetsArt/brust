@@ -10,7 +10,7 @@ import { installServerOnlyRuntime } from './server-only'
 export async function scanRoutes(
   entryFile: string,
   appRoot?: string,
-): Promise<{ routes: Route[]; componentFile: Map<Function, string>; componentIssue: Map<Function, string> }> {
+): Promise<{ routes: Route[]; componentFile: Map<Function, string>; componentIssue: Map<Function, string>; appModules: string[] }> {
   // biome-ignore lint/suspicious/noExplicitAny: an arbitrary user module
   let mod: any
   installServerOnlyRuntime() // `server-only` resolves to an empty module: a loader may import server-only code
@@ -79,5 +79,7 @@ export async function scanRoutes(
   await visit(entryFile)
   // A function reachable as a default somewhere is fine; only an unmapped one keeps its explanation.
   for (const f of componentFile.keys()) componentIssue.delete(f)
-  return { routes, componentFile, componentIssue }
+  // F230: every app module of the static graph (`.ts`/`.tsx` inside the root, outside node_modules), for the scan of
+  // load-time writes into another module's exports (`scanLoadWrites`).
+  return { routes, componentFile, componentIssue, appModules: [...visited].filter(inRoot) }
 }

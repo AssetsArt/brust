@@ -7,6 +7,7 @@ pub mod expr;
 pub mod hir;
 pub mod hooks;
 pub mod jsx;
+pub mod load_writes;
 pub mod module_effects;
 pub mod modules;
 pub mod names;

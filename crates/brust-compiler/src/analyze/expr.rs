@@ -707,6 +707,30 @@ pub fn chain_root(e: &js_ast::Expr) -> Option<js_ast::Ref> {
     }
 }
 
+/// F230: the roots whose object `e` may be (not a copy): an identifier or a member chain of one, through `?:`, `&&`,
+/// `||`, `??` and a comma's last operand.
+pub fn alias_roots(e: &js_ast::Expr) -> Vec<js_ast::Ref> {
+    match &e.data {
+        E::EIf(c) => {
+            let mut v = alias_roots(&c.yes);
+            v.extend(alias_roots(&c.no));
+            v
+        }
+        E::EBinary(b)
+            if matches!(
+                b.op,
+                OpCode::BinLogicalAnd | OpCode::BinLogicalOr | OpCode::BinNullishCoalescing
+            ) =>
+        {
+            let mut v = alias_roots(&b.left);
+            v.extend(alias_roots(&b.right));
+            v
+        }
+        E::EBinary(b) if matches!(b.op, OpCode::BinComma) => alias_roots(&b.right),
+        _ => chain_root(e).into_iter().collect(),
+    }
+}
+
 /// Collects declared bindings and used identifier refs below a function body.
 /// A small structural walk; the React Compiler is not used for this.
 #[derive(Default)]
@@ -734,6 +758,9 @@ pub struct Walk {
     /// `(binding, read)`: a binding declared or assigned from a value that reads `read` (`const s = slots`,
     /// `s = { a: slots }`), so writing through the binding may write into `read`.
     pub flows: Vec<(js_ast::Ref, js_ast::Ref)>,
+    /// F230: `(binding, root)`: a binding declared or assigned as an alias of `root`'s object (`const l = list`,
+    /// `l = cfg.items`, `x = a ?? b`), not from a computed value (`const r = f(list)`), which `flows` also records.
+    pub aliases: Vec<(js_ast::Ref, js_ast::Ref)>,
 }
 
 impl Walk {
@@ -843,6 +870,9 @@ impl Walk {
                         for t in d0..d1 {
                             for u in u0..self.used.len() {
                                 self.flows.push((self.declared[t], self.used[u]));
+                            }
+                            for r in alias_roots(v) {
+                                self.aliases.push((self.declared[t], r));
                             }
                         }
                     }
@@ -961,6 +991,9 @@ impl Walk {
                 {
                     for u in u0..self.used.len() {
                         self.flows.push((t, self.used[u]));
+                    }
+                    for r in alias_roots(&b.right) {
+                        self.aliases.push((t, r));
                     }
                 }
             }
