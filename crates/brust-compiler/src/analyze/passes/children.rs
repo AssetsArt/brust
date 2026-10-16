@@ -81,6 +81,12 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .iter()
             .any(|j| matches!(j.kind, crate::ir::JobKind::Precompute)),
         guard_depth: 0,
+        slot_depth: 0,
+        state_inits: ir
+            .state
+            .iter()
+            .map(|s| (s.name.clone(), s.init.clone()))
+            .collect(),
         fused: Vec::new(),
         fused_counts: HashMap::new(),
         holds_island: false,
@@ -103,6 +109,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         no_spec: Default::default(),
         spec_failure: None,
         bubbled_pkg: false,
+        ctx_defaults: Vec::new(),
         foreign: Default::default(),
     }
 }
@@ -198,6 +205,12 @@ pub fn contexts(
         ));
     }
     ir.ctx_pkg |= w.bubbled_pkg;
+    // R34.142: a whole-value need no Provider answers is, at the page, the context's default (React's own rule)
+    let defaulted = |c: &str, f: &str| {
+        ctx.is_root
+            && f == crate::analyze::hooks::WHOLE_FIELD
+            && w.ctx_defaults.iter().any(|(x, _)| x == c)
+    };
     for (c, f) in &bubbled {
         let name = crate::ir::ctx_prop(c, f);
         if !ir.props.iter().any(|p| p.name == name) {
@@ -205,7 +218,15 @@ pub fn contexts(
                 name: name.clone(),
                 local: name,
                 ts_type: None,
-                default: None,
+                default: w
+                    .ctx_defaults
+                    .iter()
+                    .find(|(x, _)| x == c)
+                    .filter(|_| defaulted(c, f))
+                    .map(|(_, d)| RawExpr {
+                        loc: 0,
+                        kind: RawKind::Lit(d.clone()),
+                    }),
             });
         }
         match ir.ctx_uses.iter_mut().find(|u| &u.context == c) {
@@ -217,13 +238,17 @@ pub fn contexts(
             }),
         }
     }
-    if ctx.is_root && !bubbled.is_empty() {
+    for (c, d) in &w.ctx_defaults {
+        if bubbled.iter().any(|(x, _)| x == c) && !ir.ctx_defaults.iter().any(|(x, _)| x == c) {
+            ir.ctx_defaults.push((c.clone(), d.clone()));
+        }
+    }
+    if let Some((c, _)) = bubbled.iter().find(|(c, f)| !defaulted(c, f))
+        && ctx.is_root
+    {
         diags.push(Diagnostic::fallback(
             "context-no-provider",
-            format!(
-                "`{}` reads a context that no Provider above it provides",
-                bubbled[0].0
-            ),
+            format!("`{c}` reads a context that no Provider above it provides"),
             0,
             "render it inside the Provider component, or keep this component in React",
         ));
@@ -363,6 +388,8 @@ struct Walker<'s, 'c> {
     spec_failure: Option<(u32, String)>,
     /// A need bubbled out of a package-source consumer ([`ComponentIR::ctx_pkg`]).
     bubbled_pkg: bool,
+    /// R34.142: the literal defaults of the scalar contexts the bubbled needs name.
+    ctx_defaults: Vec<(String, crate::ir::Literal)>,
     /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
     /// of its module scope in this component's jobs, the component, the names).
     foreign: std::cell::RefCell<ForeignModules>,
@@ -389,6 +416,10 @@ struct Walker<'s, 'c> {
     own_job: bool,
     /// Open `If` branches: a fused child's job would run whether or not the branch renders (v1: refused).
     guard_depth: u32,
+    /// F277: open component children (slot content): the host may print them conditionally, or once per row.
+    slot_depth: u32,
+    /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
+    state_inits: HashMap<String, Expr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
     fused: Vec<crate::ir::FusedInstance>,
     fused_counts: HashMap<String, u32>,
@@ -2156,6 +2187,26 @@ impl Walker<'_, '_> {
                         if props.iter().any(|(k, _)| k == &hidden) {
                             continue;
                         }
+                        let whole = f == crate::analyze::hooks::WHOLE_FIELD;
+                        if let Some(fr) = frames.iter().rev().find(|fr| fr.context == u.context)
+                            && whole
+                                != fr
+                                    .fields
+                                    .iter()
+                                    .any(|(k, _)| k == crate::analyze::hooks::WHOLE_FIELD)
+                            && (whole || !fr.fields.is_empty())
+                        {
+                            diags.push(Diagnostic::fallback(
+                                "context-shape",
+                                format!(
+                                    "<{name}> reads a context {} and its Provider hands out {}",
+                                    if whole { "as a whole value" } else { "by field" },
+                                    if whole { "fields" } else { "a whole value" },
+                                ),
+                                *loc,
+                                "read the context the way its Provider writes the value, or keep this component in React",
+                            ));
+                        }
                         let value = match frames.iter().rev().find(|fr| fr.context == u.context) {
                             Some(fr) => Expr::Raw(
                                 fr.fields
@@ -2169,6 +2220,12 @@ impl Walker<'_, '_> {
                             ),
                             None => {
                                 self.bubbled_pkg |= cir.ctx_pkg;
+                                if let Some((_, d)) =
+                                    cir.ctx_defaults.iter().find(|(c, _)| c == &u.context)
+                                    && !self.ctx_defaults.iter().any(|(c, _)| c == &u.context)
+                                {
+                                    self.ctx_defaults.push((u.context.clone(), d.clone()));
+                                }
                                 if !bubbled.iter().any(|(c, g)| c == &u.context && g == f) {
                                     bubbled.push((u.context.clone(), f.clone()));
                                 }
@@ -2667,6 +2724,31 @@ impl Walker<'_, '_> {
             }
         };
         Ok(RawExpr { loc: raw.loc, kind })
+    }
+
+    /// F277: `v` has the same value whenever this component mounts: it reads literals, module names, fixed cells, the
+    /// props of a route component (fixed for the page), and state cells whose initial value is itself such a value
+    /// (a cell is its initial value at mount). A prop of any other component, a store, a list item, a browser global or
+    /// opaque code may differ at a later mount (an `x-if` of the caller re-creates this component).
+    fn same_at_every_mount(&self, v: &Expr) -> bool {
+        let mut seen = BTreeSet::new();
+        self.mount_value(&self.deps_of(v), &mut seen)
+    }
+
+    fn mount_value(&self, d: &Deps, seen: &mut BTreeSet<String>) -> bool {
+        (d.props.is_empty() || self.ctx.is_root)
+            && d.stores.is_empty()
+            && d.loop_bindings.is_empty()
+            && !d.browser
+            && !d.opaque
+            && d.state.iter().all(|s| {
+                if !seen.insert(s.clone()) {
+                    return false;
+                }
+                self.state_inits
+                    .get(s)
+                    .is_some_and(|init| self.mount_value(&self.st.cx.deps_expr(init, &[]), seen))
+            })
     }
 
     fn deps_of(&self, e: &Expr) -> Deps {
@@ -3795,7 +3877,9 @@ impl Walker<'_, '_> {
             return;
         };
         if name == "<member>" {
+            self.slot_depth += 1;
             children.iter_mut().for_each(|c| self.node(c));
+            self.slot_depth -= 1;
             return;
         }
         let child = self.resolve_child(name, source.as_deref(), imported.as_deref(), member, *loc);
@@ -4388,10 +4472,27 @@ impl Walker<'_, '_> {
                         self.instances.push(record);
                     }
                 }
-                // Native / static child (§7.4, F70): see `instance_needs_link`.
+                // Native / static child (§7.4, F70): see `instance_needs_link`. F277: a prop the child reads only as
+                // the first value of a cell nothing sets is read once, when the instance mounts. Where the instance
+                // mounts with this component and never again (not under a condition, in a row or in slot content),
+                // and the value is the same at every mount of this component, what it becomes later never reaches the
+                // child: no link for it.
+                let snapshot = if self.guard_depth == 0
+                    && self.loop_scope.is_empty()
+                    && self.slot_depth == 0
+                {
+                    child
+                        .ir
+                        .as_deref()
+                        .map(snapshot_only_props)
+                        .unwrap_or_default()
+                } else {
+                    BTreeSet::new()
+                };
                 let need = instance_needs_link(
                     &child.tier,
                     kept.iter()
+                        .filter(|(k, v)| !(snapshot.contains(k) && self.same_at_every_mount(v)))
                         .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
                 );
                 if need == LinkNeed::Always && child.prop_precompute {
@@ -4446,7 +4547,9 @@ impl Walker<'_, '_> {
         }
         // After this node's own link id: `_pN` follow document order.
         let fed_before = self.instances.len();
+        self.slot_depth += 1;
         children.iter_mut().for_each(|c| self.node(c));
+        self.slot_depth -= 1;
         if let Some(inner) = &child.inner
             && let Err(why) = self.rebase(inner, props)
         {
@@ -5753,6 +5856,75 @@ pub enum LinkNeed {
     /// A static child reads only the row's loop bindings: linked only inside a row the
     /// client can re-create, plain HTML everywhere else (ledger F70).
     RowOnly,
+}
+
+/// F277: the props of `ir` read nowhere but in the first value of a state cell nothing sets (a B4 never-written ref,
+/// `const [x] = useState(init)`): the child takes them once, at its first render. Fail closed: the IR as serialised,
+/// with those cells, the prop declarations and the client's prop list (`client_props` and its projections, which count
+/// the cells' first values) left out, must not spell the prop's name (or its local) in any string, and must not read
+/// the whole props object (`*`). Keys are struct fields, or a child's prop names (an instance record), not reads.
+fn snapshot_only_props(ir: &ComponentIR) -> BTreeSet<String> {
+    let cx = super::deps::DepsCx::new(ir);
+    let mut out: BTreeSet<String> = ir
+        .state
+        .iter()
+        .filter(|s| s.is_fixed())
+        .flat_map(|s| cx.deps_expr(&s.init, &[]).prop_roots())
+        .collect();
+    if out.is_empty() || out.contains("*") {
+        return BTreeSet::new();
+    }
+    let Ok(mut rest) = serde_json::to_value(ir) else {
+        return BTreeSet::new();
+    };
+    if let Some(o) = rest.as_object_mut() {
+        for k in [
+            "id",
+            "source",
+            "props",
+            "client_props",
+            "client_prop_projections",
+        ] {
+            o.remove(k);
+        }
+        if let Some(state) = o.get_mut("state").and_then(|s| s.as_array_mut()) {
+            state.retain(|s| s.get("setter").is_some_and(|x| !x.is_null()));
+        }
+    }
+    if spells(&rest, &|s| s == "*") {
+        return BTreeSet::new();
+    }
+    out.retain(|k| {
+        let local = ir
+            .props
+            .iter()
+            .find(|p| &p.name == k)
+            .map(|p| p.local.as_str());
+        [Some(k.as_str()), local]
+            .into_iter()
+            .flatten()
+            .all(|n| !spells(&rest, &|s| names_word(s, n)))
+    });
+    out
+}
+
+/// Some string of `v` passes `f`.
+fn spells(v: &serde_json::Value, f: &dyn Fn(&str) -> bool) -> bool {
+    match v {
+        serde_json::Value::String(s) => f(s),
+        serde_json::Value::Array(a) => a.iter().any(|x| spells(x, f)),
+        serde_json::Value::Object(o) => o.values().any(|x| spells(x, f)),
+        _ => false,
+    }
+}
+
+/// `s` holds `name` as a whole identifier (not inside a longer one).
+fn names_word(s: &str, name: &str) -> bool {
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    s.match_indices(name).any(|(i, _)| {
+        !s[..i].chars().next_back().is_some_and(ident)
+            && !s[i + name.len()..].chars().next().is_some_and(ident)
+    })
 }
 
 /// The link decision for one `<Child …/>` from the child's tier and what each prop reads

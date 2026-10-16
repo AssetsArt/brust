@@ -384,6 +384,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                     None if name == crate::ir::REST_PROPS => {
                         format!("({})", omit_jinja("_props", &self.rest_omits()))
                     }
+                    // The template's own names (`loop`, `range`, ...) would be shadowed: read them off the props object.
+                    None if crate::analyze::names::TEMPLATE_OWN.contains(&name) => {
+                        format!("_props.{name}")
+                    }
                     None => name.to_string(),
                     Some(i) if name == "*" => format!("({})", i.object(&[])),
                     Some(i) if name == crate::ir::REST_PROPS => {

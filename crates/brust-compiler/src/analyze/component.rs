@@ -128,6 +128,9 @@ pub struct AnalyzeOptions {
     /// F153c (R34.61): the package sources the build wrote (`packages/brust/src/build/pkg-src.ts`); empty = a
     /// package import is the React island of its export, as before.
     pub packages: PackageSources,
+    /// F230: the exports of app modules another app module writes (`load_writes::scan`, once per build); `None` = not
+    /// scanned (a single-file compile), nothing is refused for it.
+    pub load_writes: Option<std::sync::Arc<crate::analyze::load_writes::LoadWrites>>,
 }
 
 /// Where a bare import resolves to package SOURCE (F153c, R34.61): per importing scope (`""` = the app, else
@@ -559,6 +562,12 @@ fn read_function_as(
     ir.ctx_uses = reader.names.ctx_uses();
     ir.ctx_pkg =
         !ir.ctx_uses.is_empty() && ir.source.starts_with(crate::analyze::modules::PKG_SRC_DIR);
+    ir.ctx_defaults = reader
+        .names
+        .scalar_defaults()
+        .into_iter()
+        .filter(|(c, _)| ir.ctx_uses.iter().any(|u| &u.context == c))
+        .collect();
     ir.provides = std::mem::take(&mut reader.provides);
     ir.render_props = std::mem::take(&mut reader.render_props);
     ir.safe_objects = reader.names.safe_object_const_names();

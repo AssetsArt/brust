@@ -65,7 +65,8 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             reason: format!("{what} at line {} builds JSX", ctx.line(*loc)),
             client_only: false,
         };
-    } else if ir.state.is_empty()
+    // F277: a fixed cell (nothing sets it, its first value is the same at every mount) changes nothing.
+    } else if ir.state.iter().all(|s| st.cx.is_fixed(&s.name))
         && ir.handlers.is_empty()
         && ir.effects.is_empty()
         && ir.refs.is_empty()

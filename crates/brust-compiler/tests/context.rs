@@ -145,17 +145,34 @@ fn a_consumer_with_no_provider_falls_back_at_the_route() {
     assert!(is_react(&ir), "{:?}", ir.tier);
 }
 
-/// The context value used as a whole, and a Provider value that is not an object literal, fall back.
+/// A whole context value (`JSON.stringify(c)`) the Provider hands out as FIELDS, and an object Provider `value` that is not
+/// an object literal, fall back.
 #[test]
-fn a_whole_context_value_and_a_scalar_provider_value_fall_back() {
+fn a_whole_context_value_and_a_non_literal_provider_value_fall_back() {
     for (f, code) in [
-        ("escape.tsx", "context-escape"),
+        // R34.142: a context with a literal default may be read whole (`__whole`); this Provider hands out fields
+        ("escape.tsx", "context-shape"),
         ("value-shape.tsx", "context-value"),
     ] {
         let all = compile(f);
         let rules: Vec<&str> = all.iter().flat_map(|(_, ir, _)| rules(ir)).collect();
         assert!(rules.contains(&code), "{f}: {rules:?}");
     }
+}
+
+/// R34.142: a context declared with a literal default (`createContext(0)`) is one whole value: its Provider's `value` is any
+/// expression, a consumer reads it as a value, and the page lowers (no island).
+#[test]
+fn a_scalar_context_provider_value_reaches_a_consumer_that_reads_it_whole() {
+    let all = compile("scalar-value.tsx");
+    let rules: Vec<&str> = all.iter().flat_map(|(_, ir, _)| rules(ir)).collect();
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir))
+            && !rules.iter().any(|r| r.starts_with("context")),
+        "{rules:?}"
+    );
+    let jinja = &all[0].2;
+    assert!(jinja.contains("<b>{{ (1) | e }}</b>"), "{jinja}");
 }
 
 /// The Provider's values call helpers of ITS module (`clamp`, `stateOf`): a call is not a literal, so under the lead's scope

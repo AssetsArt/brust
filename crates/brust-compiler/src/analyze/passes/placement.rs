@@ -12,8 +12,8 @@ use super::deps::{Deps, minimal_paths};
 use super::server_expr::try_server;
 use crate::analyze::const_fold::{Folder, imported_const, map_idents, map_pre};
 use crate::ir::{
-    Attr, ComponentIR, Diagnostic, Expr, IdentKind, JobDecl, JobKind, Literal, Node, RawExpr,
-    RawKind,
+    Attr, BinOp, ComponentIR, Diagnostic, Expr, IdentKind, JobDecl, JobKind, Literal, Node,
+    RawExpr, RawKind,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -1379,7 +1379,87 @@ impl Placer<'_> {
         }
     }
 
+    /// What the server template prints for a DERIVED local `e`: [`Self::fold_consts`], then F297's dead arms dropped. Only
+    /// a derived local: its chunk prints it from the structural IR, so the client keeps every arm. A painted value is
+    /// bound on the client from its placed expression, so it uses [`Self::fold_consts`] alone.
     fn fold(&self, e: &RawExpr) -> RawExpr {
+        self.drop_dead_arms(&self.fold_consts(e))
+    }
+
+    /// F297: an arm the server never takes becomes `undefined`. A condition (`?:`, `&&`, `||`, `??`) is decided when its
+    /// test is a literal or a state cell whose `useState` initial value is one (`useState(null)`): the server renders
+    /// every state at its initial value, so `control ? control.closest('form') : true` prints `true` there instead of
+    /// becoming a job over a method call. The test stays, so the value still reads the state (its deps, links and the
+    /// client's live expression, which the chunk prints from the structural IR, are unchanged).
+    fn drop_dead_arms(&self, e: &RawExpr) -> RawExpr {
+        let undefined = |loc| RawExpr {
+            loc,
+            kind: RawKind::Lit(Literal::Undefined),
+        };
+        map_pre(e, &|n| {
+            let kind = match &n.kind {
+                RawKind::Cond { test, yes, no } => {
+                    let taken = truthy(&self.server_literal(test)?);
+                    RawKind::Cond {
+                        test: test.clone(),
+                        yes: Box::new(if taken {
+                            self.drop_dead_arms(yes)
+                        } else {
+                            undefined(yes.loc)
+                        }),
+                        no: Box::new(if taken {
+                            undefined(no.loc)
+                        } else {
+                            self.drop_dead_arms(no)
+                        }),
+                    }
+                }
+                RawKind::Binary { op, left, right }
+                    if matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) =>
+                {
+                    let l = self.server_literal(left)?;
+                    let dead = match op {
+                        BinOp::And => !truthy(&l),
+                        BinOp::Or => truthy(&l),
+                        _ => !matches!(l, Literal::Null | Literal::Undefined),
+                    };
+                    if !dead {
+                        return None;
+                    }
+                    RawKind::Binary {
+                        op: *op,
+                        left: left.clone(),
+                        right: Box::new(undefined(right.loc)),
+                    }
+                }
+                _ => return None,
+            };
+            Some(RawExpr { loc: n.loc, kind })
+        })
+    }
+
+    /// F297: the value `e` has on the server when that is a literal: a literal, a state cell whose initial value is a
+    /// literal, or `!` of one.
+    fn server_literal(&self, e: &RawExpr) -> Option<Literal> {
+        match &e.kind {
+            RawKind::Lit(l) => Some(l.clone()),
+            RawKind::Ident {
+                name,
+                kind: IdentKind::State,
+            } => match &self.state_inits.get(name)?.kind {
+                RawKind::Lit(l) => Some(l.clone()),
+                _ => None,
+            },
+            RawKind::Unary {
+                op: crate::ir::UnOp::Not,
+                value,
+            } => Some(Literal::Bool(!truthy(&self.server_literal(value)?))),
+            _ => None,
+        }
+    }
+
+    /// Module consts, imported consts and CSS Module classes folded into `e`.
+    fn fold_consts(&self, e: &RawExpr) -> RawExpr {
         if self.consts.is_empty() && self.imported_vals.is_empty() && self.css.is_empty() {
             return e.clone();
         }
@@ -1582,9 +1662,9 @@ impl Placer<'_> {
         let problem = if self.frame_value {
             None
         } else if self.provider_children > 0 || (self.component_children > 0 && self.slot_content) {
-            self.child_read_problem(&self.fold(r), 0)
+            self.child_read_problem(&self.fold_consts(r), 0)
         } else if (self.slot_content || self.component_prop) && !self.react_already {
-            self.element_problem(&self.fold(r), 0)
+            self.element_problem(&self.fold_consts(r), 0)
         } else {
             None
         };
@@ -1621,7 +1701,7 @@ impl Placer<'_> {
             && self
                 .st
                 .cx
-                .deps(&self.fold(r), &self.loop_scope)
+                .deps(&self.fold_consts(r), &self.loop_scope)
                 .module_locals
                 .is_empty();
         self.st.painted.push(Painted {
@@ -1681,7 +1761,9 @@ impl Placer<'_> {
             }
             return Expr::Raw(r.clone());
         }
-        let folded = self.fold(r);
+        // Not `fold`: the client binds a painted value from this expression, so an arm dropped for the server would be
+        // dropped for the client too (F297 drops dead arms only in derived locals, whose chunk reads the structural IR).
+        let folded = self.fold_consts(r);
         if try_server(&folded).is_ok() && self.locals_placed(&folded) {
             return Expr::Server(crate::ir::ServerExpr(folded));
         }
@@ -1978,4 +2060,14 @@ fn collect_raw(n: &Node, f: &mut dyn FnMut(&RawExpr)) {
 /// / array set (`slice` included) and the F173 allowlist (`plain_fn::PRIMITIVE_METHODS`).
 fn plain_method(name: &str) -> bool {
     name == "slice" || crate::analyze::plain_fn::PRIMITIVE_METHODS.contains(&name)
+}
+
+/// JS truthiness of a literal (F297).
+fn truthy(l: &Literal) -> bool {
+    match l {
+        Literal::Null | Literal::Undefined => false,
+        Literal::Bool(b) => *b,
+        Literal::Num(n) => *n != 0.0 && !n.is_nan(),
+        Literal::Str(s) => !s.is_empty(),
+    }
 }

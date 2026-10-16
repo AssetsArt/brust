@@ -57,6 +57,10 @@ pub struct Module<'m, 'x> {
     pub foreign: bool,
 }
 
+/// R34.142: the field a context's whole value travels as, for a context declared with a literal default that a consumer
+/// reads as a value (`const dir = useContext(DirectionContext)`, not `ctx.field`) and a Provider hands one expression to.
+pub(crate) const WHOLE_FIELD: &str = "__whole";
+
 /// How deep custom hooks may call custom hooks.
 const MAX_HOOK_DEPTH: usize = 8;
 
@@ -80,6 +84,9 @@ struct Inline {
     /// state cell or its setter, a dispatch). A hook result handed out inside an object or array that the call site binds
     /// WHOLE (`const t = useToggle()`) would be one derived value naming them, which a per-request job cannot (F289).
     hook_results: HashSet<String>,
+    /// R34.142: addresses of the `useId()` calls that seed a state nothing updates (`drop_inert_id_effects`); the state
+    /// is that id.
+    inert_id_states: HashSet<usize>,
 }
 
 impl BodyDecls {
@@ -171,6 +178,15 @@ fn hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<(String, 
     let target = comma_callee(target);
     if is_use_store(target, names) {
         return Some(("useStore".into(), false));
+    }
+    // F255: `useId.call(null)`, `.apply(…)`, `.bind(…)()` invoke the hook through a method of the function. The reader
+    // does not follow that spelling, so the call is named as the hook it reaches and left unclassified: the body
+    // reader refuses it by name instead of compiling it with a variable nothing binds.
+    if let E::EDot(d) = &target.data
+        && matches!(d.name.slice(), b"call" | b"apply" | b"bind")
+        && let Some((inner, _)) = hook_target(&d.target, names)
+    {
+        return Some((inner, false));
     }
     let name = match &target.data {
         E::EIdentifier(id) => names.name(id.ref_),
@@ -723,6 +739,22 @@ fn read_stmts(
             // S2 (R34.104): `if (cond) { console.error(…) }` only logs (Radix's dev validation of its props): it is not
             // part of the render, so it is left out; any other effect of a branch keeps the control-flow fallback.
             S::SIf(i) if console_only_if(i, r.names) => {}
+            // R34.142: `if (typeof useReactInsertionEffect === 'function') { A } else { B }` where the name is React's own
+            // hook (a module const read off the React namespace): React exports its hooks as functions, so the test is
+            // decided and only the branch that runs is read (Radix's `useCallbackRef`, written for React versions that
+            // lack `useInsertionEffect`).
+            S::SIf(i) if let Some(taken) = hook_presence_test(&i.test, r.names) => {
+                let branch = if taken { Some(i.yes) } else { i.no };
+                if let Some(b) = branch {
+                    let inner: Vec<js_ast::Stmt> = match &b.data {
+                        S::SBlock(blk) => blk.stmts.slice().to_vec(),
+                        _ => vec![b],
+                    };
+                    if let Some(v) = read_stmts(&inner, r, out, m) {
+                        returned = Some(v);
+                    }
+                }
+            }
             S::SIf(_)
             | S::SFor(_)
             | S::SForIn(_)
@@ -1258,6 +1290,52 @@ fn nested_hooks_in(
         }
     }
     w.stmts(stmts);
+    // F255: React's hook read as a value anywhere but as the callee of a call the reader classified (an alias,
+    // `useId['call'](null)`, `Reflect.apply(useId, …)`, an argument) is called by something the reader cannot see:
+    // the job it lands in would call it outside a render. Fail closed, like F156 for the JSX runtime.
+    let mut callees = HashSet::new();
+    for e in &w.calls {
+        let E::ECall(call) = &e.data else {
+            continue;
+        };
+        // A classified call is read; an unclassified one is reported by the loop below.
+        if out.classified_hooks.contains(&call_addr(call))
+            || hook_target(&call.target, names).is_some()
+        {
+            let c = comma_callee(&call.target);
+            match &c.data {
+                E::EDot(d) => callees.insert(d.target.loc.start),
+                _ => callees.insert(c.loc.start),
+            };
+        }
+    }
+    let is_hook_name = |n: &str| {
+        n.strip_prefix("use").is_some_and(|rest| {
+            rest.is_empty()
+                || rest.starts_with(|c: char| c.is_ascii_uppercase() || c.is_ascii_digit())
+        })
+    };
+    let value_reads = w
+        .used_at
+        .iter()
+        .filter(|(r, _)| react_named(names, *r).is_some_and(|n| is_hook_name(&n)))
+        .map(|(r, at)| (react_named(names, *r).unwrap_or_default(), *at))
+        .chain(w.member_reads.iter().filter_map(|(r, member, at)| {
+            matches!(names.import_of(*r), Some(("react", "default" | "*")))
+                .then_some(())
+                .filter(|()| member.is_empty() || is_hook_name(member))
+                .map(|()| (member.clone(), *at))
+        }));
+    for (hook, at) in value_reads {
+        if !callees.contains(&at) {
+            out.fallback(
+                "hook-unsupported",
+                format!("hook {hook} is read as a value, not called directly"),
+                at.max(0) as u32,
+                "call hooks only as `const x = useHook(...)` at the top of the component",
+            );
+        }
+    }
     for e in &w.calls {
         let E::ECall(call) = &e.data else {
             continue;
@@ -1529,6 +1607,178 @@ fn console_only(stmt: &js_ast::Stmt, names: &NameTable<'_>) -> bool {
 }
 
 /// `if (test) A else B` where every branch only logs.
+/// R34.142: Radix's `useId` seeds `const [id, setId] = useState(useReactId())` (React's `useId`, always a string) and keeps a
+/// client-only fallback for React versions without it: `useLayoutEffect(() => { if (!x) setId((r) => r ?? String(count++)) })`.
+/// `setId((r) => r ?? …)` returns `r` untouched while `r` is not nullish, and a state seeded by `useId()` never is, so
+/// such an effect changes nothing (React bails out of the update). When every use of the setter is in effects of exactly
+/// that shape, the effects are dropped (the module counter they read goes with them) and the state is the id
+/// (`inert_id_states`). Anything else, any other use of the setter, leaves the body as written.
+fn drop_inert_id_effects(
+    body: Vec<js_ast::Stmt>,
+    names: &NameTable<'_>,
+    inert: &mut HashSet<usize>,
+) -> (Vec<js_ast::Stmt>, Vec<(Option<js_ast::Ref>, js_ast::Ref)>) {
+    // the setters of `useState(useId())`, with the address of that `useId()` call
+    let mut setters: Vec<(js_ast::Ref, usize)> = Vec::new();
+    let mut pairs: Vec<(Option<js_ast::Ref>, js_ast::Ref)> = Vec::new();
+    for st in &body {
+        let S::SLocal(l) = &st.data else { continue };
+        for d in l.decls.iter() {
+            let (Some(v), B::BArray(arr)) = (&d.value, d.binding.data) else {
+                continue;
+            };
+            let E::ECall(c) = &v.data else { continue };
+            if react_hook_name(c, names).as_deref() != Some("useState") {
+                continue;
+            }
+            let Some(E::ECall(seed)) = c.args.first().map(|a| &a.data) else {
+                continue;
+            };
+            if !seed.args.is_empty() || react_hook_name(seed, names).as_deref() != Some("useId") {
+                continue;
+            }
+            if let Some(B::BIdentifier(id)) = arr.items().get(1).map(|i| i.binding.data) {
+                setters.push((id.r#ref, call_addr(seed)));
+                let state = match arr.items().first().map(|i| i.binding.data) {
+                    Some(B::BIdentifier(v)) => Some(v.r#ref),
+                    _ => None,
+                };
+                pairs.push((state, id.r#ref));
+            }
+        }
+    }
+    if setters.is_empty() {
+        return (body, Vec::new());
+    }
+    let is_setter = |e: &js_ast::Expr| {
+        crate::analyze::names::ident_ref(e)
+            .is_some_and(|r| setters.iter().any(|(s, _)| names.same(*s, r)))
+    };
+    // `setId((r) => r ?? X)`
+    let identity_update = |e: &js_ast::Expr| -> bool {
+        let E::ECall(c) = &e.data else { return false };
+        if !is_setter(&c.target) || c.args.len() != 1 {
+            return false;
+        }
+        let E::EArrow(a) = &c.args[0].data else {
+            return false;
+        };
+        let [arg] = a.args.slice() else { return false };
+        let (B::BIdentifier(p), None) = (arg.binding.data, arg.default) else {
+            return false;
+        };
+        let Some(body) = expr_body(a) else {
+            return false;
+        };
+        matches!(&body.data, E::EBinary(b)
+            if b.op == js_ast::OpCode::BinNullishCoalescing
+                && crate::analyze::names::ident_ref(&b.left).is_some_and(|l| names.same(l, p.r#ref)))
+    };
+    fn update_stmt(st: &js_ast::Stmt, f: &dyn Fn(&js_ast::Expr) -> bool) -> bool {
+        match &st.data {
+            S::SExpr(x) => f(&x.value),
+            // the test runs with the update: only an effect-free one may go with it
+            // the test runs with the update: only an effect-free one may go with it
+            S::SIf(i) => pure_expr(&i.test) && update_stmt(&i.yes, f) && i.no.is_none(),
+            S::SBlock(b) => b.stmts.slice().iter().all(|x| update_stmt(x, f)),
+            _ => false,
+        }
+    }
+    let inert_effect = |st: &js_ast::Stmt| -> bool {
+        let S::SExpr(x) = &st.data else { return false };
+        let E::ECall(c) = &x.value.data else {
+            return false;
+        };
+        if !matches!(
+            react_hook_name(c, names).as_deref(),
+            Some("useEffect" | "useLayoutEffect" | "useInsertionEffect")
+        ) {
+            return false;
+        }
+        let Some(E::EArrow(a)) = c.args.first().map(|a| &a.data) else {
+            return false;
+        };
+        let stmts = a.body.stmts.slice();
+        !stmts.is_empty() && stmts.iter().all(|s| update_stmt(s, &identity_update))
+    };
+    let kept: Vec<js_ast::Stmt> = body.iter().filter(|s| !inert_effect(s)).copied().collect();
+    if kept.len() == body.len() {
+        return (body, Vec::new());
+    }
+    // every use of a setter that remains is a real update: leave the hook as written
+    let declares_setter = |st: &js_ast::Stmt| {
+        matches!(&st.data, S::SLocal(l) if l.decls.iter().any(|d| matches!(d.binding.data,
+            B::BArray(arr) if matches!(arr.items().get(1).map(|i| i.binding.data),
+                Some(B::BIdentifier(id)) if setters.iter().any(|(s, _)| names.same(*s, id.r#ref))))))
+    };
+    let mut w = Walk::default();
+    let rest: Vec<js_ast::Stmt> = kept
+        .iter()
+        .filter(|s| !declares_setter(s))
+        .copied()
+        .collect();
+    w.stmts(&rest);
+    if setters
+        .iter()
+        .any(|(s, _)| w.used.iter().any(|u| names.same(*u, *s)))
+    {
+        return (body, Vec::new());
+    }
+    inert.extend(setters.iter().map(|(_, a)| *a));
+    (kept, pairs)
+}
+
+/// A statement the hook keeps: itself, or, for an `if` whose test `hook_presence_test` decides, the statements of the
+/// branch that runs (so a hook of the branch that never runs is not seen at all).
+fn decided_branch(st: &js_ast::Stmt, names: &NameTable<'_>) -> Vec<js_ast::Stmt> {
+    let S::SIf(i) = &st.data else {
+        return vec![*st];
+    };
+    let Some(taken) = hook_presence_test(&i.test, names) else {
+        return vec![*st];
+    };
+    match if taken { Some(i.yes) } else { i.no } {
+        None => Vec::new(),
+        Some(b) => match &b.data {
+            S::SBlock(blk) => blk
+                .stmts
+                .slice()
+                .iter()
+                .flat_map(|x| decided_branch(x, names))
+                .collect(),
+            _ => decided_branch(&b, names),
+        },
+    }
+}
+
+/// `typeof X === 'function'` (or `!==`, `==`, `!=`) where `X` is a local bound to one of React's own hooks (`names.rs`,
+/// `collect_react_hook_aliases`): what the test evaluates to, since React's exported hooks are functions. `None` for any
+/// other test.
+fn hook_presence_test(test: &js_ast::Expr, names: &NameTable<'_>) -> Option<bool> {
+    use js_ast::OpCode as Op;
+    let E::EBinary(b) = &test.data else {
+        return None;
+    };
+    let equal = match b.op {
+        Op::BinStrictEq | Op::BinLooseEq => true,
+        Op::BinStrictNe | Op::BinLooseNe => false,
+        _ => return None,
+    };
+    let is_function = |e: &js_ast::Expr| matches!(&e.data, E::EString(s) if crate::analyze::expr::estring(s) == "function");
+    let typeof_hook = |e: &js_ast::Expr| {
+        let E::EUnary(u) = &e.data else {
+            return false;
+        };
+        u.op == Op::UnTypeof
+            && crate::analyze::names::ident_ref(&u.value).is_some_and(
+                |r| matches!(names.import_of(r), Some(("react", h)) if crate::analyze::names::REACT_HOOKS.contains(&h)),
+            )
+    };
+    ((typeof_hook(&b.left) && is_function(&b.right))
+        || (typeof_hook(&b.right) && is_function(&b.left)))
+    .then_some(equal)
+}
+
 fn console_only_if(i: &js_ast::S::If, names: &NameTable<'_>) -> bool {
     console_only(&i.yes, names) && i.no.as_ref().is_none_or(|n| console_only(n, names))
 }
@@ -1558,7 +1808,7 @@ fn read_decl(
     if let Some(ctx) = context_read(value, r.names) {
         return read_context_use(r, out, decl, value, &ctx, vloc);
     }
-    adopt_react_alias(r, m, value);
+    adopt_react_alias(r.names, m, value);
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
         out.classified_hooks.insert(call_addr(call));
         let args: Vec<js_ast::Expr> = call.args.to_vec();
@@ -1611,6 +1861,13 @@ fn read_decl(
                 // it apart from the precompute slots `_sN`.
                 let name = name_at(0).unwrap_or_else(|| format!("_st{}", out.state.len() + 1));
                 let setter = name_at(1);
+                // R34.142: `useState(useId())` whose state nothing updates is the id itself.
+                if let Some(E::ECall(inner)) = args.first().map(|a| &a.data)
+                    && out.inline.inert_id_states.contains(&call_addr(inner))
+                {
+                    out.classified_hooks.insert(call_addr(inner));
+                    return simple_hook(r, out, "useId", Some(name), &[], vloc, false);
+                }
                 let init = match args.first() {
                     Some(a) => r.expr(a),
                     None => undefined_at(vloc),
@@ -1846,7 +2103,7 @@ fn read_expr_stmt(
     value: &js_ast::Expr,
 ) {
     let vloc = loc_of(value);
-    adopt_react_alias(r, m, value);
+    adopt_react_alias(r.names, m, value);
     let hook = hook_call(value, r.names);
     if let Some((_, call, _)) = &hook {
         out.classified_hooks.insert(call_addr(call));
@@ -1932,7 +2189,7 @@ const HOOK_REMEDY: &str = "keep custom hooks to const declarations, React hooks 
 /// (`export const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}`) is React's hook for every
 /// reader of the call, by symbol: the caller's import is recorded as an import of `react`. Nothing is recognised by the
 /// package's name; only the module's own declaration (`NameTable::exported_react_hook`) decides.
-fn adopt_react_alias(r: &mut Reader<'_, '_>, m: Module<'_, '_>, value: &js_ast::Expr) {
+fn adopt_react_alias(names: &mut NameTable<'_>, m: Module<'_, '_>, value: &js_ast::Expr) {
     let E::ECall(call) = &value.data else {
         return;
     };
@@ -1941,8 +2198,7 @@ fn adopt_react_alias(r: &mut Reader<'_, '_>, m: Module<'_, '_>, value: &js_ast::
         E::EImportIdentifier(id) => id.ref_,
         _ => return,
     };
-    let Some((source, imported)) = r
-        .names
+    let Some((source, imported)) = names
         .import_of(target)
         .map(|(s, i)| (s.to_string(), i.to_string()))
     else {
@@ -1967,7 +2223,7 @@ fn adopt_react_alias(r: &mut Reader<'_, '_>, m: Module<'_, '_>, value: &js_ast::
     };
     let hook = parsed.with_ast(|ast| NameTable::for_hook(ast).exported_react_hook(ast, &imported));
     if let Some(hook) = hook {
-        r.names.adopt_react_hook(target, &hook);
+        names.adopt_react_hook(target, &hook);
     }
 }
 
@@ -2186,6 +2442,11 @@ fn read_hook(
         out.fallback(rule, why, vloc, HOOK_REMEDY);
     };
     let mut hnames = NameTable::for_hook(hm.ast);
+    if imported {
+        hnames.literal_reads_are_safe(hm.ast);
+    }
+    // the contexts of the hook's module are named by that module (the same tag its own components get)
+    hnames.tag_contexts(&path);
     let fn_name = func
         .name
         .as_ref()
@@ -2304,8 +2565,24 @@ fn read_hook(
                 .collect();
             !dev_only_block(st, &rest, &hnames)
         })
-        .map(|(_, st)| *st)
+        .flat_map(|(_, st)| decided_branch(st, &hnames))
         .collect();
+    // a hook imported under another name may be React's own (`useLayoutEffect` of `use-layout-effect`): decided before the
+    // statements are looked at, as reading each one would
+    for st in &body {
+        if let S::SExpr(x) = &st.data {
+            adopt_react_alias(&mut hnames, hm, &x.value);
+        }
+    }
+    let (body, inert_states) =
+        drop_inert_id_effects(body, &hnames, &mut out.inline.inert_id_states);
+    // such a state is a plain id: its reads are not state reads
+    for (state, setter) in inert_states {
+        if let Some(state) = state {
+            hnames.unmark_state(state);
+        }
+        hnames.unmark_setter(setter);
+    }
 
     let mut w = Walk::default();
     for arg in func.args.slice() {
@@ -2376,6 +2653,7 @@ fn read_hook(
         }
     }
     let mut import_aliases: Vec<(js_ast::Ref, Alias)> = Vec::new();
+    let mut module_consts: Vec<(String, js_ast::Ref)> = Vec::new();
     for u in &w.used {
         if hnames.is_jsx_runtime(*u)
             || w.declared.iter().any(|d| hnames.same(*d, *u))
@@ -2436,6 +2714,20 @@ fn read_hook(
                 "hook-shape",
                 format!("custom hook {hook} reads `arguments`"),
             );
+        }
+        // R34.142: the argument of `useContext(C)`, a context the hook's module declares: the frames pass carries it
+        if hnames.react_context(*u).is_some() {
+            continue;
+        }
+        // R34.142: a never-written `const` of literal shape of the hook's module (`Direction.LTR`) is read as its value:
+        // folded into what the hook reads; any use that does not fold fails the hook below.
+        if imported
+            && (hnames.module_inits().contains_key(&spelled) || hnames.object_const(*u).is_some())
+        {
+            if !module_consts.iter().any(|(n, _)| n == &spelled) {
+                module_consts.push((spelled.clone(), *u));
+            }
+            continue;
         }
         if imported && !matches!(kind, IdentKind::Global) {
             return fail(
@@ -2694,7 +2986,28 @@ fn read_hook(
                 expr: Expr::Raw(e),
             });
         }
-        let returned = read_stmts(&body, &mut hr, out, hm);
+        let mut returned = read_stmts(&body, &mut hr, out, hm);
+        if !module_consts.is_empty() {
+            let values: HashMap<String, RawExpr> = module_consts
+                .iter()
+                .filter_map(|(n, u)| {
+                    let e = match hr.names.module_inits().get(n) {
+                        Some(e) => *e,
+                        None => hr.names.object_const(*u)?,
+                    };
+                    Some((n.clone(), hr.expr(&e)))
+                })
+                .collect();
+            if !fold_module_consts(&values, &start, out, &mut returned) {
+                fail(
+                    out,
+                    "hook-shape",
+                    format!(
+                        "custom hook {hook} reads a constant of {path} other than as `NAME` or `NAME.key` of a literal"
+                    ),
+                );
+            }
+        }
         nested_hooks_in(func, &body, hr.names, out);
         out.diagnostics.append(&mut hr.diagnostics);
         if !hr.pending_handlers.is_empty() {
@@ -2708,6 +3021,15 @@ fn read_hook(
     };
     out.inline.stack.pop();
     out.classified_hooks = saved;
+    // the context fields the hook read are this component's own needs (hidden props), with their defaults
+    for u in hnames.ctx_uses() {
+        for f in &u.fields {
+            r.names.note_ctx_field(&u.context, f);
+        }
+    }
+    for (c, d) in hnames.scalar_defaults() {
+        r.names.adopt_scalar(&c, &d);
+    }
 
     // What went wrong inside is reported at the call site, naming the hook (R0.2).
     let text = hm.parsed.text();
@@ -2890,6 +3212,83 @@ fn relocate(e: &mut RawExpr, loc: u32) {
             }
         }
     }
+}
+
+/// R34.142: replaces each read of a module constant of a literal shape in what the hook read since `start` by its value
+/// (`Direction.LTR` becomes `'ltr'`, a literal `NAME` itself). `false` when a use is left that does not fold (the constant
+/// as a whole object, a key it has no entry for): the hook then reads a name the component does not have.
+fn fold_module_consts(
+    values: &HashMap<String, RawExpr>,
+    start: &Marks,
+    out: &mut BodyDecls,
+    returned: &mut Option<Option<RawExpr>>,
+) -> bool {
+    let left = std::cell::Cell::new(false);
+    let name_of = |e: &RawExpr| match &e.kind {
+        RawKind::Ident { name, kind } if !matches!(kind, IdentKind::Prop | IdentKind::State) => {
+            Some(name.clone())
+        }
+        _ => None,
+    };
+    let f = |e: &RawExpr| -> Option<RawExpr> {
+        match &e.kind {
+            RawKind::Member { target, name, .. } => {
+                let c = values.get(&name_of(target)?)?;
+                let RawKind::Object(props) = &c.kind else {
+                    return None;
+                };
+                match props.iter().find(|(k, _)| k == name) {
+                    Some((_, v)) if matches!(v.kind, RawKind::Lit(_)) => Some(RawExpr {
+                        loc: e.loc,
+                        kind: v.kind.clone(),
+                    }),
+                    _ => {
+                        left.set(true);
+                        None
+                    }
+                }
+            }
+            RawKind::Ident { .. } => {
+                let c = values.get(&name_of(e)?)?;
+                if matches!(c.kind, RawKind::Lit(_)) {
+                    Some(RawExpr {
+                        loc: e.loc,
+                        kind: c.kind.clone(),
+                    })
+                } else {
+                    left.set(true);
+                    None
+                }
+            }
+            _ => None,
+        }
+    };
+    let fold = |e: &mut RawExpr| *e = crate::analyze::const_fold::map_pre(e, &f);
+    let fold_expr = |e: &mut Expr| {
+        if let Expr::Raw(r) = e {
+            fold(r)
+        }
+    };
+    out.state[start.state..]
+        .iter_mut()
+        .for_each(|s| fold_expr(&mut s.init));
+    out.derived[start.derived..]
+        .iter_mut()
+        .for_each(|d| fold_expr(&mut d.expr));
+    out.refs[start.refs..]
+        .iter_mut()
+        .for_each(|d| fold_expr(&mut d.init));
+    out.handlers[start.handlers..]
+        .iter_mut()
+        .for_each(|h| fold(&mut h.body));
+    for e in &mut out.effects[start.effects..] {
+        fold(&mut e.body);
+        e.deps.iter_mut().flatten().for_each(&fold);
+    }
+    if let Some(Some(r)) = returned {
+        fold(r);
+    }
+    !left.get()
 }
 
 /// A value whose computation can be dropped: no call, nothing opaque.

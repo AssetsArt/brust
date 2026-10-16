@@ -4,7 +4,7 @@
 // A component several trees reach keeps one compile, chosen by role, not by route order (F75).
 import { realpathSync } from 'node:fs'
 import { relative, sep } from 'node:path'
-import { type CompiledComponent, type CompiledTree, compileTree } from '../../native/index.js'
+import { type CompiledComponent, type CompiledTree, compileTree, scanLoadWrites } from '../../native/index.js'
 import type { FlatRoute, Route } from '../routes'
 import { BuildError } from './errors'
 import { checkAliasAgreement, readPathAliases } from './tsconfig-paths'
@@ -114,6 +114,27 @@ export function replaces(kept: Seen, next: Seen): boolean {
   return next.role > kept.role
 }
 
+/**
+ * F230 (closes F219): scans the app's modules once for writes into another app module's exports (`LABELS.a = …`,
+ * `list.push(…)` through an import) and returns the JSON every `compileTree` of the build reads: a component whose
+ * compiled code reads such an export falls back to React (`module-written`). `modules` are absolute paths.
+ */
+export function scanAppWrites(appRoot: string, modules: string[], log: (s: string) => void, sourceRoots: string[] = []): string {
+  // Keyed as `compileApp` names a file to the compiler (relative to `appRoot`), plus the real-path spelling (as
+  // `routeRoots`), so an import resolves to the same key either way.
+  const real = realpathSync(appRoot)
+  const toKey = (base: string, f: string) => relative(base, f).split(sep).join('/')
+  // F276: a module under a `[build] source_roots` directory (`../shared/x.ts`) is scanned too; any other `..` key is not.
+  const inSourceRoot = (k: string) => sourceRoots.some((r) => k.startsWith(`${r}/`))
+  const rel = [...new Set(modules.flatMap((f) => [toKey(appRoot, f), toKey(real, realpathSync(f))]))].filter((k) => !k.startsWith('..') || inSourceRoot(k)).sort()
+  const { aliases } = readPathAliases(appRoot)
+  const t0 = performance.now()
+  const json = scanLoadWrites(appRoot, rel, aliases.length > 0 ? JSON.stringify(aliases) : undefined, sourceRoots.length > 0 ? sourceRoots : undefined)
+  const ms = performance.now() - t0
+  if (process.env.BRUST_BUILD_TIMINGS) log(`[brust] scan load-time writes: ${rel.length} modules in ${ms.toFixed(1)} ms`)
+  return json
+}
+
 export function compileApp(opts: {
   appRoot: string
   leaves: FlatRoute[]
@@ -135,6 +156,8 @@ export function compileApp(opts: {
   packages?: PackageSources
   /** F256: `[build] source_roots`, normalised and relative to the app root (`../shared`). */
   sourceRoots?: string[]
+  /** F230: `scanAppWrites`'s result; absent = no module is refused for a load-time write. */
+  loadWrites?: string
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
   const { appRoot, leaves, componentFile } = opts
   const iconSvgsJson = opts.iconsFinal ? JSON.stringify({ final: true, svgs: opts.iconSvgs ?? {} }) : undefined
@@ -168,7 +191,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson, sourceRoots)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson, sourceRoots, opts.loadWrites)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).

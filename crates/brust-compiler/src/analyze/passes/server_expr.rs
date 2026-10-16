@@ -135,6 +135,10 @@ fn call(callee: &RawExpr, args: &[RawExpr]) -> Result<(), &'static str> {
     {
         return match (obj.as_str(), name.as_str(), args) {
             ("Object", "keys" | "entries", [arg]) => check(arg),
+            // F277: an object spread (`{ ...a, k: v }`, read as `Object.assign({}, a, { k: v })`, B5) into a new object.
+            ("Object", "assign", [first, rest @ ..]) if matches!(&first.kind, RawKind::Object(p) if p.is_empty()) => {
+                rest.iter().try_for_each(check)
+            }
             ("Array", "from", [len]) if is_range(len) => Ok(()),
             _ => Err("call"),
         };
