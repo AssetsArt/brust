@@ -304,6 +304,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         "every RowOnly link is visited by resolve_row_only"
     );
     ir.template = template;
+    w.frozen.extend(ir.throw_props.iter().cloned());
     ir.frozen_props = std::mem::take(&mut w.frozen).into_iter().collect();
     // A list or condition the children lowered folded its slot away: the precompute job no longer
     // computes what no node reads (the server would warn about the missing output on every request).
