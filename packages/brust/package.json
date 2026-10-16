@@ -55,7 +55,8 @@
     ]
   },
   "dependencies": {
-    "@brust/runtime-dom": "workspace:*"
+    "@brust/runtime-dom": "workspace:*",
+    "tsconfig-paths": "4.2.0"
   },
   "peerDependencies": {
     "react": "^19.0.0",

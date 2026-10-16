@@ -2,7 +2,7 @@
 // root, names its fallback, carries every build target's own conditions, keeps its answers across builds, and the
 // directory specifiers `.` / `..` are resolved on the same path as `./x`.
 import { afterAll, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { PRODUCTION, sourceDirPlugin } from '../src/build/bundle'
@@ -180,4 +180,83 @@ test('F218: a staged artifact importing ".." resolves in its component source di
   const res = await Bun.build({ entrypoints: [staged], target: 'bun', plugins: [sourceDirPlugin(new Map([[staged, join(root, 'ui/parts/comp.ts')]]), root)] })
   expect(res.success, res.logs.join('\n')).toBe(true)
   expect(await res.outputs[0]!.text()).toContain('UI_INDEX')
+})
+
+// F241: the importer's own package.json (its `browser` / `imports` maps) is part of what an answer depends on.
+test('F241: a cached answer is dropped when the importer package.json changed', () => {
+  const root = tmp()
+  put(join(root, 'bun.lock'), '{}\n')
+  pkg(root, 'dep', { main: 'main.js' }, { 'main.js': '' })
+  const host = join(root, 'node_modules/host')
+  put(join(host, 'package.json'), JSON.stringify({ name: 'host' }))
+  const warnings: string[] = []
+  const ask = (timeoutMs: number) => resolveNative('dep', host, 'bun', PRODUCTION, { appRoot: root, timeoutMs, warn: (m) => warnings.push(m) })
+  clearResolveCache()
+  const first = ask(30_000)
+  clearResolveCache()
+  expect(ask(1)).toBe(first) // unchanged: a hit, no probe
+  expect(warnings).toEqual([])
+  utimesSync(join(host, 'package.json'), new Date(), new Date(Date.now() + 5000))
+  clearResolveCache()
+  ask(1) // the importer's package.json moved: the entry is dropped, the (timed-out) probe asks again
+  expect(warnings).toHaveLength(1)
+})
+
+// F242: a browser-target build never takes the bun/node answer.
+test('F242: a browser-target probe that cannot answer is an error naming the specifier, not the node pick', () => {
+  const root = tmp()
+  pkg(root, 'nodey', { exports: { node: './node.js', browser: './browser.js' } }, { 'node.js': '', 'browser.js': '' })
+  clearResolveCache()
+  const run = () => resolveNative('nodey', root, 'browser', PRODUCTION, { timeoutMs: 1, conditions: [...CF_CONDITIONS] })
+  expect(run).toThrow('"nodey"')
+  try {
+    run()
+  } catch (e) {
+    expect((e as { rule?: string }).rule).toBe('resolve-fallback')
+    expect(String(e)).not.toContain('node.js')
+  }
+  // The same failure for the bun target keeps today's answer (and names it).
+  const warnings: string[] = []
+  expect(resolveNative('nodey', root, 'bun', PRODUCTION, { timeoutMs: 1, warn: (m) => warnings.push(m) })).toContain('node_modules/nodey/')
+  expect(warnings).toHaveLength(1)
+})
+
+// F245: the cache file is data; every answer read from it is checked.
+function cacheFile(root: string): string {
+  return join(root, '.brust', readdirSync(join(root, '.brust')).find((f) => f.startsWith('resolve-cache-'))!)
+}
+test('F245: a cached answer outside the app and node_modules, or a missing file, is dropped', () => {
+  const root = tmp()
+  put(join(root, 'bun.lock'), '{}\n')
+  pkg(root, 'real', { main: 'main.js' }, { 'main.js': '' })
+  const warnings: string[] = []
+  const ask = () => resolveNative('real', root, 'bun', PRODUCTION, { appRoot: root, timeoutMs: 1, warn: (m) => warnings.push(m) })
+  clearResolveCache()
+  const real = resolveNative('real', root, 'bun', PRODUCTION, { appRoot: root })
+  const file = cacheFile(root)
+  const original = readFileSync(file, 'utf8')
+  const plant = (path: string) => {
+    const j = JSON.parse(original)
+    for (const e of Object.values(j.entries) as { path: string; pkg: string }[]) {
+      e.path = path
+      e.pkg = ''
+    }
+    writeFileSync(file, JSON.stringify(j))
+    clearResolveCache()
+  }
+  // A real file, but in neither the app nor a node_modules.
+  plant('/etc/hosts')
+  expect(ask()).toBe(real)
+  expect(warnings).toHaveLength(1) // not served from the cache: the probe was asked (and timed out to the fallback)
+  // Inside the app but gone.
+  warnings.length = 0
+  plant(join(root, 'gone.js'))
+  ask()
+  expect(warnings).toHaveLength(1)
+  // The genuine file is served.
+  warnings.length = 0
+  writeFileSync(file, original)
+  clearResolveCache()
+  expect(ask()).toBe(real)
+  expect(warnings).toEqual([])
 })

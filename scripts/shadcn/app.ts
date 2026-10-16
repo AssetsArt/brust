@@ -254,12 +254,21 @@ export function parseRefusal(text: string): Refusal | null {
   return { rule: m[1]!, at: m[2]!, construct: prop ? `prop \`${prop[1]}\` on <${prop[2]}>` : m[3]! }
 }
 
+/** F140: one page build gets this long; a hung build must not hang the generator (or CI). */
+export const BUILD_TIMEOUT_MS = Number(process.env.BRUST_SHADCN_BUILD_TIMEOUT_MS) || 120_000
+
+/** True when `spawnSync` killed the child because it ran past `timeout` (`error.code` is `ETIMEDOUT`). */
+export function timedOut(p: { error?: Error | undefined }): boolean {
+  return (p.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT'
+}
+
 /** `brust build <entry>` in the fixture, into a throwaway dist. */
 function buildEntry(entryRel: string, id: string): AppRow['build'] {
   const out = join(FIXTURE, '.rows', `dist-${id}`)
   mkdirSync(join(FIXTURE, '.rows'), { recursive: true })
   try {
-    const p = spawnSync(process.execPath, [join(repo, 'packages/brust/bin/brust'), 'build', entryRel, '--out-dir', `.rows/dist-${id}`], { cwd: FIXTURE, encoding: 'utf8' })
+    const p = spawnSync(process.execPath, [join(repo, 'packages/brust/bin/brust'), 'build', entryRel, '--out-dir', `.rows/dist-${id}`], { cwd: FIXTURE, encoding: 'utf8', timeout: BUILD_TIMEOUT_MS, killSignal: 'SIGKILL' })
+    if (timedOut(p)) return { ok: false, message: 'timeout', refusal: null }
     if (p.status === 0) return { ok: true, measured: measureDist(out) }
     const text = (p.stderr || p.stdout).replaceAll(FIXTURE, '.')
     const refusal = parseRefusal(text)
