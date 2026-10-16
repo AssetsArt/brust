@@ -737,7 +737,7 @@ fn rebase_sources(
                                 return Err(err());
                             }
                             let lookup = compile(&path, &export, None, opts, modules);
-                            if package_needs_react(&lookup, &modules.borrow()).is_some() {
+                            if package_needs_react(&lookup, &modules.borrow(), false).is_some() {
                                 return Err(err());
                             }
                             *s = relative_spec(to, &path);
@@ -2126,6 +2126,7 @@ fn state_frame_provider(ir: &ComponentIR) -> bool {
 fn package_needs_react(
     lookup: &Lookup,
     modules: &crate::analyze::modules::ModuleCache,
+    state_frames: bool,
 ) -> Option<String> {
     let ir = match lookup {
         Lookup::Compiled(ir) => ir.clone(),
@@ -2144,7 +2145,7 @@ fn package_needs_react(
             continue;
         }
         if let Tier::React { reason, .. } = &ir.tier
-            && !state_frame_provider(&ir)
+            && !(state_frames && state_frame_provider(&ir))
         {
             return Some(format!(
                 "{} renders as React in its source: {reason}",
@@ -3512,7 +3513,11 @@ impl Walker<'_, '_> {
             Export::Named(n) => named_component_id(&path, n),
         };
         let lookup = compile(&path, &export, None, ctx.opts, ctx.modules);
-        let needs_react = package_needs_react(&lookup, &ctx.modules.borrow());
+        // A state-frame Provider is not an island of package source when written in app code: a call site specialises
+        // it, and one that cannot keeps the published export's island (F188). From inside a package source there is
+        // no published spelling to fall back to.
+        let needs_react =
+            package_needs_react(&lookup, &ctx.modules.borrow(), !is_package_source(from));
         if let Some(why) = needs_react {
             // Only the outermost package import is the island: a nested one says nothing new.
             if is_package_source(from) {
