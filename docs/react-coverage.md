@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 136 | 26 | 49 | 61 | 0 | 0 | 0 | 0 |
+| C Hooks | 136 | 26 | 50 | 60 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 514 | 218 | 94 | 198 | 3 | 1 | 0 | 0 |
+| **Total** | 514 | 218 | 95 | 197 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -380,8 +380,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-style-child-element | a parent's state in a style object a static child spreads onto its element | native | native | 0 | ok | 4.6 | — | F277: Object.assign({}, …) is in the template subset: the merged style binds as an object (x-bind-style), no job to go stale |
 | c-dead-arm-null-state | a derived value whose arm on a useState(null) cell calls a method (`control ? control.closest(…) : true`) | native | native | 0 | ok | 4.6 | — | F297: the server renders control at null, so it prints the true arm (no job); the chunk keeps the whole expression |
 | c-live-arm-null-state | the same shape whose arm the server takes calls a method | native | native | precompute | ok | 4.6 | — | F297: only an arm the server never takes is dropped; the taken arm keeps its precompute job |
-| c-snapshot-through-spread | a never-written ref seeded from a live prop, passed to a forwarding primitive that spreads it, mounted once | native | native | 0 | ok | 4.6 | — | F295: the snapshot never changes while the instance lives; printed once through the spread, right because it mounts once |
-| c-snapshot-through-spread-guarded | the same child mounted under a condition | react | react | ssr | ok | 4.0 | fallback:snapshot-remount | F295 (c): a later mount takes the value current then, which a spread key cannot get on the client yet (F300): snapshot-remount |
+| c-snapshot-through-spread | a never-written ref seeded from a live prop, passed to a forwarding primitive that spreads it, mounted once | native | native | 0 | ok | 4.6 | — | F295 → F300: the snapshot never changes while the instance lives; bound at mount on the forwarded element (x-bind-checked, a computed over a cell nothing sets), so it needs no single-mount promise |
+| c-snapshot-through-spread-guarded | the same child mounted under a condition | native | native | 0 | ok | 4.9 | — | F300: a later mount takes the value current then: the child binds the snapshot at mount (a link seeds a late host from its parent), so the guarded page is native and equals React |
 | c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | 4.6 | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
 | c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | 4.0 | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
 | c-useid-comma-call | useId called through a comma (`(0, useId)()`, bundler output) | static | static | 0 | ok | 0 | — | F237: the comma spelling is the hook (was a per-request job calling useId outside a render) |

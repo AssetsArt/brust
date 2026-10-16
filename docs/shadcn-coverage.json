@@ -40,36 +40,36 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 38,
+      "measuredRows": 37,
       "analysisOnlyRows": 0,
-      "appComponents": 130,
+      "appComponents": 129,
       "libraryComponents": 167
     },
     {
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 33,
+      "measuredRows": 31,
       "analysisOnlyRows": 0,
-      "appComponents": 119,
+      "appComponents": 117,
       "libraryComponents": 190
     },
     {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 31,
+      "measuredRows": 29,
       "analysisOnlyRows": 0,
-      "appComponents": 83,
+      "appComponents": 81,
       "libraryComponents": 192
     },
     {
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 19,
+      "measuredRows": 18,
       "analysisOnlyRows": 0,
-      "appComponents": 20,
+      "appComponents": 19,
       "libraryComponents": 55
     },
     {
@@ -143,6 +143,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 2,
       "libraryComponents": 17
+    },
+    {
+      "blocker": "fallback:children-rest",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -759,14 +768,13 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 7,
-      "reactComponents": 3,
+      "components": 12,
+      "reactComponents": 2,
       "jsGzipKb": 92,
       "workerCalls": 1,
       "codes": [
-        "external-component",
-        "island-prop",
-        "spread-props"
+        "children-rest",
+        "external-component"
       ]
     },
     {
@@ -1332,15 +1340,12 @@
       "basis": "measured",
       "tier": "static",
       "islands": 1,
-      "components": 8,
-      "reactComponents": 2,
+      "components": 13,
+      "reactComponents": 1,
       "jsGzipKb": 89,
       "workerCalls": 1,
       "codes": [
-        "external-component",
-        "island-children",
-        "island-prop",
-        "spread-props"
+        "children-rest"
       ]
     },
     {
