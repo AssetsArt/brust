@@ -834,6 +834,30 @@ pub fn chain_root(e: &js_ast::Expr) -> Option<js_ast::Ref> {
     }
 }
 
+/// F230: the roots whose object `e` may be (not a copy): an identifier or a member chain of one, through `?:`, `&&`,
+/// `||`, `??` and a comma's last operand.
+pub fn alias_roots(e: &js_ast::Expr) -> Vec<js_ast::Ref> {
+    match &e.data {
+        E::EIf(c) => {
+            let mut v = alias_roots(&c.yes);
+            v.extend(alias_roots(&c.no));
+            v
+        }
+        E::EBinary(b)
+            if matches!(
+                b.op,
+                OpCode::BinLogicalAnd | OpCode::BinLogicalOr | OpCode::BinNullishCoalescing
+            ) =>
+        {
+            let mut v = alias_roots(&b.left);
+            v.extend(alias_roots(&b.right));
+            v
+        }
+        E::EBinary(b) if matches!(b.op, OpCode::BinComma) => alias_roots(&b.right),
+        _ => chain_root(e).into_iter().collect(),
+    }
+}
+
 /// Collects declared bindings and used identifier refs below a function body.
 /// A small structural walk; the React Compiler is not used for this.
 #[derive(Default)]
@@ -861,6 +885,12 @@ pub struct Walk {
     /// `(binding, read)`: a binding declared or assigned from a value that reads `read` (`const s = slots`,
     /// `s = { a: slots }`), so writing through the binding may write into `read`.
     pub flows: Vec<(js_ast::Ref, js_ast::Ref)>,
+    /// F230: `(binding, root)`: a binding declared or assigned as an alias of `root`'s object (`const l = list`,
+    /// `l = cfg.items`, `x = a ?? b`), not from a computed value (`const r = f(list)`), which `flows` also records.
+    pub aliases: Vec<(js_ast::Ref, js_ast::Ref)>,
+    /// F230: only code that runs where it stands: a function's body is not walked unless the function is called right
+    /// there (`(() => { … })()`); a nested function in it is not walked either.
+    pub shallow: bool,
     /// `(base, member, base start)` of each `base.member` / `base['member']` read whose base is an identifier; the member
     /// is empty for a computed one (`base[key]`). The base is also in `used_at`.
     pub member_reads: Vec<(js_ast::Ref, String, i32)>,
@@ -868,8 +898,8 @@ pub struct Walk {
     pub current_reads: Vec<i32>,
     /// B4: identifiers read inside a nested function (a handler, an effect, a callback), where a ref is not a render read.
     pub fn_uses: Vec<js_ast::Ref>,
-    /// Depth of nested functions at the point being walked.
-    depth: u32,
+    /// Depth of nested functions at the point being walked (crate-visible: F230's shallow walks build a `Walk` too).
+    pub(crate) depth: u32,
 }
 
 impl Walk {
@@ -946,10 +976,18 @@ impl Walk {
     }
 
     fn func(&mut self, f: &js_ast::G::Fn) {
-        self.depth += 1;
         if let Some(name) = &f.name {
             self.declared.push(name.ref_);
         }
+        if self.shallow {
+            return;
+        }
+        self.func_body(f);
+    }
+
+    /// A function's parameters and body, one function deeper (B4 `fn_uses`), from every path that walks one.
+    fn func_body(&mut self, f: &js_ast::G::Fn) {
+        self.depth += 1;
         for arg in f.args.slice() {
             self.declare_binding(&arg.binding);
             if let Some(d) = &arg.default {
@@ -957,6 +995,28 @@ impl Walk {
             }
         }
         self.stmts(f.body.stmts.slice());
+        self.depth -= 1;
+    }
+
+    /// A call's argument. Shallow: a function handed to a call may run during it (`xs.forEach((x) => …)`, a `Promise`
+    /// executor), so its body is walked (still shallow: a function nested in it is not).
+    fn call_arg(&mut self, x: &js_ast::Expr) {
+        match (&x.data, self.shallow) {
+            (E::EArrow(a), true) => self.arrow_body(a),
+            (E::EFunction(f), true) => self.func_body(&f.func),
+            _ => self.expr(x),
+        }
+    }
+
+    fn arrow_body(&mut self, a: &js_ast::E::Arrow) {
+        self.depth += 1;
+        for arg in a.args.slice() {
+            self.declare_binding(&arg.binding);
+            if let Some(d) = &arg.default {
+                self.expr(d);
+            }
+        }
+        self.stmts(a.body.stmts.slice());
         self.depth -= 1;
     }
 
@@ -981,6 +1041,9 @@ impl Walk {
                         for t in d0..d1 {
                             for u in u0..self.used.len() {
                                 self.flows.push((self.declared[t], self.used[u]));
+                            }
+                            for r in alias_roots(v) {
+                                self.aliases.push((self.declared[t], r));
                             }
                         }
                     }
@@ -1106,16 +1169,24 @@ impl Walk {
                     for u in u0..self.used.len() {
                         self.flows.push((t, self.used[u]));
                     }
+                    for r in alias_roots(&b.right) {
+                        self.aliases.push((t, r));
+                    }
                 }
             }
             E::ENew(n) => {
                 self.expr(&n.target);
-                n.args.iter().for_each(|x| self.expr(x));
+                n.args.iter().for_each(|x| self.call_arg(x));
             }
             E::ECall(c) => {
                 self.calls.push(*e);
-                self.expr(&c.target);
-                c.args.iter().for_each(|x| self.expr(x));
+                // Shallow: an immediately-invoked function runs here.
+                match (&c.target.data, self.shallow) {
+                    (E::EArrow(a), true) => self.arrow_body(a),
+                    (E::EFunction(f), true) => self.func_body(&f.func),
+                    _ => self.expr(&c.target),
+                }
+                c.args.iter().for_each(|x| self.call_arg(x));
             }
             E::EDot(d) => {
                 if let Some(base) = match &d.target.data {
@@ -1151,17 +1222,8 @@ impl Walk {
                 self.expr(&i.target);
                 self.expr(&i.index);
             }
-            E::EArrow(a) => {
-                self.depth += 1;
-                for arg in a.args.slice() {
-                    self.declare_binding(&arg.binding);
-                    if let Some(d) = &arg.default {
-                        self.expr(d);
-                    }
-                }
-                self.stmts(a.body.stmts.slice());
-                self.depth -= 1;
-            }
+            E::EArrow(_) if self.shallow => {}
+            E::EArrow(a) => self.arrow_body(a),
             E::EFunction(f) => self.func(&f.func),
             E::EClass(c) => self.class(c),
             E::EObject(o) => {
