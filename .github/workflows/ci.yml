@@ -309,6 +309,7 @@ jobs:
       - run: bun test --timeout 120000 tests/server/event-aria.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/live-style.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/props-order.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/loader-style.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/bind-parity.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/icon-shapes.test.ts
       - run: bun test --timeout 120000 tests/server/nested-fed.test.ts
@@ -333,8 +334,12 @@ jobs:
       - run: bun test --timeout 120000 tests/server/rest-style.chromium.test.ts
       # B4: a never-written useRef read in the render is its first value, served == React.
       - run: bun test --timeout 120000 tests/server/ref-snapshot.chromium.test.ts
+      # F319: a changing prop read where a native child would not follow it falls back (frozen-prop); served == React.
+      - run: bun test --timeout 120000 tests/server/frozen-prop.chromium.test.ts
       # F309: a linked static child hosting slot content with a linked prop is refused (slot-owner); served == React.
       - run: bun test --timeout 120000 tests/server/linked-slot.chromium.test.ts
+      # F298: a consumer passed as children through a component's rest sits under that component's Provider; served == React.
+      - run: bun test --timeout 120000 tests/server/rest-children.chromium.test.ts
       # F297: a condition on a useState(null) cell is decided at the server (no job); served == React hydrating the page.
       - run: bun test --timeout 120000 tests/server/form-control.chromium.test.ts
       # F295: a snapshot through a forwarding spread where every instance mounts once; a guarded mount refused.
