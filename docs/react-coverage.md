@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 162 | 40 | 50 | 72 | 0 | 0 | 0 | 0 |
+| C Hooks | 163 | 40 | 50 | 73 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 540 | 232 | 95 | 209 | 3 | 1 | 0 | 0 |
+| **Total** | 541 | 232 | 95 | 210 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -397,6 +397,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid-alias-read | a React hook read as a value (`const u = useId; u()`) | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | F255: a hook read other than as a classified call callee (alias, ['call'], Reflect.apply) is refused: hook-unsupported |
 | c-key-live-outside-list | a key that changes on an element that is not a list body | react | react | ssr | ok | 5.3 | fallback:key-outside-list | F308: React remounts on a key change (state resets), brust keeps the instance: key-outside-list refuses |
 | c-key-literal-outside-list | a literal key on an element that is not a list body | native | native | 0 | ok | 4.6 | warning:key-outside-list | F308: a literal key never changes, so it only warns (key-outside-list) |
+| c-key-live-through-spread | a changing key written through a spread of an object literal | react | react | ssr | ok | 5.3 | fallback:key-outside-list | F334: a key through a spread is React's key: a changing one remounts, so key-outside-list refuses |
 | c-useid-in-key | useId() called in an element key | react | react | ssr | ok | 4.0 | fallback:hook-in-expression, fallback:key-outside-list | F235: the JSX runtime evaluates key after the props, so the hook is refused there (hook-in-expression) |
 | c-useid-logical-assign | useId() on the right side of `??=` in the returned tree | react | react | ssr | ok | 4.0 | fallback:hook-in-expression | F236: the right side of \|\|=, &&=, ??= runs conditionally, so the hook is refused there (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | 4.9 | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |

@@ -38,21 +38,23 @@ afterAll(async () => {
   rmSync(join(app, 'dist'), { recursive: true, force: true })
 })
 
-test('/key: a changing key remounts the counter (state resets), as in React', async () => {
-  const res = await fetch(`${base}/key`)
-  expect(res.status).toBe(200)
-  const page = await browser.newPage()
-  const errors: string[] = []
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
-  await page.goto(`${base}/key`, { waitUntil: 'networkidle' })
-  const count = page.getByTestId('count')
-  await count.click()
-  await count.click()
-  await page.waitForFunction(() => document.querySelector('[data-testid="count"]')?.textContent === '2')
-  await page.getByTestId('swap').click()
-  await page.waitForFunction(() => document.querySelector('[data-testid="count"]')?.textContent === '0')
-  await count.click()
-  await page.waitForFunction(() => document.querySelector('[data-testid="count"]')?.textContent === '1')
-  expect(errors).toEqual([])
-  await page.close()
-}, 60_000)
+for (const path of ['/key', '/key-spread']) {
+  test(`${path}: a changing key remounts the counter (state resets), as in React`, async () => {
+    const res = await fetch(`${base}${path}`)
+    expect(res.status).toBe(200)
+    const page = await browser.newPage()
+    const errors: string[] = []
+    page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+    await page.goto(`${base}${path}`, { waitUntil: 'networkidle' })
+    const count = page.getByTestId('count')
+    await count.click()
+    await count.click()
+    await page.waitForFunction(() => document.querySelector('[data-testid="count"]')?.textContent === '2')
+    await page.getByTestId('swap').click()
+    await page.waitForFunction(() => document.querySelector('[data-testid="count"]')?.textContent === '0')
+    await count.click()
+    await page.waitForFunction(() => document.querySelector('[data-testid="count"]')?.textContent === '1')
+    expect(errors).toEqual([])
+    await page.close()
+  }, 60_000)
+}

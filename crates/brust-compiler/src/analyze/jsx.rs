@@ -188,6 +188,31 @@ fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
     }
 }
 
+/// F334: a `key` that arrives through a spread (`{...{ key: k }}`, or a union of objects naming `key`) is React's element
+/// key like the `key` argument: a literal never changes, any other can, and React remounts when it does (F308).
+fn spread_key(r: &mut Reader<'_, '_>, v: Option<&js_ast::Expr>, loc: u32) {
+    if v.is_some_and(is_fixed_key) {
+        return;
+    }
+    r.diagnostics.push(live_key_diagnostic(loc));
+}
+
+fn is_fixed_key(e: &js_ast::Expr) -> bool {
+    matches!(
+        e.data,
+        E::EString(_) | E::ENumber(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_)
+    )
+}
+
+fn live_key_diagnostic(loc: u32) -> Diagnostic {
+    Diagnostic::fallback(
+        "key-outside-list",
+        "a `key` that can change on an element that is not the body of a list: React remounts the element when it changes (state and effects reset), brust keeps the instance",
+        loc,
+        "remove the key, or keep this component in React",
+    )
+}
+
 /// `in_list_body`: this element is the direct body of a `.map` callback, so a
 /// `key` argument is expected here and nowhere else.
 fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) -> Node {
@@ -205,11 +230,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
     {
         // F308: a key that can change (`key={id}`, `key={n}`) makes React remount the element when it does, resetting its
         // state and effects; brust keeps the instance. A literal key never changes, so it only warns.
-        let fixed = matches!(
-            key.data,
-            E::EString(_) | E::ENumber(_) | E::EBoolean(_) | E::ENull(_) | E::EUndefined(_)
-        );
-        if fixed {
+        if is_fixed_key(key) {
             r.diagnostics.push(Diagnostic::warning(
                 "key-outside-list",
                 "`key` on an element that is not the body of a list has no effect",
@@ -217,12 +238,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                 "remove the key",
             ));
         } else {
-            r.diagnostics.push(Diagnostic::fallback(
-                "key-outside-list",
-                "a `key` that can change on an element that is not the body of a list: React remounts the element when it changes (state and effects reset), brust keeps the instance",
-                loc_of(key),
-                "remove the key, or keep this component in React",
-            ));
+            r.diagnostics.push(live_key_diagnostic(loc_of(key)));
         }
     }
     let mut tag = tag_of(r, tag);
@@ -291,6 +307,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                         }
                         // `key` is never a prop; `children` from a spread is not read natively.
                         if name == "key" {
+                            spread_key(r, Some(v), loc_of(v));
                             continue;
                         }
                         if name == "children" {
@@ -334,6 +351,7 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                         // As for an object literal: `key` is React's, `children` is not read, and a key that is not
                         // an attribute name is not rendered (R34.17).
                         if name == "key" {
+                            spread_key(r, None, loc_of(value));
                             continue;
                         }
                         if name == "children" {
@@ -497,6 +515,11 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                 }
             }
             _ => {
+                // F334: a `key` an inlined spread put among a component's props is its element key, never a prop.
+                if name == "key" {
+                    spread_key(r, Some(value), loc_of(value));
+                    continue;
+                }
                 // F153c: the component's own forwarded ref passed on (`<Primitive.label ref={forwardedRef}>`); the
                 // children pass decides whether the child can take it.
                 if name == "ref"
@@ -1120,6 +1143,7 @@ fn read_attr(
     }
     // `key` from an inlined spread is React's element key, never an attribute.
     if name == "key" {
+        spread_key(r, Some(value), loc_of(value));
         return None;
     }
     if name == "ref" {

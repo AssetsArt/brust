@@ -570,3 +570,36 @@ fn a_live_key_outside_a_list_is_refused_and_a_literal_one_only_warns() {
         );
     }
 }
+
+/// F334: a `key` that reaches the element through a spread is React's key like the `key` argument: a changing one is the
+/// same named refusal as F308's, a literal one is silent as before.
+#[test]
+fn a_live_key_through_a_spread_is_refused() {
+    for src in [
+        "export default function T({ id }: any) { return <ul><li {...{ key: id }}/></ul> }",
+        "export default function T({ id }: any) { return <ul><li {...{ key: id, className: 'a' }}>x</li></ul> }",
+        "export default function T({ id, on }: any) { return <ul><li {...(on ? { key: id } : { title: 'a' })}>x</li></ul> }",
+    ] {
+        let (_, d) = tpl(src);
+        assert!(
+            d.iter()
+                .any(|d| d.rule == "key-outside-list" && matches!(d.class, DiagClass::Fallback)),
+            "{src}: {d:?}"
+        );
+    }
+    let (_, d) =
+        tpl("export default function T() { return <ul><li {...{ key: 'a' }}>x</li></ul> }");
+    assert!(d.iter().all(|d| d.rule != "key-outside-list"), "{d:?}");
+}
+
+#[test]
+fn a_live_key_through_a_spread_on_a_component_is_refused() {
+    let (_, d) = tpl(
+        "import C from './c'\nexport default function T({ id }: any) { return <ul><C {...{ key: id }}/></ul> }",
+    );
+    assert!(
+        d.iter()
+            .any(|d| d.rule == "key-outside-list" && matches!(d.class, DiagClass::Fallback)),
+        "{d:?}"
+    );
+}
