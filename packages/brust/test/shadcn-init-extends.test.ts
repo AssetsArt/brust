@@ -219,25 +219,28 @@ test('F251: a package-shaped components.json alias (@scope/name) is refused, eve
   expect((await init(project({ 'tsconfig.json': '{ "compilerOptions": {} }' }), ['button'])).code).toBe(0)
 })
 
-// F261 (Mellow on ledger-knock4): the CLI's workspace route takes the first path segment of ANY alias as a package name,
-// so a bare alias (no @scope/) is no safer than a scoped one. By default only "@/...", "~/..." and the exact key of a
-// paths entry are accepted.
-test('F261: a bare alias is refused unless it is "@/", "~/" or the exact key of a paths entry', async () => {
+// F261 (Mellow on ledger-knock4, round 1 of ledger-knock5): the CLI's workspace route takes the first path segment of ANY
+// alias as a package name, before the tsconfig paths and whatever they say. So an exact paths key is no safer than a
+// wildcard or a baseUrl alias: only "@/..." and "~/..." (never a package name) are accepted.
+test('F261: only "@/" and "~/" aliases are accepted; a bare alias is refused even when a paths entry names it exactly', async () => {
   const aliases = (ui: string) => ({ ui, components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' })
-  // a baseUrl alias named like a workspace package: resolved by tsconfig-paths, but the CLI may write through the package
-  const base = project({ 'tsconfig.json': '{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./*"] } } }' })
-  writeFileSync(join(base, 'components.json'), JSON.stringify({ aliases: aliases('ui-kit/ui') }))
-  const r = await init(base, ['button'])
-  expect(r.code).toBe(2)
-  expect(r.calls).toEqual([])
-  expect(r.text).toContain('workspace package')
-  expect(r.text).toContain('"ui"')
-  // a wildcard match does not make it exact
-  const wild = project({ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./*"], "$lib/*": ["./src/lib/*"] } } }' })
-  writeFileSync(join(wild, 'components.json'), JSON.stringify({ aliases: aliases('$lib/ui') }))
-  expect((await init(wild, ['button'])).code).toBe(2)
-  // an exact paths key is accepted, and so are "@/" and "~/"
-  const exact = project({ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./*"], "$ui": ["./src/ui"] } } }' })
-  writeFileSync(join(exact, 'components.json'), JSON.stringify({ aliases: aliases('$ui') }))
-  expect((await init(exact, ['button'])).code).toBe(0)
+  const cases: Record<string, { tsconfig: string; alias: string }> = {
+    'a baseUrl alias named like a package': { tsconfig: '{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["./*"] } } }', alias: 'ui-kit/ui' },
+    'a wildcard-matched alias': { tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "$lib/*": ["./src/lib/*"] } } }', alias: '$lib/ui' },
+    'an exact bare key (a workspace package "ui" would win)': { tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "ui": ["./src/ui"] } } }', alias: 'ui' },
+    'an exact scoped-looking key': { tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "@acme/ui": ["./src/ui"] } } }', alias: '@acme/ui' },
+  }
+  for (const [name, c] of Object.entries(cases)) {
+    const d = project({ 'tsconfig.json': c.tsconfig })
+    writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: aliases(c.alias) }))
+    const r = await init(d, ['button'])
+    expect(r.code, name).toBe(2)
+    expect(r.calls, name).toEqual([])
+    expect(r.text, name).toContain('workspace package')
+    expect(r.text, name).toContain('"ui"')
+  }
+  // "@/" and "~/" are accepted
+  const ok = project({ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~/*": ["./src/*"] } } }' })
+  writeFileSync(join(ok, 'components.json'), JSON.stringify({ aliases: aliases('~/ui') }))
+  expect((await init(ok, ['button'])).code).toBe(0)
 })

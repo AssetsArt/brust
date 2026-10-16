@@ -123,18 +123,18 @@ function tsconfigInfo(root: string, file: string): TsInfo | { error: string } | 
 /** The path the CLI writes an alias to, the way it resolves one (`resolveAlias` in `@shadcn/registry`: `createMatchPath`
  *  over the tsconfig, first candidate), as a project-relative path; or `{ error }` when it cannot be judged here:
  *  a `#` import (package.json `imports`), nothing matches, or the result is outside the project. A package-shaped alias
- *  (`@scope/name`) is refused (F251), and so is any alias that is not `@/...`, `~/...` or an exact `paths` key (F261). */
+ *  (`@scope/name`) is refused (F251), and so is any alias that is not `@/...` or `~/...` (F261). */
 function resolveAlias(alias: string, root: string, ts: { absoluteBaseUrl: string; hasBaseUrl: boolean; paths: PathsMap }): { rel: string } | { why: string } {
   if (alias.startsWith('#')) return { why: 'is a package.json "imports" alias, which cannot be checked here' }
   // F251: the CLI tries npm workspace packages (a `workspaces` root above the project, a package named like the alias)
   // BEFORE the tsconfig, and that route is not modelled here. A package-shaped alias (`@scope/name...`) could land there,
   // so it is refused whether or not a `paths` entry names it; the default `@/...` aliases are not package-shaped.
   if (/^@[^/]+\/[^/]+(?:\/.*)?$/.test(alias)) return { why: 'looks like a package name (`@scope/name`); the shadcn CLI tries npm workspace packages before the tsconfig "paths", which cannot be checked here. Use an alias like "@/components" or "~/components"' }
-  // F261: the same workspace route takes the FIRST path segment of ANY alias as a package name, so a bare alias
-  // (`components/ui` under a `baseUrl`, `$lib/ui`) could be written through a workspace package named like it. Only the
-  // aliases that are not a package name are accepted by default: `@/...`, `~/...` or the exact key of a `paths` entry.
-  if (!alias.startsWith('@/') && !alias.startsWith('~/') && !Object.hasOwn(ts.paths, alias)) {
-    return { why: 'is not "@/...", "~/..." or the exact key of a tsconfig "paths" entry; the shadcn CLI takes the first segment of any other alias for an npm workspace package name and tries workspace packages before the tsconfig, which cannot be checked here. Rename the alias to "@/..." or "~/...", or give it its own exact "paths" entry' }
+  // F261: the same workspace route takes the FIRST path segment of ANY alias as a package name, before the tsconfig and
+  // whatever its `paths` say, so even an exact `paths` key like `ui` is written through a workspace package named `ui`.
+  // Only `@/...` and `~/...` cannot be a package name (`@/components` and `~` are not valid ones): all else is refused.
+  if (!alias.startsWith('@/') && !alias.startsWith('~/')) {
+    return { why: 'is not "@/..." or "~/..."; the shadcn CLI takes the first segment of any other alias for an npm workspace package name and tries workspace packages before the tsconfig "paths" (an exact "paths" key does not change that), which cannot be checked here. Rename the alias to "@/..." or "~/..."' }
   }
   const named = Object.keys(ts.paths).some((k) => (k.includes('*') ? alias.startsWith(k.slice(0, k.indexOf('*'))) && alias.endsWith(k.slice(k.indexOf('*') + 1)) && alias.length >= k.length - 1 : k === alias))
   // `createMatchPath` maps any alias under the base directory (it adds a match-all); TypeScript does that only with a
