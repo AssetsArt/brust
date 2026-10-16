@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 174 | 50 | 50 | 74 | 0 | 0 | 0 | 0 |
+| B Composition | 223 | 117 | 16 | 90 | 0 | 0 | 0 | 0 |
+| C Hooks | 174 | 50 | 51 | 73 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 552 | 242 | 95 | 211 | 3 | 1 | 0 | 0 |
+| **Total** | 554 | 243 | 96 | 211 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -183,6 +183,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-wrapper | a consumer inside a wrapper component, under a Provider | static | static | 0 | ok | 0 | — | S2 R34.104: the need bubbles up through the wrapper and is filled where the Provider is |
 | b-context-rest-wrapper | a shadcn-style wrapper forwarding its ...rest into a Provider component | static | static | ssr | ok | 4.0 | — | S2: frame values must be literals (lead ruling on 84a4650a): this wrapper's Provider reads props, so it stays a React island (context-value; F174 narrows it); the page stays static |
 | b-context-helper | a Provider value computed by helpers of its own module, used from another module | react | react | ssr | ok | 4.0 | fallback:context-no-provider, fallback:context-value | S2: a frame value that calls a helper is not a literal (lead ruling on 84a4650a), so the page renders with React (context-value; F174 narrows it to helpers proven to return primitives) |
+| b-context-rest-children | a component that passes its whole ...rest to a specialised state Provider, called with JSX children | react | react | ssr | ok | 5.4 | fallback:children-rest | F300/F324: the clone takes the caller's ...rest as data (__in_rest) and markup is not data, so the JSX children would vanish: children-rest keeps the caller React (mutation: without the fallback the page is native and prints the button without them) |
+| b-context-rest-no-children | the same component called without children | static | static | 0 | ok | 4.6 | — | F300: the children-rest guard fires only on the dropped-children shape; with no children the rest crosses as data and stays native |
 | b-context-radix-scope | Radix createContextScope: Provider props, a default, a consumer | static | static | 0 | ok | 0 | — | S2 R34.100/101: the second structural recogniser (Radix createContextScope); a scope that is a pass-through is ignored |
 | b-context-no-provider | a consumer with no Provider above it, at the route | react | react | ssr | ok | 4.0 | fallback:context-no-provider | S2 context-no-provider: fail closed (the default of a createContext is not read in v1) |
 | b-context-escape | a context value used as a whole | react | react | ssr | ok | 4.0 | fallback:context-shape | S2 context-escape: the consumer reads the whole object, so it is a React island; under a lowered Provider that keeps the page React (F3 context-island) |
@@ -390,8 +392,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-style-child-element | a parent's state in a style object a static child spreads onto its element | native | native | 0 | ok | 4.6 | — | F277: Object.assign({}, …) is in the template subset: the merged style binds as an object (x-bind-style), no job to go stale |
 | c-dead-arm-null-state | a derived value whose arm on a useState(null) cell calls a method (`control ? control.closest(…) : true`) | native | native | 0 | ok | 4.6 | — | F297: the server renders control at null, so it prints the true arm (no job); the chunk keeps the whole expression |
 | c-live-arm-null-state | the same shape whose arm the server takes calls a method | native | native | precompute | ok | 4.6 | — | F297: only an arm the server never takes is dropped; the taken arm keeps its precompute job |
-| c-snapshot-through-spread | a never-written ref seeded from a live prop, passed to a forwarding primitive that spreads it, mounted once | native | native | 0 | ok | 4.6 | — | F295: the snapshot never changes while the instance lives; printed once through the spread, right because it mounts once |
-| c-snapshot-through-spread-guarded | the same child mounted under a condition | react | react | ssr | ok | 4.0 | fallback:snapshot-remount | F295 (c): a later mount takes the value current then, which a spread key cannot get on the client yet (F300): snapshot-remount |
+| c-snapshot-through-spread | a never-written ref seeded from a live prop, passed to a forwarding primitive that spreads it, mounted once | native | native | 0 | ok | 4.6 | — | F295 → F300: the snapshot never changes while the instance lives; bound at mount on the forwarded element (x-bind-checked, a computed over a cell nothing sets), so it needs no single-mount promise |
+| c-snapshot-through-spread-guarded | the same child mounted under a condition | native | native | 0 | ok | 5.0 | — | F300: a later mount takes the value current then: the child binds the snapshot at mount (a link seeds a late host from its parent), so the guarded page is native and equals React |
 | c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | 4.6 | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
 | c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | 4.0 | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
 | c-useid-comma-call | useId called through a comma (`(0, useId)()`, bundler output) | static | static | 0 | ok | 0 | — | F237: the comma spelling is the hook (was a per-request job calling useId outside a render) |
