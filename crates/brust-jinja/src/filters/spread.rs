@@ -342,6 +342,27 @@ pub fn obj_assign(sources: Rest<Value>) -> Value {
 
 #[cfg(test)]
 mod tests {
+    // The JS array-index rule, as one table shared (by value) with `ir/ojson.rs` / `filters/spread.rs` (F321).
+    const INDEX_KEYS: &[(&str, bool)] = &[
+        ("0", true),
+        ("7", true),
+        ("10", true),
+        ("4294967294", true),
+        ("4294967295", false),
+        ("01", false),
+        ("-1", false),
+        ("1.5", false),
+        ("", false),
+        ("a", false),
+        ("12345678901", false),
+    ];
+
+    #[test]
+    fn the_array_index_rule_matches_js() {
+        for (k, want) in INDEX_KEYS {
+            assert_eq!(super::is_array_index(k), *want, "{k:?}");
+        }
+    }
     use minijinja::Environment;
     use serde_json::json;
 

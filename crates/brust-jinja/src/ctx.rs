@@ -328,7 +328,8 @@ impl Serialize for Node {
 
 /// A node serialised in the order its objects had in the JSON text they were parsed from (F318): what a job's inputs
 /// need so the worker's `JSON.stringify` and React see the loader's own key order (a style's declaration order decides
-/// the cascade). [`Node`]'s own `Serialize` stays SORTED: it is the canonical form job cache keys hash.
+/// the cascade). [`Node`]'s own `Serialize` stays SORTED (the canonical form); the automatic job cache key hashes THIS ordered
+/// form (F322), and the `cache({key})` user key the sorted one.
 pub struct Ordered<'a>(pub &'a Node);
 
 impl Serialize for Ordered<'_> {

@@ -229,6 +229,28 @@ impl<'de> Deserialize<'de> for OJson {
 mod tests {
     use super::*;
 
+    // The JS array-index rule, as one table shared (by value) with `ir/ojson.rs` / `filters/spread.rs` (F321).
+    const INDEX_KEYS: &[(&str, bool)] = &[
+        ("0", true),
+        ("7", true),
+        ("10", true),
+        ("4294967294", true),
+        ("4294967295", false),
+        ("01", false),
+        ("-1", false),
+        ("1.5", false),
+        ("", false),
+        ("a", false),
+        ("12345678901", false),
+    ];
+
+    #[test]
+    fn the_array_index_rule_matches_js() {
+        for (k, want) in INDEX_KEYS {
+            assert_eq!(array_index(k).is_some(), *want, "{k:?}");
+        }
+    }
+
     #[test]
     fn an_object_is_written_and_read_in_source_order() {
         let o = OJson::object([

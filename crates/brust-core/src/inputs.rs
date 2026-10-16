@@ -375,7 +375,8 @@ pub fn canonical(v: &Node) -> Vec<u8> {
 }
 
 /// F322: like [`canonical`], but an object that carries a key-order hint (the loader's JSON text order, F318) is written
-/// in that order. Order is observable output (a style's cascade, `Object.entries` rows), so two inputs that differ only
+/// in that order. (Test-only now: the automatic job key hashes the same ordered form; the `cache({key})` user key stays
+/// sorted, as the developer's contract.) Order is observable output (a style's cascade, `Object.entries` rows), so two inputs that differ only
 /// in key order must not share a cache entry. An object without a hint is sorted, so its bytes are `canonical`'s.
 pub fn canonical_ordered(v: &Node) -> Vec<u8> {
     serde_json::to_vec(&brust_jinja::ctx::Ordered(v)).expect("Node serialises")

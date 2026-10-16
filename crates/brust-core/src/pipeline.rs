@@ -1633,6 +1633,17 @@ fn job_inputs(j: &JobTpl, props: &Node, row: Option<usize>) -> Result<Node, Stri
     }
 }
 
+/// The user key a `cache({key})` value names: a string raw, any other non-null value canonical (SORTED) JSON. The
+/// developer's key is their contract for the entry's identity (and `invalidate({key})` takes it back), so unlike the
+/// automatic input key it does not take the key order of the loader's text into account (F322).
+fn user_key(v: &Node) -> Option<String> {
+    match v {
+        Node::Null => None,
+        Node::Str(s) => Some(s.to_string()),
+        v => Some(String::from_utf8(inputs::canonical(v)).expect("JSON is UTF-8")),
+    }
+}
+
 /// Job cache key: `cache.key` evaluated against the props when set → the user
 /// key (a string raw, any other non-null value canonical JSON), namespaced as
 /// `"k:<componentId>/<keyJob>/<user key>"` so two components keyed on one value
@@ -1647,11 +1658,7 @@ fn plan_key(
     projected: &Node,
 ) -> (JobKey, Option<String>) {
     if let Some(expr) = &j.cache_key {
-        let user = match expr.get(props, None) {
-            Node::Null => None,
-            Node::Str(s) => Some(s.to_string()),
-            v => Some(String::from_utf8(inputs::canonical_ordered(v)).expect("JSON is UTF-8")),
-        };
+        let user = user_key(&expr.get(props, None));
         if let Some(u) = user {
             return (JobKey(format!("k:{cid}/{key_job}/{u}")), Some(u));
         }
@@ -2366,6 +2373,17 @@ mod tests {
             value: v.map(Node::from),
             error: e.map(String::from),
         }
+    }
+
+    // F322 (Mellow F1): an explicit `cache({key})` object names ONE entry whatever key order the loader text had.
+    #[test]
+    fn a_user_key_ignores_the_key_order_of_the_loader_text() {
+        let a: Node = serde_json::from_str(r#"{"b":1,"a":2}"#).unwrap();
+        let b: Node = serde_json::from_str(r#"{"a":2,"b":1}"#).unwrap();
+        assert_eq!(user_key(&a), user_key(&b));
+        assert_eq!(user_key(&a).as_deref(), Some(r#"{"a":2,"b":1}"#));
+        assert_eq!(user_key(&Node::Null), None);
+        assert_eq!(user_key(&Node::str("k")).as_deref(), Some("k"));
     }
 
     #[test]
