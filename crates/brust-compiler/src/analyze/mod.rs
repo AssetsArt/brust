@@ -15,5 +15,6 @@ pub mod names;
 pub mod passes;
 pub mod plain_fn;
 pub mod primitive;
+pub mod reducer;
 pub mod stores;
 pub mod use_scan;

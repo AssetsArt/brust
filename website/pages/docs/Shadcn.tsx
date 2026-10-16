@@ -53,7 +53,7 @@ const MEANING: Record<string, string> = {
   'fallback:island-children': 'An island receives children that are not constant (they read state, hold a handler, or call a function).',
   'fallback:local-component': 'A tag that is a local value (`const Comp = …`) of a shape brust does not resolve.',
   'fallback:member-tag': 'A member tag of a local object, such as a context provider, or deeper than one level.',
-  'fallback:hook-unsupported': 'A React hook brust does not lower yet, such as `useContext` or `useReducer`.',
+  'fallback:hook-unsupported': 'A React hook brust does not lower yet, such as `useContext` or `useTransition`.',
   'fallback:jsx-expression': 'A JSX expression the compiler cannot lower, such as a render function.',
   'fallback:prop-pattern': 'A props pattern with a nested or computed destructuring.',
   'fallback:child-component': 'A child component brust cannot resolve, such as a `forwardRef` constant.',

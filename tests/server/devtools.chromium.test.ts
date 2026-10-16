@@ -53,8 +53,9 @@ export default function Counter() {
   return <button type="button" data-testid="inc" onClick={() => setN(n + 1)}>n {n}</button>
 }
 `,
-  'pages/Island.tsx': `import { useReducer } from 'react'
+  'pages/Island.tsx': `import { useReducer, useTransition } from 'react'
 export default function Island() {
+  useTransition()
   const [n, inc] = useReducer((x: number) => x + 1, 0)
   return <button type="button" data-testid="rb" onClick={inc}>r {n}</button>
 }

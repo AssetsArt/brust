@@ -41,10 +41,10 @@ fn literal_props_are_recorded_per_instance() {
         "import Code from './Code'\nexport default function T() { return <div><Code code=\"a\" lang=\"ts\" /><Code code={'b\\nc'} lang={`js`} /></div> }",
     );
     assert_eq!(inst.len(), 2, "{inst:?}");
-    assert_eq!(inst[0].literals["code"], json!("a"));
-    assert_eq!(inst[0].literals["lang"], json!("ts"));
-    assert_eq!(inst[1].literals["code"], json!("b\nc"));
-    assert_eq!(inst[1].literals["lang"], json!("js"));
+    assert_eq!(inst[0].literals["code"].to_value(), json!("a"));
+    assert_eq!(inst[0].literals["lang"].to_value(), json!("ts"));
+    assert_eq!(inst[1].literals["code"].to_value(), json!("b\nc"));
+    assert_eq!(inst[1].literals["lang"].to_value(), json!("js"));
     assert!(
         inst.iter()
             .all(|i| i.props.is_empty() && i.exprs.is_empty()),

@@ -1571,8 +1571,11 @@ fn island_child_job_maps_store() {
     assert_eq!(props.get("id"), Some(&Some("id".to_string())));
     assert_eq!(props.len(), 2, "{props:?}");
     assert_eq!(
-        job.literals.iter().collect::<Vec<_>>(),
-        [(&"limit".to_string(), &serde_json::json!(3))]
+        job.literals
+            .iter()
+            .map(|(k, v)| (k.clone(), v.to_value()))
+            .collect::<Vec<_>>(),
+        [("limit".to_string(), serde_json::json!(3))]
     );
 }
 

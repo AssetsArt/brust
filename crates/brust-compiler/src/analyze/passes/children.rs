@@ -780,6 +780,25 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
     }
 }
 
+/// F309: the template of `ir` prints `{children}` somewhere.
+fn prints_children_slot(ir: &ComponentIR) -> bool {
+    fn any(n: &Node) -> bool {
+        match n {
+            Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => matches!(
+                &r.kind,
+                RawKind::Ident { name, kind: IdentKind::Prop } if name == "children"
+            ),
+            Node::Element { children, .. }
+            | Node::Component { children, .. }
+            | Node::Fragment(children) => children.iter().any(any),
+            Node::If { then, else_, .. } => then.iter().chain(else_).any(any),
+            Node::For { body, .. } => body.iter().any(any),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        }
+    }
+    any(&ir.template)
+}
+
 /// A call site's clone: its id, its module-cache key and the hidden inputs the call site must now pass (S2).
 type Specialised = (String, String, Vec<(String, Expr)>);
 
@@ -3379,7 +3398,7 @@ impl Walker<'_, '_> {
                         "`{root}` is not a props path and its child reads inside it"
                     ));
                 } else if let Some(j) = match v {
-                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
+                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal_ordered(),
                     _ => None,
                 } {
                     rec.literals.insert(n.clone(), j);
@@ -4125,7 +4144,7 @@ impl Walker<'_, '_> {
                         }
                         match lowered {
                             Ok((tree, nested)) => {
-                                literals.insert(k.clone(), tree.clone());
+                                literals.insert(k.clone(), crate::ir::OJson::from(tree.clone()));
                                 element_props.push((k.clone(), tree));
                                 self.note_nested(name, nested);
                             }
@@ -4166,7 +4185,7 @@ impl Walker<'_, '_> {
                     }
                     inputs.extend(self.paths_of(v));
                     let lit = match v {
-                        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal(),
+                        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r.json_literal_ordered(),
                         _ => None,
                     };
                     match lit {
@@ -4220,7 +4239,7 @@ impl Walker<'_, '_> {
                         }
                         r.x.sort();
                     }
-                    literals.insert(X_KEY.to_string(), names);
+                    literals.insert(X_KEY.to_string(), crate::ir::OJson::from(names));
                 }
                 if !children.is_empty() && root_host {
                     root_host_diag(&mut self.diagnostics, name, *loc);
@@ -4238,7 +4257,7 @@ impl Walker<'_, '_> {
                                 loc: *loc,
                                 kind: raw_json(&tree, *loc),
                             };
-                            literals.insert("children".to_string(), tree);
+                            literals.insert("children".to_string(), crate::ir::OJson::from(tree));
                             props.push(("children".into(), Expr::Server(ServerExpr(raw))));
                             children.clear();
                             if let Some(r) = self.refs.iter_mut().find(|r| r.name == *name) {
@@ -4442,7 +4461,7 @@ impl Walker<'_, '_> {
                         // F149 R34.88: folded with this module's consts (`const v = "outline"`).
                         let lit = match v {
                             Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {
-                                r.json_literal().or_else(|| self.fold_json(r))
+                                r.json_literal_ordered().or_else(|| self.fold_ojson(r))
                             }
                             _ => None,
                         };
@@ -4629,6 +4648,24 @@ impl Walker<'_, '_> {
                     "move the interactive part into the component that owns its state, or keep this component interactive with React",
                 ));
             }
+        }
+        // F309 (the guard above, for a static child): a static child LINKED here gets a host of its own (`x-data` on its
+        // root), and the runtime binds the slot content it prints by that nearest host too (`nearestInstance`), so a
+        // directive of this component in it would look for its members in the child and never update. Fail closed.
+        if link.is_some()
+            && matches!(child.tier, Tier::Static)
+            && !children.is_empty()
+            && child.ir.as_deref().is_some_and(prints_children_slot)
+            && let Some(what) = children.iter().find_map(|c| self.owned_directive(c))
+        {
+            self.diagnostics.push(Diagnostic::fallback(
+                "slot-owner",
+                format!(
+                    "the children given to <{name}> contain {what}, and <{name}> is linked here, so it prints them inside a host element of its own, which would bind them to its instance instead of this component's"
+                ),
+                *loc,
+                "move the interactive part into the component that owns its state, or keep this component interactive with React",
+            ));
         }
         if child.has_for
             && !matches!(child.tier, Tier::React { .. })
@@ -4827,6 +4864,12 @@ impl Walker<'_, '_> {
     }
 
     /// `r` folded to JSON with this module's consts (`crate::ir::FoldEnv`, which runs no user code).
+    fn fold_ojson(&self, r: &RawExpr) -> Option<crate::ir::OJson> {
+        let consts = self.module_consts.clone();
+        let lookup = move |n: &str| consts.get(n).cloned();
+        crate::ir::FoldEnv::new(&lookup).fold(r).ok()?.to_ojson()
+    }
+
     fn fold_json(&self, r: &RawExpr) -> Option<serde_json::Value> {
         let consts = self.module_consts.clone();
         let lookup = move |n: &str| consts.get(n).cloned();
@@ -4890,7 +4933,7 @@ impl Walker<'_, '_> {
             key,
             child_id: record.child_id.clone(),
             k: record.k,
-            inputs: serde_json::Value::Object(
+            inputs: crate::ir::OJson::Obj(
                 record
                     .literals
                     .iter()
@@ -5432,6 +5475,9 @@ impl Walker<'_, '_> {
                 || !child.spread.lands(k)
                 || !self.reads_state(v)
                 || !live_key_ok(k)
+                // F296 C1 / F299: a Slot merges the call site's `style` and `className` with its child's.
+                || (matches!(k.as_str(), "style" | "class" | "className")
+                    && self.style_may_merge(props, child))
                 || child.onward.spread_sites != 1
                 || child.onward.components.lands(k)
                 || child
@@ -5489,6 +5535,33 @@ impl Walker<'_, '_> {
         }
         let _ = name;
         live
+    }
+
+    /// F296 C1 (and F299 for `className`): the child may render a Slot (`asChild`) at this call site, and a Slot MERGES
+    /// `style` (the call site's object over its child element's own) and `className` (both class lists), where a host
+    /// element's spread replaces them. True unless the flag is known
+    /// to select the host element: absent or a literal for the host, and no spread that could carry the flag.
+    fn style_may_merge(&self, props: &[(String, Expr)], child: &Child) -> bool {
+        let Some(poly) = &child.poly else {
+            return false;
+        };
+        let flag = props
+            .iter()
+            .rev()
+            .find(|(k, _)| k == &poly.flag)
+            .map(|(_, v)| v);
+        let value = match flag {
+            None => Some(false),
+            Some(Expr::Raw(r)) | Some(Expr::Server(ServerExpr(r))) => match r.json_literal() {
+                Some(serde_json::Value::Bool(b)) => Some(b),
+                _ => None,
+            },
+            Some(_) => None,
+        };
+        let spreads_in = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
+        let unknown_spread =
+            spreads_in && (poly.negate || self.spread_carries(&poly.flag, props).is_err());
+        !(value == Some(poly.negate) && !unknown_spread)
     }
 
     /// F267: whether the `ref` of this call site is a ref cell of this component and `child` is an inlined `forwardRef`
@@ -5880,9 +5953,12 @@ pub(crate) fn handler_key_ok(k: &str) -> bool {
 }
 
 /// A live prop the parent binds on a child's element prints as `x-bind-<attr>`: it must pass the gate a hand-written
-/// attribute passes (2b-handlers C3), and none of the keys that merge (`class`, `style`), that the binder sets as a
-/// property (`value`, `checked`: refused when the element has a model, which is not known here, so refused here),
-/// or that are not attributes at all.
+/// attribute passes (2b-handlers C3), and none of the keys the binder sets as a property (`value`, `checked`,
+/// `selected`: refused when the element has a model, which is not known here, so refused here), the URL attributes,
+/// or that are not attributes at all. `style` and `className` are allowed (F296, F299, spread-live option A): React
+/// REPLACES an element's own `style`/`className` with the spread's (it never merges), so the parent's binding equals
+/// what the element prints; where something merges them instead (`asChild`'s Slot), the caller of this gate refuses
+/// them (`style_may_merge`).
 pub(crate) fn live_key_ok(k: &str) -> bool {
     let html = brust_jinja::attr_name(k);
     brust_jinja::spread::attr_name_ok(k)
@@ -5894,9 +5970,8 @@ pub(crate) fn live_key_ok(k: &str) -> bool {
         && !brust_jinja::is_url_attr(&html)
         && !matches!(
             html.as_str(),
-            "class" | "style" | "value" | "checked" | "selected" | "children" | "key" | "ref"
+            "value" | "checked" | "selected" | "children" | "key" | "ref"
         )
-        && k != "className"
         && k != "dangerouslySetInnerHTML"
 }
 
