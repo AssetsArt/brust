@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderGate, renderNested, renderNestedIds, renderPage } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderGate, renderNested, renderNestedIds, renderPage, renderRender } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -47,6 +47,8 @@ const plain = (html: string): string => {
     .replace(/<brust-host\b[^>]*>/g, '')
     .replace(/<\/brust-host>/g, '')
     .replace(/<div\b[^>]*\shidden[^>]*>[\s\S]*?<\/div>/g, '')
+    .replace(/<brust-if\b[^>]*\shidden[^>]*>[\s\S]*?<\/brust-if>/g, '')
+    .replace(/<\/?brust-if\b[^>]*>/g, '')
     .replace(/ (?:x-[\w-]+|data-id)="[^"]*"/g, '')
     .replace(/ x-[\w-]+='[^']*'/g, '')
     .replace(/(aria-controls|id)="([^"]*)"/g, (_, k: string, v: string) => {
@@ -159,6 +161,28 @@ test("a consumer under the Provider's own condition is switched by the Provider"
   // the consumer's own trigger flips the same state: it closes the gate from inside
   await consumer.click()
   await page.waitForFunction(() => ![...document.querySelectorAll('button')].some((b) => b.textContent === 'consumer' && b.offsetParent !== null))
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('a render prop the Provider only calls is spliced into the specialised Provider', async () => {
+  const html = await (await fetch(`${base}/render`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderRender()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/render`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('button')?.hasAttribute('x-data'))
+  const mirror = page.locator('input[type="hidden"]')
+  expect(await mirror.count()).toBe(0)
+  await page.getByRole('button', { name: 'toggle' }).click()
+  await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'true')
+  expect(await page.locator('input[type="hidden"]').getAttribute('value')).toBe('on')
+  await page.getByRole('button', { name: 'toggle' }).click()
+  await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'false')
+  expect(await page.locator('input[type="hidden"]').count()).toBe(0)
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

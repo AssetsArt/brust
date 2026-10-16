@@ -48,6 +48,8 @@ const PKG_PRIMITIVE: StubPackage = { files: { 'src/primitive.tsx': RADIX_PRIMITI
 // The state Providers the native-provider rows use (2c-2): one source, shared with the compiler's tests.
 const NATIVE_PROV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Prov.tsx'), 'utf8')
 
+const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
+
 const PKG_LEAF = `import * as React from 'react'\nimport { Primitive } from '@radix-ui/react-primitive'\nexport const Root = React.forwardRef(function Root(props: any, forwardedRef: any) { return <Primitive.div {...props} ref={forwardedRef} /> })`
 const SLOT_BTN = `import { Slot } from 'radix-ui'\nexport default function Btn({ asChild = false, variant = 'default', className, ...props }: any) { const Comp = asChild ? Slot.Root : 'button'; return <Comp data-slot="btn" data-variant={variant} className={'base ' + (className ?? '')} {...props} /> }`
 // F149: shadcn's Badge (cva + cn).
@@ -1520,6 +1522,18 @@ export const rows: Row[] = [
     snippet: `import { P, PTrigger, PBody } from './Prov'\nexport default function C() { return <main><P><PTrigger>One</PTrigger><PBody><p>one body</p></PBody></P></main> }`,
     files: { 'Prov.tsx': NATIVE_PROV },
     note: 'R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island' },
+  { id: 'c-render-prop-guarded', category: 'C', authoring: 'a render prop a state Provider calls under typeof, falling back to children', expect: 'static', jobs: 0,
+    snippet: `import { RG, RT } from './Rend'\nexport default function C() { return <main><RG render={({ on }) => (<><RT>go</RT>{on && <p>on</p>}</>)} /></main> }`,
+    files: { 'Rend.tsx': NATIVE_REND },
+    note: 'B7/R34.122 b: the arrow body is spliced where the Provider calls it, its parameter bound to the Provider\'s own state; no island' },
+  { id: 'c-render-prop-used-otherwise', category: 'C', authoring: 'a render prop the Provider reads besides calling it', expect: 'react',
+    snippet: `import { RU, RT } from './Rend'\nexport default function C() { return <main><RU render={({ on }) => (<><RT>go</RT>{on && <p>on</p>}</>)} /></main> }`,
+    files: { 'Rend.tsx': NATIVE_REND },
+    note: 'B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported)' },
+  { id: 'c-render-prop-computed-arg', category: 'C', authoring: 'a render prop called with a computed argument', expect: 'react',
+    snippet: `import { RK, RT } from './Rend'\nexport default function C() { return <main><RK render={({ on }) => (<><RT>go</RT>{on && <p>on</p>}</>)} /></main> }`,
+    files: { 'Rend.tsx': NATIVE_REND },
+    note: 'B7 (Mellow S3): an argument that is not a plain read is not substituted; the Provider stays an island' },
   { id: 'c-native-provider-two-sites', category: 'C', authoring: 'two call sites of a state Provider with different text', expect: 'static', jobs: 0,
     snippet: `import { P, PTrigger, PBody } from './Prov'\nexport default function C() { return <main><P><PTrigger>One</PTrigger><PBody><p>one body</p></PBody></P><P><PTrigger>Two</PTrigger><PBody><p>two body, other text</p></PBody></P></main> }`,
     files: { 'Prov.tsx': NATIVE_PROV },

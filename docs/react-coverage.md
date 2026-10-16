@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 60 | 7 | 22 | 31 | 0 | 0 | 0 | 0 |
+| C Hooks | 63 | 8 | 22 | 33 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 424 | 195 | 59 | 166 | 3 | 1 | 0 | 0 |
+| **Total** | 427 | 196 | 59 | 168 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -359,6 +359,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | 4.4 | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
 | c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | 4.8 | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |
+| c-render-prop-guarded | a render prop a state Provider calls under typeof, falling back to children | static | static | 0 | ok | 4.8 | — | B7/R34.122 b: the arrow body is spliced where the Provider calls it, its parameter bound to the Provider's own state; no island |
+| c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
+| c-render-prop-computed-arg | a render prop called with a computed argument | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Mellow S3): an argument that is not a plain read is not substituted; the Provider stays an island |
 | c-native-provider-two-sites | two call sites of a state Provider with different text | static | static | 0 | ok | 4.8 | — | R34.124: one clone per call site (own jinja and ids), one shared factory module for the equal chunks |
 | c-native-provider-handler-in-content | a page handler written in the content of a state Provider | react | react | ssr | ok | 5.1 | fallback:island-children, info:specialise-unsupported | R34.125: a page-owned handler in the content cannot move into the clone (specialise-unsupported; the island keeps it) |
 | c-native-provider-caller-prop | a prop of the calling component read in the content of a state Provider | static | static | ssr | ok | 5.1 | info:specialise-unsupported | R34.123 (S2): a name of the rendering component would read the clone's own members; the Provider stays the island |
