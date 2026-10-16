@@ -390,8 +390,8 @@ test('F193 (b): a symlinked file inside an alias directory (a registryDependency
 
 test('F193 (c): a non-@/ alias is resolved by the tsconfig paths, and refused when it cannot be resolved', async () => {
   const outside = outsideDir()
-  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~kit/*": ["./src/kit/*"] } } }' })
-  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~kit/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~/kit/ui": ["./src/kit/ui"] } } }' })
+  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~/kit/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
   mkdirSync(join(d, 'src/kit'), { recursive: true })
   symlinkSync(outside, join(d, 'src/kit/ui'))
   const linked = await init(d)
@@ -403,7 +403,13 @@ test('F193 (c): a non-@/ alias is resolved by the tsconfig paths, and refused wh
   const r = await init(e)
   expect(r.code).toBe(2)
   expect(r.calls).toEqual([])
-  expect(r.lines.join('\n')).toContain('does not resolve')
+  expect(r.lines.join('\n')).toContain('workspace package') // F261: not "@/", "~/" or an exact paths key
+  // "~/" is accepted by name, but with no entry and no baseUrl it still does not resolve
+  const f = project()
+  writeFileSync(join(f, 'components.json'), JSON.stringify({ aliases: { ui: '~/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  const g = await init(f)
+  expect(g.code).toBe(2)
+  expect(g.lines.join('\n')).toContain('does not resolve')
   // an alias that escapes the project
   writeFileSync(join(e, 'components.json'), JSON.stringify({ aliases: { ui: '@/../outside', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
   expect((await init(e)).code).toBe(2)
@@ -432,8 +438,8 @@ test('F193: a custom alias with an unreadable components.json is refused (fail c
 test('F193: the first target of a paths entry is the one the CLI writes to, and nested entries of an alias directory are walked', async () => {
   // tsconfig-paths (the CLI's resolver) returns the FIRST candidate of an entry; the second target is never written
   const outside = outsideDir()
-  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~k/*": ["./first/*", "./second/*"] } } }' })
-  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~k/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~/k/ui": ["./first/ui", "./second/ui"] } } }' })
+  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~/k/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
   mkdirSync(join(d, 'second'))
   symlinkSync(outside, join(d, 'second/ui'))
   expect((await init(d)).code).toBe(0) // the CLI does not write under second/

@@ -65,6 +65,8 @@ pub(crate) struct CompileInputs {
     pub route_roots: Vec<String>,
     pub path_aliases: Option<String>,
     pub packages: Option<String>,
+    /// F256: `[build] source_roots`, normalised app-root-relative paths.
+    pub source_roots: Vec<String>,
 }
 
 /// An optional JSON argument; one that does not parse is an error, not an empty value: `path_aliases` and `packages`
@@ -108,6 +110,7 @@ pub(crate) fn compile_tree_impl(
         route_roots,
         path_aliases,
         packages,
+        source_roots,
     } = inputs;
     // F153c: `{ "scopes": …, "refused": … }`, the package sources the build wrote (`pkg-src.ts`).
     let packages = match json_input("packages", packages, |s| serde_json::from_str(s)) {
@@ -151,6 +154,7 @@ pub(crate) fn compile_tree_impl(
         path_aliases,
         route_roots: route_roots.into_iter().collect(),
         packages,
+        source_roots,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
     brust_compiler::parse::run_on_compiler_thread(|| {
@@ -197,6 +201,7 @@ pub(crate) fn compile_tree_impl(
 /// Compiles `path` (relative to `root`) and every child it reaches through lowering. `css_modules` (L20): the class
 /// map of each `*.module.css`, keyed by its path relative to `root`; `styles.x` folds to the literal class.
 /// `packages` (F153c): the JSON resolution map of the package sources the build wrote (`pkg-src.ts`).
+/// `source_roots` (F256): the directories besides the app that a relative import may reach.
 // One positional argument per option: that is the JS call (`packages/brust/native/index.d.ts`).
 #[allow(clippy::too_many_arguments)]
 #[napi]
@@ -213,6 +218,7 @@ pub fn compile_tree(
     route_roots: Option<Vec<String>>,
     path_aliases: Option<String>,
     packages: Option<String>,
+    source_roots: Option<Vec<String>>,
 ) -> CompiledTree {
     crate::init_tracing();
     compile_tree_impl(
@@ -227,6 +233,7 @@ pub fn compile_tree(
             route_roots: route_roots.unwrap_or_default(),
             path_aliases,
             packages,
+            source_roots: source_roots.unwrap_or_default(),
         },
     )
 }
