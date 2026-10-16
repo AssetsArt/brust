@@ -20,6 +20,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, s
 import { dirname, join, posix, relative, resolve, sep } from 'node:path'
 import { BuildError } from './errors'
 import { RELATIVE_SPEC } from './esm-resolve'
+import { RECOGNISED, verifyRecognised } from './recognised'
 
 /** What the compiler reads (`AnalyzeOptions.packages`): per importing scope (`""` = the app, else the root-relative
  * directory of a written package), each bare specifier → the root-relative path of its written entry source, or the
@@ -27,6 +28,9 @@ import { RELATIVE_SPEC } from './esm-resolve'
 export interface PackageSources {
   scopes: Record<string, Record<string, string>>
   refused: Record<string, Record<string, string>>
+  /** R34.140: packages the compiler recognises by version + hash instead of reading (`recognised.ts`), name → version. A
+   * name is here only when EVERY copy of it the build met verified. */
+  recognised: Record<string, string>
   /** Each written directory (root-relative) → the package's real directory: a bare import in an artifact compiled from
    * a package source resolves from the package, as it does in a real install (not read by the compiler). */
   dirs: Record<string, string>
@@ -417,6 +421,20 @@ function writePackage(appRoot: string, dir: string, budget: { bytes: number }): 
   return { ok: true, dir: outRel, entry: posix.join(outRel, (entrySrc ?? barrel)!.path), imports: [...bare].sort() }
 }
 
+/** The verified version of the pinned package at `dir` (`RECOGNISED`), `null` when its version or entry bytes differ. */
+function recognisedVersion(name: string, dir: string): string | null {
+  try {
+    const pj = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Record<string, unknown>
+    const entryRel = esmEntry(pj)
+    if (!entryRel) return null
+    const entry = join(dir, entryRel)
+    if (!statSync(entry).isFile()) return null
+    return verifyRecognised(name, pj.version, readFileSync(entry))
+  } catch {
+    return null
+  }
+}
+
 /**
  * Writes the sources of every package `specs` reaches from the app (and of every package those sources import),
  * and returns the resolution map for the compiler. The directory is rebuilt from nothing on every call.
@@ -436,7 +454,8 @@ export function preparePackageSources(appRoot: string, specs: Iterable<string>):
   rmSync(join(root, PKG_SRC_DIR), { recursive: true, force: true })
   mkdirSync(join(root, PKG_SRC_DIR), { recursive: true })
   if (!realpathSync(join(root, PKG_SRC_DIR)).startsWith(root + sep)) throw new BuildError('package-source', `${PKG_SRC_DIR} resolves outside the app root (a link?); remove it and build again`)
-  const out: PackageSources = { scopes: {}, refused: {}, dirs: {} }
+  const out: PackageSources = { scopes: {}, refused: {}, dirs: {}, recognised: {} }
+  const recognisedBad = new Set<string>()
   writtenDirs.clear()
   const byDir = new Map<string, Outcome>()
   const budget = { bytes: 0 }
@@ -462,6 +481,14 @@ export function preparePackageSources(appRoot: string, specs: Iterable<string>):
       continue
     }
     let o = byDir.get(dir)
+    if (!o && Object.hasOwn(RECOGNISED, name)) {
+      // R34.140: not read: pinned by version and hash. The refusal stays (its imports stay islands where nothing recognises them).
+      const v = recognisedVersion(name, dir)
+      if (v) out.recognised[name] ??= v
+      else recognisedBad.add(name)
+      o = { ok: false, reason: v ? `recognised by the compiler (${name}@${v}), not read` : `${name} is not the pinned release the compiler recognises` }
+      byDir.set(dir, o)
+    }
     if (!o) {
       try {
         o = byDir.size >= LIMITS.packages ? { ok: false, reason: `more than ${LIMITS.packages} packages` } : writePackage(root, dir, budget)
@@ -480,6 +507,7 @@ export function preparePackageSources(appRoot: string, specs: Iterable<string>):
     if (o.ok) (out.scopes[scope] ??= {})[spec] = o.entry
     else refuse(o.reason)
   }
+  for (const n of recognisedBad) delete out.recognised[n]
   mkdirSync(join(root, PKG_SRC_DIR), { recursive: true })
   writeFileSync(join(root, PKG_SRC_DIR, 'index.json'), `${JSON.stringify(out, null, 2)}\n`)
   return out

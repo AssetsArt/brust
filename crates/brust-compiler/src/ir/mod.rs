@@ -272,10 +272,17 @@ pub struct ComponentIR {
     /// The context fields this component reads, each as a hidden prop (see `CtxUse`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ctx_uses: Vec<CtxUse>,
+    /// W1d PR 2: the contexts of `ctx_uses` that a hook reads (or a descendant bubbled up) with a `scope` argument.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ctx_scoped: Vec<String>,
     /// `ctx_uses` reach a context read in a package source (this component's own, or a descendant's it passes on): such a
     /// consumer revived from its source would not share the Provider island's `createContext` (the published dist).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ctx_pkg: bool,
+    /// R34.140: this component asks for the items of its nearest collection (`useCollection(scope)`): its host carries
+    /// `x-collection-use` (the runtime feature loads) and its chunk reads `ctx.items`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uses_collection: bool,
     /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -460,7 +467,9 @@ impl ComponentIR {
             inline_fns: Vec::new(),
             fixed_props: Vec::new(),
             ctx_uses: Vec::new(),
+            ctx_scoped: Vec::new(),
             ctx_pkg: false,
+            uses_collection: false,
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),

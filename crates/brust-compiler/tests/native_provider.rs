@@ -535,6 +535,28 @@ fn a_rest_spread_in_the_content_crosses_and_a_plain_helper_call_needs_no_job() {
     }
 }
 
+// F300: the call site's `...rest` crosses into the clone as data, and markup children are not data: a call with JSX
+// children is refused (children-rest) instead of printing the clone without them; without children it stays native.
+#[test]
+fn jsx_children_given_to_a_component_that_passes_its_rest_to_a_clone_are_refused() {
+    let all = compile("rest_children_data.tsx");
+    let root = &all[0];
+    assert!(
+        has(&root.ir, DiagClass::Fallback, "children-rest"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    assert!(is_react(&root.ir), "{:?}", root.ir.tier);
+    assert!(!root.jinja.contains("hello"), "{}", root.jinja);
+    let none = compile("rest_input.tsx");
+    assert!(
+        !has(&none[0].ir, DiagClass::Fallback, "children-rest"),
+        "{:?}",
+        none[0].ir.diagnostics
+    );
+    assert!(!is_react(&none[0].ir));
+}
+
 #[test]
 fn a_helper_called_with_a_computation_keeps_its_job() {
     let all = compile("helper_neg.tsx");
@@ -770,6 +792,33 @@ fn rest_children_a_native_trigger_would_bind_keep_todays_refusal_and_say_why() {
         .unwrap_or_default();
     assert!(why.contains("its own host element"), "{why}");
 }
+// F324: a state Provider that spreads its `...rest` onto an element and never prints `{children}` gets the call site's
+// children through that spread in React. The clone has no `{children}` to put them in, so it is refused: the call site
+// keeps the Provider as an island, which carries them. Without children the clone is still taken.
+#[test]
+fn jsx_children_given_to_a_provider_that_spreads_its_rest_are_not_dropped_by_the_clone() {
+    let all = compile("spec_drop.tsx");
+    assert!(clones(&all).is_empty(), "no clone");
+    let root = &all[0];
+    assert!(
+        root.ir
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == "specialise-unsupported" && d.message.contains("as `children`")),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    assert!(
+        root.jinja.contains("brust-island") && root.jinja.contains("hello"),
+        "{}",
+        root.jinja
+    );
+
+    let all = compile("spec_drop_none.tsx");
+    assert_eq!(clones(&all).len(), 1, "{:?}", all[0].ir.diagnostics);
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+}
+
 // R34.143: `useSyncExternalStore(subscribe, () => true, () => false)` with a `subscribe` that subscribes to nothing (Radix's
 // `useIsHydrated`) is false on the server and true once mounted; every other store stays `hook-unsupported`.
 #[test]
@@ -917,4 +966,176 @@ fn a_provider_value_that_reads_this_or_is_a_class_instance_stays_react() {
             "{file}: no native clone of the Provider"
         );
     }
+}
+
+/// `compile`, with the build having vouched for `@radix-ui/react-collection` (version + entry hash, R34.140).
+fn compile_collection(file: &str) -> Vec<Item> {
+    compile_with(file, true)
+}
+
+fn compile_with(file: &str, collection: bool) -> Vec<Item> {
+    let file = file.to_string();
+    run_on_compiler_thread(move || {
+        let mut opts = AnalyzeOptions {
+            root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            ..Default::default()
+        };
+        if collection {
+            opts.packages
+                .recognised
+                .insert("@radix-ui/react-collection".into(), "1.2.0".into());
+        }
+        compile_tree(
+            &format!("crates/brust-compiler/tests/fixtures/native-provider/{file}"),
+            None,
+            &opts,
+            "/_brust/client/runtime.js",
+        )
+        .unwrap()
+        .into_iter()
+        .map(|l| Item {
+            ir: (*l.ir).clone(),
+            jinja: l.artifacts.jinja.clone(),
+            client: l.artifacts.client_js.clone(),
+            modules: l.artifacts.client_modules.clone(),
+        })
+        .collect()
+    })
+}
+
+// R34.140: a recognised `createCollection` (the build vouched for the package): Provider is transparent, Slot makes its
+// component child's host the collection root, ItemSlot marks its element an item with its data, `useCollection(scope)` is
+// the function that lists the items.
+#[test]
+fn a_recognised_collection_lowers_to_markers_and_the_items_function() {
+    let all = compile_collection("coll_basic.tsx");
+    let find = |p: &str| all.iter().find(|i| i.ir.id.starts_with(p)).unwrap();
+    let (page, list_impl, item) = (find("collBasic"), find("listImpl"), find("item_"));
+    for i in &all {
+        assert!(
+            !i.ir
+                .diagnostics
+                .iter()
+                .any(|d| d.class == DiagClass::Fallback),
+            "{}: {:?}",
+            i.ir.id,
+            i.ir.diagnostics
+        );
+        assert!(!is_react(&i.ir), "{}: {:?}", i.ir.id, i.ir.tier);
+    }
+    // the Slot's component child is the root: its host (here printed in the Page's template) carries the marker, and the
+    // component that asks for the items carries the feature marker
+    assert!(
+        page.jinja.contains("x-data=\"listImpl_") && page.jinja.contains("x-collection-root=\"\""),
+        "{}",
+        page.jinja
+    );
+    assert!(
+        page.jinja.contains("x-collection-use=\"\""),
+        "{}",
+        page.jinja
+    );
+    // an item is marked as React prints it, and hands its data over through a member
+    assert!(
+        page.jinja
+            .contains("data-radix-collection-item=\"\" x-collection-item=\"_c2\""),
+        "{}",
+        page.jinja
+    );
+    let ichunk = item.client.as_deref().expect("the item's chunk");
+    assert!(
+        ichunk.contains(
+            "const _c2 = computed(() => ({ id: props().id, focusable: !props().disabled }))"
+        ),
+        "{ichunk}"
+    );
+    // `useCollection(scope)` is a handler over the runtime's `ctx.items`
+    let lchunk = list_impl.client.as_deref().expect("the list's chunk");
+    assert!(lchunk.contains("items: __brust_items"), "{lchunk}");
+    assert!(
+        lchunk.contains("const getItems = (...__args) => (() => __brust_items())(...__args)"),
+        "{lchunk}"
+    );
+    // the Provider and the Slot print nothing of their own
+    assert!(!page.jinja.contains("Collection"), "{}", page.jinja);
+}
+
+// R34.140: only the build's vouching makes a `createCollection` a collection; the same component without it keeps the
+// refusal it had (`member-tag` of the unresolved `Collection.*`), and so does the same export name of another package.
+#[test]
+fn a_collection_the_build_did_not_vouch_for_stays_what_it_was() {
+    let all = compile("coll_basic.tsx");
+    assert!(
+        all.iter().any(|i| is_react(&i.ir)
+            || i.ir
+                .diagnostics
+                .iter()
+                .any(|d| d.class == DiagClass::Fallback)),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.tier))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !all.iter().any(|i| i.jinja.contains("x-collection-")),
+        "no collection marker without the vouching"
+    );
+    // vouched for, but the call is another package's
+    let all = compile_collection("coll_other_pkg.tsx");
+    assert!(
+        !all.iter().any(|i| i.jinja.contains("x-collection-")),
+        "another package's createCollection"
+    );
+}
+
+#[test]
+fn collection_elements_that_are_not_the_librarys_shape_fall_back_with_a_named_code() {
+    for (file, code) in [
+        ("coll_scope.tsx", "collection-scope"),
+        ("coll_shape.tsx", "collection-shape"),
+        ("coll_data_keys.tsx", "collection-shape"),
+        ("coll_static_slot.tsx", "collection-shape"),
+    ] {
+        let all = compile_collection(file);
+        assert!(
+            all.iter().any(|i| has(&i.ir, DiagClass::Fallback, code)),
+            "{file}: {:?}",
+            all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+        );
+        assert!(
+            !all.iter().any(|i| i.jinja.contains("x-collection-")),
+            "{file}"
+        );
+    }
+}
+
+// the list exists only in the browser: `getItems()` read while rendering is refused, never printed as a server value
+#[test]
+fn the_items_function_is_not_callable_in_the_render() {
+    let all = compile_collection("coll_render.tsx");
+    let count = all.iter().find(|i| i.ir.id.starts_with("count")).unwrap();
+    assert!(
+        is_react(&count.ir)
+            || count
+                .ir
+                .diagnostics
+                .iter()
+                .any(|d| d.class == DiagClass::Fallback),
+        "{:?} {:?}",
+        count.ir.tier,
+        count.ir.diagnostics
+    );
+}
+
+// A rest spread among a call site's props answers every prop name (`spread_get`), but the reserved collection-root prop is only
+// ever written by the compiler: a Label-like instance with a rest spread must NOT become a collection root (it linked the
+// collection feature on pages that use no collection, and differed between the fold on and off).
+#[test]
+fn a_rest_spread_instance_is_not_a_collection_root() {
+    let all = compile_collection("coll_rest_spread.tsx");
+    assert!(
+        all.iter().all(|i| !i.jinja.contains("x-collection-")),
+        "{:?}",
+        all.iter().map(|i| &i.jinja).collect::<Vec<_>>()
+    );
 }

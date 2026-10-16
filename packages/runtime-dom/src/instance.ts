@@ -70,7 +70,7 @@ export class Instance {
     return r as { current: E | null }
   }
   ctx(): BehaviorCtx {
-    return { el: this.host, props: this.props, effect: (fn) => this.componentEffect(fn), onCleanup: (fn) => this.onCleanup(fn), ref: (n, init) => this.ref(n, init), late: this.late }
+    return { el: this.host, props: this.props, effect: (fn) => this.componentEffect(fn), onCleanup: (fn) => this.onCleanup(fn), ref: (n, init) => this.ref(n, init), late: this.late, items: () => collectionHooks.items(this.host) }
   }
   init(factory: BehaviorFactory): void {
     const m = factory(this.ctx())
@@ -99,6 +99,11 @@ export function nearestInstance(el: Element): Instance | null {
 
 /** Late-bound by mount.ts so binders (x-if, x-for) can mount nested hosts synchronously without an import cycle. */
 export const hooks: { mountTree: (root: ParentNode) => void } = { mountTree: () => {} }
+
+/** One item of a collection (R34.141): the data its host handed over, the element, and `ref.current` (Radix's item shape). */
+export type CollectionItem = { ref: { current: Element }; element: Element } & Record<string, unknown>
+/** Late-bound by the `collection` feature (features/collection.ts): `ctx.items()` is a no-op list until it loads. */
+export const collectionHooks: { items: (from: Element) => CollectionItem[] } = { items: () => [] }
 
 /** Late-bound by the `island` feature (features/island.ts) so a page without React islands never loads the hydration glue. */
 export const islandHooks: { schedule: (root: ParentNode) => void; cancel: (root: Node) => void } = { schedule: () => {}, cancel: () => {} }

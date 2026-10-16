@@ -293,7 +293,7 @@ async function buildInto(
   // F197: and the packages a helper is imported from, when the compiler asked to prove one plain.
   const external = [...new Set([...compiled.values()].flatMap((c) => [...(c.ir.external ? [c.ir.external.source] : []), ...((c.ir.package_requests ?? []) as string[])]))]
   const packages = preparePackageSources(appRoot, external)
-  if (Object.keys(packages.scopes).length > 0) {
+  if (Object.keys(packages.scopes).length > 0 || Object.keys(packages.recognised).length > 0) {
     firstLog.length = 0
     ;({ compiled, routeComponent } = compileApp({ ...compileOpts, packages, log: (l) => firstLog.push(l) }))
   }
