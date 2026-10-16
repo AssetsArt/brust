@@ -319,6 +319,11 @@ pub struct ComponentIR {
     /// text says what, for the call site that cannot promise it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mount_once: Option<String>,
+    /// F319 (fail closed): props this component reads where a change would not be followed: the rows of a list that is
+    /// printed once, a prop of a child it does not link, a key printed once through a spread (transitive through its own
+    /// props). A call site that passes a value that changes on the client for one of them falls back (`frozen-prop`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frozen_props: Vec<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -461,6 +466,7 @@ impl ComponentIR {
             repeats_children: false,
             hosts_children: false,
             mount_once: None,
+            frozen_props: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],

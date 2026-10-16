@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 136 | 26 | 49 | 61 | 0 | 0 | 0 | 0 |
+| C Hooks | 140 | 27 | 49 | 64 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 514 | 218 | 94 | 198 | 3 | 1 | 0 | 0 |
+| **Total** | 518 | 219 | 94 | 201 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -344,6 +344,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-forward-class-slot | a live className through a child that may render a Slot (asChild) | react | react | ssr | ok | 4.0 | fallback:spread-props | F299: a Slot merges class lists, so the replace rule does not hold: refused |
 | c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | 5.3 | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
 | c-slot-owner-linked-static | a linked prop in the slot of a static child that is itself linked | react | react | ssr | ok | 4.0 | fallback:slot-owner | F309: the linked static child gets a host of its own, which would bind the slot content (it never updated): slot-owner |
+| c-frozen-prop-rows | a native child reading the page's changing prop in the rows of a constant list | react | react | ssr | ok | 5.3 | fallback:frozen-prop | F319: the child would keep the first value (it was stale on main): frozen-prop, the page renders with React |
+| c-frozen-prop-child | a native child reading the page's changing prop in a prop of a child it does not link | react | react | ssr | ok | 5.3 | fallback:frozen-prop | F319: the child would keep the first value (it was stale on main): frozen-prop, the page renders with React |
+| c-frozen-prop-spread | a native child reading the page's changing prop in a key printed once through a forwarder's spread | react | react | ssr | ok | 5.3 | fallback:frozen-prop | F319: the child would keep the first value (it was stale on main): frozen-prop, the page renders with React |
+| c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 4.5 | — | F319: a value that does not change satisfies the requirement |
 | c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.3 | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | 4.5 | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
