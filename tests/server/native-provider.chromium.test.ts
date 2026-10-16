@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderGate, renderNested, renderNestedIds, renderPage, renderRender } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderGate, renderNested, renderNestedIds, renderInputs, renderPage, renderRender } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -183,6 +183,31 @@ test('a render prop the Provider only calls is spliced into the specialised Prov
   await page.getByRole('button', { name: 'toggle' }).click()
   await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'false')
   expect(await page.locator('input[type="hidden"]').count()).toBe(0)
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('names of the page read in a specialised Provider\'s content cross as inputs: text, and a handler', async () => {
+  const html = await (await fetch(`${base}/inputs`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderInputs()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/inputs`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('section[data-panel]')?.hasAttribute('x-data'))
+  expect(await page.locator('#live').textContent()).toBe('0')
+  await page.locator('#inc').click()
+  // the handler lives in the page; the clone's content calls it, and the live read follows in both places
+  await page.waitForFunction(() => document.querySelector('#outside')?.textContent === '1')
+  await page.waitForFunction(() => document.querySelector('#live')?.textContent === '1')
+  await page.locator('#inc').click()
+  await page.waitForFunction(() => document.querySelector('#live')?.textContent === '2')
+  // the Provider still toggles on its own
+  await page.getByRole('button', { name: 'open' }).click()
+  await page.waitForFunction(() => document.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded') === 'true')
+  expect(await page.getByText('body').isVisible()).toBe(true)
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

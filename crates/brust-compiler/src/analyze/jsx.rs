@@ -473,12 +473,17 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                     forwarded_ref = true;
                     continue;
                 }
-                if let E::EArrow(arrow) = &value.data
+                let rendered = if let E::EArrow(arrow) = &value.data
                     && let Some(rp) = read_render_arrow(r, arrow, loc, &name)
                 {
                     r.render_props.push(rp);
-                }
+                    true
+                } else {
+                    false
+                };
+                r.verbatim_unused = rendered;
                 let v = r.expr(value);
+                r.verbatim_unused = false;
                 match union_names
                     .contains(&name)
                     .then(|| props_out.iter().position(|(n, _)| *n == name))

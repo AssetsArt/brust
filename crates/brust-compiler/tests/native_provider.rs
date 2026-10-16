@@ -135,8 +135,6 @@ fn call_sites_with_different_text_share_one_factory_module_and_keep_their_own_id
 #[test]
 fn shapes_the_splice_cannot_carry_keep_the_island_provider_and_say_why() {
     for (file, why) in [
-        ("handler.tsx", "handler"),
-        ("prop.tsx", "title"),
         ("gated.tsx", "children as a value"),
         ("local.tsx", "declared in the module"),
     ] {
@@ -236,7 +234,6 @@ fn a_render_prop_that_cannot_be_spliced_keeps_the_island_provider() {
     for (file, why) in [
         ("render_used.tsx", "render"),
         ("render_calc.tsx", "computation"),
-        ("render_free.tsx", "title"),
         // capture: the row binds `on`, which the substituted argument (the Provider's state `on`) also names
         ("render_capture.tsx", "binds `on`"),
     ] {
@@ -267,5 +264,61 @@ fn a_provider_in_a_render_body_does_not_provide_to_the_writers_children() {
     let all = compile("render_provider.tsx");
     for i in &all {
         assert!(!i.jinja.contains("inner"), "{}: {}", i.ir.id, i.jinja);
+    }
+}
+
+// S2 (R34.123, F262): the call site's names read in the content cross as hidden inputs of the clone.
+#[test]
+fn a_name_of_the_call_sites_component_in_the_content_is_a_hidden_input_of_the_clone() {
+    for (file, seen, input) in [
+        ("prop.tsx", "title", "__in_title"),
+        ("handler.tsx", "__in_n", "__in_n"),
+    ] {
+        let all = compile(file);
+        let root = &all[0];
+        assert!(!is_react(&root.ir), "{file}: {:?}", root.ir.diagnostics);
+        let c = clones(&all);
+        assert_eq!(c.len(), 1, "{file}: {:?}", root.ir.diagnostics);
+        assert!(matches!(c[0].ir.tier, Tier::Native), "{file}");
+        // the call site fills the input with its own value
+        assert!(root.jinja.contains(seen), "{file}: {}", root.jinja);
+        assert!(c[0].ir.props.iter().any(|p| p.name == input), "{file}");
+    }
+    // a constant name stays fixed in the clone: printed once, no directive
+    let all = compile("prop.tsx");
+    let c = &clones(&all)[0];
+    assert_eq!(c.ir.fixed_props, vec!["__in_title".to_string()]);
+    assert!(!c.jinja.contains("x-text"), "{}", c.jinja);
+    // a handler of the call site is called through a prop of the clone
+    let all = compile("handler.tsx");
+    let c = &clones(&all)[0];
+    assert!(
+        c.ir.handlers.iter().any(|h| h.name == "__inh__h1"),
+        "{:?}",
+        c.ir.handlers
+    );
+    assert!(c.jinja.contains("x-on-click=\"__inh__h1\""), "{}", c.jinja);
+}
+
+#[test]
+fn names_that_cannot_cross_keep_the_island_provider_and_say_which() {
+    for (file, why) in [
+        ("in_ref.tsx", "ref `r`"),
+        ("in_row.tsx", "enclosing list"),
+        ("in_props.tsx", "whole props"),
+        ("in_fn.tsx", "module-level"),
+        ("in_import.tsx", "an import"),
+        // O1: a live value of the page printed inside another native host's markup is bound by the wrong instance
+        ("in_live_nested.tsx", "changes on the client"),
+    ] {
+        let all = compile(file);
+        assert!(clones(&all).is_empty(), "{file}: nothing was specialised");
+        let info = all[0]
+            .ir
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "specialise-unsupported")
+            .unwrap_or_else(|| panic!("{file}: {:?}", all[0].ir.diagnostics));
+        assert!(info.message.contains(why), "{file}: {}", info.message);
     }
 }

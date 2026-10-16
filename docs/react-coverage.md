@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 66 | 10 | 22 | 34 | 0 | 0 | 0 | 0 |
+| C Hooks | 68 | 10 | 23 | 35 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 67 | 31 | 10 | 22 | 3 | 1 | 0 | 0 |
-| **Total** | 430 | 198 | 59 | 169 | 3 | 1 | 0 | 0 |
+| **Total** | 432 | 198 | 60 | 170 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -365,9 +365,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |
 | c-render-prop-provider-in-body | a render body holding a Provider, next to the writer's own children | static | static | ssr | ok | 3.8 | — | B7 (Mellow F1): a Provider written inside a render arrow must not provide to the writer's own children (they read the context default) |
 | c-render-prop-computed-arg | a render prop called with a computed argument | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Mellow S3): an argument that is not a plain read is not substituted; the Provider stays an island |
+| c-native-provider-live-name-nested | a live value of the page printed inside a consumer's own host in a state Provider's content | react | react | ssr | ok | 5.1 | fallback:island-children, fallback:slot-owner, info:specialise-unsupported | S2/O1: the input is owned by the clone but printed inside the consumer's host, which would bind it by the wrong instance; the Provider stays an island |
+| c-native-provider-ref-in-content | a ref of the page written in a state Provider's content | react | react | ssr | ok | 5.1 | fallback:island-children, info:specialise-unsupported | S2: a ref cannot cross into the clone |
 | c-native-provider-two-sites | two call sites of a state Provider with different text | static | static | 0 | ok | 4.8 | — | R34.124: one clone per call site (own jinja and ids), one shared factory module for the equal chunks |
-| c-native-provider-handler-in-content | a page handler written in the content of a state Provider | react | react | ssr | ok | 5.1 | fallback:island-children, info:specialise-unsupported | R34.125: a page-owned handler in the content cannot move into the clone (specialise-unsupported; the island keeps it) |
-| c-native-provider-caller-prop | a prop of the calling component read in the content of a state Provider | static | static | ssr | ok | 5.1 | info:specialise-unsupported | R34.123 (S2): a name of the rendering component would read the clone's own members; the Provider stays the island |
+| c-native-provider-handler-in-content | a page handler written in the content of a state Provider | native | native | 0 | ok | 4.4 | — | S2 (F262): a page handler written in the content is called through a hidden input of the clone (the page keeps the closure) |
+| c-native-provider-caller-prop | a prop of the calling component read in the content of a state Provider | static | static | 0 | ok | 4.4 | — | S2 (F262): the caller's prop is a hidden input of the clone; fixed there, so it prints once |
 | c-native-provider-outer-frame | a consumer of an outer Provider inside another Provider's content | static | static | ssr | ok | 5.1 | info:specialise-unsupported | A1: the outer frame's expressions would be read against the inner clone's members |
 | c-native-provider-ctx-in-effect | a consumer that reads the context inside an effect | static | static | ssr | ok | 3.8 | info:specialise-unsupported | context-escape: a context local is not a value in code printed as written |
 | c-handler-binding-named-a | a handler that reads a component binding named a | native | native | 0 | ok | 4.4 | — | F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array |
