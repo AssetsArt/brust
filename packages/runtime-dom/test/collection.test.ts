@@ -73,3 +73,23 @@ test('data cannot override the element or ref the feature adds', () => {
   expect(it.ref.current).toBe(document.getElementById('i1')!)
   expect(it.id).toBe('z')
 })
+
+test('items inside a React island or inside x-html / x-raw markup are not the collection\'s (inert boundaries)', () => {
+  let items!: Items
+  defineBehavior('c7', ({ items: it }) => { items = it; return {} })
+  document.body.innerHTML = `<ul x-data="c7" x-collection-root><li id="a" data-radix-collection-item></li>`
+    + `<brust-island data-id="k"><i id="isl" data-radix-collection-item></i></brust-island>`
+    + `<div x-html><b id="cms" data-radix-collection-item></b></div>`
+    + `<div x-raw><b id="raw" data-radix-collection-item></b></div>`
+    + `<li id="b" data-radix-collection-item></li></ul>`
+  mount()
+  expect(items().map((i) => i.element.id)).toEqual(['a', 'b'])
+})
+
+test('an item that itself holds raw markup is still an item', () => {
+  let items!: Items
+  defineBehavior('c8', ({ items: it }) => { items = it; return {} })
+  document.body.innerHTML = `<ul x-data="c8" x-collection-root><li id="a" data-radix-collection-item x-raw><b data-radix-collection-item id="in"></b></li></ul>`
+  mount()
+  expect(items().map((i) => i.element.id)).toEqual(['a'])
+})

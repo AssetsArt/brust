@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 106 | 31 | 30 | 45 | 0 | 0 | 0 | 0 |
+| C Hooks | 108 | 33 | 30 | 45 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 481 | 220 | 75 | 182 | 3 | 1 | 0 | 0 |
+| **Total** | 483 | 222 | 75 | 182 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -381,7 +381,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-forwardref-child-ref-cell | a useRef passed as ref to an inlined forwardRef child that hands it to its one element | native | native | 0 | ok | 4.6 | — | F267: the parent binds x-ref on the child's own element, in its scope; the child stays static and unlinked |
 | c-forwardref-child-ref-callback | a state setter passed as ref to an inlined forwardRef child | native | native | 0 | ok | 4.6 | — | F267: a callback ref is the same mount effect as on an element, its ref cell bound on the child's element |
 | c-forwardref-child-ref-conditional-child | a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes | react | react | ssr | ok | 4.0 | fallback:forwardref-ref | F267: the child may not render the element at all; the call site keeps the React fallback |
-| c-native-provider-rest-input | a component spreads its own ...rest into a consumer under the Provider it renders | static | static | 0 | ok | 5.0 | — | F278: the rest crosses into the clone as the hidden input __in_rest and is spread there; F279: getState(checked) is its expression, so the consumer has no job |
+| c-native-provider-rest-input | a component spreads its own ...rest into a consumer under the Provider it renders | static | static | 0 | ok | 5.1 | — | F278: the rest crosses into the clone as the hidden input __in_rest and is spread there; F279: getState(checked) is its expression, so the consumer has no job |
 | c-native-provider-rest-input-live | a native page passes a live attribute to a component that spreads its rest into a clone | react | react | ssr | ok | 5.8 | fallback:spread-props | F278 (Mellow F1): a live rest cannot be re-spread by the clone on the client, so the call that passes one stays React |
 | c-pure-helper-call-inlined | a single-return module helper called with a state read | native | native | 0 | ok | 4.6 | — | F279: the call is replaced by the helper's expression (a plain-read argument), so no precompute job runs it |
 | c-hook-radix-useid-callbackref | Radix's useId and useCallbackRef (imported hooks with React-version fallbacks) | static | static | 0 | ok | 4.6 | info:build-eval-instance | R34.142: `typeof <React hook alias> === "function"` is decided (React exports its hooks as functions) and only the branch that runs is read; `setId(r => r ?? ...)` on a state seeded by useId() is an identity update, so the client-only counter fallback and its effect are dropped and the state is the server-seeded id |
@@ -409,12 +409,14 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-native-provider-outer-frame | a consumer of an outer Provider inside another Provider's content | static | static | ssr | ok | 5.3 | info:specialise-unsupported | A1: the outer frame's expressions would be read against the inner clone's members |
 | c-native-provider-ctx-in-effect | a consumer that reads the context inside an effect | static | static | ssr | ok | 4.0 | info:specialise-unsupported | context-escape: a context local is not a value in code printed as written |
 | c-handler-binding-named-a | a handler that reads a component binding named a | native | native | 0 | ok | 4.6 | — | F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array |
-| c-collection-basic | a createCollection list: Provider, Slot, ItemSlot and useCollection (roving focus shape) | static | static | 0 | ok | 5.0 | — | R34.140 (W1c): the vouched package lowers to x-collection-root / data-radix-collection-item markers and the runtime items function |
+| c-collection-basic | a createCollection list: Provider, Slot, ItemSlot and useCollection (roving focus shape) | static | static | 0 | ok | 5.1 | — | R34.140 (W1c): the vouched package lowers to x-collection-root / data-radix-collection-item markers and the runtime items function |
 | c-collection-unvouched | createCollection from a package that is not the pinned release | static | static | ssr | ok | 4.0 | — | R34.140 (Mellow gate): without index.json#recognised (version + sha256 mismatch) the import stays the React island |
 | c-collection-other-package | a createCollection export of another package | static | static | ssr | ok | 4.0 | — | R34.140: the recogniser is by package name, never by export name alone |
 | c-collection-scope | an ItemSlot whose scope is not the component's own pass-through | static | static | ssr | ok | 4.0 | — | R34.140: fallback collection-scope (the component is a React island under a static page); a literal scope names another collection |
 | c-collection-shape | collection elements that are not the library's shape (extra prop, two Slot children, component child of an ItemSlot) | static | static | ssr, ssr | ok | 4.0 | — | R34.140: fallback collection-shape |
 | c-collection-render | the items function called while rendering | static | static | ssr | ok | 4.0 | — | R34.140: the list exists only in the browser; a render-time call has no server value (client-only) |
+| c-collection-static-slot | a Collection.Slot around a component that holds no state | static | static | ssr | ok | 4.0 | — | R34.140 (Afrojack): the root marker needs a native host; a hostless component would drop it and getItems() would find nothing: fallback collection-shape |
+| c-collection-data-keys | an ItemSlot whose data names the feature's own key (element) | static | static | ssr | ok | 4.0 | — | R34.140 (Mellow N1): ref, element and __proto__ are not item data keys: fallback collection-shape (Item is a React island under a static page) |
 
 ## D. API surface
 

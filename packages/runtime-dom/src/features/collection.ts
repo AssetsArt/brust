@@ -3,7 +3,7 @@
 // above it is that root (a collection nested inside another keeps its items to itself). Document order is the DOM's own,
 // so there is no registry to sort. An item's data (`id`, `focusable`, ...) is what its host's `x-collection-item` member
 // evaluates to when asked: read at call time, so it is never stale.
-import { BINDERS, collectionHooks, parsed, read } from '../core-api'
+import { BINDERS, collectionHooks, parsed, read, RAW_SEL } from '../core-api'
 import type { CollectionItem } from '../core-api'
 
 const ROOT = '[x-collection-root]'
@@ -17,6 +17,10 @@ collectionHooks.items = (from) => {
   for (const el of Array.from(root.querySelectorAll(ITEM))) {
     // the nearest root ABOVE the item (not the item itself, which may be a root of its own)
     if (el.parentElement?.closest(ROOT) !== root) continue
+    // an island or raw markup (x-html / x-raw) between the root and the item is inert: its items are not this collection's
+    // (Radix keeps only the nodes registered through its own context, never what a foreign widget or CMS markup holds)
+    const raw = el.parentElement?.closest(RAW_SEL)
+    if (raw && root.contains(raw)) continue
     const d = DATA.get(el)?.()
     out.push({ ...(d && typeof d === 'object' ? (d as object) : {}), ref: { current: el }, element: el })
   }

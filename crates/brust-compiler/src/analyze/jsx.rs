@@ -679,7 +679,10 @@ fn read_collection_part(
             .next()
             .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
             && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            && k != crate::ir::SPREAD_KEY;
+            && k != crate::ir::SPREAD_KEY
+            // the item is `{ ...data, ref, element }`: those two are the feature's, and `__proto__` in an object literal
+            // sets a prototype instead of a key
+            && !matches!(k.as_str(), "__proto__" | "element" | "ref");
         match v {
             Expr::Raw(raw) if valid => data.push((k, raw)),
             _ => {

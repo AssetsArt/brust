@@ -1765,4 +1765,10 @@ export const rows: Row[] = [
   { id: 'c-collection-render', category: 'C', authoring: 'the items function called while rendering', expect: 'static', jobs: 1,
     snippet: collFx('render'), packages: COLL_PKG, vouch: COLL_VOUCH,
     note: 'R34.140: the list exists only in the browser; a render-time call has no server value (client-only)' },
+  { id: 'c-collection-static-slot', category: 'C', authoring: 'a Collection.Slot around a component that holds no state', expect: 'static', jobs: 1,
+    snippet: collFx('static_slot'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'R34.140 (Afrojack): the root marker needs a native host; a hostless component would drop it and getItems() would find nothing: fallback collection-shape' },
+  { id: 'c-collection-data-keys', category: 'C', authoring: 'an ItemSlot whose data names the feature\'s own key (element)', expect: 'static', jobs: 1,
+    snippet: collFx('data_keys'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'R34.140 (Mellow N1): ref, element and __proto__ are not item data keys: fallback collection-shape (Item is a React island under a static page)' },
 ]

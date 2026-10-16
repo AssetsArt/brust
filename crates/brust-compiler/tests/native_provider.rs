@@ -870,6 +870,8 @@ fn collection_elements_that_are_not_the_librarys_shape_fall_back_with_a_named_co
     for (file, code) in [
         ("coll_scope.tsx", "collection-scope"),
         ("coll_shape.tsx", "collection-shape"),
+        ("coll_data_keys.tsx", "collection-shape"),
+        ("coll_static_slot.tsx", "collection-shape"),
     ] {
         let all = compile_collection(file);
         assert!(
