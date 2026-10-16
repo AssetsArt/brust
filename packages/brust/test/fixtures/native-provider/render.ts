@@ -12,6 +12,7 @@ import InputsPage from './InputsPage'
 import LoopPage from './LoopPage'
 import Page from './Page'
 import RestPage from './RestPage'
+import SwPage from './SwPage'
 import SamePage from './SamePage'
 import RenderPage from './RenderPage'
 import PolyPage from './PolyPage'
@@ -36,3 +37,4 @@ export const renderDir = (): string => html(DirNonePage)
 export const renderDirProvider = (): string => html(DirProvPage)
 export const renderHydr = (): string => html(HydrPage)
 export const renderCtxV = (): string => html(CtxVPage)
+export const renderSw = (kind: string): string => server.renderToStaticMarkup(createElement(SwPage as never, { kind } as never))

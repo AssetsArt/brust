@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderSw, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -433,4 +433,17 @@ test('F304: a context field called in a handler and read in an effect: no island
   await page.waitForFunction(() => document.querySelector('main p')?.getAttribute('data-seen') === 'n')
   expect(errors).toEqual([])
   await page.close()
+}, 60_000)
+
+test('W1d PR 3: an early-return chain on a prop (Radix ToggleGroup\'s root shape): each type equals React, an invalid type is the server\'s own 500 with no message', async () => {
+  for (const kind of ['single', 'multiple']) {
+    const html = await (await fetch(`${base}/sw/${kind}`)).text()
+    expect(html).not.toContain('brust-island')
+    expect(plain(html)).toBe(plain(renderSw(kind)))
+  }
+  const bad = await fetch(`${base}/sw/other`)
+  expect(bad.status).toBe(500)
+  const body = await bad.text()
+  expect(body).toBe('500 Internal Server Error')
+  expect(body).not.toMatch(/Missing prop|Switch|threw/)
 }, 60_000)

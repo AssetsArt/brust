@@ -14,6 +14,7 @@ import LoopPage from './LoopPage'
 import Page from './Page'
 import RestLivePage from './RestLivePage'
 import RestPage from './RestPage'
+import SwPage from './SwPage'
 import SamePage from './SamePage'
 import RenderPage from './RenderPage'
 import PolyPage from './PolyPage'
@@ -35,6 +36,7 @@ export const routes = defineRoutes([
   { path: '/dir-provider', Component: DirProvPage },
   { path: '/hooks', Component: HooksPage },
   { path: '/loop/{loop}', Component: LoopPage, loader: async ({ params }: { params: { loop: string } }) => ({ loop: params.loop }) },
+  { path: '/sw/{kind}', Component: SwPage, loader: async ({ params }: { params: { kind: string } }) => ({ kind: params.kind }) },
   { path: '/render', Component: RenderPage },
   { path: '/poly', Component: PolyPage },
 ])

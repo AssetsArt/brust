@@ -207,3 +207,24 @@ test('R9.3: a dynamic route without params fails; no * route writes a default 40
   expect(n.stdout).toContain("[brust] warning ssg-404 no '*' route: wrote a default 404.html")
   expect(readFileSync(join(no404, 'dist/static/404.html'), 'utf8')).toContain('<h1>404 Not Found</h1>')
 }, 120_000)
+
+test('W1d PR 3: a page whose component throws (an early-return chain ending in `throw new Error`) fails the static build, naming the path and not the message', () => {
+  const dir = variant('throws', (d) => {
+    writeFileSync(
+      join(d, 'Sw.tsx'),
+      "const SECRET = 'secret-message'\nfunction Sw({ type }: { type?: string }) {\n  if (type === 'a') return <p>a</p>\n  throw new Error(`bad ${SECRET}`)\n}\nexport default function Page({ k }: { k: string }) {\n  return <main><Sw type={k} /></main>\n}\n",
+    )
+    const src = readFileSync(join(d, 'routes.tsx'), 'utf8')
+    writeFileSync(
+      join(d, 'routes.tsx'),
+      src
+        .replace("import Reads from './Reads'", "import Reads from './Reads'\nimport Sw from './Sw'")
+        .replace("{ path: '/', Component: Home },", "{ path: '/', Component: Home },\n      { path: '/sw/{k}', Component: Sw, loader: ({ params }) => ({ k: params.k }), ssg: { params: () => [{ k: 'bad' }] } },"),
+    )
+  })
+  const b = build(dir)
+  expect(b.code).toBe(1)
+  expect(b.stderr).toContain('/sw/bad')
+  expect(b.stderr + b.stdout).not.toContain('secret-message')
+  expect(existsSync(join(dir, 'dist'))).toBe(false)
+}, 120_000)

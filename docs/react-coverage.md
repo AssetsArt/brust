@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 152 | 37 | 49 | 66 | 0 | 0 | 0 | 0 |
+| C Hooks | 158 | 43 | 49 | 66 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 530 | 229 | 94 | 203 | 3 | 1 | 0 | 0 |
+| **Total** | 536 | 235 | 94 | 203 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -464,6 +464,12 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-scope-token-host | a scope token spread on a host element | react | react | ssr | ok | 4.0 | fallback:context-island | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
 | c-scope-token-value | a scope token read as a value | react | react | ssr | ok | 4.0 | fallback:context-island | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
 | c-scope-by-name | a hook named like a scope hook that createContextScope did not make | react | react | ssr | ok | 4.0 | fallback:local-component | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
+| c-chain | an early return chain of two ifs and a final return, with a const in each branch | static | static | 0 | ok | 0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-throw | an early return chain on a prop that ends in throw new Error(literal) (Radix ToggleGroup root) | static | static | 0 | ok | 0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-rest | a rest aliased in each branch of a type switch (const singleProps = rest) with a module const object as discriminant | static | static | 0 | ok | 0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-throw-state | an early return chain that ends in a throw, tested on state | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-throw-msg | a chain that ends in throw new Error(prop) | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-chain-throw-value | a chain that ends in throw of a string | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
 
 ## D. API surface
 
