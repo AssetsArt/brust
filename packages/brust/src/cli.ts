@@ -6,7 +6,6 @@ import { BuildError, runBuild } from './build'
 import { runBunDev } from './dev/bun'
 import { runDev } from './dev'
 import { run } from './run'
-import { shadcnInit, spawnRunner } from './shadcn/init'
 
 const USAGE = `usage:
   brust build [entry=routes.tsx] [--out-dir dist] [--force] [--target bun|cloudflare|static] [--actions-only] [--strict] [--wasm-from-source] [--dev]
@@ -135,6 +134,8 @@ export async function main(argv: string[]): Promise<void> {
   if (cmd === 'shadcn') {
     const [sub, ...components] = positionals
     if (sub !== 'init') usage(`shadcn takes a subcommand: init (got ${sub === undefined ? 'none' : JSON.stringify(sub)})`)
+    // F252: loaded here, so no other command pays for it (it pulls in tsconfig-paths)
+    const { shadcnInit, spawnRunner } = await import('./shadcn/init')
     const code = await shadcnInit({
       root: process.cwd(),
       components,

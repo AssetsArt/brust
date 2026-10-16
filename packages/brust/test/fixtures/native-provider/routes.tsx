@@ -5,6 +5,7 @@ import NestedIds from './NestedIds'
 import InputsPage from './InputsPage'
 import Page from './Page'
 import RenderPage from './RenderPage'
+import PolyPage from './PolyPage'
 
 export const routes = defineRoutes([
   { path: '/', Component: Page },
@@ -13,4 +14,5 @@ export const routes = defineRoutes([
   { path: '/gate', Component: GatePage },
   { path: '/inputs', Component: InputsPage },
   { path: '/render', Component: RenderPage },
+  { path: '/poly', Component: PolyPage },
 ])

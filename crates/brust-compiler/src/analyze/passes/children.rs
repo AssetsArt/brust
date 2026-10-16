@@ -2715,7 +2715,11 @@ impl Walker<'_, '_> {
             if crate::analyze::modules::is_relative_spec(source) {
                 self.diagnostics.push(Diagnostic::error(
                     "unresolved-import",
-                    format!("cannot resolve component <{name}> from {source}"),
+                    if crate::analyze::modules::import_leaves_root(ctx.path, source, ctx.opts) {
+                        format!("cannot resolve component <{name}> from {source}: it leaves the app root")
+                    } else {
+                        format!("cannot resolve component <{name}> from {source}")
+                    },
                     loc,
                     "import a .tsx/.ts module or a directory with index.tsx",
                 ));
@@ -4411,7 +4415,18 @@ impl Walker<'_, '_> {
         if value == poly.negate {
             return; // the host element
         }
-        if !matches!(child.tier, Tier::Static) {
+        // Q5 (R34.117): a native CONSUMER of the Provider this clone was specialised for may be `asChild`: its host
+        // is the child element, and everything it binds is the frame's members, fed as hidden `__ctx_` props whose
+        // values are the clone's own (the frames pass already refused an outer Provider's frame, A1/A2). A
+        // component with state of its own, one outside a clone, or one with no frame member is not.
+        let is_frame = |k: &str| k.starts_with("__ctx_");
+        let owned_consumer = self.ctx.specialised
+            && matches!(child.tier, Tier::Native)
+            && props.iter().any(|(k, _)| is_frame(k))
+            && child.ir.as_ref().is_some_and(|ir| {
+                ir.state.is_empty() && ir.refs.is_empty() && ir.effects.is_empty()
+            });
+        if !matches!(child.tier, Tier::Static) && !owned_consumer {
             self.diagnostics.push(refuse(
                 "slot-native",
                 format!(
@@ -4424,7 +4439,7 @@ impl Walker<'_, '_> {
         }
         if props
             .iter()
-            .any(|(_, v)| matches!(v, Expr::ClientOnly { .. }))
+            .any(|(k, v)| matches!(v, Expr::ClientOnly { .. }) && !is_frame(k))
         {
             self.diagnostics.push(refuse(
                 "slot-handler",
@@ -5283,7 +5298,9 @@ impl Walker<'_, '_> {
         for k in &want {
             let body = self.st.prop_raws[&(loc, k.clone())].clone();
             let mut n = self.st.handler_names.len() + 1;
-            while self.st.handler_names.contains(&format!("_h{n}")) {
+            while self.st.handler_names.contains(&format!("_h{n}"))
+                || self.st.reserved.contains(&format!("_h{n}"))
+            {
                 n += 1;
             }
             let hname = format!("_h{n}");

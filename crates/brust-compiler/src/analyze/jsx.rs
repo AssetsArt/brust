@@ -62,6 +62,7 @@ fn tag_ref(tag: &js_ast::Expr) -> Option<js_ast::Ref> {
 /// Returns the location of the first one.
 pub fn jsx_runtime_call(
     calls: &[js_ast::Expr],
+    used_at: &[(js_ast::Ref, i32)],
     names: &crate::analyze::names::NameTable<'_>,
 ) -> Option<u32> {
     const RUNTIMES: [&str; 2] = ["react/jsx-runtime", "react/jsx-dev-runtime"];
@@ -91,7 +92,14 @@ pub fn jsx_runtime_call(
             return Some(loc_of(c));
         }
     }
-    None
+    // F156: a builder, or the namespace / default import that carries one, read as a value anywhere else
+    // (`const h = jsx; h(…)`, `(0, jsx)(…)`, `call(R.jsx)`) can build an element through any spelling: fail closed.
+    used_at
+        .iter()
+        .find(|(r, _)| {
+            import(*r).is_some_and(|(_, i)| FNS.contains(&i) || i == "*" || i == "default")
+        })
+        .map(|(_, at)| (*at).max(0) as u32)
 }
 
 fn tag_of(r: &Reader<'_, '_>, tag: &js_ast::Expr) -> Tag {
@@ -1149,7 +1157,8 @@ pub(crate) fn event_name(attr: &str) -> Option<String> {
 }
 
 /// A handler bound to a local name (a `useCallback` or a local function) keeps
-/// that name; anything else is hoisted to `_hN` in encounter order.
+/// that name; anything else is hoisted to `_hN` in encounter order, skipping every
+/// name the module spells (F147: a user's own `_h2` stays theirs).
 fn hoist_handler(r: &mut Reader<'_, '_>, value: &js_ast::Expr) -> String {
     let body = r.expr(value);
     if let RawKind::Ident {
@@ -1159,7 +1168,14 @@ fn hoist_handler(r: &mut Reader<'_, '_>, value: &js_ast::Expr) -> String {
     {
         return name.clone();
     }
-    let name = format!("_h{}", r.pending_handlers.len() + 1);
+    let mut n = r.pending_handlers.len() + 1;
+    let name = loop {
+        let name = format!("_h{n}");
+        if !r.names.spells(&name) && !r.pending_handlers.iter().any(|h| h.name == name) {
+            break name;
+        }
+        n += 1;
+    };
     r.pending_handlers.push(HandlerDecl {
         name: name.clone(),
         body,

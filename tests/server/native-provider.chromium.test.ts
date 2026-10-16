@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderGate, renderNested, renderNestedIds, renderInputs, renderPage, renderRender } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderGate, renderInputs, renderNested, renderNestedIds, renderPage, renderPoly, renderRender } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -208,6 +208,32 @@ test('names of the page read in a specialised Provider\'s content cross as input
   await page.getByRole('button', { name: 'open' }).click()
   await page.waitForFunction(() => document.querySelector('button[aria-expanded]')?.getAttribute('aria-expanded') === 'true')
   expect(await page.getByText('body').isVisible()).toBe(true)
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('an asChild consumer makes the caller\'s element the toggle', async () => {
+  const html = await (await fetch(`${base}/poly`)).text()
+  expect(html).not.toContain('brust-island')
+  // Slot keeps the child's attributes first; the order of attributes carries no meaning.
+  const sorted = (h: string): string => h.replace(/<(\w+)((?: [\w-]+="[^"]*")+)>/g, (_, tag: string, a: string) => `<${tag}${(a.match(/ [\w-]+="[^"]*"/g) ?? []).sort().join('')}>`)
+  expect(sorted(plain(html))).toBe(sorted(plain(renderPoly())))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/poly`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('div[data-poly]')?.hasAttribute('x-data'))
+  const link = page.locator('a[data-from="child"]')
+  expect(await link.getAttribute('aria-expanded')).toBe('false')
+  expect(await link.getAttribute('type')).toBe('button')
+  expect(await page.getByText('poly body').isVisible()).toBe(false)
+  await link.click()
+  await page.waitForFunction(() => document.querySelector('a[data-from="child"]')?.getAttribute('aria-expanded') === 'true')
+  expect(await page.getByText('poly body').isVisible()).toBe(true)
+  await link.click()
+  await page.waitForFunction(() => document.querySelector('a[data-from="child"]')?.getAttribute('aria-expanded') === 'false')
+  expect(await page.getByText('poly body').isVisible()).toBe(false)
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
