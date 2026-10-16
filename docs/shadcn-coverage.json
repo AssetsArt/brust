@@ -16,8 +16,8 @@
       "native": 1,
       "react": 7
     },
-    "islands": 35,
-    "pagesWithNoJs": 26,
+    "islands": 36,
+    "pagesWithNoJs": 25,
     "pagesWithNoWorker": 22,
     "jsGzipKb": {
       "min": 0,
@@ -40,36 +40,36 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 37,
+      "measuredRows": 38,
       "analysisOnlyRows": 0,
-      "appComponents": 124,
+      "appComponents": 125,
       "libraryComponents": 167
     },
     {
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 32,
+      "measuredRows": 33,
       "analysisOnlyRows": 0,
-      "appComponents": 114,
+      "appComponents": 115,
       "libraryComponents": 203
     },
     {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 30,
+      "measuredRows": 31,
       "analysisOnlyRows": 0,
-      "appComponents": 78,
+      "appComponents": 79,
       "libraryComponents": 199
     },
     {
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 18,
+      "measuredRows": 19,
       "analysisOnlyRows": 0,
-      "appComponents": 19,
+      "appComponents": 20,
       "libraryComponents": 62
     },
     {
@@ -1193,12 +1193,17 @@
       "id": "progress",
       "basis": "measured",
       "tier": "static",
-      "islands": 0,
+      "islands": 1,
       "components": 5,
-      "reactComponents": 0,
-      "jsGzipKb": 0,
+      "reactComponents": 2,
+      "jsGzipKb": 86,
       "workerCalls": 1,
-      "codes": []
+      "codes": [
+        "external-component",
+        "island-children",
+        "island-prop",
+        "spread-props"
+      ]
     },
     {
       "id": "radio-group",
