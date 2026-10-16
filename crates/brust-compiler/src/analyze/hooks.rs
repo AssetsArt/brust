@@ -1431,8 +1431,9 @@ fn hydration_shape(call: &js_ast::E::Call, m: Module<'_, '_>, names: &NameTable<
         return false;
     };
     let returns = |e: &js_ast::Expr, want: bool| match &e.data {
-        E::EArrow(a) if a.args.is_empty() && !a.is_async => expr_body(a)
-            .is_some_and(|b| matches!(&b.data, E::EBoolean(x) if x.value == want)),
+        E::EArrow(a) if a.args.is_empty() && !a.is_async => {
+            expr_body(a).is_some_and(|b| matches!(&b.data, E::EBoolean(x) if x.value == want))
+        }
         _ => false,
     };
     // `subscribe` returns an unsubscribe that does nothing
@@ -1573,6 +1574,13 @@ fn read_decl(
         _ => None,
     };
     if let Some(ctx) = context_read(value, r.names) {
+        return read_context_use(r, out, decl, value, &ctx, vloc);
+    }
+    // R34.144: `const { a, b } = context` of a context local (Radix's `const { onFocusableItemAdd, ... } = context`), or
+    // `const c2 = context`: read like the hook's own result
+    if let E::EIdentifier(id) = &value.data
+        && let Some(ctx) = r.names.ctx_local(id.ref_).map(str::to_string)
+    {
         return read_context_use(r, out, decl, value, &ctx, vloc);
     }
     adopt_react_alias(r.names, m, value);
@@ -2139,6 +2147,21 @@ fn exported_fn<'x>(ast: &'x js_ast::Ast<'_>, export: &str) -> Option<&'x js_ast:
                             .is_some_and(|n| names.name(n.ref_) == export) =>
                 {
                     return Some(&f.func);
+                }
+                // R34.143: `export const useX = typeof reactHook === 'function' ? useModern : useLegacy` (Radix's
+                // `useIsHydrated`): the test is decided (`hook_presence_test`), the export is the branch that runs.
+                S::SLocal(l) if l.is_export && matches!(l.kind, js_ast::S::Kind::KConst) => {
+                    for d in l.decls.iter() {
+                        if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                            && names.name(id.r#ref) == export
+                            && let E::EIf(i) = &v.data
+                            && let Some(taken) = hook_presence_test(&i.test, &names)
+                            && let Some(target) =
+                                crate::analyze::names::ident_ref(if taken { &i.yes } else { &i.no })
+                        {
+                            return local_fn(ast, &names, target);
+                        }
+                    }
                 }
                 S::SExportDefault(ed) if export == "default" => {
                     if let js_ast::StmtOrExpr::Stmt(inner) = &ed.value

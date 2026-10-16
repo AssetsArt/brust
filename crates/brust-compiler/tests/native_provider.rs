@@ -676,9 +676,16 @@ fn use_is_hydrated_lowers_to_a_state_that_a_mount_effect_sets() {
         .expect("the component");
     assert!(!is_react(&b.ir), "{:?}", b.ir.diagnostics);
     // false in the server markup (React's `getServerSnapshot`), set on mount in the chunk
-    assert!(b.jinja.contains("data-h=\"n\"") || b.jinja.contains("'n'") || b.jinja.contains("\"n\""), "{}", b.jinja);
+    assert!(
+        b.jinja.contains("data-h=\"n\"") || b.jinja.contains("'n'") || b.jinja.contains("\"n\""),
+        "{}",
+        b.jinja
+    );
     let client = b.client.as_deref().expect("a client chunk");
-    assert!(client.contains("(!0)") || client.contains("(true)"), "{client}");
+    assert!(
+        client.contains("(!0)") || client.contains("(true)"),
+        "{client}"
+    );
 }
 
 #[test]
@@ -693,4 +700,22 @@ fn another_external_store_keeps_the_hook_unsupported_refusal() {
         );
         assert!(is_react(&all[0].ir), "{f}");
     }
+}
+
+// R34.144: a context local destructured in the body (`const { on, flip } = context`) or aliased (`const again = context`) is
+// read field by field, like the hook's own result.
+#[test]
+fn a_context_local_destructured_or_aliased_in_the_body_reads_its_fields() {
+    let all = compile("ctx_destruct.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", all[0].ir.diagnostics);
+    assert!(
+        !all.iter().any(|i| i
+            .ir
+            .diagnostics
+            .iter()
+            .any(|d| d.class == DiagClass::Fallback)),
+        "{:?}",
+        all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+    );
 }

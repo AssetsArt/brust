@@ -307,3 +307,29 @@ test('F244: "." names the directory index, never a sibling file of the directory
   expect(r.scopes['']?.dotsib).toBeUndefined()
   expect(r.refused['']?.dotsib).toContain('imports ., which the source map does not carry')
 })
+
+// W1b (R34.142): `import { X as Y } from './sibling'` is the same binding under a local name; the bundler resolves it to the
+// sibling's declaration, so `Y` is absent from the published file and `X` is present (Radix's use-is-hydrated).
+const SIB = `export function useIsHydrated() {\n  return 1\n}\n`
+const MAIN = `import { useIsHydrated as useIsHydratedLegacy } from './legacy'\nexport const useIsHydrated = useIsHydratedLegacy\n`
+// what a bundler writes: the sibling inlined, the alias resolved, the colliding export renamed
+const BUNDLED = `function useIsHydrated() {\n  return 1\n}\nvar useIsHydrated2 = useIsHydrated\nexport { useIsHydrated2 as useIsHydrated }\n`
+
+test('W1b: a relative import alias of a name the published file has is not a difference', () => {
+  const src = [
+    { path: 'src/main.ts', text: MAIN },
+    { path: 'src/legacy.ts', text: SIB },
+  ]
+  expect(integrityGaps(src, BUNDLED)).toEqual([])
+})
+
+test('W1b bounds: an alias of a name the published file lacks, a bare-specifier alias, or an alias used elsewhere stays a refusal', () => {
+  const src = (main: string) => [
+    { path: 'src/main.ts', text: main },
+    { path: 'src/legacy.ts', text: SIB },
+  ]
+  // the imported name is not in the published file
+  expect(integrityGaps(src(MAIN.replace('{ useIsHydrated as', '{ other as')), BUNDLED).join()).toContain('name `useIsHydratedLegacy`')
+  // a package import (not a bundled sibling)
+  expect(integrityGaps(src(MAIN.replace("'./legacy'", "'legacy-pkg'")), BUNDLED).join()).toContain('name `useIsHydratedLegacy`')
+})
