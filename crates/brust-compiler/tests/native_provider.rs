@@ -651,3 +651,16 @@ fn typeof_of_a_react_export_that_is_not_a_hook_is_not_decided() {
         all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
     );
 }
+
+// Review (Mellow F1): the `if` test of an identity-update effect runs with it; one with a side effect keeps the effect.
+#[test]
+fn an_identity_update_effect_whose_test_has_a_side_effect_is_not_dropped() {
+    let all = compile("hooks_side.tsx");
+    assert!(
+        all.iter()
+            .any(|i| has(&i.ir, DiagClass::Fallback, "hook-shape")),
+        "{:?}",
+        all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+    );
+    assert!(is_react(&all[0].ir), "{:?}", all[0].ir.tier);
+}

@@ -1344,7 +1344,9 @@ fn drop_inert_id_effects(
     fn update_stmt(st: &js_ast::Stmt, f: &dyn Fn(&js_ast::Expr) -> bool) -> bool {
         match &st.data {
             S::SExpr(x) => f(&x.value),
-            S::SIf(i) => update_stmt(&i.yes, f) && i.no.is_none(),
+            // the test runs with the update: only an effect-free one may go with it
+            // the test runs with the update: only an effect-free one may go with it
+            S::SIf(i) => pure_expr(&i.test) && update_stmt(&i.yes, f) && i.no.is_none(),
             S::SBlock(b) => b.stmts.slice().iter().all(|x| update_stmt(x, f)),
             _ => false,
         }
