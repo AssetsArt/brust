@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 99 | 23 | 32 | 44 | 0 | 0 | 0 | 0 |
+| C Hooks | 100 | 23 | 32 | 45 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 474 | 212 | 77 | 181 | 3 | 1 | 0 | 0 |
+| **Total** | 475 | 212 | 77 | 182 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -330,6 +330,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-forward-two-spreads | a live prop through a child that spreads the same rest on two elements | react | react | ssr | ok | 3.9 | fallback:spread-props | R34.18 extended: a live value needs ONE element to bind on |
 | c-live-forward-class | a live className through a static child's spread | react | react | ssr | ok | 3.9 | fallback:spread-handler | R34.18 extended: class and style merge, they are not bound through a spread |
 | c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | 5.2 | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
+| c-slot-owner-linked-static | a linked prop in the slot of a static child that is itself linked | react | react | ssr | ok | 3.9 | fallback:slot-owner | F309: the linked static child gets a host of its own, which would bind the slot content (it never updated): slot-owner |
 | c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.2 | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | 4.5 | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | 3.9 | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
