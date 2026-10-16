@@ -869,12 +869,12 @@ fn put_into_rest_host(n: &mut Node, content: &mut Option<Vec<Node>>) -> usize {
     }
     fn count(n: &Node) -> usize {
         match n {
-            Node::Element { attrs, children, .. } => {
-                usize::from(spreads_rest(attrs)) + children.iter().map(count).sum::<usize>()
-            }
-            Node::Component { props, children, .. } => {
-                usize::from(comp_spreads_rest(props)) + children.iter().map(count).sum::<usize>()
-            }
+            Node::Element {
+                attrs, children, ..
+            } => usize::from(spreads_rest(attrs)) + children.iter().map(count).sum::<usize>(),
+            Node::Component {
+                props, children, ..
+            } => usize::from(comp_spreads_rest(props)) + children.iter().map(count).sum::<usize>(),
             Node::Fragment(children) => children.iter().map(count).sum(),
             Node::If { then, else_, .. } => then.iter().chain(else_).map(count).sum(),
             Node::For { body, .. } => body.iter().map(count).sum(),
@@ -883,7 +883,9 @@ fn put_into_rest_host(n: &mut Node, content: &mut Option<Vec<Node>>) -> usize {
     }
     fn put(n: &mut Node, content: &mut Option<Vec<Node>>) {
         match n {
-            Node::Element { attrs, children, .. } => {
+            Node::Element {
+                attrs, children, ..
+            } => {
                 if spreads_rest(attrs) && children.is_empty() {
                     if let Some(c) = content.take() {
                         *children = c;
@@ -892,7 +894,9 @@ fn put_into_rest_host(n: &mut Node, content: &mut Option<Vec<Node>>) -> usize {
                     children.iter_mut().for_each(|c| put(c, content));
                 }
             }
-            Node::Component { props, children, .. } => {
+            Node::Component {
+                props, children, ..
+            } => {
                 if comp_spreads_rest(props) && children.is_empty() {
                     if let Some(c) = content.take() {
                         *children = c;

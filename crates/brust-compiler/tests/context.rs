@@ -175,21 +175,95 @@ fn a_scalar_context_provider_value_reaches_a_consumer_that_reads_it_whole() {
     assert!(jinja.contains("<b>{{ (1) | e }}</b>"), "{jinja}");
 }
 
-/// The Provider's values call helpers of ITS module (`clamp`, `stateOf`): a call is not a literal, so under the lead's scope
-/// cut the page renders with React (context-value); F174 narrows it to helpers proven to return primitives.
+/// W1d (progress, ruling on challenge 2c9522ea): the Provider's values call helpers of ITS module (`clamp`, `stateOf`), proven to
+/// return primitives. A call is not a literal and a call site cannot substitute it into a lowered frame (the cut stays: no
+/// call in a frame), so the Provider's own native instance evaluates it and the page lowers with a native clone.
 #[test]
-fn a_provider_value_that_calls_a_helper_is_not_lowered_yet() {
+fn a_provider_value_that_calls_a_plain_helper_makes_a_native_frame() {
     let out = compile_all("helper-page.tsx");
     let page = out
         .iter()
         .find(|(id, ..)| id.starts_with("helperPage_"))
         .expect("page");
+    assert!(!is_react(&page.1), "{:?}", page.1.tier);
     assert!(
-        rules(&page.1).contains(&"context-value"),
+        !rules(&page.1).iter().any(|r| r.starts_with("context")),
         "{:?}",
         page.1.diagnostics
     );
+    // the consumer's value is the Provider instance's own derived member, never a call printed at the call site
+    assert!(
+        page.2.contains("data-state=") && page.2.contains("\"complete\""),
+        "{}",
+        page.2
+    );
+    assert!(
+        !page.2.contains("clamp(") && !page.2.contains("stateOf("),
+        "{}",
+        page.2
+    );
+}
+
+/// The same shape with a function-valued prop whose default is a plain module function (Radix `getValueLabel`): the Provider
+/// qualifies (condition 1: a call of a proven-plain function over plain props, read through a conditional), the page lowers.
+#[test]
+fn a_function_prop_with_a_plain_default_lowers_the_provider() {
+    let all = compile("fn-default.tsx");
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| (&ir.id, &ir.tier))
+            .collect::<Vec<_>>()
+    );
+    let page = all
+        .iter()
+        .map(|(_, _, j)| j.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        page.contains("progressbar") && page.contains("data-value"),
+        "{page}"
+    );
+}
+
+/// A Provider field that IS a call of a proven-plain module function (`pct: clamp(value)`) is evaluated by the Provider's own
+/// instance (a native clone per call site): the call is never substituted into a lowered frame at the call site.
+#[test]
+fn a_provider_field_that_is_a_plain_call_is_evaluated_by_the_native_clone() {
+    let all = compile("call-field.tsx");
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        all.iter().map(|(_, ir, _)| &ir.tier).collect::<Vec<_>>()
+    );
+    assert!(
+        all.iter()
+            .any(|(id, ..)| id.starts_with("meter_") && id.contains("_s")),
+        "{:?}",
+        all.iter().map(|(id, ..)| id).collect::<Vec<_>>()
+    );
+    assert!(
+        all.iter().all(|(.., j)| !j.contains("clamp(")),
+        "a call printed at a call site"
+    );
+}
+
+/// A call site that passes the function itself (the prop the Provider's helper call may run) cannot be served by a job that
+/// evaluates the module's default: the prop is frozen, and the page renders with React rather than print the default's value.
+#[test]
+fn a_call_site_that_passes_the_function_prop_keeps_the_page_react() {
+    let out = compile_all("fn-default-passed.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("fnDefaultPassed_"))
+        .expect("page");
     assert!(is_react(&page.1), "{:?}", page.1.tier);
+    assert!(
+        rules(&page.1).contains(&"frozen-prop"),
+        "{:?}",
+        page.1.diagnostics
+    );
 }
 
 /// R34.104: an `if` whose branches only call `console.*` is a diagnostic, not part of the render; any other effect

@@ -231,7 +231,9 @@ fn field_bad(
             // is evaluated by the Provider's own (native) instance; a call site cannot substitute it into a lowered frame
             // (the cut stays: no call in a frame), so such a field makes the frame a native one.
             if !native && is_plain_fn_call(ir, callee) {
-                return Some("a call of a plain module function, which the native Provider evaluates".into());
+                return Some(
+                    "a call of a plain module function, which the native Provider evaluates".into(),
+                );
             }
             field_bad(ir, callee, depth, true, native).or_else(|| args.iter().find_map(bad))
         }
