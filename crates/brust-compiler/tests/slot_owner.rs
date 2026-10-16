@@ -154,3 +154,13 @@ fn a_static_child_linked_here_hosts_its_slot_content_too() {
     refused("linked-static.tsx");
     kept("linked-static-const.tsx");
 }
+
+#[test]
+fn children_carried_by_a_rest_onto_a_host_are_refused_too() {
+    // F342: wrong output on main before this (the page's text bound by the child's instance: first-paint mismatch and the
+    // child's own counter shown), through the rest, the whole props, and a static child linked at the call site.
+    refused("rest-host.tsx");
+    refused("rest-host-props.tsx");
+    refused("rest-host-linked.tsx");
+    kept("rest-host-const.tsx");
+}
