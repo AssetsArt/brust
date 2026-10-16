@@ -1237,7 +1237,7 @@
       "islands": 1,
       "components": 21,
       "reactComponents": 13,
-      "jsGzipKb": 100,
+      "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
         "context-island",
