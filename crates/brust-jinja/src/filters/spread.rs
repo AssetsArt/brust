@@ -240,6 +240,43 @@ pub fn spread_merge(segs: Rest<Value>) -> Value {
     Value::from(merge(&segs).into_iter().collect::<BTreeMap<_, _>>())
 }
 
+/// `obj_assign(source, …)`: `Object.assign({}, source, …)` (F277): each source's own enumerable keys in turn, a later
+/// one replacing an earlier one; a list or a string gives its indices, anything else (`null`, `undefined`, a number, a
+/// boolean) nothing.
+pub fn obj_assign(sources: Rest<Value>) -> Value {
+    let mut out: Vec<(String, Value)> = Vec::new();
+    for s in sources.iter() {
+        let pairs: Vec<(String, Value)> = match s.kind() {
+            ValueKind::Map => map_pairs(s),
+            ValueKind::Seq => (0..s.len().unwrap_or(0))
+                .map(|i| {
+                    (
+                        i.to_string(),
+                        s.get_item(&Value::from(i)).unwrap_or(Value::UNDEFINED),
+                    )
+                })
+                .collect(),
+            ValueKind::String => s
+                .as_str()
+                .unwrap_or_default()
+                .encode_utf16()
+                .collect::<Vec<u16>>()
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (i.to_string(), Value::from(String::from_utf16_lossy(&[*c]))))
+                .collect(),
+            _ => Vec::new(),
+        };
+        for (k, v) in pairs {
+            match out.iter_mut().find(|(n, _)| *n == k) {
+                Some(slot) => slot.1 = v,
+                None => out.push((k, v)),
+            }
+        }
+    }
+    Value::from(out.into_iter().collect::<BTreeMap<_, _>>())
+}
+
 #[cfg(test)]
 mod tests {
     use minijinja::Environment;
@@ -249,6 +286,37 @@ mod tests {
         let mut env = Environment::new();
         crate::register(&mut env);
         env.render_str(src, crate::value_of(ctx)).unwrap()
+    }
+
+    /// F277: `obj_assign` is `Object.assign({}, …)`: later keys win in place, `null`/`undefined`/numbers add nothing,
+    /// a list or string gives its indices.
+    #[test]
+    fn obj_assign_merges_as_object_assign_does() {
+        // `k=v;` per entry, in the map's order.
+        let r = |args: &str, ctx: serde_json::Value| {
+            render(
+                &format!(
+                    "{{% for e in obj_assign({args}) | entries %}}{{{{ e[0] }}}}={{{{ e[1] }}}};{{% endfor %}}"
+                ),
+                ctx,
+            )
+        };
+        assert_eq!(
+            r(
+                "a, {'k': 2}, b",
+                json!({"a": {"k": 1, "x": 1}, "b": {"x": 3}})
+            ),
+            "k=2;x=3;"
+        );
+        assert_eq!(r("n, u, 3, true, {'k': 1}", json!({"n": null})), "k=1;");
+        assert_eq!(r("['p', 'q'], 'ab'", json!({})), "0=a;1=b;");
+        assert_eq!(
+            render(
+                "{{ obj_assign(s, {'position': 'absolute'}) | style_css }}",
+                json!({"s": {"width": "3px"}})
+            ),
+            "position:absolute;width:3px"
+        );
     }
 
     /// F196: the spread path prints every attribute and value as React does (`tests/fixtures/attr-parity/react.json`).

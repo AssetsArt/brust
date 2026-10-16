@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | pages with no worker call | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|---|
-| 64 | 57 | 1 | 6 | 36 | 25 | 21 | 0 / 87 / 240 KiB |
+| 64 | 57 | 1 | 6 | 36 | 25 | 22 | 0 / 87 / 240 KiB |
 
 ### Analysis-only (0 of 64 pages refused)
 
@@ -113,7 +113,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | accordion | measured | static | 1 | 11 (8) | 94 | 1 | external-component, island-children, island-prop, spread-props | built |
 | alert | measured | static | 0 | 4 (0) | 0 | 0 | — | built |
 | alert-dialog | measured | static | 1 | 22 (18) | 100 | 1 | external-component, island-children, island-prop, slot-child-component, spread-props | built |
-| aspect-ratio | measured | static | 0 | 4 (0) | 0 | 1 | — | built |
+| aspect-ratio | measured | static | 0 | 4 (0) | 0 | 0 | — | built |
 | attachment | measured | static | 0 | 7 (0) | 0 | 0 | — | built |
 | avatar | measured | static | 2 | 8 (5) | 87 | 2 | external-component, instance-prop-path, island-prop, nested-instance, spread-props | built |
 | badge | measured | static | 0 | 2 (0) | 0 | 0 | — | built |

@@ -18,7 +18,7 @@
     },
     "islands": 36,
     "pagesWithNoJs": 25,
-    "pagesWithNoWorker": 21,
+    "pagesWithNoWorker": 22,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -567,7 +567,7 @@
       "components": 4,
       "reactComponents": 0,
       "jsGzipKb": 0,
-      "workerCalls": 1,
+      "workerCalls": 0,
       "codes": []
     },
     {

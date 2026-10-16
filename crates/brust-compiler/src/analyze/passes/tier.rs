@@ -65,7 +65,7 @@ pub fn tier(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
             reason: format!("{what} at line {} builds JSX", ctx.line(*loc)),
             client_only: false,
         };
-    } else if ir.state.is_empty()
+    } else if !ir.has_live_state()
         && ir.handlers.is_empty()
         && ir.effects.is_empty()
         && ir.refs.is_empty()

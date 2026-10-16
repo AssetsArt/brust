@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 216 | 113 | 14 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 65 | 9 | 22 | 34 | 0 | 0 | 0 | 0 |
+| C Hooks | 68 | 10 | 24 | 34 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 69 | 31 | 10 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 431 | 197 | 59 | 171 | 3 | 1 | 0 | 0 |
+| **Total** | 434 | 198 | 61 | 171 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -352,10 +352,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-callback-ref | ref={fn} with a useCallback function | native | native | 0 | ok | 4.4 | — | B1: a ref that is a function value becomes a synthetic ref and a mount effect that calls it with the node |
 | c-callback-ref-in-list | ref={fn} on an element inside a list | react | react | ssr | ok | 3.8 | fallback:ref-shape | B1: a callback ref inside a list stays ref-shape |
 | c-callback-ref-in-conditional | ref={fn} on an element under a conditional | react | react | ssr | ok | 3.8 | fallback:ref-shape | B1: a callback ref on an element that may mount later stays ref-shape (the mount effect runs once) |
-| c-object-spread-rest-key | an object literal spreading a ...rest key | native | native | precompute | ok | 4.4 | — | B5: ...rest.key in an object literal reads that prop and spreads it (Object.assign), instead of reading the rest object as a value |
+| c-object-spread-rest-key | an object literal spreading a ...rest key | native | native | 0 | ok | 4.4 | — | B5: ...rest.key in an object literal reads that prop and spreads it (Object.assign), instead of reading the rest object as a value; F277: printed in the template (obj_assign), no job |
 | c-object-spread-rest-whole | an object literal spreading the whole ...rest object | react | react | ssr | ok | 3.8 | fallback:prop-pattern | B5: the whole rest object read as a value stays prop-pattern |
 | c-ref-never-written | a useRef(init) only read as .current in the render | native | native | 0 | ok | 4.4 | — | B4: a ref nobody writes is its initial value, held as a state cell |
 | c-ref-written-read-in-render | a useRef written in a handler and read in the render | react | react | ssr | ok | 3.8 | fallback:ref-in-render | B4: a written ref read during render stays ref-in-render |
+| c-fixed-cell-static | a useState with no setter (or a never-written ref) and nothing else | static | static | 0 | ok | 0 | — | F277: a cell nothing sets is its first value; reading it is not reactive, so the component is static |
+| c-fixed-cell-prop-unlinked | a parent's state passed to a child that reads it only as a never-written ref's first value | native | native | 0 | ok | 4.4 | — | F277: the child takes the prop once (React keeps the first render too): no link, no directive |
+| c-live-style-child-element | a parent's state in a style object a static child spreads onto its element | native | native | 0 | ok | 4.4 | — | F277: Object.assign({}, …) is in the template subset: the merged style binds as an object (x-bind-style), no job to go stale |
 | c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | 4.4 | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
 | c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
 | c-useid-comma-call | useId called through a comma (`(0, useId)()`, bundler output) | static | static | 0 | ok | 0 | — | F237: the comma spelling is the hook (was a per-request job calling useId outside a render) |

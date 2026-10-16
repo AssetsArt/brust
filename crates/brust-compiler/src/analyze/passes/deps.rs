@@ -25,6 +25,8 @@ pub struct Deps {
     /// Dotted prop paths (`item.price`); `*` is the whole props object.
     pub props: BTreeSet<String>,
     pub state: BTreeSet<String>,
+    /// F277: state cells nothing sets, read: their first-render value, which never changes (not reactive).
+    pub fixed: BTreeSet<String>,
     pub setters: BTreeSet<String>,
     /// `(source, imported)`.
     pub imports: BTreeSet<(String, String)>,
@@ -44,6 +46,7 @@ impl Deps {
     pub fn union(&mut self, o: &Deps) {
         self.props.extend(o.props.iter().cloned());
         self.state.extend(o.state.iter().cloned());
+        self.fixed.extend(o.fixed.iter().cloned());
         self.setters.extend(o.setters.iter().cloned());
         self.imports.extend(o.imports.iter().cloned());
         self.globals.extend(o.globals.iter().cloned());
@@ -137,6 +140,8 @@ pub struct DepsCx {
     module: HashMap<String, Vec<(String, IdentKind)>>,
     /// `useStore` bindings by handle (`StoreUse.resolved` names the store).
     stores: HashMap<String, StoreUse>,
+    /// F277: the state cells nothing sets, by name: what their initial value reads.
+    fixed: HashMap<String, LocalDef>,
 }
 
 impl DepsCx {
@@ -167,6 +172,19 @@ impl DepsCx {
                 .iter()
                 .map(|u| (u.handle.clone(), u.clone()))
                 .collect(),
+            fixed: ir
+                .state
+                .iter()
+                .filter(|s| s.is_fixed())
+                .map(|s| {
+                    let def = match &s.init {
+                        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => LocalDef::Value(r.clone()),
+                        Expr::Precomputed { inputs, .. } => LocalDef::Placed(split_inputs(inputs)),
+                        Expr::ClientOnly { .. } => LocalDef::Opaque,
+                    };
+                    (s.name.clone(), def)
+                })
+                .collect(),
         }
     }
 
@@ -188,6 +206,7 @@ impl DepsCx {
             locals,
             module: self.module.clone(),
             stores: self.stores.clone(),
+            fixed: self.fixed.clone(),
         }
     }
 
@@ -370,6 +389,32 @@ impl Walker<'_> {
             }
             IdentKind::Prop => {
                 out.props.insert(name.into());
+            }
+            // F277: a cell nothing sets is its initial value, read at the first render: what that reads (a job
+            // evaluates it), and nothing that changes it later.
+            IdentKind::State if self.cx.fixed.contains_key(name) => {
+                out.fixed.insert(name.into());
+                let key = format!("fixed {name}");
+                if let Some(d) = self.memo.get(&key) {
+                    out.union(&d.clone());
+                    return;
+                }
+                if self.visiting.contains(&key) {
+                    return;
+                }
+                let mut d = Deps::default();
+                self.visiting.push(key.clone());
+                let saved = std::mem::take(&mut self.loop_scope);
+                match self.cx.fixed.get(name) {
+                    Some(LocalDef::Value(e)) => self.raw(&e.clone(), &mut d),
+                    Some(LocalDef::Placed(p)) => d.union(p),
+                    Some(LocalDef::Opaque) => d.opaque = true,
+                    None => {}
+                }
+                self.loop_scope = saved;
+                self.visiting.pop();
+                self.memo.insert(key, d.clone());
+                out.union(&d);
             }
             IdentKind::State => {
                 out.state.insert(name.into());

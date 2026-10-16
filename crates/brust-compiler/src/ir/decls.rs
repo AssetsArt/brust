@@ -44,6 +44,14 @@ pub struct StateDecl {
     pub init: Expr,
 }
 
+impl StateDecl {
+    /// F277: a cell nothing sets (`const [x] = useState(init)`, or a B4 never-written ref): its first-render value
+    /// for good. Reading it makes nothing reactive.
+    pub fn is_fixed(&self) -> bool {
+        self.setter.is_none()
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DerivedDecl {
     pub name: String,

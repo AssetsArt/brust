@@ -77,6 +77,7 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_function("spread_children", spread::spread_children);
     env.add_function("spread_get", spread::spread_get);
     env.add_function("spread_merge", spread::spread_merge);
+    env.add_function("obj_assign", spread::obj_assign);
     env.add_function("class_join", spread::class_join);
     env.add_filter("omit", spread::omit);
     env.add_filter("omit_attrs", spread::omit_attrs);
