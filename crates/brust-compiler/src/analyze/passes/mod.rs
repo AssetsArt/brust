@@ -32,6 +32,8 @@ pub struct PassState {
     /// Where render reads a browser global, and which.
     pub browser_locs: Vec<(u32, String)>,
     pub handler_names: BTreeSet<String>,
+    /// Names a generated handler must not take (F147): [`ComponentIR::bound_names`].
+    pub reserved: std::collections::HashSet<String>,
     /// Values the client chunk evaluates, beyond handlers/effects/state inits.
     pub client_uses: Vec<ClientUse>,
     /// Code outside the template that builds JSX: (loc, what).
@@ -73,6 +75,9 @@ pub struct PassCtx<'a> {
     /// The component the caller asked for (a route component), not a child compiled on the way. Only a
     /// root can be sure nothing links it, so only a root may treat its own props as fixed (ledger F70).
     pub is_root: bool,
+    /// R34.122: the component is a clone of another, its template already holds content whose hidden context props
+    /// were filled where the content was written (so a `__ctx_` prop there is not the author's).
+    pub specialised: bool,
 }
 
 impl PassCtx<'_> {
@@ -86,6 +91,7 @@ impl PassState {
         PassState {
             cx: DepsCx::new(ir),
             handler_names: ir.handlers.iter().map(|h| h.name.clone()).collect(),
+            reserved: ir.bound_names.clone(),
             ..Default::default()
         }
     }

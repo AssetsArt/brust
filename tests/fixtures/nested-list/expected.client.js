@@ -4,7 +4,7 @@ import { fmt } from "./money"
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("input_a93faba9", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const scale = signal(2)
-  const _h1 = (...a) => (() => scale.set(scale() + 1))(...a)
+  const _h1 = (...__args) => (() => scale.set(scale() + 1))(...__args)
   const _l1 = computed(() => props().rows)
   const _k1 = (row) => row.id
   const _l2 = (row) => row.cells

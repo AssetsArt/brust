@@ -67,8 +67,11 @@ struct Ctx<'a, 'n> {
     fns: &'a HashSet<String>,
     /// Plain module consts.
     consts: &'a HashSet<String>,
-    /// Parameters and locals of the function being read.
-    locals: HashSet<String>,
+    /// Parameters and locals of the function being read, by symbol (F194: a block's `const` is not the same
+    /// spelling read after the block).
+    locals: HashSet<u32>,
+    /// Their names, so none may hide a module binding.
+    local_names: HashSet<String>,
 }
 
 impl Ctx<'_, '_> {
@@ -87,7 +90,7 @@ impl Ctx<'_, '_> {
             | E::EUndefined(_) => true,
             E::EIdentifier(id) => {
                 let n = self.names.name(id.ref_);
-                self.locals.contains(&n)
+                self.locals.contains(&self.names.key_of(id.ref_))
                     || self.consts.contains(&n)
                     || (GLOBAL_VALUES.contains(&n.as_str()) && self.is_global(id.ref_))
             }
@@ -157,7 +160,7 @@ impl Ctx<'_, '_> {
         match &t.data {
             E::EIdentifier(id) => {
                 let n = self.names.name(id.ref_);
-                !self.locals.contains(&n)
+                !self.locals.contains(&self.names.key_of(id.ref_))
                     && ((GLOBAL_CALLS.contains(&n.as_str()) && self.is_global(id.ref_))
                         || self.fns.contains(&n))
             }
@@ -165,7 +168,7 @@ impl Ctx<'_, '_> {
                 let method = String::from_utf8_lossy(d.name.slice());
                 (matches!(&d.target.data, E::EIdentifier(id)
                     if self.names.name(id.ref_) == "Math"
-                        && !self.locals.contains("Math")
+                        && !self.locals.contains(&self.names.key_of(id.ref_))
                         && self.is_global(id.ref_))
                     && MATH_CALLS.contains(&method.as_ref()))
                     // F173: a primitive-returning method of a plain value (`n.toFixed(2)`, `s.trim()`, `xs.join(', ')`).
@@ -193,7 +196,8 @@ impl Ctx<'_, '_> {
             S::SLocal(l) => l.decls.iter().all(|d| match (d.binding.data, &d.value) {
                 (B::BIdentifier(id), Some(v)) => {
                     let ok = self.expr(v);
-                    self.locals.insert(self.names.name(id.r#ref));
+                    self.locals.insert(self.names.key_of(id.r#ref));
+                    self.local_names.insert(self.names.name(id.r#ref));
                     ok
                 }
                 _ => false,
@@ -275,6 +279,7 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                     fns: &empty,
                     consts: &consts,
                     locals: HashSet::new(),
+                    local_names: HashSet::new(),
                 };
                 if c.expr(init) {
                     consts.insert(name.clone());
@@ -295,6 +300,7 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
             }
             let ok = (|| {
                 let mut locals = HashSet::new();
+                let mut local_names = HashSet::new();
                 for a in args.iter() {
                     match a.binding.data {
                         B::BIdentifier(id) if a.default.is_none() && !*rest => {
@@ -306,7 +312,8 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                             {
                                 return false;
                             }
-                            locals.insert(p);
+                            locals.insert(names.key_of(id.r#ref));
+                            local_names.insert(p);
                         }
                         _ => return false,
                     }
@@ -316,8 +323,9 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                     fns: &alive,
                     consts: &consts,
                     locals,
+                    local_names,
                 };
-                c.stmts(body) && !c.locals.iter().any(|l| module_names.contains(l))
+                c.stmts(body) && !c.local_names.iter().any(|l| module_names.contains(l))
             })();
             if !ok {
                 alive.remove(name);
@@ -666,7 +674,7 @@ pub fn module_may_hold_element(
     opts: &crate::analyze::component::AnalyzeOptions,
     depth: u8,
 ) -> bool {
-    if !(source.starts_with("./") || source.starts_with("../")) {
+    if !super::modules::is_relative_spec(source) {
         return false;
     }
     if depth > 4 {

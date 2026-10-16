@@ -47,7 +47,7 @@ fn server_only_import(source: &str, ctx: &PassCtx<'_>) -> bool {
     if is_server_only(source, &ctx.opts.server_only) {
         return true;
     }
-    if !(source.starts_with("./") || source.starts_with("../")) {
+    if !crate::analyze::modules::is_relative_spec(source) {
         return false;
     }
     let dir = ctx.path.rfind('/').map_or("", |i| &ctx.path[..i]);

@@ -780,3 +780,46 @@ fn a_ref_that_is_written_or_read_in_a_function_or_bound_stays_a_ref() {
         );
     }
 }
+
+// R34.120: a `useId()` in the returned expression that runs on every render is the same hook as
+// `const id = useId()` before the return.
+#[test]
+fn use_id_in_an_attribute_value_is_hoisted() {
+    let a = ir(&format!(
+        "{PRE}export default function F() {{ const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}><label htmlFor={{useId()}}>{{n}}</label><input id={{useId()}} /></div> }}"
+    ));
+    assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+    assert_eq!(a.id_bindings.len(), 2, "{:?}", a.id_bindings);
+    assert_eq!(a.use_id_slots, 2);
+    let names: std::collections::HashSet<_> = a.id_bindings.iter().collect();
+    assert_eq!(names.len(), 2, "two calls, two slots");
+}
+
+#[test]
+fn use_id_hoist_keeps_source_order_with_a_declared_id() {
+    let a = ir(&format!(
+        "{PRE}export default function F() {{ const first = useId(); const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}><input id={{first}} aria-controls={{useId()}} /></div> }}"
+    ));
+    assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+    assert_eq!(a.id_bindings.len(), 2);
+    assert_eq!(a.id_bindings[0], "first", "the declared id keeps slot 0");
+}
+
+#[test]
+fn use_id_in_a_conditional_position_is_refused_by_name() {
+    for body in [
+        "{n ? <input id={useId()} /> : null}",
+        "{n && <input id={useId()} />}",
+        "{[1, 2].map(i => <input key={i} id={useId()} />)}",
+        "<input id={n ? useId() : 'x'} />",
+    ] {
+        let a = ir(&format!(
+            "{PRE}export default function F() {{ const [n, setN] = useState(0); return <div onClick={{() => setN(n + 1)}}>{body}</div> }}"
+        ));
+        assert!(
+            a.diagnostics.iter().any(|d| d.rule == "hook-in-expression"),
+            "{body}: {:?}",
+            a.diagnostics
+        );
+    }
+}

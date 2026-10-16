@@ -2,9 +2,14 @@
 // shadcn's own `init` does not detect brust, so this writes what `add` needs (components.json, the `@/*` path),
 // installs the four packages the components import, and runs ONE pinned shadcn CLI for the theme and the components.
 // Every child process is spawned from an argv array, never through a shell; the runner is injected for tests.
-import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
-import { type Member, type ObjectNode, raw, readObject } from './jsonc'
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { createMatchPath } from 'tsconfig-paths'
+import { configLoader } from 'tsconfig-paths/lib/config-loader'
+import { tsConfigLoader } from 'tsconfig-paths/lib/tsconfig-loader'
+import { type ObjectNode, raw, readObject } from './jsonc'
+import { fetchRegistryItem, vetItem } from './registry'
 
 /** The shadcn CLI version this command runs (R41.6). A release that moves it re-runs the transcript. */
 export const SHADCN_VERSION = '4.21.4'
@@ -35,6 +40,8 @@ export interface InitOptions {
   shadcnVersion?: string
   run: Runner
   out: (line: string) => void
+  /** F228: fetches the JSON of a registry URL item (default: `fetchRegistryItem`, https only); injected for tests. */
+  fetchItem?: (url: string) => Promise<string>
 }
 
 const COMPONENT = /^[a-z0-9][a-z0-9-]*$/
@@ -61,54 +68,94 @@ function linkUnder(root: string, rel: string): boolean {
   return false
 }
 
-/** `compilerOptions.paths` (pattern → every target) and `baseUrl` of a tsconfig text; `extends` is true when the file
- *  inherits from another one (its own `paths` are then not the whole picture). Empty when it cannot be read. */
-function tsPaths(text: string | undefined): { base: string; map: Array<[string, string[]]>; extended: boolean } {
-  const none = { base: '', map: [] as Array<[string, string[]]>, extended: false }
-  if (text === undefined) return none
+type PathsMap = Record<string, string[]>
+
+function readJsonc(file: string): { text: string; top: ObjectNode } | { error: string } {
+  let text: string
   try {
-    const co = readObject(text).members.find((m) => m.key === 'compilerOptions')?.object
-    const strs = (m: Member | undefined): string[] => (m ? [...raw(text, m).matchAll(/"([^"\\]*)"/g)].map((x) => x[1] ?? '') : [])
-    const base = strs(co?.members.find((m) => m.key === 'baseUrl'))[0] ?? ''
-    const map = (co?.members.find((m) => m.key === 'paths')?.object?.members ?? []).map((m): [string, string[]] => [m.key, strs(m)])
-    const extended = readObject(text).members.some((m) => m.key === 'extends') || (co?.members.some((m) => m.key === 'extends') ?? false)
-    return { base, map, extended }
+    text = readFileSync(file, 'utf8')
   } catch {
-    return none
+    return { error: `cannot read ${file}` }
+  }
+  try {
+    return { text, top: readObject(text) }
+  } catch (e) {
+    return { error: `cannot parse ${file} (${(e as Error).message})` }
   }
 }
 
-/** A project-relative path for an import alias (`@/hooks` → `hooks`) by the tsconfig `paths`, or undefined when no entry
- *  matches or the result is not a plain path inside the project (absolute, `..`, a drive, a backslash). */
-function resolveAlias(alias: string, base: string, map: Array<[string, string[]]>): string[] | undefined {
-  let best: { rank: number; targets: string[] } | undefined
-  for (const [key, targets] of map) {
-    const star = key.indexOf('*')
-    let rest: string | undefined
-    if (star < 0) rest = key === alias ? '' : undefined
-    else if (alias.length >= key.length - 1 && alias.startsWith(key.slice(0, star)) && alias.endsWith(key.slice(star + 1))) rest = alias.slice(star, alias.length - (key.length - star - 1))
-    if (rest === undefined || targets.length === 0) continue
-    const rank = star < 0 ? Number.MAX_SAFE_INTEGER : star
-    if (!best || rank > best.rank) best = { rank, targets: targets.map((t) => (star < 0 ? t : t.replace('*', rest))) }
+/** The `tsconfig-paths` version the pinned shadcn CLI resolves its aliases with (`shadcn@4.21.4` → `@shadcn/registry`
+ *  0.1.3 → `tsconfig-paths ^4.2.0`, read from its lockfile and source). It is a dependency of this package at exactly this
+ *  version, and it moves together with `SHADCN_VERSION`: a release that moves the CLI re-checks the resolver. */
+export const TSCONFIG_PATHS_VERSION = '4.2.0'
+
+/** What the shadcn CLI sees of the tsconfig: it calls `tsconfig-paths` `loadConfig(cwd)` and then
+ *  `createMatchPath(absoluteBaseUrl, paths)` for each alias. This asks the same code, so the `extends` rules (the paths
+ *  base is the directory of the TOP file, an inherited `baseUrl` is rebased by the extends specifier string, a package
+ *  config is looked up only at `<dir>/node_modules/<spec>`, an unresolved parent counts as empty) are its rules, not
+ *  TypeScript's (F226, Mellow's review). `inherited` is true when the `paths` come from a parent file. */
+interface TsInfo {
+  absoluteBaseUrl: string
+  /** Whether the chain sets a `baseUrl` (then a bare alias like `components/ui` is TypeScript-legal). */
+  hasBaseUrl: boolean
+  paths: PathsMap
+  inherited: boolean
+}
+
+/** Undefined when `tsconfig-paths` finds no config at all (the CLI then fails by itself before writing anything). An
+ *  error when it throws (a parent that is not JSON, a cycle, a non-string `extends`): the CLI would throw the same way. */
+function tsconfigInfo(root: string, file: string): TsInfo | { error: string } | undefined {
+  let cfg: ReturnType<typeof configLoader>
+  try {
+    // `loadConfig(root)` with `TS_NODE_PROJECT` / `TS_NODE_BASEURL` ignored: the spawned CLI does not get them either (F253)
+    cfg = configLoader({ cwd: root, tsConfigLoader: (p) => tsConfigLoader({ ...p, getEnv: () => undefined }) })
+  } catch (e) {
+    return { error: `the shadcn CLI cannot read the tsconfig chain of ${file} (${(e as Error).message})` }
   }
-  if (!best) return undefined
-  const out: string[] = []
-  for (const t of best.targets) {
-    const segs = `${base}/${t}`.split('/').filter((x) => x !== '' && x !== '.')
-    if (t === '' || segs.some((x) => x === '..' || x.includes('\\') || x.includes(':')) || t.startsWith('/') || base.startsWith('/')) return undefined
-    out.push(segs.join('/'))
+  if (cfg.resultType !== 'success') return undefined
+  const own = existsSync(file) ? readJsonc(file) : undefined
+  const ownPaths = own && !('error' in own) ? own.top.members.find((m) => m.key === 'compilerOptions')?.object?.members.some((m) => m.key === 'paths') : undefined
+  const paths: PathsMap = {}
+  for (const [k, v] of Object.entries(cfg.paths ?? {})) paths[k] = Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
+  return { absoluteBaseUrl: cfg.absoluteBaseUrl, hasBaseUrl: cfg.baseUrl !== undefined, paths, inherited: !ownPaths && Object.keys(paths).length > 0 }
+}
+
+/** The path the CLI writes an alias to, the way it resolves one (`resolveAlias` in `@shadcn/registry`: `createMatchPath`
+ *  over the tsconfig, first candidate), as a project-relative path; or `{ error }` when it cannot be judged here:
+ *  a `#` import (package.json `imports`), nothing matches, or the result is outside the project. A package-shaped alias
+ *  (`@scope/name`) is refused (F251). */
+function resolveAlias(alias: string, root: string, ts: { absoluteBaseUrl: string; hasBaseUrl: boolean; paths: PathsMap }): { rel: string } | { why: string } {
+  if (alias.startsWith('#')) return { why: 'is a package.json "imports" alias, which cannot be checked here' }
+  // F251: the CLI tries npm workspace packages (a `workspaces` root above the project, a package named like the alias)
+  // BEFORE the tsconfig, and that route is not modelled here. A package-shaped alias (`@scope/name...`) could land there,
+  // so it is refused whether or not a `paths` entry names it; the default `@/...` aliases are not package-shaped.
+  if (/^@[^/]+\/[^/]+(?:\/.*)?$/.test(alias)) return { why: 'looks like a package name (`@scope/name`); the shadcn CLI tries npm workspace packages before the tsconfig "paths", which cannot be checked here. Use an alias like "@/components" or "~/components"' }
+  const named = Object.keys(ts.paths).some((k) => (k.includes('*') ? alias.startsWith(k.slice(0, k.indexOf('*'))) && alias.endsWith(k.slice(k.indexOf('*') + 1)) && alias.length >= k.length - 1 : k === alias))
+  // `createMatchPath` maps any alias under the base directory (it adds a match-all); TypeScript does that only with a
+  // `baseUrl`. An alias no `paths` key names and no `baseUrl` covers is a misconfiguration: refused, not written to `./<alias>`.
+  if (!named && !ts.hasBaseUrl) return { why: 'does not resolve by the tsconfig "paths" (no entry names it and there is no "baseUrl")' }
+  let hit: string | undefined
+  try {
+    hit = createMatchPath(ts.absoluteBaseUrl, ts.paths)(alias, undefined, () => true, ['.ts', '.tsx', '.jsx', '.js', '.css'])
+  } catch (e) {
+    return { why: `cannot be resolved by tsconfig-paths (${(e as Error).message})` }
   }
-  return out
+  if (hit === undefined) return { why: 'does not resolve by the tsconfig "paths"' }
+  const rel = relative(root, resolve(hit))
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return { why: `resolves to ${hit}, which is outside the project` }
+  return { rel: rel.split(sep).join('/') }
 }
 
 /** F193: every path the shadcn CLI may write, project-relative, or an error. The CLI follows symlinks, so the caller
  *  refuses when one is, or sits under, a symlink. Fails closed: an alias that cannot be resolved by the tsconfig `paths`
- *  (`@/*` → `./*` is assumed when the tsconfig has no entry: it is what this command asks for) is an error, not a skipped check. */
+ *  (read through `extends`, F226; `@/*` → `./*` is assumed only when no `@/*` is there and none is inherited: it is what
+ *  this command adds) is an error, not a skipped check. */
 function cliTargets(
   componentsText: string | undefined,
-  tsText: string | undefined,
+  ts: TsInfo | undefined,
   css: string | undefined,
   components: string[],
+  opts: { root: string },
 ): { paths: string[]; dirs: string[] } | { error: string } {
   let aliases: Record<string, string> = { components: '@/components', utils: '@/lib/utils', ui: '@/components/ui', lib: '@/lib', hooks: '@/hooks' }
   if (componentsText !== undefined) {
@@ -126,36 +173,42 @@ function cliTargets(
       return { error: 'components.json is not valid JSON, so the shadcn CLI target paths cannot be checked' }
     }
   }
-  const { base, map, extended } = tsPaths(tsText)
-  // `@/*` → `./*` is the mapping this command adds or asks for; an existing entry (e.g. `./src/*`) wins. When the
-  // tsconfig also has its own `paths` without `@/*`, TypeScript ignores an inherited `@/*`, so the assumption is the
-  // only mapping there is; with no own `paths` and an `extends`, an inherited one is not read (residual, in the ledger).
-  if (!(extended && map.length > 0) && !map.some(([k]) => k === '@/*')) map.push(['@/*', ['./*']])
+  const root = opts.root
+  // With no tsconfig the command adds `paths: { "@/*": ["./*"] }` to nothing (the CLI fails by itself). `@/*` → `./*` is the
+  // mapping this command adds when the tsconfig has no `@/*` of its own. When the `paths` are inherited through `extends`
+  // nothing is added (an own `paths` would replace them), so only what the chain says counts.
+  const resolver = { absoluteBaseUrl: ts?.absoluteBaseUrl ?? root, hasBaseUrl: ts?.hasBaseUrl ?? false, paths: { ...(ts?.paths ?? {}) } }
+  if (!ts?.inherited && resolver.paths['@/*'] === undefined) resolver.paths['@/*'] = ['./*']
   const paths: string[] = []
   const dirs: string[] = []
   const roots: Record<string, string> = {}
   for (const [k, v] of Object.entries(aliases)) {
-    const rels = resolveAlias(v, base, map)
-    if (rels === undefined || rels.length === 0 || rels.includes('')) return { error: `alias ${JSON.stringify(k)} (${JSON.stringify(v)}) in components.json does not resolve to a path inside the project by the tsconfig "paths"; the shadcn CLI target cannot be checked` }
-    roots[k] = rels[0]!
-    for (const rel of rels) {
-      if (k === 'utils') paths.push(rel, `${rel}.ts`)
-      else {
-        paths.push(rel)
-        dirs.push(rel)
-      }
+    const r = resolveAlias(v, root, resolver)
+    if ('why' in r) return { error: `alias ${JSON.stringify(k)} (${JSON.stringify(v)}) in components.json ${r.why}; the shadcn CLI target cannot be checked` }
+    const rel = r.rel
+    roots[k] = rel
+    if (k === 'utils') paths.push(rel, `${rel}.ts`)
+    else {
+      paths.push(rel)
+      dirs.push(rel)
     }
   }
   const ui = roots.ui ?? 'components/ui'
   return { paths: [...paths, 'package.json', ...(css === undefined ? [] : [css]), ...components.filter((c) => COMPONENT.test(c)).map((c) => `${ui}/${c}.tsx`)], dirs }
 }
 
-/** Where a path or directory entry the CLI could write through is a symlink; undefined when clean. */
-function cliLink(root: string, t: { paths: string[]; dirs: string[] }): string | undefined {
+/** F227: the most entries `cliLink` looks at under the alias directories before it refuses (no fixed depth: a link at
+ *  any depth is found; a tree this big is not a components directory). */
+export const SCAN_LIMIT = 10_000
+
+/** Where a path or directory entry the CLI could write through is a symlink (`link`), or the directory walk hit its
+ *  entry bound (`tooMany`); undefined when clean. */
+function cliLink(root: string, t: { paths: string[]; dirs: string[] }): { link: string } | { tooMany: string } | undefined {
   const hit = t.paths.find((p) => linkUnder(root, p))
-  if (hit !== undefined) return hit
+  if (hit !== undefined) return { link: hit }
   // dependency files of a registry item (hooks, lib helpers) land in these directories: no entry may be a link
-  const scan = (rel: string, depth: number): string | undefined => {
+  let seen = 0
+  const scan = (rel: string): { link: string } | { tooMany: string } | undefined => {
     let names: string[]
     try {
       names = readdirSync(join(root, rel))
@@ -164,14 +217,15 @@ function cliLink(root: string, t: { paths: string[]; dirs: string[] }): string |
     }
     for (const e of names) {
       const sub = `${rel}/${e}`
-      if (isLink(join(root, sub))) return sub
-      const found = depth > 0 ? scan(sub, depth - 1) : undefined
+      if (++seen > SCAN_LIMIT) return { tooMany: rel }
+      if (isLink(join(root, sub))) return { link: sub }
+      const found = scan(sub)
       if (found !== undefined) return found
     }
     return undefined
   }
   for (const d of t.dirs) {
-    const found = scan(d, 3)
+    const found = scan(d)
     if (found !== undefined) return found
   }
   return undefined
@@ -208,6 +262,15 @@ export type PathEdit =
   | { kind: 'unparseable'; why: string }
 
 const ENTRY = '"@/*": ["./*"]'
+
+/** F226: the `paths` come from an extended file, so the file is not edited (an own `paths` would replace them whole):
+ *  the inherited `@/*` is judged like an own one. */
+function inheritedEdit(root: string, ts: TsInfo): PathEdit {
+  const hit = ts.paths['@/*']
+  if (!hit) return { kind: 'unparseable', why: 'its "paths" are inherited through "extends" and have no "@/*"; an own "paths" would replace them' }
+  const r = resolveAlias('@/x', root, { absoluteBaseUrl: ts.absoluteBaseUrl, hasBaseUrl: ts.hasBaseUrl, paths: { '@/*': hit } })
+  return 'rel' in r && r.rel === 'x' ? { kind: 'present' } : { kind: 'other', target: JSON.stringify(hit) }
+}
 
 /** The separator before a non-empty object's first member, so the new entry takes the same line and indent. */
 function lead(text: string, o: ObjectNode): string {
@@ -302,7 +365,10 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   const cj = join(root, 'components.json')
   const tsPath = join(root, 'tsconfig.json')
   // F192: a symlinked tsconfig.json is only a problem when the command would edit it (the `@/*` path is missing).
-  const tsEdit = existsSync(tsPath) ? addAliasPath(readFileSync(tsPath, 'utf8')) : undefined
+  // F226: the `paths` the CLI will see are the ones of the whole `extends` chain; a chain that cannot be read is refused.
+  const ts = tsconfigInfo(root, tsPath)
+  if (ts && 'error' in ts) return fail2(`${ts.error}; fix the tsconfig.json chain, then run again`)
+  const tsEdit = existsSync(tsPath) ? (ts?.inherited ? inheritedEdit(root, ts) : addAliasPath(readFileSync(tsPath, 'utf8'))) : undefined
   if (isLink(tsPath) && tsEdit?.kind === 'added') return fail2('tsconfig.json is a symbolic link; refusing to write through it. Add "@/*": ["./*"] to compilerOptions.paths of the real file yourself, then run again')
   if (isLink(cj) && (!existsSync(cj) || o.force)) return fail2('components.json is a symbolic link; refusing to write through it. Replace it with a real file or remove the link, then run again')
   // F193: the shadcn CLI writes files itself (the theme, `lib/utils.ts`, each component, the CSS entry). It follows
@@ -311,13 +377,44 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   const themeRuns = o.force || !readFileSync(join(root, entry.css), 'utf8').includes('shadcn/tailwind.css')
   const targets = cliTargets(
     writing ? undefined : readFileSync(cj, 'utf8'),
-    existsSync(tsPath) ? readFileSync(tsPath, 'utf8') : undefined,
+    ts,
     themeRuns ? entry.css : undefined,
     o.components,
+    { root },
   )
   if ('error' in targets) return fail2(targets.error)
   const hit = cliLink(root, targets)
-  if (hit !== undefined) return fail2(`${hit} is, or is inside, a symbolic link; the shadcn CLI would write through it. Replace the link with a real directory or file, then run again`)
+  if (hit && 'link' in hit) return fail2(`${hit.link} is, or is inside, a symbolic link; the shadcn CLI would write through it. Replace the link with a real directory or file, then run again`)
+  if (hit) return fail2(`${hit.tooMany} holds more than ${SCAN_LIMIT} entries, so it cannot be checked for symbolic links before the shadcn CLI writes into it; point the alias at a smaller directory, then run again`)
+
+  // A component whose file is already in components/ui is not added again (idempotent). A registry URL is judged by
+  // the item name in its path (`.../acme-card.json` → `acme-card`), looked up in components/ui and components.
+  const present = (c: string): boolean => {
+    const name = REGISTRY_URL.test(c) ? urlItemName(c) : c
+    if (name === undefined) return false
+    return existsSync(join(root, 'components/ui', `${name}.tsx`)) || (name !== c && existsSync(join(root, 'components', `${name}.tsx`)))
+  }
+  const todo = o.components.filter((c) => o.force || !present(c))
+
+  // F228: a registry URL item declares its own file targets, known only once it is fetched. Fetch it now, before the CLI
+  // runs, and refuse when a target is outside the project or is, or sits under, a symlink. The CLI is then given the file
+  // checked here (not the URL), so the item cannot change between the check and the write.
+  const fetchItem = o.fetchItem ?? ((url: string) => fetchRegistryItem(url))
+  const vetted = new Map<string, string>()
+  for (const c of todo) {
+    if (!REGISTRY_URL.test(c) || vetted.has(c)) continue
+    let text: string
+    try {
+      text = await fetchItem(c)
+    } catch (e) {
+      return fail2(`registry item ${c} was not fetched (${(e as Error).message}), so its file targets cannot be checked; nothing was added`)
+    }
+    const v = vetItem(text, entry.css)
+    if ('error' in v) return fail2(`registry item ${c} ${v.error}; nothing was added`)
+    const bad = v.paths.find((p) => linkUnder(root, p))
+    if (bad !== undefined) return fail2(`registry item ${c} would write ${bad}, which is, or is inside, a symbolic link; the shadcn CLI would write through it. Replace the link with a real file or directory, then run again`)
+    vetted.set(c, text)
+  }
 
   const report = (name: string, step: Step, why = ''): void => out(`${step === 'done' ? '✓' : step === 'skipped' ? '-' : '✗'} ${name}: ${step}${why ? ` (${why})` : ''}`)
   const stop = (name: string, code: number): number => {
@@ -365,19 +462,24 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
     if (code !== 0) return stop('shadcn add index', code)
     report('theme', 'done', `shadcn@${version} add index`)
   }
-  // A component whose file is already in components/ui is not added again (idempotent). A registry URL is judged by
-  // the item name in its path (`.../acme-card.json` → `acme-card`), looked up in components/ui and components.
-  const present = (c: string): boolean => {
-    const name = REGISTRY_URL.test(c) ? urlItemName(c) : c
-    if (name === undefined) return false
-    return existsSync(join(root, 'components/ui', `${name}.tsx`)) || (name !== c && existsSync(join(root, 'components', `${name}.tsx`)))
-  }
-  const todo = o.components.filter((c) => o.force || !present(c))
   for (const c of o.components) if (!todo.includes(c)) report(c, 'skipped', REGISTRY_URL.test(c) ? 'its item is already in components; --force adds it again' : 'components/ui already has it')
-  for (const c of todo) if (REGISTRY_URL.test(c)) out(`warning shadcn-init ${c} is third-party code: it is written into your project and runs in your build and in the browser. Read it before you ship`)
+  for (const c of todo) if (REGISTRY_URL.test(c)) out(`warning shadcn-init ${c} is third-party code: it is written into your project and runs in your build and in the browser. Read it before you ship. Only the item itself was checked (its file paths, and that none is a symlink); the shadcn components it names in registryDependencies and the npm packages it lists in dependencies are installed by the CLI and were not`)
   if (todo.length > 0) {
-    const code = await o.run(shadcn('add', ...todo, '-y'), root)
-    if (code !== 0) return stop(`shadcn add ${todo.join(' ')}`, code)
+    // a URL item is added from the copy that was checked above
+    const dir = vetted.size > 0 ? mkdtempSync(join(tmpdir(), 'brust-shadcn-item-')) : undefined
+    try {
+      const args = todo.map((c, i) => {
+        const text = vetted.get(c)
+        if (text === undefined || dir === undefined) return c
+        const file = join(dir, `${urlItemName(c) ?? 'item'}-${i}.json`)
+        writeFileSync(file, text)
+        return file
+      })
+      const code = await o.run(shadcn('add', ...args, '-y'), root)
+      if (code !== 0) return stop(`shadcn add ${todo.join(' ')}`, code)
+    } finally {
+      if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
+    }
     for (const c of todo) report(c, 'done')
   }
 
@@ -388,8 +490,18 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   return 0
 }
 
+/** F253: the variables that make `tsconfig-paths` (the resolver the shadcn CLI uses) read another tsconfig than the
+ *  project's. The pre-check ignores them and the spawned CLI does not get them, so both see the same file. */
+export const RESOLVER_ENV = ['TS_NODE_PROJECT', 'TS_NODE_BASEURL'] as const
+
+export function cliEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const out = { ...env }
+  for (const k of RESOLVER_ENV) delete out[k]
+  return out
+}
+
 /** The real runner: argv spawn with the terminal attached, no shell. */
 export const spawnRunner: Runner = async (argv, cwd) => {
-  const p = Bun.spawn(argv, { cwd, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' })
+  const p = Bun.spawn(argv, { cwd, env: cliEnv(process.env), stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' })
   return await p.exited
 }

@@ -922,6 +922,16 @@ impl<'a> NameTable<'a> {
             .map(|s| String::from_utf8_lossy(s.original_name.slice()).into_owned())
     }
 
+    /// Whether any symbol of the module, or a name a symbol prints as (G3), is spelled `name`: a
+    /// generated name must not be one (F147).
+    pub fn spells(&self, name: &str) -> bool {
+        self.printed.values().any(|p| p == name)
+            || self
+                .symbols
+                .iter()
+                .any(|s| s.original_name.slice() == name.as_bytes())
+    }
+
     /// Every name the module itself declares (imports, module and nested bindings), as spelled:
     /// the module's symbols except the unbound ones (globals).
     pub fn declared_spellings(&self) -> impl Iterator<Item = String> + '_ {

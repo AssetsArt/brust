@@ -54,7 +54,7 @@ test('the repro guards the named-export rule (S1.1): a named-export island build
   expect(by).toEqual({ named: true, default: true, static: true })
 })
 
-test('measured and analysis-only rows add up, and the doc rounds client JS to KB with an exact 0', () => {
+test('measured and analysis-only rows add up, and the doc rounds client JS to KiB with an exact 0', () => {
   const built = rows.filter((r) => r.build.ok)
   const refused = rows.filter((r) => !r.build.ok)
   expect(built.length + refused.length).toBe(rows.length)

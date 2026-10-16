@@ -3,7 +3,7 @@ import { signal, computed, defineBehavior } from "brust/runtime-dom"
 const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__text).join("") : v)
 export default defineBehavior("input_82339f83", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const showTotal = signal(false)
-  const _h1 = (...a) => (() => showTotal.set(!showTotal()))(...a)
+  const _h1 = (...__args) => (() => showTotal.set(!showTotal()))(...__args)
   const _c1 = computed(() => showTotal())
   const _c2 = computed(() => __text(props().rows.length))
   return { showTotal, _h1, _c1, _c2 }

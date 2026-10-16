@@ -5,7 +5,7 @@ export default defineBehavior("input_38302085", ({ el: __el, props, effect: __ef
   const open = signal(false)
   const n = signal(5)
   const list = signal([])
-  const _h1 = (...a) => (() => open.set(!open()))(...a)
+  const _h1 = (...__args) => (() => open.set(!open()))(...__args)
   const _c1 = computed(() => open())
   const _c2 = computed(() => __text(open() && "text-branch"))
   const _c3 = computed(() => list())

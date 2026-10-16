@@ -10,7 +10,7 @@ use crate::analyze::modules::{
     Entry, Export, Lookup, cache_key, compile, is_package_source, resolve, resolve_package,
 };
 use crate::ir::{
-    Attr, ChildLink, ChildRef, ComponentIR, Diagnostic, Expr, ExternalRef, IdentKind,
+    Attr, ChildLink, ChildRef, ComponentIR, DiagClass, Diagnostic, Expr, ExternalRef, IdentKind,
     InstanceRecord, JobDecl, JobKind, JsCtx, Node, PolyTag, RawExpr, RawKind, ServerExpr, Tier,
     UnOp, component_id, named_component_id,
 };
@@ -84,6 +84,10 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         fused_counts: HashMap::new(),
         holds_island: false,
         provider_locs: Default::default(),
+        next_owner: 0,
+        native_props: Vec::new(),
+        no_spec: Default::default(),
+        spec_failure: None,
         bubbled_pkg: false,
         foreign: Default::default(),
     }
@@ -135,6 +139,12 @@ fn plain_frame_value(r: &RawExpr) -> Result<(), String> {
 struct Frame {
     context: String,
     fields: Vec<(String, RawExpr)>,
+    /// R34.116: the fields are expressions of the Provider component's OWN scope (state, a handler, ...), not of the call
+    /// site: the Provider is specialised for this call site (R34.122) and the consumers are spliced into the clone.
+    /// The number identifies that Provider instance.
+    owner: Option<usize>,
+    /// The location of the Provider's call site (what a specialisation failure is reported against).
+    loc: u32,
 }
 
 /// S2 context lowering, BEFORE placement (R34.102-R34.104): a Provider component's value fields become hidden props
@@ -320,6 +330,14 @@ struct Walker<'s, 'c> {
     holds_island: bool,
     /// S2: component instances that push a Provider frame.
     provider_locs: std::collections::BTreeSet<u32>,
+    /// R34.116: the number of native Provider instances met so far (their frame owner ids).
+    next_owner: usize,
+    /// R34.116: the hidden context props a native frame filled, as (consumer location, prop, frame owner).
+    native_props: Vec<(u32, String, usize)>,
+    /// R34.122: call sites (by location) whose specialisation failed; they are read as island Providers.
+    no_spec: std::collections::HashSet<u32>,
+    /// R34.122: the location and reason of the specialisation that just failed.
+    spec_failure: Option<(u32, String)>,
     /// A need bubbled out of a package-source consumer ([`ComponentIR::ctx_pkg`]).
     bubbled_pkg: bool,
     /// S2: names of a Provider's module that a substituted context value reads, per Provider component (the alias
@@ -519,6 +537,142 @@ fn template_has_for(n: &Node) -> bool {
         | Node::Fragment(children) => children.iter().any(template_has_for),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(template_has_for),
         Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
+/// The `source` of a `Component` node that names a specialised clone (its `imported` is the module-cache key).
+const SPEC_SOURCE: &str = "\u{0}spec";
+
+/// A stable 32-bit mix of the call site (module and location): the suffix of a clone's id. Ids are per call site
+/// (R34.124); equal chunks share a factory module, not an id.
+fn spec_hash(path: &str, loc: u32) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for b in path.bytes().chain(loc.to_le_bytes()) {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
+}
+
+/// The content given to a component is read in the module that renders it; once it moves into a clone of the component
+/// it is read in the component's module. Relative specifiers are rewritten to reach the same file from there; a
+/// component declared in the rendering module, or a bare specifier of another package scope, cannot be reached.
+fn rebase_sources(
+    nodes: &mut [Node],
+    from: &str,
+    to: &str,
+    opts: &crate::analyze::component::AnalyzeOptions,
+) -> Result<(), String> {
+    for n in nodes {
+        match n {
+            Node::Component {
+                name,
+                source,
+                children,
+                ..
+            } => {
+                match source {
+                    None => {
+                        return Err(format!(
+                            "<{name}> is declared in the module that renders it"
+                        ));
+                    }
+                    Some(s) if s.starts_with("./") || s.starts_with("../") => {
+                        let Some(target) = resolve(from, s, opts) else {
+                            return Err(format!("cannot resolve {s} from {from}"));
+                        };
+                        *s = relative_spec(to, &target);
+                    }
+                    Some(_) => {
+                        if crate::analyze::modules::package_scope(from)
+                            != crate::analyze::modules::package_scope(to)
+                        {
+                            return Err(format!(
+                                "<{name}> is imported from a package of another scope than the component it is given to"
+                            ));
+                        }
+                    }
+                }
+                rebase_sources(children, from, to, opts)?;
+            }
+            Node::Element { children, .. } | Node::Fragment(children) => {
+                rebase_sources(children, from, to, opts)?
+            }
+            Node::If { then, else_, .. } => {
+                rebase_sources(then, from, to, opts)?;
+                rebase_sources(else_, from, to, opts)?;
+            }
+            Node::For { body, .. } => rebase_sources(body, from, to, opts)?,
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    Ok(())
+}
+
+/// The relative specifier that reaches the project-relative file `target` from the module at `from`.
+fn relative_spec(from: &str, target: &str) -> String {
+    let dir: Vec<&str> = from
+        .rsplit_once('/')
+        .map_or(Vec::new(), |(d, _)| d.split('/').collect());
+    let t: Vec<&str> = target.split('/').collect();
+    let mut i = 0;
+    while i < dir.len() && i + 1 < t.len() && dir[i] == t[i] {
+        i += 1;
+    }
+    let ups = dir.len() - i;
+    let rest = t[i..].join("/");
+    if ups == 0 {
+        format!("./{rest}")
+    } else {
+        format!("{}{rest}", "../".repeat(ups))
+    }
+}
+
+/// R34.123: puts `content` where the component reads its `{children}`. Exactly one read is spliced; two would repeat the
+/// content (and its ids and jobs).
+fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), String> {
+    fn count(n: &Node) -> usize {
+        match n {
+            Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => matches!(
+                &r.kind,
+                RawKind::Ident { name, kind: IdentKind::Prop } if name == "children"
+            ) as usize,
+            Node::Element { children, .. }
+            | Node::Component { children, .. }
+            | Node::Fragment(children) => children.iter().map(count).sum(),
+            Node::If { then, else_, .. } => then.iter().chain(else_).map(count).sum(),
+            Node::For { body, .. } => body.iter().map(count).sum(),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => 0,
+        }
+    }
+    fn put(n: &mut Node, content: &mut Option<Vec<Node>>) {
+        match n {
+            Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children") =>
+            {
+                *n = Node::Fragment(content.take().unwrap_or_default());
+            }
+            Node::Element { children, .. }
+            | Node::Component { children, .. }
+            | Node::Fragment(children) => children.iter_mut().for_each(|c| put(c, content)),
+            Node::If { then, else_, .. } => then
+                .iter_mut()
+                .chain(else_.iter_mut())
+                .for_each(|c| put(c, content)),
+            Node::For { body, .. } => body.iter_mut().for_each(|c| put(c, content)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    // `{open && children}`, a condition on it, an attribute from it: only the markup of the children can be answered.
+    if reads_children_as_value(ir) {
+        return Err("the component reads its children as a value, not only as markup".into());
+    }
+    match count(&ir.template) {
+        0 => Ok(()),
+        1 => {
+            put(&mut ir.template, &mut Some(content));
+            Ok(())
+        }
+        n => Err(format!("the component reads its children {n} times")),
     }
 }
 
@@ -1093,6 +1247,51 @@ impl Walker<'_, '_> {
         bubbled: &mut Vec<(String, String)>,
         diags: &mut Vec<Diagnostic>,
     ) {
+        // R34.122: a call site that cannot be specialised keeps the island Provider it had before (the page stays what
+        // it was): the node is read again as an ordinary one, with the reason as an info.
+        let snapshot = matches!(n, Node::Component { .. }).then(|| {
+            (
+                n.clone(),
+                frames.len(),
+                bubbled.len(),
+                diags.len(),
+                self.native_props.len(),
+            )
+        });
+        self.frames_node_once(n, frames, bubbled, diags);
+        let mine = match n {
+            Node::Component { loc, .. } => Some(*loc),
+            _ => None,
+        };
+        // A failure belongs to the Provider call site it names; an outer wrapper handles one found deeper.
+        if self.spec_failure.as_ref().map(|(l, _)| *l) == mine
+            && mine.is_some()
+            && let Some((loc, why)) = self.spec_failure.take()
+            && let Some((saved, nf, nb, nd, np)) = snapshot
+        {
+            *n = saved;
+            frames.truncate(nf);
+            bubbled.truncate(nb);
+            diags.truncate(nd);
+            self.native_props.truncate(np);
+            self.no_spec.insert(loc);
+            diags.push(Diagnostic::info(
+                "specialise-unsupported",
+                format!("this Provider stays a React island: {why}"),
+                loc,
+                "keep the content simple (components, text, constants) to have the Provider lowered",
+            ));
+            self.frames_node_once(n, frames, bubbled, diags);
+        }
+    }
+
+    fn frames_node_once(
+        &mut self,
+        n: &mut Node,
+        frames: &mut Vec<Frame>,
+        bubbled: &mut Vec<(String, String)>,
+        diags: &mut Vec<Diagnostic>,
+    ) {
         match n {
             Node::Element { children, .. } | Node::Fragment(children) => children
                 .iter_mut()
@@ -1136,11 +1335,24 @@ impl Walker<'_, '_> {
                 };
                 // A React island (and what it receives as children or element props) renders with React's own
                 // context at run time: nothing in its subtree is read here, and it provides nothing at compile time.
-                let island = !matches!(cir.tier, Tier::Static | Tier::Native);
+                // R34.116/R34.122: a Provider whose frame is state-valued is specialised for this call site below.
+                let native_prov =
+                    child.path.is_some() && !self.no_spec.contains(loc) && self.specialisable(&cir);
+                let island = !matches!(cir.tier, Tier::Static | Tier::Native) && !native_prov;
                 // F3 (fail closed): a Provider that is lowered away no longer shares a React tree with an island
                 // under it, which would hydrate standalone and read the context DEFAULT. Any island (or a static
                 // child holding one) under an active frame, or inside a Provider's own tree, keeps the page React.
-                if ((island || cir.holds_island) && !frames.is_empty())
+                // R34.122: an island among the content of a native frame cannot move into the clone (it would hydrate
+                // standalone and read the context default): that Provider call site keeps its island.
+                let under_native = (island || cir.holds_island)
+                    .then(|| frames.iter().rev().find_map(|f| f.owner.map(|_| f.loc)))
+                    .flatten();
+                if let Some(at) = under_native {
+                    self.spec_failure.get_or_insert((
+                        at,
+                        format!("<{name}> is, or holds, a React island in the content"),
+                    ));
+                } else if ((island || cir.holds_island) && !frames.is_empty())
                     || (!island && cir.holds_island && !cir.provides.is_empty())
                 {
                     diags.push(Diagnostic::fallback(
@@ -1169,7 +1381,9 @@ impl Walker<'_, '_> {
                 }
                 // The `__ctx_` prefix is the lowering's own. This pass runs before the lowering adds any hidden prop, so
                 // every prop met here with that prefix was written by the author: it would override a frame value.
-                if let Some((k, _)) = props.iter().find(|(k, _)| k.starts_with("__ctx_")) {
+                if !self.ctx.specialised
+                    && let Some((k, _)) = props.iter().find(|(k, _)| k.starts_with("__ctx_"))
+                {
                     diags.push(Diagnostic::fallback(
                         "context-shape",
                         format!("the prop `{k}` uses the `__ctx_` prefix, which brust reserves for context values"),
@@ -1209,12 +1423,36 @@ impl Walker<'_, '_> {
                                 })
                             }
                         };
+                        if let Some(o) = frames
+                            .iter()
+                            .rev()
+                            .find(|fr| fr.context == u.context)
+                            .and_then(|fr| fr.owner)
+                        {
+                            self.native_props.push((*loc, hidden.clone(), o));
+                        }
                         props.push((hidden, value));
                     }
                 }
                 // Provider: its values, in this scope, for the children passed to it.
                 let mut pushed = 0;
-                for pd in &cir.provides {
+                let owner = native_prov.then(|| {
+                    self.next_owner += 1;
+                    self.next_owner
+                });
+                // A clone already holds the content its frame served: it pushes no frame of its own.
+                for pd in cir.provides.iter().filter(|_| !cir.specialised) {
+                    if let Some(o) = owner {
+                        // R34.116: the fields stay expressions of the Provider's own scope.
+                        frames.push(Frame {
+                            context: pd.context.clone(),
+                            fields: pd.fields.clone(),
+                            owner: Some(o),
+                            loc: *loc,
+                        });
+                        pushed += 1;
+                        continue;
+                    }
                     let mut fields = Vec::new();
                     let mut failed = None;
                     for (k, raw) in &pd.fields {
@@ -1235,6 +1473,8 @@ impl Walker<'_, '_> {
                             frames.push(Frame {
                                 context: pd.context.clone(),
                                 fields,
+                                owner: None,
+                                loc: *loc,
                             });
                             pushed += 1;
                         }
@@ -1255,9 +1495,249 @@ impl Walker<'_, '_> {
                     .iter_mut()
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
                 frames.truncate(frames.len() - pushed);
+                if let Some(o) = owner
+                    && self.spec_failure.as_ref().map(|(l, _)| *l) != Some(*loc)
+                {
+                    // R34.122: the Provider and its content become one component for this call site.
+                    let from = child.path.clone().unwrap_or_default();
+                    match self.specialise(&cir, &from, o, *loc, props, children) {
+                        Ok((id, key)) => {
+                            *name = id;
+                            *source = Some(SPEC_SOURCE.to_string());
+                            *imported = Some(key);
+                            member.clear();
+                            children.clear();
+                        }
+                        Err(why) => self.spec_failure = Some((*loc, why)),
+                    }
+                }
             }
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
+    }
+
+    /// R34.116: whether `cir` is a Provider whose frame is state-valued and a native clone of it can carry the frame.
+    fn specialisable(&self, cir: &ComponentIR) -> bool {
+        // A clone already carries its content (it is what a call site names after specialising).
+        !cir.specialised
+            && !cir.provides.is_empty()
+            && !crate::analyze::context::frames_are_plain(cir)
+            && crate::analyze::context::native_provider_problem(cir).is_none()
+            // The island diagnostic `context-state` is the only reason it is React; a clone drops it.
+            && cir
+                .diagnostics
+                .iter()
+                .filter(|d| d.class == DiagClass::Fallback)
+                .all(|d| d.rule == "context-state" || super::tier::CHILD_ONLY.contains(&d.rule.as_str()))
+    }
+
+    /// R34.122-R34.123: a clone of `cir` (re-read from its module) whose `{children}` is `content`, compiled as its own
+    /// component. Returns its id and cache key.
+    fn specialise(
+        &mut self,
+        cir: &Rc<ComponentIR>,
+        c_path: &str,
+        owner: usize,
+        loc: u32,
+        _props: &[(String, Expr)],
+        content: &mut Vec<Node>,
+    ) -> Result<(String, String), String> {
+        let ctx = self.ctx;
+        let export = match &cir.export {
+            Some(n) => Export::Named(n.clone()),
+            None => Export::Default,
+        };
+        let mut nodes = std::mem::take(content);
+        self.check_owner(&nodes, owner)?;
+        self.check_free_names(&nodes, owner)?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        let exp = cir.export.as_deref().unwrap_or("default");
+        // One clone per call site: its id is built from the call site, so its jinja, jobs and instance records are the
+        // call site's own. Clones whose chunks are equal share ONE factory module at lowering (R34.124).
+        let id = format!("{}_s{:08x}", cir.id, spec_hash(ctx.path, loc));
+        let key = format!("{c_path}#{exp}~spec~{}~{loc}", ctx.path);
+        let mut once = Some(nodes);
+        let clone_id = id.clone();
+        let clone = crate::analyze::modules::compile_specialised(
+            c_path,
+            &export,
+            key.clone(),
+            ctx.opts,
+            ctx.modules,
+            &mut |ir: &mut ComponentIR| {
+                splice_children(ir, once.take().unwrap_or_default())?;
+                ir.id = clone_id.clone();
+                ir.specialised = true;
+                ir.diagnostics.retain(|d| d.rule != "context-state");
+                Ok(())
+            },
+        )?;
+        // A clone that still needs React would be an island of the Provider WITHOUT the content that moved into it:
+        // the call site keeps the island it had, with its children.
+        if let Tier::React { reason, .. } = &clone.tier {
+            let reason = reason.clone();
+            ctx.modules.borrow_mut().remove(&key);
+            return Err(format!("the specialised component needs React ({reason})"));
+        }
+        Ok((id, key))
+    }
+
+    /// R34.123 (Mellow S2), first iteration: nothing in the content may name the call site. A name of the rendering
+    /// component (a prop, state, a handler, a loop value of an enclosing list, an import) would be read against the
+    /// clone's own members once the content moves there, and a handler or ref attribute is a hoisted name of the caller.
+    /// The only call-site names that cross are none: the content is markup, constants, `Global` reads, names bound inside
+    /// the content, and the hidden context props the frame filled (expressions of the Provider's own scope). A shape the
+    /// hidden-input mechanism would carry is refused by name for now.
+    fn check_free_names(&self, content: &[Node], owner: usize) -> Result<(), String> {
+        fn expr(e: &Expr, bound: &[String], what: &str) -> Result<(), String> {
+            let (Expr::Raw(r) | Expr::Server(ServerExpr(r))) = e else {
+                return Ok(());
+            };
+            let mut bad: Option<String> = None;
+            crate::lower::common::visit_idents(r, &mut |name, kind| {
+                if bad.is_some() {
+                    return;
+                }
+                let ok = match kind {
+                    IdentKind::Global => true,
+                    IdentKind::LoopBinding | IdentKind::Local => bound.iter().any(|b| b == name),
+                    _ => false,
+                };
+                if !ok {
+                    bad = Some(format!(
+                        "{what} reads `{name}`, a name of the component that renders it"
+                    ));
+                }
+            });
+            bad.map_or(Ok(()), Err)
+        }
+        fn walk(
+            n: &Node,
+            owner: usize,
+            native: &[(u32, String, usize)],
+            bound: &mut Vec<String>,
+        ) -> Result<(), String> {
+            match n {
+                Node::Element {
+                    attrs, children, ..
+                } => {
+                    for a in attrs {
+                        match a {
+                            Attr::Static { .. } => {}
+                            Attr::Dynamic { name, value } => {
+                                expr(value, bound, &format!("the attribute `{name}`"))?
+                            }
+                            Attr::InnerHtml { value } | Attr::Spread(value) => {
+                                expr(value, bound, "an attribute")?
+                            }
+                            Attr::Event { event, .. } => {
+                                return Err(format!(
+                                    "an `on{event}` handler is written in the content (a handler of the component that renders it)"
+                                ));
+                            }
+                            Attr::Ref { name } => {
+                                return Err(format!("the ref `{name}` is written in the content"));
+                            }
+                        }
+                    }
+                    children
+                        .iter()
+                        .try_for_each(|c| walk(c, owner, native, bound))
+                }
+                Node::Slot(e) => expr(e, bound, "a text"),
+                Node::If {
+                    cond, then, else_, ..
+                } => {
+                    expr(cond, bound, "a condition")?;
+                    then.iter()
+                        .chain(else_)
+                        .try_for_each(|c| walk(c, owner, native, bound))
+                }
+                Node::For {
+                    source,
+                    item,
+                    index,
+                    key,
+                    body,
+                } => {
+                    expr(source, bound, "a list")?;
+                    let before = bound.len();
+                    bound.push(item.clone());
+                    if let Some(i) = index {
+                        bound.push(i.clone());
+                    }
+                    expr(key, bound, "a list key")?;
+                    let r = body.iter().try_for_each(|c| walk(c, owner, native, bound));
+                    bound.truncate(before);
+                    r
+                }
+                Node::Component {
+                    loc,
+                    props,
+                    children,
+                    ..
+                } => {
+                    for (k, v) in props {
+                        // Filled by the frame of THIS Provider: an expression of its own scope.
+                        if native
+                            .iter()
+                            .any(|(l, kk, o)| l == loc && kk == k && *o == owner)
+                        {
+                            continue;
+                        }
+                        expr(v, bound, &format!("the prop `{k}`"))?;
+                    }
+                    children
+                        .iter()
+                        .try_for_each(|c| walk(c, owner, native, bound))
+                }
+                Node::Fragment(cs) => cs.iter().try_for_each(|c| walk(c, owner, native, bound)),
+                Node::Text(_) | Node::Outlet => Ok(()),
+            }
+        }
+        let mut bound = Vec::new();
+        content
+            .iter()
+            .try_for_each(|c| walk(c, owner, &self.native_props, &mut bound))
+    }
+
+    /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
+    /// read the clone's own members by name. Refused.
+    fn check_owner(&self, content: &[Node], owner: usize) -> Result<(), String> {
+        fn walk(n: &Node, owner: usize, native: &[(u32, String, usize)]) -> Result<(), String> {
+            match n {
+                Node::Component {
+                    loc,
+                    props,
+                    children,
+                    ..
+                } => {
+                    for (k, _) in props {
+                        if native
+                            .iter()
+                            .any(|(l, kk, o)| l == loc && kk == k && *o != owner)
+                        {
+                            return Err(format!(
+                                "a consumer reads the frame of an outer Provider from inside another Provider's content (`{k}`)"
+                            ));
+                        }
+                    }
+                    children.iter().try_for_each(|c| walk(c, owner, native))
+                }
+                Node::Element { children, .. } | Node::Fragment(children) => {
+                    children.iter().try_for_each(|c| walk(c, owner, native))
+                }
+                Node::If { then, else_, .. } => then
+                    .iter()
+                    .chain(else_)
+                    .try_for_each(|c| walk(c, owner, native)),
+                Node::For { body, .. } => body.iter().try_for_each(|c| walk(c, owner, native)),
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => Ok(()),
+            }
+        }
+        content
+            .iter()
+            .try_for_each(|c| walk(c, owner, &self.native_props))
     }
 
     /// `raw`, an expression of the Provider component `cir`'s body, as an expression of the scope that renders it
@@ -1618,14 +2098,27 @@ impl Walker<'_, '_> {
         loc: u32,
     ) -> Child {
         let ctx = self.ctx;
+        // R34.122: a call site the pass already specialised names its clone in the module cache.
+        if source == Some(SPEC_SOURCE)
+            && let Some(key) = imported
+            && let Some(Entry::Done(ir)) = ctx.modules.borrow().get(key).cloned()
+        {
+            let path = ir.source.clone();
+            let id = ir.id.clone();
+            return self.finish(name, Some(id), Some(path), Lookup::Compiled(ir), loc);
+        }
         let Some(source) = source else {
             return self.local_child(name, loc);
         };
         let Some(path) = resolve(ctx.path, source, ctx.opts) else {
-            if source.starts_with("./") || source.starts_with("../") {
+            if crate::analyze::modules::is_relative_spec(source) {
                 self.diagnostics.push(Diagnostic::error(
                     "unresolved-import",
-                    format!("cannot resolve component <{name}> from {source}"),
+                    if crate::analyze::modules::import_leaves_root(ctx.path, source, ctx.opts) {
+                        format!("cannot resolve component <{name}> from {source}: it leaves the app root")
+                    } else {
+                        format!("cannot resolve component <{name}> from {source}")
+                    },
                     loc,
                     "import a .tsx/.ts module or a directory with index.tsx",
                 ));
@@ -1846,6 +2339,7 @@ impl Walker<'_, '_> {
                     modules: ctx.modules,
                     local: ctx.local,
                     is_root: false,
+                    specialised: false,
                 };
                 run_passes(&mut child, &child_ctx);
                 finish_diagnostics(&mut child, ctx.text);
@@ -3315,7 +3809,18 @@ impl Walker<'_, '_> {
         if value == poly.negate {
             return; // the host element
         }
-        if !matches!(child.tier, Tier::Static) {
+        // Q5 (R34.117): a native CONSUMER of the Provider this clone was specialised for may be `asChild`: its host
+        // is the child element, and everything it binds is the frame's members, fed as hidden `__ctx_` props whose
+        // values are the clone's own (the frames pass already refused an outer Provider's frame, A1/A2). A
+        // component with state of its own, one outside a clone, or one with no frame member is not.
+        let is_frame = |k: &str| k.starts_with("__ctx_");
+        let owned_consumer = self.ctx.specialised
+            && matches!(child.tier, Tier::Native)
+            && props.iter().any(|(k, _)| is_frame(k))
+            && child.ir.as_ref().is_some_and(|ir| {
+                ir.state.is_empty() && ir.refs.is_empty() && ir.effects.is_empty()
+            });
+        if !matches!(child.tier, Tier::Static) && !owned_consumer {
             self.diagnostics.push(refuse(
                 "slot-native",
                 format!(
@@ -3328,7 +3833,7 @@ impl Walker<'_, '_> {
         }
         if props
             .iter()
-            .any(|(_, v)| matches!(v, Expr::ClientOnly { .. }))
+            .any(|(k, v)| matches!(v, Expr::ClientOnly { .. }) && !is_frame(k))
         {
             self.diagnostics.push(refuse(
                 "slot-handler",
@@ -4187,7 +4692,9 @@ impl Walker<'_, '_> {
         for k in &want {
             let body = self.st.prop_raws[&(loc, k.clone())].clone();
             let mut n = self.st.handler_names.len() + 1;
-            while self.st.handler_names.contains(&format!("_h{n}")) {
+            while self.st.handler_names.contains(&format!("_h{n}"))
+                || self.st.reserved.contains(&format!("_h{n}"))
+            {
                 n += 1;
             }
             let hname = format!("_h{n}");

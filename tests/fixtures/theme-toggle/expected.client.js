@@ -5,7 +5,7 @@ const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__
 export default defineBehavior("input_7a17a8db", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const mode = signal("dark")
   const label = computed(() => mode() === "dark" ? "Light" : "Dark")
-  const _h1 = (...a) => (() => mode.set((m) => m === "dark" ? "light" : "dark"))(...a)
+  const _h1 = (...__args) => (() => mode.set((m) => m === "dark" ? "light" : "dark"))(...__args)
   const _c1 = computed(() => __attrs(props().themeLabel))
   const _c2 = computed(() => __text(label()))
   __effect(() => { void [mode()]; return untracked(() => (((mode) => (() => {

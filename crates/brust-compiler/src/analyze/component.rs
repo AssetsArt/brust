@@ -467,7 +467,7 @@ fn read_function_as(
     }
     // R34.67 (G2): a hand-written call to the JSX runtime builds an element the reader cannot see
     // through; read as an expression it would print an element object. Fail closed.
-    if let Some(loc) = crate::analyze::jsx::jsx_runtime_call(&w.calls, reader.names) {
+    if let Some(loc) = crate::analyze::jsx::jsx_runtime_call(&w.calls, &w.used_at, reader.names) {
         ir.diagnostics.push(Diagnostic::fallback(
             "jsx-runtime-call",
             "a hand-written call to React's JSX runtime (`jsx(…)`) is not read as an element; the component renders as a React island",
@@ -499,6 +499,11 @@ fn read_function_as(
         ));
     }
     (ir.module_scope, ir.module_decls) = reader.module_scope(ast);
+    ir.bound_names = reader
+        .names
+        .spellings()
+        .chain(reader.names.print_aliases().values().cloned())
+        .collect();
     ir.plain_fns = crate::analyze::plain_fn::plain_fns(ast, &*reader.names);
     // F215 allowlist: a module `const` is accepted when the folder folds it or `plain_fn` proves it plain.
     let folded = {
@@ -567,9 +572,9 @@ fn read_function_as(
     if let Some(loc) = reader.names.ctx_escape.get() {
         ir.diagnostics.push(Diagnostic::fallback(
             "context-escape",
-            "a context value is used as a whole (not `context.field`); brust reads the fields one by one",
+            "a context value is used as a whole, or inside code brust prints as written (an effect, a handler), not as `context.field` in the render; brust reads the fields one by one",
             loc,
-            "read context.field, or keep this component in React",
+            "read context.field into a const in the render, or keep this component in React",
         ));
     }
     if let Some((loc, name, code, what)) = reader.names.prop_read_problem.borrow().clone() {
@@ -617,8 +622,9 @@ fn read_function_as(
     ir.id_bindings = body.id_bindings;
     ir.stores = body.stores;
     ir.diagnostics.extend(body.diagnostics);
-    // S2: a Provider whose values cannot be expressed at the call site (state, a handler, a loop value) is not
-    // compiled yet (a native provider is a later step): the component stays a React island, as before.
+    // S2: a Provider whose values cannot be expressed at the call site (state, a handler, a loop value) is a React
+    // island of its own. A call site that can specialise it (R34.122) builds a clone of its pre-pass IR with this
+    // diagnostic removed and never reaches the island; every other call site keeps the island, as before.
     if let Some((loc, why)) = crate::analyze::context::provider_problem(ir) {
         ir.diagnostics.push(Diagnostic::fallback(
             "context-state",

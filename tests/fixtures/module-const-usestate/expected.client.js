@@ -6,8 +6,8 @@ const __text = (v) => (typeof v === "boolean" ? "" : Array.isArray(v) ? v.map(__
 export default defineBehavior("input_c0e8de97", ({ el: __el, props, effect: __effect, onCleanup: __onCleanup, ref: __ref }) => {
   const n = signal(START)
   const tab = signal(TABS[0])
-  const _h1 = (...a) => (() => n.set(n() + 1))(...a)
-  const _h2 = (...a) => (() => tab.set("two"))(...a)
+  const _h1 = (...__args) => (() => n.set(n() + 1))(...__args)
+  const _h2 = (...__args) => (() => tab.set("two"))(...__args)
   const _c1 = computed(() => __text(n()))
   const _c2 = computed(() => __text(tab()))
   return { n, tab, _h1, _h2, _c1, _c2 }

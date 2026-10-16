@@ -76,11 +76,11 @@ export function renderReport(rows: AppRow[], libs: LibPackage[], repro: Repro[])
   const mt = (t: Measured['tier']) => built.filter((r) => r.build.measured.tier === t).length
   const gz = built.map((r) => r.build.measured.jsGzip).sort((a, b) => a - b)
   const med = gz.length ? gz[Math.floor(gz.length / 2)]! : 0
-  out.push('**Units.** Client JS = the gzip size of the client JS the page loads (the runtime core, the feature modules the page preloads `rt-*`, the chunk of each island and native component it reaches, and the shared chunks those import; the chunk of a React child of an island is not loaded, the island renders it), rounded to the nearest 1 KB (a non-zero size never shows 0); a page with no island and no native chunk loads no JS and shows exactly `0`. Exact raw and gzip bytes per page go to `tests/fixtures/shadcn/.rows/shadcn-sizes.json` on every run (not committed; CI uploads it as an artifact). Byte regressions are guarded by the runtime-split budget, not by this file.', '')
+  out.push('**Units.** Client JS = the gzip size of the client JS the page loads (the runtime core, the feature modules the page preloads `rt-*`, the chunk of each island and native component it reaches, and the shared chunks those import; the chunk of a React child of an island is not loaded, the island renders it), rounded to the nearest 1 KiB (a non-zero size never shows 0); a page with no island and no native chunk loads no JS and shows exactly `0`. Exact raw and gzip bytes per page go to `tests/fixtures/shadcn/.rows/shadcn-sizes.json` on every run (not committed; CI uploads it as an artifact). Byte regressions are guarded by the runtime-split budget, not by this file.', '')
   out.push(`### Measured (${built.length} of ${rows.length} pages built)`, '')
   out.push('A page is **measured** when its own `brust build` succeeded: tier, components, islands and client JS are read from its `dist/manifest.json` and `dist/client`.', '')
   out.push('| Pages | static | native | react | islands in total | pages with 0 JS | pages with no worker call | Client JS gzip, smallest / median / largest |', '|---|---|---|---|---|---|---|---|')
-  out.push(`| ${built.length} | ${mt('static')} | ${mt('native')} | ${mt('react')} | ${built.reduce((n, r) => n + r.build.measured.islands, 0)} | ${gz.filter((n) => n === 0).length} | ${built.filter((r) => r.build.measured.workerCalls === 0).length} | ${kb(gz[0] ?? 0)} / ${kb(med)} / ${kb(gz.at(-1) ?? 0)} KB |`, '')
+  out.push(`| ${built.length} | ${mt('static')} | ${mt('native')} | ${mt('react')} | ${built.reduce((n, r) => n + r.build.measured.islands, 0)} | ${gz.filter((n) => n === 0).length} | ${built.filter((r) => r.build.measured.workerCalls === 0).length} | ${kb(gz[0] ?? 0)} / ${kb(med)} / ${kb(gz.at(-1) ?? 0)} KiB |`, '')
   out.push(`### Analysis-only (${refused.length} of ${rows.length} pages refused)`, '')
   out.push('A page the build refuses has no manifest. It keeps the refusal (rule, place, construct) and the compiler\'s own `compileTree` analysis of the page (tier and fallback codes); there are no island or byte counts for it. Library numbers below are analysis-only too.', '')
   out.push('| Page | Refusal | Where | Construct |', '|---|---|---|---|')
@@ -108,8 +108,8 @@ export function renderReport(rows: AppRow[], libs: LibPackage[], repro: Repro[])
   for (const r of repro) out.push(`| ${r.id} | ${cell(r.what)} | ${cell(list(r.codes))} | ${r.build.ok ? 'ok' : cell(`failed: ${r.build.message}`)} |`)
   out.push('')
   out.push('## App rows', '')
-  out.push('Basis `measured` = read from the page\'s own successful build; `analysis-only` = the build was refused, tier and codes are the compiler\'s `compileTree` analysis. Islands = React islands the page ships (a React page root is one island). Components = components in the tree (React ones in brackets). Client JS in KB as defined under Summary. Worker = the job calls one request of the page makes (0: answered without the worker; see Method).', '')
-  out.push('| Row | Basis | Tier | Islands | Components | Client JS gzip KB | Worker | Fallback codes | Outcome |', '|---|---|---|---|---|---|---|---|---|')
+  out.push('Basis `measured` = read from the page\'s own successful build; `analysis-only` = the build was refused, tier and codes are the compiler\'s `compileTree` analysis. Islands = React islands the page ships (a React page root is one island). Components = components in the tree (React ones in brackets). Client JS in KiB as defined under Summary. Worker = the job calls one request of the page makes (0: answered without the worker; see Method).', '')
+  out.push('| Row | Basis | Tier | Islands | Components | Client JS gzip KiB | Worker | Fallback codes | Outcome |', '|---|---|---|---|---|---|---|---|---|')
   for (const r of rows) {
     if (r.build.ok) {
       const m = r.build.measured

@@ -73,6 +73,11 @@ impl ModuleCache {
     pub fn insert(&mut self, key: String, e: Entry) {
         self.map.insert(key, e);
     }
+
+    /// Forgets `key` (a specialised clone that turned out to need React).
+    pub fn remove(&mut self, key: &str) {
+        self.map.remove(key);
+    }
 }
 
 /// Which component of a module.
@@ -127,6 +132,61 @@ pub fn compile(
         Entry::Failed(d) => Lookup::Failed(d),
         Entry::InProgress => unreachable!(),
     }
+}
+
+/// R34.123: compiles `export` of the module at `path` as a specialisation of it: the component's own pre-pass IR is
+/// handed to `splice`, which puts the call site's content into it, and the result goes through the whole pass pipeline
+/// as a component of its own under `key` (a synthetic cache key, not a path). The component is the same function of the
+/// same module, so everything it resolves (imports, local components, module scope) resolves as it does for the
+/// original.
+pub fn compile_specialised(
+    path: &str,
+    export: &Export,
+    key: String,
+    opts: &AnalyzeOptions,
+    modules: &RefCell<ModuleCache>,
+    splice: &mut dyn FnMut(&mut ComponentIR) -> Result<(), String>,
+) -> Result<Rc<ComponentIR>, String> {
+    if let Some(Entry::Done(ir)) = modules.borrow().get(&key) {
+        return Ok(ir.clone());
+    }
+    let path = &normalize(path);
+    let source =
+        std::fs::read(opts.root.join(path)).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let parsed =
+        crate::parse::parse_tsx(path, source).map_err(|e| format!("{path}: {}", e.message))?;
+    let mut ir = match export {
+        Export::Default => analyze_component_in(&parsed, Some(opts)).map_err(|d| d.message)?,
+        Export::Named(name) => {
+            use crate::analyze::exports::{Binding, find};
+            let local = match parsed.with_ast(|ast| find(ast, name)) {
+                Binding::Fn(l) | Binding::Local(l) => l,
+                _ => return Err(format!("{path} has no function declaration `{name}`")),
+            };
+            let mut ir = analyze_named_component_in(&parsed, &local, Some(opts))
+                .ok_or_else(|| format!("{path} has no function declaration `{local}`"))?;
+            ir.id = crate::ir::named_component_id(path, name);
+            ir.export = Some(name.clone());
+            ir
+        }
+    };
+    splice(&mut ir)?;
+    let local = |name: &str| analyze_named_component_in(&parsed, name, Some(opts));
+    let ctx = PassCtx {
+        text: parsed.text(),
+        opts,
+        path,
+        modules,
+        local: &local,
+        is_root: false,
+        specialised: true,
+    };
+    run_passes(&mut ir, &ctx);
+    finish_diagnostics(&mut ir, parsed.text());
+    ir.alias_imports = parsed.alias_imports();
+    let ir = Rc::new(ir);
+    modules.borrow_mut().insert(key, Entry::Done(ir.clone()));
+    Ok(ir)
 }
 
 fn compile_uncached(
@@ -193,6 +253,7 @@ fn compile_uncached(
         modules,
         local: &local,
         is_root: modules.borrow().is_root(&cache_key(path, export)),
+        specialised: false,
     };
     run_passes(&mut ir, &ctx);
     finish_diagnostics(&mut ir, parsed.text());
@@ -200,30 +261,70 @@ fn compile_uncached(
     Ok(ir)
 }
 
-/// The module a relative import names, as a path relative to the root:
-/// `<rel>`, `<rel>.tsx`, `<rel>.ts`, `<rel>/index.tsx`, `<rel>/index.ts`, first that exists.
-/// `None` for a package import or when nothing exists.
-pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String> {
-    if !(rel.starts_with("./") || rel.starts_with("../")) {
-        return None;
-    }
+/// Whether `spec` names a file relative to its importer: `./x`, `../x`, and the bare `.` and `..` (a directory's index).
+/// The one place the compiler tells a relative import from a package (F218): a bare `.`/`..` was read as a package name
+/// by some passes and as nothing by others.
+pub fn is_relative_spec(spec: &str) -> bool {
+    spec == "." || spec == ".." || spec.starts_with("./") || spec.starts_with("../")
+}
+
+/// `rel` joined onto the directory of `parent` and normalised (`..` that climb past the start stay as leading `..`).
+fn join_relative(parent: &str, rel: &str) -> String {
     let dir = match parent.rfind('/') {
         Some(i) => &parent[..i],
         None => "",
     };
-    let joined = normalize(&if dir.is_empty() && !parent.starts_with('/') {
+    normalize(&if dir.is_empty() && !parent.starts_with('/') {
         rel.to_string()
     } else {
         format!("{dir}/{rel}")
-    });
-    let mut candidates = Vec::new();
-    if joined.ends_with(".tsx") || joined.ends_with(".ts") {
-        candidates.push(joined.clone());
+    })
+}
+
+/// Whether a normalised module path lies outside the app root (F243): a leading `..`, or an absolute path that is not
+/// under `opts.root` when its importer is. (An absolute importer outside the root, as the tests analyse, has no root to
+/// stay in.) The package sources the build writes live under the root (`.brust/pkg-src`), so they are inside.
+fn leaves_root(parent: &str, joined: &str, opts: &AnalyzeOptions) -> bool {
+    let under = |p: &str| std::path::Path::new(p).starts_with(&opts.root);
+    joined == ".."
+        || joined.starts_with("../")
+        || (joined.starts_with('/') && under(parent) && !under(joined))
+}
+
+/// Whether the relative import `rel` of `parent` names a place outside the app root: such an import is refused, never
+/// read (F243). Callers that report an unresolved import say so by name.
+pub fn import_leaves_root(parent: &str, rel: &str, opts: &AnalyzeOptions) -> bool {
+    is_relative_spec(rel) && leaves_root(parent, &join_relative(parent, rel), opts)
+}
+
+/// The module a relative import names, as a path relative to the root:
+/// `<rel>`, `<rel>.tsx`, `<rel>.ts`, `<rel>/index.tsx`, `<rel>/index.ts`, first that exists.
+/// `None` for a package import or when nothing exists.
+pub fn resolve(parent: &str, rel: &str, opts: &AnalyzeOptions) -> Option<String> {
+    if !is_relative_spec(rel) {
+        return None;
     }
-    candidates.push(format!("{joined}.tsx"));
-    candidates.push(format!("{joined}.ts"));
-    candidates.push(format!("{joined}/index.tsx"));
-    candidates.push(format!("{joined}/index.ts"));
+    let joined = join_relative(parent, rel);
+    if leaves_root(parent, &joined, opts) {
+        return None;
+    }
+    let mut candidates = Vec::new();
+    // `.` and `..` name a directory: only its index can answer (`../a.tsx` for `..` from `a/b.tsx` would be a file).
+    let dir_only = rel == "." || rel == "..";
+    if !dir_only {
+        if joined.ends_with(".tsx") || joined.ends_with(".ts") {
+            candidates.push(joined.clone());
+        }
+        candidates.push(format!("{joined}.tsx"));
+        candidates.push(format!("{joined}.ts"));
+    }
+    let base = if joined.is_empty() || joined == "." {
+        String::new()
+    } else {
+        format!("{joined}/")
+    };
+    candidates.push(format!("{base}index.tsx"));
+    candidates.push(format!("{base}index.ts"));
     candidates.into_iter().find(|c| opts.root.join(c).is_file())
 }
 
@@ -281,7 +382,7 @@ pub fn resolve_module(parent: &str, spec: &str, opts: &AnalyzeOptions) -> Option
 /// L20: the key of the CSS module `rel` names, relative to the module at `parent`: a path relative to the
 /// root, `/`-separated, as `AnalyzeOptions::css_modules` is keyed. `None` for a package import.
 pub fn css_module_key(parent: &str, rel: &str) -> Option<String> {
-    if !(rel.starts_with("./") || rel.starts_with("../")) {
+    if !is_relative_spec(rel) {
         return None;
     }
     let dir = parent.rfind('/').map_or("", |i| &parent[..i]);
@@ -336,7 +437,45 @@ fn opaque_island(path: &str, name: &str) -> ComponentIR {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize;
+    use super::{import_leaves_root, is_relative_spec, normalize, resolve};
+    use crate::analyze::component::AnalyzeOptions;
+
+    // F218: one predicate for "relative", and `.` / `..` resolve to the directory index on the same path as `./x`.
+    #[test]
+    fn dot_specifiers_are_relative_and_name_a_directory_index() {
+        for s in [".", "..", "./a", "../a"] {
+            assert!(is_relative_spec(s), "{s}");
+        }
+        for s in ["", "a", ".a", "..a", ".hidden/x", "react", "@s/p", "/abs"] {
+            assert!(!is_relative_spec(s), "{s}");
+        }
+        let root = std::env::temp_dir().join(format!("brust-f218-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a/b")).unwrap();
+        for f in ["index.tsx", "a/index.tsx", "a/b/c.tsx", "a.tsx"] {
+            std::fs::write(root.join(f), "").unwrap();
+        }
+        let opts = AnalyzeOptions {
+            root: root.clone(),
+            ..Default::default()
+        };
+        // `.` from a/b/c.tsx is a/b: no index there, and never the sibling FILE a/b.tsx or a.tsx.
+        assert_eq!(resolve("a/b/c.tsx", ".", &opts), None);
+        // `..` from a/b/c.tsx is a/: its index, not a.tsx.
+        assert_eq!(
+            resolve("a/b/c.tsx", "..", &opts).as_deref(),
+            Some("a/index.tsx")
+        );
+        // `.` from the root file is the root index.
+        assert_eq!(resolve("x.tsx", ".", &opts).as_deref(), Some("index.tsx"));
+        assert_eq!(
+            resolve("a/b/c.tsx", "../../a", &opts).as_deref(),
+            Some("a.tsx")
+        );
+        // a bare package name is still not relative
+        assert_eq!(resolve("a/b/c.tsx", "react", &opts), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn normalizes_relative_segments() {
@@ -345,5 +484,43 @@ mod tests {
         assert_eq!(normalize("./C"), "C");
         assert_eq!(normalize("/abs/dir/./C"), "/abs/dir/C");
         assert_eq!(normalize("../x"), "../x");
+    }
+
+    // F243: a relative import never leaves the app root, even when the file it names exists.
+    #[test]
+    fn resolve_is_confined_to_the_app_root() {
+        let base = std::env::temp_dir().join(format!("brust-f243-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("app");
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join(".brust/pkg-src/p/src")).unwrap();
+        std::fs::write(base.join("outside.tsx"), "").unwrap();
+        std::fs::write(root.join("a/in.tsx"), "").unwrap();
+        std::fs::write(root.join(".brust/pkg-src/p/src/x.tsx"), "").unwrap();
+        let opts = AnalyzeOptions {
+            root: root.clone(),
+            ..Default::default()
+        };
+        // `outside.tsx` exists one level above the root: refused, by name for the diagnostic.
+        assert_eq!(resolve("a/b.tsx", "../../outside", &opts), None);
+        assert!(import_leaves_root("a/b.tsx", "../../outside", &opts));
+        assert_eq!(resolve("a/b.tsx", "../../../../../..", &opts), None);
+        assert!(import_leaves_root("a/b.tsx", "../../../..", &opts));
+        assert!(import_leaves_root("x.tsx", "..", &opts));
+        // inside: the app itself and the written package sources
+        assert_eq!(
+            resolve("a/b.tsx", "./in", &opts).as_deref(),
+            Some("a/in.tsx")
+        );
+        assert!(!import_leaves_root("a/b.tsx", "../a/in", &opts));
+        assert_eq!(
+            resolve(".brust/pkg-src/p/src/y.tsx", "./x", &opts).as_deref(),
+            Some(".brust/pkg-src/p/src/x.tsx")
+        );
+        // an absolute importer inside the root is held to it too; one outside has no root to stay in
+        let abs = root.join("a/b.tsx").to_string_lossy().into_owned();
+        assert!(import_leaves_root(&abs, "../../outside", &opts));
+        assert!(!import_leaves_root("/elsewhere/a.tsx", "./b", &opts));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

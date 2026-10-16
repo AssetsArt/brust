@@ -4,7 +4,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { addAliasPath, componentsJson, SHADCN_DEP_PINS, SHADCN_DEPS, SHADCN_VERSION, shadcnInit } from '../src/shadcn/init'
+import { addAliasPath, componentsJson, SCAN_LIMIT, SHADCN_DEP_PINS, SHADCN_DEPS, SHADCN_VERSION, shadcnInit } from '../src/shadcn/init'
 import { readObject } from '../src/shadcn/jsonc'
 
 const dirs: string[] = []
@@ -22,6 +22,7 @@ const TSCONFIG = `{
   "exclude": ["dist"],
 }
 `
+const ITEM = JSON.stringify({ name: 'acme-card', type: 'registry:ui', files: [{ path: 'registry/acme/ui/acme-card.tsx', type: 'registry:ui' }] })
 const THEME = '@import "tailwindcss";\n@import "tw-animate-css";\n@import "shadcn/tailwind.css";\n'
 
 function project(over: { pkg?: object | null; tsconfig?: string | null; css?: string | null } = {}): string {
@@ -52,6 +53,7 @@ async function init(root: string, args: { components?: string[]; fail?: string }
       return fail !== undefined && argv.includes(fail) ? 7 : 0
     },
     out: (s) => lines.push(s),
+    fetchItem: async () => ITEM, // F228: a URL item is fetched and checked before the CLI runs; no network in tests
     ...rest,
   } as Parameters<typeof shadcnInit>[0])
   return { calls, lines, code }
@@ -125,7 +127,8 @@ test('paths cases: into an existing paths, an empty one, an identical entry, ano
 })
 
 test('an unparseable tsconfig is not touched; the exact line to add is printed (R41.4)', async () => {
-  const bad = '{ "extends": "./base.json" }'
+  // (was `{ "extends": "./base.json" }` with no such file: since F226 an extends chain that cannot be read is refused)
+  const bad = '{ "include": ["src"] }'
   const d = project({ tsconfig: bad })
   const r = await init(d)
   expect(readFileSync(join(d, 'tsconfig.json'), 'utf8')).toBe(bad)
@@ -202,7 +205,12 @@ test('names are validated before anything is written or spawned; URLs must be ht
   const d = project()
   const ok = await init(d, { components: ['https://ui.example.dev/r/styles/new-york-v4/button.json', 'dialog'] })
   expect(ok.code).toBe(0)
-  expect(ok.calls.at(-1)).toEqual(['bun', 'x', `shadcn@${SHADCN_VERSION}`, 'add', 'https://ui.example.dev/r/styles/new-york-v4/button.json', 'dialog', '-y'])
+  // F228: the CLI is given the item that was checked (a local copy), not the URL
+  const last = ok.calls.at(-1)!
+  expect(last.slice(0, 4)).toEqual(['bun', 'x', `shadcn@${SHADCN_VERSION}`, 'add'])
+  expect(last[4]).toMatch(/brust-shadcn-item-[^/]+\/button-0\.json$/)
+  expect(last.slice(5)).toEqual(['dialog', '-y'])
+  expect(existsSync(last[4]!)).toBe(false) // removed after the CLI ran
 })
 
 test('every spawned argv is an array of plain strings, never a shell line (R41.8)', async () => {
@@ -285,14 +293,16 @@ test('a registry URL whose item is already installed is skipped on a second run;
   const d = project()
   const url = 'https://ui.example.dev/r/acme-card.json'
   const first = await init(d, { components: [url] })
-  expect(first.calls.at(-1)).toContain(url)
+  expect(first.calls.at(-1)!.some((a) => a.endsWith('acme-card-0.json'))).toBe(true)
   expect(first.lines.join('\n')).toContain('third-party code')
+  expect(first.lines.join('\n')).toContain('registryDependencies') // F249: the unvetted boundary is in the warning
+  expect(first.lines.join('\n')).toContain('npm packages')
   mkdirSync(join(d, 'components/ui'), { recursive: true })
   writeFileSync(join(d, 'components/ui/acme-card.tsx'), 'export {}')
   const second = await init(d, { components: [url] })
   expect(second.calls.some((c) => c.includes(url))).toBe(false)
   expect(second.lines.join('\n')).toContain('already in components')
-  expect((await init(d, { components: [url], force: true })).calls.at(-1)).toContain(url)
+  expect((await init(d, { components: [url], force: true })).calls.at(-1)!.some((a) => a.endsWith('acme-card-0.json'))).toBe(true)
 })
 
 test('a symlinked tsconfig.json that already has "@/*" is not refused and is left alone (F192)', async () => {
@@ -419,13 +429,17 @@ test('F193: a custom alias with an unreadable components.json is refused (fail c
   expect(r.calls).toEqual([])
 })
 
-test('F193: every target of a paths entry and nested entries of an alias directory are walked', async () => {
+test('F193: the first target of a paths entry is the one the CLI writes to, and nested entries of an alias directory are walked', async () => {
+  // tsconfig-paths (the CLI's resolver) returns the FIRST candidate of an entry; the second target is never written
   const outside = outsideDir()
-  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~k/*": ["./safe/*", "./second/*"] } } }' })
+  const d = project({ tsconfig: '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~k/*": ["./first/*", "./second/*"] } } }' })
   writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '~k/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
   mkdirSync(join(d, 'second'))
-  symlinkSync(outside, join(d, 'second/ui')) // the SECOND target of the entry
-  expect((await init(d)).code).toBe(2)
+  symlinkSync(outside, join(d, 'second/ui'))
+  expect((await init(d)).code).toBe(0) // the CLI does not write under second/
+  mkdirSync(join(d, 'first'))
+  symlinkSync(outside, join(d, 'first/ui'))
+  expect((await init(d)).code).toBe(2) // the FIRST target is where it writes
   const n = project()
   mkdirSync(join(n, 'components/ui/deep'), { recursive: true })
   symlinkSync(join(outside, 'x.tsx'), join(n, 'components/ui/deep/x.tsx')) // nested entry
@@ -433,4 +447,31 @@ test('F193: every target of a paths entry and nested entries of an alias directo
   expect(r.code).toBe(2)
   expect(r.calls).toEqual([])
   expect(readdirSync(outside)).toEqual([])
+})
+
+test('F227: a symlink 6 levels deep under an alias directory is found (no fixed depth)', async () => {
+  const outside = outsideDir()
+  const d = project()
+  mkdirSync(join(d, 'components/ui/a/b/c/d/e'), { recursive: true })
+  symlinkSync(join(outside, 'x.tsx'), join(d, 'components/ui/a/b/c/d/e/x.tsx')) // components/ui/a/b/c/d/e/x.tsx: 6 below components
+  const r = await init(d, { components: ['button'] })
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(r.lines.join('\n')).toContain('components/ui/a/b/c/d/e/x.tsx')
+  expect(readdirSync(outside)).toEqual([])
+})
+
+test('F227: an alias directory with more than SCAN_LIMIT entries is refused, not skipped', async () => {
+  const d = project()
+  mkdirSync(join(d, 'hooks'))
+  for (let i = 0; i <= SCAN_LIMIT; i++) writeFileSync(join(d, `hooks/h${i}.ts`), '')
+  const r = await init(d, { components: ['button'] })
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(r.lines.join('\n')).toContain(`more than ${SCAN_LIMIT} entries`)
+  // exactly at the bound is fine
+  const e = project()
+  mkdirSync(join(e, 'hooks'))
+  for (let i = 0; i < SCAN_LIMIT; i++) writeFileSync(join(e, `hooks/h${i}.ts`), '')
+  expect((await init(e)).code).toBe(0)
 })

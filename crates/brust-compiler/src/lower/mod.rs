@@ -34,6 +34,9 @@ pub struct Artifacts {
     pub client_js: Option<String>,
     /// Every member the chunk exports, in order.
     pub members: Vec<String>,
+    /// R34.124: modules the chunk imports that are shared by name with other components' chunks (`<name>.js` beside
+    /// it): (name, code). Equal code under one name is one file.
+    pub client_modules: Vec<(String, String)>,
     /// Warnings found while lowering (refused attributes).
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -140,11 +143,23 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
     }
     let server_ts = server::job(ir);
     let eval_ts = server::eval_module(ir);
+    let mut client_modules: Vec<(String, String)> = Vec::new();
     let (client_js, members) = if matches!(ir.tier, Tier::Static) && !(ctx.linked)(&ir.id) {
         (None, Vec::new())
     } else {
-        let (js, members) = client::chunk(ir, &out.members, ctx.runtime_import);
-        (Some(js), members)
+        if ir.specialised {
+            // R34.124: the factory is shared by every clone whose factory is equal; the chunk is a stub naming this one.
+            let (code, members) = client::factory_module(ir, &out.members, ctx.runtime_import);
+            let name = format!("spec-{:016x}", fnv64(code.as_bytes()));
+            client_modules.push((name.clone(), code));
+            (
+                Some(client::stub(&ir.id, &name, ctx.runtime_import)),
+                members,
+            )
+        } else {
+            let (js, members) = client::chunk(ir, &out.members, ctx.runtime_import);
+            (Some(js), members)
+        }
     };
     Ok(Artifacts {
         jinja: out.jinja,
@@ -152,6 +167,18 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
         eval_ts,
         client_js,
         members,
+        client_modules,
         diagnostics: out.diagnostics,
     })
+}
+
+/// 64-bit FNV-1a: stable across processes (std hashers are seeded per process). It names a shared factory module; the
+/// build stops when two different codes meet under one name.
+pub fn fnv64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
