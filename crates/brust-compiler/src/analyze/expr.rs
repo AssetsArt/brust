@@ -859,6 +859,16 @@ impl Walk {
         self.stmts(f.body.stmts.slice());
     }
 
+    /// A call's argument. Shallow: a function handed to a call may run during it (`xs.forEach((x) => …)`, a `Promise`
+    /// executor), so its body is walked (still shallow: a function nested in it is not).
+    fn call_arg(&mut self, x: &js_ast::Expr) {
+        match (&x.data, self.shallow) {
+            (E::EArrow(a), true) => self.arrow_body(a),
+            (E::EFunction(f), true) => self.func_body(&f.func),
+            _ => self.expr(x),
+        }
+    }
+
     fn arrow_body(&mut self, a: &js_ast::E::Arrow) {
         for arg in a.args.slice() {
             self.declare_binding(&arg.binding);
@@ -1019,7 +1029,7 @@ impl Walk {
             }
             E::ENew(n) => {
                 self.expr(&n.target);
-                n.args.iter().for_each(|x| self.expr(x));
+                n.args.iter().for_each(|x| self.call_arg(x));
             }
             E::ECall(c) => {
                 self.calls.push(*e);
@@ -1029,7 +1039,7 @@ impl Walk {
                     (E::EFunction(f), true) => self.func_body(&f.func),
                     _ => self.expr(&c.target),
                 }
-                c.args.iter().for_each(|x| self.expr(x));
+                c.args.iter().for_each(|x| self.call_arg(x));
             }
             E::EDot(d) => self.expr(&d.target),
             E::EIndex(i) => {

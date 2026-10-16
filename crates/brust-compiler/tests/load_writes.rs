@@ -357,3 +357,33 @@ fn a_load_writer_writes_where_its_statement_stands() {
         [("iife.ts".to_string(), vec!["o.ts".to_string()])]
     );
 }
+
+/// Afrojack (round 2): a function handed to a call at load may run during it (`forEach`, a `Promise` executor), so its
+/// writes make a writer; a function nested in that callback (or a plain handler object) still does not.
+#[test]
+fn a_callback_handed_to_a_load_time_call_writes_at_load() {
+    let (_, lw) = app(
+        "callbacks",
+        &[
+            ("b.ts", B),
+            (
+                "o.ts",
+                "export const LABELS2 = { a: 1 }\nexport const LABELS3 = { a: 1 }\n",
+            ),
+            (
+                "each.ts",
+                "import { LABELS, list } from './b'\n;['a'].forEach((k) => { LABELS.a = k })\nnew Promise((resolve) => { list.push('y'); resolve(1) })\n",
+            ),
+            (
+                "nested.ts",
+                "import { LABELS2 } from './o'\n;[1].forEach(() => { const later = () => { LABELS2.a = 2 }; void later })\n",
+            ),
+        ],
+    );
+    assert_eq!(
+        lw.writers,
+        [("each.ts".to_string(), vec!["b.ts".to_string()])]
+    );
+    // The nested write still counts for the fallback.
+    assert!(lw.why("o.ts", "LABELS2").is_some());
+}

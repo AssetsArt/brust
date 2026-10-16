@@ -22,6 +22,8 @@ let buildLog = ''
 const ROUTES = `import { defineRoutes } from "@brust/core/routes"
 import "../repro/f230/patch-e"
 import "../repro/f230/setup-secret"
+import "../repro/f230/patch-c"
+import PageC from "../repro/f230/Readc"
 import Page from "../repro/f219-page"
 import PageE from "../repro/f230/Reade"
 import Layout from "../repro/f230/Layout"
@@ -38,6 +40,7 @@ export const routes = defineRoutes([
   { path: "/r", Component: PageR },
   { path: "/o", Component: PageO },
   { path: "/f", Component: PageF },
+  { path: "/c", Component: PageC },
 ])
 `
 
@@ -84,7 +87,8 @@ import PageL from '../repro/f230/Readl'
 import PageR from '../repro/f230/Readr'
 import PageO from '../repro/f230/Reado'
 import PageF from '../repro/f230/Readf'
-const pages = { '/f219': Page, '/e': PageE, '/l': PageL, '/r': PageR, '/o': PageO, '/f': PageF }
+import PageC from '../repro/f230/Readc'
+const pages = { '/f219': Page, '/e': PageE, '/l': PageL, '/r': PageR, '/o': PageO, '/f': PageF, '/c': PageC }
 process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(pages).map(([k, P]) => [k, renderToString(<P />)]))))
 `,
   )
@@ -101,6 +105,7 @@ const CASES: [string, string, string][] = [
   ['/r', 'another route imports the writer', 'patched x,y'],
   ['/o', 'nothing writes the module', 'one x'],
   ['/f', 'the write sits in a function nothing calls', 'one x'],
+  ['/c', 'the writes run in callbacks of load-time calls (forEach, a Promise executor)', 'patched x,y'],
 ]
 
 test('served == React for a module another module writes when it loads', async () => {
@@ -115,7 +120,7 @@ test('served == React for a module another module writes when it loads', async (
 })
 
 test('a written module makes its readers fall back (named); a module only read stays compiled', async () => {
-  for (const f of ['f219/labels.ts', 'f230/labels-e.ts', 'f230/labels-l.ts', 'f230/labels-r.ts', 'f230/labels-f.ts'])
+  for (const f of ['f219/labels.ts', 'f230/labels-c.ts', 'f230/labels-e.ts', 'f230/labels-l.ts', 'f230/labels-r.ts', 'f230/labels-f.ts'])
     expect([f, buildLog.includes('module-written') && buildLog.includes(f)]).toEqual([f, true])
   expect(buildLog.includes('f230/labels-o.ts')).toBe(false)
   // The only-read case keeps its native component (directives, no React island host).
@@ -131,6 +136,8 @@ test('Mellow F1: a writer ships only to the islands whose code imports the modul
   expect([...new Set(pairs)].sort()).toEqual([
     'repro/f219/patch.ts -> label',
     'repro/f219/patch.ts -> labelState',
+    'repro/f230/patch-c.ts -> read',
+    'repro/f230/patch-c.ts -> readc',
     'repro/f230/patch-e.ts -> read',
     'repro/f230/patch-e.ts -> reade',
     'repro/f230/patch-l.ts -> read',
