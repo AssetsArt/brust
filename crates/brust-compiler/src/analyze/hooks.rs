@@ -34,6 +34,11 @@ pub struct BodyDecls {
     /// Locals bound to `useId()`.
     pub id_bindings: Vec<String>,
     pub uses_id: bool,
+    /// W1d PR 3: the tests of an early-return chain (`if (a) return A; if (b) return B; throw …`) whose last statement
+    /// throws: the render is valid only when one of them holds. `None`: no throw.
+    pub throw_unless: Option<Vec<RawExpr>>,
+    /// The props those tests read (frozen: see `ComponentIR::throw_props`).
+    pub throw_props: Vec<String>,
     /// R34.140: the component asks for the items of its collection (`useCollection(scope)`).
     pub uses_collection: bool,
     pub return_expr: Option<Expr>,
@@ -784,6 +789,122 @@ fn read_stmts(
                         returned = Some(v);
                     }
                 }
+            }
+            // W1d PR 3: `if (a) { const …; return A }` followed by the rest of the body (an early-return chain, ending in a
+            // return or a `throw`): one nested conditional, each branch's consts hoisted into the body (they are lazy
+            // derived values, so a branch that does not run costs nothing). Components only.
+            S::SIf(ifs)
+                if out.inline.stack.is_empty()
+                    && ends_with_return(&ifs.yes)
+                    && ifs.no.as_ref().is_none_or(ends_with_return_or_throw) =>
+            {
+                let test = r.expr(&ifs.test);
+                let before = out.derived.len();
+                let yes_stmts = branch_stmts(&ifs.yes);
+                let yes = match read_stmts(&yes_stmts, r, out, m) {
+                    Some(Some(v)) => v,
+                    _ => {
+                        out.fallback(
+                            "control-flow",
+                            "an early return without a value".into(),
+                            loc,
+                            "return one JSX tree",
+                        );
+                        break;
+                    }
+                };
+                let mut rest: Vec<js_ast::Stmt> = match &ifs.no {
+                    Some(n) => branch_stmts(n),
+                    None => stmts[i + 1..].to_vec(),
+                };
+                let mut throws = false;
+                if let [only] = rest.as_slice()
+                    && let S::SThrow(t) = &only.data
+                {
+                    // W1d PR 3 (ruling A): a render error with a literal message (never printed: the 500 goes through the
+                    // server's own error path); any other thrown value is not read
+                    if !literal_error_throw(&t.value, m, r.names) {
+                        out.fallback(
+                            "control-flow",
+                            "the throw of an early-return chain is not `throw new Error(<literal>)`".into(),
+                            loc,
+                            "throw an Error with a literal message, or keep this component in React",
+                        );
+                        break;
+                    }
+                    rest.clear();
+                    throws = true;
+                }
+                let no = match read_stmts(&rest, r, out, m) {
+                    Some(Some(v)) => v,
+                    None if throws => {
+                        // the chain ends in the throw: a render error
+                        out.throw_unless.get_or_insert_with(Vec::new);
+                        throw_arm(loc)
+                    }
+                    _ => {
+                        out.fallback(
+                            "control-flow",
+                            "an early-return chain must end in a return or a throw".into(),
+                            loc,
+                            "return one JSX tree",
+                        );
+                        break;
+                    }
+                };
+                if throws || out.throw_unless.is_some() {
+                    out.throw_unless
+                        .get_or_insert_with(Vec::new)
+                        .push(test.clone());
+                    let mut roots = Vec::new();
+                    prop_roots(&test, &mut roots);
+                    for p in roots {
+                        if !out.throw_props.contains(&p) {
+                            out.throw_props.push(p);
+                        }
+                    }
+                    // ruling A (3): a test that can change after mount would make the error a client-side one
+                    let body_locals: Vec<&str> = out
+                        .derived
+                        .iter()
+                        .map(|d| d.name.as_str())
+                        .chain(out.handlers.iter().map(|h| h.name.as_str()))
+                        .chain(out.refs.iter().map(|x| x.name.as_str()))
+                        .chain(out.state.iter().map(|x| x.name.as_str()))
+                        .collect();
+                    if !test_is_static(&test, &body_locals) {
+                        out.fallback(
+                            "control-flow",
+                            "the test of an early return that ends in a throw reads something that changes after mount".into(),
+                            loc,
+                            "decide the render from props, or keep this component in React",
+                        );
+                        break;
+                    }
+                }
+                // a hoisted const must not shadow another of the body
+                let names: Vec<&String> = out.derived.iter().map(|d| &d.name).collect();
+                if out.derived[before..]
+                    .iter()
+                    .any(|d| names.iter().filter(|n| **n == &d.name).count() > 1)
+                {
+                    out.fallback(
+                        "control-flow",
+                        "two branches of an early-return chain declare the same name".into(),
+                        loc,
+                        "give each branch's consts a different name",
+                    );
+                    break;
+                }
+                returned = Some(Some(RawExpr {
+                    loc,
+                    kind: RawKind::Cond {
+                        test: Box::new(test),
+                        yes: Box::new(yes),
+                        no: Box::new(no),
+                    },
+                }));
+                break;
             }
             S::SIf(_)
             | S::SFor(_)
@@ -2013,6 +2134,14 @@ fn read_decl(
         && let Some(ctx) = r.names.ctx_local(id.ref_).map(str::to_string)
     {
         return read_context_use(r, out, decl, value, &ctx, vloc);
+    }
+    // W1d PR 3: `const alias = rest` (the `...rest` object itself): the alias reads as the rest object
+    if let E::EIdentifier(v) = &value.data
+        && r.names.is_rest(v.ref_)
+        && let B::BIdentifier(id) = decl.binding.data
+    {
+        r.names.alias_rest(id.r#ref);
+        return;
     }
     // W1d PR 2: `const scope = useXScope(props.__scopeX)`, a Radix scope hook: its result is a scope token (no code)
     if let E::ECall(call) = &value.data
@@ -3832,4 +3961,112 @@ fn second_binding_of_context_scope(
             })
         })
     })
+}
+
+/// The statements of an `if` branch (a block's, or the one statement).
+fn branch_stmts(b: &js_ast::Stmt) -> Vec<js_ast::Stmt> {
+    match &b.data {
+        S::SBlock(blk) => blk.stmts.slice().to_vec(),
+        _ => vec![*b],
+    }
+}
+
+/// Whether a branch ends in a `return` of a value.
+fn ends_with_return(b: &js_ast::Stmt) -> bool {
+    matches!(branch_stmts(b).last().map(|s| &s.data), Some(S::SReturn(r)) if r.value.is_some())
+}
+
+fn ends_with_return_or_throw(b: &js_ast::Stmt) -> bool {
+    ends_with_return(b) || matches!(branch_stmts(b).last().map(|s| &s.data), Some(S::SThrow(_)))
+}
+
+/// W1d PR 3: the render-error arm of an early-return chain that ends in a `throw`.
+fn throw_arm(loc: u32) -> RawExpr {
+    RawExpr {
+        loc,
+        kind: RawKind::Call {
+            callee: Box::new(RawExpr {
+                loc,
+                kind: RawKind::Ident {
+                    name: crate::ir::THROW_FN.into(),
+                    kind: IdentKind::Global,
+                },
+            }),
+            args: Vec::new(),
+        },
+    }
+}
+
+/// `throw new Error(<literal>)` (or TypeError/RangeError): the message is a string literal, a template of string literals
+/// and module consts that are string literals, or absent.
+fn literal_error_throw(v: &js_ast::Expr, m: Module<'_, '_>, names: &NameTable<'_>) -> bool {
+    let E::ENew(n) = &v.data else { return false };
+    let E::EIdentifier(t) = &n.target.data else {
+        return false;
+    };
+    if !matches!(
+        names.name(t.ref_).as_str(),
+        "Error" | "TypeError" | "RangeError"
+    ) || !matches!(names.kind_of(t.ref_).1, IdentKind::Global)
+        || n.args.len() > 1
+    {
+        return false;
+    }
+    let module = crate::analyze::stores::Module::new(m.ast);
+    let lit = |e: &js_ast::Expr| match &e.data {
+        E::EString(_) => true,
+        E::EIdentifier(id) => matches!(
+            module.const_value(id.ref_),
+            Some(js_ast::Expr {
+                data: E::EString(_),
+                ..
+            })
+        ),
+        _ => false,
+    };
+    match n.args.first().map(|a| &a.data) {
+        None | Some(E::EString(_)) => true,
+        Some(E::ETemplate(t)) => t.tag.is_none() && t.parts.slice().iter().all(|p| lit(&p.value)),
+        _ => false,
+    }
+}
+
+/// A test that reads only props, literals and module names (not state, a store, a setter, a loop value or a body local).
+fn test_is_static(e: &RawExpr, body_locals: &[&str]) -> bool {
+    let st = |x: &RawExpr| test_is_static(x, body_locals);
+    match &e.kind {
+        RawKind::Lit(_) => true,
+        RawKind::Ident { kind, name } => match kind {
+            IdentKind::Prop => true,
+            IdentKind::Local | IdentKind::Import { .. } => !body_locals.contains(&name.as_str()),
+            _ => false,
+        },
+        RawKind::Member { target, .. } => st(target),
+        RawKind::Unary { value, .. } => st(value),
+        RawKind::Binary { left, right, .. } => st(left) && st(right),
+        RawKind::Cond { test, yes, no } => st(test) && st(yes) && st(no),
+        _ => false,
+    }
+}
+
+/// The props `e` reads (`Ident` of kind `Prop`, the root before any path).
+fn prop_roots(e: &RawExpr, out: &mut Vec<String>) {
+    match &e.kind {
+        RawKind::Ident {
+            name,
+            kind: IdentKind::Prop,
+        } => out.push(name.split(['.', '[']).next().unwrap_or(name).to_string()),
+        RawKind::Member { target, .. } => prop_roots(target, out),
+        RawKind::Unary { value, .. } => prop_roots(value, out),
+        RawKind::Binary { left, right, .. } => {
+            prop_roots(left, out);
+            prop_roots(right, out);
+        }
+        RawKind::Cond { test, yes, no } => {
+            prop_roots(test, out);
+            prop_roots(yes, out);
+            prop_roots(no, out);
+        }
+        _ => {}
+    }
 }

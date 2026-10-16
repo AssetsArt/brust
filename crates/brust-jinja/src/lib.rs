@@ -42,6 +42,17 @@ pub fn register(env: &mut Environment<'_>) {
         ValueKind::String => v.as_str().unwrap_or_default().to_string(),
         _ => js_string(&v),
     });
+    // W1d PR 3: a component threw while rendering (`throw new Error(…)` at the end of an early-return chain): the render
+    // fails, the server answers with its own 500 and logs this. The message is fixed: nothing of the app reaches a body.
+    env.add_filter(
+        "render_error",
+        |_v: Value| -> Result<Value, minijinja::Error> {
+            Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "a component threw while rendering",
+            ))
+        },
+    );
     env.add_filter("js_str", |v: Value| paint(&v));
     env.add_filter("js_string", |v: Value| js_string(&v));
     env.add_filter("attr_str", |v: Value| attr_string(&v));
@@ -984,6 +995,32 @@ mod tests {
         let mut env = Environment::new();
         register(&mut env);
         env.render_str(src, ctx).unwrap()
+    }
+
+    /// W1d PR 3: `render_error` fails the whole render with a fixed message, whatever it is given, and only where it is
+    /// reached (an untaken branch renders).
+    #[test]
+    fn render_error_fails_the_render_where_it_is_reached_with_a_fixed_message() {
+        let mut env = Environment::new();
+        register(&mut env);
+        let e = env
+            .render_str(
+                "a{% if t %}{{ (none | render_error) | e }}{% endif %}b",
+                minijinja::context! { t => true },
+            )
+            .unwrap_err();
+        assert!(
+            e.to_string().contains("a component threw while rendering"),
+            "{e}"
+        );
+        assert!(!e.to_string().contains("secret"), "{e}");
+        let ok = env
+            .render_str(
+                "a{% if t %}{{ (none | render_error) | e }}{% endif %}b",
+                minijinja::context! { t => false },
+            )
+            .unwrap();
+        assert_eq!(ok, "ab");
     }
 
     /// F296 C3: style declarations print as react-dom prints them (values read off react-dom 19 by

@@ -655,6 +655,7 @@ fn read_function_as(
     ir.derived = body.derived;
     ir.effects = body.effects;
     ir.handlers = body.handlers;
+    ir.throw_props = body.throw_props;
     ir.refs = body.refs;
     ir.use_id_slots = body.id_bindings.len();
     ir.uses_collection = body.uses_collection;

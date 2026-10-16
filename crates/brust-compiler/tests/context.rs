@@ -1125,3 +1125,137 @@ fn a_scope_factory_imported_from_a_module_that_made_it_is_followed() {
         ind.1.diagnostics
     );
 }
+
+// ---- W1d PR 3: early-return chains and a render error (ruling A) ----
+
+/// An early-return chain is one nested conditional; each branch's consts are hoisted; the last arm is a plain return.
+#[test]
+fn an_early_return_chain_is_one_nested_conditional() {
+    let all = compile("chain.tsx");
+    assert!(
+        all.iter().all(|(_, ir, _)| !is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| &ir.diagnostics)
+            .collect::<Vec<_>>()
+    );
+    let boxed = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("box"))
+        .expect("box");
+    assert!(
+        boxed.2.contains(r#"kind == "a""#)
+            && boxed.2.contains(r#"kind == "b""#)
+            && boxed.2.contains("<div>"),
+        "{}",
+        boxed.2
+    );
+}
+
+/// Ruling A: the ending `throw new Error(<literal>)` is a render error arm; the message never reaches the template.
+#[test]
+fn a_chain_ending_in_a_literal_throw_prints_a_render_error_arm_without_the_message() {
+    let all = compile("chain-throw.tsx");
+    assert!(
+        all.iter().all(|(_, ir, _)| !is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| &ir.diagnostics)
+            .collect::<Vec<_>>()
+    );
+    let sw = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("switch"))
+        .expect("switch");
+    assert!(sw.2.contains("render_error"), "{}", sw.2);
+    assert!(
+        !sw.2.contains("Missing prop") && !sw.2.contains("Switch'"),
+        "{}",
+        sw.2
+    );
+}
+
+/// Ruling A (1, 3): a thrown value that is not an Error with a literal message, or a test that reads state, stays React.
+#[test]
+fn a_throw_that_is_not_a_literal_error_or_a_test_that_changes_after_mount_stays_react() {
+    for f in [
+        "chain-throw-msg.tsx",
+        "chain-throw-value.tsx",
+        "chain-throw-state.tsx",
+    ] {
+        let all = compile(f);
+        let sw = all
+            .iter()
+            .find(|(id, ..)| id.starts_with("switch"))
+            .expect("switch");
+        assert!(
+            is_react(&sw.1) && sw.1.diagnostics.iter().any(|d| d.rule == "control-flow"),
+            "{f}: {:?} {:?}",
+            sw.1.tier,
+            sw.1.diagnostics
+        );
+    }
+}
+
+/// W1d PR 3: Radix ToggleGroup's root shape: a rest object aliased in each branch (`const singleProps = rest`), a module
+/// const object as the discriminant's other side, a literal throw at the end.
+#[test]
+fn a_rest_aliased_in_each_branch_of_a_type_switch_lowers() {
+    let all = compile("chain-rest.tsx");
+    let rules: Vec<&str> = all.iter().flat_map(|(_, ir, _)| rules(ir)).collect();
+    assert!(all.iter().all(|(_, ir, _)| !is_react(ir)), "{rules:?}");
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.to_lowercase().starts_with("chainrest"))
+        .expect("page");
+    assert!(
+        page.2.contains("radiogroup") && page.2.contains("toolbar"),
+        "{}",
+        page.2
+    );
+}
+
+/// W1d PR 3 (ruling A, condition 3; Mellow F1): the props a throwing chain tests are frozen, so a call site that passes a value
+/// that changes on the client falls back (`frozen-prop`), and a literal passes.
+#[test]
+fn the_props_a_throwing_chain_tests_are_frozen_against_a_changing_call_site() {
+    let all = compile("chain-throw-live.tsx");
+    let sw = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("switch"))
+        .expect("switch");
+    assert!(
+        sw.1.frozen_props.iter().any(|p| p == "type"),
+        "{:?}",
+        sw.1.frozen_props
+    );
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.to_lowercase().starts_with("chainthrowlive"))
+        .expect("page");
+    assert!(
+        is_react(&page.1) && page.1.diagnostics.iter().any(|d| d.rule == "frozen-prop"),
+        "{:?} {:?}",
+        page.1.tier,
+        page.1.diagnostics
+    );
+    // a literal at the call site is fine (chain-throw.tsx)
+    let ok = compile("chain-throw.tsx");
+    assert!(ok.iter().all(|(_, ir, _)| !is_react(ir)));
+}
+
+/// N1 (Mellow, Afrojack): only a `const` can alias the rest object.
+#[test]
+fn a_let_alias_of_the_rest_object_is_not_an_alias() {
+    let all = compile("chain-rest-let.tsx");
+    let sw = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("switch"))
+        .expect("switch");
+    assert!(
+        is_react(&sw.1) && sw.1.diagnostics.iter().any(|d| d.rule == "let-var"),
+        "{:?} {:?}",
+        sw.1.tier,
+        sw.1.diagnostics
+    );
+}

@@ -734,6 +734,21 @@ mod tests {
             .unwrap();
         assert_eq!(out, "<ul><li>A</li><li>B</li></ul>");
 
+        // W1d PR 3: a component that threw while rendering (`render_error`) is a render error, not a page
+        let mut templates = std::collections::BTreeMap::new();
+        templates.insert(
+            "Throws".to_string(),
+            "{% if bad %}{{ (none | render_error) | e }}{% else %}ok{% endif %}".to_string(),
+        );
+        let t = Renderer::from_templates(&templates).unwrap();
+        assert_eq!(t.render("Throws", &json!({"bad": false})).unwrap(), "ok");
+        match t.render("Throws", &json!({"bad": true})) {
+            Err(RenderError::Render { msg, .. }) => {
+                assert!(msg.contains("a component threw while rendering"), "{msg}")
+            }
+            other => panic!("expected a render error, got {other:?}"),
+        }
+
         match r.render("NotThere", &json!({})) {
             Err(RenderError::Unknown(name)) => assert_eq!(name, "NotThere"),
             other => panic!("expected Unknown, got {other:?}"),

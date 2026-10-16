@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderColl, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderColl, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame, renderSw } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -440,6 +440,19 @@ test('F326: a local object that spreads the props among plain entries (Radix Tog
   expect(html).not.toContain('brust-island')
   // React prints a true boolean attribute as `disabled=""`, brust as `disabled`: the same HTML
   expect(plain(html)).toBe(plain(renderLocalSpread()).replace(/ (disabled)=""/g, ' $1'))
+}, 60_000)
+
+test('W1d PR 3: an early-return chain on a prop (Radix ToggleGroup\'s root shape): each type equals React, an invalid type is the server\'s own 500 with no message', async () => {
+  for (const kind of ['single', 'multiple']) {
+    const html = await (await fetch(`${base}/sw/${kind}`)).text()
+    expect(html).not.toContain('brust-island')
+    expect(plain(html)).toBe(plain(renderSw(kind)))
+  }
+  const bad = await fetch(`${base}/sw/other`)
+  expect(bad.status).toBe(500)
+  const body = await bad.text()
+  expect(body).toBe('500 Internal Server Error')
+  expect(body).not.toMatch(/Missing prop|Switch|threw/)
 }, 60_000)
 
 test('a recognised createCollection (R34.140): the markup equals React\'s, getItems() lists the items in document order with their data, a disabled item is skipped', async () => {
