@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 15 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 55 | 9 | 17 | 29 | 0 | 0 | 0 | 0 |
+| C Hooks | 73 | 12 | 23 | 38 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 428 | 197 | 60 | 167 | 3 | 1 | 0 | 0 |
+| **Total** | 446 | 200 | 66 | 176 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -348,17 +348,35 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-use-context | use(context) | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | spec §3 react tier: use |
 | c-useformstatus | useFormStatus read in the component | react | react | ssr | ok | 3.8 | fallback:hook-unsupported | react-dom hook, outside the supported set |
 | c-useformstatus-child | useFormStatus in a child inside a static <form> | react | static | ssr | ok | 3.8 | — | known gap: F115: the root is static and Submit is an island, but the <form> is not a React form, so pending never becomes true; the root should be react |
+| c-hook-rest-param | custom hook with a ...rest parameter whose body calls an exported function of its module | native | native | 0 | ok | 4.4 | — | B2: a rest parameter is the array of the remaining arguments; an exported function the hook calls is imported by the component; `return useCallback(…)` is read under a generated name |
+| c-forwarded-ref-to-hook | the forwardRef ref handed whole to a custom hook | native | native | 0 | ok | 4.4 | — | B3: the forwarded ref handed whole to a hook is null (a native component is never given a ref) |
+| c-forwarded-ref-member | the forwardRef ref read as a member (ref.current) | react | react | ssr | ok | 3.8 | fallback:forwardref-ref | B3: any read of the forwarded ref other than ref={ref} or a whole argument still needs React (forwardref-ref) |
+| c-callback-ref | ref={fn} with a useCallback function | native | native | 0 | ok | 4.4 | — | B1: a ref that is a function value becomes a synthetic ref and a mount effect that calls it with the node |
+| c-callback-ref-in-list | ref={fn} on an element inside a list | react | react | ssr | ok | 3.8 | fallback:ref-shape | B1: a callback ref inside a list stays ref-shape |
+| c-callback-ref-in-conditional | ref={fn} on an element under a conditional | react | react | ssr | ok | 3.8 | fallback:ref-shape | B1: a callback ref on an element that may mount later stays ref-shape (the mount effect runs once) |
+| c-object-spread-rest-key | an object literal spreading a ...rest key | native | native | precompute | ok | 4.4 | — | B5: ...rest.key in an object literal reads that prop and spreads it (Object.assign), instead of reading the rest object as a value |
+| c-object-spread-rest-whole | an object literal spreading the whole ...rest object | react | react | ssr | ok | 3.8 | fallback:prop-pattern | B5: the whole rest object read as a value stays prop-pattern |
+| c-ref-never-written | a useRef(init) only read as .current in the render | native | native | 0 | ok | 4.4 | — | B4: a ref nobody writes is its initial value, held as a state cell |
+| c-ref-written-read-in-render | a useRef written in a handler and read in the render | react | react | ssr | ok | 3.8 | fallback:ref-in-render | B4: a written ref read during render stays ref-in-render |
 | c-useid-in-attribute | useId() called in attribute values of the returned tree | native | native | 0 | ok | 4.4 | — | R34.120: an unconditional useId() in the returned expression is the same hook as const id = useId() before the return |
 | c-useid-in-conditional | useId() called in a branch of the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | R34.120: a hook in a conditional position stays refused (hook-in-expression) |
 | c-useid-comma-call | useId called through a comma (`(0, useId)()`, bundler output) | static | static | 0 | ok | 0 | — | F237: the comma spelling is the hook (was a per-request job calling useId outside a render) |
 | c-useid-in-key | useId() called in an element key | react | react | ssr | ok | 3.8 | fallback:hook-in-expression, warning:key-outside-list | F235: the JSX runtime evaluates key after the props, so the hook is refused there (hook-in-expression) |
 | c-useid-logical-assign | useId() on the right side of `??=` in the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | F236: the right side of \|\|=, &&=, ??= runs conditionally, so the hook is refused there (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | 4.8 | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |
+| c-render-prop-guarded | a render prop a state Provider calls under typeof, falling back to children | static | static | 0 | ok | 4.8 | — | B7/R34.122 b: the arrow body is spliced where the Provider calls it, its parameter bound to the Provider's own state; no island |
+| c-render-prop-is-function-helper | a render prop a state Provider guards with a typeof helper (isFunction(render)) | static | static | 0 | ok | 4.8 | — | B7: Radix's isFunction(render) ? render(ctx) : children; the helper is accepted only when its body is exactly typeof v === "function" |
+| c-render-prop-used-otherwise | a render prop the Provider reads besides calling it | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7: a function the Provider also hands around cannot be spliced; the Provider stays an island (specialise-unsupported) |
+| c-render-prop-capture | a render prop whose list row rebinds a name its argument reads | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Afrojack): substituting the argument into the row would capture the row binding; fail closed (specialise-unsupported) |
+| c-render-prop-provider-in-body | a render body holding a Provider, next to the writer's own children | static | static | ssr | ok | 3.8 | — | B7 (Mellow F1): a Provider written inside a render arrow must not provide to the writer's own children (they read the context default) |
+| c-render-prop-computed-arg | a render prop called with a computed argument | react | react | ssr | ok | 5.1 | fallback:island-prop, info:specialise-unsupported, info:jsx-outside-render | B7 (Mellow S3): an argument that is not a plain read is not substituted; the Provider stays an island |
+| c-native-provider-live-name-nested | a live value of the page printed inside a consumer's own host in a state Provider's content | react | react | ssr | ok | 5.1 | fallback:island-children, fallback:slot-owner, info:specialise-unsupported | S2/O1: the input is owned by the clone but printed inside the consumer's host, which would bind it by the wrong instance; the Provider stays an island |
+| c-native-provider-ref-in-content | a ref of the page written in a state Provider's content | react | react | ssr | ok | 5.1 | fallback:island-children, info:specialise-unsupported | S2: a ref cannot cross into the clone |
 | c-native-provider-as-child | asChild on a consumer of a state Provider, with a plain element child | static | static | 0 | ok | 4.8 | — | Q5/R34.117: the consumer's host is the caller's element, carrying the frame's bindings and handler |
 | c-native-provider-as-child-handler | asChild on a consumer of a state Provider, the child element has its own handler | react | react | ssr | ok | 5.1 | fallback:island-children, fallback:slot-native, fallback:slot-owner, info:specialise-unsupported | Q5: a handler on the asChild child is not composed yet (child first, then the Provider's); the Provider stays an island |
 | c-native-provider-two-sites | two call sites of a state Provider with different text | static | static | 0 | ok | 4.8 | — | R34.124: one clone per call site (own jinja and ids), one shared factory module for the equal chunks |
-| c-native-provider-handler-in-content | a page handler written in the content of a state Provider | react | react | ssr | ok | 5.1 | fallback:island-children, info:specialise-unsupported | R34.125: a page-owned handler in the content cannot move into the clone (specialise-unsupported; the island keeps it) |
-| c-native-provider-caller-prop | a prop of the calling component read in the content of a state Provider | static | static | ssr | ok | 5.1 | info:specialise-unsupported | R34.123 (S2): a name of the rendering component would read the clone's own members; the Provider stays the island |
+| c-native-provider-handler-in-content | a page handler written in the content of a state Provider | native | native | 0 | ok | 4.4 | — | S2 (F262): a page handler written in the content is called through a hidden input of the clone (the page keeps the closure) |
+| c-native-provider-caller-prop | a prop of the calling component read in the content of a state Provider | static | static | 0 | ok | 4.4 | — | S2 (F262): the caller's prop is a hidden input of the clone; fixed there, so it prints once |
 | c-native-provider-outer-frame | a consumer of an outer Provider inside another Provider's content | static | static | ssr | ok | 5.1 | info:specialise-unsupported | A1: the outer frame's expressions would be read against the inner clone's members |
 | c-native-provider-ctx-in-effect | a consumer that reads the context inside an effect | static | static | ssr | ok | 3.8 | info:specialise-unsupported | context-escape: a context local is not a value in code printed as written |
 | c-handler-binding-named-a | a handler that reads a component binding named a | native | native | 0 | ok | 4.4 | — | F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array |

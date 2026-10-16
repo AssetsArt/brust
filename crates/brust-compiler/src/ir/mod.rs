@@ -249,6 +249,13 @@ pub struct ComponentIR {
     /// S2 context lowering: what this component's Provider element hands to its children (see `ProvideDecl`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provides: Vec<ProvideDecl>,
+    /// B7: the render-prop arrows this component writes on its children, read as templates (see `RenderProp`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub render_props: Vec<RenderProp>,
+    /// S2: props of a specialised clone whose value the call site fixes for the life of the instance (a hidden input
+    /// that is not client-changing there): reading one is not a client change.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fixed_props: Vec<String>,
     /// The context fields this component reads, each as a hidden prop (see `CtxUse`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ctx_uses: Vec<CtxUse>,
@@ -420,6 +427,8 @@ impl ComponentIR {
             alias_imports: vec![],
             absent_props: Vec::new(),
             provides: Vec::new(),
+            render_props: Vec::new(),
+            fixed_props: Vec::new(),
             ctx_uses: Vec::new(),
             ctx_pkg: false,
             plain_fns: Vec::new(),

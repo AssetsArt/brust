@@ -13,7 +13,8 @@ const FIXTURE = join(import.meta.dir, '../fixtures/shadcn')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
 const ENTRY = '.rows/generated-names-routes.tsx'
 const OUT = '.rows/dist-generated-names'
-// Keep in sync with tests/fixtures/shadcn/repro/generated-names.tsx.
+// The fixture is generated (bun scripts/gen-generated-names.ts) from NAMES in crates/brust-compiler/tests/generated_names.rs;
+// scripts/gen-generated-names.test.ts fails when this copy differs.
 const NAMES = ['signal', 'computed', 'untracked', 'defineBehavior', 'props', '__el', '__effect', '__onCleanup', '__ref', '__text', '__attr', '__attrs', '__attro', '__css', '__unitless', '__bool', '__args', '_c1', '_l1', '_k1', '_p1']
 // After one click: the count is 1, the derived value 2 (it doubles the count).
 const ROLES: Record<string, string> = { state: '1', derived: '2', handler: '1', ref: '1' }

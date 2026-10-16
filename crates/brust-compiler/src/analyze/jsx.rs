@@ -481,7 +481,17 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                     forwarded_ref = true;
                     continue;
                 }
+                let rendered = if let E::EArrow(arrow) = &value.data
+                    && let Some(rp) = read_render_arrow(r, arrow, loc, &name)
+                {
+                    r.render_props.push(rp);
+                    true
+                } else {
+                    false
+                };
+                r.verbatim_unused = rendered;
                 let v = r.expr(value);
+                r.verbatim_unused = false;
                 match union_names
                     .contains(&name)
                     .then(|| props_out.iter().position(|(n, _)| *n == name))
@@ -580,6 +590,89 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
             forwarded_ref,
         },
     }
+}
+
+/// B7: `render={({ a, b }) => <jsx/>}` (or `render={() => <jsx/>}`) on a component, read as a template: the keys the
+/// arrow destructures, and its JSX body with those names bound as loop bindings (values the callee supplies). `None`
+/// for any other shape (a pattern with a default, a rest, a nested pattern or a computed key; an `async` arrow; a block
+/// body; a body that is not JSX; a body that needs a hoisted handler or reports a diagnostic): the prop stays the
+/// client-only value it always was.
+fn read_render_arrow(
+    r: &mut Reader<'_, '_>,
+    arrow: &js_ast::E::Arrow,
+    loc: u32,
+    key: &str,
+) -> Option<crate::ir::RenderProp> {
+    if arrow.is_async || arrow.args.len() > 1 {
+        return None;
+    }
+    let mut params: Vec<(String, js_ast::Ref)> = Vec::new();
+    if let Some(p) = arrow.args.slice().first() {
+        if p.default.is_some() {
+            return None;
+        }
+        let B::BObject(obj) = p.binding.data else {
+            return None;
+        };
+        for prop in obj.properties() {
+            if prop.flags.contains(js_ast::flags::Property::IsSpread)
+                || prop.flags.contains(js_ast::flags::Property::IsComputed)
+                || prop.default_value.is_some()
+            {
+                return None;
+            }
+            let (E::EString(k), B::BIdentifier(id)) = (&prop.key.data, prop.value.data) else {
+                return None;
+            };
+            params.push((estring(k), id.r#ref));
+        }
+    }
+    let [only] = arrow.body.stmts.slice() else {
+        return None;
+    };
+    let S::SReturn(ret) = &only.data else {
+        return None;
+    };
+    let body_expr = ret.value?;
+    if !is_jsx(&body_expr) {
+        return None;
+    }
+    // The body is read a second time (the prop itself stays the client-only value), so nothing it does to the reader
+    // may stay: diagnostics, hoisted handlers, `useId` hoists, nested render props and, above all, the Providers it
+    // would hand to the CALLER's own children.
+    let (diags, handlers) = (r.diagnostics.len(), r.pending_handlers.len());
+    let (provides, renders) = (r.provides.len(), r.render_props.len());
+    let hoisted = r.hoisted_calls.clone();
+    for (_, b) in &params {
+        r.names.mark_loop_binding(*b);
+        r.loop_scope.push(r.names.name(*b));
+    }
+    let mut body = Vec::new();
+    read_child(r, &body_expr, &mut body);
+    r.loop_scope.truncate(r.loop_scope.len() - params.len());
+    for (_, b) in &params {
+        r.names.unmark_loop_binding(*b);
+    }
+    // Reading this body again is not allowed to leave anything behind.
+    // A Provider in the body would have to scope its consumers to the body: not supported, the prop stays as it was.
+    let clean = r.diagnostics.len() == diags
+        && r.pending_handlers.len() == handlers
+        && r.provides.len() == provides
+        && r.hoisted_calls == hoisted;
+    r.diagnostics.truncate(diags);
+    r.pending_handlers.truncate(handlers);
+    r.provides.truncate(provides);
+    r.render_props.truncate(renders);
+    r.hoisted_calls = hoisted;
+    clean.then(|| crate::ir::RenderProp {
+        loc,
+        key: key.to_string(),
+        params: params
+            .into_iter()
+            .map(|(k, b)| (k, r.names.name(b)))
+            .collect(),
+        body,
+    })
 }
 
 /// A Provider element (S2): its value fields are what the consumers under it read. Radix's Provider takes them as

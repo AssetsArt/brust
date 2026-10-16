@@ -4,8 +4,8 @@ use crate::analyze::hooks::{Module, mark_state_bindings, read_body};
 use crate::analyze::names::Aliases;
 use crate::analyze::names::NameTable;
 use crate::ir::{
-    Attr, BinOp, ComponentIR, Diagnostic, Expr, Literal, Node, RawExpr, RawKind, component_id,
-    line_col, named_component_id,
+    ArrowBody, Attr, BinOp, ComponentIR, Diagnostic, EffectDecl, Expr, IdentKind, Literal, Node,
+    RawExpr, RawKind, RefDecl, component_id, line_col, named_component_id,
 };
 use crate::parse::Parsed;
 use bun_ast as js_ast;
@@ -559,6 +559,7 @@ fn read_function_as(
     ir.ctx_pkg =
         !ir.ctx_uses.is_empty() && ir.source.starts_with(crate::analyze::modules::PKG_SRC_DIR);
     ir.provides = std::mem::take(&mut reader.provides);
+    ir.render_props = std::mem::take(&mut reader.render_props);
     for u in &ir.ctx_uses {
         for f in &u.fields {
             let name = crate::ir::ctx_prop(&u.context, f);
@@ -594,6 +595,16 @@ fn read_function_as(
             "a name of a `const { … } = props` pattern is used before the pattern statement (React throws: the binding is not initialised yet)",
             loc,
             "move the pattern above its first use",
+        ));
+    }
+    if let Some(loc) = reader.names.snapshot_escape.get() {
+        // B4: a never-written ref read in the render is a state cell; code printed as written would read `.current`
+        // off its value, so it keeps the fallback it had.
+        ir.diagnostics.push(Diagnostic::fallback(
+            "ref-in-render",
+            "a ref read during render is also read by code printed as written",
+            loc,
+            "read the ref in an effect or an event handler",
         ));
     }
     if let Some(loc) = reader.names.rest_escape.get() {
@@ -635,8 +646,152 @@ fn read_function_as(
         .map(root_node)
         .unwrap_or(Node::Fragment(vec![]));
     ir.template = host_root(root, root_loc);
+    callback_refs(ir);
     ir.uses_outlet = has_outlet(&ir.template);
     check_printer_panic(ir);
+}
+
+/// B1: `ref={x}` where `x` is a function value or a ref object the component computes (a `useCallback`, a derived
+/// value, a state setter) and not a `useRef` binding (a ref handed in as a prop cannot cross from a native caller, so
+/// it stays a `ref-shape` fallback). React calls a function ref with the node at mount (and
+/// its returned cleanup, or `null`, at unmount) and sets `.current` on an object ref. Each such attribute is
+/// desugared to a synthetic `useRef` bound on the element plus a mount effect that does `setRef(x, node)`, which is
+/// what `composeRefs` itself does. A ref on an element inside a list, a conditional branch or a component's children (which
+/// may mount later or never) stays a `ref-shape` fallback. The mount effects go FIRST in `ir.effects`: React attaches
+/// refs before it runs any effect of the owner.
+fn callback_refs(ir: &mut ComponentIR) {
+    let callable: Vec<(String, IdentKind)> = ir
+        .derived
+        .iter()
+        .map(|d| (d.name.clone(), IdentKind::Local))
+        .chain(
+            ir.handlers
+                .iter()
+                .map(|h| (h.name.clone(), IdentKind::Local)),
+        )
+        .chain(
+            ir.state
+                .iter()
+                .filter_map(|s| s.setter.clone().map(|n| (n, IdentKind::Setter))),
+        )
+        .collect();
+    let mut taken: std::collections::HashSet<String> =
+        ir.refs.iter().map(|r| r.name.clone()).collect();
+    taken.extend(callable.iter().map(|(n, _)| n.clone()));
+    let mut made: Vec<(String, String, IdentKind, u32)> = Vec::new();
+    fn walk(
+        n: &mut Node,
+        refs: &std::collections::HashSet<String>,
+        callable: &[(String, IdentKind)],
+        taken: &mut std::collections::HashSet<String>,
+        made: &mut Vec<(String, String, IdentKind, u32)>,
+        in_list: bool,
+    ) {
+        match n {
+            Node::Element {
+                loc,
+                attrs,
+                children,
+                ..
+            } => {
+                for a in attrs.iter_mut() {
+                    let Attr::Ref { name } = a else { continue };
+                    if in_list || refs.contains(name) {
+                        continue;
+                    }
+                    let Some((_, kind)) = callable.iter().find(|(c, _)| c == name) else {
+                        continue;
+                    };
+                    let mut k = made.len() + 1;
+                    let rf = loop {
+                        let rf = format!("_rf{k}");
+                        if taken.insert(rf.clone()) {
+                            break rf;
+                        }
+                        k += 1;
+                    };
+                    made.push((rf.clone(), name.clone(), kind.clone(), *loc));
+                    *name = rf;
+                }
+                children
+                    .iter_mut()
+                    .for_each(|c| walk(c, refs, callable, taken, made, in_list));
+            }
+            // A branch or a component's children may mount later or not at all; the mount effect cannot follow that.
+            Node::If { then, else_, .. } => then
+                .iter_mut()
+                .chain(else_.iter_mut())
+                .for_each(|c| walk(c, refs, callable, taken, made, true)),
+            Node::For { body, .. } => body
+                .iter_mut()
+                .for_each(|c| walk(c, refs, callable, taken, made, true)),
+            Node::Component { children, .. } => children
+                .iter_mut()
+                .for_each(|c| walk(c, refs, callable, taken, made, true)),
+            Node::Fragment(children) => children
+                .iter_mut()
+                .for_each(|c| walk(c, refs, callable, taken, made, in_list)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    let refs: std::collections::HashSet<String> = ir.refs.iter().map(|r| r.name.clone()).collect();
+    let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
+    walk(
+        &mut template,
+        &refs,
+        &callable,
+        &mut taken,
+        &mut made,
+        false,
+    );
+    ir.template = template;
+    for (at, (rf, x, kind, loc)) in made.into_iter().enumerate() {
+        // Locals of the effect that neither shadow `x` nor the ref.
+        let local = |base: &str| {
+            let mut n = base.to_string();
+            while n == x || n == rf {
+                n.push('_');
+            }
+            n
+        };
+        let (node, r, c, cleanup) = (
+            local("__node"),
+            local("__r"),
+            local("__c"),
+            local("__cleanup"),
+        );
+        let source = format!(
+            "() => {{ const {node} = {rf}.current; const {r} = {x}; let {cleanup}; if (typeof {r} === \"function\") {{ const {c} = {r}({node}); {cleanup} = typeof {c} === \"function\" ? {c} : () => {r}(null) }} else if ({r} !== null && {r} !== undefined) {{ {r}.current = {node}; {cleanup} = () => {{ {r}.current = null }} }} return {cleanup} }}"
+        );
+        ir.refs.push(RefDecl {
+            name: rf.clone(),
+            init: Expr::Raw(RawExpr {
+                loc,
+                kind: RawKind::Lit(Literal::Null),
+            }),
+        });
+        ir.effects.insert(
+            at,
+            EffectDecl {
+                body: RawExpr {
+                    loc,
+                    kind: RawKind::Arrow {
+                        params: Vec::new(),
+                        body: ArrowBody::Block {
+                            source,
+                            captures_only: false,
+                        },
+                        captures: vec![(x.clone(), kind.clone()), (rf.clone(), IdentKind::Local)],
+                    },
+                },
+                deps: Some(vec![RawExpr {
+                    loc,
+                    kind: RawKind::Ident { name: x, kind },
+                }]),
+                layout: true,
+            },
+        );
+    }
 }
 
 /// F42 backstop: raise `printer-panic` when `print_js` caught a printer panic since the last check.

@@ -322,6 +322,13 @@ jobs:
       - run: bun test --timeout 180000 tests/server/toggle-live.chromium.test.ts
       # F214: page state in the slot of a native child stays React (slot-owner), served == React.
       - run: bun test --timeout 180000 tests/server/slot-owner.chromium.test.ts
+      # B1: ref={fn} (a callback ref that is not a useRef binding) is called with the element at mount.
+      - run: bun test --timeout 120000 tests/server/callback-ref.chromium.test.ts
+      # B5: ...rest.key spread inside an object literal (style), served == React.
+      - run: bun test --timeout 120000 tests/server/rest-style.chromium.test.ts
+      # B4: a never-written useRef read in the render is its first value, served == React.
+      - run: bun test --timeout 120000 tests/server/ref-snapshot.chromium.test.ts
+
       # ledger-dew: F147 served (hoisted handler names), F219 known difference pinned until F230.
       - run: bun test --timeout 120000 tests/server/handler-names.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/f219-known-difference.test.ts
@@ -347,3 +354,5 @@ jobs:
       - run: bun run m2-exit && git diff --exit-code docs/plans/m2-exit-report.md
       - run: bun test scripts/m2-exit
       - run: bun test scripts/release-check.test.ts scripts/core-cf-check.test.ts
+      # F264: the generated-names fixture is generated; stale or out of step with the cargo/Chromium tables fails.
+      - run: bun test scripts/gen-generated-names.test.ts
