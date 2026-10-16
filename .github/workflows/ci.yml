@@ -345,6 +345,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/form-control.chromium.test.ts
       # F295: a snapshot through a forwarding spread where every instance mounts once; a guarded mount refused.
       - run: bun test --timeout 120000 tests/server/snapshot-spread.chromium.test.ts
+      # F333: an unsorted object literal read by Object.entries / Object.keys keeps its JS key order; served == React.
+      - run: bun test --timeout 120000 tests/server/literal-order.test.ts
 
       # ledger-dew: F147 served (hoisted handler names), F219 known difference pinned until F230.
       - run: bun test --timeout 120000 tests/server/handler-names.chromium.test.ts

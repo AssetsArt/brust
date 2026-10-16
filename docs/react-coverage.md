@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 170 | 50 | 49 | 71 | 0 | 0 | 0 | 0 |
+| C Hooks | 171 | 51 | 49 | 71 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 548 | 242 | 94 | 208 | 3 | 1 | 0 | 0 |
+| **Total** | 549 | 243 | 94 | 208 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -354,6 +354,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | ssr | ok | 5.4 | info:rest-children-unsupported | F298 + F309: that element is linked, so it would host the Thumb (slot-owner): no clone, LiveRoot stays a React island with its children (F307 relaxes it) |
 | c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F324: the children reach the button through the rest in React; the clone has no children slot, so it is refused and the Provider stays an island that carries them (info specialise-unsupported; was: children silently dropped, alpha.16) |
 | c-spec-rest-no-children | the same Provider component called without children | static | static | 0 | ok | 4.6 | — | F324: nothing to drop, so the clone is still taken |
+| c-literal-order-entries | an object literal written out of sorted order, passed to a stateful child that reads Object.entries / Object.keys | static | static | 0 | ok | 4.6 | — | F333: the literal prints through obj_lit (JS key order z,a); a jinja map literal sorted it a,z |
 | c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:island-prop | F214 (Mellow F1): one predicate for every directive kind in slot content |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | 4.6 | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
