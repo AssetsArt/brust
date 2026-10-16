@@ -111,7 +111,7 @@ fn unsupported_hook_and_control_flow_record_react_reason() {
             .any(|d| d.rule == "hook-unsupported" && d.message.contains("useContext"))
     );
     let b = ir(&format!(
-        "{PRE}export default function V({{ x }}: any) {{ if (x) {{ return <p/> }} return <i/> }}"
+        "{PRE}export default function V({{ x }}: any) {{ for (const i of x) {{ console.log(i) }} return <i/> }}"
     ));
     assert!(b.diagnostics.iter().any(|d| d.rule == "control-flow"));
     let c = ir(

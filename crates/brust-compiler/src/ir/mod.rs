@@ -337,6 +337,11 @@ pub struct ComponentIR {
     /// props). A call site that passes a value that changes on the client for one of them falls back (`frozen-prop`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frozen_props: Vec<String>,
+    /// W1d PR 3 (ruling A, condition 3): the props read by the tests of an early-return chain that ends in a throw. A
+    /// discriminant that changes after mount stays refused: they are frozen (a call site that passes a changing value falls
+    /// back, `frozen-prop`), whatever the children pass decides about the rest.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub throw_props: Vec<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -483,6 +488,7 @@ impl ComponentIR {
             hosts_children: false,
             mount_once: None,
             frozen_props: Vec::new(),
+            throw_props: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],

@@ -257,6 +257,10 @@ fn call(callee: &RawExpr, args: &[RawExpr], ctx: &JinjaCtx<'_>) -> String {
     if let Some(chain) = crate::analyze::passes::server_expr::includes_chain(callee, args) {
         return raw(&chain, ctx);
     }
+    // W1d PR 3: a render error (a component threw): the filter fails the render, the server answers with its own 500
+    if crate::analyze::passes::server_expr::is_throw(callee, args) {
+        return "(none | render_error)".into();
+    }
     let RawKind::Member { target, name, .. } = &callee.kind else {
         return "none".into();
     };

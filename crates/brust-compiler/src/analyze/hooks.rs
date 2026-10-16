@@ -34,6 +34,11 @@ pub struct BodyDecls {
     /// Locals bound to `useId()`.
     pub id_bindings: Vec<String>,
     pub uses_id: bool,
+    /// W1d PR 3: the tests of an early-return chain (`if (a) return A; if (b) return B; throw …`) whose last statement
+    /// throws: the render is valid only when one of them holds. `None`: no throw.
+    pub throw_unless: Option<Vec<RawExpr>>,
+    /// The props those tests read (frozen: see `ComponentIR::throw_props`).
+    pub throw_props: Vec<String>,
     /// R34.140: the component asks for the items of its collection (`useCollection(scope)`).
     pub uses_collection: bool,
     pub return_expr: Option<Expr>,
@@ -82,10 +87,6 @@ struct Inline {
     /// Every name the component's module declares (imports included): a global a foreign
     /// hook reads must not be among them, or the inlined code would read that binding.
     root_module: HashSet<String>,
-    /// F286 / F285: the generated locals that stand for a hook call hoisted out of a returned expression (a handler, a
-    /// state cell or its setter, a dispatch). A hook result handed out inside an object or array that the call site binds
-    /// WHOLE (`const t = useToggle()`) would be one derived value naming them, which a per-request job cannot (F289).
-    hook_results: HashSet<String>,
     /// R34.142: addresses of the `useId()` calls that seed a state nothing updates (`drop_inert_id_effects`); the state
     /// is that id.
     inert_id_states: HashSet<usize>,
@@ -665,6 +666,19 @@ pub fn read_body(func: &js_ast::G::Fn, r: &mut Reader<'_, '_>, m: Module<'_, '_>
     }
     out.handlers.append(&mut r.pending_handlers);
     out.diagnostics.append(&mut r.diagnostics);
+    // F289: the same rule one step outside a hook: `const o = { cb: toggle }` in the component, with `toggle` a handler.
+    if out.react_reason.is_none()
+        && let Some(name) = client_function_in_derived(&out, 0)
+    {
+        out.fallback(
+            "client-function-in-job",
+            format!(
+                "a value computed per request names `{name}`, a handler, setter or function the client owns"
+            ),
+            0,
+            "use the function only in an event handler or the JSX, or keep this component in React",
+        );
+    }
     out
 }
 
@@ -785,6 +799,122 @@ fn read_stmts(
                     }
                 }
             }
+            // W1d PR 3: `if (a) { const …; return A }` followed by the rest of the body (an early-return chain, ending in a
+            // return or a `throw`): one nested conditional, each branch's consts hoisted into the body (they are lazy
+            // derived values, so a branch that does not run costs nothing). Components only.
+            S::SIf(ifs)
+                if out.inline.stack.is_empty()
+                    && ends_with_return(&ifs.yes)
+                    && ifs.no.as_ref().is_none_or(ends_with_return_or_throw) =>
+            {
+                let test = r.expr(&ifs.test);
+                let before = out.derived.len();
+                let yes_stmts = branch_stmts(&ifs.yes);
+                let yes = match read_stmts(&yes_stmts, r, out, m) {
+                    Some(Some(v)) => v,
+                    _ => {
+                        out.fallback(
+                            "control-flow",
+                            "an early return without a value".into(),
+                            loc,
+                            "return one JSX tree",
+                        );
+                        break;
+                    }
+                };
+                let mut rest: Vec<js_ast::Stmt> = match &ifs.no {
+                    Some(n) => branch_stmts(n),
+                    None => stmts[i + 1..].to_vec(),
+                };
+                let mut throws = false;
+                if let [only] = rest.as_slice()
+                    && let S::SThrow(t) = &only.data
+                {
+                    // W1d PR 3 (ruling A): a render error with a literal message (never printed: the 500 goes through the
+                    // server's own error path); any other thrown value is not read
+                    if !literal_error_throw(&t.value, m, r.names) {
+                        out.fallback(
+                            "control-flow",
+                            "the throw of an early-return chain is not `throw new Error(<literal>)`".into(),
+                            loc,
+                            "throw an Error with a literal message, or keep this component in React",
+                        );
+                        break;
+                    }
+                    rest.clear();
+                    throws = true;
+                }
+                let no = match read_stmts(&rest, r, out, m) {
+                    Some(Some(v)) => v,
+                    None if throws => {
+                        // the chain ends in the throw: a render error
+                        out.throw_unless.get_or_insert_with(Vec::new);
+                        throw_arm(loc)
+                    }
+                    _ => {
+                        out.fallback(
+                            "control-flow",
+                            "an early-return chain must end in a return or a throw".into(),
+                            loc,
+                            "return one JSX tree",
+                        );
+                        break;
+                    }
+                };
+                if throws || out.throw_unless.is_some() {
+                    out.throw_unless
+                        .get_or_insert_with(Vec::new)
+                        .push(test.clone());
+                    let mut roots = Vec::new();
+                    prop_roots(&test, &mut roots);
+                    for p in roots {
+                        if !out.throw_props.contains(&p) {
+                            out.throw_props.push(p);
+                        }
+                    }
+                    // ruling A (3): a test that can change after mount would make the error a client-side one
+                    let body_locals: Vec<&str> = out
+                        .derived
+                        .iter()
+                        .map(|d| d.name.as_str())
+                        .chain(out.handlers.iter().map(|h| h.name.as_str()))
+                        .chain(out.refs.iter().map(|x| x.name.as_str()))
+                        .chain(out.state.iter().map(|x| x.name.as_str()))
+                        .collect();
+                    if !test_is_static(&test, &body_locals) {
+                        out.fallback(
+                            "control-flow",
+                            "the test of an early return that ends in a throw reads something that changes after mount".into(),
+                            loc,
+                            "decide the render from props, or keep this component in React",
+                        );
+                        break;
+                    }
+                }
+                // a hoisted const must not shadow another of the body
+                let names: Vec<&String> = out.derived.iter().map(|d| &d.name).collect();
+                if out.derived[before..]
+                    .iter()
+                    .any(|d| names.iter().filter(|n| **n == &d.name).count() > 1)
+                {
+                    out.fallback(
+                        "control-flow",
+                        "two branches of an early-return chain declare the same name".into(),
+                        loc,
+                        "give each branch's consts a different name",
+                    );
+                    break;
+                }
+                returned = Some(Some(RawExpr {
+                    loc,
+                    kind: RawKind::Cond {
+                        test: Box::new(test),
+                        yes: Box::new(yes),
+                        no: Box::new(no),
+                    },
+                }));
+                break;
+            }
             S::SIf(_)
             | S::SFor(_)
             | S::SForIn(_)
@@ -881,8 +1011,6 @@ fn returned_value(
                 kind,
             },
         };
-        out.inline.hook_results.insert(state.clone());
-        out.inline.hook_results.insert(set.clone());
         if hook == "useState" {
             let init = match args.first() {
                 Some(a) => r.expr(a),
@@ -1227,7 +1355,6 @@ fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) 
             loc_of_call(call),
             false,
         );
-        out.inline.hook_results.insert(name.clone());
         r.hoisted_calls.insert(addr, name);
     }
 }
@@ -2014,6 +2141,14 @@ fn read_decl(
     {
         return read_context_use(r, out, decl, value, &ctx, vloc);
     }
+    // W1d PR 3: `const alias = rest` (the `...rest` object itself): the alias reads as the rest object
+    if let E::EIdentifier(v) = &value.data
+        && r.names.is_rest(v.ref_)
+        && let B::BIdentifier(id) = decl.binding.data
+    {
+        r.names.alias_rest(id.r#ref);
+        return;
+    }
     // W1d PR 2: `const scope = useXScope(props.__scopeX)`, a Radix scope hook: its result is a scope token (no code)
     if let E::ECall(call) = &value.data
         && is_scope_hook_call(m, r.names, call)
@@ -2190,6 +2325,17 @@ fn read_decl(
         return;
     }
     let expr = r.expr(value);
+    // F331: `const o = { cb: toggle }` holding the component's own function is read member by member (`o.cb` is
+    // `toggle`), as an object a hook returns is; as one derived value it would be a job naming a client function.
+    // Not inside a hook: `const obj = {…}; return obj` hands the object out whole, which stays the named refusal.
+    if out.inline.stack.is_empty()
+        && let B::BIdentifier(id) = decl.binding.data
+        && let RawKind::Object(props) = &expr.kind
+        && names_client_function(&expr, &client_functions(out)).is_some()
+        && bind_literal_members(r, out, id.r#ref, props)
+    {
+        return;
+    }
     out.derived.push(DerivedDecl {
         name,
         expr: Expr::Raw(expr),
@@ -3337,6 +3483,93 @@ fn read_hook(
         return;
     }
     bind_result(r, out, site, returned);
+    // F289: a derived value the hook (or the binding of its result) added is a per-request job; the handlers and setters
+    // are the client's, so one that names them is a job that throws (a 500). Whatever shape put it there (a `useMemo`
+    // returning the object, a spread in the returned literal) is refused by name.
+    if let Some(name) = client_function_in_derived(out, start.derived) {
+        let spelled = name
+            .rsplit_once('_')
+            .filter(|(_, tail)| tail.starts_with(&clean_name(hook)))
+            .map_or(name.as_str(), |(head, _)| head)
+            .to_string();
+        out.fallback(
+            "hook-return-shape",
+            format!(
+                "custom hook {hook} hands out `{spelled}`, a handler or setter, inside a value the compiler computes per request"
+            ),
+            vloc,
+            "return an object or array literal the call site reads as `t.key` or destructures, or keep this component in React",
+        );
+    }
+}
+
+/// The first handler, setter or hook-declared function that a derived value of `out` (from `from` on) names. A
+/// derived value is a per-request job, which does not have the client's functions: it would throw (a 500).
+fn client_function_in_derived(out: &BodyDecls, from: usize) -> Option<String> {
+    let handlers = client_functions(out);
+    out.derived[from..].iter().find_map(|d| {
+        // a function (`const toggle = () => setOn(…)`) is a handler the component lifts, not a job
+        let Expr::Raw(e) = &d.expr else { return None };
+        if matches!(e.kind, RawKind::Arrow { .. }) {
+            return None;
+        }
+        names_client_function(e, &handlers)
+    })
+}
+
+/// The client's functions: the handlers, and a function declared as a const (`const toggle = () => …`).
+fn client_functions(out: &BodyDecls) -> HashSet<&str> {
+    out.handlers
+        .iter()
+        .map(|h| h.name.as_str())
+        .chain(out.derived.iter().filter_map(|d| match &d.expr {
+            Expr::Raw(e) if matches!(e.kind, RawKind::Arrow { .. }) => Some(d.name.as_str()),
+            _ => None,
+        }))
+        .collect()
+}
+
+/// The first handler or setter that `e` names (the client's functions, which a per-request job does not have).
+fn names_client_function(e: &RawExpr, handlers: &HashSet<&str>) -> Option<String> {
+    let all = |items: &[RawExpr]| {
+        items
+            .iter()
+            .find_map(|i| names_client_function(i, handlers))
+    };
+    match &e.kind {
+        RawKind::Ident { name, kind } => (matches!(kind, IdentKind::Setter)
+            || handlers.contains(name.as_str()))
+        .then(|| name.clone()),
+        RawKind::Lit(_) | RawKind::Jsx(_) => None,
+        RawKind::Opaque { captures, .. } => captures
+            .iter()
+            .find(|(n, k)| matches!(k, IdentKind::Setter) || handlers.contains(n.as_str()))
+            .map(|(n, _)| n.clone()),
+        RawKind::Member { target, .. } => names_client_function(target, handlers),
+        RawKind::Index { target, index } => names_client_function(target, handlers)
+            .or_else(|| names_client_function(index, handlers)),
+        RawKind::Call { callee, args } => {
+            names_client_function(callee, handlers).or_else(|| all(args))
+        }
+        RawKind::Binary { left, right, .. } => {
+            names_client_function(left, handlers).or_else(|| names_client_function(right, handlers))
+        }
+        RawKind::Unary { value, .. } => names_client_function(value, handlers),
+        RawKind::Cond { test, yes, no } => names_client_function(test, handlers)
+            .or_else(|| names_client_function(yes, handlers))
+            .or_else(|| names_client_function(no, handlers)),
+        RawKind::Template { parts, .. } => parts
+            .iter()
+            .find_map(|(p, _)| names_client_function(p, handlers)),
+        RawKind::Array(items) => all(items),
+        RawKind::Object(props) => props
+            .iter()
+            .find_map(|(_, v)| names_client_function(v, handlers)),
+        RawKind::Arrow { captures, .. } => captures
+            .iter()
+            .find(|(n, k)| matches!(k, IdentKind::Setter) || handlers.contains(n.as_str()))
+            .map(|(n, _)| n.clone()),
+    }
 }
 
 /// The module-level `function` declaring `target`, with its statement.
@@ -3456,7 +3689,7 @@ impl Marks {
     }
 }
 
-fn relocate(e: &mut RawExpr, loc: u32) {
+pub(crate) fn relocate(e: &mut RawExpr, loc: u32) {
     e.loc = loc;
     match &mut e.kind {
         RawKind::Lit(_) | RawKind::Ident { .. } | RawKind::Opaque { .. } | RawKind::Jsx(_) => {}
@@ -3578,6 +3811,63 @@ fn inert(e: &RawExpr) -> bool {
     }
 }
 
+/// Binds `r` to the members of an object or array literal (`props`): a plain member (an identifier, a literal, an arrow)
+/// is read where `t.key` is read, any other becomes its own derived value `{base}_{key}`. An arrow written in the
+/// literal is read where `t.key` is read (each read is its own copy, like a function written inline at each use):
+/// identity across reads is not kept, as for a destructured arrow. `false`, with nothing bound, when a member is
+/// itself an object or array (not read one level deeper).
+fn bind_literal_members(
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    bound: js_ast::Ref,
+    props: &[(String, RawExpr)],
+) -> bool {
+    if props
+        .iter()
+        .any(|(_, v)| matches!(v.kind, RawKind::Object(_) | RawKind::Array(_)))
+    {
+        return false;
+    }
+    let base = clean_name(&r.names.name(bound));
+    let mut members: Vec<(String, RawExpr)> = Vec::new();
+    for (key, v) in props {
+        let plain = matches!(
+            v.kind,
+            RawKind::Ident { .. } | RawKind::Lit(_) | RawKind::Arrow { .. }
+        );
+        let v = if plain {
+            v.clone()
+        } else {
+            let mut n = 1;
+            let name = loop {
+                let name = if n == 1 {
+                    format!("{base}_{}", clean_name(key))
+                } else {
+                    format!("{base}_{}{n}", clean_name(key))
+                };
+                if out.inline.taken.insert(name.clone()) {
+                    break name;
+                }
+                n += 1;
+            };
+            out.derived.push(DerivedDecl {
+                name: name.clone(),
+                expr: Expr::Raw(v.clone()),
+            });
+            RawExpr {
+                loc: v.loc,
+                kind: RawKind::Ident {
+                    name,
+                    kind: IdentKind::Local,
+                },
+            }
+        };
+        members.push((key.clone(), v));
+    }
+    r.names.bind_hook_object(bound, members);
+    true
+}
+
 /// Binds the hook's returned value to the call site's pattern.
 fn bind_result(
     r: &mut Reader<'_, '_>,
@@ -3606,12 +3896,27 @@ fn bind_result(
     let value = returned.unwrap_or_else(|| undefined_at(vloc));
     match binding.data {
         B::BIdentifier(id) => {
-            // F286: kept refused until F289: the whole object is one derived value that names a hoisted hook result.
-            if let Some(name) = whole_hook_result(&value, &out.inline.hook_results) {
+            // F289: an object literal bound whole (`const t = useToggle()`) is read member by member (`t.key`), as a
+            // destructuring is; one derived value naming a handler's local would be a job that cannot run.
+            let named: Option<Vec<(String, RawExpr)>> = match &value.kind {
+                RawKind::Object(props) => Some(props.clone()),
+                RawKind::Array(items) => Some(
+                    items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| (i.to_string(), v.clone()))
+                        .collect(),
+                ),
+                _ => None,
+            };
+            if let Some(props) = named {
+                if bind_literal_members(r, out, id.r#ref, &props) {
+                    return;
+                }
                 return shape(
                     out,
                     format!(
-                        "custom hook {hook} returns `{name}`, a hook call, inside an object or array that is bound whole at the call site"
+                        "custom hook {hook} returns an object or array inside the one bound whole at the call site"
                     ),
                 );
             }
@@ -3697,20 +4002,6 @@ fn bind_result(
             }
         }
     }
-}
-
-/// The first generated hook-result local (see [`Inline::hook_results`]) that the object or array `value` holds directly.
-fn whole_hook_result(value: &RawExpr, results: &HashSet<String>) -> Option<String> {
-    let items: Vec<&RawExpr> = match &value.kind {
-        RawKind::Object(props) => props.iter().map(|(_, v)| v).collect(),
-        RawKind::Array(items) => items.iter().collect(),
-        _ => return None,
-    };
-    items.into_iter().find_map(|v| match &v.kind {
-        RawKind::Ident { name, .. } if results.contains(name) => Some(name.clone()),
-        RawKind::Object(_) | RawKind::Array(_) => whole_hook_result(v, results),
-        _ => None,
-    })
 }
 
 /// `binding` is the returned `value`: an identifier the hook returns is the same binding
@@ -3832,4 +4123,112 @@ fn second_binding_of_context_scope(
             })
         })
     })
+}
+
+/// The statements of an `if` branch (a block's, or the one statement).
+fn branch_stmts(b: &js_ast::Stmt) -> Vec<js_ast::Stmt> {
+    match &b.data {
+        S::SBlock(blk) => blk.stmts.slice().to_vec(),
+        _ => vec![*b],
+    }
+}
+
+/// Whether a branch ends in a `return` of a value.
+fn ends_with_return(b: &js_ast::Stmt) -> bool {
+    matches!(branch_stmts(b).last().map(|s| &s.data), Some(S::SReturn(r)) if r.value.is_some())
+}
+
+fn ends_with_return_or_throw(b: &js_ast::Stmt) -> bool {
+    ends_with_return(b) || matches!(branch_stmts(b).last().map(|s| &s.data), Some(S::SThrow(_)))
+}
+
+/// W1d PR 3: the render-error arm of an early-return chain that ends in a `throw`.
+fn throw_arm(loc: u32) -> RawExpr {
+    RawExpr {
+        loc,
+        kind: RawKind::Call {
+            callee: Box::new(RawExpr {
+                loc,
+                kind: RawKind::Ident {
+                    name: crate::ir::THROW_FN.into(),
+                    kind: IdentKind::Global,
+                },
+            }),
+            args: Vec::new(),
+        },
+    }
+}
+
+/// `throw new Error(<literal>)` (or TypeError/RangeError): the message is a string literal, a template of string literals
+/// and module consts that are string literals, or absent.
+fn literal_error_throw(v: &js_ast::Expr, m: Module<'_, '_>, names: &NameTable<'_>) -> bool {
+    let E::ENew(n) = &v.data else { return false };
+    let E::EIdentifier(t) = &n.target.data else {
+        return false;
+    };
+    if !matches!(
+        names.name(t.ref_).as_str(),
+        "Error" | "TypeError" | "RangeError"
+    ) || !matches!(names.kind_of(t.ref_).1, IdentKind::Global)
+        || n.args.len() > 1
+    {
+        return false;
+    }
+    let module = crate::analyze::stores::Module::new(m.ast);
+    let lit = |e: &js_ast::Expr| match &e.data {
+        E::EString(_) => true,
+        E::EIdentifier(id) => matches!(
+            module.const_value(id.ref_),
+            Some(js_ast::Expr {
+                data: E::EString(_),
+                ..
+            })
+        ),
+        _ => false,
+    };
+    match n.args.first().map(|a| &a.data) {
+        None | Some(E::EString(_)) => true,
+        Some(E::ETemplate(t)) => t.tag.is_none() && t.parts.slice().iter().all(|p| lit(&p.value)),
+        _ => false,
+    }
+}
+
+/// A test that reads only props, literals and module names (not state, a store, a setter, a loop value or a body local).
+fn test_is_static(e: &RawExpr, body_locals: &[&str]) -> bool {
+    let st = |x: &RawExpr| test_is_static(x, body_locals);
+    match &e.kind {
+        RawKind::Lit(_) => true,
+        RawKind::Ident { kind, name } => match kind {
+            IdentKind::Prop => true,
+            IdentKind::Local | IdentKind::Import { .. } => !body_locals.contains(&name.as_str()),
+            _ => false,
+        },
+        RawKind::Member { target, .. } => st(target),
+        RawKind::Unary { value, .. } => st(value),
+        RawKind::Binary { left, right, .. } => st(left) && st(right),
+        RawKind::Cond { test, yes, no } => st(test) && st(yes) && st(no),
+        _ => false,
+    }
+}
+
+/// The props `e` reads (`Ident` of kind `Prop`, the root before any path).
+fn prop_roots(e: &RawExpr, out: &mut Vec<String>) {
+    match &e.kind {
+        RawKind::Ident {
+            name,
+            kind: IdentKind::Prop,
+        } => out.push(name.split(['.', '[']).next().unwrap_or(name).to_string()),
+        RawKind::Member { target, .. } => prop_roots(target, out),
+        RawKind::Unary { value, .. } => prop_roots(value, out),
+        RawKind::Binary { left, right, .. } => {
+            prop_roots(left, out);
+            prop_roots(right, out);
+        }
+        RawKind::Cond { test, yes, no } => {
+            prop_roots(test, out);
+            prop_roots(yes, out);
+            prop_roots(no, out);
+        }
+        _ => {}
+    }
 }

@@ -261,6 +261,37 @@ impl<'r, 'a> Reader<'r, 'a> {
                 };
                 self.ident(t.ref_)
             }
+            // F289: `t.key` of a hook object is that member of the hook's returned literal.
+            E::EDot(d)
+                if let E::EIdentifier(t) = &d.target.data
+                    && let Some(members) = self.names.hook_object(t.ref_)
+                    && let Some((_, v)) = members
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| k.as_bytes() == d.name.slice()) =>
+            {
+                let mut v = v.clone();
+                crate::analyze::hooks::relocate(&mut v, loc);
+                return v;
+            }
+            E::EIndex(ix)
+                if let E::EIdentifier(t) = &ix.target.data
+                    && let E::ENumber(n) = &ix.index.data
+                    && let Some(members) = self.names.hook_object(t.ref_)
+                    && let Some((_, v)) =
+                        members.iter().find(|(k, _)| *k == n.value().to_string()) =>
+            {
+                let mut v = v.clone();
+                crate::analyze::hooks::relocate(&mut v, loc);
+                return v;
+            }
+            // Any other read of a hook object (bare, `t[k]`, a key the literal lacks) cannot be named.
+            E::EIdentifier(id) if self.names.hook_object(id.ref_).is_some() => {
+                if self.names.hook_object_escape.get().is_none() {
+                    self.names.hook_object_escape.set(Some(loc));
+                }
+                return self.opaque(e, "hook object");
+            }
             E::EIdentifier(id) => self.ident(id.ref_),
             E::EImportIdentifier(id) => self.ident(id.ref_),
             // `context.field` of a context local reads the hidden prop of that field (S2).
@@ -569,6 +600,11 @@ impl<'r, 'a> Reader<'r, 'a> {
             && !self.ctx_verbatim(w).1
         {
             self.names.ctx_escape.set(Some(loc));
+        }
+        if self.names.hook_object_escape.get().is_none()
+            && w.used.iter().any(|r| self.names.hook_object(*r).is_some())
+        {
+            self.names.hook_object_escape.set(Some(loc));
         }
     }
 
