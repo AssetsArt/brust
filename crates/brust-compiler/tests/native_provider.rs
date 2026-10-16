@@ -203,3 +203,57 @@ fn a_context_value_read_inside_an_effect_keeps_the_consumer_in_react_and_the_pro
     assert!(clones(&all).is_empty());
     assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
 }
+
+// Q5 (R34.117): `asChild` on a consumer of the Provider the clone was made for merges the frame's bindings into the
+// child element: the page stays native and the child element is the consumer's host.
+#[test]
+fn an_as_child_consumer_of_the_enclosing_provider_is_the_childs_host() {
+    let all = compile("aschild.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    let c = clones(&all);
+    assert_eq!(c.len(), 1, "{:?}", root.ir.diagnostics);
+    assert!(
+        matches!(c[0].ir.tier, Tier::Native),
+        "{:?}",
+        c[0].ir.diagnostics
+    );
+    assert!(!root.jinja.contains("brust-island"), "{}", root.jinja);
+    // The merged element is the caller's <a>, carrying the consumer's host, binding and handler.
+    let a = root
+        .jinja
+        .split("<a ")
+        .nth(1)
+        .expect("an <a>")
+        .split('>')
+        .next()
+        .unwrap();
+    for want in [
+        "x-data=\"pAs_",
+        "type=\"button\"",
+        "x-on-click=",
+        "x-bind-aria-expanded=",
+        "href=",
+    ] {
+        assert!(a.contains(want), "{want} in <a {a}>");
+    }
+    assert!(!root.jinja.contains("<button"), "{}", root.jinja);
+}
+
+#[test]
+fn an_as_child_consumer_keeps_its_limits() {
+    for (file, want) in [
+        ("aschild_handler.tsx", "handler"),
+        ("aschild_own.tsx", "PAsOwn"),
+    ] {
+        let all = compile(file);
+        assert!(clones(&all).is_empty(), "{file}: nothing was specialised");
+        let info = all[0]
+            .ir
+            .diagnostics
+            .iter()
+            .find(|d| d.rule == "specialise-unsupported")
+            .unwrap_or_else(|| panic!("{file}: {:?}", all[0].ir.diagnostics));
+        assert!(info.message.contains(want), "{file}: {}", info.message);
+    }
+}

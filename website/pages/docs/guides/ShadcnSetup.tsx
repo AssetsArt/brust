@@ -204,6 +204,9 @@ export default function ShadcnSetup({ blocks }: ShadcnSetupData) {
         A component can also be an <code>https://</code> registry URL. That installs <strong>third-party code</strong> from that host into your project, and it runs in your build and in the browser, so read it first. The command prints a warning for each URL, skips a URL whose item is already in <code>components/</code> on a second run, and will not write through a symbolic <code>tsconfig.json</code> or <code>components.json</code> (it stops and says so).
       </Note>
       <Note>
+        Before the shadcn CLI runs, <code>brust shadcn init</code> fetches the URL&rsquo;s item itself (https only, at most 1 MiB, 15 seconds) and checks the files it declares: each must land inside the project and not through a symbolic link, and an item with a key it does not know, or a <code>registry:font</code> or <code>registry:page</code> item, is refused. The CLI is then given that checked copy, not the URL. <strong>Two things are not checked.</strong> The shadcn components an item names in <code>registryDependencies</code> (plain names, resolved in shadcn&rsquo;s own registry) and the npm packages it lists in <code>dependencies</code> are installed by the CLI without being read first; the alias directories are still scanned for symbolic links before anything is written. An item that depends on another URL is refused: pass that URL as its own argument so it is checked too.
+      </Note>
+      <Note>
         <code>brust shadcn init</code> needs <code>@brust/core</code> 2.0.0-alpha.11 or later. On an older project, update <code>@brust/core</code>, or follow <a href="#manual">Doing it by hand</a>.
       </Note>
 

@@ -5,7 +5,9 @@
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { createMatchPath, loadConfig } from 'tsconfig-paths'
+import { createMatchPath } from 'tsconfig-paths'
+import { configLoader } from 'tsconfig-paths/lib/config-loader'
+import { tsConfigLoader } from 'tsconfig-paths/lib/tsconfig-loader'
 import { type ObjectNode, raw, readObject } from './jsonc'
 import { fetchRegistryItem, vetItem } from './registry'
 
@@ -103,9 +105,10 @@ interface TsInfo {
 /** Undefined when `tsconfig-paths` finds no config at all (the CLI then fails by itself before writing anything). An
  *  error when it throws (a parent that is not JSON, a cycle, a non-string `extends`): the CLI would throw the same way. */
 function tsconfigInfo(root: string, file: string): TsInfo | { error: string } | undefined {
-  let cfg: ReturnType<typeof loadConfig>
+  let cfg: ReturnType<typeof configLoader>
   try {
-    cfg = loadConfig(root)
+    // `loadConfig(root)` with `TS_NODE_PROJECT` / `TS_NODE_BASEURL` ignored: the spawned CLI does not get them either (F253)
+    cfg = configLoader({ cwd: root, tsConfigLoader: (p) => tsConfigLoader({ ...p, getEnv: () => undefined }) })
   } catch (e) {
     return { error: `the shadcn CLI cannot read the tsconfig chain of ${file} (${(e as Error).message})` }
   }
@@ -120,14 +123,17 @@ function tsconfigInfo(root: string, file: string): TsInfo | { error: string } | 
 /** The path the CLI writes an alias to, the way it resolves one (`resolveAlias` in `@shadcn/registry`: `createMatchPath`
  *  over the tsconfig, first candidate), as a project-relative path; or `{ error }` when it cannot be judged here:
  *  a `#` import (package.json `imports`), nothing matches, or the result is outside the project. A package-shaped alias
- *  (`@scope/name`) that no `paths` key names is refused as the CLI refuses it. */
+ *  (`@scope/name`) is refused (F251). */
 function resolveAlias(alias: string, root: string, ts: { absoluteBaseUrl: string; hasBaseUrl: boolean; paths: PathsMap }): { rel: string } | { why: string } {
   if (alias.startsWith('#')) return { why: 'is a package.json "imports" alias, which cannot be checked here' }
+  // F251: the CLI tries npm workspace packages (a `workspaces` root above the project, a package named like the alias)
+  // BEFORE the tsconfig, and that route is not modelled here. A package-shaped alias (`@scope/name...`) could land there,
+  // so it is refused whether or not a `paths` entry names it; the default `@/...` aliases are not package-shaped.
+  if (/^@[^/]+\/[^/]+(?:\/.*)?$/.test(alias)) return { why: 'looks like a package name (`@scope/name`); the shadcn CLI tries npm workspace packages before the tsconfig "paths", which cannot be checked here. Use an alias like "@/components" or "~/components"' }
   const named = Object.keys(ts.paths).some((k) => (k.includes('*') ? alias.startsWith(k.slice(0, k.indexOf('*'))) && alias.endsWith(k.slice(k.indexOf('*') + 1)) && alias.length >= k.length - 1 : k === alias))
   // `createMatchPath` maps any alias under the base directory (it adds a match-all); TypeScript does that only with a
   // `baseUrl`. An alias no `paths` key names and no `baseUrl` covers is a misconfiguration: refused, not written to `./<alias>`.
   if (!named && !ts.hasBaseUrl) return { why: 'does not resolve by the tsconfig "paths" (no entry names it and there is no "baseUrl")' }
-  if (!named && /^@[^/]+\/[^/]+(?:\/.*)?$/.test(alias)) return { why: 'looks like a package name and no tsconfig "paths" entry names it' }
   let hit: string | undefined
   try {
     hit = createMatchPath(ts.absoluteBaseUrl, ts.paths)(alias, undefined, () => true, ['.ts', '.tsx', '.jsx', '.js', '.css'])
@@ -457,7 +463,7 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
     report('theme', 'done', `shadcn@${version} add index`)
   }
   for (const c of o.components) if (!todo.includes(c)) report(c, 'skipped', REGISTRY_URL.test(c) ? 'its item is already in components; --force adds it again' : 'components/ui already has it')
-  for (const c of todo) if (REGISTRY_URL.test(c)) out(`warning shadcn-init ${c} is third-party code: it is written into your project and runs in your build and in the browser. Read it before you ship`)
+  for (const c of todo) if (REGISTRY_URL.test(c)) out(`warning shadcn-init ${c} is third-party code: it is written into your project and runs in your build and in the browser. Read it before you ship. Only the item itself was checked (its file paths, and that none is a symlink); the shadcn components it names in registryDependencies and the npm packages it lists in dependencies are installed by the CLI and were not`)
   if (todo.length > 0) {
     // a URL item is added from the copy that was checked above
     const dir = vetted.size > 0 ? mkdtempSync(join(tmpdir(), 'brust-shadcn-item-')) : undefined
@@ -484,8 +490,18 @@ export async function shadcnInit(o: InitOptions): Promise<number> {
   return 0
 }
 
+/** F253: the variables that make `tsconfig-paths` (the resolver the shadcn CLI uses) read another tsconfig than the
+ *  project's. The pre-check ignores them and the spawned CLI does not get them, so both see the same file. */
+export const RESOLVER_ENV = ['TS_NODE_PROJECT', 'TS_NODE_BASEURL'] as const
+
+export function cliEnv(env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const out = { ...env }
+  for (const k of RESOLVER_ENV) delete out[k]
+  return out
+}
+
 /** The real runner: argv spawn with the terminal attached, no shell. */
 export const spawnRunner: Runner = async (argv, cwd) => {
-  const p = Bun.spawn(argv, { cwd, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' })
+  const p = Bun.spawn(argv, { cwd, env: cliEnv(process.env), stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' })
   return await p.exited
 }

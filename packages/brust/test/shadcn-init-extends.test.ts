@@ -198,3 +198,23 @@ test('F226: tsconfig-paths is a dependency at exactly the version the pinned CLI
   expect(TSCONFIG_PATHS_VERSION).toBe('4.2.0')
   expect(pkg.dependencies['tsconfig-paths']).toBe(TSCONFIG_PATHS_VERSION)
 })
+
+// F251 (Mellow R1): the CLI tries npm workspace packages before the tsconfig paths, a route the pre-check does not model.
+// A package-shaped alias is refused even when a `paths` entry names it; the default `@/` aliases are not package-shaped.
+test('F251: a package-shaped components.json alias (@scope/name) is refused, even when a paths entry names it', async () => {
+  const d = project({ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./*"], "@acme/*": ["./acme/*"] } } }' })
+  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '@acme/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  const r = await init(d, ['button'])
+  expect(r.code).toBe(2)
+  expect(r.calls).toEqual([])
+  expect(r.text).toContain('looks like a package name')
+  expect(r.text).toContain('"ui"')
+  // a bare scoped alias with no path after the name is package-shaped too
+  writeFileSync(join(d, 'components.json'), JSON.stringify({ aliases: { ui: '@acme/ui', components: '@acme/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  expect((await init(d, ['button'])).code).toBe(2)
+  // control: the default @/ aliases and a ~/ alias are unaffected
+  const ok = project({ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@/*": ["./*"], "~/*": ["./src/*"] } } }' })
+  writeFileSync(join(ok, 'components.json'), JSON.stringify({ aliases: { ui: '~/ui', components: '@/components', lib: '@/lib', hooks: '@/hooks', utils: '@/lib/utils' } }))
+  expect((await init(ok, ['button'])).code).toBe(0)
+  expect((await init(project({ 'tsconfig.json': '{ "compilerOptions": {} }' }), ['button'])).code).toBe(0)
+})
