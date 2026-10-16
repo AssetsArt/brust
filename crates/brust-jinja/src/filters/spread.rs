@@ -235,6 +235,15 @@ pub fn spread_merge(segs: Rest<Value>) -> Value {
     Value::from(merge(&segs).into_iter().collect::<BTreeMap<_, _>>())
 }
 
+/// A canonical array index (`"0"`, `"7"`, up to `2^32 - 2`): the property keys JS enumerates first, ascending (F321).
+pub(crate) fn is_array_index(k: &str) -> bool {
+    k == "0"
+        || (!k.starts_with('0')
+            && k.len() <= 10
+            && k.bytes().all(|b| b.is_ascii_digit())
+            && k.parse::<u64>().is_ok_and(|n| n < u32::MAX as u64))
+}
+
 /// An object built by `obj_lit` / `obj_assign` (F277): its keys enumerate in JS order (array-index keys ascending,
 /// then the others in the order they were first set), so a style object prints its declarations in source order and a
 /// later shorthand still overrides an earlier longhand (`{ marginTop: 5, margin: 0 }`), as React prints them. A plain
@@ -258,13 +267,7 @@ impl OrderedMap {
     }
 
     fn keys(&self) -> Vec<Value> {
-        let is_index = |k: &str| {
-            k == "0"
-                || (!k.starts_with('0')
-                    && k.len() <= 10
-                    && k.bytes().all(|b| b.is_ascii_digit())
-                    && k.parse::<u64>().is_ok_and(|n| n < u32::MAX as u64))
-        };
+        let is_index = is_array_index;
         let mut idx: Vec<&str> = self
             .entries
             .iter()
@@ -339,6 +342,27 @@ pub fn obj_assign(sources: Rest<Value>) -> Value {
 
 #[cfg(test)]
 mod tests {
+    // The JS array-index rule, as one table shared (by value) with `ir/ojson.rs` / `filters/spread.rs` (F321).
+    const INDEX_KEYS: &[(&str, bool)] = &[
+        ("0", true),
+        ("7", true),
+        ("10", true),
+        ("4294967294", true),
+        ("4294967295", false),
+        ("01", false),
+        ("-1", false),
+        ("1.5", false),
+        ("", false),
+        ("a", false),
+        ("12345678901", false),
+    ];
+
+    #[test]
+    fn the_array_index_rule_matches_js() {
+        for (k, want) in INDEX_KEYS {
+            assert_eq!(super::is_array_index(k), *want, "{k:?}");
+        }
+    }
     use minijinja::Environment;
     use serde_json::json;
 

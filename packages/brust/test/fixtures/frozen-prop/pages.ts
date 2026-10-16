@@ -6,6 +6,7 @@ import PStatic from './p_static'
 import PRest from './p_rest'
 import PSpread from './p_spread'
 import PRestUp from './p_restup'
+import PCond from './p_cond'
 
 /** F319's pages by route name. */
-export const pages: Record<string, unknown> = { chain: PChain, prov: PProv, more: PMore, direct: PDirect, static: PStatic, rest: PRest, spread: PSpread, restup: PRestUp }
+export const pages: Record<string, unknown> = { chain: PChain, prov: PProv, more: PMore, direct: PDirect, static: PStatic, rest: PRest, spread: PSpread, restup: PRestUp, cond: PCond }

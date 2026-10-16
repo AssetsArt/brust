@@ -618,6 +618,14 @@ fn read_function_as(
             "read context.field into a const in the render, or keep this component in React",
         ));
     }
+    if let Some(loc) = reader.names.hook_object_escape.get() {
+        ir.diagnostics.push(Diagnostic::fallback(
+            "hook-return-shape",
+            "an object a custom hook returns is used as a whole (or inside code brust prints as written), not as `t.key`; brust reads its members one by one",
+            loc,
+            "read the members (`t.key`, or destructure the hook's result), or keep this component in React",
+        ));
+    }
     if let Some((loc, name, code, what)) = reader.names.prop_read_problem.borrow().clone() {
         ir.diagnostics.push(Diagnostic::fallback(
             code,
