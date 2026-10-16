@@ -2114,7 +2114,11 @@ impl Walker<'_, '_> {
             if crate::analyze::modules::is_relative_spec(source) {
                 self.diagnostics.push(Diagnostic::error(
                     "unresolved-import",
-                    format!("cannot resolve component <{name}> from {source}"),
+                    if crate::analyze::modules::import_leaves_root(ctx.path, source, ctx.opts) {
+                        format!("cannot resolve component <{name}> from {source}: it leaves the app root")
+                    } else {
+                        format!("cannot resolve component <{name}> from {source}")
+                    },
                     loc,
                     "import a .tsx/.ts module or a directory with index.tsx",
                 ));
