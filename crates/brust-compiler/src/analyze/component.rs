@@ -104,6 +104,9 @@ pub struct AnalyzeOptions {
     pub server_only: Vec<String>,
     /// Directory module paths are relative to.
     pub root: std::path::PathBuf,
+    /// F256: extra directories, as normalised paths relative to `root` (`../shared`), a relative import may reach besides
+    /// the app itself (`brust.toml` `[build] source_roots`). Each confines imports the way the root does. Empty = the app only.
+    pub source_roots: Vec<String>,
     /// SVG markup the build rendered for `IconRequest.key`s (L23): those icons become inline elements.
     pub icon_svgs: std::collections::HashMap<String, IconMarkup>,
     /// The last compile (icons were rendered): a lucide icon that is still a component is judged
