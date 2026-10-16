@@ -325,10 +325,22 @@ export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<Runti
  * printed (external: one runtime for every chunk). */
 export async function buildClientChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls): Promise<Map<string, string>> {
   const entrypoints: string[] = []
+  const shared = new Map<string, string>()
   for (const c of compiled.values()) {
     if (c.clientJs === undefined) continue
     const file = join(dist, '.stage', 'client', `${c.id}.js`)
     write(file, c.clientJs)
+    // R34.124: a module several chunks import (a specialised clone's factory) is written once under its content name.
+    for (const m of c.clientModules ?? []) {
+      const mf = join(dist, '.stage', 'client', `${m.name}.js`)
+      const seen = shared.get(m.name)
+      if (seen !== undefined && seen !== m.code) throw new BuildError('client-module-collision', `two different client modules are named ${m.name}`)
+      if (seen === undefined) {
+        shared.set(m.name, m.code)
+        write(mf, m.code)
+        stage(ctx.sourceOf, mf, c)
+      }
+    }
     stage(ctx.sourceOf, file, c)
     entrypoints.push(file)
   }
@@ -337,8 +349,16 @@ export async function buildClientChunks(dist: string, compiled: Map<string, Comp
     entrypoints,
     splitting: true,
     external: ['/_brust/*'],
-    plugins: [runtimeAliasPlugin(runtimeUrl), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
+    plugins: [runtimeAliasPlugin(runtimeUrl), specModulePlugin(join(dist, '.stage', 'client')), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
   })
+}
+
+/** R34.124: `brust-spec:<name>` is a module several chunks share (a specialised clone's factory), written beside the chunks. */
+function specModulePlugin(dir: string): BunPlugin {
+  return {
+    name: 'brust-spec-modules',
+    setup: (b) => void b.onResolve({ filter: /^brust-spec:/ }, (a) => ({ path: join(dir, `${a.path.slice('brust-spec:'.length)}.js`) })),
+  }
 }
 
 /** Registers a written artifact (by its path and its real path: the importer Bun reports). */
