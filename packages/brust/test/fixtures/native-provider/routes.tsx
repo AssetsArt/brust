@@ -5,6 +5,7 @@ import Nested from './Nested'
 import NestedIds from './NestedIds'
 import InputsPage from './InputsPage'
 import Page from './Page'
+import RestLivePage from './RestLivePage'
 import RestPage from './RestPage'
 import SamePage from './SamePage'
 import RenderPage from './RenderPage'
@@ -18,6 +19,7 @@ export const routes = defineRoutes([
   { path: '/fwd', Component: FwdPage },
   { path: '/same', Component: SamePage },
   { path: '/rest', Component: RestPage },
+  { path: '/rest-live', Component: RestLivePage },
   { path: '/inputs', Component: InputsPage },
   { path: '/render', Component: RenderPage },
   { path: '/poly', Component: PolyPage },

@@ -531,3 +531,18 @@ fn a_helper_called_with_a_computation_keeps_its_job() {
             .collect::<Vec<_>>()
     );
 }
+
+// Mellow F1 (switch-rest-fed): a LIVE rest crossing as `__in_rest` would stay at its first value (the clone is not
+// linked and a spread is expanded into HTML only), so the call that passes one is refused where the rest is spread.
+#[test]
+fn a_live_caller_rest_is_never_carried_into_a_clone() {
+    let all = compile("rest_live.tsx");
+    let root = &all[0];
+    assert!(
+        is_react(&root.ir) || has(&root.ir, DiagClass::Fallback, "spread-props"),
+        "{:?}\n{}",
+        root.ir.diagnostics,
+        root.jinja
+    );
+    assert!(!root.jinja.contains("data-n=\"0\""), "{}", root.jinja);
+}

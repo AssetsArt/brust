@@ -1469,7 +1469,7 @@ fn count_prop_spreads(n: &Node) -> usize {
         } => {
             props
                 .iter()
-                .filter(|(k, v)| k == crate::ir::SPREAD_KEY && own(v))
+                .filter(|(k, v)| (k == crate::ir::SPREAD_KEY || k == REST_INPUT) && own(v))
                 .count()
                 + children.iter().map(count_prop_spreads).sum::<usize>()
         }
@@ -1587,7 +1587,8 @@ impl SpreadSink {
                     props, children, ..
                 } => {
                     for (k, v) in props {
-                        if k == crate::ir::SPREAD_KEY {
+                        // F278: the rest handed to a clone as its input is spread there
+                        if k == crate::ir::SPREAD_KEY || k == REST_INPUT {
                             add(v);
                         }
                     }

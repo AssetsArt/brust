@@ -298,3 +298,16 @@ test('the call site\'s rest spread into the content crosses as an input and a pl
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
+
+test('a live caller rest reaches the spread attributes after a click (Mellow F1)', async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/rest-live`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('button[data-n]')?.getAttribute('data-n') === '0')
+  await page.getByRole('button', { name: 'inc' }).click()
+  await page.waitForFunction(() => document.querySelector('button[data-n]')?.getAttribute('data-n') === '1')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
