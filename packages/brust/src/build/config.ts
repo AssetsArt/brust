@@ -1,9 +1,11 @@
 // Build-time settings from `brust.toml` `[build]` (the runtime sections are `../config.ts`):
 //   [build]
 //   server_only = ["lib/server", "@acme/db"]   # import prefixes / app-root-relative paths
+//   source_roots = ["../shared"]                # F256: directories besides the app a relative import may reach (monorepo)
 // `server_only` is the app config `serverOnly` of the compiler spec (§8.2): the compiler refuses
 // such an import in client code, and every browser bundle refuses to include it.
-import { join } from 'node:path'
+import { statSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { ACTION_CREDENTIALS, type ActionCredentials, DEFAULT_ACTION_PREFIX, DEFAULT_MAX_BODY_BYTES, DEFAULT_MAX_RESPONSE_BYTES, MAX_ACTION_BYTES, baseUrlError, prefixError } from '../actions/prefix'
 import { ADAPTER_NAMES, BUILTINS, installHint } from '../cache-adapter/load'
 import { BuildError } from './errors'
@@ -76,6 +78,8 @@ export interface BuildConfig {
   cache: CacheBuildConfig | null
   /** `[css] global` (L19, R19.1): app-root-relative stylesheets every route links first, in order. */
   cssGlobal: string[]
+  /** `[build] source_roots` (F256): directories outside the app a relative import may reach, normalised and relative to the app root (`../shared`). Empty = the app only. */
+  sourceRoots: string[]
 }
 
 const isTable = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -306,10 +310,36 @@ function parseCss(file: string, raw: unknown): string[] {
   return g.map((p: string) => p.trim())
 }
 
+/**
+ * `[build] source_roots` (F256): extra directories, relative to the app root, that a relative import may reach besides
+ * the app itself (`../shared` in a monorepo). Each is normalised (`../a/../shared` = `../shared`), must exist and be a
+ * directory, and confines imports the way the app root does: lexically, so `../shared/../secret` is outside it.
+ * An entry inside the app adds nothing and is dropped. Returns the roots that lie outside, `/`-separated.
+ */
+export function parseSourceRoots(file: string, appRoot: string, raw: unknown): string[] {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw) || raw.some((p) => typeof p !== 'string' || p.trim() === '' || p.includes('\0')))
+    throw new BuildError('config', `${file}: build.source_roots must be an array of non-empty strings (paths relative to the app root)`)
+  const out = new Set<string>()
+  for (const p of raw as string[]) {
+    if (isAbsolute(p.trim())) throw new BuildError('config', `${file}: build.source_roots entry ${JSON.stringify(p)} must be relative to the app root`)
+    const abs = resolve(appRoot, p.trim())
+    let dir = false
+    try {
+      dir = statSync(abs).isDirectory()
+    } catch {}
+    if (!dir) throw new BuildError('config', `${file}: build.source_roots entry ${JSON.stringify(p)} (${abs}) is not an existing directory`)
+    if (abs === resolve(abs, '..')) throw new BuildError('config', `${file}: build.source_roots entry ${JSON.stringify(p)} is the filesystem root`)
+    const rel = relative(appRoot, abs).split(sep).join('/')
+    if (rel === '..' || rel.startsWith('../')) out.add(rel)
+  }
+  return [...out].sort()
+}
+
 export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolean } = {}): Promise<BuildConfig> {
   const file = join(appRoot, 'brust.toml')
   const f = Bun.file(file)
-  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [] }
+  if (!(await f.exists())) return { serverOnly: [], actions: null, cloudflare: null, cache: null, cssGlobal: [], sourceRoots: [] }
   let parsed: unknown
   try {
     parsed = Bun.TOML.parse(await f.text())
@@ -322,11 +352,12 @@ export async function loadBuildConfig(appRoot: string, o: { actionsOnly?: boolea
   const cache = await parseCache(file, appRoot, root.cache)
   const cssGlobal = parseCss(file, root.css)
   const build = root.build
-  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal }
+  if (build === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots: [] }
   if (build === null || typeof build !== 'object' || Array.isArray(build)) throw new BuildError('config', `${file}: [build] must be a table`)
+  const sourceRoots = parseSourceRoots(file, appRoot, (build as Record<string, unknown>).source_roots)
   const so = (build as Record<string, unknown>).server_only
-  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal }
+  if (so === undefined) return { serverOnly: [], actions, cloudflare, cache, cssGlobal, sourceRoots }
   if (!Array.isArray(so) || so.some((p) => typeof p !== 'string' || p.trim() === ''))
     throw new BuildError('config', `${file}: build.server_only must be an array of non-empty strings`)
-  return { serverOnly: so.map((p: string) => p.trim().replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal }
+  return { serverOnly: so.map((p: string) => p.trim().replace(/^\.\//, '')), actions, cloudflare, cache, cssGlobal, sourceRoots }
 }

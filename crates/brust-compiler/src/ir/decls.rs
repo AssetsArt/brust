@@ -22,6 +22,20 @@ pub struct ProvideDecl {
     pub fields: Vec<(String, RawExpr)>,
 }
 
+/// B7 (R34.122 b): a function prop a component passes to a child, written as an arrow whose body is JSX
+/// (`render={({ checked }) => <>…</>}`). The prop itself stays a client-only value; this is its body read as a
+/// template, in the scope of the component that writes it, so a child that only ever CALLS the prop can be
+/// specialised with the body spliced in where the call is. `params` are the keys of the object pattern the arrow
+/// destructures, each with the local it binds; the body reads them as loop bindings.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct RenderProp {
+    /// The location of the `Component` node that passes the prop.
+    pub loc: u32,
+    pub key: String,
+    pub params: Vec<(String, String)>,
+    pub body: Vec<crate::ir::Node>,
+}
+
 /// The context fields a component reads (`const context = useXContext(...)`, then `context.field`). Each field is a
 /// hidden prop `__ctx_<context>_<field>` (`ctx_prop`) the call site fills from the nearest Provider frame.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

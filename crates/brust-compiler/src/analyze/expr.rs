@@ -27,6 +27,12 @@ pub struct Reader<'r, 'a> {
     map_callback: bool,
     /// The context Providers read in the template (S2): what this component hands to its consumers.
     pub provides: Vec<crate::ir::ProvideDecl>,
+    /// B7: render-prop arrows written on components, read as templates (`ir::RenderProp`).
+    pub render_props: Vec<crate::ir::RenderProp>,
+    /// B7: the code being read is the verbatim copy of an arrow whose body was also read as a template. The copy is
+    /// used only if its call site cannot be specialised, and that call site then falls back anyway (`island-prop`),
+    /// so what the copy reads as written (`...rest`, a snapshot ref, a context local) is not an escape of this component.
+    pub verbatim_unused: bool,
     /// `useId()` calls hoisted out of the return expression (R34.120), by call address: each reads as the local the
     /// component declares for it.
     pub hoisted_calls: std::collections::HashMap<usize, String>,
@@ -42,6 +48,8 @@ impl<'r, 'a> Reader<'r, 'a> {
             loop_scope: Vec::new(),
             map_callback: false,
             provides: Vec::new(),
+            render_props: Vec::new(),
+            verbatim_unused: false,
             hoisted_calls: std::collections::HashMap::new(),
         }
     }
@@ -60,6 +68,7 @@ impl<'r, 'a> Reader<'r, 'a> {
         let mut w = Walk::default();
         w.expr(e);
         self.rest_in_verbatim(&w, loc_of(e));
+        self.snapshot_in_verbatim(&w, loc_of(e));
         let (captures, jsx) = self.captured(w);
         RawExpr {
             loc: loc_of(e),
@@ -69,6 +78,23 @@ impl<'r, 'a> Reader<'r, 'a> {
                 captures,
             },
         }
+    }
+
+    /// A call argument. B3: the forwarded ref handed on whole (`useComposedRefs(forwardedRef, …)`, `composeRefs(ref)`) is
+    /// `null`: a native component is never given a ref (a call site that passes `ref` already falls back,
+    /// `forwardref-ref`), which is what React hands a `forwardRef` render function when its caller passes none. Any
+    /// other read of it (a member, an operand, a binding) stays a fallback.
+    pub fn arg(&mut self, a: &js_ast::Expr) -> RawExpr {
+        if let E::EIdentifier(id) = &a.data
+            && self.names.is_forwarded_ref(id.ref_)
+        {
+            self.names.note_forwarded_ref_dropped(a.loc.start);
+            return RawExpr {
+                loc: loc_of(a),
+                kind: RawKind::Lit(Literal::Null),
+            };
+        }
+        self.expr(a)
     }
 
     pub fn expr(&mut self, e: &js_ast::Expr) -> RawExpr {
@@ -92,6 +118,16 @@ impl<'r, 'a> Reader<'r, 'a> {
                     self.names.ctx_escape.set(Some(loc));
                 }
                 return self.opaque(e, "context value");
+            }
+            // B4: `.current` of a ref that is never written is its initial value, held as a state cell no one sets.
+            E::EDot(d)
+                if d.name.slice() == b"current"
+                    && matches!(&d.target.data, E::EIdentifier(t) if self.names.is_snapshot_ref(t.ref_)) =>
+            {
+                let E::EIdentifier(t) = &d.target.data else {
+                    unreachable!()
+                };
+                self.ident(t.ref_)
             }
             E::EIdentifier(id) => self.ident(id.ref_),
             E::EImportIdentifier(id) => self.ident(id.ref_),
@@ -185,13 +221,22 @@ impl<'r, 'a> Reader<'r, 'a> {
                     let is_map = matches!(&c.target.data,
                         E::EDot(d) if d.name.slice() == b"map")
                         && c.args.len() == 1;
+                    let user_fn = matches!(
+                        &callee.kind,
+                        RawKind::Ident {
+                            kind: IdentKind::Import { .. } | IdentKind::Local,
+                            ..
+                        }
+                    );
                     let mut args = Vec::with_capacity(c.args.len());
                     for a in c.args.iter() {
                         if matches!(a.data, E::ESpread(_)) {
                             return self.opaque(e, "spread argument");
                         }
                         self.map_callback = is_map && matches!(a.data, E::EArrow(_));
-                        args.push(self.expr(a));
+                        // B3: only for a function of the app or a package (evaluated in JS, where the ref IS `null`), never
+                        // a builtin the server prints its own way (`String(ref)`).
+                        args.push(if user_fn { self.arg(a) } else { self.expr(a) });
                         self.map_callback = false;
                     }
                     RawKind::Call {
@@ -246,6 +291,72 @@ impl<'r, 'a> Reader<'r, 'a> {
                 }
                 RawKind::Array(items)
             }
+            // B5: `{ ...a, k: v, ...b }` is `Object.assign({}, a, { k: v }, b)`: each spread is a plain read of `a` / `b`
+            // (`...props.style` of the `...rest` object reads the prop `style`), so the object stays structured
+            // instead of printing the rest object as written.
+            E::EObject(o)
+                if o.properties
+                    .iter()
+                    .any(|p| matches!(p.kind, js_ast::G::PropertyKind::Spread)) =>
+            {
+                let mut args = vec![RawExpr {
+                    loc,
+                    kind: RawKind::Object(Vec::new()),
+                }];
+                let mut seg: Vec<(String, RawExpr)> = Vec::new();
+                for p in o.properties.iter() {
+                    if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
+                        let Some(value) = &p.value else {
+                            return self.opaque(e, "object spread shape");
+                        };
+                        if !seg.is_empty() {
+                            args.push(RawExpr {
+                                loc,
+                                kind: RawKind::Object(std::mem::take(&mut seg)),
+                            });
+                        }
+                        args.push(self.expr(value));
+                        continue;
+                    }
+                    let (Some(key), Some(value)) = (&p.key, &p.value) else {
+                        return self.opaque(e, "object property shape");
+                    };
+                    if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
+                        || p.flags.contains(js_ast::flags::Property::IsComputed)
+                    {
+                        return self.opaque(e, "object spread, accessor or computed key");
+                    }
+                    let name = match &key.data {
+                        E::EString(s) => estring(s),
+                        E::ENumber(n) => format_num(n.value()),
+                        _ => return self.opaque(e, "object key"),
+                    };
+                    seg.push((name, self.expr(value)));
+                }
+                if !seg.is_empty() {
+                    args.push(RawExpr {
+                        loc,
+                        kind: RawKind::Object(seg),
+                    });
+                }
+                RawKind::Call {
+                    callee: Box::new(RawExpr {
+                        loc,
+                        kind: RawKind::Member {
+                            target: Box::new(RawExpr {
+                                loc,
+                                kind: RawKind::Ident {
+                                    name: "Object".into(),
+                                    kind: IdentKind::Global,
+                                },
+                            }),
+                            name: "assign".into(),
+                            optional: false,
+                        },
+                    }),
+                    args,
+                }
+            }
             E::EObject(o) => {
                 let mut props = Vec::with_capacity(o.properties.len());
                 for p in o.properties.iter() {
@@ -294,7 +405,23 @@ impl<'r, 'a> Reader<'r, 'a> {
 
     /// Code printed as written that reads the props `...rest` object would see the whole props
     /// (named keys included): recorded so the component falls back (R34.14).
+    /// B4: a ref held as a state cell is read as `.current` only in structured code; printed as written it would read
+    /// `.current` off the value. Recorded so the component keeps the old `ref-in-render` fallback.
+    fn snapshot_in_verbatim(&self, w: &Walk, loc: u32) {
+        if self.verbatim_unused {
+            return;
+        }
+        if self.names.snapshot_escape.get().is_none()
+            && w.used.iter().any(|r| self.names.is_snapshot_ref(*r))
+        {
+            self.names.snapshot_escape.set(Some(loc));
+        }
+    }
+
     fn rest_in_verbatim(&self, w: &Walk, loc: u32) {
+        if self.verbatim_unused {
+            return;
+        }
         if self.names.rest_escape.get().is_none() && w.used.iter().any(|r| self.names.is_rest(*r)) {
             self.names.rest_escape.set(Some(loc));
         }
@@ -734,6 +861,12 @@ pub struct Walk {
     /// `(binding, read)`: a binding declared or assigned from a value that reads `read` (`const s = slots`,
     /// `s = { a: slots }`), so writing through the binding may write into `read`.
     pub flows: Vec<(js_ast::Ref, js_ast::Ref)>,
+    /// B4: the start of each identifier expression that is the object of a `.current` member read.
+    pub current_reads: Vec<i32>,
+    /// B4: identifiers read inside a nested function (a handler, an effect, a callback), where a ref is not a render read.
+    pub fn_uses: Vec<js_ast::Ref>,
+    /// Depth of nested functions at the point being walked.
+    depth: u32,
 }
 
 impl Walk {
@@ -810,6 +943,7 @@ impl Walk {
     }
 
     fn func(&mut self, f: &js_ast::G::Fn) {
+        self.depth += 1;
         if let Some(name) = &f.name {
             self.declared.push(name.ref_);
         }
@@ -820,6 +954,7 @@ impl Walk {
             }
         }
         self.stmts(f.body.stmts.slice());
+        self.depth -= 1;
     }
 
     pub fn stmts(&mut self, stmts: &[js_ast::Stmt]) {
@@ -928,10 +1063,16 @@ impl Walk {
             E::EIdentifier(id) => {
                 self.used.push(id.ref_);
                 self.used_at.push((id.ref_, e.loc.start));
+                if self.depth > 0 {
+                    self.fn_uses.push(id.ref_);
+                }
             }
             E::EImportIdentifier(id) => {
                 self.used.push(id.ref_);
                 self.used_at.push((id.ref_, e.loc.start));
+                if self.depth > 0 {
+                    self.fn_uses.push(id.ref_);
+                }
             }
             E::EArray(a) => a.items.iter().for_each(|x| self.expr(x)),
             E::EUnary(u) => {
@@ -973,12 +1114,20 @@ impl Walk {
                 self.expr(&c.target);
                 c.args.iter().for_each(|x| self.expr(x));
             }
-            E::EDot(d) => self.expr(&d.target),
+            E::EDot(d) => {
+                if d.name.slice() == b"current"
+                    && let E::EIdentifier(_) = &d.target.data
+                {
+                    self.current_reads.push(d.target.loc.start);
+                }
+                self.expr(&d.target)
+            }
             E::EIndex(i) => {
                 self.expr(&i.target);
                 self.expr(&i.index);
             }
             E::EArrow(a) => {
+                self.depth += 1;
                 for arg in a.args.slice() {
                     self.declare_binding(&arg.binding);
                     if let Some(d) = &arg.default {
@@ -986,6 +1135,7 @@ impl Walk {
                     }
                 }
                 self.stmts(a.body.stmts.slice());
+                self.depth -= 1;
             }
             E::EFunction(f) => self.func(&f.func),
             E::EClass(c) => self.class(c),
