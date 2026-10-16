@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 223 | 117 | 16 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 190 | 57 | 56 | 77 | 0 | 0 | 0 | 0 |
+| C Hooks | 191 | 57 | 59 | 75 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 570 | 250 | 101 | 215 | 3 | 1 | 0 | 0 |
+| **Total** | 571 | 250 | 104 | 213 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -346,12 +346,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-live-forward-class-slot | a live className through a child that may render a Slot (asChild) | react | react | ssr | ok | 4.0 | fallback:spread-props | F299: a Slot merges class lists, so the replace rule does not hold: refused |
 | c-slot-owner-state | the page's own state read in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:slot-owner | F214: slot content under a native child's host is bound by the child (slot-owner) |
 | c-slot-owner-linked-static | a linked prop in the slot of a static child that is itself linked | react | react | ssr | ok | 4.0 | fallback:slot-owner | F309: the linked static child gets a host of its own, which would bind the slot content (it never updated): slot-owner |
-| c-frozen-prop-rows | a native child reading the page's changing prop in the rows of a constant list | react | react | ssr | ok | 5.4 | fallback:frozen-prop | F319: the child would keep the first value (it was stale on main): frozen-prop, the page renders with React |
-| c-frozen-prop-child | a native child reading the page's changing prop in a prop of a child it does not link | react | react | ssr | ok | 5.4 | fallback:frozen-prop | F319: the child would keep the first value (it was stale on main): frozen-prop, the page renders with React |
-| c-frozen-prop-spread | a native child reading the page's changing prop in a key printed once through a forwarder's spread | react | react | ssr | ok | 5.4 | fallback:frozen-prop | F319: the child would keep the first value (it was stale on main): frozen-prop, the page renders with React |
+| c-frozen-prop-rows | a native child reading the page's changing prop in the rows of a constant list | native | native | 0 | ok | 5.7 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
+| c-frozen-prop-child | a native child reading the page's changing prop in a prop of a child it does not link | native | native | 0 | ok | 4.6 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
+| c-frozen-prop-spread | a native child reading the page's changing prop in a key printed once through a forwarder's spread | native | native | 0 | ok | 4.6 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
+| c-frozen-prop-stateless | a stateless child reading the page's changing prop in the rows of a constant list | react | react | ssr | ok | 4.0 | fallback:frozen-prop | F319 / F323: a stateless component cannot know whether a caller changes its props (F75): frozen-prop, the page renders with React |
 | c-frozen-prop-rest | a native wrapper passing its own changing prop into a native child's rest, handed to a static child it does not link | react | react | ssr | ok | 5.4 | fallback:frozen-prop | F319 (Mellow F1): a read of the rest freezes every key that lands there, passed up through the wrapper's own prop: frozen-prop (it was native and stale; the direct page call site was already refused by spread-props) |
-| c-frozen-prop-call-spread | the page's state object spread into a native child that reads the key in a constant list | react | react | ssr | ok | 5.4 | fallback:spread-props, fallback:frozen-prop | F319 (Afrojack): a spread at the call site may carry a frozen key: frozen-prop (spread-props refuses it too) |
-| c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 4.6 | — | F319: a value that does not change satisfies the requirement |
+| c-frozen-prop-call-spread | the page's state object spread into a native child that reads the key in a constant list | react | react | ssr | ok | 6.4 | fallback:spread-props | F319 (Afrojack): a spread at the call site may carry a frozen key: frozen-prop (spread-props refuses it too) |
+| c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 5.7 | — | F319: a value that does not change satisfies the requirement |
 | c-rest-children-consumer | a context consumer passed as children of a component that spreads its rest (children included) under its own Provider | static | static | 0 | ok | 4.6 | — | F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider) |
 | c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | ssr | ok | 5.4 | info:rest-children-unsupported | F298 + F309: that element is linked, so it would host the Thumb (slot-owner): no clone, LiveRoot stays a React island with its children (F307 relaxes it) |
 | c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F324: the children reach the button through the rest in React; the clone has no children slot, so it is refused and the Provider stays an island that carries them (info specialise-unsupported; was: children silently dropped, alpha.16) |
