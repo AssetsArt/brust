@@ -85,6 +85,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         spec_salt: ir.rest_clone_of.as_ref().map(|_| ir.id.clone()),
         mount_once: None,
         frozen: BTreeSet::new(),
+        callable_up: false,
         state_inits: ir
             .state
             .iter()
@@ -304,6 +305,9 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         "every RowOnly link is visited by resolve_row_only"
     );
     ir.template = template;
+    if w.callable_up && !ir.callable_props.iter().any(|p| p == "*") {
+        ir.callable_props.push("*".into());
+    }
     w.frozen.extend(ir.callable_props.iter().cloned());
     ir.frozen_props = std::mem::take(&mut w.frozen).into_iter().collect();
     // A list or condition the children lowered folded its slot away: the precompute job no longer
@@ -441,6 +445,9 @@ struct Walker<'s, 'c> {
     mount_once: Option<String>,
     /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
     frozen: BTreeSet<String>,
+    /// W1d (progress): this component spreads its own props/rest onto a child that may call a function prop, so its
+    /// own callers must not pass one (`callable_props` gains `*`).
+    callable_up: bool,
     /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
     state_inits: HashMap<String, Expr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
@@ -5059,13 +5066,34 @@ impl Walker<'_, '_> {
                     // an arrow, an import) is never run by the child's job, which evaluates the module's own default:
                     // refused whatever the value is.
                     for root in &c.callable_props {
-                        let passed = props
-                            .iter()
-                            .any(|(k, _)| k == root || k == crate::ir::SPREAD_KEY);
-                        if passed {
+                        // A key written at this call site refuses. A spread of this component's own props or rest
+                        // (`{...props}` onto the Root) carries whatever ITS callers pass: the requirement moves up
+                        // to them (`*`), and the refusal happens at the concrete call site.
+                        let mut refuse = false;
+                        for (k, v) in props.iter() {
+                            if k == crate::ir::SPREAD_KEY {
+                                if matches!(v, Expr::ClientOnly { .. })
+                                    || self.reads_state(v)
+                                    || self.deps_of(v).props.is_empty()
+                                {
+                                    refuse = true;
+                                } else {
+                                    self.callable_up = true;
+                                }
+                            } else if k == root
+                                || (root == "*"
+                                    && k != "children"
+                                    && (c.props_rest.is_none() || !named.contains(k.as_str()))
+                                    // a literal (`data-x="1"`) is not a function
+                                    && !matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if r.json_literal().is_some()))
+                            {
+                                refuse = true;
+                            }
+                        }
+                        if refuse {
                             self.diagnostics.push(Diagnostic::fallback(
                                 "frozen-prop",
-                                format!("<{name}> may call its prop `{root}`, which a call site passes here; the server evaluates the module's own default, not the function passed"),
+                                format!("<{name}> may call a function prop (`{root}`), which a call site passes here; the server evaluates the module's own default, not the function passed"),
                                 *loc,
                                 "do not pass the function, or keep this component in React",
                             ));

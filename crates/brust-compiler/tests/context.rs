@@ -227,6 +227,32 @@ fn a_function_prop_with_a_plain_default_lowers_the_provider() {
     );
 }
 
+/// A wrapper that spreads its own props onto the Provider component (shadcn's `<Progress.Root {...props}>`) carries whatever
+/// ITS callers pass: the callable requirement moves up, the call site that passes no function stays native and the one that
+/// passes any refuses by name.
+#[test]
+fn a_wrapper_spreading_its_props_moves_the_callable_requirement_to_its_callers() {
+    let all = compile("fn-wrap-ok.tsx");
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| (&ir.id, &ir.tier))
+            .collect::<Vec<_>>()
+    );
+    let out = compile_all("fn-wrap-passed.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("fnWrapPassed_"))
+        .expect("page");
+    assert!(is_react(&page.1), "{:?}", page.1.tier);
+    assert!(
+        rules(&page.1).contains(&"frozen-prop"),
+        "{:?}",
+        page.1.diagnostics
+    );
+}
+
 /// A Provider field that IS a call of a proven-plain module function (`pct: clamp(value)`) is evaluated by the Provider's own
 /// instance (a native clone per call site): the call is never substituted into a lowered frame at the call site.
 #[test]
