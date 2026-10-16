@@ -14,6 +14,7 @@ import LoopPage from './LoopPage'
 import Page from './Page'
 import RestPage from './RestPage'
 import LocalSpreadPage from './LocalSpreadPage'
+import LocalSpreadRestPage from './LocalSpreadRestPage'
 import SwPage from './SwPage'
 import SamePage from './SamePage'
 import RenderPage from './RenderPage'
@@ -41,4 +42,5 @@ export const renderHydr = (): string => html(HydrPage)
 export const renderColl = (): string => html(CollPage)
 export const renderCtxV = (): string => html(CtxVPage)
 export const renderLocalSpread = (): string => html(LocalSpreadPage)
+export const renderLocalSpreadRest = (): string => html(LocalSpreadRestPage)
 export const renderSw = (kind: string): string => server.renderToStaticMarkup(createElement(SwPage as never, { kind } as never))

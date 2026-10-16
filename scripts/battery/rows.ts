@@ -2058,6 +2058,13 @@ export const rows: Row[] = [
   { id: 'c-local-spread-method', category: 'C', authoring: 'a local object with a method that spreads the props', expect: 'static', jobs: 1,
     snippet: lsFx('local-spread-method'),
     note: 'W1d PR 4a (F326): a method is not a plain entry; the component is a React island under a static page' },
+  { id: 'c-local-spread-rest', category: 'C', authoring: 'a local object of entries and the rest ({ role, dir, ...groupProps }) used only as a JSX spread', expect: 'static', jobs: 0,
+    snippet: lsFx('local-spread-rest'),
+    note: 'W1d PR 4b (F327): Radix ToggleGroupImpl\'s commonProps; the rest in it is not read as a value because the object is only spread' },
+  { id: 'c-local-spread-rest-value', category: 'C', authoring: 'the same object also read as a value', expect: 'static', jobs: 1,
+    snippet: lsFx('local-spread-rest-value'),
+    note: 'W1d PR 4b (F327): read as a value the rest would print as one: prop-pattern, the component is a React island under a static page' },
+
   { id: 'c-scope-props', category: 'C', authoring: 'a context hook and a scope hook read props.__scopeX, the token spread on a component', expect: 'static', jobs: 0,
     snippet: scopeFx('props'),
     note: 'W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React' },
