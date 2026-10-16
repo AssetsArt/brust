@@ -315,6 +315,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/nested-fed.test.ts
       # F284-F287: an arrow-const component, useReducer, hoisted hooks and includes: served == React, then the interaction.
       - run: bun test --timeout 120000 tests/server/presence-general.chromium.test.ts
+      # F289: a hook's returned object bound whole at the call site (t.on / t.toggle): served == React, then the clicks.
+      - run: bun test --timeout 120000 tests/server/hook-object-bind.chromium.test.ts
       # F308: a changing key outside a list is a named refusal; the React page resets state on a key change.
       - run: bun test --timeout 120000 tests/server/live-key.chromium.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
@@ -347,6 +349,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/form-control.chromium.test.ts
       # F295: a snapshot through a forwarding spread where every instance mounts once; a guarded mount refused.
       - run: bun test --timeout 120000 tests/server/snapshot-spread.chromium.test.ts
+      # F333: an unsorted object literal read by Object.entries / Object.keys keeps its JS key order; served == React.
+      - run: bun test --timeout 120000 tests/server/literal-order.test.ts
       # F300/F324: JSX children given to a component that passes its rest to a specialised Provider (children-rest).
       - run: bun test --timeout 120000 tests/server/rest-children-data.test.ts
 
