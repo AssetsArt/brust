@@ -21,6 +21,8 @@ export class Instance {
   disposed = false
   /** false until the initial bind pass finishes; the first-paint tripwire only applies before then. */
   booted = false
+  /** Mounted after the page booted: nothing of it was in the server markup (`BehaviorCtx.late`). */
+  late = false
   /** F277: started from props other than the ones its markup was printed with (a host an `x-if` or a row created after
    * first paint, linked to its parent's current value): its first bind is not a first paint, so no tripwire. */
   reseeded = false
@@ -68,7 +70,7 @@ export class Instance {
     return r as { current: E | null }
   }
   ctx(): BehaviorCtx {
-    return { el: this.host, props: this.props, effect: (fn) => this.componentEffect(fn), onCleanup: (fn) => this.onCleanup(fn), ref: (n, init) => this.ref(n, init) }
+    return { el: this.host, props: this.props, effect: (fn) => this.componentEffect(fn), onCleanup: (fn) => this.onCleanup(fn), ref: (n, init) => this.ref(n, init), late: this.late }
   }
   init(factory: BehaviorFactory): void {
     const m = factory(this.ctx())

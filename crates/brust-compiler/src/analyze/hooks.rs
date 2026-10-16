@@ -734,7 +734,35 @@ fn read_stmts(
                 if let Some(v) = &ret.value {
                     hoist_ids(v, r, out);
                 }
-                returned = Some(ret.value.map(|v| returned_value(&v, r, out, m)));
+                returned = Some(ret.value.map(|v| {
+                    // R34.143: `return useSyncExternalStore(...)` of the hydration shape is the hook's one state
+                    if !out.inline.stack.is_empty()
+                        && let Some((_, call, true)) = hook_call(&v, r.names)
+                        && react_hook_name(call, r.names).as_deref() == Some("useSyncExternalStore")
+                        && hydration_shape(call, m, r.names)
+                        && !out.classified_hooks.contains(&call_addr(call))
+                    {
+                        out.classified_hooks.insert(call_addr(call));
+                        let mut n = 1;
+                        let name = loop {
+                            let name = format!("ret{n}_useSyncExternalStore");
+                            if out.inline.taken.insert(name.clone()) {
+                                break name;
+                            }
+                            n += 1;
+                        };
+                        let vloc = loc_of(&v);
+                        hydrated_state(out, name.clone(), vloc);
+                        return RawExpr {
+                            loc: vloc,
+                            kind: RawKind::Ident {
+                                name,
+                                kind: IdentKind::State,
+                            },
+                        };
+                    }
+                    returned_value(&v, r, out, m)
+                }));
             }
             // S2 (R34.104): `if (cond) { console.error(…) }` only logs (Radix's dev validation of its props): it is not
             // part of the render, so it is left out; any other effect of a branch keeps the control-flow fallback.
@@ -862,6 +890,7 @@ fn returned_value(
                 name: state.clone(),
                 setter: Some(set.clone()),
                 init: Expr::Raw(init),
+                late: false,
             });
             return RawExpr {
                 loc: vloc,
@@ -955,6 +984,7 @@ fn simple_hook(
                     name,
                     setter: None,
                     init: Expr::Raw(init),
+                    late: false,
                 });
             } else {
                 out.refs.push(RefDecl {
@@ -1081,6 +1111,7 @@ fn reducer_hook(
         name: state,
         setter: Some(set.clone()),
         init: Expr::Raw(init),
+        late: false,
     });
     let reducer_body = r.expr(reducer);
     out.handlers.push(HandlerDecl {
@@ -1728,6 +1759,101 @@ fn drop_inert_id_effects(
     (kept, pairs)
 }
 
+/// R34.143: the call is `useSyncExternalStore(subscribe, () => true, () => false)` with a `subscribe` that subscribes to
+/// nothing (returns a no-op unsubscribe): the snapshot is `false` where there is no client (the server render and the
+/// hydration pass) and `true` once mounted. This is the only shape lowered; any other store stays `hook-unsupported`.
+fn hydration_shape(call: &js_ast::E::Call, m: Module<'_, '_>, names: &NameTable<'_>) -> bool {
+    let [subscribe, client, server] = call.args.as_slice() else {
+        return false;
+    };
+    let returns = |e: &js_ast::Expr, want: bool| match &e.data {
+        E::EArrow(a) if a.args.is_empty() && !a.is_async => {
+            expr_body(a).is_some_and(|b| matches!(&b.data, E::EBoolean(x) if x.value == want))
+        }
+        _ => false,
+    };
+    // `subscribe` returns an unsubscribe that does nothing
+    let returns_noop = |stmts: &[js_ast::Stmt]| {
+        matches!(stmts, [only] if matches!(&only.data, S::SReturn(r)
+            if r.value.as_ref().is_some_and(crate::analyze::names::is_noop_fn)))
+    };
+    let silent = match &subscribe.data {
+        E::EArrow(a) => a.args.is_empty() && !a.is_async && returns_noop(a.body.stmts.slice()),
+        E::EFunction(f) => f.func.args.is_empty() && returns_noop(f.func.body.stmts.slice()),
+        _ => crate::analyze::names::ident_ref(subscribe)
+            .and_then(|id| module_fn(m.ast, names, id))
+            .is_some_and(|(_, f)| f.args.is_empty() && returns_noop(f.body.stmts.slice())),
+    };
+    silent && returns(client, true) && returns(server, false)
+}
+
+/// R34.143: a state `name` that is `false` until the component is mounted and `true` after: React's `isHydrated`.
+fn hydrated_state(out: &mut BodyDecls, name: String, loc: u32) {
+    let mut n = 1;
+    let set = loop {
+        let set = format!("{name}_set{n}");
+        if out.inline.taken.insert(set.clone()) {
+            break set;
+        }
+        n += 1;
+    };
+    let lit = |b: bool| RawExpr {
+        loc,
+        kind: RawKind::Lit(crate::ir::Literal::Bool(b)),
+    };
+    out.state.push(StateDecl {
+        name,
+        setter: Some(set.clone()),
+        init: Expr::Raw(lit(false)),
+        late: true,
+    });
+    out.effects.push(EffectDecl {
+        // set in a microtask: the effects of the component that start with this one see the render's value (`false`)
+        // first, as in React, where an effect closes over the render it ran for; the browser does not paint in between
+        body: RawExpr {
+            loc,
+            kind: RawKind::Arrow {
+                params: Vec::new(),
+                body: ArrowBody::Expr(Box::new(RawExpr {
+                    loc,
+                    kind: RawKind::Call {
+                        callee: Box::new(RawExpr {
+                            loc,
+                            kind: RawKind::Ident {
+                                name: "queueMicrotask".into(),
+                                kind: IdentKind::Global,
+                            },
+                        }),
+                        args: vec![RawExpr {
+                            loc,
+                            kind: RawKind::Arrow {
+                                params: Vec::new(),
+                                body: ArrowBody::Expr(Box::new(RawExpr {
+                                    loc,
+                                    kind: RawKind::Call {
+                                        callee: Box::new(RawExpr {
+                                            loc,
+                                            kind: RawKind::Ident {
+                                                name: set.clone(),
+                                                kind: IdentKind::Setter,
+                                            },
+                                        }),
+                                        args: vec![lit(true)],
+                                    },
+                                })),
+                                captures: vec![(set.clone(), IdentKind::Setter)],
+                            },
+                        }],
+                    },
+                })),
+                captures: vec![(set, IdentKind::Setter)],
+            },
+        },
+        deps: Some(Vec::new()),
+        layout: false,
+    });
+}
+
 /// A statement the hook keeps: itself, or, for an `if` whose test `hook_presence_test` decides, the statements of the
 /// branch that runs (so a hook of the branch that never runs is not seen at all).
 fn decided_branch(st: &js_ast::Stmt, names: &NameTable<'_>) -> Vec<js_ast::Stmt> {
@@ -1808,6 +1934,13 @@ fn read_decl(
     if let Some(ctx) = context_read(value, r.names) {
         return read_context_use(r, out, decl, value, &ctx, vloc);
     }
+    // R34.144: `const { a, b } = context` of a context local (Radix's `const { onFocusableItemAdd, ... } = context`), or
+    // `const c2 = context`: read like the hook's own result
+    if let E::EIdentifier(id) = &value.data
+        && let Some(ctx) = r.names.ctx_local(id.ref_).map(str::to_string)
+    {
+        return read_context_use(r, out, decl, value, &ctx, vloc);
+    }
     adopt_react_alias(r.names, m, value);
     if let Some((hook, call, from_react)) = hook_call(value, r.names) {
         out.classified_hooks.insert(call_addr(call));
@@ -1876,7 +2009,19 @@ fn read_decl(
                     name,
                     setter,
                     init: Expr::Raw(init),
+                    late: false,
                 });
+            }
+            // R34.143: `useSyncExternalStore(subscribe, () => true, () => false)` (Radix's `useIsHydrated`): false on the
+            // server, true once mounted.
+            (true, "useSyncExternalStore") if hydration_shape(call, m, r.names) => {
+                let Some(name) = ident else {
+                    return hook_binding_shape(out, "useSyncExternalStore", vloc);
+                };
+                if let B::BIdentifier(id) = decl.binding.data {
+                    r.names.mark_state(id.r#ref);
+                }
+                hydrated_state(out, name, vloc);
             }
             (true, "useMemo" | "useCallback" | "useRef" | "useId") => {
                 let snapshot = matches!(decl.binding.data, B::BIdentifier(id) if r.names.is_snapshot_ref(id.r#ref));
@@ -2393,6 +2538,21 @@ fn exported_fn<'x>(ast: &'x js_ast::Ast<'_>, export: &str) -> Option<&'x js_ast:
                 {
                     return Some(&f.func);
                 }
+                // R34.143: `export const useX = typeof reactHook === 'function' ? useModern : useLegacy` (Radix's
+                // `useIsHydrated`): the test is decided (`hook_presence_test`), the export is the branch that runs.
+                S::SLocal(l) if l.is_export && matches!(l.kind, js_ast::S::Kind::KConst) => {
+                    for d in l.decls.iter() {
+                        if let (B::BIdentifier(id), Some(v)) = (d.binding.data, d.value)
+                            && names.name(id.r#ref) == export
+                            && let E::EIf(i) = &v.data
+                            && let Some(taken) = hook_presence_test(&i.test, &names)
+                            && let Some(target) =
+                                crate::analyze::names::ident_ref(if taken { &i.yes } else { &i.no })
+                        {
+                            return local_fn(ast, &names, target);
+                        }
+                    }
+                }
                 S::SExportDefault(ed) if export == "default" => {
                     if let js_ast::StmtOrExpr::Stmt(inner) = &ed.value
                         && let S::SFunction(f) = &inner.data
@@ -2654,6 +2814,17 @@ fn read_hook(
     }
     let mut import_aliases: Vec<(js_ast::Ref, Alias)> = Vec::new();
     let mut module_consts: Vec<(String, js_ast::Ref)> = Vec::new();
+    // R34.143: the `subscribe` of a hydration-shaped `useSyncExternalStore` is never run: it is not a free name of the hook
+    let mut silent_subscribers: Vec<js_ast::Ref> = Vec::new();
+    for c in &w.calls {
+        if let E::ECall(call) = &c.data
+            && react_hook_name(call, &hnames).as_deref() == Some("useSyncExternalStore")
+            && hydration_shape(call, hm, &hnames)
+            && let Some(s) = call.args.first().and_then(crate::analyze::names::ident_ref)
+        {
+            silent_subscribers.push(s);
+        }
+    }
     for u in &w.used {
         if hnames.is_jsx_runtime(*u)
             || w.declared.iter().any(|d| hnames.same(*d, *u))
@@ -2714,6 +2885,9 @@ fn read_hook(
                 "hook-shape",
                 format!("custom hook {hook} reads `arguments`"),
             );
+        }
+        if silent_subscribers.iter().any(|s| hnames.same(*s, *u)) {
+            continue;
         }
         // R34.142: the argument of `useContext(C)`, a context the hook's module declares: the frames pass carries it
         if hnames.react_context(*u).is_some() {
