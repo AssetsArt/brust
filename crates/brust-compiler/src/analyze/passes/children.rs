@@ -780,6 +780,25 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
     }
 }
 
+/// F309: the template of `ir` prints `{children}` somewhere.
+fn prints_children_slot(ir: &ComponentIR) -> bool {
+    fn any(n: &Node) -> bool {
+        match n {
+            Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => matches!(
+                &r.kind,
+                RawKind::Ident { name, kind: IdentKind::Prop } if name == "children"
+            ),
+            Node::Element { children, .. }
+            | Node::Component { children, .. }
+            | Node::Fragment(children) => children.iter().any(any),
+            Node::If { then, else_, .. } => then.iter().chain(else_).any(any),
+            Node::For { body, .. } => body.iter().any(any),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        }
+    }
+    any(&ir.template)
+}
+
 /// A call site's clone: its id, its module-cache key and the hidden inputs the call site must now pass (S2).
 type Specialised = (String, String, Vec<(String, Expr)>);
 
@@ -2119,12 +2138,35 @@ impl Walker<'_, '_> {
                     self.resolve_child(name, source.as_deref(), imported.as_deref(), member, *loc);
                 // The children pass resolves it again and reports; these diagnostics are not repeated.
                 self.diagnostics.truncate(mark);
-                let Some(cir) = child.ir.clone() else {
+                let Some(mut cir) = child.ir.clone() else {
                     children
                         .iter_mut()
                         .for_each(|c| self.frames_node(c, frames, bubbled, diags));
                     return;
                 };
+                // F307 SPIKE (option B, not shipped): a native child that hosts its children gets a clone for this call
+                // site with the content spliced in, so the content's directives are the clone's own.
+                if std::env::var_os("BRUST_SPIKE_B").is_some()
+                    && let Some(from) = child.path.clone()
+                    && matches!(cir.tier, Tier::Native)
+                    && child.hosts_children
+                    && cir.provides.is_empty()
+                    && !cir.specialised
+                    && !children.is_empty()
+                {
+                    match self.spike_host(&cir, &from, *loc, children) {
+                        Ok((clone, (id, key, inputs))) => {
+                            props.extend(inputs);
+                            *name = id;
+                            *source = Some(SPEC_SOURCE.to_string());
+                            *imported = Some(key);
+                            member.clear();
+                            children.clear();
+                            cir = clone;
+                        }
+                        Err(why) => diags.push(Diagnostic::info("spike-b", format!("<{name}>: {why}"), *loc, "")),
+                    }
+                }
                 // A React island (and what it receives as children or element props) renders with React's own
                 // context at run time: nothing in its subtree is read here, and it provides nothing at compile time.
                 // R34.116/R34.122: a Provider whose frame is state-valued is specialised for this call site below.
@@ -2472,6 +2514,74 @@ impl Walker<'_, '_> {
 
     /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
     /// read the clone's own members by name. Refused.
+    /// F307 SPIKE (option B): a clone of the host child `cir` with `content` spliced at its `{children}`.
+    fn spike_host(
+        &mut self,
+        cir: &Rc<ComponentIR>,
+        c_path: &str,
+        loc: u32,
+        content: &[Node],
+    ) -> Result<(Rc<ComponentIR>, Specialised), String> {
+        let ctx = self.ctx;
+        let export = match &cir.export {
+            Some(n) => Export::Named(n.clone()),
+            None => Export::Default,
+        };
+        let mut nodes = content.to_vec();
+        self.check_owner(&nodes, usize::MAX)?;
+        let mut carry = Carry::new(
+            &self.native_props,
+            usize::MAX,
+            &self.module_names,
+            &self.row_handlers,
+            &self.st.handler_names,
+            &self.module_consts,
+            cir.props.iter().map(|p| p.name.clone()).collect(),
+        );
+        carry.nodes(&mut nodes, &[])?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        let exp = cir.export.as_deref().unwrap_or("default");
+        let id = format!("{}_h{:08x}", cir.id, spec_hash(ctx.path, loc));
+        let key = format!("{c_path}#{exp}~host~{}~{loc}", ctx.path);
+        let clone_id = id.clone();
+        let (inputs, clone_handlers) = carry.finish();
+        let fixed: Vec<String> = inputs
+            .iter()
+            .filter(|(_, v)| !self.source_reactive(v))
+            .map(|(h, _)| h.clone())
+            .collect();
+        let mut once = Some(nodes);
+        let clone = crate::analyze::modules::compile_specialised(
+            c_path,
+            &export,
+            key.clone(),
+            ctx.opts,
+            ctx.modules,
+            &mut |ir: &mut ComponentIR| {
+                splice_children(ir, once.take().unwrap_or_default())?;
+                for (hidden, _) in &inputs {
+                    ir.props.push(crate::ir::PropDecl {
+                        name: hidden.clone(),
+                        local: hidden.clone(),
+                        ts_type: None,
+                        default: None,
+                    });
+                }
+                ir.handlers.extend(clone_handlers.iter().cloned());
+                ir.fixed_props = fixed.clone();
+                ir.id = clone_id.clone();
+                ir.specialised = true;
+                Ok(())
+            },
+        )?;
+        if let Tier::React { reason, .. } = &clone.tier {
+            let reason = reason.clone();
+            ctx.modules.borrow_mut().remove(&key);
+            return Err(format!("the clone needs React ({reason})"));
+        }
+        Ok((clone, (id, key, inputs)))
+    }
+
     fn check_owner(&self, content: &[Node], owner: usize) -> Result<(), String> {
         fn walk(n: &Node, owner: usize, native: &[(u32, String, usize)]) -> Result<(), String> {
             match n {
@@ -4629,6 +4739,24 @@ impl Walker<'_, '_> {
                     "move the interactive part into the component that owns its state, or keep this component interactive with React",
                 ));
             }
+        }
+        // F309 (the guard above, for a static child): a static child LINKED here gets a host of its own (`x-data` on its
+        // root), and the runtime binds the slot content it prints by that nearest host too (`nearestInstance`), so a
+        // directive of this component in it would look for its members in the child and never update. Fail closed.
+        if link.is_some()
+            && matches!(child.tier, Tier::Static)
+            && !children.is_empty()
+            && child.ir.as_deref().is_some_and(prints_children_slot)
+            && let Some(what) = children.iter().find_map(|c| self.owned_directive(c))
+        {
+            self.diagnostics.push(Diagnostic::fallback(
+                "slot-owner",
+                format!(
+                    "the children given to <{name}> contain {what}, and <{name}> is linked here, so it prints them inside a host element of its own, which would bind them to its instance instead of this component's"
+                ),
+                *loc,
+                "move the interactive part into the component that owns its state, or keep this component interactive with React",
+            ));
         }
         if child.has_for
             && !matches!(child.tier, Tier::React { .. })
