@@ -347,12 +347,10 @@ impl Walker<'_> {
                     name,
                     kind: IdentKind::Local,
                 } = &callee.kind
+                    && matches!(self.cx.locals.get(name.as_str()), Some(LocalDef::Value(h)) if is_items_arrow(h))
                 {
-                    if matches!(self.cx.locals.get(name.as_str()), Some(LocalDef::Value(h)) if is_items_arrow(h))
-                    {
-                        out.browser = true;
-                        out.globals.insert(crate::ir::COLLECTION_ITEMS.into());
-                    }
+                    out.browser = true;
+                    out.globals.insert(crate::ir::COLLECTION_ITEMS.into());
                 }
                 // A method call reads its receiver, not a member named like the method.
                 match &callee.kind {

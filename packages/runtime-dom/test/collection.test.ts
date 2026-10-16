@@ -14,7 +14,7 @@ test('items are the elements marked as items under the root, in DOM order, with 
   mount()
   const got = items()
   expect(got.map((i) => i.element.id)).toEqual(['a', 'b'])
-  expect(got[0]!.ref.current).toBe(document.getElementById('a'))
+  expect(got[0]!.ref.current).toBe(document.getElementById('a')!)
 })
 
 test('document order is the DOM order: an item inserted in the middle is found there, an item moved changes place', () => {
@@ -69,7 +69,7 @@ test('data cannot override the element or ref the feature adds', () => {
   document.body.innerHTML = `<div x-data="c6" x-collection-root><i id="i1" data-radix-collection-item x-collection-item="_d1"></i></div>`
   mount()
   const it = items()[0]!
-  expect(it.element).toBe(document.getElementById('i1'))
-  expect(it.ref.current).toBe(document.getElementById('i1'))
+  expect(it.element).toBe(document.getElementById('i1')!)
+  expect(it.ref.current).toBe(document.getElementById('i1')!)
   expect(it.id).toBe('z')
 })
