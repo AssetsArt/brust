@@ -1,13 +1,13 @@
 // F300 / F324 served: a component that passes its ...rest to a specialised state Provider and is called with a JSX
 // child. The brust page must show the child inside the button, as React does (it used to print the button without it);
 // the build refuses the native path (children-rest) so the page renders with React, not with the child dropped.
-// Run alone: `bun test --timeout 120000 tests/server/rest-children.test.ts`.
+// Run alone: `bun test --timeout 120000 tests/server/rest-children-data.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { renderPage } from '../../packages/brust/test/fixtures/rest-children/render'
+import { renderPage } from '../../packages/brust/test/fixtures/rest-children-data/render'
 
-const app = join(import.meta.dir, '../../packages/brust/test/fixtures/rest-children')
+const app = join(import.meta.dir, '../../packages/brust/test/fixtures/rest-children-data')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
 let proc: ReturnType<typeof Bun.spawn>
 let base = ''

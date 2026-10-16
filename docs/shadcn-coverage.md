@@ -36,10 +36,10 @@ One line per thing that keeps a row or a library component off the static/native
 
 | # | Blocker | Kind | Classification | Measured rows | Analysis-only rows | App components | Library components | Why |
 |---|---|---|---|---|---|---|---|---|
-| 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 37 | 0 | 129 | 167 | `external-component` diagnostic (docs/react-coverage.md) |
-| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 31 | 0 | 117 | 190 | `spread-props` diagnostic (docs/react-coverage.md) |
-| 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 29 | 0 | 81 | 192 | `island-prop` diagnostic (docs/react-coverage.md) |
-| 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 18 | 0 | 19 | 55 | `island-children` diagnostic (docs/react-coverage.md) |
+| 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 38 | 0 | 130 | 167 | `external-component` diagnostic (docs/react-coverage.md) |
+| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 33 | 0 | 119 | 190 | `spread-props` diagnostic (docs/react-coverage.md) |
+| 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 31 | 0 | 83 | 192 | `island-prop` diagnostic (docs/react-coverage.md) |
+| 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 19 | 0 | 20 | 55 | `island-children` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 7 | 0 | 8 | 34 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 175 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
 | 7 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 8 | `jsx-expression` diagnostic (docs/react-coverage.md) |
@@ -48,52 +48,51 @@ One line per thing that keeps a row or a library component off the static/native
 | 10 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 9 | 53 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 11 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 26 | `prop-pattern` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 17 | `context-state` diagnostic (docs/react-coverage.md) |
-| 13 | fallback:children-rest | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `children-rest` diagnostic (docs/react-coverage.md) |
-| 14 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
-| 15 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
-| 16 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 34 | `body-shape` diagnostic (docs/react-coverage.md) |
-| 17 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `hook-shape` diagnostic (docs/react-coverage.md) |
-| 18 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `child-component` diagnostic (docs/react-coverage.md) |
-| 19 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `ref-shape` diagnostic (docs/react-coverage.md) |
-| 20 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
-| 21 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
-| 22 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
-| 23 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
-| 24 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
-| 25 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
-| 26 | rest-props spread | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 398 | b-spread-child / a-spread-host: fallback:spread-props |
-| 27 | forwardRef | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 286 | b-forwardref: fallback:default-export-shape |
-| 28 | fallback:forwardref-ref | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 188 | `forwardref-ref` diagnostic (docs/react-coverage.md) |
-| 29 | useContext / use*Context | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 187 | c-usecontext: fallback:hook-unsupported |
-| 30 | Context.Provider / *Provider | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 137 | fallback:member-tag |
-| 31 | Primitive.* | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 113 | fallback:member-tag |
-| 32 | composeRefs | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 77 | ref shapes other than ref={x}: fallback:ref-shape |
-| 33 | Slot / asChild | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 58 | no battery row: cloneElement-based |
-| 34 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 54 | `module-side-effect` diagnostic (docs/react-coverage.md) |
-| 35 | error:unresolved-import (published .js/.mjs module is not followed) | compile error | survey truth (compiler refusal) | 0 | 0 | 0 | 50 | the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy) |
-| 36 | DOM globals (document / window) | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 45 | fallback:browser-global in render |
-| 37 | fallback:context-escape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 29 | `context-escape` diagnostic (docs/react-coverage.md) |
-| 38 | fallback:context-scope | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 27 | `context-scope` diagnostic (docs/react-coverage.md) |
-| 39 | Presence | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 27 | external component |
-| 40 | isValidElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 22 | no battery row: not analysable |
-| 41 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 20 | `member-tag` diagnostic (docs/react-coverage.md) |
-| 42 | createPortal / Portal | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 15 | d-createportal: fallback:browser-global |
-| 43 | cloneElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 14 | d-clone-element: fallback:hook-unsupported |
-| 44 | fallback:let-var | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 12 | `let-var` diagnostic (docs/react-coverage.md) |
-| 45 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `browser-global` diagnostic (docs/react-coverage.md) |
-| 46 | useImperativeHandle | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 5 | c-useimperativehandle: fallback:hook-unsupported |
-| 47 | fallback:prop-quoted-key | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 4 | `prop-quoted-key` diagnostic (docs/react-coverage.md) |
-| 48 | fallback:hook-in-expression | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `hook-in-expression` diagnostic (docs/react-coverage.md) |
-| 49 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `local-component` diagnostic (docs/react-coverage.md) |
-| 50 | React.Children | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | d-children-map: fallback:jsx-expression |
-| 51 | useSyncExternalStore | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | c-usesyncexternalstore: fallback:hook-unsupported |
-| 52 | fallback:prop-default-shape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `prop-default-shape` diagnostic (docs/react-coverage.md) |
-| 53 | fallback:raw-text-child | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `raw-text-child` diagnostic (docs/react-coverage.md) |
-| 54 | fallback:ref-in-render | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `ref-in-render` diagnostic (docs/react-coverage.md) |
+| 13 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
+| 14 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
+| 15 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 34 | `body-shape` diagnostic (docs/react-coverage.md) |
+| 16 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `hook-shape` diagnostic (docs/react-coverage.md) |
+| 17 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `child-component` diagnostic (docs/react-coverage.md) |
+| 18 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `ref-shape` diagnostic (docs/react-coverage.md) |
+| 19 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
+| 20 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
+| 21 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
+| 22 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
+| 23 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 2 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
+| 24 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
+| 25 | rest-props spread | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 398 | b-spread-child / a-spread-host: fallback:spread-props |
+| 26 | forwardRef | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 286 | b-forwardref: fallback:default-export-shape |
+| 27 | fallback:forwardref-ref | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 188 | `forwardref-ref` diagnostic (docs/react-coverage.md) |
+| 28 | useContext / use*Context | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 187 | c-usecontext: fallback:hook-unsupported |
+| 29 | Context.Provider / *Provider | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 137 | fallback:member-tag |
+| 30 | Primitive.* | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 113 | fallback:member-tag |
+| 31 | composeRefs | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 77 | ref shapes other than ref={x}: fallback:ref-shape |
+| 32 | Slot / asChild | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 58 | no battery row: cloneElement-based |
+| 33 | fallback:module-side-effect | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 54 | `module-side-effect` diagnostic (docs/react-coverage.md) |
+| 34 | error:unresolved-import (published .js/.mjs module is not followed) | compile error | survey truth (compiler refusal) | 0 | 0 | 0 | 50 | the compiler resolves components only from .tsx/.jsx files: `import { X } from "./x.mjs"` is "cannot resolve component <X>" (verified on a one-line copy) |
+| 35 | DOM globals (document / window) | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 45 | fallback:browser-global in render |
+| 36 | fallback:context-scope | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 27 | `context-scope` diagnostic (docs/react-coverage.md) |
+| 37 | Presence | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 27 | external component |
+| 38 | isValidElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 22 | no battery row: not analysable |
+| 39 | fallback:member-tag | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 20 | `member-tag` diagnostic (docs/react-coverage.md) |
+| 40 | createPortal / Portal | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 15 | d-createportal: fallback:browser-global |
+| 41 | cloneElement | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 14 | d-clone-element: fallback:hook-unsupported |
+| 42 | fallback:let-var | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 12 | `let-var` diagnostic (docs/react-coverage.md) |
+| 43 | fallback:browser-global | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 9 | `browser-global` diagnostic (docs/react-coverage.md) |
+| 44 | fallback:context-escape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 7 | `context-escape` diagnostic (docs/react-coverage.md) |
+| 45 | useImperativeHandle | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 5 | c-useimperativehandle: fallback:hook-unsupported |
+| 46 | fallback:prop-quoted-key | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 4 | `prop-quoted-key` diagnostic (docs/react-coverage.md) |
+| 47 | fallback:hook-in-expression | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `hook-in-expression` diagnostic (docs/react-coverage.md) |
+| 48 | fallback:local-component | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 2 | `local-component` diagnostic (docs/react-coverage.md) |
+| 49 | React.Children | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | d-children-map: fallback:jsx-expression |
+| 50 | useSyncExternalStore | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 2 | c-usesyncexternalstore: fallback:hook-unsupported |
+| 51 | fallback:prop-default-shape | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `prop-default-shape` diagnostic (docs/react-coverage.md) |
+| 52 | fallback:raw-text-child | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `raw-text-child` diagnostic (docs/react-coverage.md) |
+| 53 | fallback:ref-in-render | compiler code | survey truth (compiler diagnostic) | 0 | 0 | 0 | 1 | `ref-in-render` diagnostic (docs/react-coverage.md) |
 
 ## Classification
 
-Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (39 survey truth, 15 census). The fixture is the CLI output unedited (the `@/` imports resolve through its `tsconfig.json` `paths`), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
+Every blocker above is **survey truth** (the compiler or build behaves so on shadcn's own code) or a **census** hit (a construct found in library code); **fixture mistakes: none found** (38 survey truth, 15 census). The fixture is the CLI output unedited (the `@/` imports resolve through its `tsconfig.json` `paths`), and it uses a plain `brust build <entry>` with `[css] global` only: no build option, no pin, no config that could cause a blocker.
 
 ### History: the named-export build rule (S0 → S1.1, PR #198)
 
@@ -129,7 +128,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | card | measured | static | 0 | 9 (0) | 0 | 0 | — | built |
 | carousel | measured | static | 1 | 9 (5) | 97 | 1 | context-state, control-flow, event-capture, external-component, hook-unsupported, jsx-const-child, ref-shape, spread-handler | built |
 | chart | measured | static | 1 | 10 (9) | 240 | 1 | control-flow, external-component, hook-shape, island-prop, jsx-const-child, use-id-in-render | built |
-| checkbox | measured | static | 1 | 12 (2) | 92 | 1 | children-rest, external-component | built |
+| checkbox | measured | static | 1 | 7 (3) | 92 | 1 | external-component, island-prop, spread-props | built |
 | collapsible | measured | react | 1 | 9 (5) | 89 | 1 | context-island, external-component, spread-props | built |
 | combobox | measured | react | 1 | 22 (16) | 158 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, nested-instance, slot-dynamic, spread-props | built |
 | command | measured | static | 1 | 16 (14) | 105 | 1 | external-component, island-prop, spread-props | built |
@@ -168,7 +167,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | slider | measured | static | 1 | 7 (4) | 93 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
 | sonner | measured | native | 1 | 4 (2) | 87 | 1 | external-component, hook-unsupported, island-prop, jsx-expression, prop-pattern, spread-props | built |
 | spinner | measured | static | 0 | 2 (0) | 0 | 1 | external-component, spread-props | built |
-| switch | measured | static | 1 | 13 (1) | 89 | 1 | children-rest | built |
+| switch | measured | static | 1 | 8 (2) | 89 | 1 | external-component, island-children, island-prop, spread-props | built |
 | table | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
 | tabs | measured | static | 1 | 9 (8) | 94 | 1 | external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
@@ -209,7 +208,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/chart.tsx#chartContainer | external-component, island-prop, jsx-const-child, use-id-in-render | 1 |
 | components/ui/chart.tsx#chartStyle | control-flow | 1 |
 | components/ui/chart.tsx#chartTooltipContent | control-flow, hook-shape | 1 |
-| components/ui/checkbox.tsx#checkbox | children-rest, external-component | 1 |
+| components/ui/checkbox.tsx#checkbox | external-component, island-prop, spread-props | 1 |
 | components/ui/collapsible.tsx#collapsible | external-component, spread-props | 1 |
 | components/ui/collapsible.tsx#collapsibleContent | external-component, spread-props | 1 |
 | components/ui/combobox.tsx#comboboxClear | external-component, island-prop, spread-props | 1 |
@@ -312,7 +311,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/slider.tsx#slider | external-component, island-children, island-prop, nested-instance, spread-props | 1 |
 | components/ui/sonner.tsx#toaster | external-component, hook-unsupported, island-prop, jsx-expression, prop-pattern, spread-props | 1 |
 | components/ui/spinner.tsx#spinner | external-component, spread-props | 1 |
-| components/ui/switch.tsx#switch | children-rest | 1 |
+| components/ui/switch.tsx#switch | external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/tabs.tsx#tabs | external-component, island-prop, spread-props | 1 |
 | components/ui/tabs.tsx#tabsContent | external-component, island-prop, spread-props | 1 |
 | components/ui/tabs.tsx#tabsList | external-component, island-prop, spread-props | 1 |
@@ -451,7 +450,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/accordion.tsx | AccordionImplSingle | forwardRef | not exported | forwardRef, Context.Provider / *Provider, useControllableState, rest-props spread, useMemo / useCallback |
 | src/accordion.tsx | AccordionImplMultiple | forwardRef | not exported | forwardRef, useContext / use*Context, Context.Provider / *Provider, useControllableState, rest-props spread, useMemo / useCallback |
 | src/accordion.tsx | AccordionImpl | forwardRef | not exported | forwardRef, Context.Provider / *Provider, composeRefs, Slot / asChild, Primitive.*, rest-props spread, useRef |
-| src/accordion.tsx | AccordionItem | forwardRef | react (fallback:context-escape, fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, rest-props spread, useId |
+| src/accordion.tsx | AccordionItem | forwardRef | react (fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, rest-props spread, useId |
 | src/accordion.tsx | AccordionHeader | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |
 | src/accordion.tsx | AccordionTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:member-tag, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread |
 | src/accordion.tsx | AccordionContent | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread |
@@ -516,7 +515,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/context-menu.tsx | ContextMenu | function | not exported | Context.Provider / *Provider, useControllableState, useEffect, useRef |
 | src/context-menu.tsx | ContextMenuTrigger | forwardRef | react (fallback:browser-global, fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window) |
 | src/context-menu.tsx | ContextMenuPortal | function | react (fallback:external-component, fallback:hook-unsupported, fallback:island-prop, fallback:prop-pattern, fallback:spread-props) | createPortal / Portal, rest-props spread |
-| src/context-menu.tsx | ContextMenuContent | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread, useRef |
+| src/context-menu.tsx | ContextMenuContent | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread, useRef |
 | src/context-menu.tsx | ContextMenuGroup | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
 | src/context-menu.tsx | ContextMenuLabel | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
 | src/context-menu.tsx | ContextMenuItem | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
@@ -536,7 +535,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 |---|---|---|---|---|
 | src/dialog.tsx | Dialog | function | not exported | Context.Provider / *Provider, useControllableState, useState, useRef, useMemo / useCallback, useId |
 | src/dialog.tsx | DialogTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread |
-| src/dialog.tsx | DialogPortal | function | react (fallback:context-escape, fallback:jsx-const-child, fallback:jsx-expression) | useContext / use*Context, Context.Provider / *Provider, React.Children, Slot / asChild, Presence |
+| src/dialog.tsx | DialogPortal | function | react (fallback:jsx-const-child, fallback:jsx-expression) | useContext / use*Context, Context.Provider / *Provider, React.Children, Slot / asChild, Presence |
 | src/dialog.tsx | DialogOverlay | forwardRef | react (fallback:body-shape, fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Presence, rest-props spread |
 | src/dialog.tsx | DialogOverlayImpl | forwardRef | not exported | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread, useMemo / useCallback |
 | src/dialog.tsx | DialogContent | forwardRef | react (fallback:body-shape, fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Presence, rest-props spread |
@@ -558,16 +557,16 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
 | src/dismissable-layer.tsx | DismissableLayer | forwardRef | react (fallback:body-shape, fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-shape, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
-| src/dismissable-layer.tsx | DismissableLayerBranch | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef |
+| src/dismissable-layer.tsx | DismissableLayerBranch | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef |
 
 ### @radix-ui/react-dropdown-menu 2.2.1
 
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
 | src/dropdown-menu.tsx | DropdownMenu | function | not exported | Context.Provider / *Provider, useControllableState, useRef, useMemo / useCallback, useId |
-| src/dropdown-menu.tsx | DropdownMenuTrigger | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread |
+| src/dropdown-menu.tsx | DropdownMenuTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread |
 | src/dropdown-menu.tsx | DropdownMenuPortal | function | react (fallback:external-component, fallback:hook-unsupported, fallback:island-prop, fallback:prop-pattern, fallback:spread-props) | createPortal / Portal, rest-props spread |
-| src/dropdown-menu.tsx | DropdownMenuContent | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread, useRef |
+| src/dropdown-menu.tsx | DropdownMenuContent | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread, useRef |
 | src/dropdown-menu.tsx | DropdownMenuGroup | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
 | src/dropdown-menu.tsx | DropdownMenuLabel | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
 | src/dropdown-menu.tsx | DropdownMenuItem | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
@@ -600,7 +599,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/form.tsx | FormBuiltInMessage | forwardRef | not exported | forwardRef, useContext / use*Context, rest-props spread |
 | src/form.tsx | FormCustomMessage | forwardRef | not exported | forwardRef, useContext / use*Context, composeRefs, rest-props spread, useEffect, useRef, useMemo / useCallback, useId |
 | src/form.tsx | FormMessageImpl | forwardRef | not exported | forwardRef, useContext / use*Context, Primitive.*, rest-props spread, useEffect, useId |
-| src/form.tsx | FormValidityState | function | react (fallback:context-escape, fallback:context-scope, fallback:control-flow) | useContext / use*Context |
+| src/form.tsx | FormValidityState | function | react (fallback:context-scope, fallback:control-flow) | useContext / use*Context |
 | src/form.tsx | FormSubmit | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:spread-props) | forwardRef, Primitive.*, rest-props spread |
 
 ### @radix-ui/react-hover-card 1.2.1
@@ -609,7 +608,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 |---|---|---|---|---|
 | src/hover-card.tsx | HoverCard | function | not exported | Context.Provider / *Provider, useControllableState, useEffect, useRef, useMemo / useCallback, DOM globals (document / window) |
 | src/hover-card.tsx | HoverCardTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Slot / asChild, Primitive.*, rest-props spread |
-| src/hover-card.tsx | HoverCardPortal | function | react (fallback:context-escape, fallback:external-component, fallback:island-prop) | useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence |
+| src/hover-card.tsx | HoverCardPortal | function | react (fallback:external-component, fallback:island-prop) | useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence |
 | src/hover-card.tsx | HoverCardContent | forwardRef | react (fallback:body-shape, fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Presence, rest-props spread |
 | src/hover-card.tsx | HoverCardContentImpl | forwardRef | not exported | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, rest-props spread, useEffect, useState, useRef, DOM globals (document / window), addEventListener |
 | src/hover-card.tsx | HoverCardArrow | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, rest-props spread |
@@ -626,7 +625,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 |---|---|---|---|---|
 | src/menu.tsx | Menu | function | not exported | Context.Provider / *Provider, useEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
 | src/menu.tsx | MenuAnchor | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, rest-props spread |
-| src/menu.tsx | MenuPortal | function | react (fallback:context-escape, fallback:external-component, fallback:island-prop) | useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence |
+| src/menu.tsx | MenuPortal | function | react (fallback:external-component, fallback:island-prop) | useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence |
 | src/menu.tsx | MenuContent | forwardRef | react (fallback:body-shape, fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:member-tag, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence, rest-props spread |
 | src/menu.tsx | MenuRootContentModal | forwardRef | not exported | forwardRef, useContext / use*Context, composeRefs, rest-props spread, useEffect, useRef |
 | src/menu.tsx | MenuRootContentNonModal | forwardRef | not exported | forwardRef, useContext / use*Context, rest-props spread |
@@ -641,7 +640,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/menu.tsx | MenuItemIndicator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, Presence, rest-props spread |
 | src/menu.tsx | MenuSeparator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:spread-props) | forwardRef, Primitive.*, rest-props spread |
 | src/menu.tsx | MenuArrow | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, rest-props spread |
-| src/menu.tsx | MenuSub | function | react (fallback:context-escape, fallback:context-state, fallback:external-component, fallback:hook-in-expression, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:module-side-effect, fallback:spread-props) | useContext / use*Context, Context.Provider / *Provider, useEffect, useState, useId |
+| src/menu.tsx | MenuSub | function | react (fallback:context-state, fallback:external-component, fallback:hook-in-expression, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:module-side-effect, fallback:spread-props) | useContext / use*Context, Context.Provider / *Provider, useEffect, useState, useId |
 | src/menu.tsx | MenuSubTrigger | forwardRef | react (fallback:body-shape, fallback:browser-global, fallback:context-scope, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, rest-props spread, useEffect, useRef, useMemo / useCallback, DOM globals (document / window) |
 | src/menu.tsx | MenuSubContent | forwardRef | react (fallback:body-shape, fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:member-tag, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, composeRefs, Slot / asChild, Presence, rest-props spread, useRef |
 
@@ -650,10 +649,10 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | Module | Component | Kind | Compiler | Constructs |
 |---|---|---|---|---|
 | src/menubar.tsx | Menubar | forwardRef | not exported | forwardRef, Context.Provider / *Provider, Slot / asChild, Primitive.*, useControllableState, rest-props spread, useState, useMemo / useCallback |
-| src/menubar.tsx | MenubarMenu | function | react (fallback:context-escape, fallback:context-state, fallback:external-component, fallback:hook-in-expression, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:prop-pattern, fallback:spread-props) | useContext / use*Context, Context.Provider / *Provider, rest-props spread, useEffect, useRef, useId |
+| src/menubar.tsx | MenubarMenu | function | react (fallback:context-state, fallback:external-component, fallback:hook-in-expression, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:prop-pattern, fallback:spread-props) | useContext / use*Context, Context.Provider / *Provider, rest-props spread, useEffect, useRef, useId |
 | src/menubar.tsx | MenubarTrigger | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:member-tag, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread, useState, useRef |
 | src/menubar.tsx | MenubarPortal | function | react (fallback:external-component, fallback:hook-unsupported, fallback:island-prop, fallback:prop-pattern, fallback:spread-props) | createPortal / Portal, rest-props spread |
-| src/menubar.tsx | MenubarContent | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread, useRef |
+| src/menubar.tsx | MenubarContent | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread, useRef |
 | src/menubar.tsx | MenubarGroup | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
 | src/menubar.tsx | MenubarLabel | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
 | src/menubar.tsx | MenubarItem | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, rest-props spread |
@@ -712,7 +711,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/popover.tsx | Popover | function | not exported | Context.Provider / *Provider, useControllableState, useState, useRef, useMemo / useCallback, useId |
 | src/popover.tsx | PopoverAnchor | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread, useEffect |
 | src/popover.tsx | PopoverTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread |
-| src/popover.tsx | PopoverPortal | function | react (fallback:context-escape, fallback:external-component, fallback:island-prop) | useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence |
+| src/popover.tsx | PopoverPortal | function | react (fallback:external-component, fallback:island-prop) | useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence |
 | src/popover.tsx | PopoverContent | forwardRef | react (fallback:body-shape, fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Presence, rest-props spread |
 | src/popover.tsx | PopoverContentModal | forwardRef | not exported | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, rest-props spread, useEffect, useRef, useMemo / useCallback |
 | src/popover.tsx | PopoverContentNonModal | forwardRef | not exported | forwardRef, useContext / use*Context, rest-props spread, useRef |
@@ -729,7 +728,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/popper.tsx | Popper | function | not exported | Context.Provider / *Provider, useState |
 | src/popper.tsx | PopperAnchor | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, useMemo / useCallback |
 | src/popper.tsx | PopperContent | forwardRef | react (fallback:body-shape, fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:ref-shape, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, composeRefs, Primitive.*, rest-props spread, useLayoutEffect, useState, DOM globals (document / window) |
-| src/popper.tsx | PopperArrow | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:island-prop, fallback:ref-shape, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread |
+| src/popper.tsx | PopperArrow | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-prop, fallback:ref-shape, fallback:spread-props) | forwardRef, useContext / use*Context, rest-props spread |
 
 ### @radix-ui/react-portal 1.2.0
 
@@ -772,7 +771,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 |---|---|---|---|---|
 | src/roving-focus-group.tsx | RovingFocusGroup | forwardRef | not exported | forwardRef, Context.Provider / *Provider, Slot / asChild, rest-props spread |
 | src/roving-focus-group.tsx | RovingFocusGroupImpl | forwardRef | not exported | forwardRef, Context.Provider / *Provider, composeRefs, Primitive.*, useControllableState, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, addEventListener |
-| src/roving-focus-group.tsx | RovingFocusGroupItem | forwardRef | react (fallback:browser-global, fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:member-tag, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread, useLayoutEffect, useEffect, useId |
+| src/roving-focus-group.tsx | RovingFocusGroupItem | forwardRef | react (fallback:browser-global, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:member-tag, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread, useLayoutEffect, useEffect, useId |
 
 ### @radix-ui/react-scroll-area 1.4.0
 
@@ -813,7 +812,7 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/select.tsx | SelectViewport | forwardRef | react (fallback:browser-global, fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:member-tag, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread, useRef, DOM globals (document / window) |
 | src/select.tsx | SelectGroup | forwardRef | react (fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:module-side-effect, fallback:spread-props) | forwardRef, Context.Provider / *Provider, Primitive.*, rest-props spread, useId |
 | src/select.tsx | SelectLabel | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |
-| src/select.tsx | SelectItem | forwardRef | react (fallback:browser-global, fallback:context-escape, fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:member-tag, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, composeRefs, Primitive.*, rest-props spread, useState, useRef, useMemo / useCallback, useId, DOM globals (document / window) |
+| src/select.tsx | SelectItem | forwardRef | react (fallback:browser-global, fallback:context-state, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:member-tag, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, Context.Provider / *Provider, composeRefs, Primitive.*, rest-props spread, useState, useRef, useMemo / useCallback, useId, DOM globals (document / window) |
 | src/select.tsx | SelectItemText | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, createPortal / Portal, composeRefs, Primitive.*, rest-props spread, useLayoutEffect, useState, useMemo / useCallback |
 | src/select.tsx | SelectItemIndicator | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |
 | src/select.tsx | SelectScrollUpButton | forwardRef | react (fallback:context-scope, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:module-side-effect, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, rest-props spread, useLayoutEffect, useState, addEventListener |
@@ -838,8 +837,8 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 | src/slider.tsx | SliderVertical | forwardRef | not exported | forwardRef, Context.Provider / *Provider, composeRefs, rest-props spread, useRef |
 | src/slider.tsx | SliderImpl | forwardRef | not exported | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |
 | src/slider.tsx | SliderTrack | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Primitive.*, rest-props spread |
-| src/slider.tsx | SliderRange | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useRef |
-| src/slider.tsx | SliderThumbProvider | function | react (fallback:context-escape, fallback:context-state, fallback:hook-unsupported, fallback:jsx-const-child) | useContext / use*Context, Context.Provider / *Provider, useEffect, useState, useMemo / useCallback |
+| src/slider.tsx | SliderRange | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useRef |
+| src/slider.tsx | SliderThumbProvider | function | react (fallback:context-state, fallback:hook-unsupported, fallback:jsx-const-child) | useContext / use*Context, Context.Provider / *Provider, useEffect, useState, useMemo / useCallback |
 | src/slider.tsx | SliderThumbTrigger | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:member-tag, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread |
 | src/slider.tsx | SliderThumb | forwardRef | react (fallback:island-prop, fallback:prop-pattern) | forwardRef, Context.Provider / *Provider, rest-props spread |
 | src/slider.tsx | SliderBubbleInput | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Primitive.*, rest-props spread, useEffect, useRef, DOM globals (document / window) |
@@ -860,8 +859,8 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 |---|---|---|---|---|
 | src/tabs.tsx | Tabs | forwardRef | not exported | forwardRef, Context.Provider / *Provider, Primitive.*, useControllableState, rest-props spread, useId |
 | src/tabs.tsx | TabsList | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Slot / asChild, Primitive.*, rest-props spread |
-| src/tabs.tsx | TabsTrigger | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Slot / asChild, Primitive.*, rest-props spread |
-| src/tabs.tsx | TabsContent | forwardRef | react (fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:jsx-expression, fallback:prop-pattern) | forwardRef, useContext / use*Context, Primitive.*, Presence, rest-props spread, useEffect, useRef |
+| src/tabs.tsx | TabsTrigger | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Slot / asChild, Primitive.*, rest-props spread |
+| src/tabs.tsx | TabsContent | forwardRef | react (fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:jsx-const-child, fallback:jsx-expression, fallback:prop-pattern) | forwardRef, useContext / use*Context, Primitive.*, Presence, rest-props spread, useEffect, useRef |
 
 ### @radix-ui/react-toast 1.3.1
 
@@ -913,8 +912,8 @@ Each package the fixture imports (`radix-ui` expanded to the `@radix-ui/*` closu
 |---|---|---|---|---|
 | src/tooltip.tsx | TooltipProvider | function | not exported | Context.Provider / *Provider, useEffect, useRef, useMemo / useCallback, DOM globals (document / window) |
 | src/tooltip.tsx | Tooltip | function | react (fallback:context-scope, fallback:context-state, fallback:external-component, fallback:hook-unsupported, fallback:island-prop, fallback:jsx-const-child, fallback:spread-props) | useContext / use*Context, Context.Provider / *Provider, useControllableState, useEffect, useState, useRef, useMemo / useCallback, useId, DOM globals (document / window) |
-| src/tooltip.tsx | TooltipTrigger | forwardRef | react (fallback:browser-global, fallback:context-escape, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:prop-quoted-key, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread, useEffect, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
-| src/tooltip.tsx | TooltipPortal | function | react (fallback:context-escape, fallback:external-component, fallback:island-prop) | useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence |
+| src/tooltip.tsx | TooltipTrigger | forwardRef | react (fallback:browser-global, fallback:external-component, fallback:forwardref-ref, fallback:hook-unsupported, fallback:island-children, fallback:island-prop, fallback:prop-quoted-key, fallback:spread-props) | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, Primitive.*, rest-props spread, useEffect, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
+| src/tooltip.tsx | TooltipPortal | function | react (fallback:external-component, fallback:island-prop) | useContext / use*Context, Context.Provider / *Provider, Slot / asChild, Presence |
 | src/tooltip.tsx | TooltipContent | forwardRef | react (fallback:body-shape, fallback:context-scope, fallback:external-component, fallback:forwardref-ref, fallback:island-children, fallback:island-prop, fallback:spread-props) | forwardRef, useContext / use*Context, Presence, rest-props spread |
 | src/tooltip.tsx | TooltipContentHoverable | forwardRef | not exported | forwardRef, useContext / use*Context, composeRefs, rest-props spread, useEffect, useState, useRef, useMemo / useCallback, DOM globals (document / window), addEventListener |
 | src/tooltip.tsx | TooltipContentImpl | forwardRef | not exported | forwardRef, useContext / use*Context, composeRefs, Slot / asChild, rest-props spread, useLayoutEffect, useEffect, useState, DOM globals (document / window), addEventListener |
