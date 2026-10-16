@@ -951,6 +951,50 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
     }
 }
 
+// ---- W1d PR 4a (F326): a local object that spreads the props among plain entries ----
+
+/// Radix ToggleGroupItem's `commonProps = { ...props, pressed, disabled }` spread onto a native child: the props spread, then
+/// the own entries (a later entry replaces an earlier key). The page lowers; each instance keeps its own values.
+#[test]
+fn a_local_object_that_spreads_the_props_among_plain_entries_spreads_as_its_parts() {
+    let all = compile("local-spread.tsx");
+    let rules: Vec<&str> = all.iter().flat_map(|(_, ir, _)| rules(ir)).collect();
+    assert!(all.iter().all(|(_, ir, _)| !is_react(ir)), "{rules:?}");
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.to_lowercase().starts_with("localspread"))
+        .expect("page");
+    // value="a" is pressed, value="b" is not (and is disabled)
+    assert!(
+        page.2.contains("aria-pressed") && page.2.contains("disabled"),
+        "{}",
+        page.2
+    );
+    assert!(
+        page.2.contains("first"),
+        "the title travelled through the props spread: {}",
+        page.2
+    );
+}
+
+/// Anything the reader cannot expand stays a refusal: a second spread of another local object, a method.
+#[test]
+fn a_local_object_with_another_spread_or_a_method_is_still_not_expanded() {
+    for f in ["local-spread-other.tsx", "local-spread-method.tsx"] {
+        let all = compile(f);
+        let item = all
+            .iter()
+            .find(|(id, ..)| id.starts_with("item"))
+            .expect("item");
+        assert!(
+            is_react(&item.1) && item.1.diagnostics.iter().any(|d| d.rule == "spread-props"),
+            "{f}: {:?} {:?}",
+            item.1.tier,
+            item.1.diagnostics
+        );
+    }
+}
+
 // ---- W1d PR 2: Radix scope hooks and `props.__scopeX` (Mellow C1-C4) ----
 
 fn all_rules(file: &str) -> Vec<String> {
