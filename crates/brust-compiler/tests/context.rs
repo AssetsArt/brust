@@ -206,25 +206,33 @@ fn a_rest_spread_into_the_provider_stays_react_while_frame_values_must_be_litera
     assert!(!page.2.contains("(5)"), "{}", page.2);
 }
 
-/// A Provider that hands out state (a native provider is a later step) stays a React island, as before; the page that
-/// renders it stays static and never becomes React because of it.
+/// A Provider that hands out state is a React island by itself; the page that renders it stays static and never becomes
+/// React because of it. F267: with the content written in the Provider's own module, the call site gets a native clone
+/// (2c-2), and the island nobody references is not part of the tree.
 #[test]
-fn a_provider_that_hands_out_state_stays_an_island_and_the_page_stays_static() {
+fn a_provider_that_hands_out_state_is_specialised_for_content_of_its_own_module() {
     let all = compile_all("state-provider.tsx");
-    let tier = |prefix: &str| {
-        all.iter()
-            .find(|(id, ..)| id.starts_with(prefix))
-            .map(|(_, ir, ..)| ir.clone())
-            .expect(prefix)
-    };
-    let provider = tier("disclosure_");
-    assert!(is_react(&provider), "{:?}", provider.tier);
+    let clone = all
+        .iter()
+        .find(|(id, ir, ..)| id.starts_with("disclosure_") && ir.specialised)
+        .map(|(_, ir, ..)| ir.clone())
+        .expect("the clone");
     assert!(
-        rules(&provider).contains(&"context-state"),
-        "{:?}",
-        provider.diagnostics
+        !is_react(&clone),
+        "{:?} {:?}",
+        clone.tier,
+        clone.diagnostics
     );
-    let page = tier("stateProvider_");
+    assert!(
+        !all.iter()
+            .any(|(id, ir, ..)| id.starts_with("disclosure_") && !ir.specialised),
+        "no island Provider is left"
+    );
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("stateProvider_"))
+        .map(|(_, ir, ..)| ir.clone())
+        .expect("page");
     assert!(!is_react(&page), "{:?} {:?}", page.tier, page.diagnostics);
 }
 

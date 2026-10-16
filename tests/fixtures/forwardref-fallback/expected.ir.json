@@ -1,14 +1,15 @@
 {
   "id": "input_16206eff",
   "source": "tests/fixtures/forwardref-fallback/input.tsx",
-  "tier": {
-    "React": {
-      "reason": "a ref is read during render",
-      "client_only": false
-    }
-  },
+  "tier": "Native",
   "props": [],
   "holds_island": true,
+  "live_forwards": [
+    {
+      "loc": 908,
+      "key": "ref"
+    }
+  ],
   "state": [],
   "derived": [],
   "effects": [],
@@ -26,13 +27,13 @@
   "id_bindings": [],
   "template": {
     "Element": {
-      "loc": 723,
+      "loc": 836,
       "tag": "section",
       "attrs": [],
       "children": [
         {
           "Component": {
-            "loc": 739,
+            "loc": 852,
             "name": "Reads",
             "source": null,
             "imported": null,
@@ -49,7 +50,7 @@
         },
         {
           "Component": {
-            "loc": 755,
+            "loc": 868,
             "name": "Passes",
             "source": null,
             "imported": null,
@@ -66,7 +67,7 @@
         },
         {
           "Component": {
-            "loc": 772,
+            "loc": 885,
             "name": "Destructured",
             "source": null,
             "imported": null,
@@ -83,7 +84,7 @@
         },
         {
           "Component": {
-            "loc": 795,
+            "loc": 908,
             "name": "Plain",
             "source": null,
             "imported": null,
@@ -92,7 +93,7 @@
                 "ref",
                 {
                   "Raw": {
-                    "loc": 807,
+                    "loc": 908,
                     "kind": {
                       "Ident": {
                         "name": "r",
@@ -121,13 +122,49 @@
         }
       },
       "inputs": [
-        "*",
         "__store"
       ],
       "outputs": [
-        "_ssr_input_16206eff"
+        "_ssr_reads_8fcf1e65"
       ],
-      "per_item": null
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
+    },
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_passes_5076b92f"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
+    },
+    {
+      "kind": {
+        "Ssr": {
+          "client_only": false
+        }
+      },
+      "inputs": [
+        "__store"
+      ],
+      "outputs": [
+        "_ssr_destructured_965c7fb5"
+      ],
+      "per_item": null,
+      "props": {
+        "__store": "__store"
+      }
     }
   ],
   "child_links": [],
@@ -177,24 +214,5 @@
       "tier": "Static"
     }
   ],
-  "diagnostics": [
-    {
-      "class": "Fallback",
-      "rule": "forwardref-ref",
-      "message": "`ref` is passed to the forwardRef component <Plain>; brust renders it without a ref",
-      "loc": 795,
-      "line": 25,
-      "col": 7,
-      "remediation": "drop the ref, or keep this component in React"
-    },
-    {
-      "class": "Fallback",
-      "rule": "ref-in-render",
-      "message": "a ref is read during render",
-      "loc": 807,
-      "line": 25,
-      "col": 19,
-      "remediation": "read refs in effects and handlers"
-    }
-  ]
+  "diagnostics": []
 }

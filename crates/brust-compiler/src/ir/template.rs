@@ -90,6 +90,9 @@ pub enum Attr {
     Ref {
         name: String,
     },
+    /// `ref={forwardedRef}` on this element (F267): where the ref a `forwardRef` component's caller passes lands. Prints
+    /// nothing of its own; a caller that binds a ref of its own on an inlined instance prints `x-ref` here.
+    ForwardRef,
     Spread(Expr),
     /// `dangerouslySetInnerHTML={{ __html: v }}`: `value` is the already-unwrapped `v`
     /// (null-safe `o.__html` for a non-literal object). Printed through the one raw sink.

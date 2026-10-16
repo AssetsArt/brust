@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderGate, renderInputs, renderNested, renderNestedIds, renderPage, renderPoly, renderRender } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderFwd, renderGate, renderInputs, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -237,6 +237,77 @@ test('an asChild consumer makes the caller\'s element the toggle', async () => {
   await link.click()
   await page.waitForFunction(() => document.querySelector('a[data-from="child"]')?.getAttribute('aria-expanded') === 'false')
   expect(await page.getByText('poly body').isVisible()).toBe(false)
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('a ref passed to an inlined forwardRef child is bound on its element', async () => {
+  const html = await (await fetch(`${base}/fwd`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderFwd()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/fwd`, { waitUntil: 'domcontentloaded' })
+  // the ref cell and the callback each reached their own button once mounted
+  await page.waitForFunction(() => document.querySelector('button[data-bound="ref"]') !== null && document.querySelector('button[data-bound="callback"]') !== null)
+  expect(await page.locator('button[data-bound="ref"]').textContent()).toContain('one')
+  expect(await page.locator('button[data-bound="callback"]').textContent()).toContain('two')
+  await page.locator('button[data-bound="ref"]').click()
+  await page.waitForFunction(() => document.querySelector('button[data-bound="ref"] i')?.textContent === '1')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('content written in the Provider\'s own module is specialised and toggles', async () => {
+  const html = await (await fetch(`${base}/same`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderSame()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/same`, { waitUntil: 'domcontentloaded' })
+  const trigger = page.getByRole('button', { name: 'go' })
+  await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'false')
+  await trigger.click()
+  await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'true')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('the call site\'s rest spread into the content crosses as an input and a plain helper paints without a job', async () => {
+  const html = await (await fetch(`${base}/rest`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(html).toContain('data-x="1"')
+  // the order of attributes carries no meaning (the spread keys come sorted)
+  const sorted = (h: string): string => h.replace(/<(\w+)((?: [\w-]+="[^"]*")+)>/g, (_, tag: string, a: string) => `<${tag}${(a.match(/ [\w-]+="[^"]*"/g) ?? []).sort().join('')}>`)
+  expect(sorted(plain(html))).toBe(sorted(plain(renderRest())))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/rest`, { waitUntil: 'domcontentloaded' })
+  const button = page.locator('button[data-x="1"]')
+  await page.waitForFunction(() => document.querySelector('button[data-x="1"]')?.getAttribute('data-state') === 'unchecked')
+  expect(await button.getAttribute('aria-label')).toBe('switch')
+  await button.click()
+  await page.waitForFunction(() => document.querySelector('button[data-x="1"]')?.getAttribute('data-state') === 'checked')
+  expect(await button.getAttribute('aria-pressed')).toBe('true')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('a live caller rest reaches the spread attributes after a click (Mellow F1)', async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/rest-live`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('button[data-n]')?.getAttribute('data-n') === '0')
+  await page.getByRole('button', { name: 'inc' }).click()
+  await page.waitForFunction(() => document.querySelector('button[data-n]')?.getAttribute('data-n') === '1')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

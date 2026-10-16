@@ -479,7 +479,8 @@ fn build_time_in_client_code_is_an_error() {
 fn a_slot_value_from_the_build_replaces_the_slot_with_a_literal_and_drops_the_job() {
     use brust_compiler::analyze::component::{AnalyzeOptions, analyze_source};
     use brust_compiler::parse::run_on_compiler_thread;
-    let src = "function f() { return 6 * 7 }\nexport default function C() { return <p>{f()}</p> }";
+    // two statements: a single-return helper is inlined (F279) and needs no slot at all
+    let src = "function f() { const a = 6; return a * 7 }\nexport default function C() { return <p>{f()}</p> }";
     let first = analyze("C.tsx", src);
     let key = first.build_eval[0].key.clone();
     assert!(first.needs_worker);

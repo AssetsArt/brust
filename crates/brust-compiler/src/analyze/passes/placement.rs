@@ -1798,7 +1798,7 @@ impl Placer<'_> {
                         | Attr::Spread(value)
                         | Attr::InnerHtml { value } => self.expr(value),
                         Attr::Event { .. } => self.reactive += 1,
-                        Attr::Static { .. } | Attr::Ref { .. } => {}
+                        Attr::Static { .. } | Attr::Ref { .. } | Attr::ForwardRef => {}
                     }
                 }
                 children.iter_mut().for_each(|c| self.node(c));
@@ -1892,6 +1892,13 @@ impl Placer<'_> {
                     if let Expr::Raw(r) = v {
                         let r = r.clone();
                         self.st.prop_raws.insert((*loc, k.clone()), r.clone());
+                        // F267: `ref={r}` hands the ref cell on (it is not a read of `.current`): the children pass
+                        // binds it on the child's element or refuses the call site.
+                        if k == "ref"
+                            && matches!(&r.kind, RawKind::Ident { name, .. } if self.unplaceable.contains_key(name.as_str()))
+                        {
+                            continue;
+                        }
                         self.frame_value = k.starts_with("__ctx_");
                         // `ref` and `key` are React's own: never a value the child prints.
                         self.component_prop = k != "ref" && k != "key";
