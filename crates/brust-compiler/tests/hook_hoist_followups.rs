@@ -155,3 +155,55 @@ fn a_hook_called_through_call_apply_or_bind_is_refused_by_name() {
     assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
     assert_eq!(a.use_id_slots, 1);
 }
+
+#[test]
+fn a_react_hook_read_as_a_value_is_refused_by_name() {
+    // F255 round 1: an alias, a computed `call`, `Reflect.apply` or an argument reach the hook through a spelling the
+    // reader cannot see; the precompute job would call it outside a render. Each is a native component otherwise
+    // (state + handler), so the refusal is what keeps it React.
+    for body in [
+        "const u = useId; const id = u(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = useId['call'](null); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = Reflect.apply(useId, null, []); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = [useId].map((f) => f())[0]; return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+    ] {
+        let src =
+            format!("{PRE}export default function F() {{ const [n, setN] = useState(0); {body} }}");
+        let a = ir(&src);
+        assert!(
+            rules(&a).contains(&"hook-unsupported"),
+            "{body}: {:?}",
+            a.diagnostics
+        );
+    }
+    // The namespace import: `const u = React.useId`, `React['useId']`, a computed member.
+    for body in [
+        "const u = React.useId; const id = u(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = React['useId'](); const j = React['useId']; return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const k = 'useId'; const u = React[k]; return <button onClick={() => setN(n + 1)} id={u()}>{n}</button>",
+    ] {
+        let src = format!(
+            "import React, {{ useState }} from 'react'\nexport default function F() {{ const [n, setN] = useState(0); {body} }}"
+        );
+        let a = ir(&src);
+        assert!(
+            rules(&a).contains(&"hook-unsupported"),
+            "{body}: {:?}",
+            a.diagnostics
+        );
+    }
+    // What stays read: direct calls, the comma call, `React.useX()`, `?.()`, and a non-hook member of React.
+    for body in [
+        "const id = useId(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = (0, useId)(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = React.useId(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = useId?.(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const v = React.version; return <button onClick={() => setN(n + 1)} title={v}>{n}</button>",
+    ] {
+        let src = format!(
+            "import React, {{ useState, useId }} from 'react'\nexport default function F() {{ const [n, setN] = useState(0); {body} }}"
+        );
+        let a = ir(&src);
+        assert!(a.diagnostics.is_empty(), "{body}: {:?}", a.diagnostics);
+    }
+}
