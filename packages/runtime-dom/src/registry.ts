@@ -6,6 +6,8 @@ export interface BehaviorCtx {
   effect: (fn: () => void | (() => void)) => Dispose
   onCleanup: (fn: () => void) => void
   ref: <E extends Element = HTMLElement>(name: string, init?: unknown) => { current: E | null }
+  /** True when this instance mounted after the page booted (an x-if clone, an x-for row, a navigation): nothing of it was server-rendered. */
+  late: boolean
 }
 export type BehaviorInstance = Record<string, unknown>
 export type BehaviorFactory = (ctx: BehaviorCtx) => BehaviorInstance | void

@@ -156,3 +156,97 @@ fn a_live_style_object_on_a_child_element_binds_as_an_object() {
         );
     }
 }
+
+#[test]
+fn a_cell_seeded_from_a_fixed_cell_is_fixed_but_one_seeded_from_live_state_is_not() {
+    // F293: `first` reads `n`, which nothing sets either: both are their first value for good.
+    let ir = tree(
+        "import { useState } from 'react'\nexport default function C() { const [n] = useState(2); const [first] = useState(n * 3); const [again] = useState(first); return <b data-x={again}>{first}</b> }",
+        "export default function Unused() { return null }",
+    );
+    assert!(fallbacks(&ir).is_empty(), "{:?}", fallbacks(&ir));
+    assert!(matches!(ir.tier, Tier::Static), "{:?}", ir.tier);
+    // A seed a setter writes is state: the cell seeded from it stays state too (it is that state's value at a mount).
+    let ir = tree(
+        "import { useState } from 'react'\nexport default function C() { const [n, setN] = useState(2); const [first] = useState(n); return <b onClick={() => setN(n + 1)}>{first}</b> }",
+        "export default function Unused() { return null }",
+    );
+    assert!(matches!(ir.tier, Tier::Native), "{:?}", ir.tier);
+}
+
+/// A child that takes `checked` once (a never-written ref) and hands it to a forwarding primitive, which spreads it.
+const FWD_BUBBLE: &str = "import { useRef } from 'react'\nfunction Fwd(props: any) { return <input type=\"checkbox\" {...props} /> }\nexport default function C({ checked }: any) { const snap = useRef(checked); return <Fwd aria-hidden defaultChecked={snap.current} /> }";
+
+fn rules(ir: &ComponentIR) -> Vec<String> {
+    ir.diagnostics
+        .iter()
+        .filter(|d| d.class == DiagClass::Fallback)
+        .map(|d| d.rule.clone())
+        .collect()
+}
+
+#[test]
+fn a_snapshot_through_a_forwarding_spread_is_printed_once_where_the_instance_mounts_once() {
+    // F295: the child alone is fine (its caller must promise a single mount).
+    let child = tree(
+        FWD_BUBBLE,
+        "export default function Unused() { return null }",
+    );
+    assert!(fallbacks(&child).is_empty(), "{:?}", fallbacks(&child));
+    assert!(
+        child.mount_once.is_some(),
+        "the child records the promise it needs"
+    );
+    // Mounted with a stateful parent and never again: no refusal, and the parent passes the promise up.
+    let ir = tree(&with_state("checked={on}"), FWD_BUBBLE);
+    assert!(fallbacks(&ir).is_empty(), "{:?}", fallbacks(&ir));
+    assert!(matches!(ir.tier, Tier::Native), "{:?}", ir.tier);
+    assert!(ir.mount_once.is_some());
+}
+
+#[test]
+fn a_snapshot_through_a_spread_under_a_condition_or_in_a_row_is_refused() {
+    for site in [
+        // F295 (c): a guarded instance can mount again later, when React takes the current value.
+        "{w > 10 && <C checked={on} />}",
+        // A row.
+        "{[1, 2].map((i) => <C key={i} checked={on} />)}",
+    ] {
+        let parent = format!(
+            "import {{ useState }} from 'react'\nimport C from './C'\nexport default function T() {{ const [on, setOn] = useState(true); const [w, setW] = useState(10); return <div><button onClick={{() => {{ setOn(!on); setW(w + 1) }}}}>t</button>{site}</div> }}"
+        );
+        let ir = tree(&parent, FWD_BUBBLE);
+        assert!(
+            rules(&ir).contains(&"snapshot-remount".to_string()),
+            "{site}: {:?}",
+            fallbacks(&ir)
+        );
+        assert!(
+            matches!(ir.tier, Tier::React { .. }),
+            "{site}: {:?}",
+            ir.tier
+        );
+    }
+}
+
+#[test]
+fn a_seed_a_setter_writes_still_refuses_the_spread() {
+    // Not a snapshot: the cell changes after mount, so the spread cannot carry it.
+    let child = "import { useState } from 'react'\nfunction Fwd(props: any) { return <input type=\"checkbox\" {...props} /> }\nexport default function C({ checked }: any) { const [c, setC] = useState(checked); return <span onClick={() => setC(!c)}><Fwd defaultChecked={c} /></span> }";
+    let ir = tree(child, "export default function Unused() { return null }");
+    assert!(
+        rules(&ir).contains(&"spread-props".to_string()),
+        "{:?}",
+        fallbacks(&ir)
+    );
+    assert!(ir.mount_once.is_none());
+}
+
+#[test]
+fn a_snapshot_does_not_link_the_forwarder_so_a_handler_can_be_bound_through_its_spread() {
+    // Radix's BubbleInput: a composed onClick next to the snapshot. A linked forwarder could not take the handler.
+    let child = "import { useRef } from 'react'\nfunction Fwd(props: any) { return <input type=\"checkbox\" {...props} /> }\nexport default function C({ checked }: any) { const snap = useRef(checked); return <Fwd aria-hidden defaultChecked={snap.current} onClick={(e: any) => e.stopPropagation()} /> }";
+    let ir = tree(&with_state("checked={on}"), child);
+    assert!(fallbacks(&ir).is_empty(), "{:?}", fallbacks(&ir));
+    assert!(matches!(ir.tier, Tier::Native), "{:?}", ir.tier);
+}

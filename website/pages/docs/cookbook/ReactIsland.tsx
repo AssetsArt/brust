@@ -87,7 +87,7 @@ export default function ReactIsland({ blocks }: ReactIslandData) {
     <>
       <h1>A React island</h1>
       <Lead>
-        When a component needs something the native tier cannot express, such as <code>useDeferredValue</code>, <code>useReducer</code> or a component from a package, brust keeps it as real React: rendered on the server, then hydrated in the browser.
+        When a component needs something the native tier cannot express, such as <code>useDeferredValue</code>, <code>useTransition</code> or a component from a package, brust keeps it as real React: rendered on the server, then hydrated in the browser.
       </Lead>
 
       <Step n={1} id="component" title="Use a React-only hook" />

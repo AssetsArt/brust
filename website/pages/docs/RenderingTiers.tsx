@@ -55,7 +55,7 @@ export async function renderingTiersLoader(): Promise<RenderingTiersData> {
       { id: 'see', title: 'See what you got' },
     ],
     blocks: {
-      warning: codeBlock({ lang: 'sh', cwd: '~/pokedex', code: '$ bun run build\nwarning hook-unsupported components/TeamBuilder.tsx:12:26 hook useReducer is not supported\nwarning hook-unsupported components/UnifiedIsland.tsx:11:25 hook useReducer is not supported\n[brust] built dist in 73ms' }),
+      warning: codeBlock({ lang: 'sh', cwd: '~/pokedex', code: '$ bun run build\nwarning hook-unsupported components/TeamBuilder.tsx:12:3 hook useTransition is not supported\nwarning hook-unsupported components/UnifiedIsland.tsx:11:3 hook useTransition is not supported\n[brust] built dist in 73ms' }),
       manifest: codeBlock({ lang: 'json', file: 'dist/manifest.json', code: '"pokemonSearch_<hash>": {\n  "tier": "react",\n  "client": "client/react-pokemonSearch_<hash>-<hash>.js",\n  "jobs": [{ "kind": "ssr", … }]\n}' }),
     },
     tiers: { card: shipped('pokemonCard'), catch: shipped('catchCard'), search: shipped('pokemonSearch') },
@@ -99,7 +99,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
             <td>
               <Tier t="react">react</Tier>
             </td>
-            <td>Everything else: context, <code>useReducer</code>, <code>useDeferredValue</code>, <code>Suspense</code>, a component from a package, browser globals read during render.</td>
+            <td>Everything else: context, <code>useTransition</code>, <code>useDeferredValue</code>, <code>Suspense</code>, a component from a package, browser globals read during render.</td>
             <td>HTML rendered by React on the server, then a React island hydrates it.</td>
           </tr>
         </tbody>
@@ -141,7 +141,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
           </tr>
           <tr>
             <td>
-              <code>useState</code>, <code>useMemo</code>, <code>useCallback</code>, <code>useEffect</code>, <code>useLayoutEffect</code>, <code>useRef</code>, <code>useId</code>, <code>memo()</code>, event handlers, <code>useStore</code>, and a custom hook whose body uses only these (the compiler inlines it)
+              <code>useState</code>, <code>useMemo</code>, <code>useCallback</code>, <code>useEffect</code>, <code>useLayoutEffect</code>, <code>useRef</code>, <code>useId</code>, <code>useReducer</code> (a state cell and one stable <code>dispatch</code>; the reducer must be a pure function, written inline or in the same module), <code>memo()</code>, event handlers, <code>useStore</code>, and a custom hook whose body uses only these (the compiler inlines it)
             </td>
             <td>
               <Tier t="native">native</Tier>
@@ -149,7 +149,7 @@ export default function RenderingTiers({ blocks, tiers, cards, catchMon, all }: 
           </tr>
           <tr>
             <td>
-              <code>useReducer</code>, <code>useContext</code>, <code>useDeferredValue</code>, <code>useTransition</code>, <code>useSyncExternalStore</code>, <code>use(promise)</code>, <code>cloneElement</code>, <code>forwardRef</code> and other HOCs, spread props, <code>lazy</code>
+              <code>useContext</code>, <code>useDeferredValue</code>, <code>useTransition</code>, <code>useSyncExternalStore</code>, <code>use(promise)</code>, <code>cloneElement</code>, <code>forwardRef</code> and other HOCs, spread props, <code>lazy</code>
             </td>
             <td>
               <Tier t="react">react</Tier>

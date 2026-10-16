@@ -25,8 +25,9 @@ const homeSrc = (text: string) => `export default function Home() {
   )
 }
 `
-const islandSrc = (text: string) => `import { useReducer } from 'react'
+const islandSrc = (text: string) => `import { useReducer, useTransition } from 'react'
 export default function Island() {
+  useTransition()
   const [n, inc] = useReducer((x: number) => x + 1, 0)
   return (
     ${doc('react', `<h1 data-testid="r">${text}</h1><button type="button" data-testid="rb" onClick={inc}>n {n}</button>`)}

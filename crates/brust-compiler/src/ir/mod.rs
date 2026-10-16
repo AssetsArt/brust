@@ -314,6 +314,11 @@ pub struct ComponentIR {
     /// transitive): directives in the slot content its caller gives would be bound by that host, not by the caller.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hosts_children: bool,
+    /// F295: this component prints a value it took once at mount (a snapshot cell) where nothing re-applies it on the
+    /// client (through a spread), so an instance of it must mount with its caller and never again (transitive). The
+    /// text says what, for the call site that cannot promise it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount_once: Option<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -455,6 +460,7 @@ impl ComponentIR {
             live_forwards: Vec::new(),
             repeats_children: false,
             hosts_children: false,
+            mount_once: None,
             state: vec![],
             derived: vec![],
             effects: vec![],

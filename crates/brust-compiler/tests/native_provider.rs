@@ -701,3 +701,67 @@ fn a_const_object_entry_calling_an_effectful_or_unproven_function_still_falls_ba
         );
     }
 }
+
+// R34.143: `useSyncExternalStore(subscribe, () => true, () => false)` with a `subscribe` that subscribes to nothing (Radix's
+// `useIsHydrated`) is false on the server and true once mounted; every other store stays `hook-unsupported`.
+#[test]
+fn use_is_hydrated_lowers_to_a_state_that_a_mount_effect_sets() {
+    for (file, id) in [("HydrBox.tsx", "hydrBox"), ("HydrBoxNeg.tsx", "hydrBoxNeg")] {
+        let all = compile(file);
+        let b = all
+            .iter()
+            .find(|i| i.ir.id.starts_with(id))
+            .expect("the component");
+        assert!(!is_react(&b.ir), "{file}: {:?}", b.ir.diagnostics);
+        // false in the server markup (React's `getServerSnapshot`)
+        assert!(
+            b.jinja
+                .contains("{% set ret1_useSyncExternalStore = false %}"),
+            "{file}: {}",
+            b.jinja
+        );
+        let client = b.client.as_deref().expect("a client chunk");
+        // seeded from the instance's `late` flag (mounted after the page booted), set true by a mount effect in a microtask
+        assert!(client.contains("late:"), "{file}: {client}");
+        assert!(
+            client.contains("queueMicrotask(() => ret1_useSyncExternalStore.set(true))"),
+            "{file}: {client}"
+        );
+        assert!(
+            client.contains("const ret1_useSyncExternalStore = signal(__late)"),
+            "{file}: {client}"
+        );
+    }
+}
+
+#[test]
+fn another_external_store_keeps_the_hook_unsupported_refusal() {
+    for f in ["sync_other.tsx", "sync_subscribes.tsx"] {
+        let all = compile(f);
+        assert!(
+            all.iter()
+                .any(|i| has(&i.ir, DiagClass::Fallback, "hook-unsupported")),
+            "{f}: {:?}",
+            all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+        );
+        assert!(is_react(&all[0].ir), "{f}");
+    }
+}
+
+// R34.144: a context local destructured in the body (`const { on, flip } = context`) or aliased (`const again = context`) is
+// read field by field, like the hook's own result.
+#[test]
+fn a_context_local_destructured_or_aliased_in_the_body_reads_its_fields() {
+    let all = compile("ctx_destruct.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", all[0].ir.diagnostics);
+    assert!(
+        !all.iter().any(|i| i
+            .ir
+            .diagnostics
+            .iter()
+            .any(|d| d.class == DiagClass::Fallback)),
+        "{:?}",
+        all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+    );
+}
