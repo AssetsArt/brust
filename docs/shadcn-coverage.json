@@ -18,7 +18,7 @@
     },
     "islands": 36,
     "pagesWithNoJs": 25,
-    "pagesWithNoWorker": 21,
+    "pagesWithNoWorker": 22,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -28,9 +28,9 @@
       "packages": 76,
       "components": 561,
       "exported": 334,
-      "static": 0,
+      "static": 1,
       "native": 0,
-      "react": 284,
+      "react": 283,
       "unresolved": 0,
       "error": 50
     }
@@ -40,9 +40,9 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 39,
+      "measuredRows": 38,
       "analysisOnlyRows": 0,
-      "appComponents": 135,
+      "appComponents": 130,
       "libraryComponents": 167
     },
     {
@@ -51,16 +51,16 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 33,
       "analysisOnlyRows": 0,
-      "appComponents": 123,
-      "libraryComponents": 191
+      "appComponents": 119,
+      "libraryComponents": 190
     },
     {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 32,
+      "measuredRows": 31,
       "analysisOnlyRows": 0,
-      "appComponents": 88,
+      "appComponents": 83,
       "libraryComponents": 192
     },
     {
@@ -79,7 +79,7 @@
       "measuredRows": 7,
       "analysisOnlyRows": 0,
       "appComponents": 8,
-      "libraryComponents": 35
+      "libraryComponents": 34
     },
     {
       "blocker": "fallback:hook-unsupported",
@@ -136,13 +136,13 @@
       "libraryComponents": 26
     },
     {
-      "blocker": "fallback:hook-shape",
+      "blocker": "fallback:context-state",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
       "analysisOnlyRows": 0,
       "appComponents": 2,
-      "libraryComponents": 7
+      "libraryComponents": 17
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -169,16 +169,16 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 43
+      "libraryComponents": 34
     },
     {
-      "blocker": "fallback:context-state",
+      "blocker": "fallback:hook-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 15
+      "libraryComponents": 7
     },
     {
       "blocker": "fallback:child-component",
@@ -205,7 +205,7 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 4
+      "libraryComponents": 1
     },
     {
       "blocker": "fallback:event-capture",
@@ -469,15 +469,6 @@
       "libraryComponents": 2
     },
     {
-      "blocker": "fallback:prop-jinja-name",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 2
-    },
-    {
       "blocker": "React.Children",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
@@ -531,7 +522,7 @@
       "islands": 1,
       "components": 11,
       "reactComponents": 8,
-      "jsGzipKb": 94,
+      "jsGzipKb": 95,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -576,7 +567,7 @@
       "components": 4,
       "reactComponents": 0,
       "jsGzipKb": 0,
-      "workerCalls": 1,
+      "workerCalls": 0,
       "codes": []
     },
     {
@@ -704,7 +695,7 @@
       "islands": 1,
       "components": 3,
       "reactComponents": 2,
-      "jsGzipKb": 107,
+      "jsGzipKb": 108,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -770,7 +761,7 @@
       "islands": 1,
       "components": 7,
       "reactComponents": 3,
-      "jsGzipKb": 91,
+      "jsGzipKb": 92,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -800,7 +791,7 @@
       "islands": 1,
       "components": 22,
       "reactComponents": 16,
-      "jsGzipKb": 157,
+      "jsGzipKb": 158,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -820,7 +811,7 @@
       "islands": 1,
       "components": 16,
       "reactComponents": 14,
-      "jsGzipKb": 104,
+      "jsGzipKb": 105,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -849,8 +840,8 @@
       "basis": "measured",
       "tier": "react",
       "islands": 1,
-      "components": 25,
-      "reactComponents": 14,
+      "components": 27,
+      "reactComponents": 10,
       "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
@@ -869,12 +860,11 @@
       "tier": "static",
       "islands": 1,
       "components": 3,
-      "reactComponents": 2,
+      "reactComponents": 1,
       "jsGzipKb": 70,
       "workerCalls": 1,
       "codes": [
-        "external-component",
-        "island-prop"
+        "context-value"
       ]
     },
     {
@@ -1158,7 +1148,7 @@
       "islands": 1,
       "components": 5,
       "reactComponents": 2,
-      "jsGzipKb": 85,
+      "jsGzipKb": 86,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1245,9 +1235,9 @@
       "basis": "measured",
       "tier": "react",
       "islands": 1,
-      "components": 21,
-      "reactComponents": 13,
-      "jsGzipKb": 100,
+      "components": 23,
+      "reactComponents": 9,
+      "jsGzipKb": 101,
       "workerCalls": 1,
       "codes": [
         "context-island",
@@ -1267,10 +1257,9 @@
       "jsGzipKb": 117,
       "workerCalls": 1,
       "codes": [
-        "context-value",
+        "context-state",
         "control-flow",
         "external-component",
-        "hook-shape",
         "island-children",
         "jsx-const-child",
         "linked-prop-precompute",
@@ -1398,7 +1387,7 @@
       "islands": 0,
       "components": 4,
       "reactComponents": 0,
-      "jsGzipKb": 5,
+      "jsGzipKb": 6,
       "workerCalls": 0,
       "codes": []
     },
@@ -1409,7 +1398,7 @@
       "islands": 1,
       "components": 5,
       "reactComponents": 4,
-      "jsGzipKb": 93,
+      "jsGzipKb": 94,
       "workerCalls": 1,
       "codes": [
         "external-component",

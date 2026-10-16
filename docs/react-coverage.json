@@ -11,9 +11,9 @@
   "summary": {
     "entries": 58,
     "native": 12,
-    "static": 11,
-    "island": 26,
-    "partial": 4,
+    "static": 12,
+    "island": 24,
+    "partial": 5,
     "unsupported": 0,
     "n/a": 5
   },
@@ -81,28 +81,24 @@
       "name": "useContext",
       "group": "hooks",
       "url": "https://react.dev/reference/react/useContext",
-      "status": "island",
+      "status": "static",
       "rows": [
         "c-usecontext"
       ],
       "tiers": [
-        "react"
+        "static"
       ],
-      "diagnostics": [
-        "fallback:context-escape"
-      ],
+      "diagnostics": [],
       "shapes": [
         {
           "row": "c-usecontext",
           "authoring": "useContext",
-          "expected": "react",
-          "observed": "react",
-          "diagnostics": [
-            "fallback:context-escape"
-          ]
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
         }
       ],
-      "note": "useContext"
+      "note": "R34.142: a context with a literal default read as a value, with no Provider above the page, is its default (React's own rule)"
     },
     {
       "name": "useDebugValue",
@@ -852,16 +848,16 @@
       "name": "createContext",
       "group": "apis",
       "url": "https://react.dev/reference/react/createContext",
-      "status": "island",
+      "status": "partial",
       "rows": [
         "d-createcontext",
         "d-createcontext-consumer"
       ],
       "tiers": [
+        "static",
         "react"
       ],
       "diagnostics": [
-        "fallback:context-value",
         "fallback:member-tag",
         "fallback:jsx-const-child",
         "fallback:jsx-expression"
@@ -870,11 +866,9 @@
         {
           "row": "d-createcontext",
           "authoring": "createContext provider",
-          "expected": "react",
-          "observed": "react",
-          "diagnostics": [
-            "fallback:context-value"
-          ]
+          "expected": "static",
+          "observed": "static",
+          "diagnostics": []
         },
         {
           "row": "d-createcontext-consumer",
@@ -888,7 +882,7 @@
           ]
         }
       ],
-      "note": "createContext provider"
+      "note": "native/static: d-createcontext; island: d-createcontext-consumer"
     },
     {
       "name": "experimental_taintObjectReference",
