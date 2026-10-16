@@ -836,7 +836,14 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         match n {
             Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children") =>
             {
-                *n = Node::Fragment(content.take().unwrap_or_default());
+                let mut nodes = content.take().unwrap_or_default();
+                // F307 S4: one node takes the slot's own place, so a bare text slot that is an element's only child binds
+                // `x-text` on that element (as a hand-written `<div>{x}</div>`), not on a wrapper React does not print.
+                *n = if nodes.len() == 1 {
+                    nodes.pop().unwrap()
+                } else {
+                    Node::Fragment(nodes)
+                };
             }
             Node::Element { children, .. }
             | Node::Component { children, .. }
@@ -960,6 +967,26 @@ fn reads_rest_or_props(ir: &ComponentIR) -> bool {
     nodes
         .into_iter()
         .any(|n| cx.deps_node(n, &[]).props.iter().any(|p| p == "*"))
+}
+
+/// F307 S4: the rule a host clone refused for a bare text slot is reported under.
+const SLOT_TEXT_WRAPPER: &str = "slot-text-wrapper";
+
+/// F307 S4: the template's `{children}` slot is the only child of an element (a text node spliced there binds `x-text`
+/// on that element, as a hand-written `<div>{x}</div>` does).
+fn children_slot_is_lone(n: &Node) -> bool {
+    fn is_slot(n: &Node) -> bool {
+        matches!(n, Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children"))
+    }
+    match n {
+        Node::Element { children, .. } if children.len() == 1 && is_slot(&children[0]) => true,
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().any(children_slot_is_lone),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(children_slot_is_lone),
+        Node::For { body, .. } => body.iter().any(children_slot_is_lone),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
 }
 
 /// F342: the children a call site gives reach the component's markup only through its `...rest` (or whole props)
@@ -2787,6 +2814,35 @@ impl Walker<'_, '_> {
                         Err(why) => self.spec_failure = Some((*loc, why)),
                     }
                 }
+                // F307 (option B): the children pass refused this call site's content, printed inside the child's own host
+                // (`slot-owner`): the child is cloned for it with the content at its `{children}`, so the content's
+                // directives are the clone's own. After the content's frames are read, so A1 sees every consumer in it.
+                if owner.is_none()
+                    && self.st.host_spec.contains(loc)
+                    && !children.is_empty()
+                    && let Some(from) = child.path.clone()
+                {
+                    match self.specialise_host(&cir, &from, *loc, children) {
+                        Ok((id, key, inputs)) => {
+                            props.extend(inputs);
+                            *name = id;
+                            *source = Some(SPEC_SOURCE.to_string());
+                            *imported = Some(key);
+                            member.clear();
+                            children.clear();
+                        }
+                        Err(why) => diags.push(Diagnostic::info(
+                            if why.starts_with(SLOT_TEXT_WRAPPER) {
+                                SLOT_TEXT_WRAPPER
+                            } else {
+                                "host-specialise-unsupported"
+                            },
+                            format!("the children of <{name}> stay outside it: {why}"),
+                            *loc,
+                            "",
+                        )),
+                    }
+                }
             }
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
@@ -2996,6 +3052,120 @@ impl Walker<'_, '_> {
             return Err(format!("the specialised component needs React ({reason})"));
         }
         Ok((clone, (id, key, inputs)))
+    }
+
+    /// F307: a `slot-owner` refusal at `loc` the frames pass may answer by cloning the child with the content (on the
+    /// component's second read, `run_passes`). Only a lowered child of a module (not a Provider, not a clone) that prints
+    /// a real `{children}` slot (S1), and not polymorphic (`asChild`: its host is the element between its tags, which
+    /// the call site must keep); a call site already tried keeps its refusal.
+    fn want_host(&mut self, loc: u32, child: &Child) {
+        if child.path.is_some()
+            && child.poly.is_none()
+            && !self.st.host_spec.contains(&loc)
+            && child
+                .ir
+                .as_deref()
+                .is_some_and(|c| c.provides.is_empty() && !c.specialised && prints_children_slot(c))
+        {
+            self.st.host_wanted.insert(loc);
+        }
+    }
+
+    /// F307 (option B): a clone of the host child `cir` whose `{children}` is `content`, compiled as a component of its
+    /// own for this call site. The call site's names the content reads cross as hidden inputs (`Carry`, as for a
+    /// Provider's content, R34.123). Refused, and the call site keeps its `slot-owner` refusal, when: the child is a
+    /// Provider or a clone, does not print a real `{children}` slot (S1: children that reach its element through
+    /// `...rest` are F324's), the content reads the frame of a native Provider around the call site (A1 / C2: no frame
+    /// crosses the clone's boundary), Carry cannot express a name, or the clone still needs React.
+    fn specialise_host(
+        &mut self,
+        cir: &Rc<ComponentIR>,
+        c_path: &str,
+        loc: u32,
+        content: &[Node],
+    ) -> Result<Specialised, String> {
+        if !cir.provides.is_empty() || cir.specialised {
+            return Err("it provides a context, or is a clone already".into());
+        }
+        if !matches!(cir.tier, Tier::Native | Tier::Static) {
+            return Err("it is not lowered".into());
+        }
+        if !prints_children_slot(cir) {
+            return Err("it does not print a `{children}` slot of its own".into());
+        }
+        // S4: a bare text slot of the content is printed in a `<span x-text>` unless it is an element's only child; React
+        // prints a text node, so that clone would not render what React renders.
+        if content.iter().any(|c| matches!(c, Node::Slot(_)))
+            && !(content.len() == 1 && children_slot_is_lone(&cir.template))
+        {
+            return Err(format!(
+                "{SLOT_TEXT_WRAPPER}: a bare text slot of the content would need a wrapper element React does not print"
+            ));
+        }
+        let ctx = self.ctx;
+        let export = match &cir.export {
+            Some(n) => Export::Named(n.clone()),
+            None => Export::Default,
+        };
+        let mut nodes = content.to_vec();
+        // No native frame is opened by the clone for its content (`usize::MAX` owns none): a consumer of a native
+        // Provider around the call site would read the clone's members by name (A1, and scoped frames, C2).
+        self.check_owner(&nodes, usize::MAX)?;
+        let mut carry = Carry::new(
+            &self.native_props,
+            usize::MAX,
+            &self.module_names,
+            &self.row_handlers,
+            &self.st.handler_names,
+            &self.module_consts,
+            cir.props.iter().map(|p| p.name.clone()).collect(),
+        );
+        carry.nodes(&mut nodes, &[])?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        let exp = cir.export.as_deref().unwrap_or("default");
+        let site = match &self.spec_salt {
+            Some(salt) => format!("{}#{salt}", ctx.path),
+            None => ctx.path.to_string(),
+        };
+        let id = format!("{}_h{:08x}", cir.id, spec_hash(&site, loc));
+        let key = format!("{c_path}#{exp}~host~{site}~{loc}");
+        let clone_id = id.clone();
+        let (inputs, clone_handlers) = carry.finish();
+        let fixed: Vec<String> = inputs
+            .iter()
+            .filter(|(_, v)| !self.source_reactive(v))
+            .map(|(h, _)| h.clone())
+            .collect();
+        let mut once = Some(nodes);
+        let clone = crate::analyze::modules::compile_specialised(
+            c_path,
+            &export,
+            key.clone(),
+            ctx.opts,
+            ctx.modules,
+            &mut |ir: &mut ComponentIR| {
+                splice_children(ir, once.take().unwrap_or_default())?;
+                for (hidden, _) in &inputs {
+                    ir.props.push(crate::ir::PropDecl {
+                        name: hidden.clone(),
+                        local: hidden.clone(),
+                        ts_type: None,
+                        default: None,
+                    });
+                }
+                ir.handlers.extend(clone_handlers.iter().cloned());
+                ir.fixed_props = fixed.clone();
+                ir.id = clone_id.clone();
+                ir.specialised = true;
+                Ok(())
+            },
+        )?;
+        if let Tier::React { reason, .. } = &clone.tier {
+            let reason = reason.clone();
+            ctx.modules.borrow_mut().remove(&key);
+            return Err(format!("the specialised component needs React ({reason})"));
+        }
+        Ok((id, key, inputs))
     }
 
     /// F342: a spread at this call site of this component's whole props, or of its `...rest` while it does not name
@@ -5379,6 +5549,7 @@ impl Walker<'_, '_> {
                 self.passes_to_host = true;
             }
             if let Some(what) = children.iter().find_map(|c| self.owned_directive(c)) {
+                self.want_host(*loc, &child);
                 self.diagnostics.push(Diagnostic::fallback(
                     "slot-owner",
                     format!(
@@ -5401,6 +5572,7 @@ impl Walker<'_, '_> {
                 .is_some_and(|c| prints_children_slot(c) || carries_children_by_rest(c))
             && let Some(what) = children.iter().find_map(|c| self.owned_directive(c))
         {
+            self.want_host(*loc, &child);
             self.diagnostics.push(Diagnostic::fallback(
                 "slot-owner",
                 format!(

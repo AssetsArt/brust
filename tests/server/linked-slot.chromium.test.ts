@@ -1,7 +1,8 @@
 // F309 in real Chromium, against React hydrating the same page in the same browser: a static child the page links
 // (`<Label on={on}>`) printed slot content with a linked prop of the page (`<Thumb on={on}/>`) inside a host of its own,
-// which bound it (the runtime binds by the nearest x-data), so the Thumb never updated. The page is now refused
-// (slot-owner) and renders with React: every observable value equals React after each click.
+// which bound it (the runtime binds by the nearest x-data), so the Thumb never updated. It was then refused (slot-owner);
+// F307 now clones the Label for this call site with the Thumb inside, so the page is native: every observable value
+// equals React after each click.
 // Run alone: `bun test --timeout 120000 tests/server/linked-slot.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
@@ -68,9 +69,9 @@ async function run(open: (page: Page) => Promise<void>): Promise<{ log: unknown[
   return { log, errors }
 }
 
-test('the page is refused with slot-owner, so it renders with React', () => {
+test('the page is native: the linked Label is cloned with its slot content (F307)', () => {
   const manifest = JSON.parse(readFileSync(join(app, 'dist/manifest.json'), 'utf8')) as { components: Record<string, { tier: string }> }
-  expect(Object.entries(manifest.components).find(([k]) => k.startsWith('page_'))![1].tier).toBe('react')
+  expect(Object.entries(manifest.components).find(([k]) => k.startsWith('page_'))![1].tier).toBe('native')
 })
 
 test('after each click, every observable value equals React hydrating the same page', async () => {
@@ -85,7 +86,7 @@ test('after each click, every observable value equals React hydrating the same p
   })
   const served = await run(async (page) => {
     await page.goto(`${base}/`, { waitUntil: 'domcontentloaded' })
-    await page.waitForFunction(() => document.querySelector('[data-hydrated], brust-island') !== null)
+    await page.waitForFunction(() => document.querySelector('[x-data], [data-hydrated], brust-island') !== null)
   })
   expect(react.errors).toEqual([])
   expect(served.errors).toEqual([])
