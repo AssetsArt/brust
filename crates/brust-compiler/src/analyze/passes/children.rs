@@ -3121,7 +3121,7 @@ impl Walker<'_, '_> {
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;
-        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts, ctx.modules)?;
         let exp = cir.export.as_deref().unwrap_or("default");
         let site = match &self.spec_salt {
             Some(salt) => format!("{}#{salt}", ctx.path),
