@@ -531,6 +531,28 @@ fn a_rest_spread_in_the_content_crosses_and_a_plain_helper_call_needs_no_job() {
     }
 }
 
+// F300: the call site's `...rest` crosses into the clone as data, and markup children are not data: a call with JSX
+// children is refused (children-rest) instead of printing the clone without them; without children it stays native.
+#[test]
+fn jsx_children_given_to_a_component_that_passes_its_rest_to_a_clone_are_refused() {
+    let all = compile("rest_children.tsx");
+    let root = &all[0];
+    assert!(
+        has(&root.ir, DiagClass::Fallback, "children-rest"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    assert!(is_react(&root.ir), "{:?}", root.ir.tier);
+    assert!(!root.jinja.contains("hello"), "{}", root.jinja);
+    let none = compile("rest_input.tsx");
+    assert!(
+        !has(&none[0].ir, DiagClass::Fallback, "children-rest"),
+        "{:?}",
+        none[0].ir.diagnostics
+    );
+    assert!(!is_react(&none[0].ir));
+}
+
 #[test]
 fn a_helper_called_with_a_computation_keeps_its_job() {
     let all = compile("helper_neg.tsx");

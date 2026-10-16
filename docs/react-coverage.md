@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
+| B Composition | 223 | 117 | 16 | 90 | 0 | 0 | 0 | 0 |
 | C Hooks | 136 | 26 | 50 | 60 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 514 | 218 | 95 | 197 | 3 | 1 | 0 | 0 |
+| **Total** | 516 | 219 | 95 | 198 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -183,6 +183,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-wrapper | a consumer inside a wrapper component, under a Provider | static | static | 0 | ok | 0 | — | S2 R34.104: the need bubbles up through the wrapper and is filled where the Provider is |
 | b-context-rest-wrapper | a shadcn-style wrapper forwarding its ...rest into a Provider component | static | static | ssr | ok | 4.0 | — | S2: frame values must be literals (lead ruling on 84a4650a): this wrapper's Provider reads props, so it stays a React island (context-value; F174 narrows it); the page stays static |
 | b-context-helper | a Provider value computed by helpers of its own module, used from another module | react | react | ssr | ok | 4.0 | fallback:context-no-provider, fallback:context-value | S2: a frame value that calls a helper is not a literal (lead ruling on 84a4650a), so the page renders with React (context-value; F174 narrows it to helpers proven to return primitives) |
+| b-context-rest-children | a component that passes its whole ...rest to a specialised state Provider, called with JSX children | react | react | ssr | ok | 5.3 | fallback:children-rest | F300/F324: the clone takes the caller's ...rest as data (__in_rest) and markup is not data, so the JSX children would vanish: children-rest keeps the caller React (mutation: without the fallback the page is native and prints the button without them) |
+| b-context-rest-no-children | the same component called without children | static | static | 0 | ok | 4.6 | — | F300: the children-rest guard fires only on the dropped-children shape; with no children the rest crosses as data and stays native |
 | b-context-radix-scope | Radix createContextScope: Provider props, a default, a consumer | static | static | 0 | ok | 0 | — | S2 R34.100/101: the second structural recogniser (Radix createContextScope); a scope that is a pass-through is ignored |
 | b-context-no-provider | a consumer with no Provider above it, at the route | react | react | ssr | ok | 4.0 | fallback:context-no-provider | S2 context-no-provider: fail closed (the default of a createContext is not read in v1) |
 | b-context-escape | a context value used as a whole | react | react | ssr | ok | 4.0 | fallback:context-shape | S2 context-escape: the consumer reads the whole object, so it is a React island; under a lowered Provider that keeps the page React (F3 context-island) |
