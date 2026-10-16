@@ -75,3 +75,11 @@ test('links resolve and the cited transcript exists', () => {
   const src = readFileSync(join(import.meta.dir, '..', 'pages/docs/guides/ShadcnSetup.tsx'), 'utf8')
   for (const m of src.matchAll(/(docs\/transcripts\/[\w./-]+\.\w+)/g)) expect([m[1], existsSync(join(root, m[1]!))]).toEqual([m[1], true])
 })
+
+test('F249: the page says what a registry URL item check covers and what it does not', () => {
+  const t = text(html)
+  expect(t).toContain('Two things are not checked')
+  expect(t).toContain('registryDependencies')
+  expect(t).toContain('npm packages it lists in dependencies')
+  expect(t).toContain('alias directories are still scanned for symbolic links')
+})

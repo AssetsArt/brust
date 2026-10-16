@@ -152,6 +152,8 @@ export function compileApp(opts: {
   slotValues?: Record<string, unknown>
   /** F153c: the package sources this build wrote (`pkg-src.ts`); absent = package imports are islands. */
   packages?: PackageSources
+  /** F256: `[build] source_roots`, normalised and relative to the app root (`../shared`). */
+  sourceRoots?: string[]
   /** F230: `scanAppWrites`'s result; absent = no module is refused for a load-time write. */
   loadWrites?: string
 }): { compiled: Map<string, Compiled>; routeComponent: Map<string, string> } {
@@ -159,6 +161,7 @@ export function compileApp(opts: {
   const iconSvgsJson = opts.iconsFinal ? JSON.stringify({ final: true, svgs: opts.iconSvgs ?? {} }) : undefined
   const slotValuesJson = opts.slotValues && Object.keys(opts.slotValues).length > 0 ? JSON.stringify(opts.slotValues) : undefined
   const packagesJson = opts.packages ? JSON.stringify(opts.packages) : undefined
+  const sourceRoots = opts.sourceRoots && opts.sourceRoots.length > 0 ? opts.sourceRoots : undefined
   // The Rust side keys each map by its path relative to the app root (`/`-separated), like an import resolves.
   const { aliases, notes } = readPathAliases(appRoot)
   for (const n of notes) opts.log(`warning tsconfig-paths ${n}`)
@@ -186,7 +189,7 @@ export function compileApp(opts: {
     let rootId = rootIdOfFile.get(file)
     if (!rootId) {
       const rel = relative(appRoot, file)
-      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson, opts.loadWrites)
+      const tree = compileTree(rel, appRoot, opts.runtimeImport, opts.serverOnly, slotValuesJson, cssModules, iconSvgsJson, routeRoots, pathAliasesJson, packagesJson, sourceRoots, opts.loadWrites)
       if (tree.error) throw new BuildError(tree.error.rule, `${where(rel, tree.error)} ${tree.error.message}`)
       for (const [i, c] of tree.components.entries()) {
         // A lowering Error that came back as a diagnostic is a build error too (contract 9).

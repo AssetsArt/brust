@@ -112,7 +112,7 @@ export async function runBuild(opts: {
   const built = await loadBuildConfig(appRoot, { actionsOnly: opts.actionsOnly === true })
   if (opts.actionsOnly)
     return runActionsOnly({ appRoot, dist, config: built, target: opts.target, wasmFromSource: opts.wasmFromSource === true, statOk, assertSafeOutDir, log: opts.log })
-  const { serverOnly, cloudflare, cache, cssGlobal } = built
+  const { serverOnly, cloudflare, cache, cssGlobal, sourceRoots } = built
   // L16 R16.4b: `[actions]` with a `base_url` and no actions file (the default name, not one written in the toml)
   // is a page-only build: the app is deployed elsewhere, so nothing is bundled or mounted here.
   const remote =
@@ -173,7 +173,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, sourceRoots, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -220,6 +220,8 @@ async function buildInto(
     cf: CfPrepared | null
     /** `[css] global` as written (app-root relative). */
     cssGlobal: string[]
+    /** `[build] source_roots` (F256): normalised, app-root-relative directories outside the app a relative import may reach. */
+    sourceRoots: string[]
     /** L16 R16.4b: the prefix of an actions app deployed elsewhere (a page-only build); absent = a local app or none. */
     actionsRemote: string | null
     /** `--target static` with `[actions]`: the worker is built without the cache (static pages are never cached). */
@@ -281,6 +283,7 @@ async function buildInto(
     loadWrites,
     runtimeImport: runtimeUrls.core,
     serverOnly: o.serverOnly,
+    sourceRoots: o.sourceRoots,
     cssMaps: css.maps,
   }
   const firstLog: string[] = []

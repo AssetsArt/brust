@@ -49,6 +49,12 @@ function pkg(
   return dir
 }
 
+/** The published bundle of `sources`: each transpiled, the relative imports a bundler resolves away dropped. */
+const bundled = (sources: string[]) => {
+  const t = new Bun.Transpiler({ loader: 'tsx' })
+  return sources.map((x) => t.transformSync(x).replace(/^import .*$/gm, '')).join('\n')
+}
+
 const LEAF = `import * as React from 'react'\nexport function Leaf(props: { tone?: string }) {\n  return <span data-tone={props.tone ?? 'plain'}>leaf</span>\n}\n`
 
 test('a package with its source in the map is written and resolved from the app', () => {
@@ -268,4 +274,36 @@ test('source paths: hostile, doubled-slash and absolute map paths are refused at
   pkg(root, 'nested', { 'src/deep/er/leaf.tsx': LEAF })
   expect(preparePackageSources(root, ['nested']).scopes['']?.nested).toMatch(/\/src\/deep\/er\/leaf\.tsx$/)
   void ok
+})
+
+// F244: `.` and `..` are relative imports (a directory's index), not package names.
+test('F244: a package source importing "." and ".." resolves them to the directory index, not a package', () => {
+  const root = app()
+  const sources = {
+    'src/index.tsx': `import { A } from './parts/a'\nimport { B } from './parts/b'\nexport const Both = () => <i>{A()}{B()}</i>\nexport const marker = 'INDEX'\n`,
+    'src/parts/index.tsx': `export const Part = () => 'part'\n`,
+    'src/parts/a.tsx': `import { Part } from '.'\nexport const A = () => Part()\n`,
+    'src/parts/b.tsx': `import { marker } from '..'\nexport const B = () => marker\n`,
+  }
+  pkg(root, 'dots', sources, { pj: { source: 'src/index.tsx' }, dist: bundled(Object.values(sources)) })
+  const r = preparePackageSources(root, ['dots'])
+  expect(r.refused).toEqual({})
+  expect(r.scopes['']?.dots).toMatch(/\/src\/index\.tsx$/)
+  // Neither specifier was taken for a bare package: the written package's scope asks for none.
+  const scope = r.scopes['']!.dots!.split('/src/')[0]!
+  expect(r.scopes[scope] ?? {}).toEqual({})
+})
+
+test('F244: "." names the directory index, never a sibling file of the directory name', () => {
+  const root = app()
+  const sources = {
+    'src/index.tsx': `import { A } from './parts/a'\nexport const X = () => A\n`,
+    // `parts.tsx` sits beside the `parts/` directory: `.` from parts/a.tsx is parts/index, which does not exist.
+    'src/parts.tsx': `export const Wrong = 1\n`,
+    'src/parts/a.tsx': `import { Wrong } from '.'\nexport const A = Wrong\n`,
+  }
+  pkg(root, 'dotsib', sources, { pj: { source: 'src/index.tsx' }, dist: bundled(Object.values(sources)) })
+  const r = preparePackageSources(root, ['dotsib'])
+  expect(r.scopes['']?.dotsib).toBeUndefined()
+  expect(r.refused['']?.dotsib).toContain('imports ., which the source map does not carry')
 })

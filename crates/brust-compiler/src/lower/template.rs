@@ -13,6 +13,7 @@
 //! `__<childId>_<k>` (an object of its slots, indexed per item of the parent's
 //! enclosing lists).
 use super::common::{Facts, raw_of, store_jinja};
+use super::names::Seeds;
 use super::server_expr::{JinjaCtx, UNDEFINED, jinja_string, to_jinja};
 use super::{LowerCtx, Member, MemberDef, Paint};
 use crate::ir::{
@@ -187,6 +188,8 @@ pub struct Printer<'a, 'c> {
     out: String,
     members: Vec<Member>,
     counts: HashMap<&'static str, u32>,
+    /// F233: the names the component spells; a member never takes one (shared by the printers of one lowering, by id).
+    seeds: Seeds,
     frames: Vec<Frame>,
     diagnostics: Vec<Diagnostic>,
     /// Prop roots the members read: they are seeded through `x-props`.
@@ -217,9 +220,11 @@ impl<'a, 'c> Printer<'a, 'c> {
         ctx: &'c LowerCtx<'a>,
         inline: Option<Inline>,
         loop_var: &'c Cell<u32>,
+        seeds: Seeds,
     ) -> Option<Self> {
         let structural = ir.structural.as_deref()?;
         Some(Printer {
+            seeds,
             ctx,
             f: Facts::new(ir, structural),
             inst_ir: ir,
@@ -258,10 +263,17 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
     }
 
+    /// The next member name `{prefix}{n}` that the component does not spell (nor its `_not` twin).
     fn next(&mut self, prefix: &'static str) -> String {
+        let taken = self.seeds.of(self.f.ir);
         let n = self.counts.entry(prefix).or_insert(0);
-        *n += 1;
-        format!("{prefix}{n}")
+        loop {
+            *n += 1;
+            let name = format!("{prefix}{n}");
+            if !taken.contains(&name) && !taken.contains(&format!("{name}_not")) {
+                return name;
+            }
+        }
     }
 
     fn suffix(&self) -> &str {
@@ -320,7 +332,36 @@ impl<'a, 'c> Printer<'a, 'c> {
             .iter()
             .position(|d| d.name == name)
             .unwrap_or(0);
-        format!("_d{}{}", i + 1, self.suffix())
+        self.jinja_free(format!("_d{}{}", i + 1, self.suffix()))
+    }
+
+    /// F233: `base` as a template variable, or `base_1`, `base_2`, … when the component or the route component it is
+    /// printed into spells it (a prop `_d1` is a template variable of that name too).
+    fn jinja_free(&self, base: String) -> String {
+        let own = self.seeds.of(self.f.ir);
+        let root = self.seeds.of(self.inst_ir);
+        let mut name = base.clone();
+        let mut n = 0;
+        while self.jinja_taken(&name, &own, &root) {
+            n += 1;
+            name = format!("{base}_{n}");
+        }
+        name
+    }
+
+    /// The seeds leave the prop keys out (no chunk binding is named by one), but a template reads each prop as the
+    /// variable of its name.
+    fn jinja_taken(
+        &self,
+        name: &str,
+        own: &std::collections::HashSet<String>,
+        root: &std::collections::HashSet<String>,
+    ) -> bool {
+        own.contains(name)
+            || root.contains(name)
+            || [self.f.ir, self.inst_ir]
+                .iter()
+                .any(|ir| ir.props.iter().any(|p| p.name == name))
     }
 
     fn names(&self) -> impl Fn(&str, &IdentKind) -> Option<String> + '_ {
@@ -1435,9 +1476,16 @@ impl<'a, 'c> Printer<'a, 'c> {
                     && self.reactive(src_raw.as_ref(), source).is_some())
                 || body.iter().any(|b| needs_directives(b, &self.f)));
         let var = {
-            let v = self.loop_var.get() + 1;
-            self.loop_var.set(v);
-            format!("_i{v}")
+            let own = self.seeds.of(self.f.ir);
+            let root = self.seeds.of(self.inst_ir);
+            loop {
+                let v = self.loop_var.get() + 1;
+                self.loop_var.set(v);
+                let var = format!("_i{v}");
+                if !self.jinja_taken(&var, &own, &root) {
+                    break var;
+                }
+            }
         };
         let mut x_for = String::new();
         if directive_row && let (Some(sr), Expr::Raw(kr)) = (&src_raw, sk) {
@@ -1817,7 +1865,16 @@ impl<'a, 'c> Printer<'a, 'c> {
         let bind = link
             .and_then(|l| ir.child_links.iter().find(|c| c.id == l))
             .map(|l| {
-                let name = l.props_member.clone();
+                let name = {
+                    let taken = self.seeds.of(ir);
+                    let mut name = l.props_member.clone();
+                    let mut n = 0;
+                    while taken.contains(&name) {
+                        n += 1;
+                        name = format!("{}_{n}", l.props_member);
+                    }
+                    name
+                };
                 let d = directive(&name, &l.item_scoped);
                 let raws: Vec<(String, RawExpr)> = props
                     .iter()
@@ -1903,7 +1960,13 @@ impl<'a, 'c> Printer<'a, 'c> {
                 client_only,
             },
         };
-        let Some(mut p) = Printer::new(child_ir, self.ctx, Some(inline), self.loop_var) else {
+        let Some(mut p) = Printer::new(
+            child_ir,
+            self.ctx,
+            Some(inline),
+            self.loop_var,
+            self.seeds.clone(),
+        ) else {
             return;
         };
         p.blank = self.blank;

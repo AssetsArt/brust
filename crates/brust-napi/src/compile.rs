@@ -65,6 +65,8 @@ pub(crate) struct CompileInputs {
     pub route_roots: Vec<String>,
     pub path_aliases: Option<String>,
     pub packages: Option<String>,
+    /// F256: `[build] source_roots`, normalised app-root-relative paths.
+    pub source_roots: Vec<String>,
     /// F230: `scanLoadWrites`'s result (`[[module, export, why], …]`).
     pub load_writes: Option<String>,
 }
@@ -111,6 +113,7 @@ pub(crate) fn compile_tree_impl(
         route_roots,
         path_aliases,
         packages,
+        source_roots,
         load_writes,
     } = inputs;
     // F230: the exports another app module writes, scanned once per build (`scan_load_writes`).
@@ -162,6 +165,7 @@ pub(crate) fn compile_tree_impl(
         path_aliases,
         route_roots: route_roots.into_iter().collect(),
         packages,
+        source_roots,
         load_writes,
     };
     // `Lowered` holds `Rc`s (not `Send`): convert on the compiler thread.
@@ -209,6 +213,7 @@ pub(crate) fn compile_tree_impl(
 /// Compiles `path` (relative to `root`) and every child it reaches through lowering. `css_modules` (L20): the class
 /// map of each `*.module.css`, keyed by its path relative to `root`; `styles.x` folds to the literal class.
 /// `packages` (F153c): the JSON resolution map of the package sources the build wrote (`pkg-src.ts`).
+/// `source_roots` (F256): the directories besides the app that a relative import may reach.
 // One positional argument per option: that is the JS call (`packages/brust/native/index.d.ts`).
 #[allow(clippy::too_many_arguments)]
 #[napi]
@@ -225,6 +230,7 @@ pub fn compile_tree(
     route_roots: Option<Vec<String>>,
     path_aliases: Option<String>,
     packages: Option<String>,
+    source_roots: Option<Vec<String>>,
     load_writes: Option<String>,
 ) -> CompiledTree {
     crate::init_tracing();
@@ -240,6 +246,7 @@ pub fn compile_tree(
             route_roots: route_roots.unwrap_or_default(),
             path_aliases,
             packages,
+            source_roots: source_roots.unwrap_or_default(),
             load_writes,
         },
     )
