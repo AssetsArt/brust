@@ -684,6 +684,7 @@ fn rebase_sources(
     from: &str,
     to: &str,
     opts: &crate::analyze::component::AnalyzeOptions,
+    modules: &std::cell::RefCell<crate::analyze::modules::ModuleCache>,
 ) -> Result<(), String> {
     // F267: the clone is compiled in the module the content was written in: every name reads as it did.
     if from == to {
@@ -694,6 +695,8 @@ fn rebase_sources(
             Node::Component {
                 name,
                 source,
+                imported,
+                member,
                 children,
                 ..
             } => {
@@ -709,26 +712,53 @@ fn rebase_sources(
                         };
                         *s = relative_spec(to, &target);
                     }
-                    Some(_) => {
+                    Some(s) => {
                         if crate::analyze::modules::package_scope(from)
                             != crate::analyze::modules::package_scope(to)
                         {
-                            return Err(format!(
-                                "<{name}> is imported from a package of another scope than the component it is given to"
-                            ));
+                            // W1d (progress): the export is a module of the build's package sources: name that file
+                            // from the clone's module instead, when it compiles without React.
+                            let err = || {
+                                format!(
+                                    "<{name}> is imported from a package of another scope than the component it is given to"
+                                )
+                            };
+                            let (Some(imp), Ok(entry)) = (
+                                imported.as_deref(),
+                                crate::analyze::modules::resolve_package(from, s, opts),
+                            ) else {
+                                return Err(err());
+                            };
+                            let Some((path, export)) = declared_member(&entry, imp, member, opts)
+                            else {
+                                return Err(err());
+                            };
+                            if !crate::analyze::modules::is_package_source(&path) {
+                                return Err(err());
+                            }
+                            let lookup = compile(&path, &export, None, opts, modules);
+                            if package_needs_react(&lookup, &modules.borrow()).is_some() {
+                                return Err(err());
+                            }
+                            *s = relative_spec(to, &path);
+                            *imported = Some(match export {
+                                Export::Default => "default".to_string(),
+                                Export::Named(n) => n,
+                            });
+                            member.clear();
                         }
                     }
                 }
-                rebase_sources(children, from, to, opts)?;
+                rebase_sources(children, from, to, opts, modules)?;
             }
             Node::Element { children, .. } | Node::Fragment(children) => {
-                rebase_sources(children, from, to, opts)?
+                rebase_sources(children, from, to, opts, modules)?
             }
             Node::If { then, else_, .. } => {
-                rebase_sources(then, from, to, opts)?;
-                rebase_sources(else_, from, to, opts)?;
+                rebase_sources(then, from, to, opts, modules)?;
+                rebase_sources(else_, from, to, opts, modules)?;
             }
-            Node::For { body, .. } => rebase_sources(body, from, to, opts)?,
+            Node::For { body, .. } => rebase_sources(body, from, to, opts, modules)?,
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
@@ -2072,6 +2102,20 @@ fn external_component_id(source: &str, export: &str, member: &[String]) -> Strin
     named_component_id(&scope, &name)
 }
 
+/// W1d (progress): a Provider that is React in its own module only because its frame needs a native provider
+/// (`context-state`) and that a call site can specialise (`specialisable`): the call site builds a native clone, so the
+/// package component is not an island of package source.
+fn state_frame_provider(ir: &ComponentIR) -> bool {
+    !ir.provides.is_empty()
+        && !crate::analyze::context::frames_are_plain(ir)
+        && crate::analyze::context::native_provider_problem(ir).is_none()
+        && ir
+            .diagnostics
+            .iter()
+            .filter(|d| d.class == DiagClass::Fallback)
+            .all(|d| d.rule == "context-state")
+}
+
 /// Why a component compiled from package source cannot be used as compiled (F153c): it, or a component in its
 /// subtree, renders as React (an island of a package's SOURCE would run code the React build never ran), or it
 /// failed to compile. `None` = static or native all the way down.
@@ -2095,7 +2139,9 @@ fn package_needs_react(
         if !seen.insert(ir.id.clone()) {
             continue;
         }
-        if let Tier::React { reason, .. } = &ir.tier {
+        if let Tier::React { reason, .. } = &ir.tier
+            && !state_frame_provider(&ir)
+        {
             return Some(format!(
                 "{} renders as React in its source: {reason}",
                 ir.source
@@ -2746,7 +2792,7 @@ impl Walker<'_, '_> {
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;
-        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts, ctx.modules)?;
         // B7: the render prop's body moves into the clone like the children do. Any other function the call site
         // passes cannot cross (the clone has no instance to hand it to).
         let mut render = render;
@@ -2762,7 +2808,7 @@ impl Walker<'_, '_> {
             let locals: Vec<String> = rp.params.iter().map(|(_, l)| l.clone()).collect();
             self.check_owner(&rp.body, owner)?;
             carry.nodes(&mut rp.body, &locals)?;
-            rebase_sources(&mut rp.body, ctx.path, c_path, ctx.opts)?;
+            rebase_sources(&mut rp.body, ctx.path, c_path, ctx.opts, ctx.modules)?;
         }
         let exp = cir.export.as_deref().unwrap_or("default");
         // One clone per call site: its id is built from the call site, so its jinja, jobs and instance records are the
@@ -2850,7 +2896,7 @@ impl Walker<'_, '_> {
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;
-        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts, ctx.modules)?;
         let exp = cir.export.as_deref().unwrap_or("default");
         let site = match &self.spec_salt {
             Some(salt) => format!("{}#{salt}", ctx.path),
