@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 104 | 25 | 33 | 46 | 0 | 0 | 0 | 0 |
+| C Hooks | 111 | 32 | 33 | 46 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 479 | 214 | 78 | 183 | 3 | 1 | 0 | 0 |
+| **Total** | 486 | 221 | 78 | 183 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -411,8 +411,15 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-native-provider-handler-in-content | a page handler written in the content of a state Provider | native | native | 0 | ok | 4.5 | — | S2 (F262): a page handler written in the content is called through a hidden input of the clone (the page keeps the closure) |
 | c-native-provider-caller-prop | a prop of the calling component read in the content of a state Provider | static | static | 0 | ok | 4.5 | — | S2 (F262): the caller's prop is a hidden input of the clone; fixed there, so it prints once |
 | c-native-provider-outer-frame | a consumer of an outer Provider inside another Provider's content | static | static | ssr | ok | 5.3 | info:specialise-unsupported | A1: the outer frame's expressions would be read against the inner clone's members |
-| c-native-provider-ctx-in-effect | a consumer that reads the context inside an effect | static | static | ssr | ok | 4.0 | info:specialise-unsupported | context-escape: a context local is not a value in code printed as written |
+| c-native-provider-ctx-in-effect | a consumer that reads a context field inside an effect | static | static | 0 | ok | 4.5 | — | F304: c.open in an effect is the hidden prop of that field (bound to a local around the printed code); was context-escape |
 | c-handler-binding-named-a | a handler that reads a component binding named a | native | native | 0 | ok | 4.5 | — | F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array |
+| c-ctx-verbatim-handler | a handler that calls one context field and reads two others (c.f(), c?.f) | static | static | 0 | ok | 4.5 | — | F304: a consumer in printed code reads only c.f: the object of field locals stands for it (this of c.f() is that object); the consumer stays native |
+| c-ctx-verbatim-computed | a handler that reads the context with a computed key | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island) |
+| c-ctx-verbatim-destruct | a handler that destructures the context | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island) |
+| c-ctx-verbatim-whole | a handler that passes the whole context on | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island) |
+| c-ctx-verbatim-write | a handler that writes through a context field | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island) |
+| c-ctx-verbatim-delete | a handler that deletes a context field | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island) |
+| c-ctx-verbatim-proto | a handler that reads constructor off the context | static | static | ssr | ok | 4.0 | info:specialise-unsupported | F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island) |
 
 ## D. API surface
 

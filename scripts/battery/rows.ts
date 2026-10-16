@@ -51,6 +51,8 @@ const PKG_PRIMITIVE: StubPackage = { files: { 'src/primitive.tsx': RADIX_PRIMITI
 // The state Providers the native-provider rows use (2c-2): one source, shared with the compiler's tests.
 const NATIVE_PROV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Prov.tsx'), 'utf8')
 
+const CTXV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/CtxV.tsx'), 'utf8')
+
 const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
 
 const NATIVE_FWD = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Fwd.tsx'), 'utf8')
@@ -1746,11 +1748,39 @@ export const rows: Row[] = [
     snippet: `import { P, PTrigger, Q, QTrigger } from './Prov'\nexport default function C() { return <main><P><Q><PTrigger>outer reader</PTrigger><QTrigger>inner</QTrigger></Q></P></main> }`,
     files: { 'Prov.tsx': NATIVE_PROV },
     note: 'A1: the outer frame\'s expressions would be read against the inner clone\'s members' },
-  { id: 'c-native-provider-ctx-in-effect', category: 'C', authoring: 'a consumer that reads the context inside an effect', expect: 'static', jobs: 1,
+  { id: 'c-native-provider-ctx-in-effect', category: 'C', authoring: 'a consumer that reads a context field inside an effect', expect: 'static', jobs: 0,
     snippet: `import { P, PEffect } from './Prov'\nexport default function C() { return <main><P><PEffect>note</PEffect></P></main> }`,
     files: { 'Prov.tsx': NATIVE_PROV },
-    note: 'context-escape: a context local is not a value in code printed as written' },
+    note: 'F304: c.open in an effect is the hidden prop of that field (bound to a local around the printed code); was context-escape' },
   { id: 'c-handler-binding-named-a', category: 'C', authoring: 'a handler that reads a component binding named a', expect: 'native', jobs: 0,
     snippet: `import { useRef, useState } from 'react'\nexport default function C() { const [n, setN] = useState(0); const a = useRef<HTMLButtonElement>(null); return <button ref={a} onClick={() => { setN(n + 1); console.log(a.current) }}>{n}</button> }`,
     note: 'F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array' },
+  { id: 'c-ctx-verbatim-handler', category: 'C', authoring: 'a handler that calls one context field and reads two others (c.f(), c?.f)', expect: 'static', jobs: 0,
+    snippet: `import { CP, CHandler } from './CtxV'\nexport default function C() { return <main><CP><CHandler /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304: a consumer in printed code reads only c.f: the object of field locals stands for it (this of c.f() is that object); the consumer stays native' },
+  { id: 'c-ctx-verbatim-computed', category: 'C', authoring: 'a handler that reads the context with a computed key', expect: 'static', jobs: 1,
+    snippet: `import { CP, CComputed } from './CtxV'\nexport default function C() { return <main><CP><CComputed /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+  { id: 'c-ctx-verbatim-destruct', category: 'C', authoring: 'a handler that destructures the context', expect: 'static', jobs: 1,
+    snippet: `import { CP, CDestruct } from './CtxV'\nexport default function C() { return <main><CP><CDestruct /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+  { id: 'c-ctx-verbatim-whole', category: 'C', authoring: 'a handler that passes the whole context on', expect: 'static', jobs: 1,
+    snippet: `import { CP, CWhole } from './CtxV'\nexport default function C() { return <main><CP><CWhole /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+  { id: 'c-ctx-verbatim-write', category: 'C', authoring: 'a handler that writes through a context field', expect: 'static', jobs: 1,
+    snippet: `import { CP, CWrite } from './CtxV'\nexport default function C() { return <main><CP><CWrite /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+  { id: 'c-ctx-verbatim-delete', category: 'C', authoring: 'a handler that deletes a context field', expect: 'static', jobs: 1,
+    snippet: `import { CP, CDelete } from './CtxV'\nexport default function C() { return <main><CP><CDelete /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
+  { id: 'c-ctx-verbatim-proto', category: 'C', authoring: 'a handler that reads constructor off the context', expect: 'static', jobs: 1,
+    snippet: `import { CP, CProto } from './CtxV'\nexport default function C() { return <main><CP><CProto /></CP></main> }`,
+    files: { 'CtxV.tsx': CTXV },
+    note: 'F304 (conditions a, b): only non-computed member reads of identifier fields qualify; this use keeps context-escape (the consumer is a React island)' },
 ]
