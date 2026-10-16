@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 221 | 116 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 153 | 38 | 49 | 66 | 0 | 0 | 0 | 0 |
+| C Hooks | 156 | 41 | 49 | 66 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 531 | 230 | 94 | 203 | 3 | 1 | 0 | 0 |
+| **Total** | 534 | 233 | 94 | 203 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -465,6 +465,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-includes-literals-mixed | [strings, null, 0, true].includes(prop) | static | static | 0 | ok | 0 | — | F287: strict equality over every literal kind (null, 0, true included) |
 | c-includes-nan-member | [NaN, 1].includes(state) | native | native | precompute | ok | 4.6 | — | F287: a NaN member is SameValueZero, not ===: the call is left to JS (a job), never rewritten |
 | c-includes-string-receiver | 'abc'.includes(state): a string receiver | native | native | precompute | ok | 4.6 | — | F287: a substring test is not a membership chain; only an array literal receiver is rewritten |
+| c-local-spread | a local object that spreads the props among plain entries ({ ...props, pressed, disabled }), spread onto a child | static | static | 0 | ok | 0 | — | W1d PR 4a (F326): Radix ToggleGroupItem's commonProps; spreads as the props spread then its own entries |
+| c-local-spread-other | a local object that spreads the props and another local object | static | static | ssr | ok | 4.0 | — | W1d PR 4a (F326): only the props or the rest may be spread inside the local object; the component is a React island under a static page |
+| c-local-spread-method | a local object with a method that spreads the props | static | static | ssr | ok | 4.0 | — | W1d PR 4a (F326): a method is not a plain entry; the component is a React island under a static page |
 
 ## D. API surface
 

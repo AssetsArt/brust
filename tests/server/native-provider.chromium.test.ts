@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderLocalSpread, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -433,4 +433,11 @@ test('F304: a context field called in a handler and read in an effect: no island
   await page.waitForFunction(() => document.querySelector('main p')?.getAttribute('data-seen') === 'n')
   expect(errors).toEqual([])
   await page.close()
+}, 60_000)
+
+test('F326: a local object that spreads the props among plain entries (Radix ToggleGroupItem\'s commonProps) equals React', async () => {
+  const html = await (await fetch(`${base}/local-spread`)).text()
+  expect(html).not.toContain('brust-island')
+  // React prints a true boolean attribute as `disabled=""`, brust as `disabled`: the same HTML
+  expect(plain(html)).toBe(plain(renderLocalSpread()).replace(/ (disabled)=""/g, ' $1'))
 }, 60_000)

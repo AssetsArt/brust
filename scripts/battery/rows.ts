@@ -55,6 +55,8 @@ const CTXV = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tes
 
 const CTXTHIS = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/CtxThis.tsx'), 'utf8')
 
+const lsFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/${n}.tsx`), 'utf8').trimEnd()
+
 const NATIVE_REND = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Rend.tsx'), 'utf8')
 
 const NATIVE_FWD = readFileSync(join(import.meta.dir, '../../crates/brust-compiler/tests/fixtures/native-provider/Fwd.tsx'), 'utf8')
@@ -1948,4 +1950,13 @@ export const rows: Row[] = [
   { id: 'c-includes-string-receiver', category: 'C', authoring: "'abc'.includes(state): a string receiver", expect: 'native', jobs: 1,
     snippet: `import { useState } from 'react'\nexport default function C() { const [s, setS] = useState('abc'); return <button type="button" onClick={() => setS('b')} data-hit={'abc'.includes(s) ? 'y' : 'n'}>{s}</button> }`,
     note: 'F287: a substring test is not a membership chain; only an array literal receiver is rewritten' },
+  { id: 'c-local-spread', category: 'C', authoring: 'a local object that spreads the props among plain entries ({ ...props, pressed, disabled }), spread onto a child', expect: 'static', jobs: 0,
+    snippet: lsFx('local-spread'),
+    note: 'W1d PR 4a (F326): Radix ToggleGroupItem\'s commonProps; spreads as the props spread then its own entries' },
+  { id: 'c-local-spread-other', category: 'C', authoring: 'a local object that spreads the props and another local object', expect: 'static', jobs: 1,
+    snippet: lsFx('local-spread-other'),
+    note: 'W1d PR 4a (F326): only the props or the rest may be spread inside the local object; the component is a React island under a static page' },
+  { id: 'c-local-spread-method', category: 'C', authoring: 'a local object with a method that spreads the props', expect: 'static', jobs: 1,
+    snippet: lsFx('local-spread-method'),
+    note: 'W1d PR 4a (F326): a method is not a plain entry; the component is a React island under a static page' },
 ]

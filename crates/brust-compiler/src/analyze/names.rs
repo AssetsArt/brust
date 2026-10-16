@@ -1090,6 +1090,11 @@ impl<'a> NameTable<'a> {
     }
 
     /// `r` is the `...rest` binding of the props pattern.
+    /// The whole (non-destructured) props parameter.
+    pub fn is_whole_props(&self, r: js_ast::Ref) -> bool {
+        self.props_ident.is_some() && self.props_ident == Some(self.key(r))
+    }
+
     pub fn is_rest(&self, r: js_ast::Ref) -> bool {
         self.rest.is_some() && self.rest == Some(self.key(r))
     }
