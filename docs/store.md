@@ -103,13 +103,14 @@ An island reads the store with the same hook:
 ```tsx
 // components/TeamBuilder.tsx (trimmed)
 import { useStore } from '@brust/core/store/react'
-import { useReducer } from 'react'
+import { useReducer, useTransition } from 'react'
 import { team } from '../stores/team'
 
 const flip = (open: boolean): boolean => !open
 
 export default function TeamBuilder() {
   const { members, max } = useStore(team) // plain values, not signals
+  useTransition() // a hook the native tier does not lower: this is what keeps the component an island
   const [open, toggle] = useReducer(flip, false)
   return (
     <button type="button" onClick={() => toggle()}>
@@ -121,7 +122,7 @@ export default function TeamBuilder() {
 
 `useStore` is `useSyncExternalStore`. During the server render it reads a scope seeded from the page snapshot, so the first client snapshot equals the server HTML: no `mounted` switch, no hydration mismatch, and the count is right with JavaScript disabled. A write anywhere re-renders the island only when a value it reads changed. In the browser the first client snapshot is the one the page was seeded with (the SSR snapshot), not the live value: a native component that writes the store before an idle island hydrates no longer causes a mismatch (React #418). The island hydrates against the seeded markup, then re-renders to the live value.
 
-Note: `useStore` alone compiles to the native tier. An island needs another React feature (the pokedex uses `useReducer`) to land on the React tier.
+Note: `useStore` alone compiles to the native tier. An island needs another React feature that the native tier does not lower (the pokedex uses `useTransition`; `useReducer` itself compiles natively) to land on the React tier.
 
 ## 7. Caching
 

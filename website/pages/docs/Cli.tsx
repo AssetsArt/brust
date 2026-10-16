@@ -38,7 +38,7 @@ export async function cliLoader(): Promise<CliData> {
         id: 'build',
         tab: 'brust build',
         note: 'The pokedex example. Each React fallback prints once, with its rule and line.',
-        text: '$ brust build routes.tsx\nwarning hook-unsupported components/TeamBuilder.tsx:12:26 hook useReducer is not supported\nwarning hook-unsupported components/UnifiedIsland.tsx:11:25 hook useReducer is not supported\n[brust] built dist in 73ms',
+        text: '$ brust build routes.tsx\nwarning hook-unsupported components/TeamBuilder.tsx:12:3 hook useTransition is not supported\nwarning hook-unsupported components/UnifiedIsland.tsx:11:3 hook useTransition is not supported\n[brust] built dist in 73ms',
       },
       {
         id: 'start',

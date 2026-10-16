@@ -42,7 +42,7 @@ const TTY = `● ready  http://127.0.0.1:1337  gen 3 · built in 46ms
   [r]eload  [o]pen  [w]arnings  [c]lear  [q]uit`
 const TTY_ERR = `✖ error  http://127.0.0.1:1337  gen 2 · built in 46ms
   error: build Expected identifier but found end of file
-  warnings: 1 — hook-unsupported components/X.tsx:12:26 hook useReducer is not supported
+  warnings: 1 — hook-unsupported components/X.tsx:12:3 hook useTransition is not supported
   [r]eload  [o]pen  [w]arnings  [c]lear  [q]uit`
 
 // observed: the \`#__brust_trace\` script of GET / on the blank template under \`brust dev\` (formatted here; the page carries it on one line).

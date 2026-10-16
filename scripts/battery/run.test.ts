@@ -16,12 +16,12 @@ test('a snippet that does not parse is a compile-error row and does not abort th
 
 test('report rows are fixed strings built from the row name, not machine paths or ids', () => {
   const pick = (id: string) => results.find((x) => x.row.id === id) as Result
-  const report = renderReport([pick('a-static-text'), pick('c-usereducer')])
-  const lines = report.split('\n').filter((l) => l.startsWith('| a-static-text') || l.startsWith('| c-usereducer'))
+  const report = renderReport([pick('a-static-text'), pick('c-usetransition')])
+  const lines = report.split('\n').filter((l) => l.startsWith('| a-static-text') || l.startsWith('| c-usetransition'))
   // F143: the Runtime column (KiB gzip) sits after Build: 0 for a page with no client JS, core + island for a react row
   expect(lines).toEqual([
     '| a-static-text | static text | static | static | 0 | ok | 0 | — | spec §3.1 static tier |',
-    expect.stringMatching(/^\| c-usereducer \| useReducer \| react \| react \| ssr \| ok \| \d+\.\d \| fallback:hook-unsupported \| {2}\|$/),
+    expect.stringMatching(/^\| c-usetransition \| useTransition \| react \| react \| ssr \| ok \| \d+\.\d \| fallback:hook-unsupported \| {2}\|$/),
   ])
   const full = renderReport(results)
   expect(full).not.toMatch(/\/Users\/|\/tmp\/|\/var\/|input_[0-9a-f]{8}|battery-/)

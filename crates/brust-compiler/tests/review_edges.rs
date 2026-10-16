@@ -166,7 +166,7 @@ fn server_only_prefix_matches_a_relative_import() {
 fn named_non_function_child_is_an_island() {
     let dir = root(
         "named",
-        &[("ui.tsx", "export const Button = () => <button/>\n")],
+        &[("ui.tsx", "export const Button = async () => <button/>\n")],
     );
     let ir = analyze_opts(
         "P.tsx",
@@ -721,7 +721,7 @@ fn job_inputs_name_the_list_not_its_length() {
 #[test]
 fn outlet_in_a_react_tier_component_is_an_error() {
     let ir = analyze(
-        "import { Outlet } from '@brust/core/routes'\nimport { useReducer } from 'react'\nexport default function L() { const [s] = useReducer((a: number) => a, 0); return <div>{s}<Outlet/></div> }",
+        "import { Outlet } from '@brust/core/routes'\nimport { useReducer, useTransition } from 'react'\nexport default function L() { useTransition(); const [s] = useReducer((a: number) => a, 0); return <div>{s}<Outlet/></div> }",
     );
     assert!(
         rules(&ir).contains(&(DiagClass::Error, "outlet-in-react".into())),
@@ -790,7 +790,7 @@ fn island_per_item_inside_an_inlined_child_falls_back_at_analysis() {
             ),
             (
                 "Tag.tsx",
-                "import { useReducer } from 'react'\nexport default function Tag({ name }: { name: string }) { const [n, bump] = useReducer((x: number) => x + 1, 0); return <b onClick={() => bump()}>{name}{n}</b> }",
+                "import { useReducer, useTransition } from 'react'\nexport default function Tag({ name }: { name: string }) { useTransition(); const [n, bump] = useReducer((x: number) => x + 1, 0); return <b onClick={() => bump()}>{name}{n}</b> }",
             ),
         ],
     );
