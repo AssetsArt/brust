@@ -15,6 +15,9 @@ import LoopPage from './LoopPage'
 import Page from './Page'
 import RestLivePage from './RestLivePage'
 import RestPage from './RestPage'
+import LocalSpreadPage from './LocalSpreadPage'
+import LocalSpreadRestPage from './LocalSpreadRestPage'
+import SwPage from './SwPage'
 import SamePage from './SamePage'
 import RenderPage from './RenderPage'
 import PolyPage from './PolyPage'
@@ -37,6 +40,9 @@ export const routes = defineRoutes([
   { path: '/dir-provider', Component: DirProvPage },
   { path: '/hooks', Component: HooksPage },
   { path: '/loop/{loop}', Component: LoopPage, loader: async ({ params }: { params: { loop: string } }) => ({ loop: params.loop }) },
+  { path: '/local-spread', Component: LocalSpreadPage },
+  { path: '/local-spread-rest', Component: LocalSpreadRestPage },
+  { path: '/sw/{kind}', Component: SwPage, loader: async ({ params }: { params: { kind: string } }) => ({ kind: params.kind }) },
   { path: '/render', Component: RenderPage },
   { path: '/poly', Component: PolyPage },
 ])

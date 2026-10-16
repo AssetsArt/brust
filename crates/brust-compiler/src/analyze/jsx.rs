@@ -311,56 +311,199 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                 }
                 continue;
             }
-            match spread_source(r, value, matches!(tag, Tag::Host(_))) {
-                // An object literal is a known shape here: its entries are ordinary attributes
-                // and props, read as if written one by one (React: later wins, which the
-                // lowering applies to the merged list, `lower::template::merge_attrs`).
-                Spread::Literal(entries) => {
-                    for (name, v) in entries {
-                        let v = &v;
-                        // Object keys are any string, unlike JSX attribute names (R34.17).
-                        if matches!(tag, Tag::Host(_)) && !brust_jinja::spread::attr_name_ok(&name)
-                        {
-                            r.diagnostics.push(Diagnostic::warning(
+            // F326: a `const` object literal that spreads the props or the rest reads as that sequence of spreads
+            let spreads = match spread_source(r, value, matches!(tag, Tag::Host(_))) {
+                Spread::Seq(parts) => parts,
+                one => vec![one],
+            };
+            for spread in spreads {
+                match spread {
+                    // An object literal is a known shape here: its entries are ordinary attributes
+                    // and props, read as if written one by one (React: later wins, which the
+                    // lowering applies to the merged list, `lower::template::merge_attrs`).
+                    Spread::Literal(entries) => {
+                        for (name, v) in entries {
+                            let v = &v;
+                            // Object keys are any string, unlike JSX attribute names (R34.17).
+                            if matches!(tag, Tag::Host(_))
+                                && !brust_jinja::spread::attr_name_ok(&name)
+                            {
+                                r.diagnostics.push(Diagnostic::warning(
                                 "unsafe-attr",
                                 format!("`{name}` in a spread is not a valid attribute name; it is not rendered"),
                                 loc_of(v),
                                 "use attribute names only",
                             ));
-                            continue;
-                        }
-                        // `key` is never a prop; `children` from a spread is not read natively.
-                        if name == "key" {
-                            spread_key(r, Some(v), loc_of(v));
-                            continue;
-                        }
-                        if name == "children" {
-                            r.diagnostics.push(Diagnostic::fallback(
+                                continue;
+                            }
+                            // `key` is never a prop; `children` from a spread is not read natively.
+                            if name == "key" {
+                                spread_key(r, Some(v), loc_of(v));
+                                continue;
+                            }
+                            if name == "children" {
+                                r.diagnostics.push(Diagnostic::fallback(
                                 "children-prop",
                                 "`children` passed in a spread object is not supported natively",
                                 loc_of(v),
                                 "pass children between the tags",
                             ));
-                            continue;
-                        }
-                        match tag {
-                            Tag::Host(_) => {
-                                if let Some(attr) =
-                                    read_attr(r, &name, v, &mut ref_name, is_custom(&tag))
-                                {
-                                    attrs.push(attr);
-                                }
+                                continue;
                             }
-                            _ => props_out.push((name, Expr::Raw(r.expr(v)))),
+                            match tag {
+                                Tag::Host(_) => {
+                                    if let Some(attr) =
+                                        read_attr(r, &name, v, &mut ref_name, is_custom(&tag))
+                                    {
+                                        attrs.push(attr);
+                                    }
+                                }
+                                _ => props_out.push((name, Expr::Raw(r.expr(v)))),
+                            }
                         }
                     }
-                }
-                Spread::Union(u) => {
-                    let mut keys = Vec::new();
-                    u.keys(&mut keys);
-                    if keys.len() > UNION_MAX_KEYS {
-                        r.diagnostics
-                            .push(union_refused(value, "has too many keys"));
+                    Spread::Union(u) => {
+                        let mut keys = Vec::new();
+                        u.keys(&mut keys);
+                        if keys.len() > UNION_MAX_KEYS {
+                            r.diagnostics
+                                .push(union_refused(value, "has too many keys"));
+                            let raw = r.opaque(value, "spread props");
+                            match tag {
+                                Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
+                                _ => props_out
+                                    .push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
+                            }
+                            continue;
+                        }
+                        for name in keys {
+                            let host = matches!(tag, Tag::Host(_));
+                            // As for an object literal: `key` is React's, `children` is not read, and a key that is not
+                            // an attribute name is not rendered (R34.17).
+                            if name == "key" {
+                                spread_key(r, None, loc_of(value));
+                                continue;
+                            }
+                            if name == "children" {
+                                r.diagnostics.push(Diagnostic::fallback(
+                                "children-prop",
+                                "`children` passed in a spread object is not supported natively",
+                                loc_of(value),
+                                "pass children between the tags",
+                            ));
+                                continue;
+                            }
+                            if host && !brust_jinja::spread::attr_name_ok(&name) {
+                                r.diagnostics.push(Diagnostic::warning(
+                                "unsafe-attr",
+                                format!("`{name}` in a spread is not a valid attribute name; it is not rendered"),
+                                loc_of(value),
+                                "use attribute names only",
+                            ));
+                                continue;
+                            }
+                            // An earlier attribute (or prop) of this name is what a branch without the key leaves in
+                            // place, and the joined value takes its position (a later key wins, the first keeps its place).
+                            let earlier = if host {
+                                attrs.iter().position(|a| match a {
+                                    Attr::Static { name: n, .. } => *n == name,
+                                    Attr::Dynamic {
+                                        name: n,
+                                        value: Expr::Raw(_),
+                                    } => *n == name,
+                                    _ => false,
+                                })
+                            } else {
+                                props_out
+                                    .iter()
+                                    .position(|(n, v)| *n == name && matches!(v, Expr::Raw(_)))
+                            };
+                            let absent = match earlier {
+                                Some(i) if host => match &attrs[i] {
+                                    Attr::Static { value, .. } => RawExpr {
+                                        loc: 0,
+                                        kind: RawKind::Lit(crate::ir::Literal::Str(value.clone())),
+                                    },
+                                    Attr::Dynamic {
+                                        value: Expr::Raw(raw),
+                                        ..
+                                    } => raw.clone(),
+                                    _ => unreachable!(),
+                                },
+                                Some(i) => match &props_out[i].1 {
+                                    Expr::Raw(raw) => raw.clone(),
+                                    _ => unreachable!(),
+                                },
+                                None => RawExpr {
+                                    loc: 0,
+                                    kind: RawKind::Lit(crate::ir::Literal::Undefined),
+                                },
+                            };
+                            let mut failed = false;
+                            let joined = u.value(&name, &absent, &mut |v| {
+                                let raw = if host {
+                                    read_union_attr(r, &name, v, &mut ref_name)
+                                } else if union_key_refused(&name) {
+                                    // The child may spread these onto an element, where they are not a plain value
+                                    // (a handler that may be undefined, raw HTML, a ref, a style object): same refusal.
+                                    None
+                                } else {
+                                    Some(r.expr(v))
+                                };
+                                if raw.is_none() {
+                                    failed = true;
+                                }
+                                raw
+                            });
+                            match joined {
+                                Some(raw) if !failed => {
+                                    union_names.push(name.clone());
+                                    match (host, earlier) {
+                                        (true, Some(i)) => {
+                                            attrs[i] = Attr::Dynamic {
+                                                name,
+                                                value: Expr::Raw(raw),
+                                            }
+                                        }
+                                        (true, None) => attrs.push(Attr::Dynamic {
+                                            name,
+                                            value: Expr::Raw(raw),
+                                        }),
+                                        (false, Some(i)) => props_out[i].1 = Expr::Raw(raw),
+                                        (false, None) => props_out.push((name, Expr::Raw(raw))),
+                                    }
+                                }
+                                _ => {
+                                    r.diagnostics.push(union_refused(
+                                    value,
+                                    &format!(
+                                        "gives `{name}` a value that is not a plain attribute value"
+                                    ),
+                                ));
+                                    let raw = r.opaque(value, "spread props");
+                                    match tag {
+                                        Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
+                                        _ => props_out.push((
+                                            crate::ir::SPREAD_KEY.to_string(),
+                                            Expr::Raw(raw),
+                                        )),
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Spread::Props(raw) => match tag {
+                        Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
+                        _ => props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
+                    },
+                    Spread::Other => {
+                        r.diagnostics.push(Diagnostic::fallback(
+                        "spread-props",
+                        "only the props object, its `...rest`, a props path or an object literal can be spread natively",
+                        loc_of(value),
+                        "spread props (or a props path), or list the attributes explicitly",
+                    ));
                         let raw = r.opaque(value, "spread props");
                         match tag {
                             Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
@@ -368,139 +511,8 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
                                 props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw)))
                             }
                         }
-                        continue;
                     }
-                    for name in keys {
-                        let host = matches!(tag, Tag::Host(_));
-                        // As for an object literal: `key` is React's, `children` is not read, and a key that is not
-                        // an attribute name is not rendered (R34.17).
-                        if name == "key" {
-                            spread_key(r, None, loc_of(value));
-                            continue;
-                        }
-                        if name == "children" {
-                            r.diagnostics.push(Diagnostic::fallback(
-                                "children-prop",
-                                "`children` passed in a spread object is not supported natively",
-                                loc_of(value),
-                                "pass children between the tags",
-                            ));
-                            continue;
-                        }
-                        if host && !brust_jinja::spread::attr_name_ok(&name) {
-                            r.diagnostics.push(Diagnostic::warning(
-                                "unsafe-attr",
-                                format!("`{name}` in a spread is not a valid attribute name; it is not rendered"),
-                                loc_of(value),
-                                "use attribute names only",
-                            ));
-                            continue;
-                        }
-                        // An earlier attribute (or prop) of this name is what a branch without the key leaves in
-                        // place, and the joined value takes its position (a later key wins, the first keeps its place).
-                        let earlier = if host {
-                            attrs.iter().position(|a| match a {
-                                Attr::Static { name: n, .. } => *n == name,
-                                Attr::Dynamic {
-                                    name: n,
-                                    value: Expr::Raw(_),
-                                } => *n == name,
-                                _ => false,
-                            })
-                        } else {
-                            props_out
-                                .iter()
-                                .position(|(n, v)| *n == name && matches!(v, Expr::Raw(_)))
-                        };
-                        let absent = match earlier {
-                            Some(i) if host => match &attrs[i] {
-                                Attr::Static { value, .. } => RawExpr {
-                                    loc: 0,
-                                    kind: RawKind::Lit(crate::ir::Literal::Str(value.clone())),
-                                },
-                                Attr::Dynamic {
-                                    value: Expr::Raw(raw),
-                                    ..
-                                } => raw.clone(),
-                                _ => unreachable!(),
-                            },
-                            Some(i) => match &props_out[i].1 {
-                                Expr::Raw(raw) => raw.clone(),
-                                _ => unreachable!(),
-                            },
-                            None => RawExpr {
-                                loc: 0,
-                                kind: RawKind::Lit(crate::ir::Literal::Undefined),
-                            },
-                        };
-                        let mut failed = false;
-                        let joined = u.value(&name, &absent, &mut |v| {
-                            let raw = if host {
-                                read_union_attr(r, &name, v, &mut ref_name)
-                            } else if union_key_refused(&name) {
-                                // The child may spread these onto an element, where they are not a plain value
-                                // (a handler that may be undefined, raw HTML, a ref, a style object): same refusal.
-                                None
-                            } else {
-                                Some(r.expr(v))
-                            };
-                            if raw.is_none() {
-                                failed = true;
-                            }
-                            raw
-                        });
-                        match joined {
-                            Some(raw) if !failed => {
-                                union_names.push(name.clone());
-                                match (host, earlier) {
-                                    (true, Some(i)) => {
-                                        attrs[i] = Attr::Dynamic {
-                                            name,
-                                            value: Expr::Raw(raw),
-                                        }
-                                    }
-                                    (true, None) => attrs.push(Attr::Dynamic {
-                                        name,
-                                        value: Expr::Raw(raw),
-                                    }),
-                                    (false, Some(i)) => props_out[i].1 = Expr::Raw(raw),
-                                    (false, None) => props_out.push((name, Expr::Raw(raw))),
-                                }
-                            }
-                            _ => {
-                                r.diagnostics.push(union_refused(
-                                    value,
-                                    &format!(
-                                        "gives `{name}` a value that is not a plain attribute value"
-                                    ),
-                                ));
-                                let raw = r.opaque(value, "spread props");
-                                match tag {
-                                    Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
-                                    _ => props_out
-                                        .push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                Spread::Props(raw) => match tag {
-                    Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
-                    _ => props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
-                },
-                Spread::Other => {
-                    r.diagnostics.push(Diagnostic::fallback(
-                        "spread-props",
-                        "only the props object, its `...rest`, a props path or an object literal can be spread natively",
-                        loc_of(value),
-                        "spread props (or a props path), or list the attributes explicitly",
-                    ));
-                    let raw = r.opaque(value, "spread props");
-                    match tag {
-                        Tag::Host(_) => attrs.push(Attr::Spread(Expr::Raw(raw))),
-                        _ => props_out.push((crate::ir::SPREAD_KEY.to_string(), Expr::Raw(raw))),
-                    }
+                    Spread::Seq(_) => unreachable!("a sequence is flattened above"),
                 }
             }
             continue;
@@ -1046,6 +1058,9 @@ enum Spread {
     Union(Union),
     /// Anything else (a local object, a call, state): not expanded.
     Other,
+    /// F326: a `const` object literal that spreads the props or the rest among plain entries
+    /// (`{ ...props, pressed, disabled }`): the parts, in order (a later entry replaces an earlier key).
+    Seq(Vec<Spread>),
 }
 
 /// The most conditional nodes and distinct keys one union spread may have (a compile-time bound).
@@ -1209,13 +1224,12 @@ fn spread_source(r: &mut Reader<'_, '_>, value: &js_ast::Expr, host: bool) -> Sp
         // F266: on a component, a `const` holding an object literal of plain reads spreads as that literal (the names it reads are
         // consts of the same render, so reading them here is reading them where the object was built).
         E::EIdentifier(id) if !host && r.names.object_const(id.ref_).is_some() => {
-            match r
-                .names
-                .object_const(id.ref_)
-                .and_then(|o| plain_object(o, r.names))
-            {
+            let Some(o) = r.names.object_const(id.ref_) else {
+                return Spread::Other;
+            };
+            match plain_object(o, r.names) {
                 Some(entries) => Spread::Literal(entries),
-                None => Spread::Other,
+                None => spread_parts(r, o).map_or(Spread::Other, Spread::Seq),
             }
         }
         E::EIdentifier(_) | E::EIf(_) | E::EBinary(_) if union_root(r, value) => {
@@ -1227,12 +1241,43 @@ fn spread_source(r: &mut Reader<'_, '_>, value: &js_ast::Expr, host: bool) -> Sp
         }
         _ => {
             let raw = r.expr(value);
-            if crate::analyze::passes::deps::prop_path(&raw).is_some() {
+            if let Some(path) = crate::analyze::passes::deps::prop_path(&raw) {
+                // F335: React reads a `key` from the spread object as the element key. What a named prop holds is known only
+                // per request, so on a component it may carry one that changes (F308) and brust would keep the child's
+                // instance. The whole props and `...rest` never carry one (React strips `key`). On a host element a
+                // changing key only resets DOM state, and React warns about a key in a spread: a known limit, not refused.
+                if !host && path != "*" {
+                    r.diagnostics.push(live_key_diagnostic(loc_of(value)));
+                }
                 Spread::Props(raw)
             } else {
                 Spread::Other
             }
         }
+    }
+}
+
+/// A read with no effect: an identifier, a literal, a member path of one, a conditional over such reads, or a call of a
+/// module function `plain_fn` proves effect-free over such reads.
+fn plain_read(e: &js_ast::Expr, names: &crate::analyze::names::NameTable<'_>) -> bool {
+    match &e.data {
+        E::EIf(i) => {
+            plain_read(&i.test, names) && plain_read(&i.yes, names) && plain_read(&i.no, names)
+        }
+        E::ECall(c) => {
+            c.optional_chain.is_none()
+                && !c.was_jsx_element
+                && matches!(&c.target.data, E::EIdentifier(id) if names.is_plain_fn(id.ref_))
+                && c.args.iter().all(|a| plain_read(a, names))
+        }
+        E::EIdentifier(_)
+        | E::EString(_)
+        | E::ENumber(_)
+        | E::EBoolean(_)
+        | E::ENull(_)
+        | E::EUndefined(_) => true,
+        E::EDot(d) => d.optional_chain.is_none() && plain_read(&d.target, names),
+        _ => false,
     }
 }
 
@@ -1245,25 +1290,6 @@ fn plain_object(
     e: js_ast::Expr,
     names: &crate::analyze::names::NameTable<'_>,
 ) -> Option<Vec<(String, js_ast::Expr)>> {
-    fn read(e: &js_ast::Expr, names: &crate::analyze::names::NameTable<'_>) -> bool {
-        match &e.data {
-            E::EIf(i) => read(&i.test, names) && read(&i.yes, names) && read(&i.no, names),
-            E::ECall(c) => {
-                c.optional_chain.is_none()
-                    && !c.was_jsx_element
-                    && matches!(&c.target.data, E::EIdentifier(id) if names.is_plain_fn(id.ref_))
-                    && c.args.iter().all(|a| read(a, names))
-            }
-            E::EIdentifier(_)
-            | E::EString(_)
-            | E::ENumber(_)
-            | E::EBoolean(_)
-            | E::ENull(_)
-            | E::EUndefined(_) => true,
-            E::EDot(d) => d.optional_chain.is_none() && read(&d.target, names),
-            _ => false,
-        }
-    }
     let E::EObject(obj) = &e.data else {
         return None;
     };
@@ -1279,13 +1305,81 @@ fn plain_object(
             || p.flags.contains(js_ast::flags::Property::IsComputed)
             // N1: `__proto__: x` in a literal sets the prototype, it is not an entry
             || k.slice8() == b"__proto__"
-            || !read(v, names)
+            || !plain_read(v, names)
         {
             return None;
         }
         entries.push((estring(k), *v));
     }
     Some(entries)
+}
+
+/// F326: an object literal of plain reads that also spreads the props object or the rest (`{ ...props, pressed, disabled }`,
+/// Radix's `commonProps`): `Props` for each such spread and a `Literal` for each run of entries between them, in order.
+/// `None` when it holds anything else (a computed key, a method, a spread of another value).
+fn spread_parts(r: &mut Reader<'_, '_>, o: js_ast::Expr) -> Option<Vec<Spread>> {
+    let E::EObject(obj) = &o.data else {
+        return None;
+    };
+    let mut parts: Vec<Spread> = Vec::new();
+    let mut entries: Vec<(String, js_ast::Expr)> = Vec::new();
+    for p in obj.properties.iter() {
+        if matches!(p.kind, js_ast::G::PropertyKind::Spread) {
+            let v = p.value.as_ref()?;
+            let E::EIdentifier(id) = &v.data else {
+                return None;
+            };
+            // only the props object or its rest
+            let raw = if r.names.is_rest(id.ref_) {
+                RawKind::Ident {
+                    name: crate::ir::REST_PROPS.into(),
+                    kind: IdentKind::Prop,
+                }
+            } else if r.names.is_whole_props(id.ref_) {
+                RawKind::Ident {
+                    name: "*".into(),
+                    kind: IdentKind::Prop,
+                }
+            } else {
+                return None;
+            };
+            if !entries.is_empty() {
+                parts.push(Spread::Literal(std::mem::take(&mut entries)));
+            }
+            parts.push(Spread::Props(RawExpr {
+                loc: loc_of(v),
+                kind: raw,
+            }));
+            continue;
+        }
+        let (Some(k), Some(v)) = (&p.key, &p.value) else {
+            return None;
+        };
+        let E::EString(k) = &k.data else {
+            return None;
+        };
+        if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
+            || p.flags.contains(js_ast::flags::Property::IsComputed)
+            || k.slice8() == b"__proto__"
+        {
+            return None;
+        }
+        entries.push((estring(k), *v));
+    }
+    if !entries.is_empty() {
+        parts.push(Spread::Literal(entries));
+    }
+    // each run of entries must be plain reads, as `plain_object` requires of a whole literal
+    for part in &parts {
+        if let Spread::Literal(es) = part {
+            for (_, v) in es {
+                if !plain_read(v, r.names) {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(parts)
 }
 
 fn union_refused(value: &js_ast::Expr, why: &str) -> Diagnostic {

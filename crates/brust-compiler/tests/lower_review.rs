@@ -105,12 +105,19 @@ fn children_markup_does_not_shift_member_numbers() {
 }
 
 /// Finding 3: a prop read in a row without x-for gets no item binding.
+/// F320: in a component with an instance its props are a signal, so a row reading one (`base`) gets x-for and an item
+/// binding (it used to print once and stay stale when a caller changed `base`, F319). Stateless, it prints once.
 #[test]
 fn prop_reads_in_static_rows_have_no_bindings() {
     let a = lower(&format!(
         "{STATE}export default function T({{ items, base }}: any) {{ const [n, setN] = useState(0); return <div onClick={{() => setN(1)}}>{{n}}{{items.map((p: any) => <a key={{p.slug}} href={{`${{base}}/${{p.slug}}`}}>x</a>)}}</div> }}"
     ));
-    assert!(!a.jinja.contains(":p\""), "{}", a.jinja);
+    assert!(a.jinja.contains("x-for=\"p in "), "{}", a.jinja);
+    assert!(a.jinja.contains("x-bind-href=\"_c2:p\""), "{}", a.jinja);
+    let s = lower(
+        "export default function T({ items, base }: any) { return <div>{items.map((p: any) => <a key={p.slug} href={`${base}/${p.slug}`}>x</a>)}</div> }",
+    );
+    assert!(!s.jinja.contains(":p\""), "{}", s.jinja);
 }
 
 /// Finding 4: a key reading the index falls back to item identity.

@@ -104,6 +104,23 @@ pub fn with_ordered_objects<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// F333: whether the keys of an object literal, enumerated as JS does, come out in the byte order a jinja map literal
+/// sorts them to (so the plain literal prints the same order).
+fn js_order_is_sorted(props: &[(String, RawExpr)]) -> bool {
+    let is_index = |k: &str| {
+        k == "0"
+            || (!k.starts_with('0')
+                && k.len() <= 10
+                && k.bytes().all(|b| b.is_ascii_digit())
+                && k.parse::<u64>().is_ok_and(|n| n < u32::MAX as u64))
+    };
+    let mut keys: Vec<&str> = props.iter().map(|(k, _)| k.as_str()).collect();
+    let (mut idx, rest): (Vec<&str>, Vec<&str>) = keys.drain(..).partition(|k| is_index(k));
+    idx.sort_by_key(|k| k.parse::<u64>().unwrap_or(0));
+    idx.extend(rest);
+    idx.windows(2).all(|w| w[0] <= w[1])
+}
+
 fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
     match &e.kind {
         RawKind::Lit(l) => match l {
@@ -212,7 +229,9 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
         ),
         // F296 C3: an object printed for a `style` value keeps its source order (`obj_lit`): a jinja map literal sorts
         // its keys, and a style's declaration order decides a shorthand against its longhand.
-        RawKind::Object(props) if ORDERED_OBJECTS.get() => format!(
+        // F333: so does any object whose keys, in JS order (array-index keys first, ascending), are not already in the
+        // sorted order a jinja map literal gives them: `Object.entries` / `Object.keys` of it observe the difference.
+        RawKind::Object(props) if ORDERED_OBJECTS.get() || !js_order_is_sorted(props) => format!(
             "obj_lit({})",
             props
                 .iter()
@@ -237,6 +256,10 @@ fn call(callee: &RawExpr, args: &[RawExpr], ctx: &JinjaCtx<'_>) -> String {
     // F287: `[lit, …].includes(x)` is printed as the strict-equality chain `check` accepted.
     if let Some(chain) = crate::analyze::passes::server_expr::includes_chain(callee, args) {
         return raw(&chain, ctx);
+    }
+    // W1d PR 3: a render error (a component threw): the filter fails the render, the server answers with its own 500
+    if crate::analyze::passes::server_expr::is_throw(callee, args) {
+        return "(none | render_error)".into();
     }
     let RawKind::Member { target, name, .. } = &callee.kind else {
         return "none".into();
