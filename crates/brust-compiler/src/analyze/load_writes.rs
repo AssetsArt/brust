@@ -57,9 +57,10 @@ pub type ExportKey = (String, String);
 #[derive(Debug, Default, Clone)]
 pub struct LoadWrites {
     pub written: HashMap<ExportKey, String>,
-    /// The modules that write when they load (sorted): the build imports them first where it renders a React island
-    /// (the SSR jobs bundle, each island chunk), so an island that reads a written export sees what React's app sees.
-    pub writers: Vec<String>,
+    /// The modules that write when they load, each with the modules it writes into (sorted): the build imports a writer
+    /// first where a React island renders (the SSR jobs bundle; the browser chunk of an island whose import graph
+    /// reaches a module it writes), so the island sees what React's app sees.
+    pub writers: Vec<(String, Vec<String>)>,
 }
 
 impl LoadWrites {
@@ -89,7 +90,7 @@ impl LoadWrites {
         struct J {
             written: Vec<(String, String, String)>,
             #[serde(default)]
-            writers: Vec<String>,
+            writers: Vec<(String, Vec<String>)>,
         }
         let j: J = serde_json::from_str(text)?;
         Ok(LoadWrites {
@@ -106,8 +107,8 @@ struct Scanned {
     imports: HashMap<u32, ExportKey>,
     /// The writes this module makes through an app import: (module path, export).
     writes: Writes,
-    /// Some of them run when the module loads.
-    load_writer: bool,
+    /// The writes a statement makes where it stands when the module loads (not in a nested function).
+    load: Writes,
     /// Exports declared as a primitive (`export const MAX = 6`): nothing can write into one.
     primitive: HashSet<String>,
     /// Exports made by a package call (`export const team = defineStore(…)`): the package owns the object and its
@@ -323,7 +324,10 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
     // Writes through an app import, anywhere in the module; and the same made by a statement that runs at load (not
     // in a function nothing calls then): the build imports those writer modules where it renders islands.
     let writes = writes_of(&all, &imports, &module_keys, &names);
-    let mut load = Walk::default();
+    let mut load = Walk {
+        shallow: true,
+        ..Default::default()
+    };
     for part in ast.parts.iter() {
         for stmt in part.stmts.slice() {
             if runs_code_at_load(stmt) {
@@ -331,7 +335,7 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
             }
         }
     }
-    let load_writer = !writes_of(&load, &imports, &module_keys, &names).is_empty();
+    let load = writes_of(&load, &imports, &module_keys, &names);
 
     let reads_of = |w: &Walk| {
         let mut imp = Vec::new();
@@ -359,7 +363,7 @@ fn scan_module(path: &str, ast: &js_ast::Ast<'_>, opts: &AnalyzeOptions) -> Scan
     Scanned {
         path: path.to_string(),
         writes,
-        load_writer,
+        load,
         package_made,
         primitive,
         decls: decls.iter().map(|(k, w)| (*k, reads_of(w))).collect(),
@@ -469,12 +473,6 @@ struct Writes {
     handed: BTreeSet<(ExportKey, Option<ExportKey>)>,
 }
 
-impl Writes {
-    fn is_empty(&self) -> bool {
-        self.method.is_empty() && self.other.is_empty() && self.handed.is_empty()
-    }
-}
-
 /// A top-level statement whose code runs when the module loads: not an import or export clause, a function or class
 /// declaration, or a declaration whose every initializer is a function value.
 fn runs_code_at_load(stmt: &js_ast::Stmt) -> bool {
@@ -521,16 +519,7 @@ fn writing_global(target: &js_ast::Expr, names: &NameTable<'_>) -> bool {
 /// The written exports: each module's writes, then every export whose code reads a written export (its own module's
 /// tainted locals included), and re-exports of a written one, to a fixpoint.
 fn propagate(mods: &[Scanned]) -> LoadWrites {
-    let mut out = LoadWrites {
-        writers: mods
-            .iter()
-            .filter(|m| m.load_writer)
-            .map(|m| m.path.clone())
-            .collect(),
-        ..Default::default()
-    };
-    out.writers.sort();
-    out.writers.dedup();
+    let mut out = LoadWrites::default();
     let package_made = |k: &ExportKey| {
         mods.iter()
             .any(|m| m.path == k.0 && m.package_made.contains(&k.1))
@@ -539,22 +528,34 @@ fn propagate(mods: &[Scanned]) -> LoadWrites {
         mods.iter()
             .any(|m| m.path == k.0 && m.primitive.contains(&k.1))
     };
-    for m in mods {
-        let method = m.writes.method.iter().filter(|w| !package_made(w));
-        let handed = m
-            .writes
+    // The writes that count: a method call into a package-made value, or a hand-off to its methods, is its API; a
+    // primitive cannot be written.
+    let counted = |w: &Writes| -> BTreeSet<ExportKey> {
+        let method = w.method.iter().filter(|k| !package_made(k));
+        let handed = w
             .handed
             .iter()
             .filter(|(_, callee)| !callee.as_ref().is_some_and(package_made))
-            .map(|(w, _)| w);
-        for w in m
-            .writes
-            .other
+            .map(|(k, _)| k);
+        w.other
             .iter()
             .chain(method)
             .chain(handed)
-            .filter(|w| !primitive(w))
-        {
+            .filter(|k| !primitive(k))
+            .cloned()
+            .collect()
+    };
+    for m in mods {
+        let modules: BTreeSet<String> = counted(&m.load).into_iter().map(|(p, _)| p).collect();
+        if !modules.is_empty() {
+            out.writers
+                .push((m.path.clone(), modules.into_iter().collect()));
+        }
+    }
+    out.writers.sort();
+    out.writers.dedup();
+    for m in mods {
+        for w in &counted(&m.writes) {
             out.written
                 .entry(w.clone())
                 .or_insert_with(|| format!("{} writes it", m.path));

@@ -761,6 +761,9 @@ pub struct Walk {
     /// F230: `(binding, root)`: a binding declared or assigned as an alias of `root`'s object (`const l = list`,
     /// `l = cfg.items`, `x = a ?? b`), not from a computed value (`const r = f(list)`), which `flows` also records.
     pub aliases: Vec<(js_ast::Ref, js_ast::Ref)>,
+    /// F230: only code that runs where it stands: a function's body is not walked unless the function is called right
+    /// there (`(() => { … })()`); a nested function in it is not walked either.
+    pub shallow: bool,
 }
 
 impl Walk {
@@ -840,6 +843,13 @@ impl Walk {
         if let Some(name) = &f.name {
             self.declared.push(name.ref_);
         }
+        if self.shallow {
+            return;
+        }
+        self.func_body(f);
+    }
+
+    fn func_body(&mut self, f: &js_ast::G::Fn) {
         for arg in f.args.slice() {
             self.declare_binding(&arg.binding);
             if let Some(d) = &arg.default {
@@ -847,6 +857,16 @@ impl Walk {
             }
         }
         self.stmts(f.body.stmts.slice());
+    }
+
+    fn arrow_body(&mut self, a: &js_ast::E::Arrow) {
+        for arg in a.args.slice() {
+            self.declare_binding(&arg.binding);
+            if let Some(d) = &arg.default {
+                self.expr(d);
+            }
+        }
+        self.stmts(a.body.stmts.slice());
     }
 
     pub fn stmts(&mut self, stmts: &[js_ast::Stmt]) {
@@ -1003,7 +1023,12 @@ impl Walk {
             }
             E::ECall(c) => {
                 self.calls.push(*e);
-                self.expr(&c.target);
+                // Shallow: an immediately-invoked function runs here.
+                match (&c.target.data, self.shallow) {
+                    (E::EArrow(a), true) => self.arrow_body(a),
+                    (E::EFunction(f), true) => self.func_body(&f.func),
+                    _ => self.expr(&c.target),
+                }
                 c.args.iter().for_each(|x| self.expr(x));
             }
             E::EDot(d) => self.expr(&d.target),
@@ -1011,15 +1036,8 @@ impl Walk {
                 self.expr(&i.target);
                 self.expr(&i.index);
             }
-            E::EArrow(a) => {
-                for arg in a.args.slice() {
-                    self.declare_binding(&arg.binding);
-                    if let Some(d) = &arg.default {
-                        self.expr(d);
-                    }
-                }
-                self.stmts(a.body.stmts.slice());
-            }
+            E::EArrow(_) if self.shallow => {}
+            E::EArrow(a) => self.arrow_body(a),
             E::EFunction(f) => self.func(&f.func),
             E::EClass(c) => self.class(c),
             E::EObject(o) => {

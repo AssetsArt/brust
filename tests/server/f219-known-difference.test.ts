@@ -7,7 +7,7 @@
 // function nothing calls is refused too (the scan does not prove "not at load": documented over-refusal).
 // Run alone: `bun test --timeout 120000 tests/server/f219-known-difference.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
 
@@ -21,6 +21,7 @@ let buildLog = ''
 
 const ROUTES = `import { defineRoutes } from "@brust/core/routes"
 import "../repro/f230/patch-e"
+import "../repro/f230/setup-secret"
 import Page from "../repro/f219-page"
 import PageE from "../repro/f230/Reade"
 import Layout from "../repro/f230/Layout"
@@ -123,6 +124,27 @@ test('a written module makes its readers fall back (named); a module only read s
   expect(o).not.toContain('<brust-island')
   const e = await (await fetch(`${base}/e`)).text()
   expect(e).toContain('<brust-island')
+})
+
+test('Mellow F1: a writer ships only to the islands whose code imports the module it writes, with a warning', () => {
+  const pairs = [...buildLog.matchAll(/load-writer-in-client (\S+) is imported into the browser chunk of the React island (\S+):/g)].map((m) => `${m[1]} -> ${m[2]!.replace(/_[0-9a-f]{8}$/, '')}`)
+  expect([...new Set(pairs)].sort()).toEqual([
+    'repro/f219/patch.ts -> label',
+    'repro/f219/patch.ts -> labelState',
+    'repro/f230/patch-e.ts -> read',
+    'repro/f230/patch-e.ts -> reade',
+    'repro/f230/patch-l.ts -> read',
+    'repro/f230/patch-l.ts -> readl',
+    'repro/f230/patch-r.ts -> read',
+    'repro/f230/patch-r.ts -> readr',
+  ])
+  // The setup module writes a module no island reads: its code is in no browser file.
+  const client = join(FIXTURE, OUT, 'client')
+  const shipped = readdirSync(client, { recursive: true })
+    .map(String)
+    .filter((f) => f.endsWith('.js'))
+    .filter((f) => readFileSync(join(client, f), 'utf8').includes('SECRET-F230'))
+  expect(shipped).toEqual([])
 })
 
 test('hydrated in Chromium: the islands keep React\'s values (the writers run in the island chunks too) and count', async () => {

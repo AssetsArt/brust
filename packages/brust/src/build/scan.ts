@@ -10,7 +10,7 @@ import { installServerOnlyRuntime } from './server-only'
 export async function scanRoutes(
   entryFile: string,
   appRoot?: string,
-): Promise<{ routes: Route[]; componentFile: Map<Function, string>; componentIssue: Map<Function, string>; appModules: string[] }> {
+): Promise<{ routes: Route[]; componentFile: Map<Function, string>; componentIssue: Map<Function, string>; appModules: string[]; appGraph: Map<string, string[]> }> {
   // biome-ignore lint/suspicious/noExplicitAny: an arbitrary user module
   let mod: any
   installServerOnlyRuntime() // `server-only` resolves to an empty module: a loader may import server-only code
@@ -31,6 +31,8 @@ export async function scanRoutes(
   const transpiler = new Bun.Transpiler({ loader: 'tsx' })
   const inRoot = (f: string) => f.startsWith(root + sep) && !f.split(sep).includes('node_modules')
   const visited = new Set<string>()
+  // F230: each in-root module's in-root static imports (absolute paths), for the island chunks' load-time writers.
+  const appGraph = new Map<string, string[]>()
   // Post-order: a file's imports are mapped before the file itself, and the first file to claim a function
   // keeps it, so the module that defines a Component beats a barrel that re-exports it.
   const visit = async (file: string): Promise<void> => {
@@ -58,6 +60,7 @@ export async function scanRoutes(
       if (inRoot(dep)) deps.push(dep)
       else if (dep.endsWith('.tsx')) await note(dep, dep.split(sep).includes('node_modules') ? 'in node_modules' : `outside the app root ${root}`)
     }
+    appGraph.set(file, deps)
     for (const dep of deps) await visit(dep)
     if (!file.endsWith('.tsx')) return
     const m = await import(file)
@@ -81,5 +84,5 @@ export async function scanRoutes(
   for (const f of componentFile.keys()) componentIssue.delete(f)
   // F230: every app module of the static graph (`.ts`/`.tsx` inside the root, outside node_modules), for the scan of
   // load-time writes into another module's exports (`scanLoadWrites`).
-  return { routes, componentFile, componentIssue, appModules: [...visited].filter(inRoot) }
+  return { routes, componentFile, componentIssue, appModules: [...visited].filter(inRoot), appGraph }
 }

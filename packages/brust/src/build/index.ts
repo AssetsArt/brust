@@ -121,7 +121,7 @@ export async function runBuild(opts: {
   if (actions?.prefix === '/') throw new BuildError('config', 'actions.prefix "/" is only for an actions-only build (brust build --actions-only) or a page-only build that points at one')
 
   // Everything that can fail on the app's own input runs before a byte is written.
-  const { routes, componentFile, componentIssue, appModules } = await scanRoutes(entry, appRoot)
+  const { routes, componentFile, componentIssue, appModules, appGraph } = await scanRoutes(entry, appRoot)
   let leaves: ReturnType<typeof validateRoutes>
   try {
     leaves = validateRoutes(routes)
@@ -173,7 +173,7 @@ export async function runBuild(opts: {
   rmSync(tmp, { recursive: true, force: true })
   mkdirSync(tmp, { recursive: true })
   try {
-    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, actionsRemote: remote?.prefix ?? null, log: opts.log })
+    await buildInto(tmp, { dev: opts.dev === true, appRoot, entry, dist, leaves, componentFile, componentIssue, appModules, appGraph, serverOnly, actions, actionsEntry, cache, cacheModule, cf, hybrid, cssGlobal, actionsRemote: remote?.prefix ?? null, log: opts.log })
     if (ssgPlan) {
       // Rendered from the finished temp dist, so a failed render leaves the previous dist untouched.
       const version: string = (await Bun.file(join(import.meta.dir, '../../package.json')).json()).version
@@ -208,6 +208,8 @@ async function buildInto(
     componentIssue: Map<Function, string>
     /** F230: every app module of the route entry's static import graph (absolute paths). */
     appModules: string[]
+    /** F230: each app module's in-root static imports (absolute paths). */
+    appGraph: Map<string, string[]>
     serverOnly: string[]
     actions: ActionsBuildConfig | null
     /** Absolute path of the actions entry (null when `[actions]` is off). */
@@ -242,8 +244,35 @@ async function buildInto(
   const runtimeUrls = { core: `/_brust/${runtime.core}`, store: `/_brust/${runtime.store}` }
   // F230: one scan per build for load-time writes into another app module's exports; every compile reads it.
   const loadWrites = scanAppWrites(appRoot, o.appModules, o.log)
-  // Where a React island renders (the SSR jobs bundle, each island chunk), the load-time writers run first.
-  const writers = (JSON.parse(loadWrites).writers as string[]).map((w) => resolve(appRoot, w))
+  // Where a React island renders, the load-time writers run first: every one in the SSR jobs bundle (server code the
+  // worker runs anyway); in an island's browser chunk only a writer of a module that island's code imports (Mellow F1:
+  // a writer is often a server-side setup module), with a warning.
+  const scanned = JSON.parse(loadWrites) as { writers: [string, string[]][] }
+  const real = (f: string) => {
+    try {
+      return realpathSync(f)
+    } catch {
+      return f
+    }
+  }
+  const writes = scanned.writers.map(([w, mods]) => ({ file: real(resolve(appRoot, w)), mods: new Set(mods.map((m) => real(resolve(appRoot, m)))) }))
+  const writers = [...new Set(writes.map((w) => w.file))]
+  const appGraph = new Map([...o.appGraph].map(([f, deps]) => [real(f), deps.map(real)]))
+  const writersFor = (c: Compiled, files: string[]): string[] => {
+    if (writes.length === 0) return []
+    const reached = new Set<string>()
+    const stack = files.map(real)
+    while (stack.length > 0) {
+      const f = stack.pop()!
+      if (reached.has(f)) continue
+      reached.add(f)
+      stack.push(...(appGraph.get(f) ?? []))
+    }
+    const out = writes.filter((w) => [...w.mods].some((m) => reached.has(m)))
+    for (const w of out)
+      o.log(`[brust] warning load-writer-in-client ${relative(appRoot, w.file)} is imported into the browser chunk of the React island ${c.id}: it changes ${[...w.mods].filter((m) => reached.has(m)).map((m) => relative(appRoot, m)).join(', ')} when it loads, and the island reads that module (F230). Its code ships to the browser: keep secrets and server-only code out of it, or write the value in the module that declares it`)
+    return [...new Set(out.map((w) => w.file))]
+  }
   const compileOpts = {
     appRoot,
     leaves,
@@ -288,7 +317,7 @@ async function buildInto(
   mkdirSync(join(out, 'jinja'), { recursive: true })
   for (const c of compiled.values()) writeFileSync(join(out, 'jinja', `${c.id}.jinja`), c.jinja)
 
-  const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrls)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writers))])
+  const chunks = new Map([...(await buildClientChunks(out, compiled, ctx, runtimeUrls)), ...(await buildReactChunks(out, compiled, ctx, runtimeUrls, routeRoots, writersFor))])
   const manifest = writeManifest({ leaves, routeComponent, compiled, runtime: { core: runtime.core, features: { ...runtime.features, store: runtime.store } }, chunks })
   // L33: a component whose chunk imports the store module (directly or through a shared chunk) has the page preload it.
   const readClient = (rel: string) => (existsSync(join(out, rel)) ? readFileSync(join(out, rel), 'utf8') : undefined)

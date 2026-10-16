@@ -46,7 +46,7 @@ fn member_writes_mutating_calls_and_aliases_through_an_import() {
         ],
     );
     assert_eq!(written(&lw), ["b.ts#LABELS", "b.ts#list"]);
-    assert_eq!(lw.writers, ["c.ts"]);
+    assert_eq!(lw.writers, [("c.ts".to_string(), vec!["b.ts".to_string()])]);
 }
 
 #[test]
@@ -173,6 +173,7 @@ fn the_json_the_build_hands_every_compile_round_trips() {
     let back = LoadWrites::from_json(&lw.to_json()).unwrap();
     assert_eq!(written(&back), written(&lw));
     assert_eq!(back.writers, lw.writers);
+    assert!(!back.writers.is_empty());
 }
 
 fn diags(root: &std::path::Path, file: &str, lw: Option<LoadWrites>) -> Vec<String> {
@@ -325,4 +326,34 @@ fn a_primitive_or_a_package_method_argument_is_not_written() {
     );
     // `keep(CAPS)` hands the object to app code: that one counts.
     assert_eq!(written(&lw), ["loaders.ts#layoutLoader", "team.ts#CAPS"]);
+}
+
+/// F2 (Mellow, round 1): only code that runs where it stands at load makes a writer: a write in a handler object, a
+/// class method or a nested function does not; one in an immediately-invoked function or a static block does.
+#[test]
+fn a_load_writer_writes_where_its_statement_stands() {
+    let (_, lw) = app(
+        "depth0",
+        &[
+            ("b.ts", B),
+            (
+                "o.ts",
+                "export const LABELS2 = { a: 1 }\nexport const LABELS3 = { a: 1 }\n",
+            ),
+            (
+                "handlers.ts",
+                "import { LABELS, list } from './b'\nexport const handlers = { onClick() { LABELS.a = 'x' } }\nexport class K { m() { list.push('y') } }\nconst later = [() => { LABELS.a = 'z' }]\n",
+            ),
+            (
+                "iife.ts",
+                "import { LABELS2, LABELS3 } from './o'\n;(() => { LABELS2.a = 2 })()\nclass S { static { LABELS3.a = 3 } }\n",
+            ),
+        ],
+    );
+    // Every write counts for the fallback; only the ones that run at load make a writer the build ships.
+    assert!(lw.why("b.ts", "LABELS").is_some() && lw.why("b.ts", "list").is_some());
+    assert_eq!(
+        lw.writers,
+        [("iife.ts".to_string(), vec!["o.ts".to_string()])]
+    );
 }

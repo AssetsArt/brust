@@ -572,11 +572,22 @@ export function islandEntries(compiled: Map<string, Compiled>): Compiled[] {
   return [...compiled.values()].filter((c) => isReact(c) && (!c.ir.external || placed.has(c.id)))
 }
 
-export async function buildReactChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls, routeRoots?: ReadonlySet<string>, writers: string[] = []): Promise<Map<string, string>> {
+/** `writersFor` (F230): the load-time writer modules an island's chunk must import first, from the app files the
+ * island's code is (its component, and the components it revives); none when absent. */
+export async function buildReactChunks(
+  dist: string,
+  compiled: Map<string, Compiled>,
+  ctx: BrowserCtx,
+  runtimeUrl: RuntimeUrls,
+  routeRoots?: ReadonlySet<string>,
+  writersFor?: (c: Compiled, files: string[]) => string[],
+): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   for (const c of islandEntries(compiled)) {
     const file = join(dist, '.stage', 'react', `react-${c.id}.tsx`)
-    write(file, islandShim(c, compiled, routeRoots, writers))
+    const own = [c, ...(nestedOf(compiled, c.id, routeRoots) ?? []).flatMap((id) => compiled.get(id) ?? [])]
+    const files = own.filter((n) => !(n.ir.external ?? n.ir.dist)).map((n) => n.file)
+    write(file, islandShim(c, compiled, routeRoots, writersFor?.(c, files) ?? []))
     stage(ctx.sourceOf, file, c)
     entrypoints.push(file)
   }
