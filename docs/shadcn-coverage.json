@@ -199,6 +199,15 @@
       "libraryComponents": 5
     },
     {
+      "blocker": "fallback:key-outside-list",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 4
+    },
+    {
       "blocker": "fallback:context-value",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -800,6 +809,7 @@
         "island-prop",
         "jsx-const-child",
         "jsx-expression",
+        "key-outside-list",
         "nested-instance",
         "slot-dynamic",
         "spread-props"
