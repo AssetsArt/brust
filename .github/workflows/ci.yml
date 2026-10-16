@@ -322,6 +322,9 @@ jobs:
       - run: bun test --timeout 180000 tests/server/toggle-live.chromium.test.ts
       # F214: page state in the slot of a native child stays React (slot-owner), served == React.
       - run: bun test --timeout 180000 tests/server/slot-owner.chromium.test.ts
+      # ledger-dew: F147 served (hoisted handler names), F219 known difference pinned until F230.
+      - run: bun test --timeout 120000 tests/server/handler-names.chromium.test.ts
+      - run: bun test --timeout 120000 tests/server/f219-known-difference.test.ts
       # 2c-2 (R34.116, R34.122): a state Provider is specialised per call site; first paint == React, independent toggles, nesting, a consumer under the Provider's own condition.
       - run: bun test --timeout 180000 tests/server/native-provider.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/absent-prop-seed.chromium.test.ts
