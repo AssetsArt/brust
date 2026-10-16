@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 52 | 36 | 12 | 4 | 0 | 0 | 0 | 0 |
 | B Composition | 218 | 113 | 15 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 53 | 8 | 17 | 28 | 0 | 0 | 0 | 0 |
+| C Hooks | 55 | 9 | 17 | 29 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 8 | 1 | 20 | 0 | 0 | 0 | 0 |
-| E v2 specifics | 69 | 31 | 10 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 421 | 196 | 55 | 166 | 3 | 1 | 0 | 0 |
+| E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
+| **Total** | 428 | 197 | 60 | 167 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -354,6 +354,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-useid-in-key | useId() called in an element key | react | react | ssr | ok | 3.8 | fallback:hook-in-expression, warning:key-outside-list | F235: the JSX runtime evaluates key after the props, so the hook is refused there (hook-in-expression) |
 | c-useid-logical-assign | useId() on the right side of `??=` in the returned tree | react | react | ssr | ok | 3.8 | fallback:hook-in-expression | F236: the right side of \|\|=, &&=, ??= runs conditionally, so the hook is refused there (hook-in-expression) |
 | c-native-provider-state | a Provider whose value is state, with markup and consumers as its content | static | static | 0 | ok | 4.8 | — | R34.116/R34.122: the Provider is specialised for the call site (its content moves into a clone), no island |
+| c-native-provider-as-child | asChild on a consumer of a state Provider, with a plain element child | static | static | 0 | ok | 4.8 | — | Q5/R34.117: the consumer's host is the caller's element, carrying the frame's bindings and handler |
+| c-native-provider-as-child-handler | asChild on a consumer of a state Provider, the child element has its own handler | react | react | ssr | ok | 5.1 | fallback:island-children, fallback:slot-native, fallback:slot-owner, info:specialise-unsupported | Q5: a handler on the asChild child is not composed yet (child first, then the Provider's); the Provider stays an island |
 | c-native-provider-two-sites | two call sites of a state Provider with different text | static | static | 0 | ok | 4.8 | — | R34.124: one clone per call site (own jinja and ids), one shared factory module for the equal chunks |
 | c-native-provider-handler-in-content | a page handler written in the content of a state Provider | react | react | ssr | ok | 5.1 | fallback:island-children, info:specialise-unsupported | R34.125: a page-owned handler in the content cannot move into the clone (specialise-unsupported; the island keeps it) |
 | c-native-provider-caller-prop | a prop of the calling component read in the content of a state Provider | static | static | ssr | ok | 5.1 | info:specialise-unsupported | R34.123 (S2): a name of the rendering component would read the clone's own members; the Provider stays the island |
@@ -438,6 +440,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-jsx-runtime-alias-value | the runtime builder read as a value (`const h = jsx; h(…)`) | react | react | ssr | ok | 3.8 | fallback:jsx-runtime-call | F156: any read of a runtime builder is jsx-runtime-call, not an opaque server slot |
 | e-jsx-runtime-comma-call | the runtime builder called through a comma (`(0, jsx)(…)`, bundler output) | react | react | ssr | ok | 3.8 | fallback:jsx-runtime-call | F156: any read of a runtime builder is jsx-runtime-call, not an opaque server slot |
 | e-jsx-runtime-local-name | a local function named `jsx` is not the runtime | static | static | precompute | ok | 0 | — |  |
+| e-name-signal-state | a state named like a runtime import (`const [signal, setSignal] = useState(0)`) | native | native | 0 | ok | 4.4 | — | F233: the chunk imports the runtime under other names (`signal as signal1`), the component keeps its own |
+| e-name-props-derived | a derived value named `props` beside a prop read | native | native | 0 | ok | 4.4 | — | F233: the behaviour context's props signal is renamed (`props: props1`), so the prop read is not the derived value |
+| e-name-text-helper | a handler named like a paint helper (`const __text = () => …`) | native | native | 0 | ok | 4.4 | — | F233: the helper is declared under another name; before, the chunk declared `__text` twice (a SyntaxError) |
+| e-job-prop-local-assign | a body local named like a prop the job reads off `props` (`const style = Object.assign({}, props.style, …)`) | native | native | precompute | ok | 4.4 | — | F257: the job destructures the prop under another name (`style: style1`); it declared `style` twice |
+| e-job-prop-local-spread | the same through an object spread (`const style = { ...props.style, … }`) | native | native | precompute | ok | 4.4 | — | F257: the B5 spelling of the same shape |
 | e-list-block-body | .map with a block body names list-shape | react | react | ssr | ok | 3.8 | fallback:list-shape | L6: block bodies stay React with a list-shape fallback naming the reason |
 | e-lucide-icon | lucide-react icon in a static parent (rendered to inline SVG by the build) | static | static | ssr | ok | 3.8 | fallback:external-component | L23: brustc alone leaves the icon as the L22 island (one ssr job); `brust build` renders it with react-dom/server and compiles again with the SVG inline (no job, no worker) |
 | e-lucide-icon-dynamic-prop | lucide icon with a prop that cannot be an attribute (stays an island) | static | static | ssr | ok | 3.8 | fallback:external-component, warning:icon-dynamic-prop | L23 R23.1: only size / color / strokeWidth / className may be dynamic; `icon-dynamic-prop` warns and the L22 island renders it |
