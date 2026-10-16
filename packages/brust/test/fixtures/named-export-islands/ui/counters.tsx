@@ -1,4 +1,4 @@
-import { useReducer } from 'react'
+import { useReducer, useTransition } from 'react'
 
 // useReducer keeps each of these a React island. They share ONE module instance of this file: `total` is
 // module state, so a click on any of them shows how many clicks the whole page has seen.
@@ -7,6 +7,7 @@ const bump = () => ++total
 
 /** `export function`, imported by name. */
 export function Alpha({ label }: { label: string }) {
+  useTransition()
   const [n, hit] = useReducer(() => bump(), 0)
   return (
     <button type="button" data-testid="alpha" onClick={() => hit()}>
@@ -17,6 +18,7 @@ export function Alpha({ label }: { label: string }) {
 
 /** `export const` of an arrow function: a binding the compiler does not read, so an island. */
 export const Beta = ({ label }: { label: string }) => {
+  useTransition()
   const [n, hit] = useReducer(() => bump(), 0)
   return (
     <button type="button" data-testid="beta" onClick={() => hit()}>
@@ -26,6 +28,7 @@ export const Beta = ({ label }: { label: string }) => {
 }
 
 function Gamma({ label }: { label: string }) {
+  useTransition()
   const [n, hit] = useReducer(() => bump(), 0)
   return (
     <button type="button" data-testid="gamma" onClick={() => hit()}>
@@ -38,6 +41,7 @@ function Gamma({ label }: { label: string }) {
 export { Gamma as Gam }
 
 function Helper({ label }: { label: string }) {
+  useTransition()
   const [n, hit] = useReducer(() => bump(), 0)
   return (
     <button type="button" data-testid="helper" onClick={() => hit()}>

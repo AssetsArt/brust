@@ -91,6 +91,19 @@ fn concat_part(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
     }
 }
 
+thread_local! {
+    /// Set while a `style` value is printed: object literals in it print as `obj_lit` (source order).
+    static ORDERED_OBJECTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with object literals printing in source order (`obj_lit`), for a `style` value.
+pub fn with_ordered_objects<T>(f: impl FnOnce() -> T) -> T {
+    let before = ORDERED_OBJECTS.replace(true);
+    let out = f();
+    ORDERED_OBJECTS.set(before);
+    out
+}
+
 fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
     match &e.kind {
         RawKind::Lit(l) => match l {
@@ -197,6 +210,16 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        // F296 C3: an object printed for a `style` value keeps its source order (`obj_lit`): a jinja map literal sorts
+        // its keys, and a style's declaration order decides a shorthand against its longhand.
+        RawKind::Object(props) if ORDERED_OBJECTS.get() => format!(
+            "obj_lit({})",
+            props
+                .iter()
+                .map(|(k, v)| format!("{}, {}", jinja_string(k), raw(v, ctx)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         RawKind::Object(props) => format!(
             "{{{}}}",
             props
@@ -211,6 +234,10 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
 }
 
 fn call(callee: &RawExpr, args: &[RawExpr], ctx: &JinjaCtx<'_>) -> String {
+    // F287: `[lit, …].includes(x)` is printed as the strict-equality chain `check` accepted.
+    if let Some(chain) = crate::analyze::passes::server_expr::includes_chain(callee, args) {
+        return raw(&chain, ctx);
+    }
     let RawKind::Member { target, name, .. } = &callee.kind else {
         return "none".into();
     };

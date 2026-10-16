@@ -156,7 +156,7 @@ fn a_wrapper_island_is_fed_and_a_linked_one_falls_back() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("Search.tsx"),
-        "import { useReducer } from 'react'\nexport default function Search({ label }: any) { const [n, bump] = useReducer((x: number) => x + 1, 0); return <button onClick={() => bump()}>{label}{n}</button> }",
+        "import { useReducer, useTransition } from 'react'\nexport default function Search({ label }: any) { useTransition(); const [n, bump] = useReducer((x: number) => x + 1, 0); return <button onClick={() => bump()}>{label}{n}</button> }",
     )
     .unwrap();
     let analyze_in = |src: &str| {

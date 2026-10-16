@@ -1,8 +1,9 @@
 // A react island that imports `cache` from the package root (browser-safe entry).
 import { cache } from '@brust/core'
-import { useReducer } from 'react'
+import { useReducer, useTransition } from 'react'
 
 function Counter(props: { label: string }) {
+  useTransition()
   const [n, bump] = useReducer((x: number) => x + 1, 0)
   return (
     <b onClick={bump}>

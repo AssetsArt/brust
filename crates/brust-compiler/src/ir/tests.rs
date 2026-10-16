@@ -15,6 +15,7 @@ fn component_ir_round_trips_through_json() {
             loc: 10,
             kind: RawKind::Lit(Literal::Str("dark".into())),
         }),
+        late: false,
     });
     ir.template = Node::Element {
         loc: 0,
