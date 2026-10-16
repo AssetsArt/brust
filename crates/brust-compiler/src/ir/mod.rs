@@ -453,8 +453,11 @@ pub struct Structural {
 impl ComponentIR {
     /// F320: the chunk has an instance (state, effects, handlers or refs), so it reads its props as a signal wherever
     /// it renders: a named prop the call site does not fix changes on the client.
+    /// F307 §7.3: a specialised clone too (R34.122, F298, F307 alike): its one call site is known and `fixed_props`
+    /// lists what that call site does not change, so every other prop follows the caller.
     pub fn props_are_signal(&self) -> bool {
-        !self.state.is_empty()
+        self.specialised
+            || !self.state.is_empty()
             || !self.effects.is_empty()
             || !self.handlers.is_empty()
             || !self.refs.is_empty()

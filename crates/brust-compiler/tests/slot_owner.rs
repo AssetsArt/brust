@@ -2,7 +2,9 @@
 //! caller in it (a handler, a binding that reads the caller's state, a list, a linked child) read the child's members: wrong
 //! output with no diagnostic. The caller stays on React with the named fallback `slot-owner`; static slot content,
 //! content the child never prints, and a static child (no host of its own) are unaffected. F309: a static child LINKED
-//! at the call site has a host of its own there, so the same holds for it.
+//! at the call site has a host of its own there, so the same holds for it. F307 (option B): where the child prints a
+//! real `{children}` slot, the call site is answered by a clone of the child with the content, which binds it as its own
+//! (`cloned`); the refusal stands where no clone can be made (`refused`).
 use brust_compiler::analyze::component::AnalyzeOptions;
 use brust_compiler::ir::{DiagClass, Tier};
 use brust_compiler::lower::DEFAULT_RUNTIME_IMPORT;
@@ -13,6 +15,8 @@ use std::path::PathBuf;
 struct Out {
     tier: Tier,
     rules: Vec<String>,
+    /// F307: the host clones in the tree (specialised components whose id carries `_h`).
+    host_clones: usize,
 }
 
 /// The page (`default export`) of `tests/fixtures/slot-owner/<file>`.
@@ -40,6 +44,10 @@ fn component(file: &str, prefix: &str) -> Out {
             .find(|n| n.ir.id.to_lowercase().starts_with(&prefix))
             .expect("the component");
         Out {
+            host_clones: tree
+                .iter()
+                .filter(|n| n.ir.specialised && n.ir.id.contains("_h"))
+                .count(),
             tier: node.ir.tier.clone(),
             rules: node
                 .ir
@@ -64,6 +72,18 @@ fn refused(file: &str) {
     assert!(matches!(o.tier, Tier::React { .. }), "{file}: {:?}", o.tier);
 }
 
+/// F307: the refusal is answered by cloning the child with the content (the page lowers, the clone binds it).
+fn cloned(file: &str) {
+    let o = page(file);
+    assert!(
+        !o.rules.iter().any(|r| r == "slot-owner") && !matches!(o.tier, Tier::React { .. }),
+        "{file}: {:?} {:?}",
+        o.tier,
+        o.rules
+    );
+    assert!(o.host_clones > 0, "{file}: no host clone");
+}
+
 fn kept(file: &str) {
     let o = page(file);
     assert!(
@@ -77,26 +97,27 @@ fn kept(file: &str) {
         o.tier,
         o.rules
     );
+    assert_eq!(o.host_clones, 0, "{file}: nothing to own, nothing cloned");
 }
 
 #[test]
 fn state_read_in_the_slot_of_a_native_child_is_refused() {
-    refused("state.tsx");
+    cloned("state.tsx");
 }
 
 #[test]
 fn a_handler_in_the_slot_of_a_native_child_is_refused() {
-    refused("handler.tsx");
+    cloned("handler.tsx");
 }
 
 #[test]
 fn a_list_over_state_in_the_slot_of_a_native_child_is_refused() {
-    refused("loop.tsx");
+    cloned("loop.tsx");
 }
 
 #[test]
 fn a_child_with_changing_props_in_the_slot_is_refused() {
-    refused("linked.tsx");
+    cloned("linked.tsx");
 }
 
 #[test]
@@ -106,7 +127,7 @@ fn a_handler_hoisted_onto_a_slot_child_is_refused() {
 
 #[test]
 fn a_static_wrapper_passing_children_to_a_native_child_is_refused() {
-    refused("wrapped.tsx");
+    cloned("wrapped.tsx");
 }
 
 #[test]
@@ -138,20 +159,30 @@ fn a_wrapper_that_prints_children_outside_the_native_child_stays_lowered() {
 /// state) is the same bypass as reading state: one predicate covers every arm.
 #[test]
 fn a_prop_the_client_changes_in_the_slot_of_a_native_child_is_refused() {
+    // F307: Mid clones the host with the content, its `label` carried in. Mid itself is stateless, so it does not follow
+    // `label` (F323): the page passing a changing value is refused `frozen-prop` instead (served == React: host-specialise
+    // `prop`).
     let o = component("linked-prop.tsx", "mid");
     assert!(
-        o.rules.iter().any(|r| r == "slot-owner"),
+        !o.rules.iter().any(|r| r == "slot-owner") && !matches!(o.tier, Tier::React { .. }),
         "{:?} {:?}",
         o.tier,
         o.rules
     );
-    assert!(matches!(o.tier, Tier::React { .. }), "{:?}", o.tier);
+    assert!(o.host_clones > 0);
+    let p = page("linked-prop.tsx");
+    assert!(
+        p.rules.iter().any(|r| r == "frozen-prop") && matches!(p.tier, Tier::React { .. }),
+        "{:?} {:?}",
+        p.tier,
+        p.rules
+    );
 }
 
 #[test]
 fn a_static_child_linked_here_hosts_its_slot_content_too() {
     // F309: wrong output on main before this (the Thumb never updated, a console warning only).
-    refused("linked-static.tsx");
+    cloned("linked-static.tsx");
     kept("linked-static-const.tsx");
 }
 

@@ -49,6 +49,11 @@ pub struct PassState {
     /// S2: the `loc` of every component instance that is a lowered context Provider (its children are printed under a
     /// Provider frame, which placement judges with the allowlist).
     pub provider_locs: std::collections::BTreeSet<u32>,
+    /// F307: the call sites the frames pass specialises with their slot content (a host child), set by `run_passes` for
+    /// its second run from the call sites the first run refused with `slot-owner`.
+    pub host_spec: BTreeSet<u32>,
+    /// F307: the call sites the children pass refused with `slot-owner` whose child could take the content as a clone.
+    pub host_wanted: BTreeSet<u32>,
 }
 
 /// Something the client chunk runs, with what it reads.
@@ -99,7 +104,38 @@ impl PassState {
 }
 
 /// Runs every pass on `ir` (a structural IR from `analyze_component`).
+///
+/// F307 (option B): where the children pass refuses slot content a child prints inside its own host (`slot-owner`,
+/// F214 / F309), the component is read once more from the same structural IR with those call sites specialised: the
+/// child is cloned for the call site with the content spliced in, so the content's directives are the clone's own. Only
+/// those call sites change; a clone that cannot be made keeps the refusal (and says why).
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
+    let saved = has_slot_content(&ir.template).then(|| ir.clone());
+    let st = run_passes_with(ir, ctx, BTreeSet::new());
+    match saved {
+        Some(again) if !st.host_wanted.is_empty() => {
+            *ir = again;
+            run_passes_with(ir, ctx, st.host_wanted)
+        }
+        _ => st,
+    }
+}
+
+/// Whether the template gives children to a component (the only place a `slot-owner` refusal can arise).
+fn has_slot_content(n: &crate::ir::Node) -> bool {
+    use crate::ir::Node;
+    match n {
+        Node::Component { children, .. } => !children.is_empty(),
+        Node::Element { children, .. } | Node::Fragment(children) => {
+            children.iter().any(has_slot_content)
+        }
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(has_slot_content),
+        Node::For { body, .. } => body.iter().any(has_slot_content),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
+fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<u32>) -> PassState {
     // lucide icons become elements before anything snapshots or places the template (L23).
     icons::inline(ir, ctx);
     // F279: calls of single-return module helpers become their expression, before anything places a value.
@@ -112,6 +148,7 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     // snapshot and placement so every later pass reads them like any prop.
     let provider_locs = {
         let mut tmp = PassState::new(ir);
+        tmp.host_spec = host_spec.clone();
         children::contexts(ir, &mut tmp, ctx)
     };
     ir.structural = Some(Box::new(crate::ir::Structural {
@@ -122,6 +159,7 @@ pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
     }));
     let mut st = PassState::new(ir);
     st.provider_locs = provider_locs;
+    st.host_spec = host_spec;
     placement::place(ir, &mut st, ctx);
     // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);
