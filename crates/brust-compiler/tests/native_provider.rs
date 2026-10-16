@@ -210,6 +210,10 @@ fn a_render_prop_the_provider_only_calls_is_spliced_into_the_clone() {
         "render_guarded.tsx",
         "render_bare.tsx",
         "render_noparams.tsx",
+        // F266: `render(ctx)` with `const ctx = { on }`
+        "render_ctx.tsx",
+        // F269: `!!el.closest('form')` over state is a boolean
+        "render_not.tsx",
     ] {
         let all = compile(file);
         let root = &all[0];
@@ -374,5 +378,48 @@ fn an_as_child_consumer_keeps_its_limits() {
             .find(|d| d.rule == "specialise-unsupported")
             .unwrap_or_else(|| panic!("{file}: {:?}", all[0].ir.diagnostics));
         assert!(info.message.contains(want), "{file}: {}", info.message);
+    }
+}
+
+// F266: a `const` object literal of plain reads spreads as its entries.
+#[test]
+fn a_const_object_literal_is_spread_as_its_entries() {
+    let all = compile("spread_const.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert!(
+        !root.ir.diagnostics.iter().any(|d| d.rule == "spread-props"),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    assert!(root.jinja.contains("data-tone"), "{}", root.jinja);
+}
+
+// F269: a frame field that is a derived value over a prop and state is a member of the clone's own instance.
+#[test]
+fn a_frame_field_derived_from_a_prop_and_state_is_carried_by_the_clone() {
+    let all = compile("derived_frame.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", root.ir.diagnostics);
+}
+
+// Mellow F1 (switch-provider): a const object that is written (at load, through an alias, or in the body) is not its
+// literal: the spread never prints the literal's value.
+#[test]
+fn a_const_object_that_is_written_is_not_spread_as_its_literal() {
+    for file in [
+        "mut_module.tsx",
+        "mut_alias.tsx",
+        "mut_body.tsx",
+        "proto_key.tsx",
+    ] {
+        let all = compile(file);
+        let root = &all[0];
+        assert!(
+            !root.jinja.contains("\"sm\"") && !root.jinja.contains(">sm<"),
+            "{file}: {}",
+            root.jinja
+        );
     }
 }

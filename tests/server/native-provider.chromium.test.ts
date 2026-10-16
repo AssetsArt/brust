@@ -177,8 +177,11 @@ test('a render prop the Provider only calls is spliced into the specialised Prov
   await page.waitForFunction(() => document.querySelector('button')?.hasAttribute('x-data'))
   const mirror = page.locator('input[type="hidden"]')
   expect(await mirror.count()).toBe(0)
+  expect(await page.locator('small').count()).toBe(1)
   await page.getByRole('button', { name: 'toggle' }).click()
   await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'true')
+  // the trigger left the body in state: `!!document.body.closest('form')` is false
+  await page.locator('small').waitFor({ state: 'hidden' })
   expect(await page.locator('input[type="hidden"]').getAttribute('value')).toBe('on')
   await page.getByRole('button', { name: 'toggle' }).click()
   await page.waitForFunction(() => document.querySelector('button')?.getAttribute('aria-pressed') === 'false')

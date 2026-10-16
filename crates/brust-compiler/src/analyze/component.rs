@@ -560,6 +560,7 @@ fn read_function_as(
         !ir.ctx_uses.is_empty() && ir.source.starts_with(crate::analyze::modules::PKG_SRC_DIR);
     ir.provides = std::mem::take(&mut reader.provides);
     ir.render_props = std::mem::take(&mut reader.render_props);
+    ir.safe_objects = reader.names.safe_object_const_names();
     for u in &ir.ctx_uses {
         for f in &u.fields {
             let name = crate::ir::ctx_prop(&u.context, f);

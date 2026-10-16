@@ -252,6 +252,10 @@ pub struct ComponentIR {
     /// B7: the render-prop arrows this component writes on its children, read as templates (see `RenderProp`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub render_props: Vec<RenderProp>,
+    /// F266: the body's `const x = { … }` object literals that are only spread, read by member or handed to a function
+    /// the component was given: a derived value of one of these names stands for its literal.
+    #[serde(skip)]
+    pub safe_objects: Vec<String>,
     /// S2: props of a specialised clone whose value the call site fixes for the life of the instance (a hidden input
     /// that is not client-changing there): reading one is not a client change.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -428,6 +432,7 @@ impl ComponentIR {
             absent_props: Vec::new(),
             provides: Vec::new(),
             render_props: Vec::new(),
+            safe_objects: Vec::new(),
             fixed_props: Vec::new(),
             ctx_uses: Vec::new(),
             ctx_pkg: false,
