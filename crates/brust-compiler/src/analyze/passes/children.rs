@@ -82,6 +82,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .any(|j| matches!(j.kind, crate::ir::JobKind::Precompute)),
         guard_depth: 0,
         slot_depth: 0,
+        mount_once: None,
         state_inits: ir
             .state
             .iter()
@@ -263,6 +264,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     w.node(&mut template);
     ir.repeats_children = w.passes_to_repeater || template_has_for(&template);
     ir.hosts_children = w.passes_to_host;
+    ir.mount_once = w.mount_once.take();
     if !w.fused.is_empty() {
         // R34.96: the job of this component also runs its fused children's jobs: their renamed outputs are its
         // outputs, and the props they read are its inputs (the caller's record maps them, A4).
@@ -418,6 +420,8 @@ struct Walker<'s, 'c> {
     guard_depth: u32,
     /// F277: open component children (slot content): the host may print them conditionally, or once per row.
     slot_depth: u32,
+    /// F295: what makes an instance of this component unable to mount again (`ComponentIR::mount_once`).
+    mount_once: Option<String>,
     /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
     state_inits: HashMap<String, Expr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
@@ -3696,6 +3700,22 @@ impl Walker<'_, '_> {
     }
 
     /// Mirrors `lower::template::expr_reactive`.
+    /// F295: the deps of a prop value `v` passed to `<name>` as they stay while this instance lives: snapshot cells
+    /// (read as their value at mount) do not change, so they do not link the child. Leaving them out is right only if
+    /// this component mounts once, which it then asks of its callers (`mount_once`).
+    fn deps_while_mounted(&mut self, v: &Expr, name: &str, k: &str) -> Deps {
+        let mut d = self.deps_of(v);
+        if !matches!(v, Expr::Raw(_) | Expr::Server(_)) || !d.reactive() || d.changes_after_mount()
+        {
+            return d;
+        }
+        d.state.clear();
+        self.mount_once.get_or_insert_with(|| {
+            format!("<{name}> gets `{k}`, a value taken once at mount, with no link")
+        });
+        d
+    }
+
     fn reads_state(&self, e: &Expr) -> bool {
         match e {
             Expr::Precomputed {
@@ -4489,12 +4509,36 @@ impl Walker<'_, '_> {
                 } else {
                     BTreeSet::new()
                 };
-                let need = instance_needs_link(
-                    &child.tier,
-                    kept.iter()
-                        .filter(|(k, v)| !(snapshot.contains(k) && self.same_at_every_mount(v)))
-                        .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
-                );
+                // F295: the child prints a value it took at mount where the client never re-applies it. Here it mounts
+                // with this component and never again, so this component inherits the promise from its own callers;
+                // anywhere else a later mount would print the server's value where React takes the current one.
+                if let Some(what) = child.ir.as_deref().and_then(|c| c.mount_once.as_deref()) {
+                    if self.guard_depth == 0 && self.loop_scope.is_empty() && self.slot_depth == 0 {
+                        self.mount_once
+                            .get_or_insert_with(|| format!("<{name}> → {what}"));
+                    } else {
+                        self.diagnostics.push(Diagnostic::fallback(
+                            "snapshot-remount",
+                            format!("<{name}> → {what}; here <{name}> can mount again after the first paint (under a condition, in a row or in slot content), when React would take the value current then"),
+                            *loc,
+                            "render it where it mounts once with this component, or keep this component in React",
+                        ));
+                    }
+                }
+                let link_props: Vec<(bool, Deps)> = kept
+                    .iter()
+                    .filter(|(k, v)| !(snapshot.contains(k) && self.same_at_every_mount(v)))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (
+                            matches!(v, Expr::ClientOnly { .. }),
+                            self.deps_while_mounted(&v, name, &k),
+                        )
+                    })
+                    .collect();
+                let need = instance_needs_link(&child.tier, link_props);
                 if need == LinkNeed::Always && child.prop_precompute {
                     // Fail closed (F96d): the child computed values from its props once, on the
                     // server; a linked prop that changes would leave them stale with no warning.
@@ -5553,13 +5597,21 @@ impl Walker<'_, '_> {
             return (dropped, unbound);
         }
         // Bound on the child's element, so the instance must paint once: no link for the rest.
-        let need = instance_needs_link(
-            &child.tier,
-            props
-                .iter()
-                .filter(|(k, _)| !want.contains(k) && !dropped.contains(k) && !live.contains(k))
-                .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
-        );
+        let rest: Vec<(String, Expr)> = props
+            .iter()
+            .filter(|(k, _)| !want.contains(k) && !dropped.contains(k) && !live.contains(k))
+            .cloned()
+            .collect();
+        let rest: Vec<(bool, Deps)> = rest
+            .iter()
+            .map(|(k, v)| {
+                (
+                    matches!(v, Expr::ClientOnly { .. }),
+                    self.deps_while_mounted(v, name, k),
+                )
+            })
+            .collect();
+        let need = instance_needs_link(&child.tier, rest);
         if need != LinkNeed::None {
             let why = match need {
                 LinkNeed::RowOnly => format!(
@@ -5684,6 +5736,13 @@ impl Walker<'_, '_> {
             if !live {
                 continue;
             }
+            // F295: a value that reads state only through snapshot cells (cells nothing sets, read as their value at
+            // mount) never changes while the instance lives: printed once through the spread, it is right as long as
+            // the instance mounts once, which its callers must promise (`mount_once`).
+            let snapshot_only = match v {
+                Expr::Raw(_) | Expr::Server(_) => !self.deps_of(v).changes_after_mount(),
+                _ => false,
+            };
             // Props spread in carry keys known only at render: a linked instance next to them could
             // repaint an attribute the spread set.
             // F278: a prop the compiler wrote (`__ctx_…`, `__in_…`) AFTER the last spread is not replaced by it (React:
@@ -5696,6 +5755,14 @@ impl Walker<'_, '_> {
                     .is_none_or(|(spread, at)| spread < at);
             if k == crate::ir::SPREAD_KEY || (spreads_in && !after_spreads) || child.spread.lands(k)
             {
+                if snapshot_only {
+                    self.mount_once.get_or_insert_with(|| {
+                        format!(
+                            "<{name}> gets `{k}`, a value taken once at mount, through a spread"
+                        )
+                    });
+                    continue;
+                }
                 let function = matches!(v, Expr::ClientOnly { .. });
                 if function && crate::analyze::jsx::event_name(k).is_none() {
                     // R34.19: not an event, so no element binding can stand for it (a render prop).
