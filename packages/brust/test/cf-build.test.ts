@@ -80,7 +80,7 @@ test('an island whose component its module does not export builds for Cloudflare
   // `Helper` is a React island (useReducer) that nothing exports: the Worker bundle re-bundles jobs.ts and must expose it.
   writeFileSync(
     join(dir, 'Home.tsx'),
-    "import { useReducer } from 'react'\n\nfunction Helper({ label }: { label: string }) {\n  const [n, hit] = useReducer((x: number) => x + 1, 0)\n  return <button type=\"button\" onClick={() => hit()}>{label} {n}</button>\n}\n\nexport default function Home() {\n  return <main><Helper label=\"helper\" /></main>\n}\n",
+    "import { useReducer, useTransition } from 'react'\n\nfunction Helper({ label }: { label: string }) {\n  useTransition(); const [n, hit] = useReducer((x: number) => x + 1, 0)\n  return <button type=\"button\" onClick={() => hit()}>{label} {n}</button>\n}\n\nexport default function Home() {\n  return <main><Helper label=\"helper\" /></main>\n}\n",
   )
   const out = join(outDir(), 'dist')
   const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])
@@ -97,7 +97,7 @@ test('an island that revives lowered children, one of them an unexported static 
   // by its binding to revive the tree, so the Worker bundle (which re-bundles jobs.ts) must expose it as well.
   writeFileSync(
     join(dir, 'Home.tsx'),
-    "import { useReducer } from 'react'\n\nfunction Inner({ n }: { n: number }) {\n  return <i>{n}</i>\n}\n\nfunction Box({ children }: { children?: React.ReactNode }) {\n  const [n, hit] = useReducer((x: number) => x + 1, 0)\n  return <div><button type=\"button\" onClick={() => hit()}>{n}</button>{children}</div>\n}\n\nexport default function Home() {\n  return <main><Box><Inner n={7} /></Box></main>\n}\n",
+    "import { useReducer, useTransition } from 'react'\n\nfunction Inner({ n }: { n: number }) {\n  return <i>{n}</i>\n}\n\nfunction Box({ children }: { children?: React.ReactNode }) {\n  useTransition(); const [n, hit] = useReducer((x: number) => x + 1, 0)\n  return <div><button type=\"button\" onClick={() => hit()}>{n}</button>{children}</div>\n}\n\nexport default function Home() {\n  return <main><Box><Inner n={7} /></Box></main>\n}\n",
   )
   const out = join(outDir(), 'dist')
   const r = brust(dir, ['build', 'routes.tsx', '--target', 'cloudflare', '--out-dir', out])

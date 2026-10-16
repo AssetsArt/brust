@@ -187,12 +187,13 @@ fn local_and_external_components() {
         .collect();
     assert_eq!(tiers[0], ("Item", Tier::Static));
     assert!(matches!(tiers[1], ("Button", Tier::React { .. })));
-    assert!(matches!(tiers[2], ("Arrow", Tier::React { .. })));
+    // F284: an arrow-const component is read like a function declaration, so it is no longer a `local-component`.
+    assert_eq!(tiers[2], ("Arrow", Tier::Static));
     let rules: Vec<_> = ir.diagnostics.iter().map(|d| d.rule.as_str()).collect();
     assert!(rules.contains(&"external-component"), "{rules:?}");
-    assert!(rules.contains(&"local-component"), "{rules:?}");
-    // local-component makes the parent React; external-component alone would not.
-    assert!(matches!(ir.tier, Tier::React { .. }));
+    assert!(!rules.contains(&"local-component"), "{rules:?}");
+    // external-component alone does not make the parent React.
+    assert!(!matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
     let only_external = analyze(
         "import { Button } from '@ui/button'\nexport default function P() { return <div><Button label=\"x\" /></div> }",
     );

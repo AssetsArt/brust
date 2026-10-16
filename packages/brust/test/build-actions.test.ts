@@ -132,7 +132,7 @@ test('a literal route under the prefix is refused; a root catch-all is not', asy
 
 const ISLAND_ROUTES = `import { defineRoutes } from '@brust/core/routes'\nimport Island from './Island'\nexport const routes = defineRoutes([{ path: '/', Component: Island, loader: () => ({ label: 'x' }) }])\n`
 const ISLAND = (imp: string, use: string) =>
-  `import { useReducer } from 'react'\n${imp}\nexport default function Island(props: { label: string }) {\n  const [n, bump] = useReducer((x: number) => x + 1, 0)\n  return <b onClick={() => { bump(); console.log(${use}) }}>{props.label}:{n}</b>\n}\n`
+  `import { useReducer, useTransition } from 'react'\n${imp}\nexport default function Island(props: { label: string }) {\n  useTransition(); const [n, bump] = useReducer((x: number) => x + 1, 0)\n  return <b onClick={() => { bump(); console.log(${use}) }}>{props.label}:{n}</b>\n}\n`
 
 test('a react island importing the actions module (value) fails with server-only-in-client', async () => {
   const dir = app({

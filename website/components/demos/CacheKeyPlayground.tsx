@@ -1,6 +1,6 @@
 // Demo (client-only): the cache-key rules of the server, evaluated in the browser by lib/cache-key.ts. Pick an example or type an expression,
 // describe a request, and see the evaluated prefix and the key parts (or the parse error, or BYPASS).
-import { useReducer } from 'react'
+import { useReducer, useTransition } from 'react'
 import { evaluatePlayground } from '../../lib/cache-key'
 
 export interface Preset {
@@ -18,7 +18,7 @@ export interface Preset {
 type Form = Omit<Preset, 'id' | 'label'> & { env: string }
 type Action = { set: keyof Form; value: string } | { preset: Preset }
 
-// One reducer holds the whole form. (useReducer is a hook the native tier does not compile, so this stays a React island: the evaluation
+// One reducer holds the whole form. (useTransition, a hook the native tier does not compile, keeps this a React island: the evaluation
 // below is a call into lib/cache-key.ts and has to run in the browser on every keystroke.)
 function reduce(f: Form, a: Action): Form {
   if ('preset' in a) {
@@ -34,6 +34,7 @@ function initial(presets: Preset[]): Form {
 }
 
 export default function CacheKeyPlayground({ presets }: { presets: Preset[] }) {
+  useTransition() // keeps this a React island: the native tier does not compile it
   const [f, dispatch] = useReducer(reduce, presets, initial)
   const r = evaluatePlayground(f)
   return (

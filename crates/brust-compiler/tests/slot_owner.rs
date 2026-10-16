@@ -1,7 +1,8 @@
 //! F214: slot content printed under a native child's host element is bound by that child's instance, so a directive of the
 //! caller in it (a handler, a binding that reads the caller's state, a list, a linked child) read the child's members: wrong
 //! output with no diagnostic. The caller stays on React with the named fallback `slot-owner`; static slot content,
-//! content the child never prints, and a static child (no host of its own) are unaffected.
+//! content the child never prints, and a static child (no host of its own) are unaffected. F309: a static child LINKED
+//! at the call site has a host of its own there, so the same holds for it.
 use brust_compiler::analyze::component::AnalyzeOptions;
 use brust_compiler::ir::{DiagClass, Tier};
 use brust_compiler::lower::DEFAULT_RUNTIME_IMPORT;
@@ -145,4 +146,11 @@ fn a_prop_the_client_changes_in_the_slot_of_a_native_child_is_refused() {
         o.rules
     );
     assert!(matches!(o.tier, Tier::React { .. }), "{:?}", o.tier);
+}
+
+#[test]
+fn a_static_child_linked_here_hosts_its_slot_content_too() {
+    // F309: wrong output on main before this (the Thumb never updated, a console warning only).
+    refused("linked-static.tsx");
+    kept("linked-static-const.tsx");
 }
