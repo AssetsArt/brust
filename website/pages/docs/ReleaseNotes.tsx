@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-16', title: '2.0.0-alpha.16' },
       { id: 'alpha-15', title: '2.0.0-alpha.15' },
       { id: 'alpha-14', title: '2.0.0-alpha.14' },
       { id: 'alpha-13', title: '2.0.0-alpha.13' },
@@ -38,6 +39,118 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-16">2.0.0-alpha.16 · 16 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.15: #260–#285 (wave A 2c-1, 2c-2a, 2c-2b, 3a, 3b, S2; switch blockers F266/F269/F278/F279/F277; resolver F241–F245, F256, F272, F273; F205, F230, F232–F234, F147, F213, F223, F237, F248, F255; shadcn init F192/F193, F226–F228, F249, F251–F253, F261) */}
+      <p>Relative imports are now confined to the app root, with a new setting for monorepos, and context Providers that hold state compile to native code. Several cases where the compiled JavaScript broke in the browser are fixed.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #265 (wave A PR 2c-2a, call-site specialisation) and PR #278 (F262, S2 hidden inputs) */}
+        <li>
+          <strong>A context Provider whose value holds state compiles to native code.</strong> A Provider built with <code>createContext</code>, <code>useState</code>, handlers and <code>useId</code> gets its own copy for each place it is used, so the components that read it bind to that copy, with no React island. The content you pass inside the Provider can read the calling component&rsquo;s props, state, locals and handlers. When brust cannot prove a case, the Provider stays a React island and the build prints <code>specialise-unsupported</code> with the reason; the rest of the page is unaffected.
+        </li>
+        {/* source: PR #270 (wave A PR 2c-2b, ruling Q5) */}
+        <li>
+          <strong><code>asChild</code> works on a component that reads the enclosing native Provider.</strong> In <code>&lt;CollapsibleTrigger asChild&gt;&lt;a /&gt;&lt;/CollapsibleTrigger&gt;</code>, the trigger&rsquo;s toggle handler, <code>aria-expanded</code> and <code>data-state</code> move onto the <code>&lt;a&gt;</code>, and the child&rsquo;s own props win, as in Radix&rsquo;s Slot. A handler written on the trigger or on the child, an <code>asChild</code> component outside any Provider, and a component child that spreads its props render with React.
+        </li>
+        {/* source: PR #263 (wave A PR 2c-1, R34.120); PR #268 (F235, F236) */}
+        <li>
+          <strong><code>useId()</code> inside an expression compiles.</strong> A call that runs on every render, such as <code>contentId={'{'}useId(){'}'}</code> in a JSX prop, now compiles. A call that runs only sometimes (a ternary branch, the right side of <code>&amp;&amp;</code>, <code>||</code>, <code>??</code> or <code>||=</code>, a <code>.map</code> callback, a nested function) or a call in a <code>key</code> renders with React.
+        </li>
+        {/* source: PRs #273 (F268), #276 (wave A PR 3a, B1–B5), #277 (PR 3b, B7), #281 (F266, F269), #282 (F278, F279), #285 (F277); docs/shadcn-coverage.md switch row unchanged */}
+        <li>
+          <strong>More of Radix&rsquo;s Switch compiles as written.</strong> Callback refs, render props, object spreads in values, an exported <code>useLayoutEffect</code> alias guarded by a <code>document</code> check, a spread of a local constant object into a Provider, Provider values derived from its state, and calls to module helpers that only return a plain value now compile, and state that nothing ever sets is read as a constant. The shadcn <code>switch</code> page itself does not change yet: it still loads one React island (89 KiB).
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #284 (F230, closes F219) */}
+        <li>
+          <strong>A value another module changes at load time renders like React.</strong> If one app module changed another module&rsquo;s exported object when it loaded (<code>LABELS.a = &quot;patched&quot;</code>), the page showed the declared value with no warning. Components that read such a value now render with React, and the output is the same as React&rsquo;s. Modules that only read the value stay compiled.
+        </li>
+        {/* source: PR #285 (F277) */}
+        <li>
+          <strong>A style object built from a parent&rsquo;s props stays up to date.</strong> A child element with <code>style={'{'}{'{'} ...props.style, k: v {'}'}{'}'}</code> or <code>Object.assign({'{'}{'}'}, ...)</code> could keep an old style after the parent changed. It now updates in the browser, and keys keep JavaScript&rsquo;s order, so in <code>{'{'} marginTop: 5, margin: 0 {'}'}</code> the later key wins, as in React. An element that appears later (under a condition or in a list) starts from the parent&rsquo;s current values.
+        </li>
+        {/* source: PR #272 (F233, F247, F257) */}
+        <li>
+          <strong>Components with names like brust&rsquo;s generated code work in the browser.</strong> A binding such as <code>signal</code>, <code>computed</code>, <code>props</code> or <code>_c1</code> clashed with a name brust generates, so the server page looked right but the component did nothing in the browser. Generated names now avoid every name the component uses.
+        </li>
+        {/* source: PR #267 (F147) */}
+        <li>
+          <strong>A variable named like a generated handler (<code>_h1</code>) no longer breaks the page.</strong> The wrong handler could run, or the JavaScript failed with a <code>SyntaxError</code>.
+        </li>
+        {/* source: PR #264 (F232) */}
+        <li>
+          <strong>A component variable named <code>a</code> works inside an event handler.</strong> The generated handler wrapper hid it (for example <code>const a = useRef(null)</code>).
+        </li>
+        {/* source: PR #264 (F234) */}
+        <li>
+          <strong>A prop you leave out takes its default.</strong> In a compiled child component, <code>{'{'} defaultOpen = false {'}'}</code> did not apply after hydration when the caller omitted <code>defaultOpen</code>, so an attribute such as <code>aria-expanded</code> disappeared. An omitted prop and an explicit <code>undefined</code> now take the default, as in React. An explicit <code>null</code> stays <code>null</code>.
+        </li>
+        {/* source: PR #265 (F248) */}
+        <li>
+          <strong>A context value used inside an effect or a handler no longer throws a <code>ReferenceError</code>.</strong> Such a component now renders with React.
+        </li>
+        {/* source: PR #268 (F237) and PR #283 (F255) */}
+        <li>
+          <strong>Hooks called in unusual ways no longer produce broken JavaScript.</strong> <code>(0, useId)()</code> and <code>(0, useState)(...)</code> compile as the hook. <code>useId.call(null)</code>, <code>.apply(...)</code> and any other use of a React hook that is not a direct call render with React.
+        </li>
+        {/* source: PR #264 (F223) */}
+        <li>
+          <strong>Cloudflare Worker builds resolve packages for Workers.</strong> The Worker bundle resolved packages with Bun&rsquo;s conditions instead of the <code>browser</code> and <code>workerd</code> ones, so it could pick the wrong build of a package.
+        </li>
+        {/* source: PR #269 (F244) */}
+        <li>
+          <strong>A package that imports <code>.</code> or <code>..</code> resolves to the directory&rsquo;s index file.</strong> It resolved to the package&rsquo;s own entry.
+        </li>
+        {/* source: PR #261 (F213) */}
+        <li>
+          <strong>Boolean attributes on custom elements match React.</strong> On a tag with a <code>-</code>, the server HTML and the browser now pass attributes through the way React does.
+        </li>
+      </ul>
+
+      <h3>Security</h3>
+      <ul>
+        {/* source: PR #261 (F192, F193), #266 (F226–F228), #271 (F249, F251, F253), #275 (F261); reviewed by Mellow */}
+        <li>
+          <strong><code>brust shadcn init</code> checks where the shadcn CLI will write before it runs it.</strong> It reads the <code>components.json</code> aliases the way the CLI does, through the <code>tsconfig.json</code> <code>extends</code> chain, and refuses a target outside the project or behind a symbolic link. A registry URL item is fetched and checked the same way first, and resolver variables such as <code>TS_NODE_PROJECT</code> are removed from the CLI&rsquo;s environment. A URL item&rsquo;s <code>registryDependencies</code> and npm <code>dependencies</code> are not checked.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #269 (F243, behaviour change), #274 (F256), #283 (F272), #280 (F273); the Configuration page documents the key */}
+        <li>
+          <strong>Relative imports that leave the app root fail the build. Monorepos list shared directories in <code>[build] source_roots</code>.</strong> An import such as <code>../../shared/Button</code> now fails with <code>unresolved-import</code> (&ldquo;it leaves the app root&rdquo;). Add <code>source_roots = [&quot;../shared&quot;]</code> under <code>[build]</code> in <code>brust.toml</code>, and both the compiler and the bundler read that directory. An entry that is the app root or contains it (<code>.</code>, <code>..</code>) is refused: list the shared directory itself. <code>brust dev</code> rebuilds when a file in a listed directory changes. See <a href="/docs/configuration">Configuration</a>.
+        </li>
+        {/* source: PR #269 (F242) */}
+        <li>
+          <strong>The client and Cloudflare Worker bundles fail the build when brust cannot resolve a package import for the browser.</strong> Before, brust fell back to Bun&rsquo;s resolver, which could pick a Node-only build of the package. The <code>resolve-fallback</code> error names the import, the file that imports it and the reason. Builds for Bun keep the warning.
+        </li>
+        {/* source: PR #275 (F261) and #271 (F251); code: packages/brust/src/shadcn/init.ts resolveAlias */}
+        <li>
+          <strong><code>brust shadcn init</code> accepts only <code>@/...</code> and <code>~/...</code> aliases.</strong> Any other alias in <code>components.json</code>, including one shaped like a package name (<code>@scope/name</code>), is refused with the reason, because the shadcn CLI can resolve it to a workspace package instead of your <code>tsconfig.json</code> paths. Rename such aliases to <code>@/...</code> or <code>~/...</code>.
+        </li>
+        {/* source: PR #266 (F226), #271 (F252) */}
+        <li>
+          <strong>New dependency: <code>tsconfig-paths</code> 4.2.0</strong>, pinned exactly in <code>@brust/core</code>. It is the resolver the shadcn CLI uses, and only <code>brust shadcn</code> loads it.
+        </li>
+        {/* source: PR #262 */}
+        <li>
+          <strong>The pokedex template uses a global <code>app.css</code>, like the blank template.</strong> The layout imports <code>app.css</code> (Tailwind CSS v4), and brust builds it into one hashed stylesheet that each page links once. The prebuilt <code>public/app.css</code> and the step that regenerated it are gone, and <code>brust dev</code> swaps the stylesheet without a reload. The pages look the same.
+        </li>
+        {/* source: PR #260 (F205) */}
+        <li>
+          <strong>More children under plain wrappers compile again.</strong> Some children that rendered with React since alpha.14 compile again when brust can prove they are plain values: expressions over strings, numbers and booleans, fields of a module constant that is never changed, and calls to built-in methods that do not change their value.
+        </li>
+        {/* source: PR #265 (not in this PR: collapsible), ledger F229 (Presence); docs/shadcn-coverage.md collapsible row: react */}
+        <li>
+          <strong>The shadcn <code>collapsible</code> page still renders with React.</strong> Radix&rsquo;s <code>Presence</code> component, which mounts and unmounts the collapsible content, does not compile yet, so it stays a React island for now.
+        </li>
+      </ul>
 
       <h2 id="alpha-15">2.0.0-alpha.15 · 15 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.14: #253–#258 (F200/F203, F198/F199, F197, F214, F188/F189, F215/F219) */}

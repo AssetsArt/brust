@@ -525,7 +525,9 @@ export function exposePlugin(compiled: Map<string, Compiled>): BunPlugin {
 /** The island entry of a react-tier component: registers `(host, props) => …` under its id. A
  * `client_only` component was never server-rendered (its host is empty), so it mounts with
  * `createRoot`; hydrating it would fail (React #418). Everything else hydrates the SSR markup. */
-export function islandShim(c: Compiled, compiled?: Map<string, Compiled>, routeRoots?: ReadonlySet<string>): string {
+/** `writers` (F230): app modules that write another module's exports when they load; imported first, so the island
+ * hydrates from what the app's React render saw. */
+export function islandShim(c: Compiled, compiled?: Map<string, Compiled>, routeRoots?: ReadonlySet<string>, writers: string[] = []): string {
   const clientOnly = c.ir.tier?.React?.client_only === true
   const nested = compiled && nestedOf(compiled, c.id, routeRoots)
   const element = nested ? `__mk(Comp, props, ${JSON.stringify(xOf(compiled!, c.id))}, ${JSON.stringify(holesOf(compiled!, c.id))})` : 'createElement(Comp, props)'
@@ -541,10 +543,16 @@ export function islandShim(c: Compiled, compiled?: Map<string, Compiled>, routeR
       reviveSource(`{ ${comps.map((n, i) => `${JSON.stringify(n.id)}: N${i}`).join(', ')} }`)
   }
   return (
+    writerImports(writers) +
     `import { ${api} } from 'react-dom/client'\nimport { createElement } from 'react'\n${componentImport(c, 'Comp')}\n${head}` +
     `;((globalThis as any).__brustIslands ||= []).push([${JSON.stringify(c.id)}, (host: Element, props: any) => { ${mount} }])\n` +
     `;(globalThis as any).__brustIslandReady?.()\n`
   )
+}
+
+/** F230: side-effect imports of the load-time writer modules (absolute paths), in a stable order. */
+function writerImports(writers: string[]): string {
+  return [...new Set(writers)].map((w) => `import ${JSON.stringify(w)}\n`).join('')
 }
 
 /** One island chunk per react-tier component (`react-<id>-<hex>.js`, contract 3), React split
@@ -564,11 +572,22 @@ export function islandEntries(compiled: Map<string, Compiled>): Compiled[] {
   return [...compiled.values()].filter((c) => isReact(c) && (!c.ir.external || placed.has(c.id)))
 }
 
-export async function buildReactChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls, routeRoots?: ReadonlySet<string>): Promise<Map<string, string>> {
+/** `writersFor` (F230): the load-time writer modules an island's chunk must import first, from the app files the
+ * island's code is (its component, and the components it revives); none when absent. */
+export async function buildReactChunks(
+  dist: string,
+  compiled: Map<string, Compiled>,
+  ctx: BrowserCtx,
+  runtimeUrl: RuntimeUrls,
+  routeRoots?: ReadonlySet<string>,
+  writersFor?: (c: Compiled, files: string[]) => string[],
+): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   for (const c of islandEntries(compiled)) {
     const file = join(dist, '.stage', 'react', `react-${c.id}.tsx`)
-    write(file, islandShim(c, compiled, routeRoots))
+    const own = [c, ...(nestedOf(compiled, c.id, routeRoots) ?? []).flatMap((id) => compiled.get(id) ?? [])]
+    const files = own.filter((n) => !(n.ir.external ?? n.ir.dist)).map((n) => n.file)
+    write(file, islandShim(c, compiled, routeRoots, writersFor?.(c, files) ?? []))
     stage(ctx.sourceOf, file, c)
     entrypoints.push(file)
   }
@@ -658,8 +677,10 @@ export async function buildJobs(
   routeRoots?: ReadonlySet<string>,
   /** F183 (`reachedJobs`): only these entries are written; every one when absent. */
   reached?: { planned: ReadonlySet<string>; ssr: ReadonlySet<string> },
+  /** F230: app modules that write another module's exports when they load: imported first (see `islandShim`). */
+  writers: string[] = [],
 ): Promise<void> {
-  const imports: string[] = ["import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"]
+  const imports: string[] = [writerImports(writers).trimEnd(), "import { createElement } from 'react'", "import { renderToString } from 'react-dom/server'"].filter((l) => l !== '')
   const entries: string[] = []
   const storePaths = [...new Set(stores)].sort()
   for (const [i, p] of storePaths.entries()) {

@@ -4,7 +4,7 @@ import { whenBehavior } from './registry'
 import { bindHost } from './directives/index'
 import { insideRaw } from './directives/common'
 import { warnOnce } from './warn'
-import { bindPropsFromParent } from './props-bind'
+import { bindPropsFromParent, initialProps } from './props-bind'
 
 let observer: MutationObserver | null = null
 
@@ -15,13 +15,20 @@ function readProps(host: HTMLElement): Record<string, unknown> {
   catch { warnOnce(`j:${host.outerHTML.slice(0, 80)}`, `bad x-props JSON in ${host.getAttribute('x-data')}`); return {} }
 }
 
+function sameJson(a: unknown, b: unknown): boolean {
+  try { return JSON.stringify(a) === JSON.stringify(b) } catch { return false }
+}
+
 function mountHost(host: HTMLElement): void {
   if (instances.has(host) || !host.isConnected) return
   const name = host.getAttribute('x-data')!
   whenBehavior(name, (factory) => {
     if (instances.has(host) || !host.isConnected) return
     const parent = nearestInstance(host)
-    const inst = new Instance(host, name, parent, readProps(host))
+    const printed = readProps(host)
+    const props = initialProps(host, parent, printed)
+    const inst = new Instance(host, name, parent, props)
+    inst.reseeded = props !== printed && !sameJson(props, printed)
     instances.set(host, inst)
     try { inst.init(factory) } catch (e) { console.error(`[brust] init threw: ${name}`, e); inst.dispose(); instances.delete(host); return }
     bindHost(inst, host, {})

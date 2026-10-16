@@ -922,7 +922,11 @@ fn spread_source(r: &mut Reader<'_, '_>, value: &js_ast::Expr, host: bool) -> Sp
         // F266: on a component, a `const` holding an object literal of plain reads spreads as that literal (the names it reads are
         // consts of the same render, so reading them here is reading them where the object was built).
         E::EIdentifier(id) if !host && r.names.object_const(id.ref_).is_some() => {
-            match r.names.object_const(id.ref_).and_then(plain_object) {
+            match r
+                .names
+                .object_const(id.ref_)
+                .and_then(|o| plain_object(o, r.names))
+            {
                 Some(entries) => Spread::Literal(entries),
                 None => Spread::Other,
             }
@@ -947,16 +951,29 @@ fn spread_source(r: &mut Reader<'_, '_>, value: &js_ast::Expr, host: bool) -> Sp
 
 /// The entries of an object literal whose keys are plain strings and whose values are reads with no effect (an
 /// identifier, a member path of one, a literal): what a spread or an argument may stand for.
-fn plain_object(e: js_ast::Expr) -> Option<Vec<(String, js_ast::Expr)>> {
-    fn read(e: &js_ast::Expr) -> bool {
+/// F280: also a conditional over such reads, and a call of a module function `plain_fn` proves effect-free over such
+/// reads (Radix's `isIndeterminate(defaultChecked) ? false : defaultChecked`): reading it where the object is spread
+/// instead of where it was built changes nothing.
+fn plain_object(
+    e: js_ast::Expr,
+    names: &crate::analyze::names::NameTable<'_>,
+) -> Option<Vec<(String, js_ast::Expr)>> {
+    fn read(e: &js_ast::Expr, names: &crate::analyze::names::NameTable<'_>) -> bool {
         match &e.data {
+            E::EIf(i) => read(&i.test, names) && read(&i.yes, names) && read(&i.no, names),
+            E::ECall(c) => {
+                c.optional_chain.is_none()
+                    && !c.was_jsx_element
+                    && matches!(&c.target.data, E::EIdentifier(id) if names.is_plain_fn(id.ref_))
+                    && c.args.iter().all(|a| read(a, names))
+            }
             E::EIdentifier(_)
             | E::EString(_)
             | E::ENumber(_)
             | E::EBoolean(_)
             | E::ENull(_)
             | E::EUndefined(_) => true,
-            E::EDot(d) => d.optional_chain.is_none() && read(&d.target),
+            E::EDot(d) => d.optional_chain.is_none() && read(&d.target, names),
             _ => false,
         }
     }
@@ -975,7 +992,7 @@ fn plain_object(e: js_ast::Expr) -> Option<Vec<(String, js_ast::Expr)>> {
             || p.flags.contains(js_ast::flags::Property::IsComputed)
             // N1: `__proto__: x` in a literal sets the prototype, it is not an entry
             || k.slice8() == b"__proto__"
-            || !read(v)
+            || !read(v, names)
         {
             return None;
         }

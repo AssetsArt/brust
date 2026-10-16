@@ -128,6 +128,9 @@ pub struct AnalyzeOptions {
     /// F153c (R34.61): the package sources the build wrote (`packages/brust/src/build/pkg-src.ts`); empty = a
     /// package import is the React island of its export, as before.
     pub packages: PackageSources,
+    /// F230: the exports of app modules another app module writes (`load_writes::scan`, once per build); `None` = not
+    /// scanned (a single-file compile), nothing is refused for it.
+    pub load_writes: Option<std::sync::Arc<crate::analyze::load_writes::LoadWrites>>,
 }
 
 /// Where a bare import resolves to package SOURCE (F153c, R34.61): per importing scope (`""` = the app, else

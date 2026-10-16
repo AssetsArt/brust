@@ -109,3 +109,101 @@ fn the_right_side_of_a_logical_assignment_is_not_hoisted() {
         assert_eq!(a.use_id_slots, 0, "{op}");
     }
 }
+
+#[test]
+fn a_hook_called_through_call_apply_or_bind_is_refused_by_name() {
+    // F255: `useId.call(null)` compiled Native with a variable nothing binds (no diagnostic, no id slot).
+    for (src, rule) in [
+        (
+            "const id = useId.call(null); return <label htmlFor={id}>x<input id={id} /></label>",
+            "hook-unsupported",
+        ),
+        (
+            "const id = useId.apply(null, []); return <p id={id}>x</p>",
+            "hook-unsupported",
+        ),
+        (
+            "const id = useId.bind(null)(); return <p id={id}>x</p>",
+            "hook-in-expression",
+        ),
+        (
+            "return <p aria-describedby={useId.call(null)}>x</p>",
+            "hook-in-expression",
+        ),
+        (
+            "const [n, setN] = useState.call(null, 1); return <button onClick={() => setN(n + 1)}>{n}</button>",
+            "hook-unsupported",
+        ),
+    ] {
+        let a = ir(&format!("{PRE}export default function F() {{ {src} }}"));
+        assert!(rules(&a).contains(&rule), "{src}: {:?}", a.diagnostics);
+        assert_eq!(a.use_id_slots, 0, "{src}");
+    }
+    // The namespace spelling and a custom hook go the same way.
+    let a = ir(
+        "import React from 'react'\nexport default function F() { const id = React.useId.call(null); return <p id={id}>x</p> }",
+    );
+    assert!(
+        rules(&a).contains(&"hook-unsupported"),
+        "{:?}",
+        a.diagnostics
+    );
+    // The plain call is untouched.
+    let a = ir(&format!(
+        "{PRE}export default function F() {{ const id = useId(); return <p id={{id}}>x</p> }}"
+    ));
+    assert!(a.diagnostics.is_empty(), "{:?}", a.diagnostics);
+    assert_eq!(a.use_id_slots, 1);
+}
+
+#[test]
+fn a_react_hook_read_as_a_value_is_refused_by_name() {
+    // F255 round 1: an alias, a computed `call`, `Reflect.apply` or an argument reach the hook through a spelling the
+    // reader cannot see; the precompute job would call it outside a render. Each is a native component otherwise
+    // (state + handler), so the refusal is what keeps it React.
+    for body in [
+        "const u = useId; const id = u(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = useId['call'](null); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = Reflect.apply(useId, null, []); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = [useId].map((f) => f())[0]; return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+    ] {
+        let src =
+            format!("{PRE}export default function F() {{ const [n, setN] = useState(0); {body} }}");
+        let a = ir(&src);
+        assert!(
+            rules(&a).contains(&"hook-unsupported"),
+            "{body}: {:?}",
+            a.diagnostics
+        );
+    }
+    // The namespace import: `const u = React.useId`, `React['useId']`, a computed member.
+    for body in [
+        "const u = React.useId; const id = u(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = React['useId'](); const j = React['useId']; return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const k = 'useId'; const u = React[k]; return <button onClick={() => setN(n + 1)} id={u()}>{n}</button>",
+    ] {
+        let src = format!(
+            "import React, {{ useState }} from 'react'\nexport default function F() {{ const [n, setN] = useState(0); {body} }}"
+        );
+        let a = ir(&src);
+        assert!(
+            rules(&a).contains(&"hook-unsupported"),
+            "{body}: {:?}",
+            a.diagnostics
+        );
+    }
+    // What stays read: direct calls, the comma call, `React.useX()`, `?.()`, and a non-hook member of React.
+    for body in [
+        "const id = useId(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = (0, useId)(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = React.useId(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const id = useId?.(); return <button onClick={() => setN(n + 1)} id={id}>{n}</button>",
+        "const v = React.version; return <button onClick={() => setN(n + 1)} title={v}>{n}</button>",
+    ] {
+        let src = format!(
+            "import React, {{ useState, useId }} from 'react'\nexport default function F() {{ const [n, setN] = useState(0); {body} }}"
+        );
+        let a = ir(&src);
+        assert!(a.diagnostics.is_empty(), "{body}: {:?}", a.diagnostics);
+    }
+}

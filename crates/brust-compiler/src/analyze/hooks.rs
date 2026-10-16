@@ -175,6 +175,15 @@ fn hook_target(target: &js_ast::Expr, names: &NameTable<'_>) -> Option<(String, 
     if is_use_store(target, names) {
         return Some(("useStore".into(), false));
     }
+    // F255: `useId.call(null)`, `.apply(…)`, `.bind(…)()` invoke the hook through a method of the function. The reader
+    // does not follow that spelling, so the call is named as the hook it reaches and left unclassified: the body
+    // reader refuses it by name instead of compiling it with a variable nothing binds.
+    if let E::EDot(d) = &target.data
+        && matches!(d.name.slice(), b"call" | b"apply" | b"bind")
+        && let Some((inner, _)) = hook_target(&d.target, names)
+    {
+        return Some((inner, false));
+    }
     let name = match &target.data {
         E::EIdentifier(id) => names.name(id.ref_),
         E::EImportIdentifier(id) => names.name(id.ref_),
@@ -1003,6 +1012,52 @@ fn nested_hooks_in(
         }
     }
     w.stmts(stmts);
+    // F255: React's hook read as a value anywhere but as the callee of a call the reader classified (an alias,
+    // `useId['call'](null)`, `Reflect.apply(useId, …)`, an argument) is called by something the reader cannot see:
+    // the job it lands in would call it outside a render. Fail closed, like F156 for the JSX runtime.
+    let mut callees = HashSet::new();
+    for e in &w.calls {
+        let E::ECall(call) = &e.data else {
+            continue;
+        };
+        // A classified call is read; an unclassified one is reported by the loop below.
+        if out.classified_hooks.contains(&call_addr(call))
+            || hook_target(&call.target, names).is_some()
+        {
+            let c = comma_callee(&call.target);
+            match &c.data {
+                E::EDot(d) => callees.insert(d.target.loc.start),
+                _ => callees.insert(c.loc.start),
+            };
+        }
+    }
+    let is_hook_name = |n: &str| {
+        n.strip_prefix("use").is_some_and(|rest| {
+            rest.is_empty()
+                || rest.starts_with(|c: char| c.is_ascii_uppercase() || c.is_ascii_digit())
+        })
+    };
+    let value_reads = w
+        .used_at
+        .iter()
+        .filter(|(r, _)| react_named(names, *r).is_some_and(|n| is_hook_name(&n)))
+        .map(|(r, at)| (react_named(names, *r).unwrap_or_default(), *at))
+        .chain(w.member_reads.iter().filter_map(|(r, member, at)| {
+            matches!(names.import_of(*r), Some(("react", "default" | "*")))
+                .then_some(())
+                .filter(|()| member.is_empty() || is_hook_name(member))
+                .map(|()| (member.clone(), *at))
+        }));
+    for (hook, at) in value_reads {
+        if !callees.contains(&at) {
+            out.fallback(
+                "hook-unsupported",
+                format!("hook {hook} is read as a value, not called directly"),
+                at.max(0) as u32,
+                "call hooks only as `const x = useHook(...)` at the top of the component",
+            );
+        }
+    }
     for e in &w.calls {
         let E::ECall(call) = &e.data else {
             continue;

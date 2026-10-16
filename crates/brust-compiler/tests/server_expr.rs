@@ -53,7 +53,13 @@ fn template_subset_table() {
         ("Object.keys(o)", Ok(())),
         ("Object.entries(o)", Ok(())),
         ("Array.from({ length: 3 })", Ok(())),
+        // F277: an object spread (B5 reads it as `Object.assign({}, …)`) into a fresh object.
+        ("{ ...o, k: a, ...xs }", Ok(())),
+        ("Object.assign({}, o, { k: n })", Ok(())),
         // rejected: deliberate absences
+        ("Object.assign(o, { k: a })", Err("call")),
+        ("Object.assign({ k: 1 }, o)", Err("call")),
+        ("{ ...o, k: fmt(a) }", Err("call")),
         ("fmt(a)", Err("call")),
         ("fmt", Err("identifier kind")),
         ("new Date()", Err("opaque")),

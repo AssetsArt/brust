@@ -314,7 +314,7 @@ function parseCss(file: string, raw: unknown): string[] {
  * `[build] source_roots` (F256): extra directories, relative to the app root, that a relative import may reach besides
  * the app itself (`../shared` in a monorepo). Each is normalised (`../a/../shared` = `../shared`), must exist and be a
  * directory, and confines imports the way the app root does: lexically, so `../shared/../secret` is outside it.
- * An entry inside the app adds nothing and is dropped. Returns the roots that lie outside, `/`-separated.
+ * An entry inside the app adds nothing and is dropped; the app root itself or an ancestor of it is refused (F272). Returns the roots that lie outside, `/`-separated.
  */
 export function parseSourceRoots(file: string, appRoot: string, raw: unknown): string[] {
   if (raw === undefined) return []
@@ -331,6 +331,13 @@ export function parseSourceRoots(file: string, appRoot: string, raw: unknown): s
     if (!dir) throw new BuildError('config', `${file}: build.source_roots entry ${JSON.stringify(p)} (${abs}) is not an existing directory`)
     if (abs === resolve(abs, '..')) throw new BuildError('config', `${file}: build.source_roots entry ${JSON.stringify(p)} is the filesystem root`)
     const rel = relative(appRoot, abs).split(sep).join('/')
+    // F272: the app root or an ancestor of it (`.`, `..`, `../..`) contains every import the app can make, so it would
+    // switch F243's confinement off for that whole level; name the directory that is actually shared instead.
+    if (rel === '' || rel.split('/').every((seg) => seg === '..'))
+      throw new BuildError(
+        'config',
+        `${file}: build.source_roots entry ${JSON.stringify(p)} is the app root or a directory that contains it, which would allow every relative import; list the shared directory itself (e.g. "../shared")`,
+      )
     if (rel === '..' || rel.startsWith('../')) out.add(rel)
   }
   return [...out].sort()

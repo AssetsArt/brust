@@ -23,5 +23,6 @@ export function member(inst: Instance, p: ParsedValue, attr: string): unknown {
 }
 export function mismatch(inst: Instance, attr: string, _el: Element, server: unknown, client: unknown): void {
   if (inst.booted) return   // element created after mount (new x-for row / x-if clone): nothing was server-rendered
+  if (inst.reseeded) return   // F277: a host created later, started from its parent's current props, not the printed ones
   warnOnce(`x:${inst.name}:${attr}`, `first-paint mismatch ${attr} in ${inst.name}: ${JSON.stringify(server)} vs ${JSON.stringify(client)}`)
 }
