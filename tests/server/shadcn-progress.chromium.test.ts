@@ -1,7 +1,7 @@
 // progress-flip (ruling on challenge 2c9522ea, option C): the shadcn Progress (a wrapper over Radix's Progress.Root /
 // Indicator, whose Provider hands out `value` through plain module helpers) is a static page, first paint equals React's,
 // and a value that changes follows the page's state (the clone's derived members follow props, F319/F320).
-// Needs the napi addon and Chromium: `bun test --timeout 300000 tests/server/shadcn-progress.chromium.test.ts`.
+// Needs the napi addon, Chromium and the shadcn fixture's node_modules (`cd tests/fixtures/shadcn && bun install`): `bun test --timeout 300000 tests/server/shadcn-progress.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'

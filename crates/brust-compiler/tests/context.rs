@@ -253,17 +253,20 @@ fn a_provider_field_that_is_a_plain_call_is_evaluated_by_the_native_clone() {
 /// evaluates the module's default: the prop is frozen, and the page renders with React rather than print the default's value.
 #[test]
 fn a_call_site_that_passes_the_function_prop_keeps_the_page_react() {
-    let out = compile_all("fn-default-passed.tsx");
-    let page = out
-        .iter()
-        .find(|(id, ..)| id.starts_with("fnDefaultPassed_"))
-        .expect("page");
-    assert!(is_react(&page.1), "{:?}", page.1.tier);
-    assert!(
-        rules(&page.1).contains(&"frozen-prop"),
-        "{:?}",
-        page.1.diagnostics
-    );
+    // an inline arrow, and a named module function (neither reads state, so only the callable rule can refuse them)
+    for (file, id) in [
+        ("fn-default-passed.tsx", "fnDefaultPassed_"),
+        ("fn-default-named.tsx", "fnDefaultNamed_"),
+    ] {
+        let out = compile_all(file);
+        let page = out.iter().find(|(i, ..)| i.starts_with(id)).expect("page");
+        assert!(is_react(&page.1), "{file}: {:?}", page.1.tier);
+        assert!(
+            rules(&page.1).contains(&"frozen-prop"),
+            "{file}: {:?}",
+            page.1.diagnostics
+        );
+    }
 }
 
 /// R34.104: an `if` whose branches only call `console.*` is a diagnostic, not part of the render; any other effect

@@ -16,8 +16,8 @@
       "native": 1,
       "react": 7
     },
-    "islands": 35,
-    "pagesWithNoJs": 26,
+    "islands": 36,
+    "pagesWithNoJs": 25,
     "pagesWithNoWorker": 22,
     "jsGzipKb": {
       "min": 0,
@@ -218,6 +218,15 @@
     },
     {
       "blocker": "fallback:event-capture",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:frozen-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -1156,12 +1165,14 @@
       "id": "progress",
       "basis": "measured",
       "tier": "static",
-      "islands": 0,
+      "islands": 1,
       "components": 5,
-      "reactComponents": 0,
-      "jsGzipKb": 0,
+      "reactComponents": 1,
+      "jsGzipKb": 86,
       "workerCalls": 1,
-      "codes": []
+      "codes": [
+        "frozen-prop"
+      ]
     },
     {
       "id": "radio-group",

@@ -5055,6 +5055,22 @@ impl Walker<'_, '_> {
                             }
                         }
                     }
+                    // W1d (progress): a function passed for a prop the child's helper call may run (`getValueLabel={fmt}`,
+                    // an arrow, an import) is never run by the child's job, which evaluates the module's own default:
+                    // refused whatever the value is.
+                    for root in &c.callable_props {
+                        let passed = props
+                            .iter()
+                            .any(|(k, _)| k == root || k == crate::ir::SPREAD_KEY);
+                        if passed {
+                            self.diagnostics.push(Diagnostic::fallback(
+                                "frozen-prop",
+                                format!("<{name}> may call its prop `{root}`, which a call site passes here; the server evaluates the module's own default, not the function passed"),
+                                *loc,
+                                "do not pass the function, or keep this component in React",
+                            ));
+                        }
+                    }
                     for (root, v) in checks {
                         if matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v) {
                             let what = if root == crate::ir::SPREAD_KEY {
