@@ -204,3 +204,16 @@ fn children_forwarded_by_an_unlinked_static_intermediate_into_a_host_are_refused
     refused("rest-host-mid-slot.tsx");
     kept("rest-host-mid-const.tsx");
 }
+
+#[test]
+fn children_passing_through_two_rests_before_a_host_are_refused() {
+    // F343: Mellow probed the chain by hand; this pins it. The page's children go Outer -> Mid -> Box (each an unlinked
+    // static rest spread) and land on Box's native host.
+    refused("rest-host-two-level.tsx");
+}
+
+#[test]
+fn children_reaching_a_host_through_a_local_object_spread_are_refused() {
+    // F343: tripwire for the sequence path (W1d 4b): `const common = { ...rest }` spread on the host expands to its parts.
+    refused("rest-host-seq.tsx");
+}
