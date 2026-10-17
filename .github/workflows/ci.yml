@@ -346,6 +346,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/rest-host.chromium.test.ts
       # F307: slot content a child prints in its own host is cloned with the child per call site; served == React.
       - run: bun test --timeout 120000 tests/server/host-specialise.chromium.test.ts
+      # battery c-rest-children-linked-host: a context-reading element hosting rest-carried children, native since F337; served == React.
+      - run: bun test --timeout 120000 tests/server/linked-rest-host.chromium.test.ts
       # F238: a clone made inside a clone keeps its own content (key = call site + content shape); content reading a Provider inside the cloned component is refused by name; served == React.
       - run: bun test --timeout 120000 tests/server/clone-cache.chromium.test.ts
       # F362: a module list the client rows run over ships only the keys the chunk reads; served == React.
