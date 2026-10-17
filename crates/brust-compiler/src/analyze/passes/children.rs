@@ -5971,7 +5971,8 @@ impl Walker<'_, '_> {
                 }
                 // F337: unless the child's chunk recomputes every such value from its props (`recomputes`), its job is
                 // its own, not fused into this component's (Mellow A3), and no function this call site passes feeds that
-                // job (the record cannot bind a function: the server would paint without it).
+                // job (the record cannot bind a function: the server would paint without it). A3 is unreachable today
+                // (a fused child is refused upstream in every shape the review probed); kept as the stated guard.
                 let fn_fed = kept.iter().any(|(k, v)| {
                     matches!(v, Expr::ClientOnly { .. })
                         && (child.job_all || child.job_roots.contains(k.as_str()))
@@ -7522,6 +7523,9 @@ impl Walker<'_, '_> {
             return Some(Ok(j));
         }
         match plain_path(i, None)? {
+            // A hidden input (a Provider frame's `__ctx_*`, a clone's `__in_*`) is a value the call site or a frame hands
+            // in, not data the page's props carry: a context-initialised state is no seed (Mellow A5, review round 1).
+            PlainPath::Props(p) if p.starts_with("__ctx_") || p.starts_with("__in_") => None,
             PlainPath::Props(p) => Some(Err(p)),
             PlainPath::Row(_) => None,
         }

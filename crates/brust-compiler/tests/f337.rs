@@ -13,6 +13,7 @@ use std::path::PathBuf;
 struct Item {
     ir: ComponentIR,
     jinja: String,
+    client: String,
 }
 
 fn compile(file: &str) -> Vec<Item> {
@@ -32,6 +33,7 @@ fn compile(file: &str) -> Vec<Item> {
         .map(|l| Item {
             ir: (*l.ir).clone(),
             jinja: l.artifacts.jinja.clone(),
+            client: l.artifacts.client_js.clone().unwrap_or_default(),
         })
         .collect()
     })
@@ -73,10 +75,28 @@ fn a_host_dependent_helper_keeps_the_link_refused() {
     assert!(fallbacks(&all[0].ir).contains(&"linked-prop-precompute".to_string()));
 }
 
-/// Mellow A5: a lazy initial value is not a seed the instance record binds.
+/// Mellow A5: a lazy initial value, or one read from a context (a hidden `__ctx_*` input), is not a seed the instance
+/// record binds.
 #[test]
-fn a_lazy_initial_state_is_not_a_seed() {
-    let all = compile("lazy.tsx");
-    assert!(matches!(all[0].ir.tier, Tier::React { .. }));
-    assert!(fallbacks(&all[0].ir).contains(&"instance-prop-path".to_string()));
+fn a_lazy_or_context_initial_state_is_not_a_seed() {
+    for f in ["lazy.tsx", "ctx_init.tsx"] {
+        let all = compile(f);
+        assert!(matches!(all[0].ir.tier, Tier::React { .. }), "{f}");
+        assert!(
+            fallbacks(&all[0].ir).contains(&"instance-prop-path".to_string()),
+            "{f}: {:?}",
+            fallbacks(&all[0].ir)
+        );
+    }
+}
+
+/// F376 (pre-existing on main, wrong output): a prop's default is printed inline in the chunk
+/// (`props().next === undefined ? twice : props().next`), so what the default reads must be declared there too; it was
+/// not, and the first click threw a ReferenceError.
+#[test]
+fn a_prop_default_the_chunk_reads_is_declared_in_it() {
+    let all = compile("f376.tsx");
+    let step = all.iter().find(|i| i.ir.id.starts_with("step_")).unwrap();
+    assert!(step.client.contains("? twice :"), "{}", step.client);
+    assert!(step.client.contains("function twice("), "{}", step.client);
 }
