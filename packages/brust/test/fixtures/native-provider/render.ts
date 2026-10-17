@@ -19,6 +19,9 @@ import SwPage from './SwPage'
 import RovingPage from './RovingPage'
 import SinkRefPage from './SinkRefPage'
 import SlotCompPage from './SlotCompPage'
+import LiveRestPage from './LiveRestPage'
+import MemoFramePage from './MemoFramePage'
+import AfterSpreadPage from './AfterSpreadPage'
 import RovingListPage from './RovingListPage'
 import CollCompPage from './CollCompPage'
 import WrapPage from './WrapPage'
@@ -56,3 +59,6 @@ export const renderCollComp = (): string => html(CollCompPage)
 export const renderRovingList = (): string => html(RovingListPage)
 export const renderSinkRef = (): string => html(SinkRefPage)
 export const renderSlotComp = (): string => html(SlotCompPage)
+export const renderLiveRest = (): string => html(LiveRestPage)
+export const renderMemoFrame = (): string => html(MemoFramePage)
+export const renderAfterSpread = (): string => html(AfterSpreadPage)

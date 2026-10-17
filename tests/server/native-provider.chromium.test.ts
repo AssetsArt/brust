@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderColl, renderCollComp, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderSinkRef, renderSlotComp, renderRovingList, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderColl, renderCollComp, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderSinkRef, renderSlotComp, renderLiveRest, renderMemoFrame, renderAfterSpread, renderRovingList, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -583,4 +583,61 @@ test('asChild over a static component child (F363a) and through carriers (F369a)
   const sorted = (h: string): string => h.replace(/<(\w+)((?: [\w-]+="[^"]*")+)>/g, (_, tag: string, a: string) => `<${tag}${(a.match(/ [\w-]+="[^"]*"/g) ?? []).sort().join('')}>`)
   expect(sorted(plain(html))).toBe(sorted(plain(renderSlotComp())))
   expect(sorted(plain(html))).toContain('<a class="link base x y" data-slot="btn" href="/go" id="ID0">Go</a>')
+}, 60_000)
+
+// F329b: a live prop of a NATIVE child lands on its element through the child's rest (`x-prop-*`): pressing one toggle
+// updates `aria-checked` / `tabindex` of the OTHERS, and the `aria-pressed` the child binds itself stays overridden (absent).
+test('live props through a native child rest (F329b): served == React, and the others follow the press', async () => {
+  const html = await (await fetch(`${base}/live-rest`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(html).toContain('x-prop-aria-checked="aria-checked"')
+  expect(html).toContain('x-prop-tabindex="tabIndex"')
+  const sorted = (h: string): string => h.replace(/<(\w+)((?: [\w-]+="[^"]*")+)>/g, (_, tag: string, a: string) => `<${tag}${(a.match(/ [\w-]+="[^"]*"/g) ?? []).sort().join('')}>`)
+  expect(sorted(plain(html))).toBe(sorted(plain(renderLiveRest())))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/live-rest`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('brust-host')?.hasAttribute('x-data'))
+  const state = () => page.evaluate(() => Array.from(document.querySelectorAll('button')).map((b) => [b.getAttribute('aria-checked'), b.getAttribute('tabindex'), b.getAttribute('aria-pressed')].map((x) => x ?? 'null').join('|')))
+  expect(await state()).toEqual(['false|-1|null', 'false|-1|null', 'false|-1|null'])
+  await page.getByRole('radio', { name: 'B' }).click()
+  await page.waitForFunction(() => document.querySelector('p')?.textContent === 'b')
+  expect(await state()).toEqual(['false|-1|null', 'true|0|null', 'false|-1|null'])
+  await page.getByRole('radio', { name: 'C' }).click()
+  await page.waitForFunction(() => document.querySelector('p')?.textContent === 'c')
+  expect(await state()).toEqual(['false|-1|null', 'false|-1|null', 'true|0|null'])
+  // the data-state the child binds itself still follows ITS press
+  expect(await page.evaluate(() => Array.from(document.querySelectorAll('button')).map((b) => b.getAttribute('data-state')))).toEqual(['off', 'on', 'on'])
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+// F329 part a, served checks: W4 (a setter in the frame, `.length` 0 -> 1) and W1 (the page's own handler runs).
+test('a memoized array frame value follows its setter (F329 W4); a function prop after a spread runs (W1)', async () => {
+  const mf = await (await fetch(`${base}/memo-frame`)).text()
+  expect(mf).not.toContain('brust-island')
+  expect(plain(mf)).toBe(plain(renderMemoFrame()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/memo-frame`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('[x-data]')?.hasAttribute('x-data'))
+  expect(await page.locator('i').textContent()).toBe('0')
+  await page.getByRole('button', { name: 'add' }).click()
+  await page.waitForFunction(() => document.querySelector('i')?.textContent === '1')
+  const as = await (await fetch(`${base}/after-spread`)).text()
+  expect(as).not.toContain('brust-island')
+  expect(plain(as)).toBe(plain(renderAfterSpread()))
+  await page.goto(`${base}/after-spread`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('button')?.hasAttribute('x-data'))
+  expect(await page.locator('p').textContent()).toBe('-1')
+  await page.getByRole('button').click()
+  await page.waitForFunction(() => document.querySelector('p')?.textContent === '0')
+  await page.getByRole('button').click()
+  await page.waitForFunction(() => document.querySelector('p')?.textContent === '1')
+  expect(errors).toEqual([])
+  await page.close()
 }, 60_000)

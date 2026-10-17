@@ -1606,11 +1606,7 @@ fn a_function_prop_after_a_spread_does_not_ride_the_spread() {
 
 #[test]
 fn a_function_prop_that_may_ride_the_spread_stays_refused() {
-    for file in [
-        "before-spread.tsx",
-        "after-spread-lands.tsx",
-        "after-spread-live.tsx",
-    ] {
+    for file in ["before-spread.tsx", "after-spread-lands.tsx"] {
         let all = compile(file);
         let page = all
             .iter()
@@ -1637,5 +1633,151 @@ fn a_memoized_array_holding_a_call_keeps_the_provider_an_island() {
         "{:?} {}",
         page.1.tier,
         page.2
+    );
+}
+
+/// F329b: a live prop of a NATIVE child lands on its element through the child's rest; the element binds it itself
+/// (`x-prop-<attribute>="<key>"`, the React key as the value), the host's `x-props` starts from the painted value, and the
+/// caller's key replaces the one the child binds itself (`aria-pressed`) without a binding for it.
+#[test]
+fn a_live_prop_through_a_native_childs_rest_is_bound_by_its_element() {
+    let out = compile_all("live-rest.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("liveRest_"))
+        .expect("page");
+    assert!(
+        !is_react(&page.1),
+        "{:?} {:?}",
+        page.1.tier,
+        page.1.diagnostics
+    );
+    let jinja = &page.2;
+    assert!(
+        jinja.contains("x-prop-aria-checked=\"aria-checked\""),
+        "{jinja}"
+    );
+    // the DOM name comes from the shared table, the React key stays the value
+    assert!(jinja.contains("x-prop-tabindex=\"tabIndex\""), "{jinja}");
+    assert!(
+        jinja.contains("\"aria-checked\": (last == \"a\")"),
+        "x-props seeds it: {jinja}"
+    );
+    // `aria-pressed: undefined` replaced the child's own binding on this element
+    assert!(!jinja.contains("x-bind-aria-pressed"), "{jinja}");
+    assert!(
+        jinja.contains("x-bind-data-state"),
+        "the child's other binding stays: {jinja}"
+    );
+    assert_eq!(page.1.live_props.len(), 4, "{:?}", page.1.live_props);
+}
+
+/// F329b (shared chunk, Mellow's condition): the key set belongs to the call site, so the Toggle chunk names none of it and two
+/// call sites with different keys use the one chunk.
+#[test]
+fn the_live_key_set_is_in_the_template_never_in_the_chunk() {
+    let out = compile_all("live-rest-two.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("liveRestTwo_"))
+        .expect("page");
+    assert!(
+        !is_react(&page.1),
+        "{:?} {:?}",
+        page.1.tier,
+        page.1.diagnostics
+    );
+    assert!(
+        page.2.contains("x-prop-aria-checked=")
+            && page.2.contains("x-prop-data-count=")
+            && page.2.contains("x-prop-tabindex=")
+    );
+    let toggle = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("toggle_"))
+        .expect("toggle");
+    // (the chunk is the component's alone: it is built from Toggle's own IR, which lists no live props)
+    assert!(toggle.1.live_props.is_empty());
+}
+
+/// F329b fail closed: a key before a spread of unknown keys, `className`/`style`, and a list keep the old refusal.
+#[test]
+fn a_live_prop_the_binding_cannot_honour_is_refused() {
+    for file in [
+        "live-rest-before.tsx",
+        "live-rest-class.tsx",
+        "live-rest-rows.tsx",
+        "live-rest-sinks.tsx",
+        "live-rest-override-before.tsx",
+        "live-rest-viewbox.tsx",
+    ] {
+        let all = compile(file);
+        let page = all
+            .iter()
+            .find(|(_, ir, _)| {
+                is_react(ir) && !ir.id.starts_with("toggle_") && !ir.id.starts_with("prim_")
+            })
+            .unwrap_or_else(|| panic!("{file}: a page that stays React"));
+        assert!(
+            rules(&page.1)
+                .iter()
+                .any(|r| *r == "spread-props" || *r == "frozen-prop"),
+            "{file}: {:?}",
+            page.1.diagnostics
+        );
+    }
+}
+
+/// F329b: another NATIVE component between the call and the element would own the directive's instance: the page stays React.
+#[test]
+fn a_native_component_between_the_call_and_the_element_keeps_the_page_react() {
+    let all = compile("live-rest-between.tsx");
+    assert!(
+        all.iter()
+            .any(|(id, ir, _)| id.starts_with("liveRestBetween_") && is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(id, ir, _)| (id, &ir.tier))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_live_key_the_child_binds_itself_is_replaced_by_the_callers_binding() {
+    let out = compile_all("live-rest-pressed.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("liveRestPressed_"))
+        .expect("page");
+    assert!(
+        !is_react(&page.1),
+        "{:?} {:?}",
+        page.1.tier,
+        page.1.diagnostics
+    );
+    assert!(
+        page.2.contains("x-prop-aria-pressed=\"aria-pressed\""),
+        "{}",
+        page.2
+    );
+    assert!(
+        !page.2.contains("x-bind-aria-pressed"),
+        "the child's own binding is replaced: {}",
+        page.2
+    );
+}
+
+/// F329 part a negative, superseded by F329b: a LIVE value written after the spread that lands on a NATIVE child's element is
+/// now bound by that element (`x-prop-*`), so the page stays native.
+#[test]
+fn a_live_value_after_the_spread_is_bound_by_the_native_childs_element() {
+    let all = compile("after-spread-live.tsx");
+    assert!(
+        !all.iter()
+            .any(|(id, ir, _)| id.starts_with("afterSpreadLive_") && is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(id, ir, _)| (id, &ir.tier))
+            .collect::<Vec<_>>()
     );
 }

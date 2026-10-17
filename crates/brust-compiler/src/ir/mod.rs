@@ -381,6 +381,10 @@ pub struct ComponentIR {
     /// [`HandlerDecl::forwarded`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub live_forwards: Vec<Forwarded>,
+    /// F329b: live props of a NATIVE child (the component node at `loc`) that land on an element through its rest spread:
+    /// the child's element binds them itself (`x-prop-<attribute>="<key>"`, printed in the template, never in the chunk).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub live_props: Vec<Forwarded>,
     /// The slot content this component is given is printed more than once: its template repeats in a list, or
     /// passes its children on to a component that does (F169, transitive).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -577,6 +581,7 @@ impl ComponentIR {
             shadowed_props: Vec::new(),
             shadowed_input: Vec::new(),
             live_forwards: Vec::new(),
+            live_props: Vec::new(),
             repeats_children: false,
             hosts_children: false,
             mount_once: Vec::new(),
