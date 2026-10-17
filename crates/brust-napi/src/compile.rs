@@ -33,6 +33,10 @@ pub struct CompiledComponent {
     /// Build-time evaluation module (L2): one thunk per `ir.build_eval` slot.
     pub eval_ts: Option<String>,
     pub client_js: Option<String>,
+    /// F362 PR2: `client_js` importing every imported list as written (the build's fallback).
+    pub client_js_whole: Option<String>,
+    /// F362 PR2: data modules (paths from the root) `client_js` no longer imports, their list declared projected.
+    pub projected_modules: Vec<String>,
     /// Modules the chunk imports that other chunks share (specialised clones with an equal factory, R34.124).
     pub client_modules: Vec<ClientModule>,
     pub diagnostics: Vec<NapiDiagnostic>,
@@ -187,6 +191,8 @@ pub(crate) fn compile_tree_impl(
                         server_ts: l.artifacts.server_ts.clone(),
                         eval_ts: l.artifacts.eval_ts.clone(),
                         client_js: l.artifacts.client_js.clone(),
+                        client_js_whole: l.artifacts.client_js_whole.clone(),
+                        projected_modules: l.artifacts.projected_modules.clone(),
                         client_modules: l
                             .artifacts
                             .client_modules

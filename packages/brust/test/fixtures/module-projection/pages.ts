@@ -1,0 +1,11 @@
+import P_rows from './p_rows'
+import P_clone from './p_clone'
+import P_child from './p_child'
+import P_whole from './p_whole'
+import P_ref from './p_ref'
+import P_refd from './p_refd'
+import P_import from './p_import'
+import P_store from './p_store'
+import P_mixed from './p_mixed'
+import P_shared from './p_shared'
+export const pages: Record<string, unknown> = { rows: P_rows, clone: P_clone, child: P_child, whole: P_whole, ref: P_ref, refd: P_refd, import: P_import, store: P_store, mixed: P_mixed, shared: P_shared }

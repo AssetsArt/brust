@@ -98,8 +98,33 @@ test('slot content a child prints inside its own host is cloned with the child p
   expect({ const: tierOf('pConst_'), state: tierOf('pState_'), text: tierOf('pText_'), handler: tierOf('pHandler_'), list: tierOf('pList_'), linked: tierOf('pLinkedChild_'), linked_static: tierOf('pLinkedStatic_'), two_levels: tierOf('pTwoLevels_'), ifmount: tierOf('pIfmount_'), nested: tierOf('pNested_'), prop: tierOf('pProp_'), scoped: tierOf('pScoped_'), switch: tierOf('pSwitch_'), gate: tierOf('pGate_'), rest: tierOf('pRest_'), livewrap: tierOf('pLivewrap_'), livewrap_wrapper: tierOf('liveWrap_') }).toEqual({ const: 'native', state: 'native', text: 'native', handler: 'native', list: 'native', linked: 'native', linked_static: 'native', two_levels: 'native', ifmount: 'native', nested: 'native', prop: 'react', scoped: 'native', switch: 'static', gate: 'react', rest: 'react', livewrap: 'native', livewrap_wrapper: 'native' })
 })
 
-const CLICKS: Record<string, string[]> = { livewrap: ['f', 'box', 'f', 'f', 'box'], ifmount: ['f', 'g', 'box', 'f', 'g', 'f', 'g'], linked_static: ['f', 'f'], nested: ['f', 'box', 'f', 'box'], switch: ['box', 'box', 'box'], scoped: ['f', 't', 'box', 'f', 't'] }
-for (const page of ['const', 'state', 'text', 'handler', 'list', 'linked', 'linked_static', 'two_levels', 'ifmount', 'nested', 'prop', 'scoped', 'switch', 'gate', 'rest', 'livewrap']) {
+const CLICKS: Record<string, string[]> = { rows: ['f', 'add', 'b3', 'in3', 'rm', 'b2', 'f', 'add', 'b4', 'in4'], rows_free: ['f', 'add', 'b3', 'rm', 'b2', 'f', 'add', 'b4', 'f'], many_same: ['f', 'f', 'f'], many_diff: ['f', 'f', 'f'], livewrap: ['f', 'box', 'f', 'f', 'box'], ifmount: ['f', 'g', 'box', 'f', 'g', 'f', 'g'], linked_static: ['f', 'f'], nested: ['f', 'box', 'f', 'box'], switch: ['box', 'box', 'box'], scoped: ['f', 't', 'box', 'f', 't'] }
+// F344 (1): a host in list rows from state. Content reading the row value (or a row handler) is refused by name
+// (host-specialise-unsupported, then slot-owner: the page renders with React); content reading page state only is
+// cloned per row, and the host's own row-valued prop is followed, not pinned (pinned, a row added on the client printed
+// the first row's id).
+test('rows: refused by name (React island); rows_free: cloned in the rows (no island)', async () => {
+  expect(await (await fetch(`${base}/rows`)).text()).toContain('brust-island')
+  const free = await (await fetch(`${base}/rows_free`)).text()
+  expect(free).not.toContain('brust-island')
+  expect(free).toMatch(/x-data="rBox_\w+_h[0-9a-f]{8}"/)
+})
+
+// F344 (2), ruling c08d26c0 (no dedupe; row F359 dedupes by shape): the same host at 20 call sites makes one clone per
+// call site, identical contents or not (20 clone scripts on the page, measured ~156 B gz each when identical), built
+// once (no growth per render: the same page served twice is the same bytes); toggled, every value equals React.
+for (const page of ['many_same', 'many_diff']) {
+  test(`${page}: 20 call sites, 20 clones, the same bytes on every render`, async () => {
+    const a = await (await fetch(`${base}/${page}`)).text()
+    const b = await (await fetch(`${base}/${page}`)).text()
+    expect(b).toBe(a)
+    expect(a).not.toContain('brust-island')
+    const clones = new Set([...a.matchAll(/x-data="(box_\w+_h[0-9a-f]{8})"/g)].map((m) => m[1]))
+    expect(clones.size).toBe(20)
+  })
+}
+
+for (const page of ['const', 'state', 'text', 'handler', 'list', 'linked', 'linked_static', 'two_levels', 'ifmount', 'nested', 'prop', 'scoped', 'switch', 'gate', 'rest', 'livewrap', 'rows', 'rows_free', 'many_same', 'many_diff']) {
   test(`${page}: every observable value equals React hydrating the same page after each click`, async () => {
     const react = await run(page, true, CLICKS[page])
     const served = await run(page, false, CLICKS[page])
