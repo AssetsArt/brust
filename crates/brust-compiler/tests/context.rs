@@ -1553,6 +1553,7 @@ fn a_ref_that_is_not_a_sink_keeps_the_forwardref_fallback() {
         ("sink-ref-spread-before.tsx", "sinkRefSpreadBefore_"),
         ("sink-ref-child-string.tsx", "sinkRefChildString_"),
         ("sink-ref-child-compose.tsx", "sinkRefChildCompose_"),
+        ("sink-ref-child-chain.tsx", "sinkRefChildChain_"),
     ] {
         let out = compile_all(file);
         let p = out
