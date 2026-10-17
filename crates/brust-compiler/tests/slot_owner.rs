@@ -121,9 +121,22 @@ fn a_list_over_state_in_the_slot_of_a_native_child_is_refused() {
 // an over-refusal for these shapes (and a clone cannot carry a row's bindings: `host-specialise-unsupported`); content
 // with no directive of the caller's is not refused at all.
 #[test]
-fn a_row_only_child_with_a_directive_in_its_slot_keeps_the_refusal() {
+fn a_row_only_child_with_a_handler_in_its_slot_keeps_the_refusal() {
     refused("row-only-handler.tsx");
+}
+
+#[test]
+fn a_row_only_child_with_a_live_attribute_in_its_slot_keeps_the_refusal() {
     refused("row-only-attr.tsx");
+}
+
+// F349 (probed): a prop-path spread on a host in a row's slot content is an OVER-refusal today (safe: the page renders
+// with React). Spread is not a `body_directive`, so the row is not re-created and the `RowOnly` link would drop, but the
+// guard runs before `resolve_row_only` knows. Admission needs the refusal deferred there (a new mechanism: task
+// challenge on ledger-guetta-10); until then this pins the refusal, and must flip with that change.
+#[test]
+fn a_prop_path_spread_in_a_row_only_childs_slot_is_refused_today() {
+    refused("row-only-spread.tsx");
 }
 
 #[test]
