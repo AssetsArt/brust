@@ -54,6 +54,11 @@ pub struct PassState {
     pub host_spec: BTreeSet<u32>,
     /// F307: the call sites the children pass refused with `slot-owner` whose child could take the content as a clone.
     pub host_wanted: BTreeSet<u32>,
+    /// F337 PR2: the call sites the frames pass replaces with a LIVE clone of a stateless child (its props a signal), set
+    /// by `run_passes` for its second run from the call sites the first run refused with `frozen-prop`.
+    pub live_spec: BTreeSet<u32>,
+    /// F337 PR2: the call sites the children pass refused with `frozen-prop` whose stateless child a live clone may answer.
+    pub live_wanted: BTreeSet<u32>,
 }
 
 /// Something the client chunk runs, with what it reads.
@@ -109,33 +114,41 @@ impl PassState {
 /// F214 / F309), the component is read once more from the same structural IR with those call sites specialised: the
 /// child is cloned for the call site with the content spliced in, so the content's directives are the clone's own. Only
 /// those call sites change; a clone that cannot be made keeps the refusal (and says why).
+///
+/// F337 PR2: likewise where it refuses a stateless child with `frozen-prop` (a prop the call site changes, read where the
+/// child would not follow it): the second read replaces that call with a live clone of the child, whose props are a
+/// signal. A clone that cannot be made, or that is refused again, keeps the refusal.
 pub fn run_passes(ir: &mut ComponentIR, ctx: &PassCtx<'_>) -> PassState {
-    let saved = has_slot_content(&ir.template).then(|| ir.clone());
-    let st = run_passes_with(ir, ctx, BTreeSet::new());
+    let saved = has_component(&ir.template).then(|| ir.clone());
+    let st = run_passes_with(ir, ctx, BTreeSet::new(), BTreeSet::new());
     match saved {
-        Some(again) if !st.host_wanted.is_empty() => {
+        Some(again) if !st.host_wanted.is_empty() || !st.live_wanted.is_empty() => {
             *ir = again;
-            run_passes_with(ir, ctx, st.host_wanted)
+            run_passes_with(ir, ctx, st.host_wanted, st.live_wanted)
         }
         _ => st,
     }
 }
 
-/// Whether the template gives children to a component (the only place a `slot-owner` refusal can arise).
-fn has_slot_content(n: &crate::ir::Node) -> bool {
+/// Whether the template calls a component (where a `slot-owner` or a `frozen-prop` refusal can arise).
+fn has_component(n: &crate::ir::Node) -> bool {
     use crate::ir::Node;
     match n {
-        Node::Component { children, .. } => !children.is_empty(),
-        Node::Element { children, .. } | Node::Fragment(children) => {
-            children.iter().any(has_slot_content)
-        }
-        Node::If { then, else_, .. } => then.iter().chain(else_).any(has_slot_content),
-        Node::For { body, .. } => body.iter().any(has_slot_content),
+        Node::Component { .. } => true,
+        Node::Element { children, .. } | Node::Fragment(children) => children.iter().any(has_component),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(has_component),
+        Node::For { body, .. } => body.iter().any(has_component),
         Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
     }
 }
 
-fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<u32>) -> PassState {
+
+fn run_passes_with(
+    ir: &mut ComponentIR,
+    ctx: &PassCtx<'_>,
+    host_spec: BTreeSet<u32>,
+    live_spec: BTreeSet<u32>,
+) -> PassState {
     // lucide icons become elements before anything snapshots or places the template (L23).
     icons::inline(ir, ctx);
     // F279: calls of single-return module helpers become their expression, before anything places a value.
@@ -149,6 +162,7 @@ fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<
     let provider_locs = {
         let mut tmp = PassState::new(ir);
         tmp.host_spec = host_spec.clone();
+        tmp.live_spec = live_spec.clone();
         children::contexts(ir, &mut tmp, ctx)
     };
     ir.structural = Some(Box::new(crate::ir::Structural {
@@ -160,6 +174,7 @@ fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<
     let mut st = PassState::new(ir);
     st.provider_locs = provider_locs;
     st.host_spec = host_spec;
+    st.live_spec = live_spec;
     placement::place(ir, &mut st, ctx);
     // Children before captures: linked props are client reads of the parent.
     children::children(ir, &mut st, ctx);

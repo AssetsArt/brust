@@ -3326,6 +3326,30 @@ impl Walker<'_, '_> {
                         )),
                     }
                 }
+                // F337 PR2: the children pass refused this call site with `frozen-prop`: the stateless child reads a prop
+                // the call site changes where it would not follow it. A live clone of it for this call site reads its
+                // props as a signal (`specialised`), so its chunk follows the change; the children pass then judges the
+                // clone like any child (a clone still frozen keeps the refusal).
+                if owner.is_none()
+                    && self.st.live_spec.contains(loc)
+                    && source.as_deref() != Some(SPEC_SOURCE)
+                    && let Some(from) = child.path.clone()
+                {
+                    match self.specialise_live(&cir, &from, *loc, children, props) {
+                        Ok((id, key)) => {
+                            *name = id;
+                            *source = Some(SPEC_SOURCE.to_string());
+                            *imported = Some(key);
+                            member.clear();
+                        }
+                        Err(why) => diags.push(Diagnostic::info(
+                            "live-specialise-unsupported",
+                            format!("<{name}> is not cloned to follow its props: {why}"),
+                            *loc,
+                            "",
+                        )),
+                    }
+                }
             }
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
@@ -3549,6 +3573,89 @@ impl Walker<'_, '_> {
             return Err(format!("the specialised component needs React ({reason})"));
         }
         Ok((clone, (id, key, inputs)))
+    }
+
+    /// F337 PR2: a LIVE clone of the stateless child `cir` for the call site at `loc`: the same component compiled as its
+    /// own, `specialised` (its props are a signal, F345), with what this call site never changes pinned (`fixed_props`).
+    /// Nothing is spliced: the call site's children and props are passed to it as before. Its id and module-cache key
+    /// name the call site (F298/F307 `spec_salt`) and the shape of what it is given (F238 `clone_site`, Mellow B3).
+    fn specialise_live(
+        &mut self,
+        cir: &Rc<ComponentIR>,
+        c_path: &str,
+        loc: u32,
+        children: &[Node],
+        props: &[(String, Expr)],
+    ) -> Result<(String, String), String> {
+        let ctx = self.ctx;
+        if cir.specialised || cir.props_are_signal() || !cir.provides.is_empty() {
+            return Err("it is not a stateless component".into());
+        }
+        let export = match &cir.export {
+            Some(n) => Export::Named(n.clone()),
+            None => Export::Default,
+        };
+        let exp = cir.export.as_deref().unwrap_or("default");
+        let site = match &self.spec_salt {
+            Some(salt) => format!("{}#{salt}", ctx.path),
+            None => ctx.path.to_string(),
+        };
+        let site = clone_site(&site, children, &props);
+        let id = format!("{}_l{:08x}", cir.id, spec_hash(&site, loc));
+        let key = format!("{c_path}#{exp}~live~{site}~{loc}");
+        let clone_id = id.clone();
+        let mut fixed = self.pinned(cir, props, &[]);
+        // The rest holds exactly the keys this call site writes that the child does not name: with no spread here and
+        // none of those values changing, it never changes either (`*` pinned), so what the child spreads it into stays
+        // as it was (shadcn's Progress hands `...props` to the Root, which then keeps its fused job).
+        if cir.props_rest.is_some() {
+            let named: BTreeSet<&str> = cir.props.iter().map(|p| p.name.as_str()).collect();
+            let rest_fixed = props.iter().all(|(k, v)| {
+                k != crate::ir::SPREAD_KEY
+                    && (named.contains(k.as_str())
+                        || k == "children"
+                        || (!matches!(v, Expr::ClientOnly { .. })
+                            && !self.live(v)
+                            && self.deps_of(v).loop_bindings.is_empty()))
+            });
+            if rest_fixed {
+                fixed.push("*".to_string());
+            }
+        }
+        let clone = crate::analyze::modules::compile_specialised(
+            c_path,
+            &export,
+            key.clone(),
+            ctx.opts,
+            ctx.modules,
+            &mut |ir: &mut ComponentIR| {
+                ir.fixed_props = fixed.clone();
+                ir.id = clone_id.clone();
+                ir.specialised = true;
+                Ok(())
+            },
+        )?;
+        if let Tier::React { reason, .. } = &clone.tier {
+            let reason = reason.clone();
+            ctx.modules.borrow_mut().remove(&key);
+            return Err(format!("the clone needs React ({reason})"));
+        }
+        Ok((id, key))
+    }
+
+    /// F337 PR2: a `frozen-prop` refusal at `loc` the frames pass may answer with a live clone of the child (on the
+    /// component's second read, `run_passes`): only a stateless child of a module (not a Provider, not a clone), outside
+    /// rows the client re-creates (W3); a call site already tried keeps its refusal.
+    fn want_live(&mut self, loc: u32, child: &Child) {
+        if child.path.is_some()
+            && !self.st.live_spec.contains(&loc)
+            && !self.rows_recreated()
+            && child.ir.as_deref().is_some_and(|c| {
+                c.provides.is_empty() && !c.specialised && !c.props_are_signal()
+            })
+        {
+            self.st.live_wanted.insert(loc);
+        }
     }
 
     /// F307: a `slot-owner` refusal at `loc` the frames pass may answer by cloning the child with the content (on the
@@ -6149,6 +6256,8 @@ impl Walker<'_, '_> {
                                 *loc,
                                 "pass a value that does not change, or keep this component in React",
                             ));
+                            // F337 PR2: a live clone of a stateless child may follow it (the second read tries).
+                            self.want_live(*loc, &child);
                         } else {
                             let roots = self.changing_prop_roots(&self.deps_of(v));
                             self.frozen.extend(roots);
