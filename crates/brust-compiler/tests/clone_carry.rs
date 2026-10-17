@@ -48,7 +48,7 @@ function KRoot({ ...rest }: React.ComponentPropsWithoutRef<'button'>) {
 export { KRoot as Root, KThumb as Thumb }
 "#;
 
-const CN: &str = "export function cn(...xs: (string | false | undefined)[]) { return xs.filter(Boolean).join(' ') }\nexport const DATA = { label: 'S3CR3T', items: ['S3CR3T'] }\nexport const ROWS = ['S3CR3T']\nexport function getRows() { return ['S3CR3T'] }\n";
+const CN: &str = "export function cn(...xs: (string | false | undefined)[]) { return xs.filter(Boolean).join(' ') }\nexport function tone(name: string) { return 'tone-' + name }\nexport const DATA = { label: 'S3CR3T', items: ['S3CR3T'] }\nexport const ROWS = ['S3CR3T']\nexport function getRows() { return ['S3CR3T'] }\n";
 
 struct App {
     root: PathBuf,
@@ -135,7 +135,7 @@ fn info(ir: &ComponentIR) -> Vec<String> {
 
 fn page(thumb: &str, import: &str) -> String {
     format!(
-        "import {{ useState }} from 'react'\n{import}\nimport {{ cn, DATA, ROWS, getRows }} from './cn'\nexport default function App() {{ const [on, setOn] = useState(false); return <main><button onClick={{() => setOn(!on)}}>f</button>{thumb}</main> }}"
+        "import {{ useState }} from 'react'\n{import}\nimport {{ cn, tone, DATA, ROWS, getRows }} from './cn'\nexport default function App() {{ const [on, setOn] = useState(false); return <main><button onClick={{() => setOn(!on)}}>f</button>{thumb}</main> }}"
     )
 }
 
@@ -188,6 +188,37 @@ fn a_namespace_imports_call_crosses_too() {
         clone.props.iter().any(|p| p.name.starts_with("__inx")),
         "{:?}",
         clone.props
+    );
+}
+
+/// F346 (Afrojack, clone-carry): an imported call that is not `cn` crosses the same way (any function the call site
+/// imports, called with values it can compute), and two such values in the content are TWO hidden inputs, each computed
+/// by the page, so neither overwrites the other.
+#[test]
+fn a_call_of_any_import_and_two_of_them_cross_as_separate_inputs() {
+    let mut app = App::new();
+    let tree = app.compile(&page(
+        "<Root data-x=\"1\"><Thumb className={tone('round')} /><Thumb className={cn('t', 'big')} /></Root>",
+        "import { Root, Thumb } from './kit'",
+    ));
+    let (root, root_jinja, _) = &tree[0];
+    assert!(!matches!(root.tier, Tier::React { .. }), "{:?}", info(root));
+    let (clone, ..) = rest_clone(&tree).unwrap_or_else(|| panic!("{:?}", info(root)));
+    let inputs: Vec<&str> = clone
+        .props
+        .iter()
+        .map(|p| p.name.as_str())
+        .filter(|n| n.starts_with("__inx"))
+        .collect();
+    assert_eq!(inputs.len(), 2, "{:?}", clone.props);
+    assert_ne!(inputs[0], inputs[1]);
+    for i in &inputs {
+        assert!(root_jinja.contains(i), "{i}: {root_jinja}");
+    }
+    // each input is its own value of the page (a build-time job here: `_s1`, `_s2`), not one shared slot
+    assert!(
+        root_jinja.contains("(_s1)") && root_jinja.contains("(_s2)"),
+        "{root_jinja}"
     );
 }
 
