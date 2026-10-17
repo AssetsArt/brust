@@ -5626,7 +5626,12 @@ impl Walker<'_, '_> {
                         }
                     }
                     for (root, v) in checks {
-                        if matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v) {
+                        // switch-provider-chain PR3 D2: a row value in a list whose rows the client re-creates is a value
+                        // that changes too: a new row would keep the first row's value where the child does not follow it.
+                        if matches!(v, Expr::ClientOnly { .. })
+                            || self.reads_state(v)
+                            || (self.rows_recreated() && !self.deps_of(v).loop_bindings.is_empty())
+                        {
                             let what = if root == crate::ir::SPREAD_KEY {
                                 "a prop spread into it".to_string()
                             } else {
@@ -6623,14 +6628,19 @@ impl Walker<'_, '_> {
         let row_free = props.iter().all(|(_, v)| {
             !matches!(v, Expr::ClientOnly { .. }) && self.deps_of(v).loop_bindings.is_empty()
         });
-        let lists_fixed =
-            self.loop_sources
-                .iter()
-                .zip(&self.lists)
-                .all(|(path, (paths, reactive))| {
-                    path.is_some() || !(*reactive || (!paths.is_empty() && self.props_reactive))
-                });
-        row_free && lists_fixed
+        row_free && !self.rows_recreated()
+    }
+
+    /// The enclosing lists may re-create their rows on the client (a list from state, or from props that change): a row
+    /// made there starts from the row template, with what each instance in it was given at the first paint.
+    fn rows_recreated(&self) -> bool {
+        !self
+            .loop_sources
+            .iter()
+            .zip(&self.lists)
+            .all(|(path, (paths, reactive))| {
+                path.is_some() || !(*reactive || (!paths.is_empty() && self.props_reactive))
+            })
     }
 
     /// Live values the parent binds itself (2b-handlers, R34.18 extended): a prop that reads state and lands in a

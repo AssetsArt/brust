@@ -61,3 +61,14 @@ export function LBubbleRoot() {
     </LProvider>
   )
 }
+// PR3 D1 (pinned): a Provider whose value never changes; the Thumb carried in the rest is linked all the same.
+function LConstProvider({ children }: { children?: React.ReactNode }) {
+  return <L.Provider value={{ on: true, flip: () => {}, label: 'k' }}>{children}</L.Provider>
+}
+export function LConstRoot({ ...rest }: React.ComponentPropsWithoutRef<'button'>) {
+  return (
+    <LConstProvider>
+      <LTrigger {...rest} />
+    </LConstProvider>
+  )
+}

@@ -1368,3 +1368,33 @@ fn a_context_value_passed_under_an_authors_key_stays_frozen() {
         assert!(!is_react(&i.ir), "{}: {:?}", i.ir.id, i.ir.diagnostics);
     }
 }
+
+// PR3 D1 (ruling: pinned, row F357): under a Provider whose value never changes, the consumer handed its context value by
+// its parent is linked all the same (a link that never fires; the output is the constant, as in React).
+#[test]
+fn a_consumer_under_a_constant_frame_is_linked_too() {
+    let all = compile("live_rest_const.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    let clone = all
+        .iter()
+        .find(|i| i.ir.rest_clone_of.is_some() && i.jinja.contains("x-props-bind"))
+        .unwrap_or_else(|| {
+            panic!(
+                "{:?}",
+                all.iter().map(|i| (&i.ir.id, &i.jinja)).collect::<Vec<_>>()
+            )
+        });
+    assert!(clone.jinja.contains("__ctx_"), "{}", clone.jinja);
+}
+
+// PR3 D2: a row value of a list the client re-creates, handed to a child that reads it where it would not follow a change,
+// refuses by name (`frozen-prop`): a row added on the client would keep the first row's value.
+#[test]
+fn a_row_value_of_a_state_list_into_a_frozen_prop_refuses() {
+    let all = compile("live_rest_rows.tsx");
+    assert!(
+        is_react(&all[0].ir) && has(&all[0].ir, DiagClass::Fallback, "frozen-prop"),
+        "{:?}",
+        all[0].ir.diagnostics
+    );
+}
