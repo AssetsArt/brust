@@ -284,3 +284,19 @@ fn a_clone_linked_for_another_reason_still_pins_the_inputs_that_never_change() {
         clone.ir.fixed_props
     );
 }
+
+/// switch-provider-chain PR1 + F345: a context value is never pinned in a clone. Radix Switch's shape (a render prop
+/// called with the Provider's own context object, a trigger handing `checked` to a static button before the caller's
+/// rest, a Thumb in that rest): pinned, the trigger's rest clone printed `data-state` once (served: switch-chain).
+#[test]
+fn a_context_value_is_never_pinned_in_a_clone() {
+    let all = compile("sw_thumb.tsx");
+    for i in all.iter().filter(|i| i.ir.specialised) {
+        assert!(
+            !i.ir.fixed_props.iter().any(|p| p.starts_with("__ctx_")),
+            "{}: {:?}",
+            i.ir.id,
+            i.ir.fixed_props
+        );
+    }
+}
