@@ -1284,12 +1284,8 @@ fn a_context_value_ahead_of_the_consumers_own_rest_is_bound_live() {
 
 #[test]
 fn a_call_site_whose_rest_may_carry_a_live_bound_key_falls_back() {
-    for file in [
-        "live_rest_write.tsx",
-        "live_rest_aria.tsx",
-        "live_rest_open.tsx",
-        "live_rest_fwd_write.tsx",
-    ] {
+    // only a spread of keys known only at render may carry the key and replace the live value: that falls back
+    for file in ["live_rest_open.tsx"] {
         let all = compile(file);
         assert!(
             all.iter()
@@ -1299,6 +1295,15 @@ fn a_call_site_whose_rest_may_carry_a_live_bound_key_falls_back() {
                 .map(|i| (&i.ir.id, &i.ir.diagnostics))
                 .collect::<Vec<_>>()
         );
+    }
+    // F329b (W3): a LITERAL written for the key replaces the live value per call site (directly, bare, or through a forwarder)
+    for file in [
+        "live_rest_write.tsx",
+        "live_rest_aria.tsx",
+        "live_rest_fwd_write.tsx",
+    ] {
+        let all = compile(file);
+        assert!(!is_react(&all[0].ir), "{file}: {:?}", all[0].ir.diagnostics);
     }
 }
 

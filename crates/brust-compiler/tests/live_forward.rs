@@ -207,25 +207,32 @@ fn the_toggle_shape_binds_its_live_attributes_and_asks_its_call_sites_not_to_wri
 
 #[test]
 fn a_call_site_that_could_replace_a_live_attribute_falls_back_named() {
-    // Writing the key would, in React, replace the live value (the later spread wins), and the one shared chunk
-    // cannot tell: the call site falls back, with the code of the requirement.
+    // F329b (W3): a LITERAL the call site writes after its last spread replaces the live value in React (the later key wins),
+    // and the printed item list is per call site, so it replaces the child's binding here too: no binding, the literal printed.
     let w = page(
         "import Toggle2 from './Toggle2'",
         "return <Toggle2 aria-pressed={true}>x</Toggle2>",
     );
-    refused(&w, "spread-props");
+    assert!(!matches!(w.tier, Tier::React { .. }), "{:?}", w.diags);
     assert!(
-        w.diags
-            .iter()
-            .any(|(_, _, m)| m.contains("aria-pressed") && m.contains("could replace it")),
-        "{:?}",
-        w.diags
+        w.jinja.contains("aria-pressed=\"{{ true | attr_str"),
+        "{}",
+        w.jinja
     );
-    // Written as `false`/`undefined` too: a present key wins in React.
+    assert!(!w.jinja.contains("x-bind-aria-pressed"), "{}", w.jinja);
+    // `undefined` removes the attribute, and the other live binding stays
+    let u = page(
+        "import Toggle2 from './Toggle2'",
+        "return <Toggle2 data-state={undefined}>x</Toggle2>",
+    );
+    assert!(!matches!(u.tier, Tier::React { .. }), "{:?}", u.diags);
+    assert!(!u.jinja.contains("x-bind-data-state"), "{}", u.jinja);
+    assert!(u.jinja.contains("x-bind-aria-pressed"), "{}", u.jinja);
+    // A value that is not a literal and not a live prop this call binds is still refused.
     refused(
         &page(
             "import Toggle2 from './Toggle2'",
-            "return <Toggle2 data-state={undefined}>x</Toggle2>",
+            "return <Toggle2 aria-pressed={String(1 + 1)}>x</Toggle2>",
         ),
         "spread-props",
     );
@@ -241,13 +248,18 @@ fn a_call_site_that_could_replace_a_live_attribute_falls_back_named() {
         "import Toggle2 from './Toggle2'\nexport default function R({ ...rest }: any) { return <Toggle2 {...rest}>x</Toggle2> }",
     );
     refused(&r, "spread-props");
-    // A wrapper that is not a root passes it up to ITS call sites: those may not write the key either.
+    // A wrapper that is not a root passes it up to ITS call sites: those may write a literal, nothing else (F329b).
     let ok = page("import Wrap from './Wrap'", "return <Wrap label=\"l\" />");
     assert!(!matches!(ok.tier, Tier::React { .. }), "{:?}", ok.diags);
+    let lit = page(
+        "import Wrap from './Wrap'",
+        "return <Wrap label=\"l\" aria-pressed={true} />",
+    );
+    assert!(!matches!(lit.tier, Tier::React { .. }), "{:?}", lit.diags);
     refused(
         &page(
             "import Wrap from './Wrap'",
-            "return <Wrap label=\"l\" aria-pressed={true} />",
+            "return <Wrap label=\"l\" aria-pressed={String(1 + 1)} />",
         ),
         "spread-props",
     );

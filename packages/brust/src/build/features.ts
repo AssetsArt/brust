@@ -30,7 +30,7 @@ export function featureOfAttr(attr: string): RuntimeFeature | null | undefined {
     case 'x-collection-use':
       return 'collection'
     default:
-      return /^x-(bind|on)-/.test(attr) ? 'basics' : undefined
+      return /^x-(bind|on|prop)-/.test(attr) ? 'basics' : undefined
   }
 }
 
