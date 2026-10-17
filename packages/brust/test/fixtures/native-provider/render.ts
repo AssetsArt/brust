@@ -24,6 +24,12 @@ import WrapPage from './WrapPage'
 import SamePage from './SamePage'
 import RenderPage from './RenderPage'
 import PolyPage from './PolyPage'
+import InEventPage from './InEventPage'
+import InKidsPage from './InKidsPage'
+import InKidsGivenPage from './InKidsGivenPage'
+import SpreadCtxPage from './SpreadCtxPage'
+import HelperFramePage from './HelperFramePage'
+import HydrSwapPage from './HydrSwapPage'
 
 const server = (await import('react-dom/server')) as unknown as { renderToStaticMarkup(el: unknown): string }
 
@@ -54,3 +60,9 @@ export const renderWrap = (tone: string): string => server.renderToStaticMarkup(
 export const renderCollComp = (): string => html(CollCompPage)
 export const renderRovingList = (): string => html(RovingListPage)
 export const renderSinkRef = (): string => html(SinkRefPage)
+export const renderInEvent = (): string => html(InEventPage)
+export const renderInKids = (): string => html(InKidsPage)
+export const renderInKidsGiven = (): string => html(InKidsGivenPage)
+export const renderSpreadCtx = (): string => html(SpreadCtxPage)
+export const renderHelperFrame = (): string => html(HelperFramePage)
+export const renderHydrSwap = (name: string): string => server.renderToStaticMarkup(createElement(HydrSwapPage as never, { name } as never))

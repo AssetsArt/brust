@@ -26,6 +26,12 @@ import WrapPage from './WrapPage'
 import SamePage from './SamePage'
 import RenderPage from './RenderPage'
 import PolyPage from './PolyPage'
+import InEventPage from './InEventPage'
+import InKidsPage from './InKidsPage'
+import InKidsGivenPage from './InKidsGivenPage'
+import SpreadCtxPage from './SpreadCtxPage'
+import HelperFramePage from './HelperFramePage'
+import HydrSwapPage from './HydrSwapPage'
 
 export const routes = defineRoutes([
   { path: '/', Component: Page },
@@ -55,4 +61,10 @@ export const routes = defineRoutes([
   { path: '/wrap/{tone}', Component: WrapPage, loader: async ({ params }: { params: { tone: string } }) => ({ tone: params.tone }) },
   { path: '/render', Component: RenderPage },
   { path: '/poly', Component: PolyPage },
+  { path: '/in-event', Component: InEventPage },
+  { path: '/in-kids', Component: InKidsPage },
+  { path: '/in-kids-given', Component: InKidsGivenPage },
+  { path: '/spread-ctx', Component: SpreadCtxPage },
+  { path: '/helper-frame', Component: HelperFramePage },
+  { path: '/hydr-swap/{name}', Component: HydrSwapPage, loader: async ({ params }: { params: { name: string } }) => ({ name: params.name }) },
 ])
