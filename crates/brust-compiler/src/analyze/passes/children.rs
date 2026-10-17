@@ -7564,6 +7564,8 @@ impl Walker<'_, '_> {
             || !self.loop_scope.is_empty()
             || !child.spread.lands(k)
             || !live_key_ok(k)
+            // a camelCase DOM name (`viewBox`) cannot be set from a lowercase `x-prop-*` attribute name (HTML lowercases it)
+            || brust_jinja::attr_name(k).chars().any(|c| c.is_ascii_uppercase())
             || matches!(
                 brust_jinja::spread::attr_key(k).as_str(),
                 "class" | "style" | "children"

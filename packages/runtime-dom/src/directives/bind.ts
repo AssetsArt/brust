@@ -57,6 +57,6 @@ BINDERS.push({
     if (!name || !raw || name.startsWith('on') || name.startsWith('x-') || PROP_REFUSED.has(name)) {
       warnOnce(`pb:${inst.name}:${name}`, `${attr} in ${inst.name} refused`); return
     }
-    inst.effect(() => { writeAttr(inst, attr, el, name, inst.props()[raw]) })
+    inst.effect(() => { const ps = inst.props(); writeAttr(inst, attr, el, name, Object.hasOwn(ps, raw) ? ps[raw] : undefined) })
   },
 })

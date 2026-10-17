@@ -41,3 +41,15 @@ test('x-prop-* refuses what the server print never binds: handlers, srcdoc, x-*,
   expect(warns.filter((w) => w.includes('x-prop-')).length).toBeGreaterThanOrEqual(7)
   console.warn = orig
 })
+
+test('x-prop-*: every step of true/false/null/string/number on aria-* and role, and a missing key removes the attribute', () => {
+  const v = signal<unknown>('a')
+  defineBehavior('prop_parent5', () => ({ _p1: computed(() => ({ 'aria-checked': v(), role: v() })) }))
+  defineBehavior('prop_child5', () => ({}))
+  document.body.innerHTML = `<div x-data="prop_parent5"><div x-data="prop_child5" x-props='{}' x-props-bind="_p1"><i id="i" x-prop-aria-checked="aria-checked" x-prop-role="role" x-prop-title="nope"></i></div></div>`
+  mount()
+  const i = document.getElementById('i')!
+  const steps: Array<[unknown, string | null, string | null]> = [['a', 'a', 'a'], [true, 'true', null], [false, 'false', null], [null, null, null], [0, '0', '0'], [undefined, null, null], ['', '', '']]
+  for (const [val, aria, role] of steps) { v.set(val); expect([i.getAttribute('aria-checked'), i.getAttribute('role')]).toEqual([aria, role]) }
+  expect(i.hasAttribute('title')).toBe(false)
+})

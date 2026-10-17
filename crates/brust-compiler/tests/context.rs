@@ -1709,6 +1709,7 @@ fn a_live_prop_the_binding_cannot_honour_is_refused() {
         "live-rest-rows.tsx",
         "live-rest-sinks.tsx",
         "live-rest-override-before.tsx",
+        "live-rest-viewbox.tsx",
     ] {
         let all = compile(file);
         let page = all
