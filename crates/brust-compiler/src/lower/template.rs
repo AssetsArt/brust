@@ -316,10 +316,20 @@ impl<'a, 'c> Printer<'a, 'c> {
         self.inline.as_ref().map_or("", |i| i.suffix.as_str())
     }
 
-    /// Seed and derived `set`s in declaration (source) order.
+    /// Seed and derived `set`s in declaration order: each after the ones it reads, then by source location (F385).
     fn preamble(&mut self) {
         let ir = self.f.ir;
-        let mut decls: Vec<(u32, String)> = Vec::new();
+        let names: BTreeSet<String> = ir
+            .state
+            .iter()
+            .map(|s| s.name.clone())
+            .chain(ir.derived.iter().map(|d| d.name.clone()))
+            .collect();
+        let reads = |e: &Expr| match e {
+            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => crate::lower::common::reads_of(r, &names),
+            _ => Vec::new(),
+        };
+        let mut decls: Vec<(u32, String, Vec<String>, String)> = Vec::new();
         for (i, s) in ir.state.iter().enumerate() {
             let loc = self.f.structural.state[i]
                 .init
@@ -328,6 +338,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             let value = self.value(&s.init);
             decls.push((
                 loc,
+                s.name.clone(),
+                reads(&s.init),
                 format!("{{% set {}{} = {value} %}}", s.name, self.suffix()),
             ));
         }
@@ -342,11 +354,12 @@ impl<'a, 'c> Printer<'a, 'c> {
             let value = self.value(&d.expr);
             decls.push((
                 loc,
+                d.name.clone(),
+                reads(&d.expr),
                 format!("{{% set {} = {value} %}}", self.derived_var(&d.name)),
             ));
         }
-        decls.sort_by_key(|d| d.0);
-        for (_, line) in decls {
+        for line in crate::lower::common::order_decls(decls) {
             self.out.push_str(&line);
             self.out.push('\n');
         }
