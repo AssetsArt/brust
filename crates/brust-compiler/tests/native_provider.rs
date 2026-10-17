@@ -1259,3 +1259,53 @@ fn a_forwarder_of_its_own_rest_inherits_the_live_bound_keys() {
             .collect::<Vec<_>>()
     );
 }
+
+// switch-provider-chain (ruling 7a25d5e0): a component handing its own `__scopeX` prop, unchanged, to a native consumer
+// stays native while no caller passes a scope (`absent_props`, inherited through a props spread); a caller that passes
+// one, or a renamed or defaulted scope, falls back (`context-scope`, W1d PR 2 Mellow C4).
+#[test]
+fn a_components_own_scope_handed_on_unchanged_is_native_until_a_caller_passes_one() {
+    for file in ["scope_fwd.tsx", "scope_fwd_two.tsx"] {
+        let all = compile(file);
+        assert!(!is_react(&all[0].ir), "{file}: {:?}", all[0].ir.diagnostics);
+        assert!(
+            all.iter()
+                .all(|i| !has(&i.ir, DiagClass::Fallback, "context-scope")),
+            "{file}: {:?}",
+            all.iter()
+                .map(|i| (&i.ir.id, &i.ir.diagnostics))
+                .collect::<Vec<_>>()
+        );
+        let root = all
+            .iter()
+            .find(|i| i.ir.id.starts_with("qRoot_"))
+            .expect("QRoot");
+        assert!(!is_react(&root.ir), "{file}: {:?}", root.ir.diagnostics);
+        assert_eq!(root.ir.absent_props, ["__scopeQ"], "{file}");
+    }
+    let two = compile("scope_fwd_two.tsx");
+    assert!(
+        two.iter()
+            .any(|i| i.ir.id.starts_with("w_") && i.ir.absent_props == ["__scopeQ"]),
+        "{:?}",
+        two.iter()
+            .map(|i| (&i.ir.id, &i.ir.absent_props))
+            .collect::<Vec<_>>()
+    );
+    for file in [
+        "scope_fwd_pass.tsx",
+        "scope_fwd_two_pass.tsx",
+        "scope_fwd_renamed.tsx",
+        "scope_fwd_defaulted.tsx",
+    ] {
+        let all = compile(file);
+        assert!(
+            all.iter()
+                .any(|i| is_react(&i.ir) && has(&i.ir, DiagClass::Fallback, "context-scope")),
+            "{file}: {:?}",
+            all.iter()
+                .map(|i| (&i.ir.id, &i.ir.diagnostics))
+                .collect::<Vec<_>>()
+        );
+    }
+}

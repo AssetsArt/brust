@@ -75,7 +75,14 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         },
         handlers: Vec::new(),
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
-        absent: BTreeSet::new(),
+        own_scopes: ir
+            .props
+            .iter()
+            .filter(|p| p.name.starts_with("__scope") && p.local == p.name && p.default.is_none())
+            .map(|p| p.name.clone())
+            .collect(),
+        // The contexts pass (a walker of its own, before this one) may add some (a forwarded scope).
+        absent: ir.absent_props.iter().cloned().collect(),
         holes: None,
         unwritten: BTreeSet::new(),
         shadowed: BTreeSet::new(),
@@ -221,6 +228,7 @@ pub fn contexts(
         ));
     }
     ir.ctx_pkg |= w.bubbled_pkg;
+    ir.absent_props = w.absent.iter().cloned().collect();
     for c in std::mem::take(&mut w.bubbled_scoped) {
         if !ir.ctx_scoped.contains(&c) {
             ir.ctx_scoped.push(c);
@@ -410,6 +418,8 @@ struct Walker<'s, 'c> {
     handlers: Vec<crate::ir::HandlerDecl>,
     /// This component's named props (its `...rest` holds every other key).
     own_named: BTreeSet<String>,
+    /// switch-provider-chain: this component's own `__scope*` props, read under their own name with no default.
+    own_scopes: BTreeSet<String>,
     /// Keys this component's own call sites must not pass (`ComponentIR::absent_props`, F153c).
     absent: BTreeSet<String>,
     /// S2 F3: a child of this template is a React island, or holds one.
@@ -2719,9 +2729,20 @@ impl Walker<'_, '_> {
                 // W1d PR 2 (Mellow C4): the scope a call site would hand to a native component is never followed (frames are
                 // resolved by position), so a `__scope*` attribute on one stays an island. An unknown spread is already
                 // refused (`spread-props`); a props or rest spread can only carry what a caller wrote, which this refuses.
+                // switch-provider-chain (ruling 7a25d5e0): this component's own scope prop handed on unchanged under its
+                // own name (Radix's `Switch` to `SwitchTrigger`) names a scope only if a caller passes one: the
+                // requirement "callers do not pass it" moves up (`absent_props`, as `require_absent` does).
+                let forwards_own_scope = |k: &str, v: &Expr| {
+                    !self.ctx.is_root
+                        && self.own_scopes.contains(k)
+                        && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
+                            if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == k))
+                };
                 if !self.ctx.specialised
                     && matches!(cir.tier, Tier::Static | Tier::Native)
-                    && let Some((k, _)) = props.iter().find(|(k, _)| k.starts_with("__scope"))
+                    && let Some((k, _)) = props
+                        .iter()
+                        .find(|(k, v)| k.starts_with("__scope") && !forwards_own_scope(k, v))
                 {
                     diags.push(Diagnostic::fallback(
                         "context-scope",
@@ -2729,6 +2750,13 @@ impl Walker<'_, '_> {
                         *loc,
                         "do not pass a scope to a native component, or keep this component in React",
                     ));
+                }
+                if !self.ctx.specialised && matches!(cir.tier, Tier::Static | Tier::Native) {
+                    for (k, _) in props.iter() {
+                        if k.starts_with("__scope") {
+                            self.absent.insert(k.clone());
+                        }
+                    }
                 }
                 // Consumer: each field it reads comes from the nearest frame of its context, else bubbles up.
                 for u in &cir.ctx_uses {
@@ -4597,6 +4625,19 @@ impl Walker<'_, '_> {
                 self.absent.insert(key.to_string());
             }
             return true;
+        }
+        // switch-provider-chain (ruling 7a25d5e0): a scope the child hands on (its own `__scope*` prop) selects a
+        // context instance, which brust resolves by position (W1d PR 2, Mellow C4).
+        if key.starts_with("__scope") {
+            self.diagnostics.push(Diagnostic::fallback(
+                "context-scope",
+                format!(
+                    "<{name}> hands its prop `{key}` to a native component as a Radix scope, and this call site may pass one (or props of unknown keys are spread in); brust resolves scopes by position"
+                ),
+                loc,
+                "do not pass a scope, or keep this component in React",
+            ));
+            return false;
         }
         self.diagnostics.push(Diagnostic::fallback(
             "slot-dynamic",
