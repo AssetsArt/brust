@@ -7589,6 +7589,90 @@ pub(super) fn plain_path(r: &RawExpr, item: Option<&str>) -> Option<PlainPath> {
 mod tests {
     use super::*;
 
+    fn call(loc: u32, source: Option<&str>, children: Vec<Node>) -> Node {
+        Node::Component {
+            loc,
+            name: "C".into(),
+            source: source.map(str::to_string),
+            imported: None,
+            member: vec![],
+            props: vec![],
+            children,
+            link: None,
+            tier: Tier::Pending,
+            forwarded_ref: false,
+        }
+    }
+
+    fn client(js: &str) -> Expr {
+        Expr::ClientOnly { js: js.into() }
+    }
+
+    // F365(a): the refusal in `specialise_host` rests on this set, and no fixture reaches it with a real collision.
+    #[test]
+    fn shared_component_locs_counts_call_sites_that_share_an_offset() {
+        let locs = |n: &Node| shared_component_locs(n).into_iter().collect::<Vec<_>>();
+        // two calls at one offset (nested in a call's own content too): counted
+        let t = Node::Fragment(vec![
+            call(7, None, vec![call(7, None, vec![])]),
+            call(9, None, vec![]),
+        ]);
+        assert_eq!(locs(&t), vec![7]);
+        // distinct offsets: none
+        let t = Node::Fragment(vec![call(1, None, vec![]), call(2, None, vec![])]);
+        assert!(locs(&t).is_empty());
+        // a clone (SPEC_SOURCE) at the offset of its original is not a second call site
+        let t = Node::Fragment(vec![
+            call(7, None, vec![]),
+            call(7, Some(SPEC_SOURCE), vec![]),
+        ]);
+        assert!(locs(&t).is_empty());
+        // ... and two clones are not either
+        let t = Node::Fragment(vec![
+            call(7, Some(SPEC_SOURCE), vec![]),
+            call(7, Some(SPEC_SOURCE), vec![]),
+        ]);
+        assert!(locs(&t).is_empty());
+        // a clone's own content is still walked: a real call inside it that repeats an offset counts
+        let t = Node::Fragment(vec![
+            call(3, None, vec![]),
+            call(7, Some(SPEC_SOURCE), vec![call(3, None, vec![])]),
+        ]);
+        assert_eq!(locs(&t), vec![3]);
+        // under an If (either arm) and a For: counted
+        let t = Node::Fragment(vec![
+            call(5, None, vec![]),
+            Node::If {
+                cond: client("c"),
+                then: vec![call(5, None, vec![])],
+                else_: vec![],
+                and: false,
+            },
+        ]);
+        assert_eq!(locs(&t), vec![5]);
+        let t = Node::Fragment(vec![
+            Node::If {
+                cond: client("c"),
+                then: vec![],
+                else_: vec![call(6, None, vec![])],
+                and: false,
+            },
+            call(6, None, vec![]),
+        ]);
+        assert_eq!(locs(&t), vec![6]);
+        let t = Node::Fragment(vec![
+            call(8, None, vec![]),
+            Node::For {
+                source: client("xs"),
+                item: "x".into(),
+                index: None,
+                key: client("x"),
+                body: vec![call(8, None, vec![])],
+            },
+        ]);
+        assert_eq!(locs(&t), vec![8]);
+    }
+
     fn d(state: &[&str], loops: &[&str]) -> Deps {
         let mut d = Deps::default();
         d.state.extend(state.iter().map(|s| s.to_string()));
