@@ -212,3 +212,53 @@ fn a_provider_clone_given_constants_stays_without_an_instance() {
     assert!(!all[0].jinja.contains("brust-host"), "{}", all[0].jinja);
     assert!(!clone.jinja.contains("brust-host"), "{}", clone.jinja);
 }
+
+/// F345: a clone's props the call site does not change are pinned, so S3 holds for every clone. A stateless wrapper
+/// passing its own prop to a Provider it specialises (shadcn Progress over Radix Root) pins it and freezes it (F319):
+/// a constant caller stays static with no instance; a changing caller falls back by name; a wrapper with an instance
+/// of its own follows its caller, and so does its clone.
+#[test]
+fn a_wrappers_own_prop_is_pinned_in_its_clone_and_frozen_at_the_wrapper() {
+    let all = compile("wrap_const.tsx");
+    assert!(
+        all.iter().all(|i| matches!(i.ir.tier, Tier::Static)),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.tier))
+            .collect::<Vec<_>>()
+    );
+    assert!(!all.iter().any(|i| i.jinja.contains("brust-host")));
+    let clone = all.iter().find(|i| i.ir.specialised).unwrap();
+    assert!(
+        clone.ir.fixed_props.iter().any(|p| p == "value"),
+        "{:?}",
+        clone.ir.fixed_props
+    );
+    let wrap = all.iter().find(|i| i.ir.id.starts_with("wrap_")).unwrap();
+    assert!(
+        wrap.ir.frozen_props.iter().any(|p| p == "value"),
+        "{:?}",
+        wrap.ir.frozen_props
+    );
+    // shadcn Progress exactly: the props reach the clone through the wrapper's own rest (`*`, frozen per call site)
+    let all = compile("restwrap_const.tsx");
+    assert!(
+        all.iter().all(|i| matches!(i.ir.tier, Tier::Static)),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.tier))
+            .collect::<Vec<_>>()
+    );
+    assert!(!all.iter().any(|i| i.jinja.contains("brust-host")));
+    let all = compile("wrap_live.tsx");
+    assert!(is_react(&all[0].ir));
+    assert!(rules(&all[0].ir, DiagClass::Fallback).contains(&"frozen-prop".to_string()));
+    let all = compile("livewrap_live.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    let clone = all.iter().find(|i| i.ir.specialised).unwrap();
+    assert!(
+        !clone.ir.fixed_props.iter().any(|p| p == "value"),
+        "{:?}",
+        clone.ir.fixed_props
+    );
+}

@@ -127,6 +127,15 @@
       "libraryComponents": 27
     },
     {
+      "blocker": "fallback:slot-dynamic",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 3,
+      "analysisOnlyRows": 0,
+      "appComponents": 3,
+      "libraryComponents": 0
+    },
+    {
       "blocker": "fallback:prop-pattern",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -143,15 +152,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 2,
       "libraryComponents": 17
-    },
-    {
-      "blocker": "fallback:slot-dynamic",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 2,
-      "analysisOnlyRows": 0,
-      "appComponents": 2,
-      "libraryComponents": 0
     },
     {
       "blocker": "fallback:spread-handler",
@@ -267,7 +267,16 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
       "analysisOnlyRows": 0,
-      "appComponents": 2,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:slot-child-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
       "libraryComponents": 0
     },
     {
@@ -592,7 +601,7 @@
       "basis": "measured",
       "tier": "react",
       "islands": 1,
-      "components": 29,
+      "components": 30,
       "reactComponents": 12,
       "jsGzipKb": 100,
       "workerCalls": 1,
@@ -602,6 +611,8 @@
         "island-children",
         "island-prop",
         "slot-child-component",
+        "slot-child-shape",
+        "slot-dynamic",
         "spread-props"
       ]
     },

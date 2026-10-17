@@ -90,7 +90,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .any(|j| matches!(j.kind, crate::ir::JobKind::Precompute)),
         guard_depth: 0,
         slot_depth: 0,
-        spec_salt: ir.rest_clone_of.as_ref().map(|_| ir.id.clone()),
+        spec_salt: (ir.rest_clone_of.is_some() || ir.specialised).then(|| ir.id.clone()),
         mount_once: Vec::new(),
         frozen: BTreeSet::new(),
         callable_up: BTreeSet::new(),
@@ -464,8 +464,9 @@ struct Walker<'s, 'c> {
     guard_depth: u32,
     /// F277: open component children (slot content): the host may print them conditionally, or once per row.
     slot_depth: u32,
-    /// F298: this component is a rest clone (`ComponentIR::rest_clone_of`): its id, mixed into the ids and cache keys
-    /// of the clones made inside it.
+    /// F298: this component is a clone (a rest clone, `ComponentIR::rest_clone_of`, or any specialised one: F307 found
+    /// two routes' Provider clones naming the same host clone inside them): its id, mixed into the ids and cache keys of
+    /// the clones made inside it.
     spec_salt: Option<String>,
     /// F295: what makes an instance of this component unable to mount again (`ComponentIR::mount_once`).
     mount_once: Vec<String>,
@@ -751,7 +752,9 @@ fn rebase_sources(
                             != crate::analyze::modules::package_scope(to)
                         {
                             // W1d (progress): the export is a module of the build's package sources: name that file
-                            // from the clone's module instead, when it compiles without React.
+                            // from the clone's module instead, when it compiles without React. F306 (Radix's
+                            // `Switch.Thumb`, declared beside `Switch.Root` in the clone's own module) is the case
+                            // where that file is the clone's module itself.
                             let err = || {
                                 format!(
                                     "<{name}> is imported from a package of another scope than the component it is given to"
@@ -1083,6 +1086,67 @@ fn splice_rest_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), 
     }
 }
 
+/// F305: `Some(true)` when `r` reads an import, and only as the callee of a direct call (`cn(…)`) or of a namespace
+/// import's member (`fmt.date(…)`, `import * as fmt`), with no element, no code printed as written and no name the
+/// content binds itself (a list row's): the whole value can be computed at the call site. `Some(false)` when it reads no import; `None` when an import is read as a value (data,
+/// which F325 keeps out of a clone) or the value cannot be moved.
+fn imports_called_only(r: &RawExpr, bound: &[String]) -> Option<bool> {
+    fn walk(r: &RawExpr, bound: &[String], callee: bool, seen: &mut bool) -> Option<()> {
+        match &r.kind {
+            RawKind::Lit(_) => Some(()),
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Import { .. } if callee => {
+                    *seen = true;
+                    Some(())
+                }
+                IdentKind::Import { .. } | IdentKind::Store { .. } | IdentKind::Unknown => None,
+                IdentKind::LoopBinding | IdentKind::Local if bound.iter().any(|b| b == name) => {
+                    None
+                }
+                _ => Some(()),
+            },
+            // `fmt.date(…)` with `import * as fmt`: one member of a namespace import is the callee. Any other member
+            // chain under a callee (`DATA.items.join(…)`) reads the import as data (Mellow N1, F325).
+            RawKind::Member { target, .. } => match &target.kind {
+                RawKind::Ident {
+                    kind: IdentKind::Import { imported, .. },
+                    ..
+                } if callee && imported == "*" => {
+                    *seen = true;
+                    Some(())
+                }
+                _ => walk(target, bound, false, seen),
+            },
+            RawKind::Index { target, index } => {
+                walk(target, bound, false, seen)?;
+                walk(index, bound, false, seen)
+            }
+            RawKind::Call { callee: c, args } => {
+                walk(c, bound, true, seen)?;
+                args.iter().try_for_each(|a| walk(a, bound, false, seen))
+            }
+            RawKind::Binary { left, right, .. } => {
+                walk(left, bound, false, seen)?;
+                walk(right, bound, false, seen)
+            }
+            RawKind::Unary { value, .. } => walk(value, bound, false, seen),
+            RawKind::Cond { test, yes, no } => {
+                walk(test, bound, false, seen)?;
+                walk(yes, bound, false, seen)?;
+                walk(no, bound, false, seen)
+            }
+            RawKind::Template { parts, .. } => parts
+                .iter()
+                .try_for_each(|(p, _)| walk(p, bound, false, seen)),
+            RawKind::Array(xs) => xs.iter().try_for_each(|x| walk(x, bound, false, seen)),
+            RawKind::Object(ps) => ps.iter().try_for_each(|(_, v)| walk(v, bound, false, seen)),
+            RawKind::Arrow { .. } | RawKind::Opaque { .. } | RawKind::Jsx(_) => None,
+        }
+    }
+    let mut seen = false;
+    walk(r, bound, false, &mut seen).map(|()| seen)
+}
+
 /// A call site's clone: its id, its module-cache key and the hidden inputs the call site must now pass (S2).
 type Specialised = (String, String, Vec<(String, Expr)>);
 
@@ -1281,9 +1345,38 @@ impl<'a> Carry<'a> {
 
     fn expr(&mut self, e: &mut Expr, bound: &[String], what: &str) -> Result<(), String> {
         match e {
-            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => self.raw(r, bound, what),
+            Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {
+                if imports_called_only(r, bound) == Some(true) {
+                    return self.whole(r);
+                }
+                self.raw(r, bound, what)
+            }
             _ => Ok(()),
         }
+    }
+
+    /// F305: a value of the content that calls an import of the call site (`className={cn("…", x)}`) is computed where
+    /// it is written: the call site passes the whole value as one hidden input, and the clone reads that prop. No import
+    /// crosses into the clone's module (a package source never imports app code); only the value does, as data, as
+    /// any input does.
+    fn whole(&mut self, r: &mut RawExpr) -> Result<(), String> {
+        let mut n = self.inputs.len() + 1;
+        let hidden = loop {
+            let h = format!("__inx{n}");
+            if !self.inputs.iter().any(|(k, _)| *k == h) && !self.taken.contains(&h) {
+                break h;
+            }
+            n += 1;
+        };
+        self.inputs.push((hidden.clone(), Expr::Raw(r.clone())));
+        *r = RawExpr {
+            loc: r.loc,
+            kind: RawKind::Ident {
+                name: hidden,
+                kind: IdentKind::Prop,
+            },
+        };
+        Ok(())
     }
 
     fn nodes(&mut self, ns: &mut [Node], bound: &[String]) -> Result<(), String> {
@@ -1365,7 +1458,12 @@ impl<'a> Carry<'a> {
                 key,
                 body,
             } => {
-                self.expr(source, bound, "a list")?;
+                // A list's source is data the rows print once (F325): never computed at the call site and shipped as
+                // an input, so an import there stays refused.
+                match source {
+                    Expr::Raw(r) | Expr::Server(ServerExpr(r)) => self.raw(r, bound, "a list")?,
+                    _ => {}
+                }
                 let mut inner = bound.to_vec();
                 inner.push(item.clone());
                 if let Some(i) = index {
@@ -2518,7 +2616,7 @@ impl Walker<'_, '_> {
                     && !children.is_empty()
                     && self.reads_context_in(children)
                 {
-                    match self.specialise_forwarder(&cir, &from, *loc, children) {
+                    match self.specialise_forwarder(&cir, &from, *loc, children, props) {
                         Ok((clone, (id, key, inputs))) => {
                             props.extend(inputs);
                             *name = id;
@@ -2825,7 +2923,7 @@ impl Walker<'_, '_> {
                     && !children.is_empty()
                     && let Some(from) = child.path.clone()
                 {
-                    match self.specialise_host(&cir, &from, *loc, children) {
+                    match self.specialise_host(&cir, &from, *loc, children, props) {
                         Ok((id, key, inputs)) => {
                             props.extend(inputs);
                             *name = id;
@@ -2932,11 +3030,7 @@ impl Walker<'_, '_> {
         let clone_id = id.clone();
         let (inputs, clone_handlers) = carry.finish();
         // An input the call site does not change on the client stays fixed in the clone.
-        let fixed: Vec<String> = inputs
-            .iter()
-            .filter(|(_, v)| !self.source_reactive(v))
-            .map(|(h, _)| h.clone())
-            .collect();
+        let fixed = self.pinned(cir, props, &inputs);
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
             &export,
@@ -2984,6 +3078,7 @@ impl Walker<'_, '_> {
         c_path: &str,
         loc: u32,
         content: &[Node],
+        props: &[(String, Expr)],
     ) -> Result<(Rc<ComponentIR>, Specialised), String> {
         let ctx = self.ctx;
         let export = match &cir.export {
@@ -3014,11 +3109,7 @@ impl Walker<'_, '_> {
         let key = format!("{c_path}#{exp}~rest~{site}~{loc}");
         let clone_id = id.clone();
         let (inputs, clone_handlers) = carry.finish();
-        let fixed: Vec<String> = inputs
-            .iter()
-            .filter(|(_, v)| !self.source_reactive(v))
-            .map(|(h, _)| h.clone())
-            .collect();
+        let fixed = self.pinned(cir, props, &inputs);
         let mut once = Some(nodes);
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
@@ -3086,6 +3177,7 @@ impl Walker<'_, '_> {
         c_path: &str,
         loc: u32,
         content: &[Node],
+        props: &[(String, Expr)],
     ) -> Result<Specialised, String> {
         if !cir.provides.is_empty() || cir.specialised {
             return Err("it provides a context, or is a clone already".into());
@@ -3134,11 +3226,7 @@ impl Walker<'_, '_> {
         let key = format!("{c_path}#{exp}~host~{site}~{loc}");
         let clone_id = id.clone();
         let (inputs, clone_handlers) = carry.finish();
-        let fixed: Vec<String> = inputs
-            .iter()
-            .filter(|(_, v)| !self.source_reactive(v))
-            .map(|(h, _)| h.clone())
-            .collect();
+        let fixed = self.pinned(cir, props, &inputs);
         let mut once = Some(nodes);
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
@@ -3160,7 +3248,6 @@ impl Walker<'_, '_> {
                 ir.fixed_props = fixed.clone();
                 ir.id = clone_id.clone();
                 ir.specialised = true;
-                ir.host_clone = true;
                 Ok(())
             },
         )?;
@@ -3181,6 +3268,56 @@ impl Walker<'_, '_> {
                     RawKind::Ident { name, kind: IdentKind::Prop }
                         if name == "*" || (name == crate::ir::REST_PROPS && !self.own_named.contains("children"))))
         })
+    }
+
+    /// F345: what a clone's one call site does not change on the client, pinned in its `fixed_props` (a clone reads every
+    /// other prop as a signal, `ComponentIR::props_are_signal`): each hidden input and each declared prop whose value at
+    /// the call site reads no state and no prop that changes here (F320's rule, `live`), and each declared prop the call
+    /// site does not pass (it stays at its default, or comes in a spread of this component's own rest), unless a spread of
+    /// unknown keys there may carry it. A pinned value that reads a prop of THIS component (a stateless wrapper passing
+    /// its own prop on, F323) freezes that prop here (F319): a caller passing a changing value falls back
+    /// (`frozen-prop`). F319's own freeze at an unlinked call site already does so; this one also holds where the clone
+    /// is linked for another reason.
+    fn pinned(
+        &mut self,
+        cir: &ComponentIR,
+        props: &[(String, Expr)],
+        inputs: &[(String, Expr)],
+    ) -> Vec<String> {
+        // A spread of this component's own rest or props carries only what its caller gave, which F319 freezes per call
+        // site (`*`, never live by F320's rule): the props it may carry are pinned too, and `*` frozen here. Any other
+        // spread (keys known only at render) may carry a changing value: what it may carry is not pinned.
+        let mut spread = false;
+        let mut frozen = Vec::new();
+        for (k, v) in props {
+            if k != crate::ir::SPREAD_KEY {
+                continue;
+            }
+            let own = matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS));
+            if own && !self.live(v) {
+                frozen.extend(self.changing_prop_roots(&self.deps_of(v)));
+            } else {
+                spread = true;
+            }
+        }
+        let mut given: Vec<(&str, &Expr)> = inputs.iter().map(|(h, v)| (h.as_str(), v)).collect();
+        let mut fixed = Vec::new();
+        for p in &cir.props {
+            match props.iter().rev().find(|(k, _)| *k == p.name) {
+                Some((_, v)) => given.push((&p.name, v)),
+                None if !spread && p.name != "children" => fixed.push(p.name.clone()),
+                None => {}
+            }
+        }
+        for (name, v) in given {
+            if matches!(v, Expr::ClientOnly { .. }) || !self.live(v) {
+                frozen.extend(self.changing_prop_roots(&self.deps_of(v)));
+                fixed.push(name.to_string());
+            }
+        }
+        self.frozen.extend(frozen);
+        fixed
     }
 
     /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
