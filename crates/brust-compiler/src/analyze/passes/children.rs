@@ -3157,6 +3157,7 @@ impl Walker<'_, '_> {
                 ir.fixed_props = fixed.clone();
                 ir.id = clone_id.clone();
                 ir.specialised = true;
+                ir.host_clone = true;
                 Ok(())
             },
         )?;
