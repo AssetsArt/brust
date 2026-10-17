@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
-| C Hooks | 213 | 66 | 68 | 79 | 0 | 0 | 0 | 0 |
+| C Hooks | 217 | 69 | 68 | 80 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 611 | 269 | 116 | 222 | 3 | 1 | 0 | 0 |
+| **Total** | 615 | 272 | 116 | 223 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -386,10 +386,14 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-rest-children-consumer | a context consumer passed as children of a component that spreads its rest (children included) under its own Provider | static | static | 0 | ok | 4.7 | — | F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider) |
 | c-clone-carry-import | a Thumb whose className calls an import, passed through a component's rest under its own Provider | static | static | precompute | ok | 4.7 | — | F305: the call of the import is computed by the page and handed to the rest clone as one input (was: the children stayed outside, the page React) |
 | c-clone-carry-import-data | the same Thumb given an imported object member | react | react | ssr | ok | 4.0 | fallback:context-no-provider, fallback:children-rest, info:rest-children-unsupported | F305 / F325: an import read as data is not computed at the call site and shipped: the children stay outside, context-no-provider |
-| c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | ssr | ok | 5.5 | info:rest-children-unsupported | F298 + F309: that element is linked, so it would host the Thumb (slot-owner): no clone, LiveRoot stays a React island with its children (F307 relaxes it) |
+| c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | 0 | ok | 5.5 | — | F298 + F309 + F307: LiveLabel is cloned with the Thumb inside LiveRoot's rest clone; since F337 (M2 binds the carried state to its seed in the LiveLabel clone's record, M3 lifts linked-prop-precompute for it) LiveRoot's rest clone is taken and no island is left: served == React, tests/server/linked-rest-host.chromium.test.ts (was: LiveRoot a React island) |
 | c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | 0 | ok | 4.7 | — | F324 (real fix, progress-flip): the children reach the button through the rest in React; the clone puts the call site's content into the one element that spreads the rest (explicit children win in React; this Provider writes none), so the markup carries them and no island is needed (was: refused to an island after the alpha.16 silent drop) |
 | c-spec-rest-no-children | the same Provider component called without children | static | static | 0 | ok | 4.7 | — | F324: nothing to drop, so the clone is still taken |
 | c-literal-order-entries | an object literal written out of sorted order, passed to a stateful child that reads Object.entries / Object.keys | static | static | 0 | ok | 4.7 | — | F333: the literal prints through obj_lit (JS key order z,a); a jinja map literal sorted it a,z |
+| c-switch-live-ahead-of-rest | a trigger binding live context values ahead of a spread of its own rest (Radix SwitchTrigger) | static | static | 0 | ok | 4.7 | — | F356 (switch-provider-chain PR2, link 3): the parent binds the live context value on the child's element ahead of the rest |
+| c-scope-own-forwarded | a component handing its own __scopeX prop unchanged to the consumer it renders, called without a scope | static | static | 0 | ok | 4.7 | — | F356 (ruling 7a25d5e0): the requirement 'callers do not pass it' moves up; no caller passes one, so it stays native |
+| c-scope-own-forwarded-passed | the same, called with a scope | react | react | ssr | ok | 5.5 | fallback:context-scope | F356: a caller that passes a scope selects another context instance (context-scope) |
+| c-scope-own-forwarded-undefined | the same, called with a literal undefined scope | static | static | 0 | ok | 4.7 | — | F356 (ruling 7a25d5e0): a literal undefined names no scope |
 | c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.5 | fallback:frozen-prop | F214 (Mellow F1) + F307: Mid clones Box with the content, but Mid is stateless and does not follow `label` (F323): frozen-prop |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | 4.7 | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | G3: reported at the call site, naming the hook |
