@@ -115,6 +115,22 @@ fn a_list_over_state_in_the_slot_of_a_native_child_is_refused() {
     cloned("loop.tsx");
 }
 
+// F310 (measured): the F309 guard fires while the child's link is still `RowOnly`, and the link survives only in a row the
+// client can re-create. Slot content the guard names (a handler, a live attribute) is itself a directive of the row
+// (`body_directive`), so the row IS re-created: the child keeps its host and would bind that content. The refusal is not
+// an over-refusal for these shapes (and a clone cannot carry a row's bindings: `host-specialise-unsupported`); content
+// with no directive of the caller's is not refused at all.
+#[test]
+fn a_row_only_child_with_a_directive_in_its_slot_keeps_the_refusal() {
+    refused("row-only-handler.tsx");
+    refused("row-only-attr.tsx");
+}
+
+#[test]
+fn a_row_only_child_with_plain_slot_content_is_not_refused() {
+    kept("row-only-plain.tsx");
+}
+
 #[test]
 fn a_child_with_changing_props_in_the_slot_is_refused() {
     cloned("linked.tsx");
