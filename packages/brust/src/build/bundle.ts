@@ -326,10 +326,13 @@ export async function buildRuntime(dist: string, ctx: BrowserCtx): Promise<Runti
 export async function buildClientChunks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls): Promise<Map<string, string>> {
   const entrypoints: string[] = []
   const shared = new Map<string, string>()
+  // F362 PR2: a chunk that declares an imported list projected keeps it only while its data module is out of the client
+  // graph: another importer (a module that pushes into the list) would hold the real one, which the copy never sees.
+  const whole = await projectionFallbacks(dist, compiled, ctx, runtimeUrl)
   for (const c of compiled.values()) {
     if (c.clientJs === undefined) continue
     const file = join(dist, '.stage', 'client', `${c.id}.js`)
-    write(file, c.clientJs)
+    write(file, whole.has(c.id) ? c.clientJsWhole! : c.clientJs)
     // R34.124: a module several chunks import (a specialised clone's factory) is written once under its content name.
     for (const m of c.clientModules ?? []) {
       const mf = join(dist, '.stage', 'client', `${m.name}.js`)
@@ -351,6 +354,53 @@ export async function buildClientChunks(dist: string, compiled: Map<string, Comp
     external: ['/_brust/*'],
     plugins: [runtimeAliasPlugin(runtimeUrl), specModulePlugin(join(dist, '.stage', 'client')), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
   })
+}
+
+/** F362 PR2: the ids of the chunks that must import their lists as written. A probe build (metafile only, nothing
+ * written to `client/`) lists every module the client graph loads; a chunk whose projected data module is among them
+ * falls back to `clientJsWhole`, which brings that module in, so the probe repeats until no projected module is in the
+ * graph. Without a projected chunk nothing is probed. */
+export async function projectionFallbacks(dist: string, compiled: Map<string, Compiled>, ctx: BrowserCtx, runtimeUrl: RuntimeUrls): Promise<Set<string>> {
+  const whole = new Set<string>()
+  const projecting = [...compiled.values()].filter((c) => c.clientJs !== undefined && c.projectedModules?.length && c.clientJsWhole !== undefined)
+  if (projecting.length === 0) return whole
+  const real = (f: string) => {
+    try {
+      return realpathSync(f)
+    } catch {
+      return resolve(f)
+    }
+  }
+  const probeDir = join(dist, '.stage', 'probe')
+  for (;;) {
+    const entrypoints: string[] = []
+    for (const c of compiled.values()) {
+      if (c.clientJs === undefined) continue
+      const file = join(probeDir, `${c.id}.js`)
+      write(file, whole.has(c.id) ? c.clientJsWhole! : c.clientJs)
+      for (const m of c.clientModules ?? []) {
+        const mf = join(probeDir, `${m.name}.js`)
+        write(mf, m.code)
+        stage(ctx.sourceOf, mf, c)
+      }
+      stage(ctx.sourceOf, file, c)
+      entrypoints.push(file)
+    }
+    const res = await Bun.build({
+      entrypoints,
+      splitting: true,
+      external: ['/_brust/*'],
+      target: 'browser',
+      format: 'esm',
+      metafile: true,
+      plugins: [serverOnlyPlugin(ctx, []), cssPlugin(ctx.cssMaps ?? new Map()), runtimeAliasPlugin(runtimeUrl), specModulePlugin(probeDir), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
+    })
+    if (!res.success || !res.metafile) throw new BuildError('bundle', `client chunks (projection probe): ${res.logs.map(String).join('\n')}`)
+    const loaded = new Set(Object.keys(res.metafile.inputs).map((k) => real(resolve(k))))
+    const next = projecting.filter((c) => !whole.has(c.id) && c.projectedModules!.some((m) => loaded.has(real(join(ctx.appRoot, m)))))
+    if (next.length === 0) return whole
+    for (const c of next) whole.add(c.id)
+  }
 }
 
 /** R34.124: `brust-spec:<name>` is a module several chunks share (a specialised clone's factory), written beside the chunks. */

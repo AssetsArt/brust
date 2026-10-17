@@ -16,61 +16,96 @@
 //! Anything else ships `B` whole: `B` or the row binding bare (passed, spread, compared, returned), indexed, captured
 //! by code printed as written (an `Opaque` value, a block-bodied arrow) or by another printed module declaration
 //! (Mellow F1), JSX in client code, a destructured row binding, a write (an `Opaque` value or a method call on `B`).
+//!
+//! PR2: an imported `B` (`import { B } from './data'`, a relative module) is the `export const B = [...]` its module
+//! declares on its own and never writes, read from the source as written (`analyze::const_fold::imported_literal`, Mellow
+//! F3: nothing runs, so the value is the same on every build). Projected, the chunk declares `const B = [...]` instead of
+//! importing it. `brust dev` rebuilds the whole app on every change (`dev/bun.ts`), so an edit of the data module is
+//! read again (C4).
+use super::common::ImportUse;
 use crate::ir::{ArrowBody, ComponentIR, Expr, JsCtx, Node, RawExpr, RawKind};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The module lists the chunk prints projected: name -> the statement printed in place of the source's.
+/// What the chunk prints projected: module lists by name, and imported lists by their import (PR2), each with the
+/// statement printed in place of the source's declaration / of the import.
+#[derive(Default)]
+pub struct Projected {
+    pub module: BTreeMap<String, String>,
+    /// The statement and the data module's path from the root (the build checks the module left the client graph).
+    pub imports: BTreeMap<ImportUse, (String, String)>,
+}
+
 pub fn projections(
     ir: &ComponentIR,
     template: &Node,
     need: &BTreeSet<String>,
+    imports: &BTreeSet<ImportUse>,
     code: &[&RawExpr],
     lists: &[&RawExpr],
-) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
+) -> Projected {
+    let mut out = Projected::default();
     for name in need {
-        let Some(rows) = literal_rows(ir, name) else {
-            continue;
-        };
-        // F1: another declaration the chunk prints reads it as written.
-        let captured = ir.module_scope.iter().any(|(m, captures)| {
-            m != name && need.contains(m) && captures.iter().any(|(c, _)| c == name)
-        });
-        if captured {
-            continue;
+        if let Some(rows) = literal_rows(ir, name)
+            && let Some(stmt) = project(ir, name, &rows, template, need, code, lists)
+        {
+            out.module.insert(name.clone(), stmt);
         }
-        // The rows run in this chunk: one of its list members is exactly `B`.
-        let runs = lists
-            .iter()
-            .any(|l| matches!(&l.kind, RawKind::Ident { name: n, .. } if n == name));
-        if !runs {
+    }
+    // PR2 (Mellow F3): an imported `export const` read from its module as written (`ir.client_import_lists`).
+    for u in imports {
+        let (local, source, imported) = u;
+        if need.contains(local) {
             continue;
         }
-        let mut items = BTreeSet::new();
-        if !row_bindings(template, name, &mut items) || items.is_empty() {
-            continue;
-        }
-        let mut s = Scan {
-            list: name,
-            items: &items,
-            keys: BTreeSet::new(),
-        };
-        let mut ok = true;
-        for r in code {
-            let source = lists.iter().any(|l| std::ptr::eq(*l, *r));
-            if s.root(r, source).is_err() {
-                ok = false;
-                break;
-            }
-        }
-        if !ok {
-            continue;
-        }
-        if let Some(stmt) = print(name, &rows, &s.keys) {
-            out.insert(name.clone(), stmt);
+        if let Some((path, value)) = ir
+            .client_import_lists
+            .get(&(source.clone(), imported.clone()))
+            && let Some(rows) = rows_of(value)
+            && let Some(stmt) = project(ir, local, &rows, template, need, code, lists)
+        {
+            out.imports.insert(u.clone(), (stmt, path.clone()));
         }
     }
     out
+}
+
+fn project(
+    ir: &ComponentIR,
+    name: &str,
+    rows: &[&Vec<(String, RawExpr)>],
+    template: &Node,
+    need: &BTreeSet<String>,
+    code: &[&RawExpr],
+    lists: &[&RawExpr],
+) -> Option<String> {
+    // F1: another declaration the chunk prints reads it as written.
+    let captured = ir.module_scope.iter().any(|(m, captures)| {
+        m != name && need.contains(m) && captures.iter().any(|(c, _)| c == name)
+    });
+    if captured {
+        return None;
+    }
+    // The rows run in this chunk: one of its list members is exactly `B`.
+    let runs = lists
+        .iter()
+        .any(|l| matches!(&l.kind, RawKind::Ident { name: n, .. } if n == name));
+    if !runs {
+        return None;
+    }
+    let mut items = BTreeSet::new();
+    if !row_bindings(template, name, &mut items) || items.is_empty() {
+        return None;
+    }
+    let mut s = Scan {
+        list: name,
+        items: &items,
+        keys: BTreeSet::new(),
+    };
+    for r in code {
+        let source = lists.iter().any(|l| std::ptr::eq(*l, *r));
+        s.root(r, source).ok()?;
+    }
+    print(name, rows, &s.keys)
 }
 
 /// The elements of a module `const` declared on its own whose value is an array of object literals of literal values.
@@ -86,7 +121,12 @@ fn literal_rows<'a>(ir: &'a ComponentIR, name: &str) -> Option<Vec<&'a Vec<(Stri
     // to the list is in the code it prints, scanned below (a write is an `Opaque` value or a method call on `B` or on a
     // row); what the server does to it never reaches the keys the chunk keeps.
     let c = decl.consts.iter().find(|c| c.name == name)?;
-    let RawKind::Array(elements) = &c.value.kind else {
+    rows_of(&c.value)
+}
+
+/// The elements of an array of object literals of literal values.
+fn rows_of(value: &RawExpr) -> Option<Vec<&Vec<(String, RawExpr)>>> {
+    let RawKind::Array(elements) = &value.kind else {
         return None;
     };
     elements

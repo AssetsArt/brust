@@ -8,7 +8,7 @@ import { parseBuildError, parseWarnings } from '../src/dev/diag'
 import { contrast, tierCounts } from '../src/dev/devtools-data'
 import { allowedHosts, inject, sameOriginOrNone } from '../src/dev/proxy'
 import { HOTKEYS, MAX_STATUS_LINES, renderStatus, rowsFor, Tui, tuiMode } from '../src/dev/tui'
-import { broadRootWarnings, countFiles, defaultIgnored, watchLoop } from '../src/dev/watch'
+import { broadRootWarnings, changeLine, countFiles, defaultIgnored, watchLoop } from '../src/dev/watch'
 
 const base = { url: 'http://localhost:1337', gen: 3, buildMs: 412, warnings: [] as string[] }
 
@@ -274,4 +274,12 @@ test('F273: a source root with more than the limit of files is warned about; a s
   } finally {
     rmSync(base, { recursive: true, force: true })
   }
+})
+
+test('F133: the boot trigger (the app root, `.`) logs no change line; a real edit does, with the root left out', () => {
+  expect(changeLine(new Set(['.']))).toBeNull()
+  expect(changeLine(new Set())).toBeNull()
+  expect(changeLine(new Set(['pages/Home.tsx']))).toBe('[brust] change detected: pages/Home.tsx')
+  expect(changeLine(new Set(['.', 'a.ts']))).toBe('[brust] change detected: a.ts')
+  expect(changeLine(new Set(['a', 'b', 'c', 'd', '.']))).toBe('[brust] change detected: a, b, c +1')
 })
