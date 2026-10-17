@@ -4,7 +4,8 @@
 // job at all (the core's dev trace lists none), and alert, badge, button, card, table and label serve React's own markup
 // with the real `cn` / `class-variance-authority` (alert: an omitted cva variant reaches the job as undefined, ruling
 // 9b2a99a9). F183: `jobs.js` keeps only the jobs a route plans, and the 19 job-free pages alone build an app that
-// starts no worker and serves them unchanged. Run alone: `bun test --timeout 300000 tests/server/cn-fold.test.ts`.
+// starts no worker and serves them unchanged. switch-provider-chain PR3: switch compiles without React and plans no job
+// too (it is not in that app: its client chunks are named by content hashes that depend on the app's shared chunks). Run alone: `bun test --timeout 300000 tests/server/cn-fold.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -20,7 +21,9 @@ const TOKEN = 'cn-fold-proof'
 const PAGES = ['alert', 'attachment', 'badge', 'badge-aslink', 'breadcrumb', 'bubble', 'button', 'button-aschild', 'button-group', 'card', 'checkbox', 'empty', 'field', 'input', 'input-group', 'item', 'kbd', 'label', 'marker', 'message', 'native-select', 'pagination', 'skeleton', 'sonner', 'switch', 'table', 'textarea']
 /** The pages whose only jobs were class jobs (docs/plans/2026-10-14-shadcn-cn-fold.md §2), and `field`, whose fed Label
  * is fused into its parent's class job since R34.96 (PR 2b), so the build evaluates that one job too. */
-const NO_WORKER = ['alert', 'attachment', 'badge', 'badge-aslink', 'bubble', 'button', 'button-aschild', 'card', 'empty', 'field', 'input', 'item', 'kbd', 'label', 'marker', 'message', 'skeleton', 'table', 'textarea']
+const NO_WORKER = ['alert', 'attachment', 'badge', 'badge-aslink', 'bubble', 'button', 'button-aschild', 'card', 'empty', 'field', 'input', 'item', 'kbd', 'label', 'marker', 'message', 'skeleton', 'switch', 'table', 'textarea']
+/** The pages of `cn-fold/static-routes.tsx`: the job-free pages that ship no component script. */
+const STATIC_APP = NO_WORKER.filter((p) => p !== 'switch')
 
 type Server = { base: string; proc: ReturnType<typeof Bun.spawn>; ready?: string }
 const servers: Server[] = []
@@ -84,7 +87,7 @@ test('R34.93: every page is served byte-identically with the fold on and off', a
   }
 })
 
-test('R34.95: the 18 class-only pages and field plan no job: Rust answers them without a worker call', async () => {
+test('R34.95: the 18 class-only pages, field and switch plan no job: Rust answers them without a worker call', async () => {
   const none: string[] = []
   for (const page of PAGES) if ((await get(folded, page)).jobs === 0) none.push(page)
   expect(none).toEqual(NO_WORKER)
@@ -154,7 +157,7 @@ test('F183: the 19 job-free pages alone need no worker: no job in jobs.js, 0 wor
   expect(manifestOf(dists[2]!).needs_workers).toBe(false)
   expect(await jobsTable(dists[2]!)).toEqual({})
   expect(staticOnly.ready).toBe('0')
-  for (const page of NO_WORKER) {
+  for (const page of STATIC_APP) {
     const [a, b] = [await get(staticOnly, page), await get(folded, page)]
     expect({ page, html: a.html, jobs: a.jobs }).toEqual({ page, html: b.html, jobs: 0 })
   }
