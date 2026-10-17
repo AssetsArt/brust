@@ -353,6 +353,11 @@ pub struct ComponentIR {
     /// in React (last wins) where the one shared chunk cannot tell.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shadowed_props: Vec<String>,
+    /// switch-provider-chain link 3: the same requirement, met by a clone's hidden rest (`__in_rest`, F278): the
+    /// component binds the key live ahead of a spread of that input, so the call site's value of `__in_rest` must not
+    /// carry the key (a key the call site writes reaches the clone's own props, not the spread).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadowed_input: Vec<String>,
     /// Live props the parent binds itself on a static child's element (2b-handlers): the prop `key` of the component
     /// node at `loc`, printed in this component's scope like an attribute written there (handlers: see
     /// [`HandlerDecl::forwarded`]).
@@ -542,6 +547,7 @@ impl ComponentIR {
             holds_island: false,
             unwritten_props: Vec::new(),
             shadowed_props: Vec::new(),
+            shadowed_input: Vec::new(),
             live_forwards: Vec::new(),
             repeats_children: false,
             hosts_children: false,

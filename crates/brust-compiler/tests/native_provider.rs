@@ -1167,3 +1167,95 @@ fn a_function_prop_called_with_a_local_object_outside_a_provider_still_falls_bac
     let all = compile("render_fn_whole.tsx");
     assert!(is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
 }
+
+// switch-provider-chain link 3 (Radix's SwitchTrigger): a context value bound on a forwarding child's element ahead of a
+// spread of the consumer's own rest is bound live by the consumer (F296), and the requirement "the rest does not carry
+// the key" moves to the call sites: through the clone's hidden rest (`shadowed_input`) to the rest its caller hands
+// over (`shadowed_props`), where a written key or an open spread falls back.
+#[test]
+fn a_context_value_ahead_of_the_consumers_own_rest_is_bound_live() {
+    let all = compile("live_rest.tsx");
+    for i in &all {
+        if i.ir.id.starts_with("lProvider_") && !i.ir.id.contains("_s") {
+            continue; // the Provider compiled on its own (state in its value) stays React; its clone is native
+        }
+        assert!(!is_react(&i.ir), "{}: {:?}", i.ir.id, i.ir.diagnostics);
+    }
+    let trigger = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("lTrigger_"))
+        .expect("trigger");
+    let keys: Vec<&str> = trigger
+        .ir
+        .live_forwards
+        .iter()
+        .map(|f| f.key.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        ["aria-checked", "data-state"],
+        "{:?}",
+        trigger.ir.diagnostics
+    );
+    assert_eq!(trigger.ir.shadowed_props, ["aria-checked", "data-state"]);
+    assert!(
+        !trigger
+            .ir
+            .frozen_props
+            .iter()
+            .any(|p| p.starts_with("__ctx_")),
+        "{:?}",
+        trigger.ir.frozen_props
+    );
+    let clone = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("lProvider_") && i.ir.id.contains("_s"))
+        .expect("the Provider's clone");
+    assert_eq!(clone.ir.shadowed_input, ["aria-checked", "data-state"]);
+    // a key the clone's own call site writes reaches the clone's props, not its hidden rest
+    assert!(
+        clone.ir.shadowed_props.is_empty(),
+        "{:?}",
+        clone.ir.shadowed_props
+    );
+    let root = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("lRoot_"))
+        .expect("root");
+    assert_eq!(root.ir.shadowed_props, ["aria-checked", "data-state"]);
+}
+
+#[test]
+fn a_call_site_whose_rest_may_carry_a_live_bound_key_falls_back() {
+    for file in [
+        "live_rest_write.tsx",
+        "live_rest_aria.tsx",
+        "live_rest_open.tsx",
+        "live_rest_fwd_write.tsx",
+    ] {
+        let all = compile(file);
+        assert!(
+            all.iter()
+                .any(|i| is_react(&i.ir) && has(&i.ir, DiagClass::Fallback, "spread-props")),
+            "{file}: {:?}",
+            all.iter()
+                .map(|i| (&i.ir.id, &i.ir.diagnostics))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn a_forwarder_of_its_own_rest_inherits_the_live_bound_keys() {
+    let all = compile("live_rest_fwd.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(
+        all.iter().any(|i| !i.ir.id.starts_with("lRoot_")
+            && !i.ir.id.starts_with("lTrigger_")
+            && i.ir.shadowed_props == ["aria-checked", "data-state"]),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.shadowed_props))
+            .collect::<Vec<_>>()
+    );
+}
