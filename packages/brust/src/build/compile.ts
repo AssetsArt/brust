@@ -70,6 +70,11 @@ export interface Compiled {
   /** Build-time evaluation module (L2): one thunk per `ir.build_eval` slot. */
   evalTs?: string
   clientJs?: string
+  /** F362 PR2: `clientJs` importing every imported list as written; the build uses it when a module in
+   * `projectedModules` is still in the client graph through another importer (`bundle.ts` `buildClientChunks`). */
+  clientJsWhole?: string
+  /** F362 PR2: data modules (app-root-relative) whose imported list `clientJs` declares projected instead of importing. */
+  projectedModules?: string[]
   /** Modules the chunk imports that other chunks share (R34.124): `<name>.js` beside it. */
   clientModules?: { name: string; code: string }[]
   /** The compiler's diagnostics for this component (`dev.json`, L14). */
@@ -226,6 +231,8 @@ export function compileApp(opts: {
       serverTs: c.serverTs,
       evalTs: c.evalTs,
       clientJs: c.clientJs,
+      clientJsWhole: c.clientJsWhole ?? undefined,
+      projectedModules: c.projectedModules?.length ? c.projectedModules : undefined,
       clientModules: c.clientModules?.length ? c.clientModules : undefined,
       diagnostics: c.diagnostics.map((d) => ({ class: d.class, rule: d.rule, message: d.message, line: d.line, col: d.col, remediation: d.remediation })),
     })

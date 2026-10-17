@@ -164,6 +164,20 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     }
     ir.client_props = props.into_iter().collect();
     ir.client_imports = imports.iter().cloned().collect();
+    // F362: an imported list the rows run over, read from its module (PR2).
+    let mut lists = std::collections::BTreeSet::new();
+    // the structural template (every value still `Raw`): placement may have made the source a job's slot
+    if let Some(st) = ir.structural.as_deref() {
+        import_list_sources(&st.template, &mut lists);
+    }
+    ir.client_import_lists = lists
+        .into_iter()
+        .filter(|k| imports.contains(k) && crate::analyze::modules::is_relative_spec(&k.0))
+        .filter_map(|k| {
+            crate::analyze::const_fold::imported_literal(ctx.path, &k.0, &k.1, ctx.opts)
+                .map(|v| (k, v))
+        })
+        .collect();
     let mut module = std::collections::BTreeSet::new();
     for u in &uses {
         module.extend(u.deps.module_locals.iter().cloned());
@@ -232,4 +246,39 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         }
     }
     st.client_uses = uses;
+}
+
+/// F362: `(source, imported)` of every list whose source is an imported binding read bare.
+fn import_list_sources(
+    n: &crate::ir::Node,
+    out: &mut std::collections::BTreeSet<(String, String)>,
+) {
+    use crate::ir::{IdentKind, Node, RawExpr, RawKind};
+    let all = |ns: &[Node], out: &mut std::collections::BTreeSet<(String, String)>| {
+        ns.iter().for_each(|c| import_list_sources(c, out))
+    };
+    match n {
+        Node::For { source, body, .. } => {
+            if let Expr::Raw(RawExpr {
+                kind:
+                    RawKind::Ident {
+                        kind: IdentKind::Import { source, imported },
+                        ..
+                    },
+                ..
+            }) = source
+            {
+                out.insert((source.clone(), imported.clone()));
+            }
+            all(body, out)
+        }
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => all(children, out),
+        Node::If { then, else_, .. } => {
+            all(then, out);
+            all(else_, out)
+        }
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+    }
 }
