@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 225 | 119 | 16 | 90 | 0 | 0 | 0 | 0 |
+| B Composition | 225 | 120 | 16 | 89 | 0 | 0 | 0 | 0 |
 | C Hooks | 208 | 62 | 67 | 79 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 590 | 257 | 112 | 217 | 3 | 1 | 0 | 0 |
+| **Total** | 590 | 258 | 112 | 216 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -254,7 +254,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-per-row-in-inlined-component | a static wrapper mapping a React island over its own rows | static | static | ssr | ok | 4.0 | — | F164 R34.97 (review r1 F): a row of an inlined component has no slot key for the island job, so the wrapper is the island; it was the lowering nested-instance error |
 | b-fed-child-in-static-wrapper | a static wrapper (no job of its own) around a child with a job, used twice with a prop and without | static | static | 0 | ok | 0 | — | F164 R34.96 (static-wrapper case): the caller feeds the wrapper's child (records re-based onto it, numbered in template order); the second use passes no tone, which the server feeds as undefined like React |
 | b-fed-child-through-repeater-chain | a useId child passed through a component that hands its children to a repeater | react | react | ssr | ok | 4.0 | fallback:nested-instance, info:build-eval-instance | F169: the repeat check is transitive, so the same id is not printed in every row |
-| b-fed-child-in-native-wrapper | a wrapper with state and a handler (native) around a child with a job of its own | react | react | ssr | ok | 5.4 | fallback:nested-instance | native-wrapper-instances: a Native wrapper keeps its fed child's record on itself (no chain component can feed it); #229 left the caller without a fallback, which was the lowering nested-instance BUILD ERROR on valid React. The caller is the React island now |
+| b-fed-child-in-native-wrapper | a wrapper with state and a handler (native) around a child with a job of its own | static | static | 0 | ok | 4.6 | — | F328c (ruling on note 84cd6abb): a Native wrapper is inlined in its caller like a static one, so its fed child's record is re-based onto the caller (before: #229 hole, the caller was the React island). This child's only input is a constant, so the build evaluates it (0 jobs); the served ids case is the Chromium F328c test. A fed child under a condition or in a list of the wrapper still falls back (nested_fed.rs) |
 | b-fed-child-local-list | a child with a job of its own in a list over a local array | static | static | 0 | ok | 0 | — | F142 R34.43: Row reads the row of a module const, so the manifest carries the rows (per-row-literal) and the server feeds one instance per row (was the instance-list-path fallback, challenge 4dc45c45) |
 | b-fed-child-row-invariant-const | a child with a job of its own, the same in every row, in a list over a module const (shadcn table) | static | static | 0 | ok | 0 | — | F142 R34.42: no prop reads the row, so the instance is fed once (static record) and its slot is read without a row index |
 | b-fed-child-row-invariant-inline | a child with a job of its own, the same in every row, in a list over an inline array (shadcn carousel) | static | static | 0 | ok | 0 | — | F142 R34.42: an inline array literal is the same case |

@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderColl, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderSame, renderSw } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderColl, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -483,3 +483,38 @@ test('a recognised createCollection (R34.140): the markup equals React\'s, getIt
   await page.close()
 }, 60_000)
 
+
+// F328c (ruling on note 84cd6abb, option a): a native Provider whose items each carry a `useId`. The Provider clone is inlined
+// in its caller, so the caller's server records feed the items' ids: no island, the markup is React's (ids included), the ids
+// are unique across the two groups, and they stay the same while the focus moves the roving tab stop.
+test('F328c: items with a useId under a native Provider: markup equals React, unique stable ids, focus moves the tab stop', async () => {
+  const html = await (await fetch(`${base}/roving`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderRoving()))
+  const ids = [...html.matchAll(/<button[^>]*\sid="([^"]+)"/g)].map((m) => m[1]!)
+  expect(ids.length).toBe(3)
+  expect(new Set(ids).size).toBe(3)
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/roving`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('div[role=group]')?.parentElement?.hasAttribute('x-data') || document.querySelector('div[role=group]')?.hasAttribute('x-data') || document.querySelector('brust-host[x-data]') !== null)
+  const b = page.getByRole('button', { name: 'b' })
+  await b.focus()
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].find((x) => x.textContent === 'b')?.getAttribute('tabindex') === '0')
+  expect(await page.getByRole('button', { name: 'a' }).getAttribute('tabindex')).toBe('-1')
+  // the other group is its own Provider: unchanged
+  expect(await page.getByRole('button', { name: 'c' }).getAttribute('tabindex')).toBe('-1')
+  const after = await page.$$eval('button', (bs) => bs.map((x) => x.id))
+  expect(after).toEqual(ids)
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+test('F328c: a native wrapper whose props change on the client keeps the page React for a child that derives from them (named fallback, markup equals React)', async () => {
+  for (const tone of ['calm', 'Ab ']) {
+    const html = await (await fetch(`${base}/wrap/${encodeURIComponent(tone)}`)).text()
+    expect(plain(html.replace(/<brust-island\b[^>]*>/g, '').replace(/<\/brust-island>/g, ''))).toBe(plain(renderWrap(tone)))
+  }
+}, 60_000)
