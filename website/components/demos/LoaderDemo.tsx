@@ -44,7 +44,7 @@ export default function LoaderDemo({ initial, names }: { initial: Lookup; names:
               <button
                 key={n}
                 type="button"
-                className="inline-flex min-h-[46px] items-center gap-2 border border-ink bg-transparent px-[1.15rem] py-[.7rem] font-mono text-[.72rem] font-bold tracking-[.08em] text-ink uppercase no-underline motion-safe:transition-[transform,background-color,box-shadow] motion-safe:duration-200 motion-safe:hover:-translate-y-px"
+                className="inline-flex min-h-[46px] items-center gap-2 border border-ink bg-transparent px-[1.15rem] py-[.7rem] font-mono text-[.72rem] font-bold tracking-[.08em] text-ink uppercase no-underline motion-safe:[transition-property:translate,background-color,box-shadow] motion-safe:duration-200 motion-safe:hover:-translate-y-px"
                 onClick={() => {
                   setDemo(lookup(n))
                   history.replaceState(null, '', `?pokemon=${n}#demo`)

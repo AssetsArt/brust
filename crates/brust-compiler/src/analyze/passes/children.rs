@@ -91,6 +91,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         own_refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
         sink_refs: ir.sink_refs.iter().cloned().collect(),
         ref_nulled: false,
+        carry_sites: Vec::new(),
         passes_to_repeater: false,
         passes_to_host: false,
         own_fed: crate::ir::is_fed(ir),
@@ -247,6 +248,7 @@ pub fn contexts(
     ir.ctx_pkg |= w.bubbled_pkg;
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.forwarded_ref_nulled |= w.ref_nulled;
+    carried_poly(ir, &w.carry_sites);
     for c in std::mem::take(&mut w.bubbled_scoped) {
         if !ir.ctx_scoped.contains(&c) {
             ir.ctx_scoped.push(c);
@@ -375,6 +377,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.forwarded_ref_nulled |= w.ref_nulled;
+    carried_poly(ir, &w.carry_sites);
     ir.unwritten_props = w.unwritten.iter().cloned().collect();
     ir.shadowed_props = w.shadowed.iter().cloned().collect();
     ir.shadowed_input = w.shadowed_input.iter().cloned().collect();
@@ -492,6 +495,9 @@ struct Walker<'s, 'c> {
     sink_refs: BTreeSet<String>,
     /// A child this component passes its forwarded ref to reads it as `null` (`ComponentIR::forwarded_ref_nulled`).
     ref_nulled: bool,
+    /// F369a: the polymorphic children this component spreads its whole rest into, and whether each is a site a carrier
+    /// may be recognised at (see [`Walker::carry_site`]).
+    carry_sites: Vec<(PolyTag, bool)>,
     /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
     passes_to_repeater: bool,
     /// This component hands its own `{children}` to a component that prints them under a native host element
@@ -705,6 +711,156 @@ fn poly_has_runtime_spread(n: &Node) -> bool {
     }
 }
 
+/// F369a: a component whose ONE polymorphic child gets the whole rest of its props (`<Primitive.span {...rest}/>`, Radix
+/// `RovingFocusGroup.Item`) passes `asChild` straight to that element, so it is polymorphic itself: its call sites resolve the
+/// flag (`check_poly`) instead of being told to leave it out (`absent_props`, F153c). Anywhere the flag might not reach the
+/// element unchanged keeps the old requirement.
+fn carried_poly(ir: &mut ComponentIR, sites: &[(PolyTag, bool)]) {
+    let [(poly, true)] = sites else {
+        return;
+    };
+    if ir.poly.is_some() {
+        return;
+    }
+    // the rest has no other consumer: a second element or value reading it would print `asChild` / `children` as React does
+    // not (React hands the flag to the Slot and its children to the clone)
+    if rest_consumers(&ir.template, &poly.flag) != 1 {
+        return;
+    }
+    ir.absent_props.retain(|k| k != &poly.flag);
+    ir.poly = Some(poly.clone());
+}
+
+/// Whether `r` reads the component's rest or props object, other than as `<rest>.<flag>` (a read of the flag itself inside a
+/// carrier is allowed on purpose: the flag still reaches the polymorphic child through the spread).
+fn reads_rest(r: &RawExpr, flag: &str) -> bool {
+    let rest = |x: &RawExpr| {
+        matches!(&x.kind, RawKind::Ident { name, kind: IdentKind::Prop }
+            if name == "*" || name == crate::ir::REST_PROPS)
+    };
+    match &r.kind {
+        RawKind::Ident { .. } => rest(r),
+        RawKind::Member { target, name, .. } if rest(target) => name != flag,
+        RawKind::Member { target, .. } => reads_rest(target, flag),
+        RawKind::Index { target, index } => reads_rest(target, flag) || reads_rest(index, flag),
+        RawKind::Call { callee, args } => {
+            reads_rest(callee, flag) || args.iter().any(|a| reads_rest(a, flag))
+        }
+        RawKind::Binary { left, right, .. } => reads_rest(left, flag) || reads_rest(right, flag),
+        RawKind::Unary { value, .. } => reads_rest(value, flag),
+        RawKind::Cond { test, yes, no } => {
+            reads_rest(test, flag) || reads_rest(yes, flag) || reads_rest(no, flag)
+        }
+        RawKind::Template { parts, .. } => parts.iter().any(|(p, _)| reads_rest(p, flag)),
+        RawKind::Array(xs) => xs.iter().any(|x| reads_rest(x, flag)),
+        RawKind::Object(ps) => ps.iter().any(|(_, v)| reads_rest(v, flag)),
+        RawKind::Lit(_) => false,
+        // a function or code outside the subset: it may read anything
+        RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => true,
+    }
+}
+
+/// How many places of `n` consume the component's rest or props: each spread of the whole rest, each other read of it.
+fn rest_consumers(n: &Node, flag: &str) -> usize {
+    let expr_reads = |e: &Expr| match e {
+        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => usize::from(reads_rest(r, flag)),
+        Expr::ClientOnly { .. } | Expr::Precomputed { .. } => 0,
+    };
+    let whole = |e: &Expr| {
+        matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+            RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS))
+    };
+    match n {
+        Node::Element {
+            attrs, children, ..
+        } => {
+            attrs
+                .iter()
+                .map(|a| match a {
+                    Attr::Spread(v) if whole(v) => 1,
+                    Attr::Spread(v)
+                    | Attr::Dynamic { value: v, .. }
+                    | Attr::InnerHtml { value: v } => expr_reads(v),
+                    _ => 0,
+                })
+                .sum::<usize>()
+                + children
+                    .iter()
+                    .map(|c| rest_consumers(c, flag))
+                    .sum::<usize>()
+        }
+        Node::Component {
+            props, children, ..
+        } => {
+            props
+                .iter()
+                .map(|(k, v)| {
+                    if k == crate::ir::SPREAD_KEY && whole(v) {
+                        1
+                    } else {
+                        expr_reads(v)
+                    }
+                })
+                .sum::<usize>()
+                + children
+                    .iter()
+                    .map(|c| rest_consumers(c, flag))
+                    .sum::<usize>()
+        }
+        Node::Slot(e) => expr_reads(e),
+        Node::If {
+            cond, then, else_, ..
+        } => {
+            expr_reads(cond)
+                + then
+                    .iter()
+                    .chain(else_)
+                    .map(|c| rest_consumers(c, flag))
+                    .sum::<usize>()
+        }
+        Node::For { source, body, .. } => {
+            expr_reads(source) + body.iter().map(|c| rest_consumers(c, flag)).sum::<usize>()
+        }
+        Node::Fragment(cs) => cs.iter().map(|c| rest_consumers(c, flag)).sum(),
+        Node::Text(_) | Node::Outlet => 0,
+    }
+}
+
+/// The call of a carrier's template that hands the whole rest on: `(name, source, imported, member, loc)`.
+/// A component call by the names `resolve_child` takes.
+type CallRef = (String, Option<String>, Option<String>, Vec<String>, u32);
+
+fn carrier_call(n: &Node) -> Option<CallRef> {
+    match n {
+        Node::Component {
+            name,
+            source,
+            imported,
+            member,
+            props,
+            loc,
+            ..
+        } if props.iter().any(|(k, v)| {
+            k == crate::ir::SPREAD_KEY
+                && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                    RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS))
+        }) =>
+        {
+            Some((
+                name.clone(),
+                source.clone(),
+                imported.clone(),
+                member.clone(),
+                *loc,
+            ))
+        }
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().find_map(carrier_call),
+        Node::If { .. } | Node::For { .. } | Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+    }
+}
+
 /// The attributes of the polymorphic element of `n` (the one `asChild` replaces), `None` when there is none.
 fn poly_element_attrs(n: &Node) -> Option<&[Attr]> {
     match n {
@@ -832,6 +988,16 @@ const SPEC_SOURCE: &str = "\u{0}spec";
 
 /// A stable 32-bit mix of the call site (module and location): the suffix of a clone's id. Ids are per call site
 /// (R34.124); equal chunks share a factory module, not an id.
+/// F238: the call site a clone's id and module-cache key name (`site`: the module and the enclosing clone's id) with a
+/// stable hash of the content it is made with (after `Carry` and `rebase_sources`), so different content at one offset
+/// of one template never reuses a clone.
+fn clone_site<R: std::fmt::Debug>(site: &str, nodes: &[Node], render: &R) -> String {
+    format!(
+        "{site}~{:016x}",
+        crate::lower::fnv64(format!("{nodes:?}{render:?}").as_bytes())
+    )
+}
+
 fn spec_hash(path: &str, loc: u32) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
     for b in path.bytes().chain(loc.to_le_bytes()) {
@@ -3202,8 +3368,24 @@ impl Walker<'_, '_> {
             Some(n) => Export::Named(n.clone()),
             None => Export::Default,
         };
+        // F374: with no children written at the call site, a spread (or a `children` prop) may still carry them, and
+        // the clone's `{children}` would be empty where React renders them (`function Outer(props) { return <Prov
+        // {...props} /> }`, `<Outer>hello</Outer>` printed an empty section). Refused by name: the Provider stays an
+        // island and React renders it with its children.
+        if content.is_empty()
+            && let Some((k, _)) = props
+                .iter()
+                .find(|(k, _)| k == crate::ir::SPREAD_KEY || k == REST_INPUT || k == "children")
+        {
+            return Err(if k == "children" {
+                "its children are given as the `children` prop, which the clone cannot hold".into()
+            } else {
+                "a spread may carry its children, which the clone cannot hold".into()
+            });
+        }
         let mut nodes = std::mem::take(content);
         self.check_owner(&nodes, owner)?;
+        self.check_inner_providers(cir, &nodes)?;
         let mut carry = Carry::new(
             &self.native_props,
             owner,
@@ -3236,10 +3418,13 @@ impl Walker<'_, '_> {
         // One clone per call site: its id is built from the call site, so its jinja, jobs and instance records are the
         // call site's own. Clones whose chunks are equal share ONE factory module at lowering (R34.124). Inside a rest
         // clone (F298) the call site is that clone's: the same call of the same module holds other content there.
+        // F238: and the content's shape, so two call sites at one offset of one template (content written in another
+        // module keeps that module's offsets) never share a clone.
         let site = match &self.spec_salt {
             Some(salt) => format!("{}#{salt}", ctx.path),
             None => ctx.path.to_string(),
         };
+        let site = clone_site(&site, &nodes, &render);
         let id = format!("{}_s{:08x}", cir.id, spec_hash(&site, loc));
         let key = format!("{c_path}#{exp}~spec~{site}~{loc}");
         let mut once = Some(nodes);
@@ -3321,6 +3506,8 @@ impl Walker<'_, '_> {
             Some(salt) => format!("{}#{salt}", ctx.path),
             None => ctx.path.to_string(),
         };
+        // F238: the content's shape too (see `specialise`).
+        let site = clone_site(&site, &nodes, &None::<()>);
         let id = format!("{}_r{:08x}", cir.id, spec_hash(&site, loc));
         let key = format!("{c_path}#{exp}~rest~{site}~{loc}");
         let clone_id = id.clone();
@@ -3547,6 +3734,75 @@ impl Walker<'_, '_> {
         }
         self.frozen.extend(frozen);
         fixed
+    }
+
+    /// A consumer in `content` of a context that a Provider INSIDE `cir`'s template provides (below `cir` itself) reads,
+    /// in React, that inner Provider wherever the content lands under it; the value the call site hands it (Carry: the
+    /// frame open where the content is written, or the context default) would override it in the clone. Refused by
+    /// name (found with F238: `<Prov>` calling a native `<Frame>` around its `{children}`, the content reading Frame's
+    /// context, printed the default).
+    fn check_inner_providers(&self, cir: &ComponentIR, content: &[Node]) -> Result<(), String> {
+        let modules = self.ctx.modules.borrow();
+        let by_id: HashMap<String, Rc<ComponentIR>> = modules
+            .done()
+            .into_iter()
+            .map(|(_, ir)| (ir.id.clone(), ir))
+            .collect();
+        let mut below = BTreeSet::new();
+        let mut stack: Vec<Rc<ComponentIR>> = cir
+            .children
+            .iter()
+            .filter_map(|c| c.id.as_ref().and_then(|id| by_id.get(id)).cloned())
+            .collect();
+        let mut seen = BTreeSet::new();
+        while let Some(ir) = stack.pop() {
+            if !seen.insert(ir.id.clone()) {
+                continue;
+            }
+            below.extend(ir.provides.iter().map(|p| p.context.clone()));
+            stack.extend(
+                ir.children
+                    .iter()
+                    .filter_map(|c| c.id.as_ref().and_then(|id| by_id.get(id)).cloned()),
+            );
+        }
+        if below.is_empty() {
+            return Ok(());
+        }
+        fn walk(n: &Node, below: &BTreeSet<String>) -> Option<String> {
+            match n {
+                Node::Component {
+                    name,
+                    props,
+                    children,
+                    ..
+                } => props
+                    .iter()
+                    .find_map(|(k, _)| {
+                        let rest = k.strip_prefix("__ctx_")?;
+                        below
+                            .iter()
+                            .any(|c| rest.starts_with(&format!("{c}_")))
+                            .then(|| name.clone())
+                    })
+                    .or_else(|| children.iter().find_map(|c| walk(c, below))),
+                Node::Element { children, .. } | Node::Fragment(children) => {
+                    children.iter().find_map(|c| walk(c, below))
+                }
+                Node::If { then, else_, .. } => {
+                    then.iter().chain(else_).find_map(|c| walk(c, below))
+                }
+                Node::For { body, .. } => body.iter().find_map(|c| walk(c, below)),
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+            }
+        }
+        match content.iter().find_map(|n| walk(n, &below)) {
+            Some(who) => Err(format!(
+                "<{who}> in the content reads a context that a Provider inside `{}` provides around it",
+                cir.export.as_deref().unwrap_or("default")
+            )),
+            None => Ok(()),
+        }
     }
 
     /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
@@ -6171,6 +6427,28 @@ impl Walker<'_, '_> {
             && self.spread_carries(&poly.flag, props).is_ok()
         {
             let flag = poly.flag.clone();
+            // F369a: recognised as a carrier only when nothing can stop the flag on the way: this is the one, unconditional
+            // polymorphic child; the spread is this component's whole rest (not a path, not a clone input, not the flag
+            // named); the flag is not written on the call; the element has no runtime spread of keys of its own.
+            let whole_rest = props.iter().all(|(k, v)| {
+                k != crate::ir::SPREAD_KEY
+                    || matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                        RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS))
+            }) && !props.iter().any(|(k, _)| k == REST_INPUT || k == &poly.flag);
+            // the child's children are the rest's (`children` in it): children written between its tags are the Slot's
+            // content instead, and React clones THAT element, not the caller's
+            // (A member read of the flag inside a carrier, `rest.asChild`, is allowed on purpose: the flag still reaches the
+            // child through the spread. The list and whole-rest guards below are defence in depth: a list child or a
+            // path spread is refused earlier, so no fixture reaches them alone.)
+            let carrier = whole_rest
+                && children.is_empty()
+                && self.guard_depth == 0
+                && self.loop_scope.is_empty()
+                && !self.own_named.contains(&flag)
+                && !self.ctx.is_root
+                && !child.poly_runtime_spread
+                && self.spread_sources(&flag, props) == Ok((true, false));
+            self.carry_sites.push((poly.clone(), carrier));
             self.require_absent(name, &flag, props, loc);
             return;
         }
@@ -6352,17 +6630,21 @@ impl Walker<'_, '_> {
         let refuse = |rule: &str, why: String, fix: &str| Diagnostic::fallback(rule, why, loc, fix);
         let attrs = parent
             .ir
-            .as_deref()
-            .and_then(|ir| poly_element_attrs(&ir.template));
+            .clone()
+            .and_then(|ir| self.poly_attrs_through(&ir, 4));
         let why = if !matches!(cc.tier, Tier::Static) {
             Some("it is not a static component (a React island, or one with state of its own)")
-        } else if cc.poly.is_some() || cc.fed || cc.use_id || linked || forwarded_ref {
+        } else if cc.poly.is_some() || cc.fed || cc.use_id || linked /* a link needs a native child: no fixture, defence */ || forwarded_ref
+        {
             Some("it is polymorphic itself, has a job or `useId`, or takes a ref")
-        } else if !cc.absent.is_empty()
-            || !cc.unwritten.is_empty()
-            || !cc.shadowed.is_empty()
-            || !cc.shadowed_input.is_empty()
-            || cc.rest_as_data
+        } else if !cc.absent.is_empty() // fixture: Carry
+            // The five below have no fixture: a Static child cannot reach them (they need a native, live or fed-through-spread
+            // shape, which the tier guard refuses first); kept as fail-closed defence.
+            || !cc.unwritten.is_empty() // a spread into a fed child (needs a job)
+            || !cc.shadowed.is_empty() // a live value bound ahead of the rest (native)
+            || !cc.shadowed_input.is_empty() // the same through a clone's hidden rest (native)
+            || cc.rest_as_data // the whole rest handed to a clone as data (native)
+            // children printed under a native host
             || cc.hosts_children
         {
             Some("it puts requirements on the props it is given")
@@ -6378,7 +6660,7 @@ impl Walker<'_, '_> {
             })
         {
             Some("it does not spread its props onto the one element it renders")
-        } else if attrs.is_none_or(|a| {
+        } else if attrs.as_deref().is_none_or(|a| {
             a.iter().any(|a| {
                 !matches!(
                     a,
@@ -6442,6 +6724,28 @@ impl Walker<'_, '_> {
                 "move the class or style to the component call, or keep the page on React",
             ));
         }
+    }
+
+    /// The attributes of the element `asChild` replaces in `ir`: its own polymorphic element, or (a carrier, F369a) the one in the
+    /// polymorphic child it hands its whole rest to, after inlining. `depth` bounds the chain.
+    fn poly_attrs_through(&mut self, ir: &ComponentIR, depth: u32) -> Option<Vec<Attr>> {
+        if let Some(a) = poly_element_attrs(&ir.template) {
+            return Some(a.to_vec());
+        }
+        if depth == 0 {
+            return None;
+        }
+        let (cname, source, imported, member, cloc) = carrier_call(&ir.template)?;
+        let cc = self.resolve_child(
+            &cname,
+            source.as_deref(),
+            imported.as_deref(),
+            &member,
+            cloc,
+        );
+        let inner = cc.ir.clone()?;
+        cc.poly.as_ref()?;
+        self.poly_attrs_through(&inner, depth - 1)
     }
 
     /// `r` folded to JSON with this module's consts (`crate::ir::FoldEnv`, which runs no user code).
@@ -7461,12 +7765,13 @@ impl Walker<'_, '_> {
             // repaint an attribute the spread set.
             // F278: a prop the compiler wrote (`__ctx_…`, `__in_…`) AFTER the last spread is not replaced by it (React:
             // the later key wins) and no caller can name it, so the spread cannot repaint what it binds.
-            let after_spreads = (k.starts_with("__ctx_") || k.starts_with("__in_"))
-                && props
-                    .iter()
-                    .rposition(|(o, _)| o == crate::ir::SPREAD_KEY)
-                    .zip(props.iter().position(|(o, _)| o == k))
-                    .is_none_or(|(spread, at)| spread < at);
+            // F329 W1: the same for ANY key written after the last spread: the later key wins in React and the spread
+            // cannot carry it here; whether the CHILD lets it reach an element is `child.spread.lands(k)` below.
+            let after_spreads = props
+                .iter()
+                .rposition(|(o, _)| o == crate::ir::SPREAD_KEY)
+                .zip(props.iter().position(|(o, _)| o == k))
+                .is_none_or(|(spread, at)| spread < at);
             if k == crate::ir::SPREAD_KEY || (spreads_in && !after_spreads) || child.spread.lands(k)
             {
                 if snapshot_only {
@@ -7871,6 +8176,22 @@ mod tests {
 
     fn client(js: &str) -> Expr {
         Expr::ClientOnly { js: js.into() }
+    }
+
+    // F238 (Mellow, review): two call sites at one offset of one template with different content get different clone
+    // ids (and keys); the same content gets the same one. On main the colliding shape is refused by F3 first, so this
+    // pins the key itself.
+    #[test]
+    fn clone_ids_at_one_site_and_offset_differ_by_content() {
+        let a = vec![Node::Text("a".into())];
+        let b = vec![Node::Text("b".into())];
+        let id = |n: &[Node]| spec_hash(&clone_site("m.tsx#c1", n, &None::<()>), 7);
+        assert_ne!(id(&a), id(&b));
+        assert_eq!(id(&a), id(&a.clone()));
+        assert_ne!(
+            clone_site("m.tsx#c1", &a, &None::<()>),
+            clone_site("m.tsx#c1", &a, &Some("render"))
+        );
     }
 
     // F365(a): the refusal in `specialise_host` rests on this set, and no fixture reaches it with a real collision.

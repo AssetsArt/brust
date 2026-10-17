@@ -1568,3 +1568,74 @@ fn a_ref_that_is_not_a_sink_keeps_the_forwardref_fallback() {
         );
     }
 }
+
+/// F329 W4: a frame value that is a `useMemo` (a derived over state) whose body builds an array was "not a plain expression"
+/// (`calls_nothing` had no array arm), which kept Radix's `ToggleGroupImplSingle` an island. It is a derived value of the
+/// native Provider instance like any other.
+#[test]
+fn a_memoized_array_over_state_is_a_native_frame_value() {
+    let out = compile_all("memo-frame.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("memoFrame_"))
+        .expect("page");
+    assert!(
+        !is_react(&page.1),
+        "{:?} {:?}",
+        page.1.tier,
+        page.1.diagnostics
+    );
+    // the Provider is lowered at the call site (a native clone), not rendered as an island
+    assert!(!page.2.contains("brust-island"), "{}", page.2);
+}
+
+/// F329 W1: a function (or live) prop written AFTER the last spread of unknown keys wins in React, so the spread cannot carry
+/// it; it reaches an element through the child's spread only if the child lets it (`SpreadSink::lands`). The same prop written
+/// BEFORE the spread may be replaced by it and stays refused.
+#[test]
+fn a_function_prop_after_a_spread_does_not_ride_the_spread() {
+    let all = compile("after-spread.tsx");
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| (&ir.id, &ir.tier, rules(ir)))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_function_prop_that_may_ride_the_spread_stays_refused() {
+    for file in [
+        "before-spread.tsx",
+        "after-spread-lands.tsx",
+        "after-spread-live.tsx",
+    ] {
+        let all = compile(file);
+        let page = all
+            .iter()
+            .find(|(_, ir, _)| is_react(ir))
+            .unwrap_or_else(|| panic!("{file}: a page that stays React"));
+        assert!(
+            rules(&page.1).iter().any(|r| r.starts_with("spread-")),
+            "{file}: {:?}",
+            page.1.diagnostics
+        );
+    }
+}
+
+/// F329 W4 negative: an array does not make an arbitrary call a plain combination of reads: the Provider keeps its island.
+#[test]
+fn a_memoized_array_holding_a_call_keeps_the_provider_an_island() {
+    let out = compile_all("memo-frame-call.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("memoFrameCall_"))
+        .expect("page");
+    assert!(
+        page.2.contains("brust-island") || is_react(&page.1),
+        "{:?} {}",
+        page.1.tier,
+        page.2
+    );
+}

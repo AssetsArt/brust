@@ -576,7 +576,7 @@ test('F329: a useRef only handed to a component ref prop: no island, markup equa
   await page.close()
 }, 60_000)
 
-test('asChild over a static component child (F363a): served == React, no island', async () => {
+test('asChild over a static component child (F363a) and through carriers (F369a): served == React, no island', async () => {
   const html = await (await fetch(`${base}/slot-comp`)).text()
   expect(html).not.toContain('brust-island')
   // the order of attributes carries no meaning (React's cloneElement keeps the child's props first)
