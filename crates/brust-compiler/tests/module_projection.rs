@@ -119,6 +119,9 @@ fn every_unrecognised_use_ships_the_list_whole() {
         "stop_opaque_list.tsx",
         // a ref's initial value, evaluated on the client outside the members (Afrojack, PR1 review)
         "stop_ref_init.tsx",
+        // a derived value only a ref init or an effect's deps read (Mellow, PR1 review)
+        "stop_ref_derived.tsx",
+        "stop_effect_dep.tsx",
         "stop_helper.tsx",
         // a value with a name in it
         "stop_not_literal.tsx",
@@ -134,4 +137,14 @@ fn an_imported_list_is_not_projected_yet() {
     let c = native("imported.tsx");
     assert!(c.contains(r#"import { ITEMS } from "./data""#), "{c}");
     assert!(!c.contains("const ITEMS"), "{c}");
+}
+
+/// A derived value only a ref's initial value or an effect's deps read is declared in the chunk (Mellow, PR1 review):
+/// both run on the client, so they are code roots like a handler. Before, `s0()` was called but never declared.
+#[test]
+fn a_derived_value_only_a_ref_init_or_an_effect_dep_reads_is_declared() {
+    for f in ["stop_ref_derived.tsx", "stop_effect_dep.tsx"] {
+        let c = native(f);
+        assert!(c.contains("const s0 = "), "{f}: {c}");
+    }
 }

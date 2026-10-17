@@ -78,6 +78,13 @@ fn chunk_in(
     roots.extend(inits.iter().flatten());
     roots.extend(ir.handlers.iter().map(|h| &h.body));
     roots.extend(ir.effects.iter().map(|e| &e.body));
+    // An effect's deps (printed in `void [...]`) and a ref's initial value (`__ref("r", init)`) run on the client too:
+    // a derived value only they read is declared, and F362 scans them (Afrojack and Mellow, PR1 review).
+    roots.extend(ir.effects.iter().flat_map(|e| e.deps.iter().flatten()));
+    roots.extend(structural.refs.iter().filter_map(|r| match &r.init {
+        Expr::Raw(raw) => Some(raw),
+        _ => None,
+    }));
     for m in members {
         match &m.def {
             MemberDef::Value { raw, .. }
@@ -139,12 +146,6 @@ fn chunk_in(
         .iter()
         .copied()
         .chain(reached_raws.iter().copied())
-        .chain(ir.effects.iter().flat_map(|e| e.deps.iter().flatten()))
-        // a ref's initial value, evaluated on the client (`__ref("r", init)`, printed below; Afrojack, PR1 review)
-        .chain(structural.refs.iter().filter_map(|r| match &r.init {
-            Expr::Raw(raw) => Some(raw),
-            _ => None,
-        }))
         .collect();
     let lists: Vec<&RawExpr> = members
         .iter()
