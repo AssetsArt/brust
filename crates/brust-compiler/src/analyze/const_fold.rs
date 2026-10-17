@@ -290,6 +290,34 @@ pub fn imported_const(
     })
 }
 
+/// F362 (PR2, Mellow F3): the initializer of the `export const imported` of the relative module `source`, read from the
+/// source as written (nothing is run), when it is declared on its own and its module never writes it. Whether its value is
+/// a list the chunk can project is `lower::module_projection`'s to decide.
+pub fn imported_literal(
+    from: &str,
+    source: &str,
+    imported: &str,
+    opts: &AnalyzeOptions,
+) -> Option<RawExpr> {
+    let path = resolve(from, source, opts)?;
+    let bytes = std::fs::read(opts.root.join(&path)).ok()?;
+    let parsed = crate::parse::parse_tsx(&path, bytes).ok()?;
+    parsed.with_ast(|ast| {
+        let dummy = js_ast::G::Fn::default();
+        let mut names = NameTable::new(ast, &dummy);
+        let print = |js: Js<'_>, a: &Aliases| print_js_with(&parsed, ast, a, js);
+        let mut reader = Reader::new(&mut names, &print);
+        let (_, decls) = reader.module_scope(ast);
+        let local = exported_const_name(ast, imported)?;
+        let decl = decls.iter().find(|d| d.names.contains(&local))?;
+        if decl.names.len() != 1 {
+            return None;
+        }
+        let c = decl.consts.iter().find(|c| c.name == local)?;
+        (!c.mutated).then(|| c.value.clone())
+    })
+}
+
 /// F149 rule 3: the exported `const imported` of the relative module `source` re-emitted as module
 /// code for build evaluation, when its initializer is a call of an import from one of `packages` whose
 /// arguments fold (`crate::ir::FoldEnv`, the module's own consts) to values JS prints exactly:

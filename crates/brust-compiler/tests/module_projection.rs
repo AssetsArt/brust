@@ -131,12 +131,64 @@ fn every_unrecognised_use_ships_the_list_whole() {
     }
 }
 
-/// PR1 projects module consts only: an imported list keeps its import (PR2).
+/// PR2 (Mellow F3): an imported `export const` list, read from its module as written, is declared projected in the
+/// chunk instead of imported, so the data module is not bundled.
 #[test]
-fn an_imported_list_is_not_projected_yet() {
-    let c = native("imported.tsx");
-    assert!(c.contains(r#"import { ITEMS } from "./data""#), "{c}");
-    assert!(!c.contains("const ITEMS"), "{c}");
+fn an_imported_list_is_declared_projected_instead_of_imported() {
+    for f in ["imported.tsx", "imported_alias.tsx"] {
+        let c = native(f);
+        assert!(
+            c.contains(r#"const ITEMS = [{ id: 1, name: "a" }, { id: 2, name: "b" }];"#),
+            "{f}: {c}"
+        );
+        assert!(
+            !c.contains("import { ITEMS }") && !c.contains("SECRET"),
+            "{f}: {c}"
+        );
+    }
+}
+
+/// PR2, C1: the import stays (the data module is bundled whole, as before) when its module writes the list, when the
+/// value has a name in it, or when the chunk's own use is not recognised (a row bare; another printed declaration reads it, F1).
+#[test]
+fn an_imported_list_its_module_writes_or_the_chunk_uses_whole_stays_imported() {
+    for f in [
+        "imported_mut.tsx",
+        "imported_env.tsx",
+        "imported_whole.tsx",
+        "imported_helper.tsx",
+    ] {
+        let c = native(f);
+        assert!(c.contains("import { ITEMS } from"), "{f}: {c}");
+        assert!(!c.contains("const ITEMS"), "{f}: {c}");
+    }
+}
+
+/// C4 + C5: the value is read from the data module's source on every compile (an edit is seen; `brust dev` rebuilds the
+/// whole app on each change) and nothing runs, so two compiles of the same source print the same bytes.
+#[test]
+fn an_imported_list_follows_its_source_and_prints_the_same_bytes_twice() {
+    let first = native("imported.tsx");
+    assert_eq!(first, native("imported.tsx"));
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/module-projection");
+    let tmp = dir.join("zz_edit");
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::copy(dir.join("imported.tsx"), tmp.join("imported.tsx")).unwrap();
+    let data = std::fs::read_to_string(dir.join("data.ts")).unwrap();
+    std::fs::write(tmp.join("data.ts"), &data).unwrap();
+    let before = native("zz_edit/imported.tsx");
+    std::fs::write(
+        tmp.join("data.ts"),
+        data.replace("name: 'a'", "name: 'edited'"),
+    )
+    .unwrap();
+    let after = native("zz_edit/imported.tsx");
+    std::fs::remove_dir_all(&tmp).unwrap();
+    assert!(before.contains(r#"name: "a""#), "{before}");
+    assert!(
+        after.contains(r#"name: "edited""#) && !after.contains("SECRET"),
+        "{after}"
+    );
 }
 
 /// A derived value only a ref's initial value or an effect's deps read is declared in the chunk (Mellow, PR1 review):

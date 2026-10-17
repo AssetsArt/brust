@@ -155,9 +155,20 @@ fn chunk_in(
         })
         .collect();
     let need = super::common::module_need(ir, &module_names, &mut BTreeSet::new());
-    let projected =
-        super::module_projection::projections(ir, &structural.template, &need, &code, &lists);
-    let module = module_code_with(ir, &module_names, &mut imports, &projected);
+    let projected = super::module_projection::projections(
+        ir,
+        &structural.template,
+        &need,
+        &imports,
+        &code,
+        &lists,
+    );
+    let mut module = module_code_with(ir, &module_names, &mut imports, &projected.module);
+    // PR2: a projected import is declared here instead of imported.
+    for (u, stmt) in &projected.imports {
+        imports.remove(u);
+        module.insert_str(0, &format!("{stmt}\n"));
+    }
 
     // Body declarations in source order: seeds, refs, reached derived values.
     let mut decls: Vec<(u32, String)> = Vec::new();

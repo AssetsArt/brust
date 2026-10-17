@@ -4,4 +4,5 @@ import P_child from './p_child'
 import P_whole from './p_whole'
 import P_ref from './p_ref'
 import P_refd from './p_refd'
-export const pages: Record<string, unknown> = { rows: P_rows, clone: P_clone, child: P_child, whole: P_whole, ref: P_ref, refd: P_refd }
+import P_import from './p_import'
+export const pages: Record<string, unknown> = { rows: P_rows, clone: P_clone, child: P_child, whole: P_whole, ref: P_ref, refd: P_refd, import: P_import }
