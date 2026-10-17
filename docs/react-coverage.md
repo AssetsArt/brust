@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 236 | 125 | 18 | 93 | 0 | 0 | 0 | 0 |
+| B Composition | 237 | 126 | 18 | 93 | 0 | 0 | 0 | 0 |
 | C Hooks | 217 | 69 | 68 | 80 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 610 | 270 | 115 | 221 | 3 | 1 | 0 | 0 |
+| **Total** | 611 | 271 | 115 | 221 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -294,6 +294,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-aschild-component-spreads | asChild whose child is a static component that spreads its props onto its element | static | static | 0 | ok | 0 | — | F363a (was slot-child-component): the component's element attributes reach the child as props (Radix Slot cloneElement), className joined slot-first; served == React in the Chromium test |
 | b-aschild-carrier | asChild on a component that only hands its whole rest to a polymorphic child (Radix RovingFocusGroup.Item shape) | static | static | 0 | ok | 0 | — | F369a (was slot-dynamic via absent_props, F153c): a unique, unconditional polymorphic child given the whole rest makes the carrier polymorphic; the Slot replaces that child's element at the carrier's call site |
 | b-aschild-carrier-conditional | the same carrier with the polymorphic child under a condition | react | react | ssr | ok | 4.0 | fallback:slot-dynamic | F369a fail closed (a): not unconditional, so not a carrier and the F153c requirement stands (slot-dynamic) |
+| b-provider-memo-array-frame | a Provider whose frame value is a useMemo over state building an array (Radix ToggleGroupImplSingle) | static | static | 0 | ok | 4.6 | — | F329 W4 (was context-state: `calls_nothing` had no array arm): the memoized array is a derived member of the native Provider instance; the page lowers with a clone |
 | b-aschild-component-style | asChild over a static component that brings a style | react | react | ssr | ok | 4.0 | fallback:slot-merge | F363a fail closed: the style merge is not done for a component child (slot-merge) |
 | b-aschild-child-handler | asChild whose child has an event handler | react | react | ssr | ok | 4.0 | fallback:slot-handler | shadcn S1.4 R34.31 (Q2): fallback slot-handler |
 | b-aschild-slot-handler | a handler passed to a component with asChild | react | react | ssr | ok | 4.0 | fallback:slot-handler | shadcn S1.4 R34.31 (Q2, Q4): fallback slot-handler until the parent-scope binding of S1.3 is on main |
