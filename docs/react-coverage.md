@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 228 | 122 | 16 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 213 | 66 | 67 | 80 | 0 | 0 | 0 | 0 |
+| C Hooks | 217 | 69 | 67 | 81 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 598 | 264 | 112 | 218 | 3 | 1 | 0 | 0 |
+| **Total** | 602 | 267 | 112 | 219 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -377,6 +377,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | 0 | ok | 4.6 | — | F324 (real fix, progress-flip): the children reach the button through the rest in React; the clone puts the call site's content into the one element that spreads the rest (explicit children win in React; this Provider writes none), so the markup carries them and no island is needed (was: refused to an island after the alpha.16 silent drop) |
 | c-spec-rest-no-children | the same Provider component called without children | static | static | 0 | ok | 4.6 | — | F324: nothing to drop, so the clone is still taken |
 | c-literal-order-entries | an object literal written out of sorted order, passed to a stateful child that reads Object.entries / Object.keys | static | static | 0 | ok | 4.6 | — | F333: the literal prints through obj_lit (JS key order z,a); a jinja map literal sorted it a,z |
+| c-switch-live-ahead-of-rest | a trigger binding live context values ahead of a spread of its own rest (Radix SwitchTrigger) | static | static | 0 | ok | 4.6 | — | F356 (switch-provider-chain PR2, link 3): the parent binds the live context value on the child's element ahead of the rest |
+| c-scope-own-forwarded | a component handing its own __scopeX prop unchanged to the consumer it renders, called without a scope | static | static | 0 | ok | 4.6 | — | F356 (ruling 7a25d5e0): the requirement 'callers do not pass it' moves up; no caller passes one, so it stays native |
+| c-scope-own-forwarded-passed | the same, called with a scope | react | react | ssr | ok | 5.4 | fallback:context-scope | F356: a caller that passes a scope selects another context instance (context-scope) |
+| c-scope-own-forwarded-undefined | the same, called with a literal undefined scope | static | static | 0 | ok | 4.6 | — | F356 (ruling 7a25d5e0): a literal undefined names no scope |
 | c-slot-owner-prop | a prop the client changes, read in the slot of a native child | react | react | ssr | ok | 5.4 | fallback:frozen-prop | F214 (Mellow F1) + F307: Mid clones Box with the content, but Mid is stateless and does not follow `label` (F323): frozen-prop |
 | c-slot-owner-constant | constant slot content in a native child | native | native | 0 | ok | 4.6 | — | F214: static slot content has no directive to misbind |
 | c-custom-hook-unsupported | custom hook calling an unsupported hook | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | G3: reported at the call site, naming the hook |

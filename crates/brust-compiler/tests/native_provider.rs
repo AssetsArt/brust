@@ -1367,6 +1367,22 @@ fn a_components_own_scope_handed_on_unchanged_is_native_until_a_caller_passes_on
     }
 }
 
+// F356 (ruling 7a25d5e0): a caller that writes a literal `undefined` scope names no scope, so it stays native like a
+// caller that passes none; a scope that is any other expression still falls back (scope_fwd_pass above).
+#[test]
+fn a_literal_undefined_scope_names_no_scope_and_stays_native() {
+    let all = compile("scope_fwd_undef.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(
+        all.iter()
+            .all(|i| !has(&i.ir, DiagClass::Fallback, "context-scope")),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.diagnostics))
+            .collect::<Vec<_>>()
+    );
+}
+
 // switch-provider-chain PR2: a field destructured from a context and read in code printed as written prints as its hidden
 // prop, the name the chunk binds around that code (it printed as `flip` / `on`: unbound, a ReferenceError at the click
 // and in the effect).
