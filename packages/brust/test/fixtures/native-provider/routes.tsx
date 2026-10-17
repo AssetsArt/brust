@@ -21,6 +21,9 @@ import SwPage from './SwPage'
 import RovingPage from './RovingPage'
 import SinkRefPage from './SinkRefPage'
 import SlotCompPage from './SlotCompPage'
+import LiveRestPage from './LiveRestPage'
+import MemoFramePage from './MemoFramePage'
+import AfterSpreadPage from './AfterSpreadPage'
 import RovingListPage from './RovingListPage'
 import CollCompPage from './CollCompPage'
 import WrapPage from './WrapPage'
@@ -58,6 +61,9 @@ export const routes = defineRoutes([
   { path: '/roving', Component: RovingPage },
   { path: '/sink-ref', Component: SinkRefPage },
   { path: '/slot-comp', Component: SlotCompPage },
+  { path: '/live-rest', Component: LiveRestPage },
+  { path: '/memo-frame', Component: MemoFramePage },
+  { path: '/after-spread', Component: AfterSpreadPage },
   { path: '/roving-list', Component: RovingListPage },
   { path: '/coll-comp', Component: CollCompPage },
   { path: '/wrap/{tone}', Component: WrapPage, loader: async ({ params }: { params: { tone: string } }) => ({ tone: params.tone }) },

@@ -350,6 +350,12 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
     ir.package_requests = requests.into_iter().collect();
     ir.callable_props = p.called_props.take().into_iter().collect();
     ir.build_eval = std::mem::take(&mut p.st.build_eval);
+    // F337: the chunk can recompute every props-only slot (none build-evaluated, Mellow A3).
+    let recomputable = ir.build_eval.is_empty()
+        && p.st.slots.values().filter(|i| !i.state_dependent).all(|i| {
+            crate::analyze::plain_fn::client_value(&i.raw, ir, &|n| p.derived_raw.get(n).cloned())
+        });
+    ir.props_slots_recomputable = recomputable;
     for d in p.css_errors.take() {
         if !ir
             .diagnostics

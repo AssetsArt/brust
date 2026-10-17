@@ -339,6 +339,14 @@ pub struct ComponentIR {
     /// F174: module functions proven to return a primitive (`analyze::plain_fn`), callable under a lowered Provider.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plain_fns: Vec<String>,
+    /// F337 (Mellow A2): the `plain_fns` that call no host-dependent method, so the client may recompute a value
+    /// that calls them and print what the server printed.
+    #[serde(skip)]
+    pub client_plain_fns: Vec<String>,
+    /// F337: every props-only precomputed slot of this component is one its chunk recomputes exactly
+    /// (`plain_fn::client_value`), and none is build-evaluated (Mellow A3): a caller that changes its props may link it.
+    #[serde(skip)]
+    pub props_slots_recomputable: bool,
     /// F199: module functions and consts that cannot hand out a React element (`analyze::plain_fn::element_free_fns`),
     /// readable in a prop passed to a component.
     #[serde(skip)]
@@ -373,6 +381,10 @@ pub struct ComponentIR {
     /// [`HandlerDecl::forwarded`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub live_forwards: Vec<Forwarded>,
+    /// F329b: live props of a NATIVE child (the component node at `loc`) that land on an element through its rest spread:
+    /// the child's element binds them itself (`x-prop-<attribute>="<key>"`, printed in the template, never in the chunk).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub live_props: Vec<Forwarded>,
     /// The slot content this component is given is printed more than once: its template repeats in a list, or
     /// passes its children on to a component that does (F169, transitive).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -559,6 +571,8 @@ impl ComponentIR {
             sink_refs: Vec::new(),
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
+            client_plain_fns: Vec::new(),
+            props_slots_recomputable: false,
             element_free_fns: Vec::new(),
             bound_names: Default::default(),
             module_effect: None,
@@ -567,6 +581,7 @@ impl ComponentIR {
             shadowed_props: Vec::new(),
             shadowed_input: Vec::new(),
             live_forwards: Vec::new(),
+            live_props: Vec::new(),
             repeats_children: false,
             hosts_children: false,
             mount_once: Vec::new(),
