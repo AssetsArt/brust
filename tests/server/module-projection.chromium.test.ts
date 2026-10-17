@@ -3,7 +3,8 @@
 // client re-creates under a condition (rows), a host cloned in the rows (clone, F361 shape 1), a stateful child given a
 // row value (child, shape 2). No script the page loads carries the unread `secret` (C2: every /_brust/*.js the page
 // references, followed through its imports), and every observable value equals React after each click. A page handing
-// the row value on whole (whole) ships the list as written (C1).
+// the row value on whole (whole) or initialising a ref from the list (ref, read on the client) ships the list as
+// written (C1).
 // Run alone: `bun test --timeout 120000 tests/server/module-projection.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
@@ -103,7 +104,7 @@ const tierOf = (prefix: string) => {
 }
 
 test('every page is native', () => {
-  expect({ rows: tierOf('pRows_'), clone: tierOf('pClone_'), child: tierOf('pChild_'), whole: tierOf('pWhole_') }).toEqual({ rows: 'native', clone: 'native', child: 'native', whole: 'native' })
+  expect({ rows: tierOf('pRows_'), clone: tierOf('pClone_'), child: tierOf('pChild_'), whole: tierOf('pWhole_'), ref: tierOf('pRef_') }).toEqual({ rows: 'native', clone: 'native', child: 'native', whole: 'native', ref: 'native' })
 })
 
 for (const page of ['rows', 'clone', 'child']) {
@@ -116,9 +117,11 @@ for (const page of ['rows', 'clone', 'child']) {
   })
 }
 
-test('whole: the row value handed on whole ships the list as written', async () => {
-  const all = await scripts('whole')
-  expect([...all.values()].some((s) => s.includes('SECRET_A'))).toBe(true)
+test('whole, ref: the row value handed on whole, or a ref initialised from the list, ships the list as written', async () => {
+  for (const page of ['whole', 'ref']) {
+    const all = await scripts(page)
+    expect([...all.values()].some((s) => s.includes('SECRET_B'))).toBe(true)
+  }
 })
 
 const CLICKS: Record<string, string[]> = {
@@ -127,6 +130,7 @@ const CLICKS: Record<string, string[]> = {
   clone: ['f', 'b2', 'f', 'b3', 'b2'],
   child: ['f', 't1', 't3', 'f', 't1'],
   whole: ['r2', 'r1'],
+  ref: ['r2', 'show', 'r3'],
 }
 
 for (const page of Object.keys(CLICKS)) {

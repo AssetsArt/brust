@@ -140,6 +140,11 @@ fn chunk_in(
         .copied()
         .chain(reached_raws.iter().copied())
         .chain(ir.effects.iter().flat_map(|e| e.deps.iter().flatten()))
+        // a ref's initial value, evaluated on the client (`__ref("r", init)`, printed below; Afrojack, PR1 review)
+        .chain(structural.refs.iter().filter_map(|r| match &r.init {
+            Expr::Raw(raw) => Some(raw),
+            _ => None,
+        }))
         .collect();
     let lists: Vec<&RawExpr> = members
         .iter()

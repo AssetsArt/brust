@@ -115,8 +115,10 @@ fn every_unrecognised_use_ships_the_list_whole() {
         "stop_list_method.tsx",
         "stop_alias.tsx",
         // code printed as written, another printed declaration (F1)
-        // (a block that reads the list itself makes the page React upstream: `it` can no longer be proven a value)
         "stop_block.tsx",
+        "stop_opaque_list.tsx",
+        // a ref's initial value, evaluated on the client outside the members (Afrojack, PR1 review)
+        "stop_ref_init.tsx",
         "stop_helper.tsx",
         // a value with a name in it
         "stop_not_literal.tsx",
