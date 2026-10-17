@@ -17,6 +17,7 @@ import LocalSpreadPage from './LocalSpreadPage'
 import LocalSpreadRestPage from './LocalSpreadRestPage'
 import SwPage from './SwPage'
 import RovingPage from './RovingPage'
+import SinkRefPage from './SinkRefPage'
 import RovingListPage from './RovingListPage'
 import CollCompPage from './CollCompPage'
 import WrapPage from './WrapPage'
@@ -52,3 +53,4 @@ export const renderRoving = (): string => html(RovingPage)
 export const renderWrap = (tone: string): string => server.renderToStaticMarkup(createElement(WrapPage as never, { tone } as never))
 export const renderCollComp = (): string => html(CollCompPage)
 export const renderRovingList = (): string => html(RovingListPage)
+export const renderSinkRef = (): string => html(SinkRefPage)

@@ -345,6 +345,33 @@ fn a_member_spread_does_not_move_the_callable_requirement_up() {
     );
 }
 
+/// F329: a `useRef` cell whose every use is the `ref` prop of a component element (Radix ToggleGroupItem's `ref`) hands nothing to
+/// anyone: the call site drops it and the child renders; one read in a handler keeps the fallback.
+#[test]
+fn a_ref_nothing_reads_is_dropped_at_the_call_site() {
+    for file in ["sink-ref-ok.tsx", "sink-ref-two.tsx"] {
+        let all = compile(file);
+        assert!(
+            !all.iter().any(|(_, ir, _)| is_react(ir)),
+            "{file}: {:?}",
+            all.iter()
+                .map(|(_, ir, _)| (&ir.id, &ir.tier, rules(ir)))
+                .collect::<Vec<_>>()
+        );
+    }
+    let out = compile_all("sink-ref-read.tsx");
+    let page = out
+        .iter()
+        .find(|(i, ..)| i.starts_with("sinkRefRead_"))
+        .expect("page");
+    assert!(is_react(&page.1), "{:?}", page.1.tier);
+    assert!(
+        rules(&page.1).contains(&"forwardref-ref"),
+        "{:?}",
+        page.1.diagnostics
+    );
+}
+
 /// A Provider field that IS a call of a proven-plain module function (`pct: clamp(value)`) is evaluated by the Provider's own
 /// instance (a native clone per call site): the call is never substituted into a lowered frame at the call site.
 #[test]

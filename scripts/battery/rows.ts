@@ -85,6 +85,7 @@ const CART = `import { defineStore, signal, computed } from 'brust/store'\nexpor
 
 // R34.140: the collection fixtures of the compiler's tests (one source). The stub carries only the export's name; the
 // build's version+hash check that vouches for the real release is pinned in the pkg-src tests, so rows say `vouch`.
+const ctxFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/${n}.tsx`), 'utf8').trimEnd()
 const ccFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/cc-${n}.tsx`), 'utf8').trimEnd()
 const collFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/native-provider/coll_${n}.tsx`), 'utf8').trimEnd()
 const COLL_PKG: Record<string, StubPackage> = { '@radix-ui/react-collection': { files: { 'src/index.tsx': 'export const createCollection = (name: string): any => [name]' } } }
@@ -864,6 +865,10 @@ export const rows: Row[] = [
     snippet: `import Outer from './Outer'\nimport Ided from './Ided'\nexport default function C() { return <Outer><Ided text="x" /></Outer> }`,
     files: { 'Outer.tsx': `import List from './List'\nexport default function Outer({ children }: any) { return <List items={['a', 'b']}>{children}</List> }`, 'List.tsx': `export default function List({ items, children }: any) { return <ul>{items.map((i: string) => <li key={i}>{i}{children}</li>)}</ul> }`, 'Ided.tsx': `import { useId } from 'react'\nexport default function Ided({ text }: any) { const id = useId(); return <label htmlFor={id}>{text}</label> }` },
     note: 'F169: the repeat check is transitive, so the same id is not printed in every row' },
+  { id: 'b-ref-nothing-reads', category: 'B', authoring: 'a useRef only handed to a component\'s ref prop (Radix ToggleGroupItem\'s ref)', expect: 'native', jobs: 0,
+    snippet: ctxFx('sink-ref-ok'), note: 'F329: nothing reads the ref, so the call site drops it and the forwardRef child renders (before: forwardref-ref island)' },
+  { id: 'b-ref-read-in-handler', category: 'B', authoring: 'the same ref read in a handler', expect: 'react',
+    snippet: ctxFx('sink-ref-read'), note: 'F329 guard: a read of ref.current keeps the forwardref-ref fallback' },
   { id: 'b-children-called-nodes', category: 'B', authoring: 'a component that calls its children when it is a function, given element children', expect: 'static', jobs: 0,
     snippet: ccFx('ok'), note: 'F328b: typeof children === function ? children(..) : children is read as {children} for provable nodes' },
   { id: 'b-children-called-function', category: 'B', authoring: 'the same component given a function (arrow, identifier, children prop)', expect: 'react',
@@ -1106,10 +1111,10 @@ export const rows: Row[] = [
     snippet: `import { Root } from 'leafy'\nexport default function C({ on }: any) { return <section><Root asChild={on}><a href="/y">y</a></Root></section> }`,
     packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
     note: 'F153c fail closed: slot-dynamic' },
-  { id: 'b-pkg-callsite-ref', category: 'B', authoring: 'a ref passed to a package forwardRef leaf', expect: 'react',
+  { id: 'b-pkg-callsite-ref', category: 'B', authoring: 'a ref passed to a package forwardRef leaf', expect: 'native', jobs: 0,
     snippet: `import { useRef } from 'react'\nimport { Root } from 'leafy'\nexport default function C() { const r = useRef(null); return <section><Root ref={r}>x</Root></section> }`,
     packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
-    note: 'F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none)' },
+    note: 'F329 (was F153c / R34.64 forwardref-ref): React attaches the ref to the leaf\'s element, but nothing reads it (a useRef only handed on), so dropping it is unobservable; a ref that is read keeps the fallback (b-ref-read-in-handler)' },
   { id: 'b-pkg-ref-read', category: 'B', authoring: 'a package leaf that reads its forwarded ref', expect: 'static', jobs: 1,
     snippet: `import { Root } from 'leafy'\nexport default function C() { return <section><Root>x</Root></section> }`,
     packages: { leafy: { files: { 'src/leaf.tsx': PKG_LEAF.replace('ref={forwardedRef}', 'ref={forwardedRef} data-r={String(forwardedRef)}') } }, '@radix-ui/react-primitive': PKG_PRIMITIVE },
@@ -1847,10 +1852,10 @@ export const rows: Row[] = [
     snippet: `import { useEffect, useState } from 'react'\nimport { Fb } from './Fwd'\nexport default function C() { const [el, setEl] = useState<HTMLButtonElement | null>(null); useEffect(() => { el?.setAttribute('data-bound', 'yes') }, [el]); return <main><Fb ref={setEl}>go</Fb></main> }`,
     files: { 'Fwd.tsx': NATIVE_FWD },
     note: 'F267: a callback ref is the same mount effect as on an element, its ref cell bound on the child\'s element' },
-  { id: 'c-forwardref-child-ref-conditional-child', category: 'C', authoring: 'a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes', expect: 'react',
+  { id: 'c-forwardref-child-ref-conditional-child', category: 'C', authoring: 'a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes', expect: 'native', jobs: 0,
     snippet: `import { useRef, useState } from 'react'\nimport { Fc } from './Fwd'\nexport default function C() { const r = useRef<HTMLButtonElement>(null); const [n, setN] = useState(0); return <main><Fc ref={r} show={n > 0} /><button onClick={() => setN(n + 1)}>{n}</button></main> }`,
     files: { 'Fwd.tsx': NATIVE_FWD },
-    note: 'F267: the child may not render the element at all; the call site keeps the React fallback' },
+    note: 'F329 (was F267 fallback): the child may not render the element at all, and nothing reads the ref, so it is dropped; the F267 binding path still serves a ref that is read (c-forwardref-*)' },
   { id: 'c-native-provider-rest-input', category: 'C', authoring: 'a component spreads its own ...rest into a consumer under the Provider it renders', expect: 'static', jobs: 0,
     snippet: `import { Outer } from './RestHlp'\nexport default function C() { return <main><Outer data-x="1" aria-label="switch" /></main> }`,
     files: { 'RestHlp.tsx': NATIVE_RESTHLP },
