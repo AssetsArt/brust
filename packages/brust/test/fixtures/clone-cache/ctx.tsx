@@ -34,3 +34,7 @@ export function OnlyOn({ label = 'o' }: { label?: string }) {
   const on = useContext(On)
   return <u data-on={on ? 1 : 0}>{label}</u>
 }
+// F374: a wrapper that only hands its props (children included) on to the native Provider.
+export function Outer(props: { id: string; children?: React.ReactNode }) {
+  return <Prov {...props} />
+}

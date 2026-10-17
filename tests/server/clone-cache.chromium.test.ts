@@ -3,7 +3,8 @@
 // (two_on); content reading Frame's own context keeps Prov an island (two: before, it printed the context default);
 // content holding a Frame call at the very offset of Prov's own Frame call nests as in React when it is a clone
 // where it is written (same_loc3) and keeps Prov an island when it is still a React island there (same_loc, F3). Every
-// observable value equals React after each click.
+// observable value equals React after each click. F374: children a wrapper hands on to Prov in a spread (rest_text,
+// rest_k) keep the wrapper a React island; rest_on (content reading Prov's own context) clones the wrapper (F298).
 // Run alone: `bun test --timeout 120000 tests/server/clone-cache.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
@@ -84,9 +85,25 @@ test('two_on and same_loc3 are native (no island); same_loc (F3) and two (a Prov
   for (const page of ['same_loc', 'two']) expect(await (await fetch(`${base}/${page}`)).text()).toContain('<brust-island data-id="prov_')
 })
 
+// F374: children reaching the Provider through a wrapper's props spread: the wrapper stays a React island (refused by
+// name), never the Provider printed without them; content reading Prov's own context still clones the wrapper (F298).
+test('rest_text and rest_k keep the wrapper an island with its children; rest_on is native', async () => {
+  const text = await (await fetch(`${base}/rest_text`)).text()
+  expect(text).toContain('<brust-island data-id="outer_')
+  expect(text).toContain('hello')
+  expect(text).toContain('para')
+  const k = await (await fetch(`${base}/rest_k`)).text()
+  expect(k).toContain('<brust-island data-id="outer_')
+  expect(k).toContain('AAA')
+  expect(await (await fetch(`${base}/rest_on`)).text()).not.toContain('brust-island')
+})
+
 const CLICKS: Record<string, string[]> = {
   two: ['t1', 'f1', 't2', 'f2', 'f2', 't1'],
   two_on: ['t1', 'f1', 't2', 'f2', 't1'],
+  rest_text: ['t1', 'f1', 't2', 'f2'],
+  rest_k: ['t1', 'f1', 't1'],
+  rest_on: ['t1', 'f1', 't1'],
   same_loc: ['t1', 'fin', 'f1', 't1'],
   same_loc3: ['t1', 'fin', 'f1', 'fin', 't1'],
 }

@@ -797,10 +797,14 @@ const SPEC_SOURCE: &str = "\u{0}spec";
 
 /// A stable 32-bit mix of the call site (module and location): the suffix of a clone's id. Ids are per call site
 /// (R34.124); equal chunks share a factory module, not an id.
-/// F238: a stable hash of the content a clone is made with (after `Carry` and `rebase_sources`): part of the clone's id
-/// and module-cache key, beside the call site, so different content never reuses a clone.
-fn content_shape<R: std::fmt::Debug>(nodes: &[Node], render: &R) -> u64 {
-    crate::lower::fnv64(format!("{nodes:?}{render:?}").as_bytes())
+/// F238: the call site a clone's id and module-cache key name (`site`: the module and the enclosing clone's id) with a
+/// stable hash of the content it is made with (after `Carry` and `rebase_sources`), so different content at one offset
+/// of one template never reuses a clone.
+fn clone_site<R: std::fmt::Debug>(site: &str, nodes: &[Node], render: &R) -> String {
+    format!(
+        "{site}~{:016x}",
+        crate::lower::fnv64(format!("{nodes:?}{render:?}").as_bytes())
+    )
 }
 
 fn spec_hash(path: &str, loc: u32) -> u32 {
@@ -3173,6 +3177,21 @@ impl Walker<'_, '_> {
             Some(n) => Export::Named(n.clone()),
             None => Export::Default,
         };
+        // F374: with no children written at the call site, a spread (or a `children` prop) may still carry them, and
+        // the clone's `{children}` would be empty where React renders them (`function Outer(props) { return <Prov
+        // {...props} /> }`, `<Outer>hello</Outer>` printed an empty section). Refused by name: the Provider stays an
+        // island and React renders it with its children.
+        if content.is_empty()
+            && let Some((k, _)) = props
+                .iter()
+                .find(|(k, _)| k == crate::ir::SPREAD_KEY || k == REST_INPUT || k == "children")
+        {
+            return Err(if k == "children" {
+                "its children are given as the `children` prop, which the clone cannot hold".into()
+            } else {
+                "a spread may carry its children, which the clone cannot hold".into()
+            });
+        }
         let mut nodes = std::mem::take(content);
         self.check_owner(&nodes, owner)?;
         self.check_inner_providers(cir, &nodes)?;
@@ -3214,7 +3233,7 @@ impl Walker<'_, '_> {
             Some(salt) => format!("{}#{salt}", ctx.path),
             None => ctx.path.to_string(),
         };
-        let site = format!("{site}~{:016x}", content_shape(&nodes, &render));
+        let site = clone_site(&site, &nodes, &render);
         let id = format!("{}_s{:08x}", cir.id, spec_hash(&site, loc));
         let key = format!("{c_path}#{exp}~spec~{site}~{loc}");
         let mut once = Some(nodes);
@@ -3297,7 +3316,7 @@ impl Walker<'_, '_> {
             None => ctx.path.to_string(),
         };
         // F238: the content's shape too (see `specialise`).
-        let site = format!("{site}~{:016x}", content_shape(&nodes, &None::<()>));
+        let site = clone_site(&site, &nodes, &None::<()>);
         let id = format!("{}_r{:08x}", cir.id, spec_hash(&site, loc));
         let key = format!("{c_path}#{exp}~rest~{site}~{loc}");
         let clone_id = id.clone();
@@ -7715,6 +7734,22 @@ mod tests {
 
     fn client(js: &str) -> Expr {
         Expr::ClientOnly { js: js.into() }
+    }
+
+    // F238 (Mellow, review): two call sites at one offset of one template with different content get different clone
+    // ids (and keys); the same content gets the same one. On main the colliding shape is refused by F3 first, so this
+    // pins the key itself.
+    #[test]
+    fn clone_ids_at_one_site_and_offset_differ_by_content() {
+        let a = vec![Node::Text("a".into())];
+        let b = vec![Node::Text("b".into())];
+        let id = |n: &[Node]| spec_hash(&clone_site("m.tsx#c1", n, &None::<()>), 7);
+        assert_ne!(id(&a), id(&b));
+        assert_eq!(id(&a), id(&a.clone()));
+        assert_ne!(
+            clone_site("m.tsx#c1", &a, &None::<()>),
+            clone_site("m.tsx#c1", &a, &Some("render"))
+        );
     }
 
     // F365(a): the refusal in `specialise_host` rests on this set, and no fixture reaches it with a real collision.

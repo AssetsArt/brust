@@ -116,3 +116,39 @@ fn content_reading_a_provider_inside_the_clones_template_is_refused_by_name() {
                 .contains("reads a context that a Provider inside `Prov` provides")
     }));
 }
+
+fn info(all: &[Item], id: &str, text: &str) -> bool {
+    all.iter()
+        .filter(|i| i.ir.id.starts_with(id))
+        .flat_map(|i| &i.ir.diagnostics)
+        .any(|d| d.rule == "specialise-unsupported" && d.message.contains(text))
+}
+
+/// F374 (Afrojack, PR1 review; pre-existing): a wrapper that hands its children on to a native Provider in a spread
+/// (`<Prov {...props} />`) or as the `children` prop had the Provider specialised with NO content, so the children were
+/// dropped (`<Outer>hello</Outer>` printed an empty section, no diagnostic). Refused by name now: the Provider stays an
+/// island in the wrapper, which renders with React, children included. The F371 shape through such a wrapper
+/// (`rest_k`) keeps its content; content reading the Provider's own context still clones the wrapper (F298, `rest_on`).
+#[test]
+fn children_handed_to_a_native_provider_in_a_spread_or_prop_are_never_dropped() {
+    let all = compile("rest_text.tsx");
+    assert!(info(&all, "outer_", "a spread may carry its children"));
+    assert!(info(&all, "outerProp_", "given as the `children` prop"));
+    for (id, text) in [("outer_", "hello"), ("outerProp_", "world")] {
+        let w = all.iter().find(|i| i.ir.id.starts_with(id)).unwrap();
+        assert!(
+            matches!(w.ir.tier, brust_compiler::ir::Tier::React { .. }),
+            "{id}"
+        );
+        assert!(all[0].jinja.contains(text), "{}", all[0].jinja);
+    }
+    let all = compile("rest_k.tsx");
+    assert!(
+        all[0].jinja.contains("AAA") && all[0].jinja.contains("brust-island"),
+        "{}",
+        all[0].jinja
+    );
+    let all = compile("rest_on.tsx");
+    assert!(!all[0].jinja.contains("brust-island"), "{}", all[0].jinja);
+    assert_eq!(clones(&all, "prov_").len(), 1);
+}
