@@ -5,7 +5,7 @@ const [Collection, useCollection, createCollectionScope] = createCollection<HTML
 void createCollectionScope
 void useCollection
 
-// two children of a Slot, a component child of an ItemSlot, and a prop on a Provider: none is the library's shape
+// two children of a Slot, a fragment-rooted component child of an ItemSlot, and a prop on a Provider: none is the library's shape
 function A() {
   const [n] = useState(0)
   return (
@@ -17,8 +17,14 @@ function A() {
     </Collection.Provider>
   )
 }
+// F328b: a component child is the item's host only when its root is ONE element; a fragment root has none to carry the markers
 function Inner() {
-  return <li>x</li>
+  return (
+    <>
+      <li>x</li>
+      <li>y</li>
+    </>
+  )
 }
 function B() {
   const [n] = useState(0)

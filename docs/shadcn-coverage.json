@@ -70,7 +70,7 @@
       "measuredRows": 17,
       "analysisOnlyRows": 0,
       "appComponents": 18,
-      "libraryComponents": 62
+      "libraryComponents": 61
     },
     {
       "blocker": "fallback:jsx-const-child",
@@ -79,7 +79,7 @@
       "measuredRows": 7,
       "analysisOnlyRows": 0,
       "appComponents": 8,
-      "libraryComponents": 39
+      "libraryComponents": 36
     },
     {
       "blocker": "fallback:context-island",
@@ -469,15 +469,6 @@
       "libraryComponents": 10
     },
     {
-      "blocker": "fallback:browser-global",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 9
-    },
-    {
       "blocker": "useImperativeHandle",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
@@ -503,6 +494,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 0,
       "libraryComponents": 4
+    },
+    {
+      "blocker": "fallback:browser-global",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 3
     },
     {
       "blocker": "fallback:hook-in-expression",

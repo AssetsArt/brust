@@ -253,6 +253,60 @@ fn a_wrapper_spreading_its_props_moves_the_callable_requirement_to_its_callers()
     );
 }
 
+/// F328b: `typeof children === 'function' ? children(..) : children` is read as `{children}` when every child given is provably a
+/// node; a function (an arrow, an identifier, `children={fn}`) is one React calls, so those call sites fall back by name.
+#[test]
+fn a_component_that_calls_its_function_children_takes_only_provable_nodes() {
+    let ok = compile("cc-ok.tsx");
+    assert!(
+        !ok.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        ok.iter()
+            .map(|(_, ir, _)| (&ir.id, &ir.tier))
+            .collect::<Vec<_>>()
+    );
+    for (file, id) in [
+        ("cc-arrow.tsx", "ccArrow_"),
+        ("cc-ident.tsx", "ccIdent_"),
+        ("cc-prop.tsx", "ccProp_"),
+    ] {
+        let out = compile_all(file);
+        let page = out.iter().find(|(i, ..)| i.starts_with(id)).expect("page");
+        assert!(is_react(&page.1), "{file}: {:?}", page.1.tier);
+        assert!(
+            rules(&page.1).contains(&"children-read"),
+            "{file}: {:?}",
+            page.1.diagnostics
+        );
+    }
+}
+
+/// F328a: `composeEventHandlers` is a function (its handler body may read `document`) only when it comes from
+/// `@radix-ui/primitive`; the same name from any other package is an ordinary call, painted like one.
+#[test]
+fn compose_event_handlers_is_a_function_only_from_the_radix_package() {
+    let radix = compile_all("compose-radix.tsx");
+    let page = radix
+        .iter()
+        .find(|(i, ..)| i.starts_with("composeRadix_"))
+        .expect("page");
+    assert!(
+        !rules(&page.1).contains(&"browser-global"),
+        "{:?}",
+        page.1.diagnostics
+    );
+    let other = compile_all("compose-other.tsx");
+    let page = other
+        .iter()
+        .find(|(i, ..)| i.starts_with("composeOther_"))
+        .expect("page");
+    assert!(
+        rules(&page.1).contains(&"browser-global"),
+        "{:?}",
+        page.1.diagnostics
+    );
+}
+
 /// F340: the requirement a wrapper moves up names the callable props (`getValueLabel`), not every key its callers pass: a
 /// `className={expr}` through `{...props}` stays native.
 #[test]

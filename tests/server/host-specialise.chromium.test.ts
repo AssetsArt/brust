@@ -1,3 +1,5 @@
+// F348: livewrap = a wrapper with an instance of its own passing its changing prop to the Provider it specialises (F345): the wrapper
+// and its clone follow the page; served == React after each change.
 // F307 (option B) in real Chromium, against React hydrating the same page in the same browser. Slot content a caller
 // prints inside a child's own host (`slot-owner`, F214 for a native child, F309 for a static child linked at the call
 // site) is compiled into a clone of the child for that call site, so the content's directives are the clone's own: a
@@ -93,11 +95,11 @@ const tierOf = (prefix: string) => {
 }
 
 test('slot content a child prints inside its own host is cloned with the child per call site; the rest keeps its refusal', () => {
-  expect({ const: tierOf('pConst_'), state: tierOf('pState_'), text: tierOf('pText_'), handler: tierOf('pHandler_'), list: tierOf('pList_'), linked: tierOf('pLinkedChild_'), linked_static: tierOf('pLinkedStatic_'), two_levels: tierOf('pTwoLevels_'), ifmount: tierOf('pIfmount_'), nested: tierOf('pNested_'), prop: tierOf('pProp_'), scoped: tierOf('pScoped_'), switch: tierOf('pSwitch_'), gate: tierOf('pGate_'), rest: tierOf('pRest_') }).toEqual({ const: 'native', state: 'native', text: 'native', handler: 'native', list: 'native', linked: 'native', linked_static: 'native', two_levels: 'native', ifmount: 'native', nested: 'native', prop: 'react', scoped: 'native', switch: 'static', gate: 'react', rest: 'react' })
+  expect({ const: tierOf('pConst_'), state: tierOf('pState_'), text: tierOf('pText_'), handler: tierOf('pHandler_'), list: tierOf('pList_'), linked: tierOf('pLinkedChild_'), linked_static: tierOf('pLinkedStatic_'), two_levels: tierOf('pTwoLevels_'), ifmount: tierOf('pIfmount_'), nested: tierOf('pNested_'), prop: tierOf('pProp_'), scoped: tierOf('pScoped_'), switch: tierOf('pSwitch_'), gate: tierOf('pGate_'), rest: tierOf('pRest_'), livewrap: tierOf('pLivewrap_'), livewrap_wrapper: tierOf('liveWrap_') }).toEqual({ const: 'native', state: 'native', text: 'native', handler: 'native', list: 'native', linked: 'native', linked_static: 'native', two_levels: 'native', ifmount: 'native', nested: 'native', prop: 'react', scoped: 'native', switch: 'static', gate: 'react', rest: 'react', livewrap: 'native', livewrap_wrapper: 'native' })
 })
 
-const CLICKS: Record<string, string[]> = { ifmount: ['f', 'g', 'box', 'f', 'g', 'f', 'g'], linked_static: ['f', 'f'], nested: ['f', 'box', 'f', 'box'], switch: ['box', 'box', 'box'], scoped: ['f', 't', 'box', 'f', 't'] }
-for (const page of ['const', 'state', 'text', 'handler', 'list', 'linked', 'linked_static', 'two_levels', 'ifmount', 'nested', 'prop', 'scoped', 'switch', 'gate', 'rest']) {
+const CLICKS: Record<string, string[]> = { livewrap: ['f', 'box', 'f', 'f', 'box'], ifmount: ['f', 'g', 'box', 'f', 'g', 'f', 'g'], linked_static: ['f', 'f'], nested: ['f', 'box', 'f', 'box'], switch: ['box', 'box', 'box'], scoped: ['f', 't', 'box', 'f', 't'] }
+for (const page of ['const', 'state', 'text', 'handler', 'list', 'linked', 'linked_static', 'two_levels', 'ifmount', 'nested', 'prop', 'scoped', 'switch', 'gate', 'rest', 'livewrap']) {
   test(`${page}: every observable value equals React hydrating the same page after each click`, async () => {
     const react = await run(page, true, CLICKS[page])
     const served = await run(page, false, CLICKS[page])

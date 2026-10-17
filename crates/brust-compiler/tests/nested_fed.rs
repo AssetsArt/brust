@@ -363,21 +363,39 @@ fn a_spread_of_the_wrappers_rest_into_the_fused_child_is_allowed_by_the_spread_r
     assert_eq!(records, 0);
 }
 
-// #229 hole (found via the context-lowering consult): a NATIVE wrapper (not Static, not fed itself) keeps its fed
-// child's record on the wrapper, where no chain component's `instances[]` can see it. The caller must fall back.
+// #229 hole (found via the context-lowering consult), closed by F328c (ruling on note 84cd6abb, option a): a NATIVE wrapper keeps
+// its fed child's record on the wrapper, where no chain component's `instances[]` can see it. The wrapper is inlined in its
+// caller like a static one, so its fed children are re-based onto the caller, which feeds them (served == React:
+// `tests/server/native-provider.chromium.test.ts`, F328c). Where the fed child sits under a condition or in a list of the
+// wrapper (the client would create it later, without a record) it still falls back.
 #[test]
-fn a_native_wrapper_with_a_fed_child_makes_the_caller_an_island() {
+fn a_native_wrapper_with_a_fed_child_is_rebased_onto_the_caller() {
     let t = lower(
         "import W from './NativeWrap'\nexport default function P() { return <div><W /></div> }",
     );
     let _w = named(&t, "nativeWrap_");
     let p = named(&t, "p_");
-    assert!(is_react(p), "P {:?} {:?}", p.tier, p.fallbacks);
-    assert!(
-        p.fallbacks.contains(&"nested-instance".to_string()),
-        "{:?}",
-        p.fallbacks
-    );
+    assert!(!is_react(p), "P {:?} {:?}", p.tier, p.fallbacks);
+    assert!(p.fallbacks.is_empty(), "{:?}", p.fallbacks);
+}
+
+// F328c guard: the re-base is for fed children the server renders once. One the client creates later (under a condition
+// or in a list of the native wrapper), or a wrapper sitting in a list, keeps the fallback.
+#[test]
+fn a_native_wrapper_whose_fed_child_is_created_later_or_sits_in_a_list_still_falls_back() {
+    for src in [
+        "import W from './NativeWrapCond'\nexport default function P() { return <div><W /></div> }",
+        "import W from './NativeWrap'\nexport default function P() { return <div>{[1, 2].map((i) => <W key={i} />)}</div> }",
+    ] {
+        let t = lower(src);
+        let p = named(&t, "p_");
+        assert!(is_react(p), "{src}: P {:?} {:?}", p.tier, p.fallbacks);
+        assert!(
+            p.fallbacks.contains(&"nested-instance".to_string()),
+            "{src}: {:?}",
+            p.fallbacks
+        );
+    }
 }
 
 #[test]

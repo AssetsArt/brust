@@ -84,6 +84,9 @@ pub struct NameTable<'a> {
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
     /// the bare object as a value, or inside code printed as written (R34.14: fail closed).
     pub rest_escape: std::cell::Cell<Option<u32>>,
+    /// F328b: the component writes `typeof children === 'function' ? children(…) : children` (Radix RovingFocusGroupItem): read as
+    /// plain `{children}`; a call site that passes a function as children refuses.
+    pub children_called: std::cell::Cell<bool>,
     /// F162: where a body pattern's name is used by a statement BEFORE the pattern (a TDZ error in React).
     pub use_before_pattern: std::cell::Cell<Option<u32>>,
     /// A prop READ as a member (`props.loop`, `rest.range`) whose name the template cannot carry (first one: location, name, code, what).
@@ -477,6 +480,7 @@ impl<'a> NameTable<'a> {
             rest_aliases: std::cell::RefCell::new(HashSet::new()),
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
+            children_called: std::cell::Cell::new(false),
             use_before_pattern: std::cell::Cell::new(None),
             prop_read_problem: std::cell::RefCell::new(None),
             absorbed: HashSet::new(),

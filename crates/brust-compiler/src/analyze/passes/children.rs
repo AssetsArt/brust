@@ -692,9 +692,43 @@ impl Inner {
             records: ir.instances.clone(),
             refs: ir.children.clone(),
             folded: !ir.folded_instances.is_empty(),
-            rebasable: matches!(ir.tier, Tier::Static),
+            // F328 (ruling on note 84cd6abb, option a): a native wrapper's template is inlined in its caller like a static
+            // one, so the caller can number and feed its children's records, provided none of the fed children is
+            // created by the client later (under a condition or in a list of the wrapper: its ids would not exist).
+            rebasable: match ir.tier {
+                Tier::Static => true,
+                Tier::Native => !fed_under_condition(ir),
+                _ => false,
+            },
         })
     }
+}
+
+/// A fed child (one with an instance record of `ir`) sits under a condition or in a list of `ir`'s template.
+fn fed_under_condition(ir: &ComponentIR) -> bool {
+    let fed: BTreeSet<&str> = ir.instances.iter().map(|r| r.child_id.as_str()).collect();
+    let ids: HashMap<&str, &str> = ir
+        .children
+        .iter()
+        .filter_map(|c| c.id.as_deref().map(|id| (c.name.as_str(), id)))
+        .collect();
+    fn walk(n: &Node, cond: bool, fed: &BTreeSet<&str>, ids: &HashMap<&str, &str>) -> bool {
+        match n {
+            Node::Component { name, children, .. } => {
+                (cond && ids.get(name.as_str()).is_some_and(|id| fed.contains(id)))
+                    || children.iter().any(|c| walk(c, cond, fed, ids))
+            }
+            Node::Element { children, .. } | Node::Fragment(children) => {
+                children.iter().any(|c| walk(c, cond, fed, ids))
+            }
+            Node::If { then, else_, .. } => {
+                then.iter().chain(else_).any(|c| walk(c, true, fed, ids))
+            }
+            Node::For { body, .. } => body.iter().any(|c| walk(c, true, fed, ids)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        }
+    }
+    walk(&ir.template, false, &fed, &ids)
 }
 
 fn inner_name(r: &ChildRef) -> &str {
@@ -1038,12 +1072,40 @@ fn prints_children_slot(ir: &ComponentIR) -> bool {
     any(&ir.template)
 }
 
+/// F328b: the template spreads the whole props object (`{...props}`) into a component or an element.
+fn spreads_whole_props(n: &Node) -> bool {
+    let whole = |e: &Expr| matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "*"));
+    match n {
+        Node::Component {
+            props, children, ..
+        } => {
+            props
+                .iter()
+                .any(|(k, v)| k == crate::ir::SPREAD_KEY && whole(v))
+                || children.iter().any(spreads_whole_props)
+        }
+        Node::Element {
+            attrs, children, ..
+        } => {
+            attrs
+                .iter()
+                .any(|a| matches!(a, crate::ir::Attr::Spread(e) if whole(e)))
+                || children.iter().any(spreads_whole_props)
+        }
+        Node::Fragment(cs) => cs.iter().any(spreads_whole_props),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(spreads_whole_props),
+        Node::For { body, .. } => body.iter().any(spreads_whole_props),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
 /// F298: puts a call site's children where the component spreads its `...rest` (into a component or an element, in its
 /// template or in a render prop it passes): there they render in React, since the rest carries them as `children`.
 /// Exactly one such spread, with no children of its own, and a component that never names `children` itself.
 fn splice_rest_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), String> {
     fn is_rest(e: &Expr) -> bool {
-        matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == crate::ir::REST_PROPS))
+        // F328b: a spread of the whole props object (Radix's `{...props}` in RovingFocusGroup) carries `children` as well.
+        matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == crate::ir::REST_PROPS || name == "*"))
     }
     fn sites(n: &mut Node, out: &mut Vec<*mut Vec<Node>>) {
         match n {
@@ -2628,7 +2690,7 @@ impl Walker<'_, '_> {
                 if let Some(from) = child.path.clone()
                     && cir.provides.is_empty()
                     && !cir.specialised
-                    && cir.props_rest.is_some()
+                    && (cir.props_rest.is_some() || spreads_whole_props(&cir.template))
                     && !children.is_empty()
                     && self.reads_context_in(children)
                 {
@@ -2664,6 +2726,7 @@ impl Walker<'_, '_> {
                     .iter()
                     .any(|(k, _)| k == crate::ir::COLLECTION_ROOT_PROP)
                     && !matches!(cir.tier, Tier::Native)
+                    && !native_prov
                 {
                     diags.push(Diagnostic::fallback(
                         "collection-shape",
@@ -2672,6 +2735,37 @@ impl Walker<'_, '_> {
                         ),
                         *loc,
                         "put the Slot around an element, or around a component that holds state",
+                    ));
+                }
+                // F328b: a `<Collection.ItemSlot>` over a component hands it the item data; the caller prints the item
+                // markers on the child's host, so the child must be a static or native component whose root is ONE
+                // host element (a React island or a fragment root has no element to carry them: fail closed).
+                if props
+                    .iter()
+                    .any(|(k, _)| k == crate::ir::COLLECTION_ITEM_PROP)
+                    && (island
+                        // React's Slot hands the markers to the child as props: a child that does not spread them onto its
+                        // element drops them (the item is then not listed); brust prints them only where React does.
+                        || !child.spread.lands("data-radix-collection-item")
+                        // The item directive reads its data in the scope of the nearest `x-data`: the child's element must be in
+                        // THIS component's scope (a static child printed inline), and this component must have a chunk.
+                        || !matches!(cir.tier, Tier::Static)
+                        || !self.props_live
+                        || !matches!(
+                            &cir.template,
+                            Node::Element {
+                                synthetic: false,
+                                ..
+                            }
+                        ))
+                {
+                    diags.push(Diagnostic::fallback(
+                        "collection-shape",
+                        format!(
+                            "<Collection.ItemSlot> wraps <{name}>, which is not a static component, inside a component with state or handlers, that spreads its props onto its one root element to carry the item markers"
+                        ),
+                        *loc,
+                        "put the ItemSlot around an element, or around a component that renders one element",
                     ));
                 }
                 // F3 (fail closed): a Provider that is lowered away no longer shares a React tree with an island
@@ -4234,9 +4328,8 @@ impl Walker<'_, '_> {
         if !self.loop_sources.is_empty() {
             return Err("it sits in a list".into());
         }
-        if props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY) {
-            return Err("props are spread into it".into());
-        }
+        // A spread may carry any key: it matters only for a root a record binds from this wrapper's props (below).
+        let spread = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
         let mut out = Vec::new();
         for r in &inner.records {
             if !r.loops.is_empty() || r.rows_literal.is_some() {
@@ -4271,6 +4364,12 @@ impl Walker<'_, '_> {
                     return Err("its child reads `children`".into());
                 }
                 let given = props.iter().rev().find(|(k, _)| k == root).map(|(_, v)| v);
+                if given.is_none() && spread {
+                    return Err(format!(
+                        "props are spread into it (record {} binds `{n}` from `{root}`)",
+                        r.child_id
+                    ));
+                }
                 let Some(v) = given else {
                     rec.exprs
                         .insert(n.clone(), crate::lower::server_expr::UNDEFINED.to_string());
@@ -5026,7 +5125,7 @@ impl Walker<'_, '_> {
                 key: "ref".to_string(),
             });
         }
-        self.check_children_read(name, children, &child, *loc);
+        self.check_children_read(name, props, children, &child, *loc);
         // F148a (R34.121): the island inside this wrapper renders its `{children}`: the call site hands the
         // wrapper the constant tree of them as the reserved prop `__ch`, which only a compiler-written call
         // can set. Children that are not a constant tree are the same fallback a React wrapper gave.
@@ -5482,6 +5581,14 @@ impl Walker<'_, '_> {
                     for (name, v) in kept.iter() {
                         // F164: a spread is not an input; `spread_feeds_no_job_input` proved it carries none.
                         if matches!(v, Expr::ClientOnly { .. }) || name == crate::ir::SPREAD_KEY {
+                            continue;
+                        }
+                        // F328: a Provider frame field (`__ctx_*`) the child's job reads nothing of: the child reads it on
+                        // the client only, so the server record binds nothing for it.
+                        if name.starts_with("__ctx_")
+                            && !child.job_all
+                            && !child.job_roots.contains(name.as_str())
+                        {
                             continue;
                         }
                         // F149 R34.88: folded with this module's consts (`const v = "outline"`).
@@ -6938,13 +7045,40 @@ impl Walker<'_, '_> {
     /// An event handler the parent binds itself (`hoisted`) is not refused; one that lands in the
     /// spread but cannot be bound (`unbound`, R34.19) is, with its own code.
     /// R34.78: a static or native child that tests `children` as a value cannot be inlined with children given.
-    fn check_children_read(&mut self, name: &str, given: &[Node], child: &Child, loc: u32) {
+    fn check_children_read(
+        &mut self,
+        name: &str,
+        props: &[(String, Expr)],
+        given: &[Node],
+        child: &Child,
+        loc: u32,
+    ) {
         if child.rest_as_data && !given.is_empty() {
             self.diagnostics.push(Diagnostic::fallback(
                 "children-rest",
                 format!("<{name}> passes its `...rest` to a component it specialises as data, and the children given to it are markup, which that object cannot carry"),
                 loc,
                 "render the children inside the component that reads them, or keep this component in React",
+            ));
+        }
+        // F328b: the child would call `children` if it were a function; React calls one. Only children that are provably nodes
+        // (elements, components, text, literals, templates) are inlined; an identifier, a call, a member or a function is not
+        // provable, and neither is `children` handed in as a prop.
+        let provably_node = |g: &Node| match g {
+            Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => {
+                matches!(r.kind, RawKind::Lit(_) | RawKind::Template { .. })
+            }
+            Node::Slot(_) => false,
+            _ => true,
+        };
+        if child.ir.as_deref().is_some_and(|c| c.children_called)
+            && (!given.iter().all(provably_node) || props.iter().any(|(k, _)| k == "children"))
+        {
+            self.diagnostics.push(Diagnostic::fallback(
+                "children-read",
+                format!("<{name}> calls its `children` when it is a function, and the children given here are not provably nodes"),
+                loc,
+                "pass elements or text as children, or keep the component interactive with React",
             ));
         }
         if child.reads_children_value && !given.is_empty() {
