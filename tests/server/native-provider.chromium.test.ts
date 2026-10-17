@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderColl, renderCollComp, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRovingList, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderColl, renderCollComp, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderSinkRef, renderRovingList, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -556,4 +556,22 @@ test('F328c pin: a native Provider with useId items in a list row falls back to 
   const ids = [...html.matchAll(/<button[^>]*\sid="([^"]+)"/g)].map((m) => m[1]!)
   expect(ids.length).toBe(4)
   expect(new Set(ids).size).toBe(4)
+}, 60_000)
+
+// F329: a ref nothing reads, handed to a component's `ref` prop, is dropped at the call site: no island, the markup is React's, and the
+// child's own handler still works.
+test('F329: a useRef only handed to a component ref prop: no island, markup equals React, the child still toggles', async () => {
+  const html = await (await fetch(`${base}/sink-ref`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderSinkRef()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/sink-ref`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('button')?.hasAttribute('x-data'))
+  await page.getByRole('button').click()
+  await page.waitForFunction(() => document.querySelector('button')?.textContent === 'a1')
+  expect(errors).toEqual([])
+  await page.close()
 }, 60_000)

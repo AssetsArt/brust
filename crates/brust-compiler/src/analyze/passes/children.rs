@@ -89,6 +89,8 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         shadowed_input: BTreeSet::new(),
         live_forwards: Vec::new(),
         own_refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
+        sink_refs: ir.sink_refs.iter().cloned().collect(),
+        ref_nulled: false,
         passes_to_repeater: false,
         passes_to_host: false,
         own_fed: crate::ir::is_fed(ir),
@@ -127,6 +129,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .map(|h| h.name.clone())
             .collect(),
         no_spec: Default::default(),
+        shared_locs: BTreeSet::new(),
         spec_failure: None,
         bubbled_pkg: false,
         bubbled_scoped: Vec::new(),
@@ -207,6 +210,7 @@ pub fn contexts(
     let mut frames: Vec<Frame> = Vec::new();
     let mut bubbled: Vec<(String, String)> = Vec::new();
     let mut diags: Vec<Diagnostic> = Vec::new();
+    w.shared_locs = shared_component_locs(&template);
     w.frames_node(&mut template, &mut frames, &mut bubbled, &mut diags);
     ir.template = template;
     // The Provider module's helpers the substituted values call, as module declarations of this component (S2).
@@ -229,6 +233,7 @@ pub fn contexts(
     }
     ir.ctx_pkg |= w.bubbled_pkg;
     ir.absent_props = w.absent.iter().cloned().collect();
+    ir.forwarded_ref_nulled |= w.ref_nulled;
     for c in std::mem::take(&mut w.bubbled_scoped) {
         if !ir.ctx_scoped.contains(&c) {
             ir.ctx_scoped.push(c);
@@ -356,6 +361,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.holds_island |= w.holds_island;
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
+    ir.forwarded_ref_nulled |= w.ref_nulled;
     ir.unwritten_props = w.unwritten.iter().cloned().collect();
     ir.shadowed_props = w.shadowed.iter().cloned().collect();
     ir.shadowed_input = w.shadowed_input.iter().cloned().collect();
@@ -440,6 +446,10 @@ struct Walker<'s, 'c> {
     renders: Vec<crate::ir::RenderProp>,
     /// R34.122: call sites (by location) whose specialisation failed; they are read as island Providers.
     no_spec: std::collections::HashSet<u32>,
+    /// F344 (Mellow N1): component call sites of this template that share a source offset. A host clone is keyed by its
+    /// call site's offset (`host_spec`, `host_wanted`), and content spliced from another module (a clone's content,
+    /// R34.123/F307) keeps that module's offsets, so two sites can share one: neither is specialised (fail closed).
+    shared_locs: BTreeSet<u32>,
     /// R34.122: the location and reason of the specialisation that just failed.
     spec_failure: Option<(u32, String)>,
     /// A need bubbled out of a package-source consumer ([`ComponentIR::ctx_pkg`]).
@@ -465,6 +475,10 @@ struct Walker<'s, 'c> {
     live_forwards: Vec<crate::ir::Forwarded>,
     /// The ref cells of this component (F267).
     own_refs: BTreeSet<String>,
+    /// F329: `ComponentIR::sink_refs`.
+    sink_refs: BTreeSet<String>,
+    /// A child this component passes its forwarded ref to reads it as `null` (`ComponentIR::forwarded_ref_nulled`).
+    ref_nulled: bool,
     /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
     passes_to_repeater: bool,
     /// This component hands its own `{children}` to a component that prints them under a native host element
@@ -702,6 +716,37 @@ impl Inner {
             },
         })
     }
+}
+
+/// F344 (Mellow N1): the source offsets two or more component call sites of `template` share (clones excluded).
+fn shared_component_locs(template: &Node) -> BTreeSet<u32> {
+    fn walk(n: &Node, seen: &mut BTreeSet<u32>, shared: &mut BTreeSet<u32>) {
+        match n {
+            Node::Component {
+                loc,
+                children,
+                source,
+                ..
+            } => {
+                // A clone already (content specialised where it was written) is never specialised again.
+                if source.as_deref() != Some(SPEC_SOURCE) && !seen.insert(*loc) {
+                    shared.insert(*loc);
+                }
+                children.iter().for_each(|c| walk(c, seen, shared));
+            }
+            Node::Element { children, .. } | Node::Fragment(children) => {
+                children.iter().for_each(|c| walk(c, seen, shared))
+            }
+            Node::If { then, else_, .. } => {
+                then.iter().chain(else_).for_each(|c| walk(c, seen, shared))
+            }
+            Node::For { body, .. } => body.iter().for_each(|c| walk(c, seen, shared)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    let (mut seen, mut shared) = (BTreeSet::new(), BTreeSet::new());
+    walk(template, &mut seen, &mut shared);
+    shared
 }
 
 /// A fed child (one with an instance record of `ir`) sits under a condition or in a list of `ir`'s template.
@@ -2835,11 +2880,16 @@ impl Walker<'_, '_> {
                         && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
                             if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == k))
                 };
+                // F356 (ruling 7a25d5e0): a written literal `undefined` names no scope (as `require_absent` reads it).
+                let scope_undefined = |v: &Expr| {
+                    matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
+                        if matches!(r.kind, RawKind::Lit(crate::ir::Literal::Undefined)))
+                };
                 if !self.ctx.specialised
                     && matches!(cir.tier, Tier::Static | Tier::Native)
-                    && let Some((k, _)) = props
-                        .iter()
-                        .find(|(k, v)| k.starts_with("__scope") && !forwards_own_scope(k, v))
+                    && let Some((k, _)) = props.iter().find(|(k, v)| {
+                        k.starts_with("__scope") && !forwards_own_scope(k, v) && !scope_undefined(v)
+                    })
                 {
                     diags.push(Diagnostic::fallback(
                         "context-scope",
@@ -2849,8 +2899,8 @@ impl Walker<'_, '_> {
                     ));
                 }
                 if !self.ctx.specialised && matches!(cir.tier, Tier::Static | Tier::Native) {
-                    for (k, _) in props.iter() {
-                        if k.starts_with("__scope") {
+                    for (k, v) in props.iter() {
+                        if k.starts_with("__scope") && !scope_undefined(v) {
                             self.absent.insert(k.clone());
                         }
                     }
@@ -3312,6 +3362,9 @@ impl Walker<'_, '_> {
     ) -> Result<Specialised, String> {
         if !cir.provides.is_empty() || cir.specialised {
             return Err("it provides a context, or is a clone already".into());
+        }
+        if self.shared_locs.contains(&loc) {
+            return Err("another call site in this component has the same source offset (content written in another module), so the clone could not be told apart".into());
         }
         if !matches!(cir.tier, Tier::Native | Tier::Static) {
             return Err("it is not lowered".into());
@@ -5086,9 +5139,29 @@ impl Walker<'_, '_> {
                 "pass the ref to an element, or to a forwardRef component that does",
             ));
         }
+        // F364: this component's forwarded ref goes to a child that reads it as `null`: so does this one, for its callers
+        if *forwarded_ref && child.ir.as_deref().is_some_and(|c| c.forwarded_ref_nulled) {
+            self.ref_nulled = true;
+        }
         // F267: a ref of this component's own bound on the one element an inlined child hands its `ref` to.
         let ref_cell = self.forward_ref(*loc, props, &child);
         let ref_fwd = ref_cell.is_some();
+        // F329: a `ref` that is one of this component's sink refs (nothing reads it: its every use is a component's `ref` prop)
+        // hands nothing to anyone, so it is dropped here and the child renders without it, as React's would be unobservable.
+        if child.forwards_ref
+            && !ref_fwd
+            && matches!(child.tier, Tier::Static | Tier::Native)
+            && !child.ir.as_deref().is_some_and(|c| c.forwarded_ref_nulled)
+            && props.iter().filter(|(k, _)| k == "ref").count() == 1
+            && matches!(
+                self.st.prop_raws.get(&(*loc, "ref".to_string())),
+                Some(RawExpr { kind: RawKind::Ident { name, .. }, .. }) if self.sink_refs.contains(name)
+            )
+            // a spread on either side may carry a `ref` of its own (React: the later one wins)
+            && !props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY)
+        {
+            props.retain(|(k, _)| k != "ref");
+        }
         if child.forwards_ref && !ref_fwd && props.iter().any(|(k, _)| k == "ref") {
             self.diagnostics.push(Diagnostic::fallback(
                 "forwardref-ref",
@@ -7543,6 +7616,90 @@ pub(super) fn plain_path(r: &RawExpr, item: Option<&str>) -> Option<PlainPath> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn call(loc: u32, source: Option<&str>, children: Vec<Node>) -> Node {
+        Node::Component {
+            loc,
+            name: "C".into(),
+            source: source.map(str::to_string),
+            imported: None,
+            member: vec![],
+            props: vec![],
+            children,
+            link: None,
+            tier: Tier::Pending,
+            forwarded_ref: false,
+        }
+    }
+
+    fn client(js: &str) -> Expr {
+        Expr::ClientOnly { js: js.into() }
+    }
+
+    // F365(a): the refusal in `specialise_host` rests on this set, and no fixture reaches it with a real collision.
+    #[test]
+    fn shared_component_locs_counts_call_sites_that_share_an_offset() {
+        let locs = |n: &Node| shared_component_locs(n).into_iter().collect::<Vec<_>>();
+        // two calls at one offset (nested in a call's own content too): counted
+        let t = Node::Fragment(vec![
+            call(7, None, vec![call(7, None, vec![])]),
+            call(9, None, vec![]),
+        ]);
+        assert_eq!(locs(&t), vec![7]);
+        // distinct offsets: none
+        let t = Node::Fragment(vec![call(1, None, vec![]), call(2, None, vec![])]);
+        assert!(locs(&t).is_empty());
+        // a clone (SPEC_SOURCE) at the offset of its original is not a second call site
+        let t = Node::Fragment(vec![
+            call(7, None, vec![]),
+            call(7, Some(SPEC_SOURCE), vec![]),
+        ]);
+        assert!(locs(&t).is_empty());
+        // ... and two clones are not either
+        let t = Node::Fragment(vec![
+            call(7, Some(SPEC_SOURCE), vec![]),
+            call(7, Some(SPEC_SOURCE), vec![]),
+        ]);
+        assert!(locs(&t).is_empty());
+        // a clone's own content is still walked: a real call inside it that repeats an offset counts
+        let t = Node::Fragment(vec![
+            call(3, None, vec![]),
+            call(7, Some(SPEC_SOURCE), vec![call(3, None, vec![])]),
+        ]);
+        assert_eq!(locs(&t), vec![3]);
+        // under an If (either arm) and a For: counted
+        let t = Node::Fragment(vec![
+            call(5, None, vec![]),
+            Node::If {
+                cond: client("c"),
+                then: vec![call(5, None, vec![])],
+                else_: vec![],
+                and: false,
+            },
+        ]);
+        assert_eq!(locs(&t), vec![5]);
+        let t = Node::Fragment(vec![
+            Node::If {
+                cond: client("c"),
+                then: vec![],
+                else_: vec![call(6, None, vec![])],
+                and: false,
+            },
+            call(6, None, vec![]),
+        ]);
+        assert_eq!(locs(&t), vec![6]);
+        let t = Node::Fragment(vec![
+            call(8, None, vec![]),
+            Node::For {
+                source: client("xs"),
+                item: "x".into(),
+                index: None,
+                key: client("x"),
+                body: vec![call(8, None, vec![])],
+            },
+        ]);
+        assert_eq!(locs(&t), vec![8]);
+    }
 
     fn d(state: &[&str], loops: &[&str]) -> Deps {
         let mut d = Deps::default();

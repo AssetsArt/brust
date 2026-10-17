@@ -345,6 +345,33 @@ fn a_member_spread_does_not_move_the_callable_requirement_up() {
     );
 }
 
+/// F329: a `useRef` cell whose every use is the `ref` prop of a component element (Radix ToggleGroupItem's `ref`) hands nothing to
+/// anyone: the call site drops it and the child renders; one read in a handler keeps the fallback.
+#[test]
+fn a_ref_nothing_reads_is_dropped_at_the_call_site() {
+    for file in ["sink-ref-ok.tsx", "sink-ref-two.tsx"] {
+        let all = compile(file);
+        assert!(
+            !all.iter().any(|(_, ir, _)| is_react(ir)),
+            "{file}: {:?}",
+            all.iter()
+                .map(|(_, ir, _)| (&ir.id, &ir.tier, rules(ir)))
+                .collect::<Vec<_>>()
+        );
+    }
+    let out = compile_all("sink-ref-read.tsx");
+    let page = out
+        .iter()
+        .find(|(i, ..)| i.starts_with("sinkRefRead_"))
+        .expect("page");
+    assert!(is_react(&page.1), "{:?}", page.1.tier);
+    assert!(
+        rules(&page.1).contains(&"forwardref-ref"),
+        "{:?}",
+        page.1.diagnostics
+    );
+}
+
 /// A Provider field that IS a call of a proven-plain module function (`pct: clamp(value)`) is evaluated by the Provider's own
 /// instance (a native clone per call site): the call is never substituted into a lowered frame at the call site.
 #[test]
@@ -1512,4 +1539,32 @@ fn a_local_object_spread_carrying_a_local_function_to_a_callable_prop_is_refused
             .map(|(id, ir, _)| (id, &ir.tier))
             .collect::<Vec<_>>()
     );
+}
+
+/// F364 (Afrojack r1): every guard of the sink drop keeps the fallback by name; each fixture is a ref that LOOKS like a sink.
+#[test]
+fn a_ref_that_is_not_a_sink_keeps_the_forwardref_fallback() {
+    for (file, page) in [
+        ("sink-ref-child-reads.tsx", "sinkRefChildReads_"),
+        ("sink-ref-on-element.tsx", "sinkRefOnElement_"),
+        ("sink-ref-assigned.tsx", "sinkRefAssigned_"),
+        ("sink-ref-nested-fn.tsx", "sinkRefNestedFn_"),
+        ("sink-ref-spread-after.tsx", "sinkRefSpreadAfter_"),
+        ("sink-ref-spread-before.tsx", "sinkRefSpreadBefore_"),
+        ("sink-ref-child-string.tsx", "sinkRefChildString_"),
+        ("sink-ref-child-compose.tsx", "sinkRefChildCompose_"),
+        ("sink-ref-child-chain.tsx", "sinkRefChildChain_"),
+    ] {
+        let out = compile_all(file);
+        let p = out
+            .iter()
+            .find(|(i, ..)| i.starts_with(page))
+            .unwrap_or_else(|| panic!("{file}: page"));
+        assert!(is_react(&p.1), "{file}: {:?}", p.1.tier);
+        assert!(
+            rules(&p.1).contains(&"forwardref-ref"),
+            "{file}: {:?}",
+            p.1.diagnostics
+        );
+    }
 }
