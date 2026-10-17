@@ -45,25 +45,25 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
 
       <h2 id="alpha-19">2.0.0-alpha.19 · 17 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.18: #335–#345 (host-specialise-f344, f362-projection PR1–PR2, toggle-group F363a/F364/F369a, clone-cache F371/F374, ledger-knock12, F356/F351; ledger-only and test-only PRs #336, #340 have no entry) */}
-      <p>Rows that run in the browser ship only the fields they read from a module-level list, and a page whose derived value was read only by a ref or an effect no longer throws on load. <code>asChild</code> over a static component child, and through a wrapper that passes its rest props on, compile to native code. Two wrong outputs from alpha.18 now render with React instead.</p>
+      <p>Rows that run in the browser ship only the fields they read from a module-level list, and a page whose derived value was read only by a ref or an effect no longer throws on load. <code>asChild</code> over a plain static component child, and through a static wrapper that passes its rest props on, compile to native code. Two wrong outputs from alpha.18 now render with React instead.</p>
 
       <h3>New</h3>
       <ul>
         {/* source: PR #339 (F362 PR1), PR #341 (F362 PR2); size from PR #339's fixtures; unrecognised uses ship the list whole, which is what alpha.18 did */}
         <li>
-          <strong>Rows that run in the browser ship only the fields they read from a module-level list.</strong> The list is a <code>const</code> array of object literals, declared in the file or imported from another file in the project. A field that no row cell, key, handler, ref initial value or effect dependency reads stays out of the page&rsquo;s scripts. The page chunk is 5 to 11% smaller on the test pages, and the saving grows with the unread fields. Any use brust does not recognise ships the list whole, as before.
+          <strong>Rows that run in the browser ship only the fields they read from a module-level list.</strong> The list is a <code>const</code> array of object literals with literal values, declared in the file or imported from a plain data file in the project. A field that no row cell, key, handler, ref initial value or effect dependency reads stays out of the page&rsquo;s scripts. The page chunk is 4 to 11% smaller on the test pages, and the saving grows with the unread fields. Any use brust does not recognise ships the list whole, as before.
         </li>
         {/* source: PR #342 (F363a, task toggle-group-f328) */}
         <li>
-          <strong><code>asChild</code> over a static component child now compiles to native code.</strong> The child must spread its props onto one host element, as <code>&lt;XTrigger asChild&gt;&lt;Button /&gt;&lt;/XTrigger&gt;</code> does. The child&rsquo;s own values win, handlers from both run, <code>style</code> is merged and <code>className</code> is joined, as Radix&rsquo;s <code>Slot</code> does. A child with its own state, a child that does not spread, or a child with more than one host root still renders with React.
+          <strong><code>asChild</code> over a static component child now compiles to native code when the child only takes the slot&rsquo;s props.</strong> The child must spread its props onto one host element, as a plain link component does in <code>&lt;XTrigger asChild&gt;&lt;Link href=&quot;/a&quot; /&gt;&lt;/XTrigger&gt;</code>. The child&rsquo;s own props win and <code>className</code> is joined, the slot&rsquo;s first, as Radix&rsquo;s <code>Slot</code> does. A child that brings a handler or a <code>style</code>, that has state of its own, that is itself polymorphic, or that does not spread its props onto its one element, or a parent whose replaced element carries a handler or a ref, still renders with React.
         </li>
         {/* source: PR #344 (F369a, ledger F369 part a) */}
         <li>
-          <strong><code>asChild</code> now works through a wrapper that hands its rest props to one polymorphic child.</strong> A component such as a Radix item, which spreads all its remaining props into a <code>Primitive</code> element, counts as polymorphic itself, so <code>asChild</code> at its call site is resolved at build time. A wrapper that also gives that child children of its own, passes the rest to a second place, or spreads it at run time keeps rendering with React.
+          <strong><code>asChild</code> now works through a static wrapper that hands its rest props to one polymorphic child.</strong> A static component that passes all its remaining props to one polymorphic child (for example a package leaf that spreads them into a <code>Primitive</code> element) now counts as polymorphic itself, so <code>asChild</code> at its call site is resolved at build time. A native component such as a Radix item still renders with React. A wrapper that gives that child children of its own, passes the rest to a second place, or spreads it at run time keeps rendering with React.
         </li>
         {/* source: PR #338 (F364) */}
         <li>
-          <strong>A ref that nothing reads no longer forces a forwardRef call site to render with React.</strong> If a <code>useRef</code> value is only passed as <code>ref</code> to a static or native component, and that component never reads its forwarded ref, the ref is dropped. A child that reads it, composes it or passes it on, or a spread in the props, keeps the React fallback.
+          <strong>A ref that nothing reads no longer forces a forwardRef call site to render with React.</strong> If a <code>useRef</code> value is only passed as <code>ref</code> to a static or native component, and that component never reads its forwarded ref, the ref is dropped. A child that reads it, composes it or passes it to something that reads it, or a spread in the props, keeps the React fallback.
         </li>
         {/* source: PR #343 (F133) */}
         <li>
@@ -83,11 +83,11 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         </li>
         {/* source: PR #345 (F374, HIGH, present in alpha.18 and earlier) */}
         <li>
-          <strong>A component that forwards its rest props to a native Provider no longer drops its children.</strong> In alpha.18 and earlier the section rendered empty. That call site now renders with React and shows the content, including a use with no children.
+          <strong>A component that spreads its rest props into a native Provider no longer loses its children.</strong> In alpha.18 and earlier the area the Provider renders its children in came out empty. That call site now renders with React and shows them. The same wrapper used with no children also renders with React (a spread may carry children brust cannot see).
         </li>
-        {/* source: PR #335 (F344; many call sites pinned, spliced-offset guard; ~156 B gzip per clone measured, ledger F359) */}
+        {/* source: PR #335 (F344; many call sites pinned, spliced-offset guard; 156 B gzip per clone for identical sites, about 334 B for distinct sites: Dew's READY note on host-specialise-f344; ledger F359) */}
         <li>
-          <strong>A page can use host specialisation at many call sites.</strong> Pages with 20 identical and with 20 distinct specialised call sites are native, give the same bytes on every request, and behave like React after each click. Each clone costs about 156 B gzip. Content spliced in from another module that shares a source position with another call site is refused by name, so two clones can never be mixed up.
+          <strong>A page can use a copy of a child made for its host element at many call sites.</strong> Pages with 20 identical and with 20 distinct call sites are native, give the same bytes on every request and behave like React after each click. A copy costs about 156 B gzip when the sites are identical and about 330 B when they differ. Content spliced in from another module whose source position equals another call site&rsquo;s is refused by name.
         </li>
         {/* source: PR #337 (F356) */}
         <li>
