@@ -41,7 +41,7 @@ function List({ children }: { children?: React.ReactNode }) {
 // F328b: an ItemSlot over a COMPONENT (Radix's `Primitive.span` shape): a static component whose one root element receives the props
 // (the ItemSlot's markers), inside an Item that has state and handlers of its own. The Item prints the markers on the row's element, in
 // its own scope, with the item's data.
-function Row({ label, ...rest }: { label: string }) {
+function Row({ label, ...rest }: { label: string } & React.LiHTMLAttributes<HTMLLIElement>) {
   return (
     <li tabIndex={0} {...rest}>
       {label}
