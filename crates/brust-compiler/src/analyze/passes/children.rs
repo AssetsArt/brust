@@ -1072,7 +1072,9 @@ fn prints_children_slot(ir: &ComponentIR) -> bool {
     any(&ir.template)
 }
 
-/// F328b: the template spreads the whole props object (`{...props}`) into a component or an element.
+/// F328b: the template spreads the whole props object (`{...props}`) into a component (switch-provider-chain PR3: not an
+/// element: a clone that only moves the children onto its own element, with no Provider of the component's on the way,
+/// gains nothing, and a native clone of it would then host them and refuse a handler its caller hoists onto that element).
 fn spreads_whole_props(n: &Node) -> bool {
     let whole = |e: &Expr| matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "*"));
     match n {
@@ -1084,14 +1086,7 @@ fn spreads_whole_props(n: &Node) -> bool {
                 .any(|(k, v)| k == crate::ir::SPREAD_KEY && whole(v))
                 || children.iter().any(spreads_whole_props)
         }
-        Node::Element {
-            attrs, children, ..
-        } => {
-            attrs
-                .iter()
-                .any(|a| matches!(a, crate::ir::Attr::Spread(e) if whole(e)))
-                || children.iter().any(spreads_whole_props)
-        }
+        Node::Element { children, .. } => children.iter().any(spreads_whole_props),
         Node::Fragment(cs) => cs.iter().any(spreads_whole_props),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(spreads_whole_props),
         Node::For { body, .. } => body.iter().any(spreads_whole_props),
