@@ -86,12 +86,17 @@ const tierOf = (prefix: string) => {
   return Object.entries(m.components).find(([k]) => k.startsWith(prefix))![1].tier
 }
 
-// PR2 (link 3): the trigger binds the context's live `data-state` ahead of its own rest, so `bare` is served natively.
-test('bare is served without a React island', async () => {
-  expect(tierOf('kRoot_')).not.toBe('react')
-  const html = await (await fetch(`${base}/bare`)).text()
-  expect(html).not.toContain('brust-island')
-})
+// PR2 (link 3): the trigger binds the context's live `data-state` ahead of its own rest, so `bare` is served natively;
+// PR3 (children-rest): the Thumb carried in that rest is linked by the trigger's clone, so `thumb` is too.
+for (const page of ['bare', 'thumb']) {
+  test(`${page} is served without a React island`, async () => {
+    // the PAGE's tier (F351), not only the Root's: a page that fell back would still serve a native Root
+    expect(tierOf(page === 'bare' ? 'pBare_' : 'pThumb_')).not.toBe('react')
+    expect(tierOf('kRoot_')).not.toBe('react')
+    const html = await (await fetch(`${base}/${page}`)).text()
+    expect(html).not.toContain('brust-island')
+  })
+}
 
 for (const page of ['thumb', 'bare']) {
   test(`${page}: toggled twice, every observable value equals React hydrating the same page`, async () => {
@@ -101,6 +106,40 @@ for (const page of ['thumb', 'bare']) {
     expect(served.errors).toEqual([])
     // React's own toggle, so a value printed once (stale) cannot pass
     expect(react.log.map((l) => /data-state=(\w+)/.exec(l)?.[1])).toEqual(['unchecked', 'checked', 'unchecked'])
+    expect(served.log).toEqual(react.log)
+  }, 90_000)
+}
+
+// PR3 D1 (ruling: pinned behaviour, row F357 tightens it): a Provider whose value never changes still links the Thumb
+// carried in the rest; the output equals React's, and a click (a setter that does nothing) changes nothing.
+test('const: a constant frame, served without an island, equals React', async () => {
+  const html = await (await fetch(`${base}/const`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(html).toContain('x-props-bind')
+  const react = await run('const', true, ['box'])
+  const served = await run('const', false, ['box'])
+  expect(react.errors).toEqual([])
+  expect(served.errors).toEqual([])
+  expect(react.log.map((l) => /data-thumb=(\w+)/.exec(l)?.[1])).toEqual(['checked', 'checked'])
+  expect(served.log).toEqual(react.log)
+}, 90_000)
+
+// PR3 D2: switches in list rows whose items come from state, the row value (`data-testid`) reaching the Root's rest, which
+// the Root reads where it would not follow a change: a row the client adds would keep the first row's value (it printed
+// `b1` in row 3), so the call site refuses by name (`frozen-prop`) and the page renders with React. With the Thumb in the
+// rest (PR3) and without it (PR2's bare trigger), after an add, a remove and toggles, every value equals React's.
+for (const page of ['rows', 'rows_bare']) {
+  test(`${page}: list rows from state (add, remove, toggles) equal React at every step`, async () => {
+    const html = await (await fetch(`${base}/${page}`)).text()
+    expect(html).toContain('brust-island')
+    const clicks = ['b1', 'add', 'b3', 'rm', 'b2', 'b3', 'add', 'b4']
+    const react = await run(page, true, clicks)
+    const served = await run(page, false, clicks)
+    expect(react.errors).toEqual([])
+    expect(served.errors).toEqual([])
+    // React's own rows: the toggled ones flip, the removed row is gone, an added row starts unchecked
+    expect(react.log.at(-1)).toContain('section[data-row=4]')
+    expect(react.log.at(-1)).not.toContain('section[data-row=1]')
     expect(served.log).toEqual(react.log)
   }, 90_000)
 }

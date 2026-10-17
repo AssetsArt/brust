@@ -5,6 +5,7 @@
 //! checks the sources).
 pub mod client;
 pub mod common;
+pub mod module_projection;
 pub mod names;
 pub mod render_debug;
 pub mod server;
@@ -33,6 +34,10 @@ pub struct Artifacts {
     /// Build-time evaluation module for `ir.build_eval` slots (L2).
     pub eval_ts: Option<String>,
     pub client_js: Option<String>,
+    /// F362 PR2: `client_js` importing every imported list as written, when `client_js` declares one projected instead.
+    pub client_js_whole: Option<String>,
+    /// F362 PR2: the data modules (paths from the root) whose imported list `client_js` declares projected.
+    pub projected_modules: Vec<String>,
     /// Every member the chunk exports, in order.
     pub members: Vec<String>,
     /// R34.124: modules the chunk imports that are shared by name with other components' chunks (`<name>.js` beside
@@ -147,6 +152,8 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
     let server_ts = server::job(ir);
     let eval_ts = server::eval_module(ir);
     let mut client_modules: Vec<(String, String)> = Vec::new();
+    let mut client_js_whole = None;
+    let mut projected_modules = Vec::new();
     let (client_js, members) = if matches!(ir.tier, Tier::Static) && !(ctx.linked)(&ir.id) {
         (None, Vec::new())
     } else {
@@ -161,7 +168,17 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
                 members,
             )
         } else {
-            let (js, members) = client::chunk(ir, &out.members, ctx.runtime_import, &seeds.of(ir));
+            let (js, members, modules) =
+                client::chunk(ir, &out.members, ctx.runtime_import, &seeds.of(ir));
+            if !modules.is_empty() {
+                client_js_whole = Some(client::chunk_whole(
+                    ir,
+                    &out.members,
+                    ctx.runtime_import,
+                    &seeds.of(ir),
+                ));
+                projected_modules = modules;
+            }
             (Some(js), members)
         }
     };
@@ -170,6 +187,8 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
         server_ts,
         eval_ts,
         client_js,
+        client_js_whole,
+        projected_modules,
         members,
         client_modules,
         diagnostics: out.diagnostics,

@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-18', title: '2.0.0-alpha.18' },
       { id: 'alpha-17', title: '2.0.0-alpha.17' },
       { id: 'alpha-16', title: '2.0.0-alpha.16' },
       { id: 'alpha-15', title: '2.0.0-alpha.15' },
@@ -40,6 +41,58 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-18">2.0.0-alpha.18 · 17 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.17: #318–#331 (switch-provider-chain PR1–PR3, toggle-group F328, clone-carry F305/F306, F345, F340, F347, F290, F316; test and ledger-only PRs #319, #322, #323, #327, #330 have no entry) */}
+      <p>The shadcn <code>Switch</code> page now compiles with no React and loads a tenth of the JavaScript. A few more Radix building blocks compile to native code, and two diagnostics are clearer.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #326 (switch-provider-chain PR1), PR #329 (PR2), PR #331 (PR3); docs/shadcn-coverage.md switch row (0 islands, 10 KiB gzip); before from PR #331's body (1 island, 89 KiB) */}
+        <li>
+          <strong>The shadcn <code>Switch</code> page compiles with no React.</strong> It was one React island with 89 KiB of JavaScript. It now has no island and 10 KiB, and it toggles the same way React does. Radix <code>Switch.Root</code> and <code>Switch.Thumb</code> compile to native code: the thumb&rsquo;s <code>data-state</code> and the root&rsquo;s <code>aria-checked</code> follow each toggle. A Radix render prop that is called with a local object now reads that object&rsquo;s members. A <code>Switch</code> in a list whose rows come from state renders with React (see Changes).
+        </li>
+        {/* source: PR #328 (toggle-group F328); the shadcn toggle-group page itself still renders with React (docs/shadcn-coverage.md) */}
+        <li>
+          <strong>Radix <code>RovingFocusGroup</code> (<code>Root</code>, <code>Impl</code> and <code>Item</code>) compiles to native code.</strong> <code>composeEventHandlers(user, handler)</code> from a package counts as a function prop, so these components no longer render with React because of &ldquo;render reads document&rdquo;. A <code>useId</code> inside a native child is fused into its native parent, and two siblings get different, stable ids. The shadcn toggle-group page still renders with React; other blockers remain. A page that uses such a child inside a list row renders with React.
+        </li>
+        {/* source: PR #320 (F305, F306) */}
+        <li>
+          <strong>Content that moves into a Provider&rsquo;s copy can read an import from the page&rsquo;s module.</strong> The shadcn wrapper&rsquo;s <code>className={'{'}cn(…){'}'}</code> is the example. A component imported from another package scope that is declared in the same module as the Provider (Radix <code>Switch.Thumb</code> beside <code>Switch.Root</code>) is read as the local one. A really foreign scope still renders with React.
+        </li>
+        {/* source: PR #318 (F340, F341); relaxes a refusal from alpha.17's progress page work */}
+        <li>
+          <strong>A <code>className</code> passed through <code>{'{'}...props{'}'}</code> no longer sends the page to React when the component also takes a function prop with a default.</strong> Only the function prop&rsquo;s own name is checked now, so <code>className={'{'}expr{'}'}</code> stays native.
+        </li>
+      </ul>
+
+      <h3>Fixed</h3>
+      <ul>
+        {/* source: PR #321 (F345) */}
+        <li>
+          <strong>Props that a call site passes as constants stay fixed in every copy of a Provider.</strong> A copy made for the Provider, for children carried in its rest, or for a host element now pins the constant props its call site gives it, so a constant is no longer mistaken for a value that changes. The <code>Progress</code> page keeps 0 islands.
+        </li>
+        {/* source: PR #324 (F347) */}
+        <li>
+          <strong>A function prop is no longer assumed to travel through a path spread.</strong> <code>{'{'}...props.cfg{'}'}</code> delivers the members of <code>cfg</code>, not a prop named after the function, so the requirement that the caller may not pass a function now applies where the spread is written.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #331 (F358, ledger row; the wrong output needed PR #329, merged after v2.0.0-alpha.17, so no published version printed it: git merge-base, Dew's note on switch-provider-chain) */}
+        <li>
+          <strong>In a list built from state, a Radix-style root that spreads its rest renders with React when a row gives it a value.</strong> The case is a <code>Switch.Root</code>, or a component shaped like it, in <code>items.map(…)</code> over <code>useState</code> with a per-row <code>id</code>, <code>aria-label</code> or <code>data-*</code>. Compiled to native code, a row added in the browser showed the first row&rsquo;s value for those props. brust now refuses it by name (<code>frozen-prop</code>), so the page renders with React and shows each row&rsquo;s own value. No published version had this wrong output.
+        </li>
+        {/* source: PR #333 (F360; on main since PR #321, merged after the v2.0.0-alpha.17 tag, so no published version had it) */}
+        <li>
+          <strong>In a list built from state, a copy of a child made for its host element never keeps one row&rsquo;s value for another row.</strong> A row added in the browser could show the first row&rsquo;s value for a prop that differs per row. It was found and fixed before any release, so no published version printed it.
+        </li>
+        {/* source: PR #325 (F290, F316) */}
+        <li>
+          <strong>Two diagnostics are clearer.</strong> A diagnostic about a local that a custom hook creates names the variable you wrote and the hook it came from (<code>stylesRef</code>, from <code>usePresence</code>), not the generated name. The <code>snapshot-remount</code> hint lists every reason a component must mount once, not only the first.
+        </li>
+      </ul>
 
       <h2 id="alpha-17">2.0.0-alpha.17 · 17 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#316 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
