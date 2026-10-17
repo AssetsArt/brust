@@ -2,8 +2,8 @@
 //! the IR — `defineBehavior(id, factory)` returning the members the template's
 //! directives name.
 use super::common::{
-    DerivedShape, Facts, arrow_body, client_fn, client_js, import_lines, imports_in, module_code,
-    module_names_in, store_client_js, visit_idents, visit_verbatim_captures,
+    DerivedShape, Facts, arrow_body, client_fn, client_js, import_lines, imports_in,
+    module_code_with, module_names_in, store_client_js, visit_idents, visit_verbatim_captures,
 };
 use super::names::Names;
 use super::{Member, MemberDef, Paint};
@@ -134,7 +134,24 @@ fn chunk_in(
         }
     }
     module_names.extend(ir.client_module_locals.iter().cloned());
-    let module = module_code(ir, &module_names, &mut imports);
+    // F362: a module list the rows run over ships the keys this chunk reads. `code` is everything printed below.
+    let code: Vec<&RawExpr> = roots
+        .iter()
+        .copied()
+        .chain(reached_raws.iter().copied())
+        .chain(ir.effects.iter().flat_map(|e| e.deps.iter().flatten()))
+        .collect();
+    let lists: Vec<&RawExpr> = members
+        .iter()
+        .filter_map(|m| match &m.def {
+            MemberDef::List { raw, .. } => Some(raw),
+            _ => None,
+        })
+        .collect();
+    let need = super::common::module_need(ir, &module_names, &mut BTreeSet::new());
+    let projected =
+        super::module_projection::projections(ir, &structural.template, &need, &code, &lists);
+    let module = module_code_with(ir, &module_names, &mut imports, &projected);
 
     // Body declarations in source order: seeds, refs, reached derived values.
     let mut decls: Vec<(u32, String)> = Vec::new();
