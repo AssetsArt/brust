@@ -6303,13 +6303,17 @@ impl Walker<'_, '_> {
             .and_then(|ir| self.poly_attrs_through(&ir, 4));
         let why = if !matches!(cc.tier, Tier::Static) {
             Some("it is not a static component (a React island, or one with state of its own)")
-        } else if cc.poly.is_some() || cc.fed || cc.use_id || linked || forwarded_ref {
+        } else if cc.poly.is_some() || cc.fed || cc.use_id || linked /* a link needs a native child: no fixture, defence */ || forwarded_ref
+        {
             Some("it is polymorphic itself, has a job or `useId`, or takes a ref")
-        } else if !cc.absent.is_empty()
-            || !cc.unwritten.is_empty()
-            || !cc.shadowed.is_empty()
-            || !cc.shadowed_input.is_empty()
-            || cc.rest_as_data
+        } else if !cc.absent.is_empty() // fixture: Carry
+            // The five below have no fixture: a Static child cannot reach them (they need a native, live or fed-through-spread
+            // shape, which the tier guard refuses first); kept as fail-closed defence.
+            || !cc.unwritten.is_empty() // a spread into a fed child (needs a job)
+            || !cc.shadowed.is_empty() // a live value bound ahead of the rest (native)
+            || !cc.shadowed_input.is_empty() // the same through a clone's hidden rest (native)
+            || cc.rest_as_data // the whole rest handed to a clone as data (native)
+            // children printed under a native host
             || cc.hosts_children
         {
             Some("it puts requirements on the props it is given")
@@ -6348,9 +6352,6 @@ impl Walker<'_, '_> {
             ));
             return;
         }
-        // (Guards above with no fixture of their own, kept as fail-closed defence because a STATIC child cannot reach them:
-        // `unwritten`, `shadowed`, `shadowed_input`, `rest_as_data`, `hosts_children`, `linked`; they need a native, live or
-        // fed-through-spread shape, which the Static tier guard refuses first.)
         // What the child is given must be values: no function, no live value, no ref, no spread (a key the merge cannot see).
         let bad = cprops.iter().find_map(|(k, v)| {
             if matches!(v, Expr::ClientOnly { .. }) {
