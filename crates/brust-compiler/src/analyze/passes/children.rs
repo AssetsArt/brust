@@ -1072,7 +1072,9 @@ fn prints_children_slot(ir: &ComponentIR) -> bool {
     any(&ir.template)
 }
 
-/// F328b: the template spreads the whole props object (`{...props}`) into a component or an element.
+/// F328b: the template spreads the whole props object (`{...props}`) into a component (switch-provider-chain PR3: not an
+/// element: a clone that only moves the children onto its own element, with no Provider of the component's on the way,
+/// gains nothing, and a native clone of it would then host them and refuse a handler its caller hoists onto that element).
 fn spreads_whole_props(n: &Node) -> bool {
     let whole = |e: &Expr| matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "*"));
     match n {
@@ -1084,14 +1086,7 @@ fn spreads_whole_props(n: &Node) -> bool {
                 .any(|(k, v)| k == crate::ir::SPREAD_KEY && whole(v))
                 || children.iter().any(spreads_whole_props)
         }
-        Node::Element {
-            attrs, children, ..
-        } => {
-            attrs
-                .iter()
-                .any(|a| matches!(a, crate::ir::Attr::Spread(e) if whole(e)))
-                || children.iter().any(spreads_whole_props)
-        }
+        Node::Element { children, .. } => children.iter().any(spreads_whole_props),
         Node::Fragment(cs) => cs.iter().any(spreads_whole_props),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(spreads_whole_props),
         Node::For { body, .. } => body.iter().any(spreads_whole_props),
@@ -4836,12 +4831,22 @@ impl Walker<'_, '_> {
 
     /// F320: one prop of a link decision (`instance_needs_link`): `(true, _)` when the value is a function or reads a
     /// prop that changes (the child must follow it, as for state).
-    fn link_input(&self, v: &Expr, d: Deps) -> (bool, Deps) {
+    fn link_input(&self, k: &str, v: &Expr, d: Deps) -> (bool, Deps) {
         (
             matches!(v, Expr::ClientOnly { .. })
-                || (!self.hold_link && self.reads_changing_prop(&d)),
+                || (!self.hold_link && (self.reads_changing_prop(&d) || self.passes_ctx(k, &d))),
             d,
         )
+    }
+
+    /// switch-provider-chain PR3: the frames pass handed a consumer child its context value (`k` is the child's hidden
+    /// `__ctx_*` prop) as one of this component's own (the consumer sits under another component, such as a Thumb
+    /// carried in a trigger's rest, F298). The frame keeps this component's copy current, but the child takes it as a
+    /// prop: unlinked, it would print it once (F319 then freezes the value, and a state Provider above refuses). Only
+    /// that key: a context value an author passes under a key of their own (`name={name}`) keeps F319's answer per call
+    /// site (frozen, refused only where the Provider's value changes).
+    fn passes_ctx(&self, k: &str, d: &Deps) -> bool {
+        k.starts_with("__ctx_") && self.props_live && self.module_rows.get() == 0 && reads_ctx(d)
     }
 
     /// Whether the client can re-create the rows of this list: an enclosing list can, its
@@ -5723,7 +5728,12 @@ impl Walker<'_, '_> {
                         }
                     }
                     for (root, v) in checks {
-                        if matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v) {
+                        // switch-provider-chain PR3 D2: a row value in a list whose rows the client re-creates is a value
+                        // that changes too: a new row would keep the first row's value where the child does not follow it.
+                        if matches!(v, Expr::ClientOnly { .. })
+                            || self.reads_state(v)
+                            || (self.rows_recreated() && !self.deps_of(v).loop_bindings.is_empty())
+                        {
                             let what = if root == crate::ir::SPREAD_KEY {
                                 "a prop spread into it".to_string()
                             } else {
@@ -5772,7 +5782,7 @@ impl Walker<'_, '_> {
                     .into_iter()
                     .map(|(k, v)| {
                         let d = self.deps_while_mounted(&v, name, &k);
-                        self.link_input(&v, d)
+                        self.link_input(&k, &v, d)
                     })
                     .collect();
                 let mut need = instance_needs_link(&child.tier, link_props);
@@ -6720,14 +6730,19 @@ impl Walker<'_, '_> {
         let row_free = props.iter().all(|(_, v)| {
             !matches!(v, Expr::ClientOnly { .. }) && self.deps_of(v).loop_bindings.is_empty()
         });
-        let lists_fixed =
-            self.loop_sources
-                .iter()
-                .zip(&self.lists)
-                .all(|(path, (paths, reactive))| {
-                    path.is_some() || !(*reactive || (!paths.is_empty() && self.props_reactive))
-                });
-        row_free && lists_fixed
+        row_free && !self.rows_recreated()
+    }
+
+    /// The enclosing lists may re-create their rows on the client (a list from state, or from props that change): a row
+    /// made there starts from the row template, with what each instance in it was given at the first paint.
+    fn rows_recreated(&self) -> bool {
+        !self
+            .loop_sources
+            .iter()
+            .zip(&self.lists)
+            .all(|(path, (paths, reactive))| {
+                path.is_some() || !(*reactive || (!paths.is_empty() && self.props_reactive))
+            })
     }
 
     /// Live values the parent binds itself (2b-handlers, R34.18 extended): a prop that reads state and lands in a
@@ -6804,7 +6819,7 @@ impl Walker<'_, '_> {
                 .filter(|(k, v)| {
                     !keys.contains(&k) && !is_handler_prop(k, v) && !(ref_fwd && *k == "ref")
                 })
-                .map(|(_, v)| self.link_input(v, self.deps_of(v))),
+                .map(|(k, v)| self.link_input(k, v, self.deps_of(v))),
         );
         if need != LinkNeed::None {
             return live;
