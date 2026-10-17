@@ -63,7 +63,7 @@ fn render(jinja: &str) -> String {
 
 fn page(body: &str) -> String {
     format!(
-        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nexport default function P() {{ return <main>{body}</main> }}"
+        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nimport Fed from './Fed'\nimport Carry from './Carry'\nimport Dsi from './Dsi'\nimport Bag from './Bag'\nexport default function P() {{ return <main>{body}</main> }}"
     )
 }
 
@@ -315,4 +315,57 @@ fn as_child_over_a_static_component_gives_it_the_element_attributes_as_props() {
         render(&o.jinja),
         "<main><a class=\"link base extra own\" data-slot=\"btn\" data-variant=\"default\" id=\"mine\" href=\"/login\">Login</a></main>"
     );
+}
+
+/// F363a (Afrojack r1): every fail-closed group of `check_poly_component` keeps the caller on React with its own code.
+#[test]
+fn a_component_child_that_cannot_take_the_props_keeps_the_caller_on_react() {
+    for (body, rule) in [
+        // a job or `useId` of its own
+        ("<Btn asChild><Fed>x</Fed></Btn>", "slot-child-component"),
+        // a requirement on the props it is given (`asChild` handed on to a polymorphic component)
+        (
+            "<Btn asChild><Carry>x</Carry></Btn>",
+            "slot-child-component",
+        ),
+        // the element replaced carries `dangerouslySetInnerHTML`
+        ("<Dsi asChild><Link>x</Link></Dsi>", "slot-child-component"),
+        // the child is given a ref
+        ("<Btn asChild><Link ref={r}>x</Link></Btn>", "slot-ref"),
+        // a class (or style) that would merge with keys known only at render
+        (
+            "<Bag asChild><Link className=\"c\">x</Link></Bag>",
+            "slot-merge",
+        ),
+    ] {
+        let o = lower("P.tsx", &page(body));
+        assert!(react_with(&o, rule), "{body}: {:?}", o.diags);
+    }
+    // the page's own forwarded ref handed to the child
+    let src = std::fs::read_to_string(
+        repo().join("crates/brust-compiler/tests/fixtures/slot/FwdPage.tsx"),
+    )
+    .unwrap();
+    let o = lower("FwdPage.tsx", &src);
+    assert!(react_with(&o, "slot-child-component"), "{:?}", o.diags);
+    // a prop that changes on the client
+    let o = lower(
+        "P.tsx",
+        "import { useState } from 'react'\nimport Btn from './Btn'\nimport Link from './Link'\nexport default function P() { const [n, setN] = useState(0); return <main><button onClick={() => setN(n + 1)}>+</button><Btn asChild><Link data-n={n}>x</Link></Btn></main> }",
+    );
+    assert!(react_with(&o, "slot-child-attr"), "{:?}", o.diags);
+}
+
+/// F363a (Afrojack r1): a child prop that is `undefined` overrides the Slot's value (`mergeProps` / `cloneElement` keep an
+/// explicit `undefined`), so the attribute is not printed.
+#[test]
+fn an_undefined_child_prop_overrides_the_slots() {
+    let o = lower(
+        "P.tsx",
+        &page("<Btn asChild id=\"slot\"><Link id={undefined} href=\"/x\">x</Link></Btn>"),
+    );
+    assert_eq!(o.tier, Tier::Static, "{:?}", o.diags);
+    let html = render(&o.jinja);
+    assert!(!html.contains("id="), "{html}");
+    assert!(html.contains("href=\"/x\""), "{html}");
 }
