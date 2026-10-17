@@ -3059,7 +3059,7 @@ impl Walker<'_, '_> {
                         // element drops them (the item is then not listed); brust prints them only where React does.
                         || !child.spread.lands("data-radix-collection-item")
                         // The item directive reads its data in the scope of the nearest `x-data`: the child's element must be in
-                        // THIS component's scope (a static child printed inline), and this component must have a chunk.
+                        // THIS component's scope (a static child printed inline), and this component must have an instance on the client.
                         || !matches!(cir.tier, Tier::Static)
                         || !self.props_live
                         || !matches!(
