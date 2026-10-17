@@ -451,6 +451,11 @@ pub struct ComponentIR {
     pub client_prop_projections: std::collections::BTreeMap<String, Vec<String>>,
     /// `(source, imported)` pairs the client chunk bundles, sorted.
     pub client_imports: Vec<(String, String)>,
+    /// F362: the initializer of each relatively imported `export const` a list in the template runs over, read from its
+    /// module as written (`(source, imported)` -> (the module's path from the root, value)): the chunk may print it
+    /// projected instead of importing it.
+    #[serde(skip)]
+    pub client_import_lists: std::collections::BTreeMap<(String, String), (String, RawExpr)>,
     /// Module-level declarations (helpers, constants) the client chunk needs,
     /// transitively, sorted.
     pub client_module_locals: Vec<String>,
@@ -590,6 +595,7 @@ impl ComponentIR {
             client_props: vec![],
             client_prop_projections: Default::default(),
             client_imports: vec![],
+            client_import_lists: Default::default(),
             client_module_locals: vec![],
             needs_worker: false,
             cache: None,

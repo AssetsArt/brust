@@ -10,14 +10,26 @@ use super::{Member, MemberDef, Paint};
 use crate::ir::{Attr, ComponentIR, Expr, IdentKind, Literal, Node, RawExpr, RawKind};
 use std::collections::{BTreeSet, HashSet};
 
-/// The chunk source and its members in export order.
+/// The chunk source, its members in export order, and the data modules whose imported list it declares projected
+/// instead of importing (F362 PR2: the build keeps them only while no other client module imports them).
 pub fn chunk(
     ir: &ComponentIR,
     members: &[Member],
     runtime_import: &str,
     seed: &HashSet<String>,
-) -> (String, Vec<String>) {
-    chunk_in(ir, members, runtime_import, seed, false)
+) -> (String, Vec<String>, Vec<String>) {
+    chunk_in(ir, members, runtime_import, seed, false, true)
+}
+
+/// [`chunk`] importing every imported list as written (the build's fallback when a projected data module is still in
+/// the client graph through another importer).
+pub fn chunk_whole(
+    ir: &ComponentIR,
+    members: &[Member],
+    runtime_import: &str,
+    seed: &HashSet<String>,
+) -> String {
+    chunk_in(ir, members, runtime_import, seed, false, false).0
 }
 
 /// R34.124: the part of a specialised clone's chunk that does not name the clone: a module that exports the behaviour
@@ -29,7 +41,9 @@ pub fn factory_module(
     runtime_import: &str,
     seed: &HashSet<String>,
 ) -> (String, Vec<String>) {
-    chunk_in(ir, members, runtime_import, seed, true)
+    // A shared factory imports its lists as written: one module serves several clones, with no fallback of its own.
+    let (code, members, _) = chunk_in(ir, members, runtime_import, seed, true, false);
+    (code, members)
 }
 
 /// A clone's own chunk: it registers the shared factory under the clone's id.
@@ -48,9 +62,10 @@ fn chunk_in(
     runtime_import: &str,
     seed: &HashSet<String>,
     shared: bool,
-) -> (String, Vec<String>) {
+    project_imports: bool,
+) -> (String, Vec<String>, Vec<String>) {
     let Some(structural) = ir.structural.as_deref() else {
-        return (String::new(), Vec::new());
+        return (String::new(), Vec::new(), Vec::new());
     };
     let mut f = Facts::new(ir, structural);
     // F233: every name the chunk declares on its own, renamed away from the component's names and the members'.
@@ -155,9 +170,22 @@ fn chunk_in(
         })
         .collect();
     let need = super::common::module_need(ir, &module_names, &mut BTreeSet::new());
-    let projected =
-        super::module_projection::projections(ir, &structural.template, &need, &code, &lists);
-    let module = module_code_with(ir, &module_names, &mut imports, &projected);
+    let projected = super::module_projection::projections(
+        ir,
+        &structural.template,
+        &need,
+        &imports,
+        &code,
+        &lists,
+    );
+    let mut module = module_code_with(ir, &module_names, &mut imports, &projected.module);
+    // PR2: a projected import is declared here instead of imported.
+    let mut projected_modules = Vec::new();
+    for (u, (stmt, path)) in projected.imports.iter().filter(|_| project_imports) {
+        imports.remove(u);
+        module.insert_str(0, &format!("{stmt}\n"));
+        projected_modules.push(path.clone());
+    }
 
     // Body declarations in source order: seeds, refs, reached derived values.
     let mut decls: Vec<(u32, String)> = Vec::new();
@@ -477,7 +505,7 @@ fn chunk_in(
     if shared && n.behavior != "behavior" {
         out.push_str(&format!("export {{ {} as behavior }}\n", n.behavior));
     }
-    (out, exported)
+    (out, exported, projected_modules)
 }
 
 /// A module-level helper that writes a value the way the server painted it.

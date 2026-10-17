@@ -18,6 +18,7 @@ import LocalSpreadRestPage from './LocalSpreadRestPage'
 import SwPage from './SwPage'
 import RovingPage from './RovingPage'
 import SinkRefPage from './SinkRefPage'
+import SlotCompPage from './SlotCompPage'
 import RovingListPage from './RovingListPage'
 import CollCompPage from './CollCompPage'
 import WrapPage from './WrapPage'
@@ -54,3 +55,4 @@ export const renderWrap = (tone: string): string => server.renderToStaticMarkup(
 export const renderCollComp = (): string => html(CollCompPage)
 export const renderRovingList = (): string => html(RovingListPage)
 export const renderSinkRef = (): string => html(SinkRefPage)
+export const renderSlotComp = (): string => html(SlotCompPage)

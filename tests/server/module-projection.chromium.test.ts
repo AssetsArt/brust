@@ -1,7 +1,8 @@
 // F362 in real Chromium, against React hydrating the same page in the same browser. A module list the client rows run
 // over (`const ITEMS = [{ id, name, secret }]`) ships only the keys the chunk reads: rows with a selection whose rows the
 // client re-creates under a condition (rows), a host cloned in the rows (clone, F361 shape 1), a stateful child given a
-// row value (child, shape 2). No script the page loads carries the unread `secret` (C2: every /_brust/*.js the page
+// row value (child, shape 2), and the rows of `rows` over a list imported from a data module (import, PR2: declared
+// projected in the chunk, the module not bundled). No script the page loads carries the unread `secret` (C2: every /_brust/*.js the page
 // references, followed through its imports), and every observable value equals React after each click. A page handing
 // the row value on whole (whole) or initialising a ref from the list (ref, read on the client; refd, through a
 // derived value only the ref reads, which the chunk now declares) ships the list as written (C1).
@@ -103,11 +104,12 @@ const tierOf = (prefix: string) => {
   return Object.entries(m.components).find(([k]) => k.startsWith(prefix))![1].tier
 }
 
-test('every page is native', () => {
-  expect({ rows: tierOf('pRows_'), clone: tierOf('pClone_'), child: tierOf('pChild_'), whole: tierOf('pWhole_'), ref: tierOf('pRef_'), refd: tierOf('pRefd_') }).toEqual({ rows: 'native', clone: 'native', child: 'native', whole: 'native', ref: 'native', refd: 'native' })
+// store: another module writes the list, refused by name (F230 module-written) before any projection.
+test('every page is native but store', () => {
+  expect({ rows: tierOf('pRows_'), clone: tierOf('pClone_'), child: tierOf('pChild_'), whole: tierOf('pWhole_'), ref: tierOf('pRef_'), refd: tierOf('pRefd_'), import: tierOf('pImport_'), store: tierOf('pStore_'), mixed: tierOf('pMixed_'), shared: tierOf('pShared_') }).toEqual({ rows: 'native', clone: 'native', child: 'native', whole: 'native', ref: 'native', refd: 'native', import: 'native', store: 'react', mixed: 'native', shared: 'native' })
 })
 
-for (const page of ['rows', 'clone', 'child']) {
+for (const page of ['rows', 'clone', 'child', 'import']) {
   test(`${page}: no script the page loads carries the field the rows never read`, async () => {
     const all = await scripts(page)
     // the list itself ships (minified) with the key every page reads
@@ -117,8 +119,8 @@ for (const page of ['rows', 'clone', 'child']) {
   })
 }
 
-test('whole, ref, refd: the row value handed on whole, or a ref initialised from the list (directly or through a derived value), ships the list as written', async () => {
-  for (const page of ['whole', 'ref', 'refd']) {
+test('whole, ref, refd, store, mixed, shared: the row value handed on whole, a ref initialised from the list (directly or through a derived value), or a data module still in the client graph (written by another module; imported for another export; read by another module) ships the list as written', async () => {
+  for (const page of ['whole', 'ref', 'refd', 'store', 'mixed', 'shared']) {
     const all = await scripts(page)
     expect([...all.values()].some((s) => s.includes('SECRET_B'))).toBe(true)
   }
@@ -132,6 +134,11 @@ const CLICKS: Record<string, string[]> = {
   whole: ['r2', 'r1'],
   ref: ['r2', 'show', 'r3'],
   refd: ['r2', 'show', 'r3'],
+  import: ['r2', 'open', 'open', 'r3', 'r1', 'open', 'open'],
+  // the push is seen when the rows are re-created (React: on its next render)
+  store: ['add', 'open', 'open', 'add', 'add', 'open', 'open'],
+  mixed: ['r2', 'r1'],
+  shared: ['r2', 'count', 'r1'],
 }
 
 for (const page of Object.keys(CLICKS)) {
