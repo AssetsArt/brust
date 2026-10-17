@@ -273,7 +273,8 @@ fn the_radix_label_compiles_native_with_primitive_label_as_the_host() {
         "{:?}",
         label.1.diagnostics
     );
-    assert_eq!(label.1.absent_props, vec!["asChild".to_string()]);
+    // F369a: the label hands its whole rest to Primitive.label, so it is polymorphic itself and asks nothing of its callers
+    assert!(label.1.absent_props.is_empty() && label.1.poly.is_some());
     assert!(jinja.contains("<label"), "{jinja}");
     assert!(jinja.contains("x-on-mousedown"), "{jinja}");
     assert!(
@@ -291,8 +292,10 @@ fn as_child_reaching_primitive_through_spread_props_fails_closed() {
         "import { Root as Label } from '@radix-ui/react-label'\nexport default function App() { return <div><Label asChild><a href=\"/x\">x</a></Label></div> }",
     );
     let (_, ir, _) = root_of(&tree);
+    // F369a: the label is a carrier now, so the call site resolves the flag; the label is native (state of its own), which a
+    // Slot is not resolved over (F369b)
     assert!(
-        rules(ir).contains(&"slot-dynamic".to_string()),
+        rules(ir).contains(&"slot-native".to_string()),
         "{:?}",
         ir.diagnostics
     );
@@ -309,7 +312,7 @@ fn as_child_reaching_primitive_through_spread_props_fails_closed() {
 }
 
 #[test]
-fn a_wrapper_spreading_its_rest_into_the_label_passes_the_requirement_up() {
+fn a_wrapper_spreading_its_rest_into_the_label_is_polymorphic_like_the_label() {
     let mut app = App::new();
     app.radix().file(
         "Wrap.tsx",
@@ -317,7 +320,8 @@ fn a_wrapper_spreading_its_rest_into_the_label_passes_the_requirement_up() {
     );
     let tree = app.compile("import { Wrap } from './Wrap'\nexport default function App() { return <div><Wrap htmlFor=\"x\">Name</Wrap></div> }");
     let wrap = tree.iter().find(|(s, ..)| s == "Wrap.tsx").unwrap();
-    assert_eq!(wrap.1.absent_props, vec!["asChild".to_string()]);
+    // F369a (transitive): the wrapper hands its whole rest to a carrier, so it is one too
+    assert!(wrap.1.absent_props.is_empty() && wrap.1.poly.is_some());
     assert!(
         matches!(root_of(&tree).1.tier, Tier::Static),
         "{:?}",

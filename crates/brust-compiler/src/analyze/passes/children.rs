@@ -91,6 +91,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         own_refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
         sink_refs: ir.sink_refs.iter().cloned().collect(),
         ref_nulled: false,
+        carry_sites: Vec::new(),
         passes_to_repeater: false,
         passes_to_host: false,
         own_fed: crate::ir::is_fed(ir),
@@ -232,6 +233,7 @@ pub fn contexts(
     ir.ctx_pkg |= w.bubbled_pkg;
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.forwarded_ref_nulled |= w.ref_nulled;
+    carried_poly(ir, &w.carry_sites);
     for c in std::mem::take(&mut w.bubbled_scoped) {
         if !ir.ctx_scoped.contains(&c) {
             ir.ctx_scoped.push(c);
@@ -360,6 +362,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.forwarded_ref_nulled |= w.ref_nulled;
+    carried_poly(ir, &w.carry_sites);
     ir.unwritten_props = w.unwritten.iter().cloned().collect();
     ir.shadowed_props = w.shadowed.iter().cloned().collect();
     ir.shadowed_input = w.shadowed_input.iter().cloned().collect();
@@ -473,6 +476,9 @@ struct Walker<'s, 'c> {
     sink_refs: BTreeSet<String>,
     /// A child this component passes its forwarded ref to reads it as `null` (`ComponentIR::forwarded_ref_nulled`).
     ref_nulled: bool,
+    /// F369a: the polymorphic children this component spreads its whole rest into, and whether each is a site a carrier
+    /// may be recognised at (see [`Walker::carry_site`]).
+    carry_sites: Vec<(PolyTag, bool)>,
     /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
     passes_to_repeater: bool,
     /// This component hands its own `{children}` to a component that prints them under a native host element
@@ -677,6 +683,56 @@ fn poly_has_runtime_spread(n: &Node) -> bool {
         Node::For { body, .. } => body.iter().any(poly_has_runtime_spread),
         Node::Component { children, .. } => children.iter().any(poly_has_runtime_spread),
         Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
+/// F369a: a component whose ONE polymorphic child gets the whole rest of its props (`<Primitive.span {...rest}/>`, Radix
+/// `RovingFocusGroup.Item`) passes `asChild` straight to that element, so it is polymorphic itself: its call sites resolve the
+/// flag (`check_poly`) instead of being told to leave it out (`absent_props`, F153c). Anywhere the flag might not reach the
+/// element unchanged keeps the old requirement.
+fn carried_poly(ir: &mut ComponentIR, sites: &[(PolyTag, bool)]) {
+    let [(poly, true)] = sites else {
+        return;
+    };
+    if ir.poly.is_some() {
+        return;
+    }
+    ir.absent_props.retain(|k| k != &poly.flag);
+    ir.poly = Some(poly.clone());
+}
+
+/// The call of a carrier's template that hands the whole rest on: `(name, source, imported, member, loc)`.
+/// A component call by the names `resolve_child` takes.
+type CallRef = (String, Option<String>, Option<String>, Vec<String>, u32);
+
+fn carrier_call(n: &Node) -> Option<CallRef> {
+    match n {
+        Node::Component {
+            name,
+            source,
+            imported,
+            member,
+            props,
+            loc,
+            ..
+        } if props.iter().any(|(k, v)| {
+            k == crate::ir::SPREAD_KEY
+                && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                    RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS))
+        }) =>
+        {
+            Some((
+                name.clone(),
+                source.clone(),
+                imported.clone(),
+                member.clone(),
+                *loc,
+            ))
+        }
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().find_map(carrier_call),
+        Node::If { .. } | Node::For { .. } | Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
     }
 }
 
@@ -6046,6 +6102,22 @@ impl Walker<'_, '_> {
             && self.spread_carries(&poly.flag, props).is_ok()
         {
             let flag = poly.flag.clone();
+            // F369a: recognised as a carrier only when nothing can stop the flag on the way: this is the one, unconditional
+            // polymorphic child; the spread is this component's whole rest (not a path, not a clone input, not the flag
+            // named); the flag is not written on the call; the element has no runtime spread of keys of its own.
+            let whole_rest = props.iter().all(|(k, v)| {
+                k != crate::ir::SPREAD_KEY
+                    || matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                        RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS))
+            }) && !props.iter().any(|(k, _)| k == REST_INPUT || k == &poly.flag);
+            let carrier = whole_rest
+                && self.guard_depth == 0
+                && self.loop_scope.is_empty()
+                && !self.own_named.contains(&flag)
+                && !self.ctx.is_root
+                && !child.poly_runtime_spread
+                && self.spread_sources(&flag, props) == Ok((true, false));
+            self.carry_sites.push((poly.clone(), carrier));
             self.require_absent(name, &flag, props, loc);
             return;
         }
@@ -6227,8 +6299,8 @@ impl Walker<'_, '_> {
         let refuse = |rule: &str, why: String, fix: &str| Diagnostic::fallback(rule, why, loc, fix);
         let attrs = parent
             .ir
-            .as_deref()
-            .and_then(|ir| poly_element_attrs(&ir.template));
+            .clone()
+            .and_then(|ir| self.poly_attrs_through(&ir, 4));
         let why = if !matches!(cc.tier, Tier::Static) {
             Some("it is not a static component (a React island, or one with state of its own)")
         } else if cc.poly.is_some() || cc.fed || cc.use_id || linked || forwarded_ref {
@@ -6253,7 +6325,7 @@ impl Walker<'_, '_> {
             })
         {
             Some("it does not spread its props onto the one element it renders")
-        } else if attrs.is_none_or(|a| {
+        } else if attrs.as_deref().is_none_or(|a| {
             a.iter().any(|a| {
                 !matches!(
                     a,
@@ -6276,6 +6348,9 @@ impl Walker<'_, '_> {
             ));
             return;
         }
+        // (Guards above with no fixture of their own, kept as fail-closed defence because a STATIC child cannot reach them:
+        // `unwritten`, `shadowed`, `shadowed_input`, `rest_as_data`, `hosts_children`, `linked`; they need a native, live or
+        // fed-through-spread shape, which the Static tier guard refuses first.)
         // What the child is given must be values: no function, no live value, no ref, no spread (a key the merge cannot see).
         let bad = cprops.iter().find_map(|(k, v)| {
             if matches!(v, Expr::ClientOnly { .. }) {
@@ -6317,6 +6392,28 @@ impl Walker<'_, '_> {
                 "move the class or style to the component call, or keep the page on React",
             ));
         }
+    }
+
+    /// The attributes of the element `asChild` replaces in `ir`: its own polymorphic element, or (a carrier, F369a) the one in the
+    /// polymorphic child it hands its whole rest to, after inlining. `depth` bounds the chain.
+    fn poly_attrs_through(&mut self, ir: &ComponentIR, depth: u32) -> Option<Vec<Attr>> {
+        if let Some(a) = poly_element_attrs(&ir.template) {
+            return Some(a.to_vec());
+        }
+        if depth == 0 {
+            return None;
+        }
+        let (cname, source, imported, member, cloc) = carrier_call(&ir.template)?;
+        let cc = self.resolve_child(
+            &cname,
+            source.as_deref(),
+            imported.as_deref(),
+            &member,
+            cloc,
+        );
+        let inner = cc.ir.clone()?;
+        cc.poly.as_ref()?;
+        self.poly_attrs_through(&inner, depth - 1)
     }
 
     /// `r` folded to JSON with this module's consts (`crate::ir::FoldEnv`, which runs no user code).

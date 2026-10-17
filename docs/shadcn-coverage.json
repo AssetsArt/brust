@@ -127,15 +127,6 @@
       "libraryComponents": 27
     },
     {
-      "blocker": "fallback:slot-dynamic",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 3,
-      "analysisOnlyRows": 0,
-      "appComponents": 3,
-      "libraryComponents": 0
-    },
-    {
       "blocker": "fallback:prop-pattern",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -155,6 +146,15 @@
     },
     {
       "blocker": "fallback:children-rest",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:slot-child-component",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
@@ -271,7 +271,7 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:slot-child-component",
+      "blocker": "fallback:slot-child-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -280,7 +280,16 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:slot-child-shape",
+      "blocker": "fallback:slot-dynamic",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:slot-native",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -866,7 +875,7 @@
         "jsx-expression",
         "key-outside-list",
         "nested-instance",
-        "slot-dynamic",
+        "slot-child-component",
         "slot-owner",
         "spread-props"
       ]
@@ -917,7 +926,7 @@
         "island-children",
         "island-prop",
         "nested-instance",
-        "slot-dynamic",
+        "slot-native",
         "spread-props"
       ]
     },
