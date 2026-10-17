@@ -317,6 +317,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/presence-general.chromium.test.ts
       # F289: a hook's returned object bound whole at the call site (t.on / t.toggle): served == React, then the clicks.
       - run: bun test --timeout 120000 tests/server/hook-object-bind.chromium.test.ts
+      # F385: an inlined custom hook's argument is set before what reads it (template, job, chunk): served == React.
+      - run: bun test --timeout 120000 tests/server/preamble-order.chromium.test.ts
       # F308: a changing key outside a list is a named refusal; the React page resets state on a key change.
       - run: bun test --timeout 120000 tests/server/live-key.chromium.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
