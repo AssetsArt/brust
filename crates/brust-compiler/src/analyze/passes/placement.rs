@@ -1871,6 +1871,13 @@ impl Placer<'_> {
                             .get(name)
                             .is_some_and(|d| self.is_function(d, depth + 1)))
             }
+            // F328: Radix's `composeEventHandlers(user, handler)` (identified by its package, never by the name alone) returns the handler that calls `user`, then `handler`
+            // unless the event was prevented: a function, whatever the handler's body reads (`document`, a timer).
+            RawKind::Call { callee, .. } => matches!(
+                &callee.kind,
+                RawKind::Ident { kind: IdentKind::Import { source, imported }, .. }
+                    if imported == "composeEventHandlers" && source == "@radix-ui/primitive"
+            ),
             _ => false,
         }
     }

@@ -1745,7 +1745,7 @@ fn read_context_use(
                 }
                 r.names.note_ctx_field(ctx, &field);
                 r.names
-                    .bind_prop_local(id.r#ref, &crate::ir::ctx_prop(ctx, &field));
+                    .bind_ctx_field_local(id.r#ref, &crate::ir::ctx_prop(ctx, &field));
             }
         }
         _ => out.fallback(

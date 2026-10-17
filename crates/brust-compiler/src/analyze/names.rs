@@ -84,6 +84,9 @@ pub struct NameTable<'a> {
     /// Where `rest` is read in a way brust cannot narrow to the props minus the named keys:
     /// the bare object as a value, or inside code printed as written (R34.14: fail closed).
     pub rest_escape: std::cell::Cell<Option<u32>>,
+    /// F328b: the component writes `typeof children === 'function' ? children(…) : children` (Radix RovingFocusGroupItem): read as
+    /// plain `{children}`; a call site that passes a function as children refuses.
+    pub children_called: std::cell::Cell<bool>,
     /// F162: where a body pattern's name is used by a statement BEFORE the pattern (a TDZ error in React).
     pub use_before_pattern: std::cell::Cell<Option<u32>>,
     /// A prop READ as a member (`props.loop`, `rest.range`) whose name the template cannot carry (first one: location, name, code, what).
@@ -477,6 +480,7 @@ impl<'a> NameTable<'a> {
             rest_aliases: std::cell::RefCell::new(HashSet::new()),
             named_props: Vec::new(),
             rest_escape: std::cell::Cell::new(None),
+            children_called: std::cell::Cell::new(false),
             use_before_pattern: std::cell::Cell::new(None),
             prop_read_problem: std::cell::RefCell::new(None),
             absorbed: HashSet::new(),
@@ -1099,6 +1103,15 @@ impl<'a> NameTable<'a> {
     pub fn bind_prop_local(&mut self, r: js_ast::Ref, prop: &str) {
         let k = self.key(r);
         self.props.insert(k, prop.to_string());
+    }
+
+    /// switch-provider-chain: `const { field } = useXContext(…)`: the local reads the field's hidden prop
+    /// (`bind_prop_local`) and, in code printed as written (a handler, an effect), prints as that prop's name, which the
+    /// chunk binds around such code (`wrap_source`); printed as the author's name it would be unbound there.
+    pub fn bind_ctx_field_local(&mut self, r: js_ast::Ref, prop: &str) {
+        self.bind_prop_local(r, prop);
+        let k = self.key(r);
+        self.printed.insert(k, prop.to_string());
     }
 
     /// `const context = useXContext(…)`: reads of `context.field` are the hidden prop of that field.
