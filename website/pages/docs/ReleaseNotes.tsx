@@ -99,6 +99,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         <li>
           <strong>A local object built from the rest props and used only as a spread compiles.</strong> <code>const commonProps = {'{'} role: &quot;group&quot;, dir, ...groupProps {'}'}</code>, where every use is <code>{'{'}...commonProps{'}'}</code> on a JSX element, is not read as a value. It is expanded where it is spread, and the children travel with the rest under the same rules as before.
         </li>
+        {/* source: PR #316 (plan section 23 item 1, F324 real fix; battery row c-spec-rest-children, tests/server/spec-children.test.ts) */}
+        <li>
+          <strong>Children given to a Provider that spreads its rest are placed in the element that receives the rest.</strong> <code>&lt;Root&gt;&lt;span&gt;hello&lt;/span&gt;&lt;/Root&gt;</code>, with <code>Root</code> a Provider that writes <code>&lt;button {'{'}...rest{'}'} /&gt;</code>, compiles with <code>hello</code> inside the button and no React island. This holds when the rest is spread onto exactly one element and the Provider writes no children of its own; otherwise the call site renders with React.
+        </li>
         {/* source: PR #315 (F307, host-specialise PR 1); cost range from the PR's measured pages */}
         <li>
           <strong>Slot content that uses the calling component&rsquo;s values, placed inside a child&rsquo;s root element, compiles with its own copy of the child.</strong> The content&rsquo;s bindings resolve to the caller, as in React, so <code>&lt;Label on={'{'}on{'}'}&gt;&lt;Thumb on={'{'}on{'}'} /&gt;&lt;/Label&gt;</code> stays live instead of rendering with React. Each such call site adds one clone of the child, measured at 193–396 bytes gzipped on the pages checked. Content that arrives through the child&rsquo;s <code>...rest</code> spread, and text-only content that cannot be proven equal to React&rsquo;s, still render with React.
@@ -115,17 +119,17 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
 
       <h3>Fixed</h3>
       <ul>
-        {/* source: PR #302 (F324); regression since alpha.16 (PR #265, call-site specialisation) */}
+        {/* source: PR #302 (F324, fail closed) and PR #316 (F324 real fix, battery row c-spec-rest-children); regression since alpha.16 (PR #265, call-site specialisation) */}
         <li>
-          <strong>A Provider that spreads its props no longer drops the children you pass it.</strong> In 2.0.0-alpha.16, <code>&lt;Root&gt;&lt;span&gt;hello&lt;/span&gt;&lt;/Root&gt;</code> printed an empty <code>&lt;button&gt;</code> when <code>Root</code> is a Provider that spreads its rest props onto the button. Such a call site now renders with React and shows the children. If you used this pattern on alpha.16, upgrade.
+          <strong>A Provider that spreads its props no longer drops the children you pass it.</strong> In 2.0.0-alpha.16, <code>&lt;Root&gt;&lt;span&gt;hello&lt;/span&gt;&lt;/Root&gt;</code> printed an empty <code>&lt;button&gt;</code> when <code>Root</code> is a Provider that spreads its rest props onto the button. The children now show. When the rest is spread onto one element and the Provider writes no children of its own, the Provider stays native and the children are placed inside that element; in other cases the call site renders with React. If you used this pattern on alpha.16, upgrade.
         </li>
         {/* source: PR #300 (F319) and PR #304 (F320); the bug is present in every alpha since 2.0.0-alpha.1 (bisected on the published addons) */}
         <li>
           <strong>A prop that changes while the page is open no longer stays stale in a compiled component.</strong> The old value stayed in the rows of a list that is printed once, in a child component that brust does not link to its parent, and in a prop forwarded through a component&rsquo;s <code>{'{'}...props{'}'}</code> spread. It has been present since alpha.1 and printed no warning. A component with state, effects, handlers or refs now follows its changing props in all three places and stays native. For a component without state, and for <code>children</code> or the whole props object, a call site that passes a changing value (state, a store value or a function) renders with React; a constant is unaffected. A list whose source is an imported value or a module constant keeps that rule too.
         </li>
-        {/* source: PR #293 (F309) */}
+        {/* source: PR #293 (F309), then PR #315 (host-specialise makes the same example native) */}
         <li>
-          <strong>Slot content inside a static child that is linked to its parent no longer keeps its first value.</strong> <code>&lt;Label on={'{'}on{'}'}&gt;&lt;Thumb on={'{'}on{'}'} /&gt;&lt;/Label&gt;</code> kept the first <code>Thumb</code> after <code>on</code> changed; the only sign was a console warning. The call site now renders with React.
+          <strong>Slot content inside a static child that is linked to its parent no longer keeps its first value.</strong> <code>&lt;Label on={'{'}on{'}'}&gt;&lt;Thumb on={'{'}on{'}'} /&gt;&lt;/Label&gt;</code> kept the first <code>Thumb</code> after <code>on</code> changed; the only sign was a console warning. This version first made such a call site render with React, and it now compiles with its own copy of the <code>Label</code> (see Slot content that uses the calling component&rsquo;s values, under New).
         </li>
         {/* source: PR #314 (F342); the bug was already on main before this version, from when it began is not measured */}
         <li>
@@ -149,7 +153,7 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         </li>
         {/* source: PR #305 (F300, children-rest) */}
         <li>
-          <strong>JSX children given to a component that passes its whole rest to a specialised Provider are no longer lost.</strong> They vanished, and an island child threw in a server job, which answered 500. Those call sites render with React.
+          <strong>JSX children given to a component that passes its whole rest to a specialised Provider are no longer lost.</strong> They vanished, and an island child threw in a server job, which answered 500. Where the whole rest is handed to the Provider as data, those call sites render with React.
         </li>
         {/* source: PR #288 (W1a) */}
         <li>
