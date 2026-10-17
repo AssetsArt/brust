@@ -130,6 +130,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .map(|h| h.name.clone())
             .collect(),
         no_spec: Default::default(),
+        shared_locs: BTreeSet::new(),
         spec_failure: None,
         bubbled_pkg: false,
         bubbled_scoped: Vec::new(),
@@ -210,6 +211,7 @@ pub fn contexts(
     let mut frames: Vec<Frame> = Vec::new();
     let mut bubbled: Vec<(String, String)> = Vec::new();
     let mut diags: Vec<Diagnostic> = Vec::new();
+    w.shared_locs = shared_component_locs(&template);
     w.frames_node(&mut template, &mut frames, &mut bubbled, &mut diags);
     ir.template = template;
     // The Provider module's helpers the substituted values call, as module declarations of this component (S2).
@@ -447,6 +449,10 @@ struct Walker<'s, 'c> {
     renders: Vec<crate::ir::RenderProp>,
     /// R34.122: call sites (by location) whose specialisation failed; they are read as island Providers.
     no_spec: std::collections::HashSet<u32>,
+    /// F344 (Mellow N1): component call sites of this template that share a source offset. A host clone is keyed by its
+    /// call site's offset (`host_spec`, `host_wanted`), and content spliced from another module (a clone's content,
+    /// R34.123/F307) keeps that module's offsets, so two sites can share one: neither is specialised (fail closed).
+    shared_locs: BTreeSet<u32>,
     /// R34.122: the location and reason of the specialisation that just failed.
     spec_failure: Option<(u32, String)>,
     /// A need bubbled out of a package-source consumer ([`ComponentIR::ctx_pkg`]).
@@ -884,6 +890,37 @@ impl Inner {
     }
 }
 
+/// F344 (Mellow N1): the source offsets two or more component call sites of `template` share (clones excluded).
+fn shared_component_locs(template: &Node) -> BTreeSet<u32> {
+    fn walk(n: &Node, seen: &mut BTreeSet<u32>, shared: &mut BTreeSet<u32>) {
+        match n {
+            Node::Component {
+                loc,
+                children,
+                source,
+                ..
+            } => {
+                // A clone already (content specialised where it was written) is never specialised again.
+                if source.as_deref() != Some(SPEC_SOURCE) && !seen.insert(*loc) {
+                    shared.insert(*loc);
+                }
+                children.iter().for_each(|c| walk(c, seen, shared));
+            }
+            Node::Element { children, .. } | Node::Fragment(children) => {
+                children.iter().for_each(|c| walk(c, seen, shared))
+            }
+            Node::If { then, else_, .. } => {
+                then.iter().chain(else_).for_each(|c| walk(c, seen, shared))
+            }
+            Node::For { body, .. } => body.iter().for_each(|c| walk(c, seen, shared)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    let (mut seen, mut shared) = (BTreeSet::new(), BTreeSet::new());
+    walk(template, &mut seen, &mut shared);
+    shared
+}
+
 /// A fed child (one with an instance record of `ir`) sits under a condition or in a list of `ir`'s template.
 fn fed_under_condition(ir: &ComponentIR) -> bool {
     let fed: BTreeSet<&str> = ir.instances.iter().map(|r| r.child_id.as_str()).collect();
@@ -932,6 +969,16 @@ const SPEC_SOURCE: &str = "\u{0}spec";
 
 /// A stable 32-bit mix of the call site (module and location): the suffix of a clone's id. Ids are per call site
 /// (R34.124); equal chunks share a factory module, not an id.
+/// F238: the call site a clone's id and module-cache key name (`site`: the module and the enclosing clone's id) with a
+/// stable hash of the content it is made with (after `Carry` and `rebase_sources`), so different content at one offset
+/// of one template never reuses a clone.
+fn clone_site<R: std::fmt::Debug>(site: &str, nodes: &[Node], render: &R) -> String {
+    format!(
+        "{site}~{:016x}",
+        crate::lower::fnv64(format!("{nodes:?}{render:?}").as_bytes())
+    )
+}
+
 fn spec_hash(path: &str, loc: u32) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
     for b in path.bytes().chain(loc.to_le_bytes()) {
@@ -1252,7 +1299,9 @@ fn prints_children_slot(ir: &ComponentIR) -> bool {
     any(&ir.template)
 }
 
-/// F328b: the template spreads the whole props object (`{...props}`) into a component or an element.
+/// F328b: the template spreads the whole props object (`{...props}`) into a component (switch-provider-chain PR3: not an
+/// element: a clone that only moves the children onto its own element, with no Provider of the component's on the way,
+/// gains nothing, and a native clone of it would then host them and refuse a handler its caller hoists onto that element).
 fn spreads_whole_props(n: &Node) -> bool {
     let whole = |e: &Expr| matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "*"));
     match n {
@@ -1264,14 +1313,7 @@ fn spreads_whole_props(n: &Node) -> bool {
                 .any(|(k, v)| k == crate::ir::SPREAD_KEY && whole(v))
                 || children.iter().any(spreads_whole_props)
         }
-        Node::Element {
-            attrs, children, ..
-        } => {
-            attrs
-                .iter()
-                .any(|a| matches!(a, crate::ir::Attr::Spread(e) if whole(e)))
-                || children.iter().any(spreads_whole_props)
-        }
+        Node::Element { children, .. } => children.iter().any(spreads_whole_props),
         Node::Fragment(cs) => cs.iter().any(spreads_whole_props),
         Node::If { then, else_, .. } => then.iter().chain(else_).any(spreads_whole_props),
         Node::For { body, .. } => body.iter().any(spreads_whole_props),
@@ -2834,9 +2876,17 @@ impl Walker<'_, '_> {
                     .iter_mut()
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
             }
-            Node::For { body, .. } => body
-                .iter_mut()
-                .for_each(|c| self.frames_node(c, frames, bubbled, diags)),
+            Node::For {
+                body, item, index, ..
+            } => {
+                // F344: the row's names are loop bindings here too (a clone made in a row must not pin a row value).
+                let n = self.loop_scope.len();
+                self.loop_scope.push(item.clone());
+                self.loop_scope.extend(index.iter().cloned());
+                body.iter_mut()
+                    .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                self.loop_scope.truncate(n);
+            }
             Node::Component {
                 loc,
                 name,
@@ -3012,11 +3062,16 @@ impl Walker<'_, '_> {
                         && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
                             if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == k))
                 };
+                // F356 (ruling 7a25d5e0): a written literal `undefined` names no scope (as `require_absent` reads it).
+                let scope_undefined = |v: &Expr| {
+                    matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
+                        if matches!(r.kind, RawKind::Lit(crate::ir::Literal::Undefined)))
+                };
                 if !self.ctx.specialised
                     && matches!(cir.tier, Tier::Static | Tier::Native)
-                    && let Some((k, _)) = props
-                        .iter()
-                        .find(|(k, v)| k.starts_with("__scope") && !forwards_own_scope(k, v))
+                    && let Some((k, _)) = props.iter().find(|(k, v)| {
+                        k.starts_with("__scope") && !forwards_own_scope(k, v) && !scope_undefined(v)
+                    })
                 {
                     diags.push(Diagnostic::fallback(
                         "context-scope",
@@ -3026,8 +3081,8 @@ impl Walker<'_, '_> {
                     ));
                 }
                 if !self.ctx.specialised && matches!(cir.tier, Tier::Static | Tier::Native) {
-                    for (k, _) in props.iter() {
-                        if k.starts_with("__scope") {
+                    for (k, v) in props.iter() {
+                        if k.starts_with("__scope") && !scope_undefined(v) {
                             self.absent.insert(k.clone());
                         }
                     }
@@ -3294,8 +3349,24 @@ impl Walker<'_, '_> {
             Some(n) => Export::Named(n.clone()),
             None => Export::Default,
         };
+        // F374: with no children written at the call site, a spread (or a `children` prop) may still carry them, and
+        // the clone's `{children}` would be empty where React renders them (`function Outer(props) { return <Prov
+        // {...props} /> }`, `<Outer>hello</Outer>` printed an empty section). Refused by name: the Provider stays an
+        // island and React renders it with its children.
+        if content.is_empty()
+            && let Some((k, _)) = props
+                .iter()
+                .find(|(k, _)| k == crate::ir::SPREAD_KEY || k == REST_INPUT || k == "children")
+        {
+            return Err(if k == "children" {
+                "its children are given as the `children` prop, which the clone cannot hold".into()
+            } else {
+                "a spread may carry its children, which the clone cannot hold".into()
+            });
+        }
         let mut nodes = std::mem::take(content);
         self.check_owner(&nodes, owner)?;
+        self.check_inner_providers(cir, &nodes)?;
         let mut carry = Carry::new(
             &self.native_props,
             owner,
@@ -3328,10 +3399,13 @@ impl Walker<'_, '_> {
         // One clone per call site: its id is built from the call site, so its jinja, jobs and instance records are the
         // call site's own. Clones whose chunks are equal share ONE factory module at lowering (R34.124). Inside a rest
         // clone (F298) the call site is that clone's: the same call of the same module holds other content there.
+        // F238: and the content's shape, so two call sites at one offset of one template (content written in another
+        // module keeps that module's offsets) never share a clone.
         let site = match &self.spec_salt {
             Some(salt) => format!("{}#{salt}", ctx.path),
             None => ctx.path.to_string(),
         };
+        let site = clone_site(&site, &nodes, &render);
         let id = format!("{}_s{:08x}", cir.id, spec_hash(&site, loc));
         let key = format!("{c_path}#{exp}~spec~{site}~{loc}");
         let mut once = Some(nodes);
@@ -3413,6 +3487,8 @@ impl Walker<'_, '_> {
             Some(salt) => format!("{}#{salt}", ctx.path),
             None => ctx.path.to_string(),
         };
+        // F238: the content's shape too (see `specialise`).
+        let site = clone_site(&site, &nodes, &None::<()>);
         let id = format!("{}_r{:08x}", cir.id, spec_hash(&site, loc));
         let key = format!("{c_path}#{exp}~rest~{site}~{loc}");
         let clone_id = id.clone();
@@ -3489,6 +3565,9 @@ impl Walker<'_, '_> {
     ) -> Result<Specialised, String> {
         if !cir.provides.is_empty() || cir.specialised {
             return Err("it provides a context, or is a clone already".into());
+        }
+        if self.shared_locs.contains(&loc) {
+            return Err("another call site in this component has the same source offset (content written in another module), so the clone could not be told apart".into());
         }
         if !matches!(cir.tier, Tier::Native | Tier::Static) {
             return Err("it is not lowered".into());
@@ -3625,13 +3704,86 @@ impl Walker<'_, '_> {
             }
         }
         for (name, v) in given {
-            if matches!(v, Expr::ClientOnly { .. }) || !self.live(v) {
+            // F344: a row value changes per instance: pinned, a row the client adds would print the first row's value
+            // (F358's class). Not pinned, the clone follows it. (Clones are made in the frames pass, which does not know
+            // whether a list re-creates its rows: every row value counts.)
+            let row = !self.deps_of(v).loop_bindings.is_empty();
+            if matches!(v, Expr::ClientOnly { .. }) || (!self.live(v) && !row) {
                 frozen.extend(self.changing_prop_roots(&self.deps_of(v)));
                 fixed.push(name.to_string());
             }
         }
         self.frozen.extend(frozen);
         fixed
+    }
+
+    /// A consumer in `content` of a context that a Provider INSIDE `cir`'s template provides (below `cir` itself) reads,
+    /// in React, that inner Provider wherever the content lands under it; the value the call site hands it (Carry: the
+    /// frame open where the content is written, or the context default) would override it in the clone. Refused by
+    /// name (found with F238: `<Prov>` calling a native `<Frame>` around its `{children}`, the content reading Frame's
+    /// context, printed the default).
+    fn check_inner_providers(&self, cir: &ComponentIR, content: &[Node]) -> Result<(), String> {
+        let modules = self.ctx.modules.borrow();
+        let by_id: HashMap<String, Rc<ComponentIR>> = modules
+            .done()
+            .into_iter()
+            .map(|(_, ir)| (ir.id.clone(), ir))
+            .collect();
+        let mut below = BTreeSet::new();
+        let mut stack: Vec<Rc<ComponentIR>> = cir
+            .children
+            .iter()
+            .filter_map(|c| c.id.as_ref().and_then(|id| by_id.get(id)).cloned())
+            .collect();
+        let mut seen = BTreeSet::new();
+        while let Some(ir) = stack.pop() {
+            if !seen.insert(ir.id.clone()) {
+                continue;
+            }
+            below.extend(ir.provides.iter().map(|p| p.context.clone()));
+            stack.extend(
+                ir.children
+                    .iter()
+                    .filter_map(|c| c.id.as_ref().and_then(|id| by_id.get(id)).cloned()),
+            );
+        }
+        if below.is_empty() {
+            return Ok(());
+        }
+        fn walk(n: &Node, below: &BTreeSet<String>) -> Option<String> {
+            match n {
+                Node::Component {
+                    name,
+                    props,
+                    children,
+                    ..
+                } => props
+                    .iter()
+                    .find_map(|(k, _)| {
+                        let rest = k.strip_prefix("__ctx_")?;
+                        below
+                            .iter()
+                            .any(|c| rest.starts_with(&format!("{c}_")))
+                            .then(|| name.clone())
+                    })
+                    .or_else(|| children.iter().find_map(|c| walk(c, below))),
+                Node::Element { children, .. } | Node::Fragment(children) => {
+                    children.iter().find_map(|c| walk(c, below))
+                }
+                Node::If { then, else_, .. } => {
+                    then.iter().chain(else_).find_map(|c| walk(c, below))
+                }
+                Node::For { body, .. } => body.iter().find_map(|c| walk(c, below)),
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+            }
+        }
+        match content.iter().find_map(|n| walk(n, &below)) {
+            Some(who) => Err(format!(
+                "<{who}> in the content reads a context that a Provider inside `{}` provides around it",
+                cir.export.as_deref().unwrap_or("default")
+            )),
+            None => Ok(()),
+        }
     }
 
     /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
@@ -5016,12 +5168,22 @@ impl Walker<'_, '_> {
 
     /// F320: one prop of a link decision (`instance_needs_link`): `(true, _)` when the value is a function or reads a
     /// prop that changes (the child must follow it, as for state).
-    fn link_input(&self, v: &Expr, d: Deps) -> (bool, Deps) {
+    fn link_input(&self, k: &str, v: &Expr, d: Deps) -> (bool, Deps) {
         (
             matches!(v, Expr::ClientOnly { .. })
-                || (!self.hold_link && self.reads_changing_prop(&d)),
+                || (!self.hold_link && (self.reads_changing_prop(&d) || self.passes_ctx(k, &d))),
             d,
         )
+    }
+
+    /// switch-provider-chain PR3: the frames pass handed a consumer child its context value (`k` is the child's hidden
+    /// `__ctx_*` prop) as one of this component's own (the consumer sits under another component, such as a Thumb
+    /// carried in a trigger's rest, F298). The frame keeps this component's copy current, but the child takes it as a
+    /// prop: unlinked, it would print it once (F319 then freezes the value, and a state Provider above refuses). Only
+    /// that key: a context value an author passes under a key of their own (`name={name}`) keeps F319's answer per call
+    /// site (frozen, refused only where the Provider's value changes).
+    fn passes_ctx(&self, k: &str, d: &Deps) -> bool {
+        k.starts_with("__ctx_") && self.props_live && self.module_rows.get() == 0 && reads_ctx(d)
     }
 
     /// Whether the client can re-create the rows of this list: an enclosing list can, its
@@ -5923,7 +6085,12 @@ impl Walker<'_, '_> {
                         }
                     }
                     for (root, v) in checks {
-                        if matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v) {
+                        // switch-provider-chain PR3 D2: a row value in a list whose rows the client re-creates is a value
+                        // that changes too: a new row would keep the first row's value where the child does not follow it.
+                        if matches!(v, Expr::ClientOnly { .. })
+                            || self.reads_state(v)
+                            || (self.rows_recreated() && !self.deps_of(v).loop_bindings.is_empty())
+                        {
                             let what = if root == crate::ir::SPREAD_KEY {
                                 "a prop spread into it".to_string()
                             } else {
@@ -5972,7 +6139,7 @@ impl Walker<'_, '_> {
                     .into_iter()
                     .map(|(k, v)| {
                         let d = self.deps_while_mounted(&v, name, &k);
-                        self.link_input(&v, d)
+                        self.link_input(&k, &v, d)
                     })
                     .collect();
                 let mut need = instance_needs_link(&child.tier, link_props);
@@ -7101,14 +7268,19 @@ impl Walker<'_, '_> {
         let row_free = props.iter().all(|(_, v)| {
             !matches!(v, Expr::ClientOnly { .. }) && self.deps_of(v).loop_bindings.is_empty()
         });
-        let lists_fixed =
-            self.loop_sources
-                .iter()
-                .zip(&self.lists)
-                .all(|(path, (paths, reactive))| {
-                    path.is_some() || !(*reactive || (!paths.is_empty() && self.props_reactive))
-                });
-        row_free && lists_fixed
+        row_free && !self.rows_recreated()
+    }
+
+    /// The enclosing lists may re-create their rows on the client (a list from state, or from props that change): a row
+    /// made there starts from the row template, with what each instance in it was given at the first paint.
+    fn rows_recreated(&self) -> bool {
+        !self
+            .loop_sources
+            .iter()
+            .zip(&self.lists)
+            .all(|(path, (paths, reactive))| {
+                path.is_some() || !(*reactive || (!paths.is_empty() && self.props_reactive))
+            })
     }
 
     /// Live values the parent binds itself (2b-handlers, R34.18 extended): a prop that reads state and lands in a
@@ -7185,7 +7357,7 @@ impl Walker<'_, '_> {
                 .filter(|(k, v)| {
                     !keys.contains(&k) && !is_handler_prop(k, v) && !(ref_fwd && *k == "ref")
                 })
-                .map(|(_, v)| self.link_input(v, self.deps_of(v))),
+                .map(|(k, v)| self.link_input(k, v, self.deps_of(v))),
         );
         if need != LinkNeed::None {
             return live;
@@ -7898,6 +8070,106 @@ pub(super) fn plain_path(r: &RawExpr, item: Option<&str>) -> Option<PlainPath> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn call(loc: u32, source: Option<&str>, children: Vec<Node>) -> Node {
+        Node::Component {
+            loc,
+            name: "C".into(),
+            source: source.map(str::to_string),
+            imported: None,
+            member: vec![],
+            props: vec![],
+            children,
+            link: None,
+            tier: Tier::Pending,
+            forwarded_ref: false,
+        }
+    }
+
+    fn client(js: &str) -> Expr {
+        Expr::ClientOnly { js: js.into() }
+    }
+
+    // F238 (Mellow, review): two call sites at one offset of one template with different content get different clone
+    // ids (and keys); the same content gets the same one. On main the colliding shape is refused by F3 first, so this
+    // pins the key itself.
+    #[test]
+    fn clone_ids_at_one_site_and_offset_differ_by_content() {
+        let a = vec![Node::Text("a".into())];
+        let b = vec![Node::Text("b".into())];
+        let id = |n: &[Node]| spec_hash(&clone_site("m.tsx#c1", n, &None::<()>), 7);
+        assert_ne!(id(&a), id(&b));
+        assert_eq!(id(&a), id(&a.clone()));
+        assert_ne!(
+            clone_site("m.tsx#c1", &a, &None::<()>),
+            clone_site("m.tsx#c1", &a, &Some("render"))
+        );
+    }
+
+    // F365(a): the refusal in `specialise_host` rests on this set, and no fixture reaches it with a real collision.
+    #[test]
+    fn shared_component_locs_counts_call_sites_that_share_an_offset() {
+        let locs = |n: &Node| shared_component_locs(n).into_iter().collect::<Vec<_>>();
+        // two calls at one offset (nested in a call's own content too): counted
+        let t = Node::Fragment(vec![
+            call(7, None, vec![call(7, None, vec![])]),
+            call(9, None, vec![]),
+        ]);
+        assert_eq!(locs(&t), vec![7]);
+        // distinct offsets: none
+        let t = Node::Fragment(vec![call(1, None, vec![]), call(2, None, vec![])]);
+        assert!(locs(&t).is_empty());
+        // a clone (SPEC_SOURCE) at the offset of its original is not a second call site
+        let t = Node::Fragment(vec![
+            call(7, None, vec![]),
+            call(7, Some(SPEC_SOURCE), vec![]),
+        ]);
+        assert!(locs(&t).is_empty());
+        // ... and two clones are not either
+        let t = Node::Fragment(vec![
+            call(7, Some(SPEC_SOURCE), vec![]),
+            call(7, Some(SPEC_SOURCE), vec![]),
+        ]);
+        assert!(locs(&t).is_empty());
+        // a clone's own content is still walked: a real call inside it that repeats an offset counts
+        let t = Node::Fragment(vec![
+            call(3, None, vec![]),
+            call(7, Some(SPEC_SOURCE), vec![call(3, None, vec![])]),
+        ]);
+        assert_eq!(locs(&t), vec![3]);
+        // under an If (either arm) and a For: counted
+        let t = Node::Fragment(vec![
+            call(5, None, vec![]),
+            Node::If {
+                cond: client("c"),
+                then: vec![call(5, None, vec![])],
+                else_: vec![],
+                and: false,
+            },
+        ]);
+        assert_eq!(locs(&t), vec![5]);
+        let t = Node::Fragment(vec![
+            Node::If {
+                cond: client("c"),
+                then: vec![],
+                else_: vec![call(6, None, vec![])],
+                and: false,
+            },
+            call(6, None, vec![]),
+        ]);
+        assert_eq!(locs(&t), vec![6]);
+        let t = Node::Fragment(vec![
+            call(8, None, vec![]),
+            Node::For {
+                source: client("xs"),
+                item: "x".into(),
+                index: None,
+                key: client("x"),
+                body: vec![call(8, None, vec![])],
+            },
+        ]);
+        assert_eq!(locs(&t), vec![8]);
+    }
 
     fn d(state: &[&str], loops: &[&str]) -> Deps {
         let mut d = Deps::default();

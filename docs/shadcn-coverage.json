@@ -16,9 +16,9 @@
       "native": 1,
       "react": 7
     },
-    "islands": 35,
+    "islands": 34,
     "pagesWithNoJs": 26,
-    "pagesWithNoWorker": 22,
+    "pagesWithNoWorker": 23,
     "jsGzipKb": {
       "min": 0,
       "median": 87,
@@ -91,6 +91,15 @@
       "libraryComponents": 0
     },
     {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 5,
+      "analysisOnlyRows": 0,
+      "appComponents": 5,
+      "libraryComponents": 1
+    },
+    {
       "blocker": "fallback:hook-unsupported",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -107,15 +116,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 4,
       "libraryComponents": 15
-    },
-    {
-      "blocker": "fallback:nested-instance",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
-      "analysisOnlyRows": 0,
-      "appComponents": 4,
-      "libraryComponents": 1
     },
     {
       "blocker": "fallback:control-flow",
@@ -145,7 +145,16 @@
       "libraryComponents": 17
     },
     {
-      "blocker": "fallback:children-rest",
+      "blocker": "fallback:instance-prop-path",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 1
+    },
+    {
+      "blocker": "fallback:slot-child-component",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
@@ -154,7 +163,7 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:slot-child-component",
+      "blocker": "fallback:slot-native",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 2,
@@ -226,7 +235,7 @@
       "libraryComponents": 1
     },
     {
-      "blocker": "fallback:instance-prop-path",
+      "blocker": "fallback:list-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -235,13 +244,13 @@
       "libraryComponents": 1
     },
     {
-      "blocker": "fallback:list-shape",
+      "blocker": "fallback:children-rest",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 1,
-      "libraryComponents": 1
+      "libraryComponents": 0
     },
     {
       "blocker": "fallback:client-function-in-job",
@@ -271,25 +280,7 @@
       "libraryComponents": 0
     },
     {
-      "blocker": "fallback:slot-child-shape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 0
-    },
-    {
       "blocker": "fallback:slot-dynamic",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 0
-    },
-    {
-      "blocker": "fallback:slot-native",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -626,11 +617,13 @@
       "codes": [
         "context-island",
         "external-component",
+        "instance-prop-path",
         "island-children",
         "island-prop",
+        "nested-instance",
         "slot-child-component",
-        "slot-child-shape",
         "slot-dynamic",
+        "slot-native",
         "spread-props"
       ]
     },
@@ -1405,14 +1398,12 @@
       "id": "switch",
       "basis": "measured",
       "tier": "static",
-      "islands": 1,
+      "islands": 0,
       "components": 13,
-      "reactComponents": 1,
-      "jsGzipKb": 89,
-      "workerCalls": 1,
-      "codes": [
-        "children-rest"
-      ]
+      "reactComponents": 0,
+      "jsGzipKb": 10,
+      "workerCalls": 0,
+      "codes": []
     },
     {
       "id": "table",

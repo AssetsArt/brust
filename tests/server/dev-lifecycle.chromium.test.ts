@@ -151,3 +151,24 @@ test('SIGTERM while a child is booting leaves no orphaned `brust start`', async 
     await d.stop()
   }
 }, 120_000)
+
+test('F133: boot prints no `change detected` line; the first edit prints one naming the file', async () => {
+  const d = startDev(0)
+  try {
+    const t0 = Date.now()
+    while (!/\[brust\] ready /.test(d.log())) {
+      if (Date.now() - t0 > 90_000) throw new Error(`never became ready\n${d.log()}`)
+      await sleep(250)
+    }
+    await sleep(1000) // a late root event from the watcher would land by now
+    expect(d.log()).not.toContain('change detected')
+    d.write('pages/Home.tsx', page('second'))
+    const t1 = Date.now()
+    while (!d.log().includes('change detected: pages/Home.tsx')) {
+      if (Date.now() - t1 > 30_000) throw new Error(`the edit was never reported\n${d.log()}`)
+      await sleep(250)
+    }
+  } finally {
+    await d.stop()
+  }
+}, 150_000)
