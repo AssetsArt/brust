@@ -217,6 +217,15 @@
       "libraryComponents": 1
     },
     {
+      "blocker": "fallback:instance-prop-path",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
+      "libraryComponents": 1
+    },
+    {
       "blocker": "fallback:list-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -259,6 +268,15 @@
       "measuredRows": 1,
       "analysisOnlyRows": 0,
       "appComponents": 2,
+      "libraryComponents": 0
+    },
+    {
+      "blocker": "fallback:slot-owner",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 1,
+      "analysisOnlyRows": 0,
+      "appComponents": 1,
       "libraryComponents": 0
     },
     {
@@ -514,15 +532,6 @@
       "libraryComponents": 2
     },
     {
-      "blocker": "fallback:instance-prop-path",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 1
-    },
-    {
       "blocker": "fallback:prop-default-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -629,6 +638,7 @@
       "workerCalls": 2,
       "codes": [
         "external-component",
+        "instance-prop-path",
         "island-prop",
         "nested-instance",
         "spread-props"
@@ -838,6 +848,7 @@
         "key-outside-list",
         "nested-instance",
         "slot-dynamic",
+        "slot-owner",
         "spread-props"
       ]
     },

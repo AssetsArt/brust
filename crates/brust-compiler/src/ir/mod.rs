@@ -217,6 +217,11 @@ pub struct ComponentIR {
     /// shares one factory module with every clone whose chunk is equal (R34.124).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub specialised: bool,
+    /// F307: a clone of a HOST child made for one call site with that call site's slot content (`specialise_host`). Only
+    /// such a clone reads its non-fixed props as signals (S3, narrowed for progress-flip: an R34.122 or F298 clone keeps
+    /// the instance rule, F345 generalises with per-call-site pinning).
+    #[serde(skip)]
+    pub host_clone: bool,
     /// F298: a clone made for one call site whose children were put where the component spreads its rest: the clones
     /// made inside it are keyed by its id too (the same Provider call of the same module holds other content there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -340,6 +345,10 @@ pub struct ComponentIR {
     /// props). A call site that passes a value that changes on the client for one of them falls back (`frozen-prop`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub frozen_props: Vec<String>,
+    /// A prop whose default is a plain module function and which the render calls (`getValueLabel(value, max)`): the call site
+    /// must pass nothing for it, so they join `frozen_props` (a passed value, a function or a changing one, falls back).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub callable_props: Vec<String>,
     /// F320: props read only as the first value of a cell nothing sets (F277, F295): taken once at mount, as React does,
     /// so they never count as changing (`props_are_signal`). Filled by the children pass, read by lowering.
     #[serde(skip)]
@@ -349,10 +358,6 @@ pub struct ComponentIR {
     /// back, `frozen-prop`), whatever the children pass decides about the rest.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub throw_props: Vec<String>,
-    /// A prop whose default is a plain module function and which the render calls (`getValueLabel(value, max)`): the call site
-    /// must pass nothing for it, so they join `frozen_props` (a passed value, a function or a changing one, falls back).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub callable_props: Vec<String>,
     pub state: Vec<StateDecl>,
     pub derived: Vec<DerivedDecl>,
     pub effects: Vec<EffectDecl>,
@@ -460,8 +465,11 @@ pub struct Structural {
 impl ComponentIR {
     /// F320: the chunk has an instance (state, effects, handlers or refs), so it reads its props as a signal wherever
     /// it renders: a named prop the call site does not fix changes on the client.
+    /// F307 §7.3: a host clone too (`host_clone`): its one call site is known and `fixed_props` lists what that call
+    /// site does not change, so every other prop follows the caller.
     pub fn props_are_signal(&self) -> bool {
-        !self.state.is_empty()
+        self.host_clone
+            || !self.state.is_empty()
             || !self.effects.is_empty()
             || !self.handlers.is_empty()
             || !self.refs.is_empty()
@@ -476,6 +484,7 @@ impl ComponentIR {
             export: None,
             unexported: false,
             specialised: false,
+            host_clone: false,
             rest_clone_of: None,
             tier: Tier::Pending,
             props: vec![],
@@ -509,9 +518,9 @@ impl ComponentIR {
             hosts_children: false,
             mount_once: None,
             frozen_props: Vec::new(),
+            callable_props: Vec::new(),
             seed_props: Vec::new(),
             throw_props: Vec::new(),
-            callable_props: Vec::new(),
             state: vec![],
             derived: vec![],
             effects: vec![],

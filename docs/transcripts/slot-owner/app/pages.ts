@@ -1,0 +1,10 @@
+import P_const from './p_const'
+import P_gate from './p_gate'
+import P_handler from './p_handler'
+import P_linked from './p_linked_child'
+import P_linked_static from './p_linked_static'
+import P_list from './p_list'
+import P_state from './p_state'
+import P_text from './p_text'
+import P_two_levels from './p_two_levels'
+export const pages: Record<string, unknown> = { const: P_const, gate: P_gate, handler: P_handler, linked: P_linked, linked_static: P_linked_static, list: P_list, state: P_state, text: P_text, two_levels: P_two_levels }
