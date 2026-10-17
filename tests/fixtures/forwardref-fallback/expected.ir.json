@@ -3,6 +3,9 @@
   "source": "tests/fixtures/forwardref-fallback/input.tsx",
   "tier": "Native",
   "props": [],
+  "sink_refs": [
+    "r"
+  ],
   "holds_island": true,
   "live_forwards": [
     {

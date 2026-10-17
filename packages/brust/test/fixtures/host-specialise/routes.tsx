@@ -7,6 +7,8 @@ import P_linked from './p_linked_child'
 import P_linked_static from './p_linked_static'
 import P_list from './p_list'
 import P_livewrap from './p_livewrap'
+import P_many_diff from './p_many_diff'
+import P_many_same from './p_many_same'
 import P_nested from './p_nested'
 import P_prop from './p_prop'
 import P_rest from './p_rest'
@@ -26,6 +28,8 @@ export const routes = defineRoutes([
   { path: '/linked_static', Component: P_linked_static },
   { path: '/list', Component: P_list },
   { path: '/livewrap', Component: P_livewrap },
+  { path: '/many_diff', Component: P_many_diff },
+  { path: '/many_same', Component: P_many_same },
   { path: '/nested', Component: P_nested },
   { path: '/prop', Component: P_prop },
   { path: '/rest', Component: P_rest },

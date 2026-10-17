@@ -90,6 +90,8 @@ const tierOf = (prefix: string) => {
 // PR3 (children-rest): the Thumb carried in that rest is linked by the trigger's clone, so `thumb` is too.
 for (const page of ['bare', 'thumb']) {
   test(`${page} is served without a React island`, async () => {
+    // the PAGE's tier (F351), not only the Root's: a page that fell back would still serve a native Root
+    expect(tierOf(page === 'bare' ? 'pBare_' : 'pThumb_')).not.toBe('react')
     expect(tierOf('kRoot_')).not.toBe('react')
     const html = await (await fetch(`${base}/${page}`)).text()
     expect(html).not.toContain('brust-island')
