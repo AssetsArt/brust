@@ -670,6 +670,7 @@ fn read_function_as(
     ir.refs = body.refs;
     ir.use_id_slots = body.id_bindings.len();
     ir.uses_collection = body.uses_collection;
+    ir.children_called = reader.names.children_called.get();
     ir.id_bindings = body.id_bindings;
     ir.stores = body.stores;
     ir.diagnostics.extend(body.diagnostics);

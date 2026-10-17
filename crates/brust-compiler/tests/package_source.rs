@@ -548,7 +548,7 @@ export function Item() {
 /// the package's own Provider island would be revived from the map source while the Provider comes from the published
 /// dist: two `createContext` instances, the consumer reads the default. The caller stays React instead, by name.
 #[test]
-fn a_package_source_consumer_under_the_packages_provider_island_keeps_the_caller_react() {
+fn a_package_source_consumer_given_through_a_props_spread_sits_under_the_packages_provider() {
     let mut app = App::new();
     app.file(&format!("{CTXPKG_DIR}/src/index.tsx"), CTXPKG)
         .map("", "ctxpkg", &format!("{CTXPKG_DIR}/src/index.tsx"));
@@ -556,19 +556,20 @@ fn a_package_source_consumer_under_the_packages_provider_island_keeps_the_caller
         "import { Root, Item } from 'ctxpkg'\nfunction Shell(props: React.ComponentProps<typeof Root>) { return <Root {...props} /> }\nexport default function App() { return <Shell><Item /></Shell> }",
     );
     let (_, ir, _) = root_of(&tree);
-    // W1d (progress): the package's state Provider is no longer an island of package source by itself (a call site may
-    // specialise it); this call site cannot (the Provider is reached through a spread wrapper), and the page stays React
-    // either way: by name when the island is the Provider (`context-island`), or because the consumer then has no Provider
-    // above it in the compiled tree (`context-no-provider`).
+    // F328b: a wrapper that spreads its whole props into the package's state Provider carries the call site's children
+    // there (F298 extended to `{...props}`): the consumer then sits under the Provider's own frame, as in React, so the
+    // page lowers and prints the Provider's state (`from-root`), never the context default.
     assert!(
-        rules(ir)
-            .iter()
-            .any(|r| r == "context-island" || r == "context-no-provider"),
+        !matches!(ir.tier, Tier::React { .. }),
         "{:?} {:?}",
         ir.tier,
         ir.diagnostics
     );
-    assert!(matches!(ir.tier, Tier::React { .. }), "{:?}", ir.tier);
+    assert!(
+        tree.iter().any(|(_, _, j)| j.contains("from-root")),
+        "{:?}",
+        tree.iter().map(|(_, _, j)| j.clone()).collect::<Vec<_>>()
+    );
 }
 
 /// F188 (R34.62): a component compiled from a package source and written in app code as a package import also carries

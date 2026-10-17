@@ -322,6 +322,9 @@ pub struct ComponentIR {
     /// `x-collection-use` (the runtime feature loads) and its chunk reads `ctx.items`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub uses_collection: bool,
+    /// F328b: the component writes `typeof children === 'function' ? children(…) : children` and is read as `{children}`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub children_called: bool,
     /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -539,6 +542,7 @@ impl ComponentIR {
             ctx_scoped: Vec::new(),
             ctx_pkg: false,
             uses_collection: false,
+            children_called: false,
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),
