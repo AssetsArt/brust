@@ -496,6 +496,9 @@ fn read_function_as(
         ));
     }
     reader.names.add_cond_consts(func.body.stmts.slice());
+    reader
+        .names
+        .mark_spread_only_objects(func.body.stmts.slice());
     let body = read_body(
         func,
         &mut reader,

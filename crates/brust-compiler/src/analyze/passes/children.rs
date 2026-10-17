@@ -65,6 +65,14 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             || !ir.effects.is_empty()
             || !ir.handlers.is_empty()
             || !ir.refs.is_empty(),
+        props_live: ir.props_are_signal(),
+        hold_link: false,
+        module_rows: std::cell::Cell::new(0),
+        seed_props: if ir.props_are_signal() {
+            snapshot_only_props(ir)
+        } else {
+            BTreeSet::new()
+        },
         handlers: Vec::new(),
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
         absent: BTreeSet::new(),
@@ -85,6 +93,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         spec_salt: ir.rest_clone_of.as_ref().map(|_| ir.id.clone()),
         mount_once: None,
         frozen: BTreeSet::new(),
+        callable_up: false,
         state_inits: ir
             .state
             .iter()
@@ -304,8 +313,13 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         "every RowOnly link is visited by resolve_row_only"
     );
     ir.template = template;
+    if w.callable_up && !ir.callable_props.iter().any(|p| p == "*") {
+        ir.callable_props.push("*".into());
+    }
+    w.frozen.extend(ir.callable_props.iter().cloned());
     w.frozen.extend(ir.throw_props.iter().cloned());
     ir.frozen_props = std::mem::take(&mut w.frozen).into_iter().collect();
+    ir.seed_props = std::mem::take(&mut w.seed_props).into_iter().collect();
     // A list or condition the children lowered folded its slot away: the precompute job no longer
     // computes what no node reads (the server would warn about the missing output on every request).
     let mut live = BTreeSet::new();
@@ -374,6 +388,20 @@ struct Walker<'s, 'c> {
     row_only: HashMap<u32, RowOnlyLink>,
     /// Whether this component's own props can change after first paint (see `children`).
     props_reactive: bool,
+    /// F320: this component's props are a signal on the client wherever it renders: it has an instance of its own
+    /// (state, effects, handlers, refs), so its chunk reads `props()` and every caller that passes a changing value
+    /// links it (lowering binds such a read in a slot already, F96d; `lower::template::expr_reactive` agrees). A
+    /// stateless component's props change only where a caller links it, which its compile cannot know (F75: a child's
+    /// IR depends only on its own subtree): F319's freeze answers for it per call site.
+    props_live: bool,
+    /// F320: this component's props read only as a cell's first value (`ComponentIR::seed_props`).
+    seed_props: BTreeSet<String>,
+    /// F320: the call site being walked keeps F319's freeze instead of a link that only a changing prop would ask for,
+    /// because the child binds a handler on its own element (`forward_handlers`), which needs an unlinked instance.
+    hold_link: bool,
+    /// F325: lists being walked whose source reads module-level data (`lower::template::module_source`): inside them no
+    /// prop counts as changing, so their rows keep F319's freeze and the chunk ships none of that data.
+    module_rows: std::cell::Cell<usize>,
     /// Handlers hoisted from props a static child spreads onto an element (shadcn S1.3).
     handlers: Vec<crate::ir::HandlerDecl>,
     /// This component's named props (its `...rest` holds every other key).
@@ -441,6 +469,9 @@ struct Walker<'s, 'c> {
     mount_once: Option<String>,
     /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
     frozen: BTreeSet<String>,
+    /// W1d (progress): this component spreads its own props/rest onto a child that may call a function prop, so its
+    /// own callers must not pass one (`callable_props` gains `*`).
+    callable_up: bool,
     /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
     state_inits: HashMap<String, Expr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
@@ -684,6 +715,7 @@ fn rebase_sources(
     from: &str,
     to: &str,
     opts: &crate::analyze::component::AnalyzeOptions,
+    modules: &std::cell::RefCell<crate::analyze::modules::ModuleCache>,
 ) -> Result<(), String> {
     // F267: the clone is compiled in the module the content was written in: every name reads as it did.
     if from == to {
@@ -694,6 +726,8 @@ fn rebase_sources(
             Node::Component {
                 name,
                 source,
+                imported,
+                member,
                 children,
                 ..
             } => {
@@ -709,26 +743,53 @@ fn rebase_sources(
                         };
                         *s = relative_spec(to, &target);
                     }
-                    Some(_) => {
+                    Some(s) => {
                         if crate::analyze::modules::package_scope(from)
                             != crate::analyze::modules::package_scope(to)
                         {
-                            return Err(format!(
-                                "<{name}> is imported from a package of another scope than the component it is given to"
-                            ));
+                            // W1d (progress): the export is a module of the build's package sources: name that file
+                            // from the clone's module instead, when it compiles without React.
+                            let err = || {
+                                format!(
+                                    "<{name}> is imported from a package of another scope than the component it is given to"
+                                )
+                            };
+                            let (Some(imp), Ok(entry)) = (
+                                imported.as_deref(),
+                                crate::analyze::modules::resolve_package(from, s, opts),
+                            ) else {
+                                return Err(err());
+                            };
+                            let Some((path, export)) = declared_member(&entry, imp, member, opts)
+                            else {
+                                return Err(err());
+                            };
+                            if !crate::analyze::modules::is_package_source(&path) {
+                                return Err(err());
+                            }
+                            let lookup = compile(&path, &export, None, opts, modules);
+                            if package_needs_react(&lookup, &modules.borrow(), false).is_some() {
+                                return Err(err());
+                            }
+                            *s = relative_spec(to, &path);
+                            *imported = Some(match export {
+                                Export::Default => "default".to_string(),
+                                Export::Named(n) => n,
+                            });
+                            member.clear();
                         }
                     }
                 }
-                rebase_sources(children, from, to, opts)?;
+                rebase_sources(children, from, to, opts, modules)?;
             }
             Node::Element { children, .. } | Node::Fragment(children) => {
-                rebase_sources(children, from, to, opts)?
+                rebase_sources(children, from, to, opts, modules)?
             }
             Node::If { then, else_, .. } => {
-                rebase_sources(then, from, to, opts)?;
-                rebase_sources(else_, from, to, opts)?;
+                rebase_sources(then, from, to, opts, modules)?;
+                rebase_sources(else_, from, to, opts, modules)?;
             }
-            Node::For { body, .. } => rebase_sources(body, from, to, opts)?,
+            Node::For { body, .. } => rebase_sources(body, from, to, opts, modules)?,
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
@@ -775,7 +836,14 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         match n {
             Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children") =>
             {
-                *n = Node::Fragment(content.take().unwrap_or_default());
+                let mut nodes = content.take().unwrap_or_default();
+                // F307 S4: one node takes the slot's own place, so a bare text slot that is an element's only child binds
+                // `x-text` on that element (as a hand-written `<div>{x}</div>`), not on a wrapper React does not print.
+                *n = if nodes.len() == 1 {
+                    nodes.pop().unwrap()
+                } else {
+                    Node::Fragment(nodes)
+                };
             }
             Node::Element { children, .. }
             | Node::Component { children, .. }
@@ -797,10 +865,19 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         // (or the whole props) it spreads carries it as `children` onto an element or a component. The clone cannot
         // say where that lands (`splice_rest_children` is the forwarder's), so it is refused and the call site keeps
         // its React island, which carries the content.
-        0 if !content.is_empty() && reads_rest_or_props(ir) => Err(
-            "the component spreads its `...rest` (or props) and the content given to it would reach that spread as `children`"
-                .into(),
-        ),
+        // W1d (progress): ONE host element with no children of its own that spreads the rest (or the props) is where React puts
+        // them (explicit JSX children win over a spread's `children`, none are written): the content is that element's.
+        0 if !content.is_empty() && reads_rest_or_props(ir) => {
+            let mut content = Some(content);
+            if put_into_rest_host(&mut ir.template, &mut content) == 1 && content.is_none() {
+                Ok(())
+            } else {
+                Err(
+                    "the component spreads its `...rest` (or props) and the content given to it would reach that spread as `children`"
+                        .into(),
+                )
+            }
+        }
         0 => Ok(()),
         1 => {
             put(&mut ir.template, &mut Some(content));
@@ -808,6 +885,78 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
         }
         n => Err(format!("the component reads its children {n} times")),
     }
+}
+
+/// The elements of `n` that spread the rest or the props among their attributes: how many there are, and the content moved
+/// into the first when it has no children of its own and it is the only one (the caller checks the count).
+fn put_into_rest_host(n: &mut Node, content: &mut Option<Vec<Node>>) -> usize {
+    fn spreads_rest(attrs: &[Attr]) -> bool {
+        attrs.iter().any(|a| {
+            matches!(a, Attr::Spread(Expr::Raw(r))
+                if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop }
+                    if name == crate::ir::REST_PROPS || name == "*"))
+        })
+    }
+    fn comp_spreads_rest(props: &[(String, Expr)]) -> bool {
+        props.iter().any(|(k, v)| {
+            k == crate::ir::SPREAD_KEY
+                && matches!(v, Expr::Raw(r)
+                    if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop }
+                        if name == crate::ir::REST_PROPS || name == "*"))
+        })
+    }
+    fn count(n: &Node) -> usize {
+        match n {
+            Node::Element {
+                attrs, children, ..
+            } => usize::from(spreads_rest(attrs)) + children.iter().map(count).sum::<usize>(),
+            Node::Component {
+                props, children, ..
+            } => usize::from(comp_spreads_rest(props)) + children.iter().map(count).sum::<usize>(),
+            Node::Fragment(children) => children.iter().map(count).sum(),
+            Node::If { then, else_, .. } => then.iter().chain(else_).map(count).sum(),
+            Node::For { body, .. } => body.iter().map(count).sum(),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => 0,
+        }
+    }
+    fn put(n: &mut Node, content: &mut Option<Vec<Node>>) {
+        match n {
+            Node::Element {
+                attrs, children, ..
+            } => {
+                if spreads_rest(attrs) && children.is_empty() {
+                    if let Some(c) = content.take() {
+                        *children = c;
+                    }
+                } else {
+                    children.iter_mut().for_each(|c| put(c, content));
+                }
+            }
+            Node::Component {
+                props, children, ..
+            } => {
+                if comp_spreads_rest(props) && children.is_empty() {
+                    if let Some(c) = content.take() {
+                        *children = c;
+                    }
+                } else {
+                    children.iter_mut().for_each(|c| put(c, content));
+                }
+            }
+            Node::Fragment(children) => children.iter_mut().for_each(|c| put(c, content)),
+            Node::If { then, else_, .. } => then
+                .iter_mut()
+                .chain(else_.iter_mut())
+                .for_each(|c| put(c, content)),
+            Node::For { body, .. } => body.iter_mut().for_each(|c| put(c, content)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    let total = count(n);
+    if total == 1 {
+        put(n, content);
+    }
+    total
 }
 
 /// F324: whether the template (or a render prop's body) of `ir` reads its `...rest` or its whole props anywhere.
@@ -818,6 +967,34 @@ fn reads_rest_or_props(ir: &ComponentIR) -> bool {
     nodes
         .into_iter()
         .any(|n| cx.deps_node(n, &[]).props.iter().any(|p| p == "*"))
+}
+
+/// F307 S4: the rule a host clone refused for a bare text slot is reported under.
+const SLOT_TEXT_WRAPPER: &str = "slot-text-wrapper";
+
+/// F307 S4: the template's `{children}` slot is the only child of an element (a text node spliced there binds `x-text`
+/// on that element, as a hand-written `<div>{x}</div>` does).
+fn children_slot_is_lone(n: &Node) -> bool {
+    fn is_slot(n: &Node) -> bool {
+        matches!(n, Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children"))
+    }
+    match n {
+        Node::Element { children, .. } if children.len() == 1 && is_slot(&children[0]) => true,
+        Node::Element { children, .. }
+        | Node::Component { children, .. }
+        | Node::Fragment(children) => children.iter().any(children_slot_is_lone),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(children_slot_is_lone),
+        Node::For { body, .. } => body.iter().any(children_slot_is_lone),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+    }
+}
+
+/// F342: the children a call site gives reach the component's markup only through its `...rest` (or whole props)
+/// spread: it prints no `{children}` and does not name `children` (which a rest would then leave out).
+fn carries_children_by_rest(ir: &ComponentIR) -> bool {
+    !prints_children_slot(ir)
+        && !ir.props.iter().any(|p| p.name == "children")
+        && reads_rest_or_props(ir)
 }
 
 /// F309: the template of `ir` prints `{children}` somewhere.
@@ -914,7 +1091,7 @@ type Specialised = (String, String, Vec<(String, Expr)>);
 /// What cannot cross is refused by name: the caller's whole props or `...rest`, a ref, a list row's bindings, imports,
 /// stores, module-level functions, and a name read inside code printed as written.
 /// The hidden input that carries the call site's whole `...rest` into a clone (F278).
-const REST_INPUT: &str = "__in_rest";
+pub(crate) const REST_INPUT: &str = "__in_rest";
 
 struct Carry<'a> {
     native: &'a [(u32, String, usize)],
@@ -1995,12 +2172,27 @@ fn external_component_id(source: &str, export: &str, member: &[String]) -> Strin
     named_component_id(&scope, &name)
 }
 
+/// W1d (progress): a Provider that is React in its own module only because its frame needs a native provider
+/// (`context-state`) and that a call site can specialise (`specialisable`): the call site builds a native clone, so the
+/// package component is not an island of package source.
+fn state_frame_provider(ir: &ComponentIR) -> bool {
+    !ir.provides.is_empty()
+        && !crate::analyze::context::frames_are_plain(ir)
+        && crate::analyze::context::native_provider_problem(ir).is_none()
+        && ir
+            .diagnostics
+            .iter()
+            .filter(|d| d.class == DiagClass::Fallback)
+            .all(|d| d.rule == "context-state")
+}
+
 /// Why a component compiled from package source cannot be used as compiled (F153c): it, or a component in its
 /// subtree, renders as React (an island of a package's SOURCE would run code the React build never ran), or it
 /// failed to compile. `None` = static or native all the way down.
 fn package_needs_react(
     lookup: &Lookup,
     modules: &crate::analyze::modules::ModuleCache,
+    state_frames: bool,
 ) -> Option<String> {
     let ir = match lookup {
         Lookup::Compiled(ir) => ir.clone(),
@@ -2018,7 +2210,9 @@ fn package_needs_react(
         if !seen.insert(ir.id.clone()) {
             continue;
         }
-        if let Tier::React { reason, .. } = &ir.tier {
+        if let Tier::React { reason, .. } = &ir.tier
+            && !(state_frames && state_frame_provider(&ir))
+        {
             return Some(format!(
                 "{} renders as React in its source: {reason}",
                 ir.source
@@ -2098,7 +2292,12 @@ impl Walker<'_, '_> {
                 self.list_uses.push(use_);
                 self.items.push(item.clone());
                 self.indexes.push(index.clone());
+                let module = self.module_list(source);
+                self.module_rows
+                    .set(self.module_rows.get() + usize::from(module));
                 body.iter_mut().for_each(|c| self.node(c));
+                self.module_rows
+                    .set(self.module_rows.get() - usize::from(module));
                 self.indexes.pop();
                 self.items.pop();
                 self.loop_sources.pop();
@@ -2615,6 +2814,35 @@ impl Walker<'_, '_> {
                         Err(why) => self.spec_failure = Some((*loc, why)),
                     }
                 }
+                // F307 (option B): the children pass refused this call site's content, printed inside the child's own host
+                // (`slot-owner`): the child is cloned for it with the content at its `{children}`, so the content's
+                // directives are the clone's own. After the content's frames are read, so A1 sees every consumer in it.
+                if owner.is_none()
+                    && self.st.host_spec.contains(loc)
+                    && !children.is_empty()
+                    && let Some(from) = child.path.clone()
+                {
+                    match self.specialise_host(&cir, &from, *loc, children) {
+                        Ok((id, key, inputs)) => {
+                            props.extend(inputs);
+                            *name = id;
+                            *source = Some(SPEC_SOURCE.to_string());
+                            *imported = Some(key);
+                            member.clear();
+                            children.clear();
+                        }
+                        Err(why) => diags.push(Diagnostic::info(
+                            if why.starts_with(SLOT_TEXT_WRAPPER) {
+                                SLOT_TEXT_WRAPPER
+                            } else {
+                                "host-specialise-unsupported"
+                            },
+                            format!("the children of <{name}> stay outside it: {why}"),
+                            *loc,
+                            "",
+                        )),
+                    }
+                }
             }
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
@@ -2669,7 +2897,7 @@ impl Walker<'_, '_> {
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;
-        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts, ctx.modules)?;
         // B7: the render prop's body moves into the clone like the children do. Any other function the call site
         // passes cannot cross (the clone has no instance to hand it to).
         let mut render = render;
@@ -2685,7 +2913,7 @@ impl Walker<'_, '_> {
             let locals: Vec<String> = rp.params.iter().map(|(_, l)| l.clone()).collect();
             self.check_owner(&rp.body, owner)?;
             carry.nodes(&mut rp.body, &locals)?;
-            rebase_sources(&mut rp.body, ctx.path, c_path, ctx.opts)?;
+            rebase_sources(&mut rp.body, ctx.path, c_path, ctx.opts, ctx.modules)?;
         }
         let exp = cir.export.as_deref().unwrap_or("default");
         // One clone per call site: its id is built from the call site, so its jinja, jobs and instance records are the
@@ -2773,7 +3001,7 @@ impl Walker<'_, '_> {
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;
-        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts)?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts, ctx.modules)?;
         let exp = cir.export.as_deref().unwrap_or("default");
         let site = match &self.spec_salt {
             Some(salt) => format!("{}#{salt}", ctx.path),
@@ -2824,6 +3052,132 @@ impl Walker<'_, '_> {
             return Err(format!("the specialised component needs React ({reason})"));
         }
         Ok((clone, (id, key, inputs)))
+    }
+
+    /// F307: a `slot-owner` refusal at `loc` the frames pass may answer by cloning the child with the content (on the
+    /// component's second read, `run_passes`). Only a lowered child of a module (not a Provider, not a clone) that prints
+    /// a real `{children}` slot (S1), and not polymorphic (`asChild`: its host is the element between its tags, which
+    /// the call site must keep); a call site already tried keeps its refusal.
+    fn want_host(&mut self, loc: u32, child: &Child) {
+        if child.path.is_some()
+            && child.poly.is_none()
+            && !self.st.host_spec.contains(&loc)
+            && child
+                .ir
+                .as_deref()
+                .is_some_and(|c| c.provides.is_empty() && !c.specialised && prints_children_slot(c))
+        {
+            self.st.host_wanted.insert(loc);
+        }
+    }
+
+    /// F307 (option B): a clone of the host child `cir` whose `{children}` is `content`, compiled as a component of its
+    /// own for this call site. The call site's names the content reads cross as hidden inputs (`Carry`, as for a
+    /// Provider's content, R34.123). Refused, and the call site keeps its `slot-owner` refusal, when: the child is a
+    /// Provider or a clone, does not print a real `{children}` slot (S1: children that reach its element through
+    /// `...rest` are F324's), the content reads the frame of a native Provider around the call site (A1 / C2: no frame
+    /// crosses the clone's boundary), Carry cannot express a name, or the clone still needs React.
+    fn specialise_host(
+        &mut self,
+        cir: &Rc<ComponentIR>,
+        c_path: &str,
+        loc: u32,
+        content: &[Node],
+    ) -> Result<Specialised, String> {
+        if !cir.provides.is_empty() || cir.specialised {
+            return Err("it provides a context, or is a clone already".into());
+        }
+        if !matches!(cir.tier, Tier::Native | Tier::Static) {
+            return Err("it is not lowered".into());
+        }
+        if !prints_children_slot(cir) {
+            return Err("it does not print a `{children}` slot of its own".into());
+        }
+        // S4: a bare text slot of the content is printed in a `<span x-text>` unless it is an element's only child; React
+        // prints a text node, so that clone would not render what React renders.
+        if content.iter().any(|c| matches!(c, Node::Slot(_)))
+            && !(content.len() == 1 && children_slot_is_lone(&cir.template))
+        {
+            return Err(format!(
+                "{SLOT_TEXT_WRAPPER}: a bare text slot of the content would need a wrapper element React does not print"
+            ));
+        }
+        let ctx = self.ctx;
+        let export = match &cir.export {
+            Some(n) => Export::Named(n.clone()),
+            None => Export::Default,
+        };
+        let mut nodes = content.to_vec();
+        // No native frame is opened by the clone for its content (`usize::MAX` owns none): a consumer of a native
+        // Provider around the call site would read the clone's members by name (A1, and scoped frames, C2).
+        self.check_owner(&nodes, usize::MAX)?;
+        let mut carry = Carry::new(
+            &self.native_props,
+            usize::MAX,
+            &self.module_names,
+            &self.row_handlers,
+            &self.st.handler_names,
+            &self.module_consts,
+            cir.props.iter().map(|p| p.name.clone()).collect(),
+        );
+        carry.nodes(&mut nodes, &[])?;
+        rebase_sources(&mut nodes, ctx.path, c_path, ctx.opts, ctx.modules)?;
+        let exp = cir.export.as_deref().unwrap_or("default");
+        let site = match &self.spec_salt {
+            Some(salt) => format!("{}#{salt}", ctx.path),
+            None => ctx.path.to_string(),
+        };
+        let id = format!("{}_h{:08x}", cir.id, spec_hash(&site, loc));
+        let key = format!("{c_path}#{exp}~host~{site}~{loc}");
+        let clone_id = id.clone();
+        let (inputs, clone_handlers) = carry.finish();
+        let fixed: Vec<String> = inputs
+            .iter()
+            .filter(|(_, v)| !self.source_reactive(v))
+            .map(|(h, _)| h.clone())
+            .collect();
+        let mut once = Some(nodes);
+        let clone = crate::analyze::modules::compile_specialised(
+            c_path,
+            &export,
+            key.clone(),
+            ctx.opts,
+            ctx.modules,
+            &mut |ir: &mut ComponentIR| {
+                splice_children(ir, once.take().unwrap_or_default())?;
+                for (hidden, _) in &inputs {
+                    ir.props.push(crate::ir::PropDecl {
+                        name: hidden.clone(),
+                        local: hidden.clone(),
+                        ts_type: None,
+                        default: None,
+                    });
+                }
+                ir.handlers.extend(clone_handlers.iter().cloned());
+                ir.fixed_props = fixed.clone();
+                ir.id = clone_id.clone();
+                ir.specialised = true;
+                ir.host_clone = true;
+                Ok(())
+            },
+        )?;
+        if let Tier::React { reason, .. } = &clone.tier {
+            let reason = reason.clone();
+            ctx.modules.borrow_mut().remove(&key);
+            return Err(format!("the specialised component needs React ({reason})"));
+        }
+        Ok((id, key, inputs))
+    }
+
+    /// F342: a spread at this call site of this component's whole props, or of its `...rest` while it does not name
+    /// `children`: the call site's children given to this component travel in it.
+    fn spreads_own_children(&self, props: &[(String, Expr)]) -> bool {
+        props.iter().any(|(k, v)| {
+            k == crate::ir::SPREAD_KEY
+                && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                    RawKind::Ident { name, kind: IdentKind::Prop }
+                        if name == "*" || (name == crate::ir::REST_PROPS && !self.own_named.contains("children"))))
+        })
     }
 
     /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
@@ -3385,7 +3739,11 @@ impl Walker<'_, '_> {
             Export::Named(n) => named_component_id(&path, n),
         };
         let lookup = compile(&path, &export, None, ctx.opts, ctx.modules);
-        let needs_react = package_needs_react(&lookup, &ctx.modules.borrow());
+        // A state-frame Provider is not an island of package source when written in app code: a call site specialises
+        // it, and one that cannot keeps the published export's island (F188). From inside a package source there is
+        // no published spelling to fall back to.
+        let needs_react =
+            package_needs_react(&lookup, &ctx.modules.borrow(), !is_package_source(from));
         if let Some(why) = needs_react {
             // Only the outermost package import is the island: a nested one says nothing new.
             if is_package_source(from) {
@@ -4112,6 +4470,44 @@ impl Walker<'_, '_> {
                 }))
     }
 
+    /// F325: the list source reads module-level data (an import, a module const).
+    fn module_list(&self, source: &Expr) -> bool {
+        crate::lower::template::module_source(&self.deps_of(source))
+    }
+
+    /// F320: `e` changes on the client: state, or a prop of a component whose props are a signal (`props_live`).
+    fn live(&self, e: &Expr) -> bool {
+        self.reads_state(e) || self.reads_changing_prop(&self.deps_of(e))
+    }
+
+    /// F320: `d` reads a named prop that changes on the client: this component's props are a signal (`props_live`) and
+    /// the prop is not one its call site fixed.
+    fn reads_changing_prop(&self, d: &Deps) -> bool {
+        self.props_live
+            && self.module_rows.get() == 0
+            && d.props.iter().any(|p| {
+                let root = p.split(['.', '[']).next().unwrap_or(p);
+                // The rest or the whole props object (`*`) stays with F319's freeze, answered per call site: counting it
+                // here would link every child it is spread into (and refuse a handler in that spread, spread-handler).
+                // A clone's `__in_rest` (F278/F298) is the call site's rest carried in: the same, answered at that site.
+                // A context value (`__ctx_*`) is fed by the Provider's frame, not by a caller: its own machinery binds it.
+                !matches!(root, "children" | "*" | REST_INPUT)
+                    && !root.starts_with("__ctx_")
+                    && !self.fixed_props.contains(root)
+                    && !self.seed_props.contains(root)
+            })
+    }
+
+    /// F320: one prop of a link decision (`instance_needs_link`): `(true, _)` when the value is a function or reads a
+    /// prop that changes (the child must follow it, as for state).
+    fn link_input(&self, v: &Expr, d: Deps) -> (bool, Deps) {
+        (
+            matches!(v, Expr::ClientOnly { .. })
+                || (!self.hold_link && self.reads_changing_prop(&d)),
+            d,
+        )
+    }
+
     /// Whether the client can re-create the rows of this list: an enclosing list can, its
     /// source changes (state, or props of a component whose props can change), or its body
     /// carries a directive of its own.
@@ -4128,18 +4524,23 @@ impl Walker<'_, '_> {
             } => {
                 attrs.iter().any(|a| match a {
                     Attr::Event { .. } | Attr::Ref { .. } => true,
-                    Attr::Dynamic { value, .. } | Attr::InnerHtml { value } => {
-                        self.reads_state(value)
-                    }
+                    Attr::Dynamic { value, .. } | Attr::InnerHtml { value } => self.live(value),
                     _ => false,
                 }) || children.iter().any(|c| self.body_directive(c))
             }
-            Node::Slot(e) => self.reads_state(e),
+            // F320: a prop that changes is as live as state for a row.
+            Node::Slot(e) => self.live(e),
             Node::If {
                 cond, then, else_, ..
-            } => self.reads_state(cond) || then.iter().chain(else_).any(|c| self.body_directive(c)),
+            } => self.live(cond) || then.iter().chain(else_).any(|c| self.body_directive(c)),
             Node::For { source, body, .. } => {
-                self.source_reactive(source) || body.iter().any(|c| self.body_directive(c))
+                let module = self.module_list(source);
+                self.module_rows
+                    .set(self.module_rows.get() + usize::from(module));
+                let r = self.source_reactive(source) || body.iter().any(|c| self.body_directive(c));
+                self.module_rows
+                    .set(self.module_rows.get() - usize::from(module));
+                r
             }
             Node::Component { link, children, .. } => {
                 link.is_some_and(|id| !self.row_only.contains_key(&id))
@@ -4224,6 +4625,9 @@ impl Walker<'_, '_> {
         for n in nodes {
             match n {
                 Node::For { source, body, .. } => {
+                    let module = self.module_list(source);
+                    self.module_rows
+                        .set(self.module_rows.get() + usize::from(module));
                     let r = self.row_reactive(source, body, reactive);
                     if !r {
                         // F319: rows printed once (no x-for): a prop they read would not be followed.
@@ -4235,6 +4639,8 @@ impl Walker<'_, '_> {
                         }
                     }
                     self.resolve_row_only(body, r);
+                    self.module_rows
+                        .set(self.module_rows.get() - usize::from(module));
                 }
                 Node::Component { link, children, .. } => {
                     if let Some(id) = *link
@@ -4338,6 +4744,7 @@ impl Walker<'_, '_> {
                 "drop the ref, or keep this component in React",
             ));
         }
+        self.hold_link = false;
         let live = self.forward_live(name, *loc, props, &child, ref_fwd);
         let (mut hoisted, unbound) = self.forward_handlers(name, *loc, props, &child, &live);
         // A hoisted handler is a member of this component, printed from its own declaration: the prop's slot in the
@@ -4923,6 +5330,43 @@ impl Walker<'_, '_> {
                             }
                         }
                     }
+                    // W1d (progress): a function passed for a prop the child's helper call may run (`getValueLabel={fmt}`,
+                    // an arrow, an import) is never run by the child's job, which evaluates the module's own default:
+                    // refused whatever the value is.
+                    for root in &c.callable_props {
+                        // A key written at this call site refuses. A spread of this component's own props or rest
+                        // (`{...props}` onto the Root) carries whatever ITS callers pass: the requirement moves up
+                        // to them (`*`), and the refusal happens at the concrete call site.
+                        let mut refuse = false;
+                        for (k, v) in props.iter() {
+                            if k == crate::ir::SPREAD_KEY {
+                                if matches!(v, Expr::ClientOnly { .. })
+                                    || self.reads_state(v)
+                                    || self.deps_of(v).props.is_empty()
+                                {
+                                    refuse = true;
+                                } else {
+                                    self.callable_up = true;
+                                }
+                            } else if k == root
+                                || (root == "*"
+                                    && k != "children"
+                                    && (c.props_rest.is_none() || !named.contains(k.as_str()))
+                                    // a literal (`data-x="1"`) is not a function
+                                    && !matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if r.json_literal().is_some()))
+                            {
+                                refuse = true;
+                            }
+                        }
+                        if refuse {
+                            self.diagnostics.push(Diagnostic::fallback(
+                                "frozen-prop",
+                                format!("<{name}> may call a function prop (`{root}`), which a call site passes here; the server evaluates the module's own default, not the function passed"),
+                                *loc,
+                                "do not pass the function, or keep this component in React",
+                            ));
+                        }
+                    }
                     for (root, v) in checks {
                         if matches!(v, Expr::ClientOnly { .. }) || self.reads_state(v) {
                             let what = if root == crate::ir::SPREAD_KEY {
@@ -4965,10 +5409,8 @@ impl Walker<'_, '_> {
                     .collect::<Vec<_>>()
                     .into_iter()
                     .map(|(k, v)| {
-                        (
-                            matches!(v, Expr::ClientOnly { .. }),
-                            self.deps_while_mounted(&v, name, &k),
-                        )
+                        let d = self.deps_while_mounted(&v, name, &k);
+                        self.link_input(&v, d)
                     })
                     .collect();
                 let mut need = instance_needs_link(&child.tier, link_props);
@@ -5082,12 +5524,33 @@ impl Walker<'_, '_> {
         // write the child's members. Directives are owned by the component whose scope resolves their names; until a
         // frame can say otherwise (a native Provider), the only owner of slot content is its caller, and the caller
         // stays on React.
-        if child.hosts_children && !matches!(child.tier, Tier::React { .. }) && !children.is_empty()
+        // F342: the same for a native child whose `...rest` (or whole props) carries the children onto an element of its
+        // own: everything a native child prints is under its host.
+        let rest_hosts = matches!(child.tier, Tier::Native)
+            && child.ir.as_deref().is_some_and(carries_children_by_rest);
+        // F342 (Mellow F1): THIS component's own children travel in its rest or props, spread at this call site into a
+        // child that hosts what it is given (a native host, or a static child linked here): they reach that host
+        // whatever this component is, so it hosts its children too (`hosts_children`, read by its callers' guard).
+        if self.spreads_own_children(props)
+            && ((!matches!(child.tier, Tier::React { .. }) && (child.hosts_children || rest_hosts))
+                || (link.is_some()
+                    && matches!(child.tier, Tier::Static)
+                    && child
+                        .ir
+                        .as_deref()
+                        .is_some_and(|c| prints_children_slot(c) || carries_children_by_rest(c))))
+        {
+            self.passes_to_host = true;
+        }
+        if (child.hosts_children || rest_hosts)
+            && !matches!(child.tier, Tier::React { .. })
+            && !children.is_empty()
         {
             if children.iter().any(template_reads_children) {
                 self.passes_to_host = true;
             }
             if let Some(what) = children.iter().find_map(|c| self.owned_directive(c)) {
+                self.want_host(*loc, &child);
                 self.diagnostics.push(Diagnostic::fallback(
                     "slot-owner",
                     format!(
@@ -5104,9 +5567,13 @@ impl Walker<'_, '_> {
         if link.is_some()
             && matches!(child.tier, Tier::Static)
             && !children.is_empty()
-            && child.ir.as_deref().is_some_and(prints_children_slot)
+            && child
+                .ir
+                .as_deref()
+                .is_some_and(|c| prints_children_slot(c) || carries_children_by_rest(c))
             && let Some(what) = children.iter().find_map(|c| self.owned_directive(c))
         {
+            self.want_host(*loc, &child);
             self.diagnostics.push(Diagnostic::fallback(
                 "slot-owner",
                 format!(
@@ -5928,7 +6395,8 @@ impl Walker<'_, '_> {
                 || matches!(v, Expr::ClientOnly { .. })
                 || cands.iter().any(|(c, _)| c == k)
                 || !child.spread.lands(k)
-                || !self.reads_state(v)
+                // F320: a prop that changes is as live as state here (it is forwarded, not printed once).
+                || !self.live(v)
                 || !(live_key_ok(k) || self.snapshot_key_ok(k, v))
                 // F296 C1 / F299: a Slot merges the call site's `style` and `className` with its child's.
                 || (matches!(k.as_str(), "style" | "class" | "className")
@@ -5973,7 +6441,7 @@ impl Walker<'_, '_> {
                 .filter(|(k, v)| {
                     !keys.contains(&k) && !is_handler_prop(k, v) && !(ref_fwd && *k == "ref")
                 })
-                .map(|(_, v)| (matches!(v, Expr::ClientOnly { .. }), self.deps_of(v))),
+                .map(|(_, v)| self.link_input(v, self.deps_of(v))),
         );
         if need != LinkNeed::None {
             return live;
@@ -6141,16 +6609,20 @@ impl Walker<'_, '_> {
             .filter(|(k, _)| !want.contains(k) && !dropped.contains(k) && !live.contains(k))
             .cloned()
             .collect();
-        let rest: Vec<(bool, Deps)> = rest
+        let rest: Vec<(Expr, Deps)> = rest
             .iter()
-            .map(|(k, v)| {
-                (
-                    matches!(v, Expr::ClientOnly { .. }),
-                    self.deps_while_mounted(v, name, k),
-                )
-            })
+            .map(|(k, v)| (v.clone(), self.deps_while_mounted(v, name, k)))
             .collect();
-        let need = instance_needs_link(&child.tier, rest);
+        let need = instance_needs_link(
+            &child.tier,
+            rest.iter()
+                .map(|(v, d)| (matches!(v, Expr::ClientOnly { .. }), d.clone())),
+        );
+        // F320: a link only a changing prop would ask for gives way to the handler: the instance stays unlinked and
+        // F319's freeze answers for those props per call site (a caller passing a constant keeps the page native).
+        if need == LinkNeed::None && rest.iter().any(|(_, d)| self.reads_changing_prop(d)) {
+            self.hold_link = true;
+        }
         if need != LinkNeed::None {
             let why = match need {
                 LinkNeed::RowOnly => format!(
@@ -6544,7 +7016,7 @@ fn names_word(s: &str, name: &str) -> bool {
 }
 
 /// The link decision for one `<Child …/>` from the child's tier and what each prop reads
-/// (`function` = the prop is `Expr::ClientOnly`).
+/// (`function` = the prop is `Expr::ClientOnly`, or F320 reads a prop that changes: the child must follow it).
 pub fn instance_needs_link(tier: &Tier, props: impl IntoIterator<Item = (bool, Deps)>) -> LinkNeed {
     let mut loop_only = false;
     for (function, d) in props {

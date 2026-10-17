@@ -556,8 +556,14 @@ fn a_package_source_consumer_under_the_packages_provider_island_keeps_the_caller
         "import { Root, Item } from 'ctxpkg'\nfunction Shell(props: React.ComponentProps<typeof Root>) { return <Root {...props} /> }\nexport default function App() { return <Shell><Item /></Shell> }",
     );
     let (_, ir, _) = root_of(&tree);
+    // W1d (progress): the package's state Provider is no longer an island of package source by itself (a call site may
+    // specialise it); this call site cannot (the Provider is reached through a spread wrapper), and the page stays React
+    // either way: by name when the island is the Provider (`context-island`), or because the consumer then has no Provider
+    // above it in the compiled tree (`context-no-provider`).
     assert!(
-        rules(ir).contains(&"context-island".to_string()),
+        rules(ir)
+            .iter()
+            .any(|r| r == "context-island" || r == "context-no-provider"),
         "{:?} {:?}",
         ir.tier,
         ir.diagnostics

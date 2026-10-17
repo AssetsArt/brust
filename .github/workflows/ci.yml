@@ -342,6 +342,10 @@ jobs:
       - run: bun test --timeout 120000 tests/server/frozen-prop.chromium.test.ts
       # F309: a linked static child hosting slot content with a linked prop is refused (slot-owner); served == React.
       - run: bun test --timeout 120000 tests/server/linked-slot.chromium.test.ts
+      # F342: slot content a child carries through its rest onto its own host is refused (slot-owner); served == React.
+      - run: bun test --timeout 120000 tests/server/rest-host.chromium.test.ts
+      # F307: slot content a child prints in its own host is cloned with the child per call site; served == React.
+      - run: bun test --timeout 120000 tests/server/host-specialise.chromium.test.ts
       # F298: a consumer passed as children through a component's rest sits under that component's Provider; served == React.
       - run: bun test --timeout 120000 tests/server/rest-children.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/spec-children.test.ts
@@ -349,6 +353,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/form-control.chromium.test.ts
       # F295: a snapshot through a forwarding spread where every instance mounts once; a guarded mount refused.
       - run: bun test --timeout 120000 tests/server/snapshot-spread.chromium.test.ts
+      # F321/F322: loader data differing only in key order is served in its own order each time; integer-like keys first.
+      - run: bun test --timeout 120000 tests/server/loader-order.test.ts
       # F333: an unsorted object literal read by Object.entries / Object.keys keeps its JS key order; served == React.
       - run: bun test --timeout 120000 tests/server/literal-order.test.ts
       # F300/F324: JSX children given to a component that passes its rest to a specialised Provider (children-rest).
@@ -361,6 +367,8 @@ jobs:
       - run: bun test --timeout 180000 tests/server/generated-names.chromium.test.ts
       # 2c-2 (R34.116, R34.122): a state Provider is specialised per call site; first paint == React, independent toggles, nesting, a consumer under the Provider's own condition.
       - run: bun test --timeout 180000 tests/server/native-provider.chromium.test.ts
+      # progress-flip (ruling 2c9522ea, option C): shadcn Progress is a static page, first paint == React, a changing value follows React.
+      - run: bun test --timeout 300000 tests/server/shadcn-progress.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/absent-prop-seed.chromium.test.ts
       # F232: a handler reading a binding named `a` reads that binding (the handler wrapper's rest parameter is reserved).
       - run: bun test --timeout 120000 tests/server/handler-shadow.chromium.test.ts

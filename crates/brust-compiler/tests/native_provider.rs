@@ -316,8 +316,6 @@ fn names_that_cannot_cross_keep_the_island_provider_and_say_which() {
         ("in_props.tsx", "whole props"),
         ("in_fn.tsx", "module-level"),
         ("in_import.tsx", "an import"),
-        // O1: a live value of the page printed inside another native host's markup is bound by the wrong instance
-        ("in_live_nested.tsx", "changes on the client"),
     ] {
         let all = compile(file);
         assert!(clones(&all).is_empty(), "{file}: nothing was specialised");
@@ -774,42 +772,62 @@ fn children_carried_in_the_rest_sit_under_the_clones_provider() {
 }
 
 #[test]
-fn rest_children_a_native_trigger_would_bind_keep_todays_refusal_and_say_why() {
-    // The trigger has an instance of its own: content with a live prop printed inside its host would bind to it (F214).
+fn a_live_value_hosted_by_a_consumer_in_the_content_is_cloned_with_that_consumer() {
+    // O1 (was refused: a live value of the page printed inside another native host's markup would be bound by the wrong
+    // instance). F307: inside the Provider's clone the consumer is cloned with that content, which is then its own.
+    let all = compile("in_live_nested.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(
+        all.iter()
+            .any(|i| i.ir.specialised && i.ir.id.contains("_h")),
+        "{:?}",
+        all.iter().map(|i| &i.ir.id).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn rest_children_a_native_trigger_hosts_are_cloned_with_that_trigger() {
+    // The trigger has an instance of its own: content printed inside its host would bind to it (F214), so it was refused
+    // (context-no-provider at the page). F307: the trigger is cloned with the Thumb inside the rest clone (served == React
+    // in tests/server/host-specialise.chromium.test.ts, page `switch`).
     let all = compile("rest_children_host.tsx");
     let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
     assert!(
-        has(&root.ir, DiagClass::Fallback, "context-no-provider"),
+        !has(&root.ir, DiagClass::Fallback, "context-no-provider"),
         "{:?}",
         root.ir.diagnostics
     );
-    let why = root
-        .ir
-        .diagnostics
-        .iter()
-        .find(|d| d.rule == "rest-children-unsupported")
-        .map(|d| d.message.clone())
-        .unwrap_or_default();
-    assert!(why.contains("its own host element"), "{why}");
+    assert!(
+        all.iter()
+            .any(|i| i.ir.specialised && i.ir.id.contains("_h")),
+        "{:?}",
+        all.iter().map(|i| &i.ir.id).collect::<Vec<_>>()
+    );
 }
 // F324: a state Provider that spreads its `...rest` onto an element and never prints `{children}` gets the call site's
-// children through that spread in React. The clone has no `{children}` to put them in, so it is refused: the call site
-// keeps the Provider as an island, which carries them. Without children the clone is still taken.
+// children through that spread in React (the element's own children, since it writes none). The clone puts the call
+// site's content into that element, once the rest is spread onto exactly one host or component and the Provider writes
+// no children of its own there; the content is printed where React prints it, not dropped. Without children the clone
+// is the same as before.
 #[test]
-fn jsx_children_given_to_a_provider_that_spreads_its_rest_are_not_dropped_by_the_clone() {
+fn jsx_children_given_to_a_provider_that_spreads_its_rest_land_in_the_rest_host() {
     let all = compile("spec_drop.tsx");
-    assert!(clones(&all).is_empty(), "no clone");
+    assert_eq!(clones(&all).len(), 1, "{:?}", all[0].ir.diagnostics);
     let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
     assert!(
         root.ir
             .diagnostics
             .iter()
-            .any(|d| d.rule == "specialise-unsupported" && d.message.contains("as `children`")),
+            .all(|d| d.rule != "specialise-unsupported"),
         "{:?}",
         root.ir.diagnostics
     );
     assert!(
-        root.jinja.contains("brust-island") && root.jinja.contains("hello"),
+        !root.jinja.contains("brust-island")
+            && root.jinja.contains("<button")
+            && root.jinja.contains("<span>hello</span></button>"),
         "{}",
         root.jinja
     );

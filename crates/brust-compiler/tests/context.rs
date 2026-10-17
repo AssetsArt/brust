@@ -175,21 +175,124 @@ fn a_scalar_context_provider_value_reaches_a_consumer_that_reads_it_whole() {
     assert!(jinja.contains("<b>{{ (1) | e }}</b>"), "{jinja}");
 }
 
-/// The Provider's values call helpers of ITS module (`clamp`, `stateOf`): a call is not a literal, so under the lead's scope
-/// cut the page renders with React (context-value); F174 narrows it to helpers proven to return primitives.
+/// W1d (progress, ruling on challenge 2c9522ea): the Provider's values call helpers of ITS module (`clamp`, `stateOf`), proven to
+/// return primitives. A call is not a literal and a call site cannot substitute it into a lowered frame (the cut stays: no
+/// call in a frame), so the Provider's own native instance evaluates it and the page lowers with a native clone.
 #[test]
-fn a_provider_value_that_calls_a_helper_is_not_lowered_yet() {
+fn a_provider_value_that_calls_a_plain_helper_makes_a_native_frame() {
     let out = compile_all("helper-page.tsx");
     let page = out
         .iter()
         .find(|(id, ..)| id.starts_with("helperPage_"))
         .expect("page");
+    assert!(!is_react(&page.1), "{:?}", page.1.tier);
     assert!(
-        rules(&page.1).contains(&"context-value"),
+        !rules(&page.1).iter().any(|r| r.starts_with("context")),
         "{:?}",
         page.1.diagnostics
     );
+    // the consumer's value is the Provider instance's own derived member, never a call printed at the call site
+    assert!(
+        page.2.contains("data-state=") && page.2.contains("\"complete\""),
+        "{}",
+        page.2
+    );
+    assert!(
+        !page.2.contains("clamp(") && !page.2.contains("stateOf("),
+        "{}",
+        page.2
+    );
+}
+
+/// The same shape with a function-valued prop whose default is a plain module function (Radix `getValueLabel`): the Provider
+/// qualifies (condition 1: a call of a proven-plain function over plain props, read through a conditional), the page lowers.
+#[test]
+fn a_function_prop_with_a_plain_default_lowers_the_provider() {
+    let all = compile("fn-default.tsx");
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| (&ir.id, &ir.tier))
+            .collect::<Vec<_>>()
+    );
+    let page = all
+        .iter()
+        .map(|(_, _, j)| j.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        page.contains("progressbar") && page.contains("data-value"),
+        "{page}"
+    );
+}
+
+/// A wrapper that spreads its own props onto the Provider component (shadcn's `<Progress.Root {...props}>`) carries whatever
+/// ITS callers pass: the callable requirement moves up, the call site that passes no function stays native and the one that
+/// passes any refuses by name.
+#[test]
+fn a_wrapper_spreading_its_props_moves_the_callable_requirement_to_its_callers() {
+    let all = compile("fn-wrap-ok.tsx");
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, _)| (&ir.id, &ir.tier))
+            .collect::<Vec<_>>()
+    );
+    let out = compile_all("fn-wrap-passed.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("fnWrapPassed_"))
+        .expect("page");
     assert!(is_react(&page.1), "{:?}", page.1.tier);
+    assert!(
+        rules(&page.1).contains(&"frozen-prop"),
+        "{:?}",
+        page.1.diagnostics
+    );
+}
+
+/// A Provider field that IS a call of a proven-plain module function (`pct: clamp(value)`) is evaluated by the Provider's own
+/// instance (a native clone per call site): the call is never substituted into a lowered frame at the call site.
+#[test]
+fn a_provider_field_that_is_a_plain_call_is_evaluated_by_the_native_clone() {
+    let all = compile("call-field.tsx");
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        all.iter().map(|(_, ir, _)| &ir.tier).collect::<Vec<_>>()
+    );
+    assert!(
+        all.iter()
+            .any(|(id, ..)| id.starts_with("meter_") && id.contains("_s")),
+        "{:?}",
+        all.iter().map(|(id, ..)| id).collect::<Vec<_>>()
+    );
+    assert!(
+        all.iter().all(|(.., j)| !j.contains("clamp(")),
+        "a call printed at a call site"
+    );
+}
+
+/// A call site that passes the function itself (the prop the Provider's helper call may run) cannot be served by a job that
+/// evaluates the module's default: the prop is frozen, and the page renders with React rather than print the default's value.
+#[test]
+fn a_call_site_that_passes_the_function_prop_keeps_the_page_react() {
+    // an inline arrow, and a named module function (neither reads state, so only the callable rule can refuse them)
+    for (file, id) in [
+        ("fn-default-passed.tsx", "fnDefaultPassed_"),
+        ("fn-default-named.tsx", "fnDefaultNamed_"),
+    ] {
+        let out = compile_all(file);
+        let page = out.iter().find(|(i, ..)| i.starts_with(id)).expect("page");
+        assert!(is_react(&page.1), "{file}: {:?}", page.1.tier);
+        assert!(
+            rules(&page.1).contains(&"frozen-prop"),
+            "{file}: {:?}",
+            page.1.diagnostics
+        );
+    }
 }
 
 /// R34.104: an `if` whose branches only call `console.*` is a diagnostic, not part of the render; any other effect
@@ -951,6 +1054,50 @@ fn a_module_level_side_effect_falls_back_when_a_module_binding_is_read() {
     }
 }
 
+// ---- W1d PR 4a (F326): a local object that spreads the props among plain entries ----
+
+/// Radix ToggleGroupItem's `commonProps = { ...props, pressed, disabled }` spread onto a native child: the props spread, then
+/// the own entries (a later entry replaces an earlier key). The page lowers; each instance keeps its own values.
+#[test]
+fn a_local_object_that_spreads_the_props_among_plain_entries_spreads_as_its_parts() {
+    let all = compile("local-spread.tsx");
+    let rules: Vec<&str> = all.iter().flat_map(|(_, ir, _)| rules(ir)).collect();
+    assert!(all.iter().all(|(_, ir, _)| !is_react(ir)), "{rules:?}");
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.to_lowercase().starts_with("localspread"))
+        .expect("page");
+    // value="a" is pressed, value="b" is not (and is disabled)
+    assert!(
+        page.2.contains("aria-pressed") && page.2.contains("disabled"),
+        "{}",
+        page.2
+    );
+    assert!(
+        page.2.contains("first"),
+        "the title travelled through the props spread: {}",
+        page.2
+    );
+}
+
+/// Anything the reader cannot expand stays a refusal: a second spread of another local object, a method.
+#[test]
+fn a_local_object_with_another_spread_or_a_method_is_still_not_expanded() {
+    for f in ["local-spread-other.tsx", "local-spread-method.tsx"] {
+        let all = compile(f);
+        let item = all
+            .iter()
+            .find(|(id, ..)| id.starts_with("item"))
+            .expect("item");
+        assert!(
+            is_react(&item.1) && item.1.diagnostics.iter().any(|d| d.rule == "spread-props"),
+            "{f}: {:?} {:?}",
+            item.1.tier,
+            item.1.diagnostics
+        );
+    }
+}
+
 // ---- W1d PR 2: Radix scope hooks and `props.__scopeX` (Mellow C1-C4) ----
 
 fn all_rules(file: &str) -> Vec<String> {
@@ -1213,5 +1360,41 @@ fn a_let_alias_of_the_rest_object_is_not_an_alias() {
         "{:?} {:?}",
         sw.1.tier,
         sw.1.diagnostics
+    );
+}
+
+// ---- W1d PR 4b (F327): the rest inside a local object that is only ever spread ----
+
+/// Radix ToggleGroupImpl's `commonProps = { role: 'group', dir: direction, ...toggleGroupProps }`: the rest is not read as a
+/// value when the object is only spread onto JSX elements; the children travel in the rest.
+#[test]
+fn a_local_object_holding_the_rest_that_is_only_spread_reads_no_rest_as_a_value() {
+    let all = compile("local-spread-rest.tsx");
+    let rules: Vec<&str> = all.iter().flat_map(|(_, ir, _)| rules(ir)).collect();
+    assert!(all.iter().all(|(_, ir, _)| !is_react(ir)), "{rules:?}");
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.to_lowercase().starts_with("localspreadrest"))
+        .expect("page");
+    assert!(
+        page.2.contains(r#"role="{{ "group""#) && page.2.contains("one"),
+        "{}",
+        page.2
+    );
+}
+
+/// The same object also read as a value stays `prop-pattern`: the rest would be printed as a value.
+#[test]
+fn the_same_object_read_as_a_value_still_refuses_the_rest() {
+    let all = compile("local-spread-rest-value.tsx");
+    let g = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("group"))
+        .expect("group");
+    assert!(
+        is_react(&g.1) && g.1.diagnostics.iter().any(|d| d.rule == "prop-pattern"),
+        "{:?} {:?}",
+        g.1.tier,
+        g.1.diagnostics
     );
 }
