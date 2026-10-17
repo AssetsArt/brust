@@ -969,6 +969,16 @@ const SPEC_SOURCE: &str = "\u{0}spec";
 
 /// A stable 32-bit mix of the call site (module and location): the suffix of a clone's id. Ids are per call site
 /// (R34.124); equal chunks share a factory module, not an id.
+/// F238: the call site a clone's id and module-cache key name (`site`: the module and the enclosing clone's id) with a
+/// stable hash of the content it is made with (after `Carry` and `rebase_sources`), so different content at one offset
+/// of one template never reuses a clone.
+fn clone_site<R: std::fmt::Debug>(site: &str, nodes: &[Node], render: &R) -> String {
+    format!(
+        "{site}~{:016x}",
+        crate::lower::fnv64(format!("{nodes:?}{render:?}").as_bytes())
+    )
+}
+
 fn spec_hash(path: &str, loc: u32) -> u32 {
     let mut h: u32 = 0x811c_9dc5;
     for b in path.bytes().chain(loc.to_le_bytes()) {
@@ -3339,8 +3349,24 @@ impl Walker<'_, '_> {
             Some(n) => Export::Named(n.clone()),
             None => Export::Default,
         };
+        // F374: with no children written at the call site, a spread (or a `children` prop) may still carry them, and
+        // the clone's `{children}` would be empty where React renders them (`function Outer(props) { return <Prov
+        // {...props} /> }`, `<Outer>hello</Outer>` printed an empty section). Refused by name: the Provider stays an
+        // island and React renders it with its children.
+        if content.is_empty()
+            && let Some((k, _)) = props
+                .iter()
+                .find(|(k, _)| k == crate::ir::SPREAD_KEY || k == REST_INPUT || k == "children")
+        {
+            return Err(if k == "children" {
+                "its children are given as the `children` prop, which the clone cannot hold".into()
+            } else {
+                "a spread may carry its children, which the clone cannot hold".into()
+            });
+        }
         let mut nodes = std::mem::take(content);
         self.check_owner(&nodes, owner)?;
+        self.check_inner_providers(cir, &nodes)?;
         let mut carry = Carry::new(
             &self.native_props,
             owner,
@@ -3373,10 +3399,13 @@ impl Walker<'_, '_> {
         // One clone per call site: its id is built from the call site, so its jinja, jobs and instance records are the
         // call site's own. Clones whose chunks are equal share ONE factory module at lowering (R34.124). Inside a rest
         // clone (F298) the call site is that clone's: the same call of the same module holds other content there.
+        // F238: and the content's shape, so two call sites at one offset of one template (content written in another
+        // module keeps that module's offsets) never share a clone.
         let site = match &self.spec_salt {
             Some(salt) => format!("{}#{salt}", ctx.path),
             None => ctx.path.to_string(),
         };
+        let site = clone_site(&site, &nodes, &render);
         let id = format!("{}_s{:08x}", cir.id, spec_hash(&site, loc));
         let key = format!("{c_path}#{exp}~spec~{site}~{loc}");
         let mut once = Some(nodes);
@@ -3458,6 +3487,8 @@ impl Walker<'_, '_> {
             Some(salt) => format!("{}#{salt}", ctx.path),
             None => ctx.path.to_string(),
         };
+        // F238: the content's shape too (see `specialise`).
+        let site = clone_site(&site, &nodes, &None::<()>);
         let id = format!("{}_r{:08x}", cir.id, spec_hash(&site, loc));
         let key = format!("{c_path}#{exp}~rest~{site}~{loc}");
         let clone_id = id.clone();
@@ -3684,6 +3715,75 @@ impl Walker<'_, '_> {
         }
         self.frozen.extend(frozen);
         fixed
+    }
+
+    /// A consumer in `content` of a context that a Provider INSIDE `cir`'s template provides (below `cir` itself) reads,
+    /// in React, that inner Provider wherever the content lands under it; the value the call site hands it (Carry: the
+    /// frame open where the content is written, or the context default) would override it in the clone. Refused by
+    /// name (found with F238: `<Prov>` calling a native `<Frame>` around its `{children}`, the content reading Frame's
+    /// context, printed the default).
+    fn check_inner_providers(&self, cir: &ComponentIR, content: &[Node]) -> Result<(), String> {
+        let modules = self.ctx.modules.borrow();
+        let by_id: HashMap<String, Rc<ComponentIR>> = modules
+            .done()
+            .into_iter()
+            .map(|(_, ir)| (ir.id.clone(), ir))
+            .collect();
+        let mut below = BTreeSet::new();
+        let mut stack: Vec<Rc<ComponentIR>> = cir
+            .children
+            .iter()
+            .filter_map(|c| c.id.as_ref().and_then(|id| by_id.get(id)).cloned())
+            .collect();
+        let mut seen = BTreeSet::new();
+        while let Some(ir) = stack.pop() {
+            if !seen.insert(ir.id.clone()) {
+                continue;
+            }
+            below.extend(ir.provides.iter().map(|p| p.context.clone()));
+            stack.extend(
+                ir.children
+                    .iter()
+                    .filter_map(|c| c.id.as_ref().and_then(|id| by_id.get(id)).cloned()),
+            );
+        }
+        if below.is_empty() {
+            return Ok(());
+        }
+        fn walk(n: &Node, below: &BTreeSet<String>) -> Option<String> {
+            match n {
+                Node::Component {
+                    name,
+                    props,
+                    children,
+                    ..
+                } => props
+                    .iter()
+                    .find_map(|(k, _)| {
+                        let rest = k.strip_prefix("__ctx_")?;
+                        below
+                            .iter()
+                            .any(|c| rest.starts_with(&format!("{c}_")))
+                            .then(|| name.clone())
+                    })
+                    .or_else(|| children.iter().find_map(|c| walk(c, below))),
+                Node::Element { children, .. } | Node::Fragment(children) => {
+                    children.iter().find_map(|c| walk(c, below))
+                }
+                Node::If { then, else_, .. } => {
+                    then.iter().chain(else_).find_map(|c| walk(c, below))
+                }
+                Node::For { body, .. } => body.iter().find_map(|c| walk(c, below)),
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+            }
+        }
+        match content.iter().find_map(|n| walk(n, &below)) {
+            Some(who) => Err(format!(
+                "<{who}> in the content reads a context that a Provider inside `{}` provides around it",
+                cir.export.as_deref().unwrap_or("default")
+            )),
+            None => Ok(()),
+        }
     }
 
     /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
@@ -7987,6 +8087,22 @@ mod tests {
 
     fn client(js: &str) -> Expr {
         Expr::ClientOnly { js: js.into() }
+    }
+
+    // F238 (Mellow, review): two call sites at one offset of one template with different content get different clone
+    // ids (and keys); the same content gets the same one. On main the colliding shape is refused by F3 first, so this
+    // pins the key itself.
+    #[test]
+    fn clone_ids_at_one_site_and_offset_differ_by_content() {
+        let a = vec![Node::Text("a".into())];
+        let b = vec![Node::Text("b".into())];
+        let id = |n: &[Node]| spec_hash(&clone_site("m.tsx#c1", n, &None::<()>), 7);
+        assert_ne!(id(&a), id(&b));
+        assert_eq!(id(&a), id(&a.clone()));
+        assert_ne!(
+            clone_site("m.tsx#c1", &a, &None::<()>),
+            clone_site("m.tsx#c1", &a, &Some("render"))
+        );
     }
 
     // F365(a): the refusal in `specialise_host` rests on this set, and no fixture reaches it with a real collision.
