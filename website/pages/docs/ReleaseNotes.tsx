@@ -42,11 +42,15 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-17">2.0.0-alpha.17 · 17 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#311 including #304, #306, #312, #313, #314 and #315 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
-      <p>This version closes several cases where a compiled component showed stale or missing output, including a regression from 2.0.0-alpha.16, and it compiles more Radix patterns to native code. Upgrade if you use a Provider that spreads its props or a component whose props change while the page is open.</p>
+      {/* source: the pull requests merged after v2.0.0-alpha.16: #287–#316 (ledger rows F274, F276, F280, F282, F284–F287, F289, F293–F299, F304, F308, F309, F311, F318, F319, F324, F331, F333–F335; lanes roving-collection W1a–W1c, switch-native, presence-general, spread-live, carry-live, w1d-context-scope, w1d-root-type, specialise-children) */}
+      <p>This version closes several cases where a compiled component showed stale or missing output, including a regression from 2.0.0-alpha.16, and it compiles more Radix patterns to native code, including the first shadcn page to move from a React island to static markup. Upgrade if you use a Provider that spreads its props or a component whose props change while the page is open.</p>
 
       <h3>New</h3>
       <ul>
+        {/* source: PR #316 (progress-flip; READY notes @dd338fcd, ruling on callable props and prop-derived Provider members); docs/shadcn-coverage.md progress row (before: 1 island, 86 KiB gzip client JS; after: 0 islands, no client JS). The live member for a changing value is a follow-up. */}
+        <li>
+          <strong>The shadcn <code>Progress</code> page compiles with no React when its value is constant.</strong> It was one React island, about 86 KiB gzipped; it is now static markup with no client JavaScript, and its first paint equals React&rsquo;s. Radix Progress calls <code>getValueLabel</code>, a prop whose default is a plain function in its own module, while rendering, and brust now does the same when the call site passes none. The Provider&rsquo;s <code>value</code> and <code>max</code> are computed from the props through plain functions that return a string, number or boolean. A value that changes while the page is open (the animated demo) renders with React, and the output equals React&rsquo;s. A call site that passes its own function for <code>getValueLabel</code>, or forwards it through a spread, also renders with React.
+        </li>
         {/* source: PR #288 (W1a); code: Radix's useId and useCallbackRef React-version checks */}
         <li>
           <strong>A context with a literal default value, and Radix&rsquo;s React-version checks in <code>useId</code> and <code>useCallbackRef</code>, compile.</strong> A context created with a literal default is read as that value. The check that picks the hook by React version is decided when brust builds, for React&rsquo;s own hooks only. A context declared in a hook module is read the same way.
