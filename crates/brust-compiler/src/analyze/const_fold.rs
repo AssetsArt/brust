@@ -290,6 +290,54 @@ pub fn imported_const(
     })
 }
 
+/// F362 (PR2, Mellow F3): the initializer of the `export const imported` of the relative module `source`, read from the
+/// source as written (nothing is run), when it is declared on its own and its module never writes it. Whether its value is
+/// a list the chunk can project is `lower::module_projection`'s to decide.
+pub fn imported_literal(
+    from: &str,
+    source: &str,
+    imported: &str,
+    opts: &AnalyzeOptions,
+) -> Option<(String, RawExpr)> {
+    let path = resolve(from, source, opts)?;
+    let bytes = std::fs::read(opts.root.join(&path)).ok()?;
+    let parsed = crate::parse::parse_tsx(&path, bytes).ok()?;
+    parsed.with_ast(|ast| {
+        let dummy = js_ast::G::Fn::default();
+        let mut names = NameTable::new(ast, &dummy);
+        let print = |js: Js<'_>, a: &Aliases| print_js_with(&parsed, ast, a, js);
+        let mut reader = Reader::new(&mut names, &print);
+        let (_, decls) = reader.module_scope(ast);
+        let local = exported_const_name(ast, imported)?;
+        let decl = decls.iter().find(|d| d.names.contains(&local))?;
+        if decl.names.len() != 1 {
+            return None;
+        }
+        let c = decl.consts.iter().find(|c| c.name == local)?;
+        if c.mutated {
+            return None;
+        }
+        // Projected, the chunk no longer loads the module: nothing it runs at load (a statement the F215 allowlist does
+        // not accept, or an import, which loads another module) may be lost (Afrojack, PR2 review).
+        let imports = ast.parts.iter().any(|p| {
+            p.stmts
+                .slice()
+                .iter()
+                .any(|s| matches!(s.data, S::SImport(_)))
+        });
+        let none = |_: &str| false;
+        let no_imports = |_: &str, _: &str| None;
+        let folded = Folder::new(&decls, &none, &no_imports).all();
+        let evaluated = crate::analyze::module_effects::fold_env_accepts(&decls);
+        let plain = crate::analyze::plain_fn::plain_fns(ast, &names);
+        let effect =
+            crate::analyze::module_effects::module_effect(ast, &names, parsed.text(), &|n| {
+                folded.contains_key(n) || evaluated.contains(n) || plain.iter().any(|p| p == n)
+            });
+        (!imports && effect.is_none()).then(|| (path.clone(), c.value.clone()))
+    })
+}
+
 /// F149 rule 3: the exported `const imported` of the relative module `source` re-emitted as module
 /// code for build evaluation, when its initializer is a call of an import from one of `packages` whose
 /// arguments fold (`crate::ir::FoldEnv`, the module's own consts) to values JS prints exactly:

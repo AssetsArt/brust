@@ -31,3 +31,15 @@ export function KThumb() {
 export function KRoot({ ...rest }: React.ComponentPropsWithoutRef<'button'>) {
   return <KProvider render={({ isFormControl }) => <><KTrigger {...rest} />{isFormControl && <i data-form="y" />}</>} />
 }
+// switch-provider-chain PR3 D1: a Provider whose value never changes; the Thumb carried in the rest is linked anyway
+// (pinned behaviour: the output equals React's).
+function KConstProvider({ children }: { children?: React.ReactNode }) {
+  return <C.Provider value={{ checked: true, setChecked: () => {}, isFormControl: false }}>{children}</C.Provider>
+}
+export function KConstRoot({ ...rest }: React.ComponentPropsWithoutRef<'button'>) {
+  return (
+    <KConstProvider>
+      <KTrigger {...rest} />
+    </KConstProvider>
+  )
+}

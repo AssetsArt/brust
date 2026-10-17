@@ -56,6 +56,18 @@ pub const PRIMITIVE_METHODS: &[&str] = &[
     "includes",
     "join",
 ];
+/// F337 (Mellow A2): the methods of [`PRIMITIVE_METHODS`] whose result depends on the host (locale, time zone, the
+/// `Date` it is called on): fine where only the server evaluates them, never in a value the client recomputes, which
+/// must print what the server printed.
+const HOST_METHODS: &[&str] = &[
+    "toString",
+    "toLocaleString",
+    "toLocaleDateString",
+    "toLocaleTimeString",
+    "toISOString",
+    "toDateString",
+    "toTimeString",
+];
 const MATH_CALLS: &[&str] = &[
     "abs", "ceil", "floor", "round", "trunc", "sign", "min", "max", "pow", "sqrt", "cbrt", "log",
     "log2", "log10", "exp", "sin", "cos", "tan", "atan", "atan2", "hypot",
@@ -72,6 +84,8 @@ struct Ctx<'a, 'n> {
     locals: HashSet<u32>,
     /// Their names, so none may hide a module binding.
     local_names: HashSet<String>,
+    /// F337: also refuse the host-dependent methods (`HOST_METHODS`).
+    host_free: bool,
 }
 
 impl Ctx<'_, '_> {
@@ -174,6 +188,7 @@ impl Ctx<'_, '_> {
                     // F173: a primitive-returning method of a plain value (`n.toFixed(2)`, `s.trim()`, `xs.join(', ')`).
                     || (d.optional_chain.is_none()
                         && PRIMITIVE_METHODS.contains(&method.as_ref())
+                        && !(self.host_free && HOST_METHODS.contains(&method.as_ref()))
                         && self.receiver(&d.target))
             }
             _ => false,
@@ -209,6 +224,16 @@ impl Ctx<'_, '_> {
 
 /// Names of the module's functions proven to return a primitive (see the module docs).
 pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
+    proven(ast, names, false)
+}
+
+/// F337 (Mellow A2): [`plain_fns`] that also call no host-dependent method (`HOST_METHODS`; `Math.random`, `Date`, `Intl`
+/// and other globals are outside the plain proof already): the client recomputes them and prints what the server did.
+pub fn client_plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
+    proven(ast, names, true)
+}
+
+fn proven(ast: &js_ast::Ast<'_>, names: &NameTable<'_>, host_free: bool) -> Vec<String> {
     // A function name that is assigned anywhere (`f = …`) is not the declaration the proof read.
     let mut walk = crate::analyze::expr::Walk::default();
     for part in ast.parts.iter() {
@@ -280,6 +305,7 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                     consts: &consts,
                     locals: HashSet::new(),
                     local_names: HashSet::new(),
+                    host_free,
                 };
                 if c.expr(init) {
                     consts.insert(name.clone());
@@ -324,6 +350,7 @@ pub fn plain_fns(ast: &js_ast::Ast<'_>, names: &NameTable<'_>) -> Vec<String> {
                     consts: &consts,
                     locals,
                     local_names,
+                    host_free,
                 };
                 c.stmts(body) && !c.local_names.iter().any(|l| module_names.contains(l))
             })();
@@ -842,4 +869,99 @@ pub fn imported_plain_fn(
         };
         plain_fns(ast, &names).contains(&local)
     })
+}
+
+/// F337: `raw` is a value the client can recompute from the component's props and print exactly as the server's job
+/// did (C1, Mellow A2): literals, prop reads (and their member paths), primitive module consts, `NaN`/`Infinity`/`undefined`,
+/// operators and conditionals over those, derived values (through `derived`) of the same kind, and calls of the global
+/// conversions, of `Math` functions (never `random`) and of `ir.client_plain_fns`. Anything else (state, stores,
+/// imports, function props, methods, `new`, other globals) is not.
+pub fn client_value(
+    raw: &crate::ir::RawExpr,
+    ir: &crate::ir::ComponentIR,
+    derived: &dyn Fn(&str) -> Option<crate::ir::RawExpr>,
+) -> bool {
+    use crate::ir::{IdentKind, RawKind};
+    fn go(
+        r: &crate::ir::RawExpr,
+        ir: &crate::ir::ComponentIR,
+        derived: &dyn Fn(&str) -> Option<crate::ir::RawExpr>,
+        depth: u32,
+    ) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        let all = |xs: &[&crate::ir::RawExpr]| xs.iter().all(|x| go(x, ir, derived, depth + 1));
+        match &r.kind {
+            RawKind::Lit(_) => true,
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::Prop => true,
+                IdentKind::Global => GLOBAL_VALUES.contains(&name.as_str()),
+                IdentKind::Local => match derived(name) {
+                    Some(d) => go(&d, ir, derived, depth + 1),
+                    None => ir
+                        .module_decls
+                        .iter()
+                        .flat_map(|d| d.consts.iter())
+                        .any(|c| {
+                            &c.name == name
+                                && !c.mutated
+                                // a primitive only: module data never reaches a chunk this way (F325)
+                                && matches!(c.value.kind, RawKind::Lit(_))
+                        }),
+                },
+                _ => false,
+            },
+            // A prop path (`props.a.b`, `props["a"]`): data the caller passed, read the same on both sides.
+            RawKind::Member { target, .. } => prop_path(target),
+            RawKind::Index { target, index } => {
+                matches!(index.kind, RawKind::Lit(_)) && prop_path(target)
+            }
+            RawKind::Unary { value, .. } => all(&[value]),
+            RawKind::Binary { left, right, .. } => all(&[left, right]),
+            RawKind::Cond { test, yes, no } => all(&[test, yes, no]),
+            RawKind::Template { parts, .. } => {
+                parts.iter().all(|(p, _)| go(p, ir, derived, depth + 1))
+            }
+            RawKind::Call { callee, args } => {
+                let ok_callee = match &callee.kind {
+                    RawKind::Ident { name, kind: IdentKind::Local } => {
+                        ir.client_plain_fns.iter().any(|f| f == name)
+                    }
+                    RawKind::Ident { name, kind: IdentKind::Global } => {
+                        GLOBAL_CALLS.contains(&name.as_str())
+                    }
+                    // Q2 (Mellow A4): a function prop the call site never passes, not even through a spread (`fixed_props`
+                    // holds only a prop no spread can carry), whose default is a client-plain module function.
+                    RawKind::Ident { name, kind: IdentKind::Prop } => ir.props.iter().any(|p| {
+                        &p.local == name
+                            && ir.fixed_props.iter().any(|f| f == &p.name)
+                            && matches!(&p.default, Some(crate::ir::RawExpr { kind: RawKind::Ident { name: d, kind: IdentKind::Local }, .. })
+                                if ir.client_plain_fns.iter().any(|f| f == d))
+                    }),
+                    RawKind::Member { target, name, .. } => {
+                        matches!(&target.kind, RawKind::Ident { name: m, kind: IdentKind::Global } if m == "Math")
+                            && MATH_CALLS.contains(&name.as_str())
+                    }
+                    _ => false,
+                };
+                ok_callee && args.iter().all(|a| go(a, ir, derived, depth + 1))
+            }
+            _ => false,
+        }
+    }
+    fn prop_path(r: &crate::ir::RawExpr) -> bool {
+        match &r.kind {
+            RawKind::Ident {
+                kind: IdentKind::Prop,
+                ..
+            } => true,
+            RawKind::Member { target, .. } => prop_path(target),
+            RawKind::Index { target, index } => {
+                matches!(index.kind, RawKind::Lit(_)) && prop_path(target)
+            }
+            _ => false,
+        }
+    }
+    go(raw, ir, derived, 0)
 }

@@ -339,6 +339,14 @@ pub struct ComponentIR {
     /// F174: module functions proven to return a primitive (`analyze::plain_fn`), callable under a lowered Provider.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub plain_fns: Vec<String>,
+    /// F337 (Mellow A2): the `plain_fns` that call no host-dependent method, so the client may recompute a value
+    /// that calls them and print what the server printed.
+    #[serde(skip)]
+    pub client_plain_fns: Vec<String>,
+    /// F337: every props-only precomputed slot of this component is one its chunk recomputes exactly
+    /// (`plain_fn::client_value`), and none is build-evaluated (Mellow A3): a caller that changes its props may link it.
+    #[serde(skip)]
+    pub props_slots_recomputable: bool,
     /// F199: module functions and consts that cannot hand out a React element (`analyze::plain_fn::element_free_fns`),
     /// readable in a prop passed to a component.
     #[serde(skip)]
@@ -455,6 +463,11 @@ pub struct ComponentIR {
     pub client_prop_projections: std::collections::BTreeMap<String, Vec<String>>,
     /// `(source, imported)` pairs the client chunk bundles, sorted.
     pub client_imports: Vec<(String, String)>,
+    /// F362: the initializer of each relatively imported `export const` a list in the template runs over, read from its
+    /// module as written (`(source, imported)` -> (the module's path from the root, value)): the chunk may print it
+    /// projected instead of importing it.
+    #[serde(skip)]
+    pub client_import_lists: std::collections::BTreeMap<(String, String), (String, RawExpr)>,
     /// Module-level declarations (helpers, constants) the client chunk needs,
     /// transitively, sorted.
     pub client_module_locals: Vec<String>,
@@ -558,6 +571,8 @@ impl ComponentIR {
             sink_refs: Vec::new(),
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
+            client_plain_fns: Vec::new(),
+            props_slots_recomputable: false,
             element_free_fns: Vec::new(),
             bound_names: Default::default(),
             module_effect: None,
@@ -595,6 +610,7 @@ impl ComponentIR {
             client_props: vec![],
             client_prop_projections: Default::default(),
             client_imports: vec![],
+            client_import_lists: Default::default(),
             client_module_locals: vec![],
             needs_worker: false,
             cache: None,

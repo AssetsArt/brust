@@ -2,22 +2,34 @@
 //! the IR — `defineBehavior(id, factory)` returning the members the template's
 //! directives name.
 use super::common::{
-    DerivedShape, Facts, arrow_body, client_fn, client_js, import_lines, imports_in, module_code,
-    module_names_in, store_client_js, visit_idents, visit_verbatim_captures,
+    DerivedShape, Facts, arrow_body, client_fn, client_js, import_lines, imports_in,
+    module_code_with, module_names_in, store_client_js, visit_idents, visit_verbatim_captures,
 };
 use super::names::Names;
 use super::{Member, MemberDef, Paint};
 use crate::ir::{Attr, ComponentIR, Expr, IdentKind, Literal, Node, RawExpr, RawKind};
 use std::collections::{BTreeSet, HashSet};
 
-/// The chunk source and its members in export order.
+/// The chunk source, its members in export order, and the data modules whose imported list it declares projected
+/// instead of importing (F362 PR2: the build keeps them only while no other client module imports them).
 pub fn chunk(
     ir: &ComponentIR,
     members: &[Member],
     runtime_import: &str,
     seed: &HashSet<String>,
-) -> (String, Vec<String>) {
-    chunk_in(ir, members, runtime_import, seed, false)
+) -> (String, Vec<String>, Vec<String>) {
+    chunk_in(ir, members, runtime_import, seed, false, true)
+}
+
+/// [`chunk`] importing every imported list as written (the build's fallback when a projected data module is still in
+/// the client graph through another importer).
+pub fn chunk_whole(
+    ir: &ComponentIR,
+    members: &[Member],
+    runtime_import: &str,
+    seed: &HashSet<String>,
+) -> String {
+    chunk_in(ir, members, runtime_import, seed, false, false).0
 }
 
 /// R34.124: the part of a specialised clone's chunk that does not name the clone: a module that exports the behaviour
@@ -29,7 +41,9 @@ pub fn factory_module(
     runtime_import: &str,
     seed: &HashSet<String>,
 ) -> (String, Vec<String>) {
-    chunk_in(ir, members, runtime_import, seed, true)
+    // A shared factory imports its lists as written: one module serves several clones, with no fallback of its own.
+    let (code, members, _) = chunk_in(ir, members, runtime_import, seed, true, false);
+    (code, members)
 }
 
 /// A clone's own chunk: it registers the shared factory under the clone's id.
@@ -48,9 +62,10 @@ fn chunk_in(
     runtime_import: &str,
     seed: &HashSet<String>,
     shared: bool,
-) -> (String, Vec<String>) {
+    project_imports: bool,
+) -> (String, Vec<String>, Vec<String>) {
     let Some(structural) = ir.structural.as_deref() else {
-        return (String::new(), Vec::new());
+        return (String::new(), Vec::new(), Vec::new());
     };
     let mut f = Facts::new(ir, structural);
     // F233: every name the chunk declares on its own, renamed away from the component's names and the members'.
@@ -78,6 +93,13 @@ fn chunk_in(
     roots.extend(inits.iter().flatten());
     roots.extend(ir.handlers.iter().map(|h| &h.body));
     roots.extend(ir.effects.iter().map(|e| &e.body));
+    // An effect's deps (printed in `void [...]`) and a ref's initial value (`__ref("r", init)`) run on the client too:
+    // a derived value only they read is declared, and F362 scans them (Afrojack and Mellow, PR1 review).
+    roots.extend(ir.effects.iter().flat_map(|e| e.deps.iter().flatten()));
+    roots.extend(structural.refs.iter().filter_map(|r| match &r.init {
+        Expr::Raw(raw) => Some(raw),
+        _ => None,
+    }));
     for m in members {
         match &m.def {
             MemberDef::Value { raw, .. }
@@ -104,6 +126,21 @@ fn chunk_in(
     for r in roots.iter().chain(&reached_raws) {
         imports_in(r, &mut imports);
         module_names_in(r, &f, &mut module_names);
+    }
+    // A prop read prints its default inline (`props().x === undefined ? dflt : props().x`): what the default reads is
+    // the chunk's too (F337: Radix's `getValueLabel = defaultGetValueLabel`, a module function).
+    let mut defaulted = BTreeSet::new();
+    for r in roots.iter().chain(&reached_raws) {
+        visit_idents(r, &mut |name, kind| {
+            if *kind == IdentKind::Prop && f.prop_defaults.contains_key(name) {
+                defaulted.insert(name.to_string());
+            }
+        });
+    }
+    for name in &defaulted {
+        let d = &f.prop_defaults[name];
+        imports_in(d, &mut imports);
+        module_names_in(d, &f, &mut module_names);
     }
     // Store handles (M3-F D7): the chunk imports each one under the user's specifier; the bundler
     // resolves it against the component's source dir (C6). The job never imports a store module.
@@ -134,7 +171,36 @@ fn chunk_in(
         }
     }
     module_names.extend(ir.client_module_locals.iter().cloned());
-    let module = module_code(ir, &module_names, &mut imports);
+    // F362: a module list the rows run over ships the keys this chunk reads. `code` is everything printed below.
+    let code: Vec<&RawExpr> = roots
+        .iter()
+        .copied()
+        .chain(reached_raws.iter().copied())
+        .collect();
+    let lists: Vec<&RawExpr> = members
+        .iter()
+        .filter_map(|m| match &m.def {
+            MemberDef::List { raw, .. } => Some(raw),
+            _ => None,
+        })
+        .collect();
+    let need = super::common::module_need(ir, &module_names, &mut BTreeSet::new());
+    let projected = super::module_projection::projections(
+        ir,
+        &structural.template,
+        &need,
+        &imports,
+        &code,
+        &lists,
+    );
+    let mut module = module_code_with(ir, &module_names, &mut imports, &projected.module);
+    // PR2: a projected import is declared here instead of imported.
+    let mut projected_modules = Vec::new();
+    for (u, (stmt, path)) in projected.imports.iter().filter(|_| project_imports) {
+        imports.remove(u);
+        module.insert_str(0, &format!("{stmt}\n"));
+        projected_modules.push(path.clone());
+    }
 
     // Body declarations in source order: seeds, refs, reached derived values.
     let mut decls: Vec<(u32, String)> = Vec::new();
@@ -454,7 +520,7 @@ fn chunk_in(
     if shared && n.behavior != "behavior" {
         out.push_str(&format!("export {{ {} as behavior }}\n", n.behavior));
     }
-    (out, exported)
+    (out, exported, projected_modules)
 }
 
 /// A module-level helper that writes a value the way the server painted it.

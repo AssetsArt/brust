@@ -593,8 +593,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
             );
         // Only a Server (template-subset) value is client-computable: a
-        // props-only precomputed slot never appears in the chunk (§7.1).
-        let client_ok = matches!(placed, Expr::Server(_)) && !self.reaches_props_only_slot(raw);
+        // props-only precomputed slot never appears in the chunk (§7.1)...
+        // F337: ...unless the chunk can recompute it exactly from its props (plain helpers, no host-dependent call:
+        // `plain_fn::client_value`), in a component whose props are a signal: the job paints first, the chunk follows.
+        let client_ok = (matches!(placed, Expr::Server(_)) && !self.reaches_props_only_slot(raw))
+            || (self.f.ir.props_are_signal() && self.recomputable(raw));
         let loop_read = in_row && !deps.loop_bindings.is_empty() && client_ok;
         // Props are a signal in the chunk (a linked child's change after
         // first paint): in a native component a prop read is reactive too —
@@ -626,6 +629,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
         }
         Some(b)
+    }
+
+    /// F337: `raw` (a value placed as, or reaching, a props-only slot) is one the chunk recomputes exactly.
+    fn recomputable(&self, raw: &RawExpr) -> bool {
+        crate::analyze::plain_fn::client_value(raw, self.f.ir, &|n| self.f.derived_raw(n).cloned())
     }
 
     /// `raw` reads (through derived values) a props-only precomputed slot,

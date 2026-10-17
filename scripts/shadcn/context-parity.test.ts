@@ -8,7 +8,7 @@ import { FIXTURE, repo } from './paths.ts'
 
 const PAGES = ['ctx-progress-basic', 'ctx-progress-max', 'ctx-progress-indeterminate', 'ctx-progress-invalid']
 // F3: islands under a Provider keep the page React (the island hydrates, so scripts are expected and markup is React's own).
-const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix', 'ctx-page-collapsible', 'ctx-page-dialog', 'ctx-page-sheet', 'ctx-page-select', 'ctx-page-slider', 'ctx-page-switch', 'ctx-page-toggle', 'ctx-page-toggle-onclick', 'ctx-page-checkbox', 'ctx-dlg-title', 'ctx-sheet-title', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns',
+const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix', 'ctx-page-collapsible', 'ctx-page-dialog', 'ctx-page-sheet', 'ctx-page-select', 'ctx-page-slider', 'ctx-page-toggle', 'ctx-page-toggle-onclick', 'ctx-page-checkbox', 'ctx-dlg-title', 'ctx-sheet-title', 'ctx-jsx-const-wrap', 'ctx-jsx-const-provider', 'ctx-imp-wrap', 'ctx-imp-provider', 'ctx-imp-ns',
   'ctx-imp-m-and', 'ctx-imp-m-computed', 'ctx-imp-m-index', 'ctx-imp-m-member', 'ctx-imp-m-nullish', 'ctx-imp-m-opt', 'ctx-imp-m-root', 'ctx-imp-m-template', 'ctx-imp-m-tern', 'ctx-loc-m-and', 'ctx-loc-m-computed', 'ctx-loc-m-index', 'ctx-loc-m-member', 'ctx-loc-m-nullish', 'ctx-loc-m-opt', 'ctx-loc-m-root', 'ctx-loc-m-template', 'ctx-loc-m-tern',
   'ctx-pown-imp-root', 'ctx-pown-imp-and', 'ctx-pown-imp-tern', 'ctx-pown-imp-member', 'ctx-pown-imp-index', 'ctx-pown-loc-root', 'ctx-pown-loc-and', 'ctx-pown-loc-tern', 'ctx-pown-loc-member', 'ctx-pown-loc-index',
   'ctx-plain-imp-root', 'ctx-plain-imp-and', 'ctx-plain-imp-tern', 'ctx-plain-loc-root', 'ctx-plain-loc-and', 'ctx-plain-loc-tern',
@@ -38,6 +38,10 @@ const ISLAND_PAGES = ['ctx-island-same', 'ctx-island-cross', 'ctx-island-radix',
 // F198 + F199: ordinary reads with no wrapper and in props (a const map, a helper, `cn(…)`, an element-free local helper,
 // an object spread) keep lowering.
 const PLAIN_PAGES = ['ctx-imp-plain', 'ctx-trio-plain', 'ctx-trio-prov', 'ctx-plain-helper-ok', 'ctx-plain-attr-helper', 'ctx-plain-helper-string', 'ctx-plain-methods', 'ctx-top-ordinary', 'ctx-plain-f205', 'ctx-side-none']
+// switch-provider-chain PR3: the scoreboard switch page compiles without React (Radix's Switch chain, its Thumb linked):
+// no island, and the DOM equals React's once brust's own markers are set aside (directives `x-*`, the `display:
+// contents` wrappers of a condition and of a host, a void element's `/>`).
+const NATIVE_PAGES = ['ctx-page-switch']
 const ROWS = join(FIXTURE, '.rows')
 const ENTRY = '.rows/ctx-parity-routes.tsx'
 const bin = join(repo, 'packages/brust/bin/brust')
@@ -50,7 +54,7 @@ const camel = (s: string) => s.replace(/(^|-)(\w)/g, (_, __, c: string) => c.toU
 
 beforeAll(async () => {
   mkdirSync(ROWS, { recursive: true })
-  const ALL = [...PAGES, ...ISLAND_PAGES, ...PLAIN_PAGES]
+  const ALL = [...PAGES, ...ISLAND_PAGES, ...PLAIN_PAGES, ...NATIVE_PAGES]
   const imports = ALL.map((p) => `import ${camel(p)}Page from "../repro/${p}"`).join('\n')
   const routes = ALL.map((p) => `  { path: "/${p}", Component: ${camel(p)}Page },`).join('\n')
   writeFileSync(join(FIXTURE, ENTRY), `import { defineRoutes } from "@brust/core/routes"\n${imports}\nexport const routes = defineRoutes([\n${routes}\n])\n`)
@@ -126,6 +130,24 @@ for (const id of [...PAGES, ...PLAIN_PAGES]) {
 // brust's own host elements (`<brust-island>` around an island, `<brust-host style=display:contents>` around a native component
 // that returns a fragment) and the `x-on-*` handler and `x-bind-*` attribute directives a compiled component carries (a Label's mousedown guard, a toggle's live `aria-pressed`) have no React equivalent and do not change the layout.
 const plain = (h: string) => normalise(h.replace(/<!-- -->/g, '').replace(/<brust-island\b[^>]*>/g, '').replace(/<\/brust-island>/g, '').replace(/<brust-host\b[^>]*>/g, '').replace(/<\/brust-host>/g, '').replace(/ x-(?:on|bind)-[a-z-]+="?[\w$]+"?/g, '')).replace(/(radix-)_\w*R_(\d+)_/g, '$1_R_$2_')
+const unmarked = (h: string) =>
+  normalise(h.replace(/<\/?brust-(?:if|host)\b[^>]*>/g, ''))
+    .replace(/ x-[\w-]+=[^ >]*/g, '')
+    .replace(/\/>/g, '>')
+for (const id of NATIVE_PAGES) {
+  test(`${id}: the page compiles without a React island and renders React's DOM`, async () => {
+    const mod = (await import(join(FIXTURE, 'repro', `${id}.tsx`))) as { default: () => unknown }
+    const { renderToStaticMarkup } = await fromFixture<typeof import('react-dom/server')>('react-dom/server')
+    const { createElement } = await fromFixture<typeof import('react')>('react')
+    const react = unmarked(renderToStaticMarkup(createElement(mod.default as never)))
+    const r = await fetch(`${base}/${id}`)
+    expect(r.status).toBe(200)
+    const html = await r.text()
+    expect(html).not.toContain('brust-island')
+    expect(unmarked(html)).toContain(react)
+  }, 60_000)
+}
+
 for (const id of ISLAND_PAGES) {
   test(`${id}: the page (island under a Provider, JSX const child) renders exactly as React does`, async () => {
     const mod = (await import(join(FIXTURE, 'repro', `${id}.tsx`))) as { default: () => unknown }
