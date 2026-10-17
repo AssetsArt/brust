@@ -508,15 +508,19 @@ impl<'r, 'a> Reader<'r, 'a> {
                     let (Some(key), Some(value)) = (&p.key, &p.value) else {
                         return self.opaque(e, "object property shape");
                     };
-                    if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
-                        || p.flags.contains(js_ast::flags::Property::IsComputed)
-                    {
+                    if !matches!(p.kind, js_ast::G::PropertyKind::Normal) {
                         return self.opaque(e, "object spread, accessor or computed key");
                     }
-                    let name = match &key.data {
-                        E::EString(s) => estring(s),
-                        E::ENumber(n) => format_num(n.value()),
-                        _ => return self.opaque(e, "object key"),
+                    let computed = p.flags.contains(js_ast::flags::Property::IsComputed);
+                    let Some(name) = literal_key(key, computed) else {
+                        return self.opaque(
+                            e,
+                            if computed {
+                                "object spread, accessor or computed key"
+                            } else {
+                                "object key"
+                            },
+                        );
                     };
                     seg.push((name, self.expr(value)));
                 }
@@ -550,15 +554,19 @@ impl<'r, 'a> Reader<'r, 'a> {
                     let (Some(key), Some(value)) = (&p.key, &p.value) else {
                         return self.opaque(e, "object property shape");
                     };
-                    if !matches!(p.kind, js_ast::G::PropertyKind::Normal)
-                        || p.flags.contains(js_ast::flags::Property::IsComputed)
-                    {
+                    if !matches!(p.kind, js_ast::G::PropertyKind::Normal) {
                         return self.opaque(e, "object spread, accessor or computed key");
                     }
-                    let name = match &key.data {
-                        E::EString(s) => estring(s),
-                        E::ENumber(n) => format_num(n.value()),
-                        _ => return self.opaque(e, "object key"),
+                    let computed = p.flags.contains(js_ast::flags::Property::IsComputed);
+                    let Some(name) = literal_key(key, computed) else {
+                        return self.opaque(
+                            e,
+                            if computed {
+                                "object spread, accessor or computed key"
+                            } else {
+                                "object key"
+                            },
+                        );
                     };
                     props.push((name, self.expr(value)));
                 }
@@ -1505,6 +1513,22 @@ impl Walk {
             _ => {}
         }
     }
+}
+
+/// The key of a plain object property: a written name, string or number, or (F383) a computed key that is itself a
+/// literal (`['--x']`, `` [`--x`] `` with no substitution, `[1]`), which names the same key (Radix Collapsible's
+/// `style={{ [`--radix-collapsible-content-height` as any]: ... }}`). `None` for any other key, and for a computed
+/// `__proto__`, which (unlike the written one) is an own property.
+fn literal_key(key: &js_ast::Expr, computed: bool) -> Option<String> {
+    let name = match &key.data {
+        E::EString(s) => estring(s),
+        E::ENumber(n) => format_num(n.value()),
+        E::ETemplate(t) if computed && t.tag.is_none() && t.parts.slice().is_empty() => {
+            template_text(&t.head)
+        }
+        _ => return None,
+    };
+    (!(computed && name == "__proto__")).then_some(name)
 }
 
 /// Every symbol a sequence of statements declares at its own level and below.
