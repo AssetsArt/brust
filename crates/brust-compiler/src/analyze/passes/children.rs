@@ -680,6 +680,22 @@ fn poly_has_runtime_spread(n: &Node) -> bool {
     }
 }
 
+/// The attributes of the polymorphic element of `n` (the one `asChild` replaces), `None` when there is none.
+fn poly_element_attrs(n: &Node) -> Option<&[Attr]> {
+    match n {
+        Node::Element {
+            poly: true, attrs, ..
+        } => Some(attrs),
+        Node::Element { children, .. } | Node::Component { children, .. } => {
+            children.iter().find_map(poly_element_attrs)
+        }
+        Node::Fragment(cs) => cs.iter().find_map(poly_element_attrs),
+        Node::If { then, else_, .. } => then.iter().chain(else_).find_map(poly_element_attrs),
+        Node::For { body, .. } => body.iter().find_map(poly_element_attrs),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+    }
+}
+
 /// The fed children of a static, unfed child component (F164 re-base): its records are re-based onto the caller,
 /// which numbers and feeds them as its own.
 #[derive(Clone, Debug)]
@@ -6092,6 +6108,27 @@ impl Walker<'_, '_> {
             ));
             return;
         };
+        if let Node::Component {
+            loc: cloc,
+            name: cname,
+            source,
+            imported,
+            member,
+            props: cprops,
+            link,
+            forwarded_ref,
+            ..
+        } = only
+        {
+            self.check_poly_component(
+                name,
+                child,
+                loc,
+                (cname, source, imported, member, *cloc),
+                (cprops, link.is_some(), *forwarded_ref),
+            );
+            return;
+        }
         let Node::Element {
             tag: child_tag,
             attrs,
@@ -6099,10 +6136,7 @@ impl Walker<'_, '_> {
             ..
         } = only
         else {
-            let (rule, what) = match only {
-                Node::Component { .. } => ("slot-child-component", "a component"),
-                _ => ("slot-child-shape", "text or an expression"),
-            };
+            let (rule, what) = ("slot-child-shape", "text or an expression");
             self.diagnostics.push(refuse(
                 rule,
                 format!(
@@ -6166,6 +6200,121 @@ impl Walker<'_, '_> {
                 rule,
                 format!("the child of <{name}> with `{}` has {what}", poly.flag),
                 "give the child plain attributes, or keep the page on React",
+            ));
+        }
+    }
+
+    /// F363a: `asChild` of a static component over ONE static component. React's Slot hands the component's element
+    /// attributes to the child as PROPS (`cloneElement`, `className` joined), so the child prints them wherever it spreads
+    /// its props; brust passes them the same way at the call site. Anything the merge cannot be proved for keeps the
+    /// caller on React (`slot-child-component`, or the merge rules' own codes).
+    fn check_poly_component(
+        &mut self,
+        name: &str,
+        parent: &Child,
+        loc: u32,
+        (cname, source, imported, member, cloc): (
+            &String,
+            &Option<String>,
+            &Option<String>,
+            &Vec<String>,
+            u32,
+        ),
+        (cprops, linked, forwarded_ref): (&[(String, Expr)], bool, bool),
+    ) {
+        let Some(poly) = &parent.poly else { return };
+        let cc = self.resolve_child(cname, source.as_deref(), imported.as_deref(), member, cloc);
+        let refuse = |rule: &str, why: String, fix: &str| Diagnostic::fallback(rule, why, loc, fix);
+        let attrs = parent
+            .ir
+            .as_deref()
+            .and_then(|ir| poly_element_attrs(&ir.template));
+        let why = if !matches!(cc.tier, Tier::Static) {
+            Some("it is not a static component (a React island, or one with state of its own)")
+        } else if cc.poly.is_some() || cc.fed || cc.use_id || linked || forwarded_ref {
+            Some("it is polymorphic itself, has a job or `useId`, or takes a ref")
+        } else if !cc.absent.is_empty()
+            || !cc.unwritten.is_empty()
+            || !cc.shadowed.is_empty()
+            || !cc.shadowed_input.is_empty()
+            || cc.rest_as_data
+            || cc.hosts_children
+        {
+            Some("it puts requirements on the props it is given")
+        } else if !cc.spread.lands("data-slot")
+            || !cc.ir.as_deref().is_some_and(|ir| {
+                matches!(
+                    ir.template,
+                    Node::Element {
+                        synthetic: false,
+                        ..
+                    }
+                )
+            })
+        {
+            Some("it does not spread its props onto the one element it renders")
+        } else if attrs.is_none_or(|a| {
+            a.iter().any(|a| {
+                !matches!(
+                    a,
+                    Attr::Static { .. } | Attr::Dynamic { .. } | Attr::Spread(_)
+                )
+            })
+        }) {
+            Some("the element it replaces carries a handler, a ref or other directive")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            self.diagnostics.push(refuse(
+                "slot-child-component",
+                format!(
+                    "`{}` on <{name}> has the component <{cname}> as its child, and {why}; only a static component that spreads its props onto one element is supported",
+                    poly.flag
+                ),
+                "pass a host element such as <a href=\"…\">, or keep the page on React",
+            ));
+            return;
+        }
+        // What the child is given must be values: no function, no live value, no ref, no spread (a key the merge cannot see).
+        let bad = cprops.iter().find_map(|(k, v)| {
+            if matches!(v, Expr::ClientOnly { .. }) {
+                Some(("slot-handler", "a function"))
+            } else if k == crate::ir::SPREAD_KEY || k == REST_INPUT {
+                Some(("slot-child-shape", "a spread"))
+            } else if k == "ref" || k == "key" || k == crate::ir::COLLECTION_ITEM_PROP {
+                Some(("slot-ref", "a ref, a key or a collection item"))
+            } else if self.reads_state(v) {
+                Some(("slot-child-attr", "a prop that changes on the client"))
+            } else {
+                None
+            }
+        });
+        if let Some((rule, what)) = bad {
+            self.diagnostics.push(refuse(
+                rule,
+                format!(
+                    "the child <{cname}> of <{name}> with `{}` is given {what}",
+                    poly.flag
+                ),
+                "give the child plain props, or keep the page on React",
+            ));
+            return;
+        }
+        // The merge joins `className` and needs both sides at compile time; `style` is not merged at all.
+        let brings = |keys: &[&str]| {
+            cprops
+                .iter()
+                .any(|(k, _)| keys.contains(&k.to_ascii_lowercase().as_str()))
+        };
+        if brings(&["style"]) || (parent.poly_runtime_spread && brings(&["class", "classname"])) {
+            self.diagnostics.push(refuse(
+                "slot-merge",
+                format!(
+                    "<{name}> spreads an object of keys known only at render, or the child <{cname}> under `{}` brings a style, which would merge with it",
+                    poly.flag
+                ),
+                "move the class or style to the component call, or keep the page on React",
             ));
         }
     }

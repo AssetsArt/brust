@@ -63,7 +63,7 @@ fn render(jinja: &str) -> String {
 
 fn page(body: &str) -> String {
     format!(
-        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nexport default function P() {{ return <main>{body}</main> }}"
+        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nexport default function P() {{ return <main>{body}</main> }}"
     )
 }
 
@@ -159,6 +159,23 @@ fn child_shapes_that_cannot_merge_stay_on_react() {
         ("<Btn asChild><a/><a/></Btn>", "slot-child-shape"),
         ("<Btn asChild></Btn>", "slot-child-shape"),
         ("<Btn asChild><Chip/></Btn>", "slot-child-component"),
+        (
+            "<Btn asChild><Plain>x</Plain></Btn>",
+            "slot-child-component",
+        ),
+        ("<Btn asChild><Stateful /></Btn>", "slot-child-component"),
+        (
+            "<Btn asChild><Link onClick={() => {}}>x</Link></Btn>",
+            "slot-handler",
+        ),
+        (
+            "<Btn asChild><Link style={{ color: 'red' }}>x</Link></Btn>",
+            "slot-merge",
+        ),
+        (
+            "<Btn asChild><Link {...props}>x</Link></Btn>",
+            "slot-child-shape",
+        ),
         (
             "<Btn asChild><a onClick={() => {}}>x</a></Btn>",
             "slot-handler",
@@ -280,4 +297,22 @@ fn a_raw_text_child_under_as_child_stays_on_react() {
         let o = lower("P.tsx", &page(&format!("<Btn asChild>{kid}</Btn>")));
         assert!(react_with(&o, "slot-child-shape"), "{kid}: {:?}", o.diags);
     }
+}
+
+/// F363a: React's Slot hands the component's element attributes to a COMPONENT child as props (`className` joined, the
+/// element's first); the child prints them where it spreads its props, so the output is what it prints when given them.
+#[test]
+fn as_child_over_a_static_component_gives_it_the_element_attributes_as_props() {
+    let o = lower(
+        "P.tsx",
+        &page(
+            "<Btn asChild className=\"extra\" id=\"slot\"><Link href=\"/login\" id=\"mine\" className=\"own\">Login</Link></Btn>",
+        ),
+    );
+    assert_eq!(o.tier, Tier::Static, "{:?}", o.diags);
+    // Slot props first, the child's override them (`id`), `className` joins slot-first and then goes through Link's own.
+    assert_eq!(
+        render(&o.jinja),
+        "<main><a class=\"link base extra own\" data-slot=\"btn\" data-variant=\"default\" id=\"mine\" href=\"/login\">Login</a></main>"
+    );
 }
