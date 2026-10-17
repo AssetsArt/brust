@@ -469,15 +469,6 @@
       "libraryComponents": 9
     },
     {
-      "blocker": "fallback:hook-return-shape",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 5
-    },
-    {
       "blocker": "useImperativeHandle",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
@@ -523,6 +514,15 @@
       "libraryComponents": 2
     },
     {
+      "blocker": "fallback:ref-in-render",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 2
+    },
+    {
       "blocker": "React.Children",
       "kind": "construct",
       "classification": "census (construct present; blocks per the battery row in Why)",
@@ -541,6 +541,15 @@
       "libraryComponents": 2
     },
     {
+      "blocker": "fallback:hook-return-shape",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 0,
+      "analysisOnlyRows": 0,
+      "appComponents": 0,
+      "libraryComponents": 1
+    },
+    {
       "blocker": "fallback:prop-default-shape",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -551,15 +560,6 @@
     },
     {
       "blocker": "fallback:raw-text-child",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 0,
-      "analysisOnlyRows": 0,
-      "appComponents": 0,
-      "libraryComponents": 1
-    },
-    {
-      "blocker": "fallback:ref-in-render",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 0,
