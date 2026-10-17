@@ -776,7 +776,7 @@ fn read_stmts(
             }
             S::SReturn(ret) => {
                 if let Some(v) = &ret.value {
-                    hoist_ids(v, r, out);
+                    hoist_ids(v, r, out, m, &stmts[..i]);
                 }
                 returned = Some(ret.value.map(|v| {
                     // R34.143: `return useSyncExternalStore(...)` of the hydration shape is the hook's one state
@@ -1331,11 +1331,18 @@ fn reducer_hook(
 /// prints in its place. The hooks are the ones whose result is one named value (`useId`, `useCallback`, `useMemo`,
 /// `useRef`). A call in a conditional, short-circuited or looped position, or inside a function, is left alone, and
 /// `nested_hooks` refuses it (`hook-in-expression`).
-fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) {
+fn hoist_ids(
+    value: &js_ast::Expr,
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+    prior: &[js_ast::Stmt],
+) {
     let mut found = Vec::new();
     unconditional_calls(value, &mut found);
     for call in found {
         let Some(hook) = react_hook_name(call, r.names) else {
+            hoist_custom(call, r, out, m, prior);
             continue;
         };
         if !matches!(
@@ -1384,6 +1391,55 @@ fn hoist_ids(value: &js_ast::Expr, r: &mut Reader<'_, '_>, out: &mut BodyDecls) 
             false,
         );
         r.hoisted_calls.insert(addr, name);
+    }
+}
+
+/// F379: an unconditional call of a custom hook in the returned expression (Radix Collapsible's `contentId={useId()}`,
+/// `useId` being `@radix-ui/react-id`'s own hook) is inlined before the return, in source order, as
+/// `const hoistN_useX = useX(…)` would be; the reader prints the generated local in the call's place. A callee the
+/// inliner cannot read is left alone, and `nested_hooks` refuses it as before.
+fn hoist_custom(
+    call: &js_ast::E::Call,
+    r: &mut Reader<'_, '_>,
+    out: &mut BodyDecls,
+    m: Module<'_, '_>,
+    prior: &[js_ast::Stmt],
+) {
+    let addr = call_addr(call);
+    let Some((hook, false)) = hook_target(&call.target, r.names) else {
+        return;
+    };
+    if r.hoisted_calls.contains_key(&addr)
+        || out.classified_hooks.contains(&addr)
+        || is_use_store(&call.target, r.names)
+        || is_scope_hook_call(m, r.names, call)
+        || crate::analyze::names::ident_ref(&call.target)
+            .is_some_and(|c| r.names.collection_hook(c))
+    {
+        return;
+    }
+    let mut n = 1;
+    let name = loop {
+        let name = format!("hoist{n}_{}", clean_name(&hook));
+        if out.inline.taken.insert(name.clone()) {
+            break name;
+        }
+        n += 1;
+    };
+    let site = Site {
+        hook: &hook,
+        call,
+        binding: None,
+        hoisted: Some(&name),
+        vloc: loc_of_call(call),
+        prior,
+    };
+    out.classified_hooks.insert(addr);
+    if inline_hook(r, out, m, &site) {
+        r.hoisted_calls.insert(addr, name);
+    } else {
+        out.classified_hooks.remove(&addr);
+        out.inline.taken.remove(&name);
     }
 }
 
@@ -2224,6 +2280,7 @@ fn read_decl(
                 hook: &hook,
                 call,
                 binding: Some(&decl.binding),
+                hoisted: None,
                 vloc,
                 prior,
             };
@@ -2547,6 +2604,7 @@ fn read_expr_stmt(
             hook: name,
             call,
             binding: None,
+            hoisted: None,
             vloc,
             prior: &[],
         };
@@ -2608,8 +2666,10 @@ struct Site<'s> {
     /// The name the hook is called by.
     hook: &'s str,
     call: &'s js_ast::E::Call,
-    /// `None` for a call as a statement.
+    /// `None` for a call as a statement, or one hoisted out of an expression (`hoisted`).
     binding: Option<&'s js_ast::Binding>,
+    /// F379: the generated local a call hoisted out of the returned expression is bound to.
+    hoisted: Option<&'s str>,
     vloc: u32,
     /// The caller's statements before this one.
     prior: &'s [js_ast::Stmt],
@@ -3923,6 +3983,13 @@ fn bind_result(
             "return one value, or an array or object literal the call site destructures",
         )
     };
+    if let Some(name) = site.hoisted {
+        out.derived.push(DerivedDecl {
+            name: name.to_string(),
+            expr: Expr::Raw(returned.unwrap_or_else(|| undefined_at(vloc))),
+        });
+        return;
+    }
     let Some(binding) = site.binding else {
         if returned.as_ref().is_some_and(|v| !inert(v)) {
             shape(

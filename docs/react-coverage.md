@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 237 | 126 | 18 | 93 | 0 | 0 | 0 | 0 |
-| C Hooks | 217 | 69 | 68 | 80 | 0 | 0 | 0 | 0 |
+| C Hooks | 219 | 69 | 69 | 81 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 611 | 271 | 115 | 221 | 3 | 1 | 0 | 0 |
+| **Total** | 613 | 271 | 116 | 222 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -506,6 +506,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-hoist-object | a custom hook returning an object whose properties are hook calls | native | native | 0 | ok | 4.6 | — | F286: an unconditional hook call in a returned object property is hoisted before the return, in source order |
 | c-hook-hoist-return | custom hooks that return useState(...) and useCallback(...) | native | native | 0 | ok | 4.6 | — | F286: a hook call in the return position is the pair or the value the call site binds |
 | c-hook-hoist-conditional | a hook call in a conditional property of a returned object | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | F286: only unconditional positions are hoisted; a conditional hook call stays refused |
+| c-custom-hook-in-attribute | custom hooks (one imported, wrapping useId) called in attribute values of the returned tree | native | native | 0 | ok | 4.6 | — | F379: an unconditional custom-hook call in the returned expression is inlined before the return, in source order (Radix Collapsible's contentId={useId()} with @radix-ui/react-id's own hook) |
+| c-custom-hook-in-conditional | a custom hook called in a branch of the returned tree | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | F379: only unconditional positions are hoisted; a conditional custom-hook call stays refused (hook-unsupported) |
 | c-hook-object-whole | a custom hook returning an object with a handler, bound whole at the call site | native | native | 0 | ok | 4.6 | — | F289: the object is read member by member (t.key), as a destructuring is; it was a job naming the handler local (500) |
 | c-hook-object-whole-array | a custom hook returning an array with a handler, bound whole at the call site | native | native | 0 | ok | 4.6 | — | F289: t[0] / t[1] with a literal index are the items of the returned array |
 | c-hook-object-whole-escapes | a custom hook's returned object bound whole and passed on as a whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: a hook object used as a value (not t.key) cannot be named in a job: hook-return-shape, the component stays React |
