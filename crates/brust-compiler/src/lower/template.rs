@@ -1993,6 +1993,14 @@ impl<'a, 'c> Printer<'a, 'c> {
         };
         let as_child = match &child_ir.poly {
             Some(poly) if slot_selected(poly, props) => self.as_child_of(name, children, schildren),
+            // F369a: this is a carrier's polymorphic child, given the carrier's whole rest: the carrier's own call site
+            // selected the Slot, and it is this element that the child replaces
+            Some(poly)
+                if carries_rest(poly, props)
+                    && self.inline.as_ref().is_some_and(|i| i.as_child.is_some()) =>
+            {
+                self.inline.as_mut().and_then(|i| i.as_child.take())
+            }
             _ => None,
         };
         // F328b: the item markers a `<Collection.ItemSlot>` over this component asks for, printed in THIS scope on the
@@ -2437,6 +2445,16 @@ impl<'a, 'c> Printer<'a, 'c> {
             .collect();
         format!("{{{}}}", items.join(", "))
     }
+}
+
+/// F369a: whether the call hands its component's whole rest to a polymorphic child without naming the flag (a carrier).
+fn carries_rest(poly: &crate::ir::PolyTag, props: &[(String, Expr)]) -> bool {
+    !props.iter().any(|(k, _)| k == &poly.flag)
+        && props.iter().any(|(k, v)| {
+            k == crate::ir::SPREAD_KEY
+                && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                    RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS))
+        })
 }
 
 /// Whether the call's props select the Slot of a polymorphic tag: a literal `asChild` (compared

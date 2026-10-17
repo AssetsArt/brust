@@ -348,6 +348,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/host-specialise.chromium.test.ts
       # battery c-rest-children-linked-host: a context-reading element hosting rest-carried children, native since F337; served == React.
       - run: bun test --timeout 120000 tests/server/linked-rest-host.chromium.test.ts
+      # F238: a clone made inside a clone keeps its own content (key = call site + content shape); content reading a Provider inside the cloned component is refused by name; served == React.
+      - run: bun test --timeout 120000 tests/server/clone-cache.chromium.test.ts
       # F362: a module list the client rows run over ships only the keys the chunk reads; served == React.
       - run: bun test --timeout 120000 tests/server/module-projection.chromium.test.ts
       # F305: a value of rest-carried content that calls an import is computed by the page and handed to the clone; served == React.

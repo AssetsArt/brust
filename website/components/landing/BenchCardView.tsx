@@ -5,7 +5,7 @@ import Histogram from './Histogram'
 
 export default function BenchCardView({ card }: { card: BenchCard }) {
   return (
-    <article className={card.lead ? 'grid min-w-0 content-start rounded-xs border px-[1.4rem] pt-[1.4rem] pb-[1.1rem] motion-safe:[transition:transform_.2s,border-color_.2s] motion-safe:hover:-translate-y-[3px] border-amber-dim bg-[oklch(24%_0.05_120/.35)]' : 'grid min-w-0 content-start rounded-xs border px-[1.4rem] pt-[1.4rem] pb-[1.1rem] motion-safe:[transition:transform_.2s,border-color_.2s] motion-safe:hover:-translate-y-[3px] border-term-rule bg-term-2'}>
+    <article className={card.lead ? 'grid min-w-0 content-start rounded-xs border px-[1.4rem] pt-[1.4rem] pb-[1.1rem] motion-safe:[transition:translate_.2s,border-color_.2s] motion-safe:hover:-translate-y-[3px] border-amber-dim bg-[oklch(24%_0.05_120/.35)]' : 'grid min-w-0 content-start rounded-xs border px-[1.4rem] pt-[1.4rem] pb-[1.1rem] motion-safe:[transition:translate_.2s,border-color_.2s] motion-safe:hover:-translate-y-[3px] border-term-rule bg-term-2'}>
       <header className="flex items-center justify-between gap-3">
         <h3 className="text-[1.05rem] text-term-fg">{card.title}</h3>
         <span className={card.lead ? 'rounded-full border px-[.55rem] py-[.1rem] font-mono text-[11.5px] whitespace-nowrap border-amber-dim text-amber' : 'rounded-full border px-[.55rem] py-[.1rem] font-mono text-[11.5px] whitespace-nowrap border-term-rule text-term-dim'}>{card.pill}</span>

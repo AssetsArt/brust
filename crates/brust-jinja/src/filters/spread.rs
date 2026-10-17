@@ -256,8 +256,13 @@ pub struct OrderedMap {
 }
 
 impl OrderedMap {
-    /// Sets `k` as a JS property assignment does: a new key goes last, an existing one keeps its place.
+    /// Sets `k` as a JS property assignment does: a new key goes last, an existing one keeps its place. `__proto__`
+    /// is never an own key: assignment calls the prototype setter, and an object literal `{ __proto__: v }` sets the
+    /// prototype, so the key is skipped (F292).
     fn set(&mut self, k: String, v: Value) {
+        if k == "__proto__" {
+            return;
+        }
         match self.index.get(&k) {
             Some(&i) => self.entries[i].1 = v,
             None => {
@@ -409,6 +414,34 @@ mod tests {
                 json!({})
             ),
             "margin-top:5px;margin:0"
+        );
+    }
+
+    /// F292: an own `__proto__` key is not copied, as `Object.assign` and an object literal treat it; other keys stay.
+    #[test]
+    fn a_proto_key_is_never_an_own_key() {
+        let data = json!({ "src": { "__proto__": { "x": 1 }, "a": 1 } });
+        assert_eq!(
+            render("{{ obj_assign(src) | keys | join(',') }}", data.clone()),
+            "a"
+        );
+        assert_eq!(
+            render("{{ '__proto__' in obj_assign(src) }}", data.clone()),
+            "False"
+        );
+        assert_eq!(
+            render(
+                "{{ obj_assign({'__proto__': 1}, src, {'b': 2}) | keys | join(',') }}",
+                data
+            ),
+            "a,b"
+        );
+        assert_eq!(
+            render(
+                "{{ obj_lit('__proto__', 1, 'k', 2) | keys | join(',') }}",
+                json!({})
+            ),
+            "k"
         );
     }
 
