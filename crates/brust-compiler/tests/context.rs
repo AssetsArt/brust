@@ -1606,7 +1606,11 @@ fn a_function_prop_after_a_spread_does_not_ride_the_spread() {
 
 #[test]
 fn a_function_prop_that_may_ride_the_spread_stays_refused() {
-    for file in ["before-spread.tsx", "after-spread-lands.tsx"] {
+    for file in [
+        "before-spread.tsx",
+        "after-spread-lands.tsx",
+        "after-spread-live.tsx",
+    ] {
         let all = compile(file);
         let page = all
             .iter()
@@ -1618,4 +1622,20 @@ fn a_function_prop_that_may_ride_the_spread_stays_refused() {
             page.1.diagnostics
         );
     }
+}
+
+/// F329 W4 negative: an array does not make an arbitrary call a plain combination of reads: the Provider keeps its island.
+#[test]
+fn a_memoized_array_holding_a_call_keeps_the_provider_an_island() {
+    let out = compile_all("memo-frame-call.tsx");
+    let page = out
+        .iter()
+        .find(|(id, ..)| id.starts_with("memoFrameCall_"))
+        .expect("page");
+    assert!(
+        page.2.contains("brust-island") || is_react(&page.1),
+        "{:?} {}",
+        page.1.tier,
+        page.2
+    );
 }
