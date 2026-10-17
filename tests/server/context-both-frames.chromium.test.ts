@@ -3,7 +3,7 @@
 // against the page's. Served output must equal React's at first paint and after each change (the inner flip, the outer flip).
 // Run alone: `bun test --timeout 120000 tests/server/context-both-frames.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, type Page, chromium } from 'playwright'
 import { renderPage } from '../../packages/brust/test/fixtures/context-both-frames/render'
@@ -75,6 +75,13 @@ async function run(open: (page: Page) => Promise<void>): Promise<{ log: unknown[
   await page.close()
   return { log, errors }
 }
+
+test('the page is compiled natively: no component is on the React tier', () => {
+  // Without this the match below could be React serving itself (a relative `K.Provider` member tag is a React page).
+  const manifest = JSON.parse(readFileSync(join(app, 'dist/manifest.json'), 'utf8')) as { components: Record<string, { tier: string }> }
+  expect(Object.keys(manifest.components).length).toBeGreaterThan(0)
+  expect(Object.values(manifest.components).every((c) => c.tier !== 'react')).toBe(true)
+})
 
 test("first paint equals React's render", async () => {
   const html = await (await fetch(`${base}/`)).text()
