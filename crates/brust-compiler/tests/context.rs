@@ -253,6 +253,20 @@ fn a_wrapper_spreading_its_props_moves_the_callable_requirement_to_its_callers()
     );
 }
 
+/// F340: the requirement a wrapper moves up names the callable props (`getValueLabel`), not every key its callers pass: a
+/// `className={expr}` through `{...props}` stays native.
+#[test]
+fn a_wrapper_only_moves_the_callable_names_up_not_every_key() {
+    let all = compile("fn-wrap-class.tsx");
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(_, ir, d)| (&ir.id, &ir.tier, d))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// A Provider field that IS a call of a proven-plain module function (`pct: clamp(value)`) is evaluated by the Provider's own
 /// instance (a native clone per call site): the call is never substituted into a lowered frame at the call site.
 #[test]
@@ -1396,5 +1410,28 @@ fn the_same_object_read_as_a_value_still_refuses_the_rest() {
         "{:?} {:?}",
         g.1.tier,
         g.1.diagnostics
+    );
+}
+
+/// F341: a local object that spreads the props and adds a local function for a callable prop (`{ ...props, getValueLabel: fmt }`)
+/// is read as a named key at the Root (F326), so the function is refused by name; one that adds only plain entries stays native.
+#[test]
+fn a_local_object_spread_carrying_a_local_function_to_a_callable_prop_is_refused() {
+    let out = compile("fn-local-spread.tsx");
+    assert!(
+        out.iter()
+            .any(|(_, ir, _)| is_react(ir) && rules(ir).contains(&"frozen-prop")),
+        "{:?}",
+        out.iter()
+            .map(|(id, ir, _)| (id, &ir.tier, rules(ir)))
+            .collect::<Vec<_>>()
+    );
+    let all = compile("fn-local-spread-prop.tsx");
+    assert!(
+        !all.iter().any(|(_, ir, _)| is_react(ir)),
+        "{:?}",
+        all.iter()
+            .map(|(id, ir, _)| (id, &ir.tier))
+            .collect::<Vec<_>>()
     );
 }
