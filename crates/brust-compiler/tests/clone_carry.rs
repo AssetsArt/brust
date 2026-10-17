@@ -48,7 +48,7 @@ function KRoot({ ...rest }: React.ComponentPropsWithoutRef<'button'>) {
 export { KRoot as Root, KThumb as Thumb }
 "#;
 
-const CN: &str = "export function cn(...xs: (string | false | undefined)[]) { return xs.filter(Boolean).join(' ') }\nexport const DATA = { label: 'S3CR3T' }\nexport const ROWS = ['S3CR3T']\nexport function getRows() { return ['S3CR3T'] }\n";
+const CN: &str = "export function cn(...xs: (string | false | undefined)[]) { return xs.filter(Boolean).join(' ') }\nexport const DATA = { label: 'S3CR3T', items: ['S3CR3T'] }\nexport const ROWS = ['S3CR3T']\nexport function getRows() { return ['S3CR3T'] }\n";
 
 struct App {
     root: PathBuf,
@@ -159,6 +159,24 @@ fn a_value_that_calls_an_import_crosses_into_the_clone_as_one_input() {
     assert!(root_jinja.contains("__inx"), "{root_jinja}");
 }
 
+/// F305: a member of a namespace import is a call of the import too (`fmt.cn(…)`, `import * as fmt`).
+#[test]
+fn a_namespace_imports_call_crosses_too() {
+    let mut app = App::new();
+    let tree = app.compile(&page(
+        "<Root data-x=\"1\"><Thumb className={fmt.cn('t', on && 'on')} /></Root>",
+        "import { Root, Thumb } from './kit'\nimport * as fmt from './cn'",
+    ));
+    let (root, ..) = &tree[0];
+    assert!(!matches!(root.tier, Tier::React { .. }), "{:?}", info(root));
+    let (clone, ..) = rest_clone(&tree).unwrap_or_else(|| panic!("{:?}", info(root)));
+    assert!(
+        clone.props.iter().any(|p| p.name.starts_with("__inx")),
+        "{:?}",
+        clone.props
+    );
+}
+
 /// F306 + F305: the same shape from a package the build wrote: `Kit.Thumb` is declared in the clone's own module.
 #[test]
 fn a_package_component_declared_in_the_clones_own_module_is_rebased() {
@@ -204,6 +222,9 @@ fn an_import_read_as_data_stays_refused() {
         "<Root data-x=\"1\"><Thumb />{ROWS.map((r) => <b key={r}>{on ? r : '-'}</b>)}</Root>",
         // a list whose source calls an import: computing it at the call site would ship the rows as an input
         "<Root data-x=\"1\"><Thumb />{getRows().map((r) => <b key={r}>{on ? r : '-'}</b>)}</Root>",
+        // Mellow N1: an import read as data through a method call is not a call of the import
+        "<Root data-x=\"1\"><Thumb className={DATA.items.join(on ? ',' : ';')} /></Root>",
+        "<Root data-x=\"1\"><Thumb className={on ? DATA.label.toLowerCase() : 'x'} /></Root>",
     ] {
         let mut app = App::new();
         let tree = app.compile(&page(thumb, "import { Root, Thumb } from './kit'"));

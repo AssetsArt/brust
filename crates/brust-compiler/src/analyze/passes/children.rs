@@ -987,9 +987,9 @@ fn splice_rest_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), 
     }
 }
 
-/// F305: `Some(true)` when `r` reads an import, and only as the callee of a call (`cn(…)`, `fmt.date(…)`), with no
-/// element, no code printed as written and no name the content binds itself (a list row's): the whole value can be
-/// computed at the call site. `Some(false)` when it reads no import; `None` when an import is read as a value (data,
+/// F305: `Some(true)` when `r` reads an import, and only as the callee of a direct call (`cn(…)`) or of a namespace
+/// import's member (`fmt.date(…)`, `import * as fmt`), with no element, no code printed as written and no name the
+/// content binds itself (a list row's): the whole value can be computed at the call site. `Some(false)` when it reads no import; `None` when an import is read as a value (data,
 /// which F325 keeps out of a clone) or the value cannot be moved.
 fn imports_called_only(r: &RawExpr, bound: &[String]) -> Option<bool> {
     fn walk(r: &RawExpr, bound: &[String], callee: bool, seen: &mut bool) -> Option<()> {
@@ -1006,8 +1006,18 @@ fn imports_called_only(r: &RawExpr, bound: &[String]) -> Option<bool> {
                 }
                 _ => Some(()),
             },
-            // `fmt.date(…)`: the member chain under a callee is still the callee.
-            RawKind::Member { target, .. } => walk(target, bound, callee, seen),
+            // `fmt.date(…)` with `import * as fmt`: one member of a namespace import is the callee. Any other member
+            // chain under a callee (`DATA.items.join(…)`) reads the import as data (Mellow N1, F325).
+            RawKind::Member { target, .. } => match &target.kind {
+                RawKind::Ident {
+                    kind: IdentKind::Import { imported, .. },
+                    ..
+                } if callee && imported == "*" => {
+                    *seen = true;
+                    Some(())
+                }
+                _ => walk(target, bound, false, seen),
+            },
             RawKind::Index { target, index } => {
                 walk(target, bound, false, seen)?;
                 walk(index, bound, false, seen)
