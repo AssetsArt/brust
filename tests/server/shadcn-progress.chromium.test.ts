@@ -22,7 +22,7 @@ beforeAll(async () => {
   mkdirSync(ROWS, { recursive: true })
   writeFileSync(
     join(FIXTURE, ENTRY),
-    `import { defineRoutes } from "@brust/core/routes"\nimport Progress from "../pages/progress"\nimport Live from "../repro/progress-live"\nimport LiveRoot from "../repro/progress-live-root"\nexport const routes = defineRoutes([\n  { path: "/progress", Component: Progress },\n  { path: "/live", Component: Live },\n  { path: "/live-root", Component: LiveRoot },\n])\n`,
+    `import { defineRoutes } from "@brust/core/routes"\nimport Progress from "../pages/progress"\nimport Live from "../repro/progress-live"\nimport LiveRoot from "../repro/progress-live-root"\nimport LiveSteps from "../repro/progress-live-steps"\nimport LiveLabel from "../repro/progress-live-label"\nimport LiveSpread from "../repro/progress-live-spread"\nexport const routes = defineRoutes([\n  { path: "/live-label", Component: LiveLabel },\n  { path: "/live-spread", Component: LiveSpread },\n  { path: "/progress", Component: Progress },\n  { path: "/live", Component: Live },\n  { path: "/live-root", Component: LiveRoot },\n  { path: "/live-steps", Component: LiveSteps },\n])\n`,
   )
   const b = Bun.spawnSync([process.execPath, bin, 'build', ENTRY, '--out-dir', DIST], { cwd: FIXTURE, stdout: 'pipe', stderr: 'pipe' })
   if (b.exitCode !== 0) throw new Error(`brust build failed:\n${b.stderr.toString()}${b.stdout.toString()}`)
@@ -74,6 +74,8 @@ function bar(html: string): string {
   }
   return html
     .slice(start, end)
+    // a native Indicator's host (`display: contents`) has no box
+    .replace(/<\/?brust-host\b[^>]*>/g, '')
     .replace(/<([a-zA-Z][\w-]*)((?:\s+[^\s=>/]+(?:="[^"]*")?)*)\s*(\/?)>/g, (_, tag: string, attrs: string, close: string) => {
       const list = [...attrs.matchAll(/\s+([^\s=>/]+)(?:="([^"]*)")?/g)]
         .map((m) => `${m[1]}=${m[1] === 'style' ? (m[2] ?? '').replace(/\s+/g, '').replace(/;$/, '').replace('(-0%)', '(0%)') : (m[2] ?? '')}`)
@@ -102,14 +104,14 @@ test("progress: first paint equals React's own render", async () => {
   expect(bar(html)).toBe(await react(66))
 })
 
-/** React's own render of a bare Radix Root with an Indicator at `value`. */
-async function reactRoot(value: number | null): Promise<string> {
+/** React's own render of a bare Radix Root with an Indicator at `value` (and `max`). */
+async function reactRoot(value: unknown, max = 100): Promise<string> {
   const { renderToStaticMarkup } = await fromFixture<typeof import('react-dom/server')>('react-dom/server')
   const { createElement } = await fromFixture<typeof import('react')>('react')
   const { Progress } = await fromFixture<typeof import('radix-ui')>('radix-ui')
   return bar(
     renderToStaticMarkup(
-      createElement(Progress.Root, { value, max: 100 }, createElement(Progress.Indicator, { style: { width: '10px' } })),
+      createElement(Progress.Root, { value: value as number | null, max }, createElement(Progress.Indicator, { style: { width: '10px' } })),
     ),
   )
 }
@@ -146,3 +148,45 @@ test('the shadcn Progress with a value that changes equals React at every step',
 test("a bare Radix Root's value that changes reaches its aria and data attributes, equal to React at every step", async () => {
   await follows('/live-root', [66, 100, null, 13], reactRoot, (v) => `document.querySelector('[role=progressbar]')?.getAttribute('aria-valuenow') ${v === null ? '== null' : `=== '${v}'`}`)
 }, 60_000)
+
+// F337: the Root clone recomputes its value-derived attributes in its chunk (plain helpers, Mellow A2), and the job is
+// fed the state's initial value at first paint (M2): the page is native, no island.
+test('the bare Radix Root with a changing value is native', async () => {
+  for (const path of ['/live-root', '/live-steps']) {
+    const html = await (await fetch(`${base}${path}`)).text()
+    expect(html).not.toContain('brust-island')
+    expect(html).toContain('x-bind-aria-valuenow')
+  }
+})
+
+// F337 (Mellow A1): every kind of value and a max that changes print what React prints, at first paint and after each
+// step (the page's own tables: repro/progress-live-steps.tsx).
+test('the Root prints what React prints for fractions, -0, out-of-range, null, undefined, booleans and a changing max', async () => {
+  const VALUES: unknown[] = [13, 33.5, -0, 250, null, undefined, true, 40, 50, 7]
+  const MAXES = [100, 100, 100, 100, 100, 100, 100, 50, 50, 0]
+  const served = await (await fetch(`${base}/live-steps`)).text()
+  expect(bar(served)).toBe(await reactRoot(13, 100))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text())
+  })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/live-steps`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('[x-data]') !== null)
+  await page.waitForTimeout(200)
+  for (let k = 1; k <= VALUES.length; k++) {
+    await page.getByRole('button', { name: 'go' }).click()
+    await page.waitForTimeout(150)
+    const i = k % VALUES.length
+    expect(`${i}: ${bar(await page.content())}`).toBe(`${i}: ${await reactRoot(VALUES[i], MAXES[i])}`)
+  }
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+// F337 (Q2/C1, A4): a getValueLabel the call site passes, or one a spread may carry, is a function the chunk cannot
+// recompute: those pages keep their refusal (a React island), as before.
+test('a passed or spread-carried getValueLabel keeps the Root a React island', async () => {
+  for (const path of ['/live-label', '/live-spread']) expect(await (await fetch(`${base}${path}`)).text()).toContain('brust-island')
+})

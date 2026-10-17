@@ -109,6 +109,19 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .iter()
             .map(|s| (s.name.clone(), s.init.clone()))
             .collect(),
+        written_inits: ir
+            .structural
+            .as_deref()
+            .map(|st| {
+                st.state
+                    .iter()
+                    .filter_map(|s| match &s.init {
+                        Expr::Raw(r) => Some((s.name.clone(), r.clone())),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         fused: Vec::new(),
         fused_counts: HashMap::new(),
         holds_island: false,
@@ -506,6 +519,9 @@ struct Walker<'s, 'c> {
     callable_up: BTreeSet<String>,
     /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
     state_inits: HashMap<String, Expr>,
+    /// F337 (M2, Mellow A5): each state's initializer as written (structural IR), so a lazy one (`useState(() => …)`,
+    /// which placement turns into its value) is never mistaken for a literal seed.
+    written_inits: HashMap<String, RawExpr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
     fused: Vec<crate::ir::FusedInstance>,
     fused_counts: HashMap<String, u32>,
@@ -529,6 +545,9 @@ struct Child {
     /// The compiled child has a precompute job (or an island's ssr render, L4) over its props: the
     /// server computes it once, so a link that changes those props later would leave it stale (F96d).
     prop_precompute: bool,
+    /// F337: ... but every value it precomputes over props is one its chunk recomputes when they change (only
+    /// Precompute jobs, `ComponentIR::props_slots_recomputable`, props a signal): a link may change them.
+    recomputes: bool,
     /// Where the child spreads its props (shadcn S1.2): the call-site keys that land in a spread.
     spread: SpreadSink,
     /// The child's polymorphic tag (`asChild`, R34.28): the call site must resolve it.
@@ -3920,6 +3939,7 @@ impl Walker<'_, '_> {
             fed: false,
             stores: false,
             prop_precompute: false,
+            recomputes: false,
             spread: SpreadSink::None,
             poly: None,
             poly_runtime_spread: false,
@@ -3986,6 +4006,7 @@ impl Walker<'_, '_> {
                     fed: false,
                     stores: false,
                     prop_precompute: false,
+                    recomputes: false,
                     spread: SpreadSink::None,
                     poly: None,
                     poly_runtime_spread: false,
@@ -4171,6 +4192,7 @@ impl Walker<'_, '_> {
                         fed: false,
                         stores: false,
                         prop_precompute: false,
+                        recomputes: false,
                         spread: SpreadSink::None,
                         poly: None,
                         poly_runtime_spread: false,
@@ -4231,6 +4253,7 @@ impl Walker<'_, '_> {
         let mut fed = false;
         let mut stores = false;
         let mut prop_precompute = false;
+        let mut recomputes = false;
         let mut spread = SpreadSink::None;
         let mut poly = None;
         let mut poly_runtime_spread = false;
@@ -4325,6 +4348,14 @@ impl Walker<'_, '_> {
                 prop_precompute = ir.jobs.iter().any(|j| {
                     crate::ir::feeds_instances(j) && j.inputs.iter().any(|i| i != "__store")
                 });
+                recomputes = ir.props_slots_recomputable
+                    && ir.props_are_signal()
+                    && ir.use_id_slots == 0
+                    && ir
+                        .jobs
+                        .iter()
+                        .filter(|j| crate::ir::feeds_instances(j))
+                        .all(|j| matches!(j.kind, crate::ir::JobKind::Precompute));
                 ir.tier.clone()
             }
             Lookup::Cycle => {
@@ -4362,6 +4393,7 @@ impl Walker<'_, '_> {
             fed,
             stores,
             prop_precompute,
+            recomputes,
             spread,
             poly,
             poly_runtime_spread,
@@ -5700,6 +5732,21 @@ impl Walker<'_, '_> {
                             record.literals.insert(name.clone(), j);
                         } else if let Some(e) = self.instance_expr(v) {
                             record.exprs.insert(name.clone(), e);
+                        } else if let Some(seed) = self.state_seed(v).filter(|_| {
+                            // ...only for a child that follows the change itself: its chunk recomputes every value its
+                            // job derives from props (F337 `recomputes`) and the job is its own (A3).
+                            child.recomputes && !fused
+                        }) {
+                            // F337 (M2, Mellow A5): this component's state, read whole: the server paints it at its
+                            // initial value, so the child's job is fed that value (a literal or a props path).
+                            match seed {
+                                Ok(j) => {
+                                    record.literals.insert(name.clone(), j);
+                                }
+                                Err(p) => {
+                                    record.props.insert(name.clone(), Some(p));
+                                }
+                            }
                         } else {
                             // The manifest has no binding for this value (a job's output, a call): its
                             // `instance-prop-path` build error becomes an island here (F164, R34.97).
@@ -5922,7 +5969,17 @@ impl Walker<'_, '_> {
                         self.frozen.extend(roots);
                     }
                 }
-                if need == LinkNeed::Always && child.prop_precompute {
+                // F337: unless the child's chunk recomputes every such value from its props (`recomputes`), its job is
+                // its own, not fused into this component's (Mellow A3), and no function this call site passes feeds that
+                // job (the record cannot bind a function: the server would paint without it).
+                let fn_fed = kept.iter().any(|(k, v)| {
+                    matches!(v, Expr::ClientOnly { .. })
+                        && (child.job_all || child.job_roots.contains(k.as_str()))
+                });
+                if need == LinkNeed::Always
+                    && child.prop_precompute
+                    && !(child.recomputes && !fused && !fn_fed)
+                {
                     // Fail closed (F96d): the child computed values from its props once, on the
                     // server; a linked prop that changes would leave them stale with no warning.
                     self.diagnostics.push(linked_prop_precompute(name, *loc));
@@ -7443,6 +7500,33 @@ impl Walker<'_, '_> {
 
     /// A plain props path of `e` (`item.price`), `[idx]` standing for the current row of
     /// the innermost list; `None` for anything else.
+    /// F337 (M2, Mellow A5): `e` reads one of this component's states whole, outside any row, whose initial value is a
+    /// literal (`Ok`, its JSON) or a props path (`Err`, the path): what the server paints for it. A lazy, store, context,
+    /// ref or any other initializer is `None`.
+    fn state_seed(&self, e: &Expr) -> Option<Result<crate::ir::OJson, String>> {
+        let (Expr::Raw(r) | Expr::Server(ServerExpr(r))) = e else {
+            return None;
+        };
+        let RawKind::Ident {
+            name,
+            kind: IdentKind::State,
+        } = &r.kind
+        else {
+            return None;
+        };
+        if !self.items.is_empty() {
+            return None;
+        }
+        let i = self.written_inits.get(name)?;
+        if let Some(j) = i.json_literal_ordered() {
+            return Some(Ok(j));
+        }
+        match plain_path(i, None)? {
+            PlainPath::Props(p) => Some(Err(p)),
+            PlainPath::Row(_) => None,
+        }
+    }
+
     fn prop_path(&self, e: &Expr) -> Option<String> {
         let r = match e {
             Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r,
