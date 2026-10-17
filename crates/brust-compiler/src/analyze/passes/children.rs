@@ -2649,9 +2649,17 @@ impl Walker<'_, '_> {
                     .iter_mut()
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
             }
-            Node::For { body, .. } => body
-                .iter_mut()
-                .for_each(|c| self.frames_node(c, frames, bubbled, diags)),
+            Node::For {
+                body, item, index, ..
+            } => {
+                // F344: the row's names are loop bindings here too (a clone made in a row must not pin a row value).
+                let n = self.loop_scope.len();
+                self.loop_scope.push(item.clone());
+                self.loop_scope.extend(index.iter().cloned());
+                body.iter_mut()
+                    .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                self.loop_scope.truncate(n);
+            }
             Node::Component {
                 loc,
                 name,
@@ -3440,7 +3448,11 @@ impl Walker<'_, '_> {
             }
         }
         for (name, v) in given {
-            if matches!(v, Expr::ClientOnly { .. }) || !self.live(v) {
+            // F344: a row value changes per instance: pinned, a row the client adds would print the first row's value
+            // (F358's class). Not pinned, the clone follows it. (Clones are made in the frames pass, which does not know
+            // whether a list re-creates its rows: every row value counts.)
+            let row = !self.deps_of(v).loop_bindings.is_empty();
+            if matches!(v, Expr::ClientOnly { .. }) || (!self.live(v) && !row) {
                 frozen.extend(self.changing_prop_roots(&self.deps_of(v)));
                 fixed.push(name.to_string());
             }
