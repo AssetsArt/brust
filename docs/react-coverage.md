@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
-| C Hooks | 217 | 69 | 68 | 80 | 0 | 0 | 0 | 0 |
+| C Hooks | 218 | 70 | 68 | 80 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 615 | 272 | 116 | 223 | 3 | 1 | 0 | 0 |
+| **Total** | 616 | 273 | 116 | 223 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -510,6 +510,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-hoist-object | a custom hook returning an object whose properties are hook calls | native | native | 0 | ok | 4.7 | — | F286: an unconditional hook call in a returned object property is hoisted before the return, in source order |
 | c-hook-hoist-return | custom hooks that return useState(...) and useCallback(...) | native | native | 0 | ok | 4.7 | — | F286: a hook call in the return position is the pair or the value the call site binds |
 | c-hook-hoist-conditional | a hook call in a conditional property of a returned object | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | F286: only unconditional positions are hoisted; a conditional hook call stays refused |
+| c-forwarded-ref-composed | a forwardRef component passing its forwarded ref to another forwardRef component that composes it with its own ref (useComposedRefs) on an element | static | static | 0 | ok | 4.7 | — | F381: not a wall of its own. Radix CollapsibleContent's ref={forwardedRef} into CollapsibleContentImpl (useComposedRefs(forwardedRef, ref)) was refused only because Impl itself was React (W6/W7/W10); with a native Impl the forwarded ref chain lowers (main already) |
 | c-hook-object-whole | a custom hook returning an object with a handler, bound whole at the call site | native | native | 0 | ok | 4.7 | — | F289: the object is read member by member (t.key), as a destructuring is; it was a job naming the handler local (500) |
 | c-hook-object-whole-array | a custom hook returning an array with a handler, bound whole at the call site | native | native | 0 | ok | 4.7 | — | F289: t[0] / t[1] with a literal index are the items of the returned array |
 | c-hook-object-whole-escapes | a custom hook's returned object bound whole and passed on as a whole | react | react | ssr | ok | 4.0 | fallback:hook-return-shape | F289: a hook object used as a value (not t.key) cannot be named in a job: hook-return-shape, the component stays React |
