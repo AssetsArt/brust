@@ -668,6 +668,7 @@ fn read_function_as(
     ir.handlers = body.handlers;
     ir.throw_props = body.throw_props;
     ir.refs = body.refs;
+    ir.sink_refs = body.sink_refs;
     ir.use_id_slots = body.id_bindings.len();
     ir.uses_collection = body.uses_collection;
     ir.children_called = reader.names.children_called.get();

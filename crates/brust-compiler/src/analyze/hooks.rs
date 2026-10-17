@@ -41,6 +41,8 @@ pub struct BodyDecls {
     pub throw_props: Vec<String>,
     /// R34.140: the component asks for the items of its collection (`useCollection(scope)`).
     pub uses_collection: bool,
+    /// F329: the `useRef` cells nothing reads (every use is a component's `ref` prop).
+    pub sink_refs: Vec<String>,
     pub return_expr: Option<Expr>,
     /// `useStore(handle)` bindings in source order (M3-F D7).
     pub stores: Vec<StoreUse>,
@@ -346,6 +348,15 @@ pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
                 names.mark_snapshot_ref(id.r#ref);
                 continue;
             }
+            // F329: `const x = useRef(init)` whose every use is the `ref` prop of a component element: nothing reads it.
+            if let (Some(value), B::BIdentifier(id)) = (&decl.value, decl.binding.data)
+                && let E::ECall(call) = &value.data
+                && react_hook_name(call, names).as_deref() == Some("useRef")
+                && is_sink_ref(&w, names, id.r#ref)
+            {
+                names.mark_sink_ref(id.r#ref);
+                continue;
+            }
             let (Some(value), B::BArray(arr)) = (&decl.value, decl.binding.data) else {
                 continue;
             };
@@ -368,6 +379,23 @@ pub fn mark_state_bindings(func: &js_ast::G::Fn, names: &mut NameTable<'_>) {
             }
         }
     }
+}
+
+/// F329: every use of `r` in `w` is the `ref` prop of a component element, and `r` is never written, assigned or handed on.
+fn is_sink_ref(w: &Walk, names: &NameTable<'_>, r: js_ast::Ref) -> bool {
+    let uses: Vec<i32> = w
+        .used_at
+        .iter()
+        .filter(|(u, _)| names.same(*u, r))
+        .map(|(_, loc)| *loc)
+        .collect();
+    !uses.is_empty()
+        && !w.opaque_write
+        && !w.assigned.iter().any(|a| names.same(*a, r))
+        && !w.member_written.iter().any(|a| names.same(*a, r))
+        && !w.member_writes.iter().any(|(a, _)| names.same(*a, r))
+        && !w.fn_uses.iter().any(|a| names.same(*a, r))
+        && uses.iter().all(|loc| w.component_ref_props.contains(loc))
 }
 
 /// B4: every read of `r` in `w` is `r.current` outside any function, and `r` is never written, assigned, or handed on.
@@ -2267,6 +2295,11 @@ fn read_decl(
                 hydrated_state(out, name, vloc);
             }
             (true, "useMemo" | "useCallback" | "useRef" | "useId") => {
+                if let B::BIdentifier(id) = decl.binding.data
+                    && r.names.is_sink_ref(id.r#ref)
+                {
+                    out.sink_refs.push(r.names.name(id.r#ref));
+                }
                 let snapshot = matches!(decl.binding.data, B::BIdentifier(id) if r.names.is_snapshot_ref(id.r#ref));
                 simple_hook(r, out, &hook, ident, &args, vloc, snapshot)
             }

@@ -122,6 +122,8 @@ pub struct NameTable<'a> {
     /// B4: `const x = useRef(init)` whose `.current` is only ever read in the render (never written, never bound to an
     /// element, never read inside a function): held as a state cell (`state` holds it too).
     snapshot_refs: HashSet<u32>,
+    /// F329: `const x = useRef()` whose every use is the `ref` prop of a component element: handed on, never read, never written.
+    sink_refs: HashSet<u32>,
     /// B4: the first verbatim code that reads such a ref (the component keeps the `ref-in-render` fallback).
     pub snapshot_escape: std::cell::Cell<Option<u32>>,
     setters: HashSet<u32>,
@@ -496,6 +498,7 @@ impl<'a> NameTable<'a> {
             poly: HashMap::new(),
             state: HashSet::new(),
             snapshot_refs: HashSet::new(),
+            sink_refs: HashSet::new(),
             snapshot_escape: std::cell::Cell::new(None),
             setters: HashSet::new(),
             loop_bindings: HashSet::new(),
@@ -1316,6 +1319,15 @@ impl<'a> NameTable<'a> {
         let k = self.key(r);
         self.snapshot_refs.insert(k);
         self.state.insert(k);
+    }
+
+    pub fn mark_sink_ref(&mut self, r: js_ast::Ref) {
+        let k = self.key(r);
+        self.sink_refs.insert(k);
+    }
+
+    pub fn is_sink_ref(&self, r: js_ast::Ref) -> bool {
+        self.sink_refs.contains(&self.key(r))
     }
 
     pub fn is_snapshot_ref(&self, r: js_ast::Ref) -> bool {

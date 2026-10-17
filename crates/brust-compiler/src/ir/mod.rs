@@ -325,6 +325,9 @@ pub struct ComponentIR {
     /// F328b: the component writes `typeof children === 'function' ? children(…) : children` and is read as `{children}`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub children_called: bool,
+    /// F329: refs (`useRef`) nothing reads: every use is the `ref` prop of a component element, so a call site may drop it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sink_refs: Vec<String>,
     /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -543,6 +546,7 @@ impl ComponentIR {
             ctx_pkg: false,
             uses_collection: false,
             children_called: false,
+            sink_refs: Vec::new(),
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),

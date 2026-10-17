@@ -1113,6 +1113,9 @@ pub struct Walk {
     pub current_reads: Vec<i32>,
     /// B4: identifiers read inside a nested function (a handler, an effect, a callback), where a ref is not a render read.
     pub fn_uses: Vec<js_ast::Ref>,
+    /// F329: the start of each identifier written as the `ref` prop of a COMPONENT element (`<Item ref={ref} />`): a use that
+    /// only hands the ref on, never reads it.
+    pub component_ref_props: Vec<i32>,
     /// Depth of nested functions at the point being walked (crate-visible: F230's shallow walks build a `Walk` too).
     pub(crate) depth: u32,
 }
@@ -1400,6 +1403,20 @@ impl Walk {
             }
             E::ECall(c) => {
                 self.calls.push(*e);
+                if c.was_jsx_element
+                    && let Some(tag) = c.args.first()
+                    && !matches!(tag.data, E::EString(_))
+                    && let Some(E::EObject(props)) = c.args.get(1).map(|a| &a.data)
+                {
+                    for p in props.properties.iter() {
+                        if matches!(p.key.as_ref().map(|k| &k.data), Some(E::EString(k)) if estring(k) == "ref")
+                            && let Some(v) = &p.value
+                            && let E::EIdentifier(_) = &v.data
+                        {
+                            self.component_ref_props.push(v.loc.start);
+                        }
+                    }
+                }
                 // Shallow: an immediately-invoked function runs here.
                 match (&c.target.data, self.shallow) {
                     (E::EArrow(a), true) => self.arrow_body(a),

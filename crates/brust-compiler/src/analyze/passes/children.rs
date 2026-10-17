@@ -89,6 +89,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         shadowed_input: BTreeSet::new(),
         live_forwards: Vec::new(),
         own_refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
+        sink_refs: ir.sink_refs.iter().cloned().collect(),
         passes_to_repeater: false,
         passes_to_host: false,
         own_fed: crate::ir::is_fed(ir),
@@ -465,6 +466,8 @@ struct Walker<'s, 'c> {
     live_forwards: Vec<crate::ir::Forwarded>,
     /// The ref cells of this component (F267).
     own_refs: BTreeSet<String>,
+    /// F329: `ComponentIR::sink_refs`.
+    sink_refs: BTreeSet<String>,
     /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
     passes_to_repeater: bool,
     /// This component hands its own `{children}` to a component that prints them under a native host element
@@ -5072,6 +5075,23 @@ impl Walker<'_, '_> {
         // F267: a ref of this component's own bound on the one element an inlined child hands its `ref` to.
         let ref_cell = self.forward_ref(*loc, props, &child);
         let ref_fwd = ref_cell.is_some();
+        // F329: a `ref` that is one of this component's sink refs (nothing reads it: its every use is a component's `ref` prop)
+        // hands nothing to anyone, so it is dropped here and the child renders without it, as React's would be unobservable.
+        if child.forwards_ref
+            && !ref_fwd
+            && props.iter().filter(|(k, _)| k == "ref").count() == 1
+            && matches!(
+                self.st.prop_raws.get(&(*loc, "ref".to_string())),
+                Some(RawExpr { kind: RawKind::Ident { name, .. }, .. }) if self.sink_refs.contains(name)
+            )
+            && props
+                .iter()
+                .rposition(|(k, _)| k == crate::ir::SPREAD_KEY)
+                .zip(props.iter().position(|(k, _)| k == "ref"))
+                .is_none_or(|(spread, at)| spread < at)
+        {
+            props.retain(|(k, _)| k != "ref");
+        }
         if child.forwards_ref && !ref_fwd && props.iter().any(|(k, _)| k == "ref") {
             self.diagnostics.push(Diagnostic::fallback(
                 "forwardref-ref",
