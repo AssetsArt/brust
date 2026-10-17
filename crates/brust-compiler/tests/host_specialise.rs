@@ -196,3 +196,19 @@ fn module_data_is_never_shipped_with_a_clone() {
         all[0].ir.diagnostics
     );
 }
+
+/// S3, narrowed (progress-flip): only a host clone reads its props as signals. A Provider clone (R34.122) whose call site
+/// passes constants keeps the instance rule: no instance, no `<brust-host>` wrapper around the Provider's markup (Radix
+/// Progress's shape; with S3 on every clone its `value` counted as live and the page's DOM gained a wrapper).
+#[test]
+fn a_provider_clone_given_constants_stays_without_an_instance() {
+    let all = compile("provider_const.tsx");
+    let clone = all
+        .iter()
+        .find(|i| i.ir.specialised && i.ir.id.starts_with("root_"))
+        .expect("the Provider's clone");
+    assert!(matches!(clone.ir.tier, Tier::Static), "{:?}", clone.ir.tier);
+    assert!(clone.client.is_empty(), "{}", clone.client);
+    assert!(!all[0].jinja.contains("brust-host"), "{}", all[0].jinja);
+    assert!(!clone.jinja.contains("brust-host"), "{}", clone.jinja);
+}

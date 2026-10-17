@@ -70,7 +70,7 @@ impl App {
         app.file("cn.ts", CN)
             .file("kit.tsx", KIT)
             .file(&format!("{KIT_DIR}/src/kit.tsx"), KIT)
-            .file(&format!("{OTHER_DIR}/src/other.tsx"), "export function Thumb({ className }: { className?: string }) { return <i className={className} /> }\n")
+            .file(&format!("{OTHER_DIR}/src/other.tsx"), "import { useSyncExternalStore } from 'react'\nexport function Thumb() { const v = useSyncExternalStore(() => () => {}, () => 1); return <i>{v}</i> }\n")
             .map("", "kit", &format!("{KIT_DIR}/src/kit.tsx"))
             .map("", "other", &format!("{OTHER_DIR}/src/other.tsx"));
         app
@@ -139,12 +139,26 @@ fn page(thumb: &str, import: &str) -> String {
     )
 }
 
-/// F305: the Thumb's `cn(…)` (over the page's state too) is computed by the page and handed to the clone.
+/// F305: the Thumb's `cn(…)` is computed by the page and handed to the clone. Over the page's state, the rest clone does
+/// not follow its inputs until F345 widens S3 again (alpha.17 narrowed it to host clones): that page falls back by name
+/// (`frozen-prop`), never stale.
 #[test]
 fn a_value_that_calls_an_import_crosses_into_the_clone_as_one_input() {
+    let mut live = App::new();
+    let tree = live.compile(&page(
+        "<Root data-x=\"1\"><Thumb className={cn('t', on && 'on')} /></Root>",
+        "import { Root, Thumb } from './kit'",
+    ));
+    assert!(
+        info(&tree[0].0)
+            .iter()
+            .any(|d| d.starts_with("frozen-prop")),
+        "{:?}",
+        info(&tree[0].0)
+    );
     let mut app = App::new();
     let tree = app.compile(&page(
-        "<Root data-x=\"1\"><Thumb className={cn('t', on && 'on')} /></Root>",
+        "<Root data-x=\"1\"><Thumb className={cn('t', 'round')} /></Root>",
         "import { Root, Thumb } from './kit'",
     ));
     let (root, root_jinja, _) = &tree[0];
@@ -164,7 +178,7 @@ fn a_value_that_calls_an_import_crosses_into_the_clone_as_one_input() {
 fn a_namespace_imports_call_crosses_too() {
     let mut app = App::new();
     let tree = app.compile(&page(
-        "<Root data-x=\"1\"><Thumb className={fmt.cn('t', on && 'on')} /></Root>",
+        "<Root data-x=\"1\"><Thumb className={fmt.cn('t', 'round')} /></Root>",
         "import { Root, Thumb } from './kit'\nimport * as fmt from './cn'",
     ));
     let (root, ..) = &tree[0];
@@ -182,7 +196,7 @@ fn a_namespace_imports_call_crosses_too() {
 fn a_package_component_declared_in_the_clones_own_module_is_rebased() {
     let mut app = App::new();
     let tree = app.compile(&page(
-        "<Kit.Root data-x=\"1\"><Kit.Thumb className={cn('t', on && 'on')} /></Kit.Root>",
+        "<Kit.Root data-x=\"1\"><Kit.Thumb className={cn('t', 'round')} /></Kit.Root>",
         "import * as Kit from 'kit'",
     ));
     let (root, ..) = &tree[0];
@@ -196,7 +210,8 @@ fn a_package_component_declared_in_the_clones_own_module_is_rebased() {
     assert!(clone.source.starts_with(KIT_DIR), "{}", clone.source);
 }
 
-/// F306: a content component of another package (not the clone's module) keeps the refusal.
+/// F306 / W1d: a content component of another package is rebased when it compiles without React (main's rule, which
+/// covers F306's same-module case); one that needs React keeps the refusal.
 #[test]
 fn a_foreign_package_component_stays_refused() {
     let mut app = App::new();

@@ -177,7 +177,7 @@ fn field_bad(
                         // F269: a native frame hands out a derived value over state as the component wrote it. Placement
                         // may have turned it into another form (a server expression, a client-only or precomputed
                         // value; the structural IR keeps the written one). Only a plain combination of reads: a call (a helper, F174) keeps the answer it had.
-                        Expr::Server(ServerExpr(e)) if native && calls_nothing(e) => {
+                        Expr::Server(ServerExpr(e)) if native && calls_nothing(ir, e) => {
                             field_bad(ir, e, depth + 1, false, native)
                         }
                         _ if native => match ir
@@ -186,7 +186,7 @@ fn field_bad(
                             .and_then(|s| s.derived.iter().find(|x| &x.name == name))
                             .map(|x| &x.expr)
                         {
-                            Some(Expr::Raw(e)) if calls_nothing(e) => {
+                            Some(Expr::Raw(e)) if calls_nothing(ir, e) => {
                                 field_bad(ir, e, depth + 1, false, native)
                             }
                             _ => Some(format!("`{name}`, which is not a plain expression")),
@@ -227,6 +227,14 @@ fn field_bad(
         RawKind::Member { target, .. } => bad(target),
         RawKind::Index { target, index } => bad(target).or_else(|| bad(index)),
         RawKind::Call { callee, args } => {
+            // W1d (progress, ruling on challenge 2c9522ea): a call of a module function proven plain (`isNumber(v) ? v : null`)
+            // is evaluated by the Provider's own (native) instance; a call site cannot substitute it into a lowered frame
+            // (the cut stays: no call in a frame), so such a field makes the frame a native one.
+            if !native && is_plain_fn_call(ir, callee) {
+                return Some(
+                    "a call of a plain module function, which the native Provider evaluates".into(),
+                );
+            }
             field_bad(ir, callee, depth, true, native).or_else(|| args.iter().find_map(bad))
         }
         RawKind::Binary { left, right, .. } => bad(left).or_else(|| bad(right)),
@@ -243,26 +251,33 @@ fn field_bad(
     }
 }
 
+/// The callee is a module function of `ir` proven to return a primitive (`ir.plain_fns`), called by name.
+fn is_plain_fn_call(ir: &crate::ir::ComponentIR, callee: &crate::ir::RawExpr) -> bool {
+    use crate::ir::{IdentKind, RawKind};
+    matches!(&callee.kind, RawKind::Ident { name, kind: IdentKind::Local }
+        if ir.plain_fns.contains(name) && !ir.derived.iter().any(|d| &d.name == name))
+}
+
 /// `e` combines reads with operators, conditionals and methods of values only (no call of a function by name, no
 /// function or JSX).
-fn calls_nothing(e: &crate::ir::RawExpr) -> bool {
+fn calls_nothing(ir: &crate::ir::ComponentIR, e: &crate::ir::RawExpr) -> bool {
     use crate::ir::RawKind;
     match &e.kind {
         RawKind::Lit(_) | RawKind::Ident { .. } => true,
         RawKind::Member { target, .. } | RawKind::Unary { value: target, .. } => {
-            calls_nothing(target)
+            calls_nothing(ir, target)
         }
-        RawKind::Index { target, index } => calls_nothing(target) && calls_nothing(index),
-        RawKind::Binary { left, right, .. } => calls_nothing(left) && calls_nothing(right),
+        RawKind::Index { target, index } => calls_nothing(ir, target) && calls_nothing(ir, index),
+        RawKind::Binary { left, right, .. } => calls_nothing(ir, left) && calls_nothing(ir, right),
         // A method of a value (`control.closest('form')`): the value is what it is called on. A function by name (a
         // helper of the module) is not, F174.
         RawKind::Call { callee, args } => {
-            matches!(callee.kind, RawKind::Member { .. })
-                && calls_nothing(callee)
-                && args.iter().all(calls_nothing)
+            (matches!(callee.kind, RawKind::Member { .. }) && calls_nothing(ir, callee)
+                || is_plain_fn_call(ir, callee))
+                && args.iter().all(|a| calls_nothing(ir, a))
         }
         RawKind::Cond { test, yes, no } => {
-            calls_nothing(test) && calls_nothing(yes) && calls_nothing(no)
+            calls_nothing(ir, test) && calls_nothing(ir, yes) && calls_nothing(ir, no)
         }
         _ => false,
     }

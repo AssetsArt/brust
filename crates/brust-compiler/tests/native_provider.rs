@@ -806,23 +806,28 @@ fn rest_children_a_native_trigger_hosts_are_cloned_with_that_trigger() {
     );
 }
 // F324: a state Provider that spreads its `...rest` onto an element and never prints `{children}` gets the call site's
-// children through that spread in React. The clone has no `{children}` to put them in, so it is refused: the call site
-// keeps the Provider as an island, which carries them. Without children the clone is still taken.
+// children through that spread in React (the element's own children, since it writes none). The clone puts the call
+// site's content into that element, once the rest is spread onto exactly one host or component and the Provider writes
+// no children of its own there; the content is printed where React prints it, not dropped. Without children the clone
+// is the same as before.
 #[test]
-fn jsx_children_given_to_a_provider_that_spreads_its_rest_are_not_dropped_by_the_clone() {
+fn jsx_children_given_to_a_provider_that_spreads_its_rest_land_in_the_rest_host() {
     let all = compile("spec_drop.tsx");
-    assert!(clones(&all).is_empty(), "no clone");
+    assert_eq!(clones(&all).len(), 1, "{:?}", all[0].ir.diagnostics);
     let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
     assert!(
         root.ir
             .diagnostics
             .iter()
-            .any(|d| d.rule == "specialise-unsupported" && d.message.contains("as `children`")),
+            .all(|d| d.rule != "specialise-unsupported"),
         "{:?}",
         root.ir.diagnostics
     );
     assert!(
-        root.jinja.contains("brust-island") && root.jinja.contains("hello"),
+        !root.jinja.contains("brust-island")
+            && root.jinja.contains("<button")
+            && root.jinja.contains("<span>hello</span></button>"),
         "{}",
         root.jinja
     );

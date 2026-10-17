@@ -1,8 +1,9 @@
 // F305 in real Chromium, against React hydrating the same page in the same browser: the shadcn Switch wrapper's shape,
 // where the Thumb the page passes into a component that spreads its rest under its own Provider (F298) has a className
 // that calls an import (`cn`). The page computes that value and hands it to the clone as one input: over the page's
-// state (wrap) and constant (const). Both were React (context-no-provider); every observable value, class included,
-// equals React after each click.
+// state (wrap) and constant (const). Both were React (context-no-provider). const is static now; wrap falls back by
+// name (frozen-prop) until F345 lets the rest clone follow its inputs again (alpha.17 narrowed S3 to host clones).
+// Every observable value, class included, equals React after each click.
 // Run alone: `bun test --timeout 120000 tests/server/clone-carry.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
@@ -84,8 +85,8 @@ const tierOf = (prefix: string) => {
   return Object.entries(m.components).find(([k]) => k.startsWith(prefix))![1].tier
 }
 
-test('the wrapper shape lowers: the Thumb\'s cn(…) is computed by the page and handed to the clone', () => {
-  expect({ wrap: tierOf('pWrap_'), const: tierOf('pConst_') }).toEqual({ wrap: 'native', const: 'static' })
+test('the wrapper shape lowers with a constant cn(…); over the page state it falls back by name until F345', () => {
+  expect({ wrap: tierOf('pWrap_'), const: tierOf('pConst_') }).toEqual({ wrap: 'react', const: 'static' })
 })
 
 const CLICKS: Record<string, string[]> = { wrap: ['f', 'box', 'f', 'box'], const: ['box', 'box'] }
