@@ -198,6 +198,39 @@ pub fn locals_in(r: &RawExpr, out: &mut Vec<String>) {
     visit_idents(r, &mut f);
 }
 
+/// The names among `names` that `r` reads (captures of functions included).
+pub fn reads_of(r: &RawExpr, names: &BTreeSet<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    visit_idents(r, &mut |n, _| {
+        if names.contains(n) && !out.iter().any(|o: &String| o == n) {
+            out.push(n.to_string());
+        }
+    });
+    out
+}
+
+/// F385: declarations `(loc, name, reads, item)` in an order where each comes after the declarations it reads (a `const`
+/// cannot read a later one), with the source location as the tie-break. Location alone is no order: an inlined custom
+/// hook's own declarations carry the hook's locations (earlier in the file, or another module's offsets) while the
+/// bindings of its arguments carry the call site's, so `useLabel(1)` read its argument before it was set. A cycle
+/// (none exists in code a JS engine runs) falls back to location order.
+pub fn order_decls<T>(mut decls: Vec<(u32, String, Vec<String>, T)>) -> Vec<T> {
+    decls.sort_by_key(|d| d.0);
+    let pending_names = |ds: &[(u32, String, Vec<String>, T)]| -> BTreeSet<String> {
+        ds.iter().map(|d| d.1.clone()).collect()
+    };
+    let mut out = Vec::with_capacity(decls.len());
+    while !decls.is_empty() {
+        let pending = pending_names(&decls);
+        let i = decls
+            .iter()
+            .position(|(_, name, reads, _)| reads.iter().all(|r| r == name || !pending.contains(r)))
+            .unwrap_or(0);
+        out.push(decls.remove(i).3);
+    }
+    out
+}
+
 /// Calls `f` for every identifier `r` reads (captures of functions included).
 pub fn visit_idents(r: &RawExpr, f: &mut dyn FnMut(&str, &IdentKind)) {
     match &r.kind {
