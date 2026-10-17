@@ -4737,12 +4737,22 @@ impl Walker<'_, '_> {
 
     /// F320: one prop of a link decision (`instance_needs_link`): `(true, _)` when the value is a function or reads a
     /// prop that changes (the child must follow it, as for state).
-    fn link_input(&self, v: &Expr, d: Deps) -> (bool, Deps) {
+    fn link_input(&self, k: &str, v: &Expr, d: Deps) -> (bool, Deps) {
         (
             matches!(v, Expr::ClientOnly { .. })
-                || (!self.hold_link && self.reads_changing_prop(&d)),
+                || (!self.hold_link && (self.reads_changing_prop(&d) || self.passes_ctx(k, &d))),
             d,
         )
+    }
+
+    /// switch-provider-chain PR3: the frames pass handed a consumer child its context value (`k` is the child's hidden
+    /// `__ctx_*` prop) as one of this component's own (the consumer sits under another component, such as a Thumb
+    /// carried in a trigger's rest, F298). The frame keeps this component's copy current, but the child takes it as a
+    /// prop: unlinked, it would print it once (F319 then freezes the value, and a state Provider above refuses). Only
+    /// that key: a context value an author passes under a key of their own (`name={name}`) keeps F319's answer per call
+    /// site (frozen, refused only where the Provider's value changes).
+    fn passes_ctx(&self, k: &str, d: &Deps) -> bool {
+        k.starts_with("__ctx_") && self.props_live && self.module_rows.get() == 0 && reads_ctx(d)
     }
 
     /// Whether the client can re-create the rows of this list: an enclosing list can, its
@@ -5665,7 +5675,7 @@ impl Walker<'_, '_> {
                     .into_iter()
                     .map(|(k, v)| {
                         let d = self.deps_while_mounted(&v, name, &k);
-                        self.link_input(&v, d)
+                        self.link_input(&k, &v, d)
                     })
                     .collect();
                 let mut need = instance_needs_link(&child.tier, link_props);
@@ -6697,7 +6707,7 @@ impl Walker<'_, '_> {
                 .filter(|(k, v)| {
                     !keys.contains(&k) && !is_handler_prop(k, v) && !(ref_fwd && *k == "ref")
                 })
-                .map(|(_, v)| self.link_input(v, self.deps_of(v))),
+                .map(|(k, v)| self.link_input(k, v, self.deps_of(v))),
         );
         if need != LinkNeed::None {
             return live;

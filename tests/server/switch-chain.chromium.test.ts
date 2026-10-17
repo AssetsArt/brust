@@ -86,12 +86,15 @@ const tierOf = (prefix: string) => {
   return Object.entries(m.components).find(([k]) => k.startsWith(prefix))![1].tier
 }
 
-// PR2 (link 3): the trigger binds the context's live `data-state` ahead of its own rest, so `bare` is served natively.
-test('bare is served without a React island', async () => {
-  expect(tierOf('kRoot_')).not.toBe('react')
-  const html = await (await fetch(`${base}/bare`)).text()
-  expect(html).not.toContain('brust-island')
-})
+// PR2 (link 3): the trigger binds the context's live `data-state` ahead of its own rest, so `bare` is served natively;
+// PR3 (children-rest): the Thumb carried in that rest is linked by the trigger's clone, so `thumb` is too.
+for (const page of ['bare', 'thumb']) {
+  test(`${page} is served without a React island`, async () => {
+    expect(tierOf('kRoot_')).not.toBe('react')
+    const html = await (await fetch(`${base}/${page}`)).text()
+    expect(html).not.toContain('brust-island')
+  })
+}
 
 for (const page of ['thumb', 'bare']) {
   test(`${page}: toggled twice, every observable value equals React hydrating the same page`, async () => {

@@ -1326,3 +1326,45 @@ fn a_destructured_context_field_in_code_printed_as_written_reads_its_hidden_prop
     assert!(!js.contains("=> flip()"), "{js}");
     assert!(!js.contains("title = on"), "{js}");
 }
+
+// switch-provider-chain PR3 (children-rest): a consumer passed as children travels in the root's rest into the trigger's
+// clone (F298), where the frames pass hands it the context value as the clone's own `__ctx_*` prop. The clone links it
+// (it follows the value) instead of letting it print the value once, which froze the value and kept the Provider React.
+#[test]
+fn a_consumer_handed_a_context_value_by_its_parent_is_linked() {
+    let all = compile("live_rest_kids.tsx");
+    for i in &all {
+        if i.ir.id.starts_with("lProvider_") && !i.ir.id.contains("_s") {
+            continue; // the Provider compiled on its own (state in its value) stays React; its clones are native
+        }
+        assert!(!is_react(&i.ir), "{}: {:?}", i.ir.id, i.ir.diagnostics);
+        assert!(
+            !i.ir.frozen_props.iter().any(|p| p.starts_with("__ctx_")),
+            "{}: {:?}",
+            i.ir.id,
+            i.ir.frozen_props
+        );
+    }
+    assert!(
+        all.iter()
+            .all(|i| !has(&i.ir, DiagClass::Fallback, "children-rest")),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.diagnostics))
+            .collect::<Vec<_>>()
+    );
+}
+
+// The link is for the hidden key only: a context value an author passes under a key of their own keeps F319's
+// per-call-site answer (frozen; fine where the Provider's value does not change). Linked instead, the forwarding child
+// with a composed handler could not be linked (the shape of Radix's SwitchBubbleInput, which then held a React island).
+#[test]
+fn a_context_value_passed_under_an_authors_key_stays_frozen() {
+    let all = compile("live_rest_bubble.tsx");
+    for i in &all {
+        if i.ir.id.starts_with("lProvider_") && !i.ir.id.contains("_s") {
+            continue;
+        }
+        assert!(!is_react(&i.ir), "{}: {:?}", i.ir.id, i.ir.diagnostics);
+    }
+}
