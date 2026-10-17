@@ -216,6 +216,8 @@ fn a_render_prop_the_provider_only_calls_is_spliced_into_the_clone() {
         "render_noparams.tsx",
         // F266: `render(ctx)` with `const ctx = { on }`
         "render_ctx.tsx",
+        // Radix Switch: `render(ctx)` with `const ctx = { on, setOn }` (a member the body never reads is a setter)
+        "render_ctx_setter.tsx",
         // F269: `!!el.closest('form')` over state is a boolean
         "render_not.tsx",
     ] {
@@ -1156,4 +1158,12 @@ fn a_rest_spread_instance_is_not_a_collection_root() {
         "{:?}",
         all.iter().map(|i| &i.jinja).collect::<Vec<_>>()
     );
+}
+
+// A function prop called in render with a local object (members read as its literal) outside a Provider's render prop
+// is not spliced: the caller that hands the function still falls back.
+#[test]
+fn a_function_prop_called_with_a_local_object_outside_a_provider_still_falls_back() {
+    let all = compile("render_fn_whole.tsx");
+    assert!(is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
 }
