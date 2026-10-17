@@ -231,6 +231,46 @@ fn a_call_of_any_import_and_two_of_them_cross_as_separate_inputs() {
     );
 }
 
+/// F346: an imported call that is not `cn`, over the page's STATE, follows like `cn` does (F345): its value is a carried
+/// input the clone reads as a signal (not pinned), so the page lowers; with a constant argument the same call is pinned.
+#[test]
+fn a_non_cn_call_over_state_is_a_carried_input_the_clone_follows() {
+    let mut app = App::new();
+    let tree = app.compile(&page(
+        "<Root data-x=\"1\"><Thumb className={tone(on ? 'a' : 'b')} /></Root>",
+        "import { Root, Thumb } from './kit'",
+    ));
+    let (root, ..) = &tree[0];
+    assert!(!matches!(root.tier, Tier::React { .. }), "{:?}", info(root));
+    let (clone, ..) = rest_clone(&tree).unwrap_or_else(|| panic!("{:?}", info(root)));
+    let inx = clone
+        .props
+        .iter()
+        .find(|p| p.name.starts_with("__inx"))
+        .expect("the carried value");
+    assert!(
+        !clone.fixed_props.contains(&inx.name),
+        "{:?}",
+        clone.fixed_props
+    );
+    let mut app = App::new();
+    let tree = app.compile(&page(
+        "<Root data-x=\"1\"><Thumb className={tone('a')} /></Root>",
+        "import { Root, Thumb } from './kit'",
+    ));
+    let (clone, ..) = rest_clone(&tree).expect("a clone");
+    let inx = clone
+        .props
+        .iter()
+        .find(|p| p.name.starts_with("__inx"))
+        .expect("the carried value");
+    assert!(
+        clone.fixed_props.contains(&inx.name),
+        "{:?}",
+        clone.fixed_props
+    );
+}
+
 /// F306 + F305: the same shape from a package the build wrote: `Kit.Thumb` is declared in the clone's own module.
 #[test]
 fn a_package_component_declared_in_the_clones_own_module_is_rebased() {
