@@ -672,9 +672,43 @@ impl Inner {
             records: ir.instances.clone(),
             refs: ir.children.clone(),
             folded: !ir.folded_instances.is_empty(),
-            rebasable: matches!(ir.tier, Tier::Static),
+            // F328 (ruling on note 84cd6abb, option a): a native wrapper's template is inlined in its caller like a static
+            // one, so the caller can number and feed its children's records, provided none of the fed children is
+            // created by the client later (under a condition or in a list of the wrapper: its ids would not exist).
+            rebasable: match ir.tier {
+                Tier::Static => true,
+                Tier::Native => !fed_under_condition(ir),
+                _ => false,
+            },
         })
     }
+}
+
+/// A fed child (one with an instance record of `ir`) sits under a condition or in a list of `ir`'s template.
+fn fed_under_condition(ir: &ComponentIR) -> bool {
+    let fed: BTreeSet<&str> = ir.instances.iter().map(|r| r.child_id.as_str()).collect();
+    let ids: HashMap<&str, &str> = ir
+        .children
+        .iter()
+        .filter_map(|c| c.id.as_deref().map(|id| (c.name.as_str(), id)))
+        .collect();
+    fn walk(n: &Node, cond: bool, fed: &BTreeSet<&str>, ids: &HashMap<&str, &str>) -> bool {
+        match n {
+            Node::Component { name, children, .. } => {
+                (cond && ids.get(name.as_str()).is_some_and(|id| fed.contains(id)))
+                    || children.iter().any(|c| walk(c, cond, fed, ids))
+            }
+            Node::Element { children, .. } | Node::Fragment(children) => {
+                children.iter().any(|c| walk(c, cond, fed, ids))
+            }
+            Node::If { then, else_, .. } => {
+                then.iter().chain(else_).any(|c| walk(c, true, fed, ids))
+            }
+            Node::For { body, .. } => body.iter().any(|c| walk(c, true, fed, ids)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => false,
+        }
+    }
+    walk(&ir.template, false, &fed, &ids)
 }
 
 fn inner_name(r: &ChildRef) -> &str {
@@ -4101,9 +4135,8 @@ impl Walker<'_, '_> {
         if !self.loop_sources.is_empty() {
             return Err("it sits in a list".into());
         }
-        if props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY) {
-            return Err("props are spread into it".into());
-        }
+        // A spread may carry any key: it matters only for a root a record binds from this wrapper's props (below).
+        let spread = props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY);
         let mut out = Vec::new();
         for r in &inner.records {
             if !r.loops.is_empty() || r.rows_literal.is_some() {
@@ -4138,6 +4171,12 @@ impl Walker<'_, '_> {
                     return Err("its child reads `children`".into());
                 }
                 let given = props.iter().rev().find(|(k, _)| k == root).map(|(_, v)| v);
+                if given.is_none() && spread {
+                    return Err(format!(
+                        "props are spread into it (record {} binds `{n}` from `{root}`)",
+                        r.child_id
+                    ));
+                }
                 let Some(v) = given else {
                     rec.exprs
                         .insert(n.clone(), crate::lower::server_expr::UNDEFINED.to_string());
@@ -5285,6 +5324,14 @@ impl Walker<'_, '_> {
                         if matches!(v, Expr::ClientOnly { .. }) || name == crate::ir::SPREAD_KEY {
                             continue;
                         }
+                        // F328: a Provider frame field (`__ctx_*`) the child's job reads nothing of: the child reads it on
+                        // the client only, so the server record binds nothing for it.
+                        if name.starts_with("__ctx_")
+                            && !child.job_all
+                            && !child.job_roots.contains(name.as_str())
+                        {
+                            continue;
+                        }
                         // F149 R34.88: folded with this module's consts (`const v = "outline"`).
                         let lit = match v {
                             Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {
@@ -5298,12 +5345,6 @@ impl Walker<'_, '_> {
                             record.literals.insert(name.clone(), j);
                         } else if let Some(e) = self.instance_expr(v) {
                             record.exprs.insert(name.clone(), e);
-                        } else if name.starts_with("__ctx_")
-                            && !child.job_all
-                            && !child.job_roots.contains(name.as_str())
-                        {
-                            // F328: a Provider frame field (`__ctx_*`) the child's job reads nothing of: the child reads it on the client
-                            // only, so there is nothing for the server to bind.
                         } else {
                             // The manifest has no binding for this value (a job's output, a call): its
                             // `instance-prop-path` build error becomes an island here (F164, R34.97).
