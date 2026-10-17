@@ -263,6 +263,28 @@ fn a_wrappers_own_prop_is_pinned_in_its_clone_and_frozen_at_the_wrapper() {
     );
 }
 
+/// F348: a clone that is LINKED for another reason (`max` is the page's state) still pins what its call site never
+/// changes (`value`), so the S3 freeze holds on that path too; only the live input follows the page. Mutation check:
+/// with `pinned()` returning nothing, `fixed_props` is empty and this fails.
+#[test]
+fn a_clone_linked_for_another_reason_still_pins_the_inputs_that_never_change() {
+    let all = compile("linked_other.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    let clone = all.iter().find(|i| i.ir.specialised).expect("a clone");
+    // linked: the page binds the clone's live input (`x-props-bind`)
+    assert!(all[0].jinja.contains("x-props-bind"), "{}", all[0].jinja);
+    assert!(
+        clone.ir.fixed_props.iter().any(|p| p == "value"),
+        "{:?}",
+        clone.ir.fixed_props
+    );
+    assert!(
+        !clone.ir.fixed_props.iter().any(|p| p == "max"),
+        "{:?}",
+        clone.ir.fixed_props
+    );
+}
+
 /// switch-provider-chain PR1 + F345: a context value is never pinned in a clone. Radix Switch's shape (a render prop
 /// called with the Provider's own context object, a trigger handing `checked` to a static button before the caller's
 /// rest, a Thumb in that rest): pinned, the trigger's rest clone printed `data-state` once (served: switch-chain).
