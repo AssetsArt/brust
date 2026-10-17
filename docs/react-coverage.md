@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 225 | 120 | 16 | 89 | 0 | 0 | 0 | 0 |
-| C Hooks | 208 | 62 | 67 | 79 | 0 | 0 | 0 | 0 |
+| B Composition | 227 | 121 | 16 | 90 | 0 | 0 | 0 | 0 |
+| C Hooks | 211 | 65 | 67 | 79 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 590 | 258 | 112 | 216 | 3 | 1 | 0 | 0 |
+| **Total** | 595 | 262 | 112 | 217 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -254,6 +254,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-per-row-in-inlined-component | a static wrapper mapping a React island over its own rows | static | static | ssr | ok | 4.0 | — | F164 R34.97 (review r1 F): a row of an inlined component has no slot key for the island job, so the wrapper is the island; it was the lowering nested-instance error |
 | b-fed-child-in-static-wrapper | a static wrapper (no job of its own) around a child with a job, used twice with a prop and without | static | static | 0 | ok | 0 | — | F164 R34.96 (static-wrapper case): the caller feeds the wrapper's child (records re-based onto it, numbered in template order); the second use passes no tone, which the server feeds as undefined like React |
 | b-fed-child-through-repeater-chain | a useId child passed through a component that hands its children to a repeater | react | react | ssr | ok | 4.0 | fallback:nested-instance, info:build-eval-instance | F169: the repeat check is transitive, so the same id is not printed in every row |
+| b-children-called-nodes | a component that calls its children when it is a function, given element children | static | static | 0 | ok | 0 | — | F328b: typeof children === function ? children(..) : children is read as {children} for provable nodes |
+| b-children-called-function | the same component given a function (arrow, identifier, children prop) | react | react | ssr | ok | 4.0 | fallback:children-read, fallback:jsx-const-child | F328b: React calls the function; brust cannot prove a node, so the call site falls back by name (children-read) |
 | b-fed-child-in-native-wrapper | a wrapper with state and a handler (native) around a child with a job of its own | static | static | 0 | ok | 4.6 | — | F328c (ruling on note 84cd6abb): a Native wrapper is inlined in its caller like a static one, so its fed child's record is re-based onto the caller (before: #229 hole, the caller was the React island). This child's only input is a constant, so the build evaluates it (0 jobs); the served ids case is the Chromium F328c test. A fed child under a condition or in a list of the wrapper still falls back (nested_fed.rs) |
 | b-fed-child-local-list | a child with a job of its own in a list over a local array | static | static | 0 | ok | 0 | — | F142 R34.43: Row reads the row of a module const, so the manifest carries the rows (per-row-literal) and the server feeds one instance per row (was the instance-list-path fallback, challenge 4dc45c45) |
 | b-fed-child-row-invariant-const | a child with a job of its own, the same in every row, in a list over a module const (shadcn table) | static | static | 0 | ok | 0 | — | F142 R34.42: no prop reads the row, so the instance is fed once (static record) and its slot is read without a row index |
@@ -460,6 +462,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-native-provider-ctx-in-effect | a consumer that reads a context field inside an effect | static | static | 0 | ok | 4.6 | — | F304: c.open in an effect is the hidden prop of that field (bound to a local around the printed code); was context-escape |
 | c-handler-binding-named-a | a handler that reads a component binding named a | native | native | 0 | ok | 4.6 | — | F232: the handler wrapper binds a reserved rest parameter, so a binding named a is read, not the arguments array |
 | c-collection-basic | a createCollection list: Provider, Slot, ItemSlot and useCollection (roving focus shape) | static | static | 0 | ok | 5.1 | — | R34.140 (W1c): the vouched package lowers to x-collection-root / data-radix-collection-item markers and the runtime items function |
+| c-collection-item-component | a createCollection ItemSlot over a static component (Primitive.span shape) inside an Item with state and handlers | static | static | 0 | ok | 5.1 | — | F328b: the Item prints data-radix-collection-item and the item directive on the row component's root element, in its own scope |
+| c-collection-item-native-child | an ItemSlot over a NATIVE component | static | static | ssr | ok | 5.8 | — | F328b: the directive would read its data in the native child's scope, so the call site falls back (collection-shape) |
+| c-collection-item-noforward | an ItemSlot over a component that does not spread its props | static | static | ssr, ssr, ssr | ok | 5.8 | — | F328b: React's Slot markers never reach an element, so brust prints none either (collection-shape) |
 | c-collection-unvouched | createCollection from a package that is not the pinned release | static | static | ssr | ok | 4.0 | — | R34.140 (Mellow gate): without index.json#recognised (version + sha256 mismatch) the import stays the React island |
 | c-collection-other-package | a createCollection export of another package | static | static | ssr | ok | 4.0 | — | R34.140: the recogniser is by package name, never by export name alone |
 | c-collection-scope | an ItemSlot whose scope is not the component's own pass-through | static | static | ssr | ok | 4.0 | — | R34.140: fallback collection-scope (the component is a React island under a static page); a literal scope names another collection |

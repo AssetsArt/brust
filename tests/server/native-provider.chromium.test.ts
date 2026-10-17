@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderColl, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderColl, renderCollComp, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderRovingList, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -515,6 +515,45 @@ test('F328c: items with a useId under a native Provider: markup equals React, un
 test('F328c: a native wrapper whose props change on the client keeps the page React for a child that derives from them (named fallback, markup equals React)', async () => {
   for (const tone of ['calm', 'Ab ']) {
     const html = await (await fetch(`${base}/wrap/${encodeURIComponent(tone)}`)).text()
+    // the named fallback happened (the page is an island), and the island still prints React's own markup
+    expect(html).toContain('brust-island')
     expect(plain(html.replace(/<brust-island\b[^>]*>/g, '').replace(/<\/brust-island>/g, ''))).toBe(plain(renderWrap(tone)))
   }
+}, 60_000)
+
+// F328b: an ItemSlot over components (a static row, a native row): the caller prints the item markers on each row's own <li>, so the
+// runtime lists the items in document order with their data and skips the disabled one, as for an ItemSlot over an element.
+test('F328b: an ItemSlot over a static and a native component: markup equals React, items in order, the disabled one skipped', async () => {
+  const html = await (await fetch(`${base}/coll-comp`)).text()
+  expect(html).not.toContain('brust-island')
+  // attribute ORDER is not part of the DOM: the marker brust prints on the child's root comes before the child's own attributes
+  const sorted = (h: string): string => h.replace(/<([a-z]+)((?:\s+[^\s=>]+(?:="[^"]*")?)*)>/g, (_, t: string, a: string) => `<${t} ${[...a.matchAll(/\s+([^\s=>]+(?:="[^"]*")?)/g)].map((m) => m[1]).sort().join(' ')}>`)
+  expect(sorted(plain(html))).toBe(sorted(plain(renderCollComp())))
+  expect([...html.matchAll(/<li[^>]*data-radix-collection-item=""/g)].length).toBe(3)
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/coll-comp`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('ul')?.getAttribute('x-data'))
+  await page.locator('li').nth(0).focus()
+  await page.keyboard.press('ArrowDown')
+  // B is disabled: A -> C; two focusable items
+  expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('C')
+  expect(await page.locator('ul').getAttribute('data-n')).toBe('2')
+  await page.keyboard.press('ArrowDown')
+  expect(await page.evaluate(() => document.activeElement?.textContent)).toBe('A')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+// FALLBACK PIN (Mellow D1, ruled by Detoro): items with a useId under a Provider rendered in a list row stay the React island
+// (the record re-base is for instances the server renders once). Two items side by side per row: the ids are React's own, unique.
+test('F328c pin: a native Provider with useId items in a list row falls back to the island and prints React ids', async () => {
+  const html = await (await fetch(`${base}/roving-list`)).text()
+  expect(html).toContain('brust-island')
+  expect(plain(html.replace(/<brust-island\b[^>]*>/g, '').replace(/<\/brust-island>/g, ''))).toBe(plain(renderRovingList()))
+  const ids = [...html.matchAll(/<button[^>]*\sid="([^"]+)"/g)].map((m) => m[1]!)
+  expect(ids.length).toBe(4)
+  expect(new Set(ids).size).toBe(4)
 }, 60_000)

@@ -85,6 +85,7 @@ const CART = `import { defineStore, signal, computed } from 'brust/store'\nexpor
 
 // R34.140: the collection fixtures of the compiler's tests (one source). The stub carries only the export's name; the
 // build's version+hash check that vouches for the real release is pinned in the pkg-src tests, so rows say `vouch`.
+const ccFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/context/cc-${n}.tsx`), 'utf8').trimEnd()
 const collFx = (n: string): string => readFileSync(join(import.meta.dir, `../../crates/brust-compiler/tests/fixtures/native-provider/coll_${n}.tsx`), 'utf8').trimEnd()
 const COLL_PKG: Record<string, StubPackage> = { '@radix-ui/react-collection': { files: { 'src/index.tsx': 'export const createCollection = (name: string): any => [name]' } } }
 const COLL_VOUCH = { '@radix-ui/react-collection': '1.2.0' }
@@ -859,6 +860,10 @@ export const rows: Row[] = [
     snippet: `import Outer from './Outer'\nimport Ided from './Ided'\nexport default function C() { return <Outer><Ided text="x" /></Outer> }`,
     files: { 'Outer.tsx': `import List from './List'\nexport default function Outer({ children }: any) { return <List items={['a', 'b']}>{children}</List> }`, 'List.tsx': `export default function List({ items, children }: any) { return <ul>{items.map((i: string) => <li key={i}>{i}{children}</li>)}</ul> }`, 'Ided.tsx': `import { useId } from 'react'\nexport default function Ided({ text }: any) { const id = useId(); return <label htmlFor={id}>{text}</label> }` },
     note: 'F169: the repeat check is transitive, so the same id is not printed in every row' },
+  { id: 'b-children-called-nodes', category: 'B', authoring: 'a component that calls its children when it is a function, given element children', expect: 'static', jobs: 0,
+    snippet: ccFx('ok'), note: 'F328b: typeof children === function ? children(..) : children is read as {children} for provable nodes' },
+  { id: 'b-children-called-function', category: 'B', authoring: 'the same component given a function (arrow, identifier, children prop)', expect: 'react',
+    snippet: ccFx('ident'), note: 'F328b: React calls the function; brust cannot prove a node, so the call site falls back by name (children-read)' },
   { id: 'b-fed-child-in-native-wrapper', category: 'B', authoring: 'a wrapper with state and a handler (native) around a child with a job of its own', expect: 'static', jobs: 0,
     snippet: `import W from './NativeWrap'\nexport default function C() { return <table><tbody><tr><W /></tr></tbody></table> }`,
     files: { 'NativeWrap.tsx': `import { useState } from 'react'\nimport Cell from './Cell'\nexport default function NativeWrap() { const [n, setN] = useState(0); return <td><button onClick={() => setN(n + 1)}>{n}</button><Cell tone="x">w</Cell></td> }`, 'Cell.tsx': `import { label } from './label'\nexport default function Cell({ tone = 'info', children }: any) { return <td className={label(tone)}>{children}</td> }`, 'label.ts': `export function label(s: string) { return s.toUpperCase() }` },
@@ -1941,6 +1946,15 @@ export const rows: Row[] = [
   { id: 'c-collection-basic', category: 'C', authoring: 'a createCollection list: Provider, Slot, ItemSlot and useCollection (roving focus shape)', expect: 'static', jobs: 0,
     snippet: collFx('basic'), packages: COLL_PKG, vouch: COLL_VOUCH,
     note: 'R34.140 (W1c): the vouched package lowers to x-collection-root / data-radix-collection-item markers and the runtime items function' },
+  { id: 'c-collection-item-component', category: 'C', authoring: 'a createCollection ItemSlot over a static component (Primitive.span shape) inside an Item with state and handlers', expect: 'static', jobs: 0,
+    snippet: collFx('item_comp'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'F328b: the Item prints data-radix-collection-item and the item directive on the row component\'s root element, in its own scope' },
+  { id: 'c-collection-item-native-child', category: 'C', authoring: 'an ItemSlot over a NATIVE component', expect: 'static', jobs: 1,
+    snippet: collFx('item_native'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'F328b: the directive would read its data in the native child\'s scope, so the call site falls back (collection-shape)' },
+  { id: 'c-collection-item-noforward', category: 'C', authoring: 'an ItemSlot over a component that does not spread its props', expect: 'static', jobs: 3,
+    snippet: collFx('item_noforward'), packages: COLL_PKG, vouch: COLL_VOUCH,
+    note: 'F328b: React\'s Slot markers never reach an element, so brust prints none either (collection-shape)' },
   { id: 'c-collection-unvouched', category: 'C', authoring: 'createCollection from a package that is not the pinned release', expect: 'static', jobs: 1,
     snippet: collFx('basic'), packages: COLL_PKG,
     note: 'R34.140 (Mellow gate): without index.json#recognised (version + sha256 mismatch) the import stays the React island' },

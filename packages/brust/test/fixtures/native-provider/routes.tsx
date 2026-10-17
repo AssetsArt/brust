@@ -19,6 +19,8 @@ import LocalSpreadPage from './LocalSpreadPage'
 import LocalSpreadRestPage from './LocalSpreadRestPage'
 import SwPage from './SwPage'
 import RovingPage from './RovingPage'
+import RovingListPage from './RovingListPage'
+import CollCompPage from './CollCompPage'
 import WrapPage from './WrapPage'
 import SamePage from './SamePage'
 import RenderPage from './RenderPage'
@@ -46,6 +48,8 @@ export const routes = defineRoutes([
   { path: '/local-spread-rest', Component: LocalSpreadRestPage },
   { path: '/sw/{kind}', Component: SwPage, loader: async ({ params }: { params: { kind: string } }) => ({ kind: params.kind }) },
   { path: '/roving', Component: RovingPage },
+  { path: '/roving-list', Component: RovingListPage },
+  { path: '/coll-comp', Component: CollCompPage },
   { path: '/wrap/{tone}', Component: WrapPage, loader: async ({ params }: { params: { tone: string } }) => ({ tone: params.tone }) },
   { path: '/render', Component: RenderPage },
   { path: '/poly', Component: PolyPage },

@@ -1078,6 +1078,63 @@ fn a_recognised_collection_lowers_to_markers_and_the_items_function() {
     assert!(!page.jinja.contains("Collection"), "{}", page.jinja);
 }
 
+// F328b: an ItemSlot over a component (Radix's `Primitive.span` shape): a STATIC component whose one root element receives the props
+// (the ItemSlot's markers), inside an Item with state and handlers of its own. The Item prints the markers and the item's data
+// directive on the row's element, in its own scope.
+#[test]
+fn an_item_slot_over_a_static_component_marks_its_root_element() {
+    let all = compile_collection("coll_item_comp.tsx");
+    for i in &all {
+        assert!(
+            !i.ir
+                .diagnostics
+                .iter()
+                .any(|d| d.class == DiagClass::Fallback)
+                && !is_react(&i.ir),
+            "{}: {:?} {:?}",
+            i.ir.id,
+            i.ir.tier,
+            i.ir.diagnostics
+        );
+    }
+    let item = all.iter().find(|i| i.ir.id.starts_with("item_")).unwrap();
+    let j = &item.jinja;
+    // the marker sits on the child's own `<li>`, not on a wrapper, with the item's data member of the Item's scope
+    let li = j.find("<li").unwrap_or_else(|| panic!("{j}"));
+    let tag_end = li + j[li..].find('>').unwrap();
+    assert!(
+        j[li..tag_end].contains("data-radix-collection-item=\"\""),
+        "{j}"
+    );
+    assert!(j[li..tag_end].contains("x-collection-item="), "{j}");
+}
+
+// Every other shape falls back by name and prints no marker: a native child (its directive would read the child's scope), an Item
+// without a chunk (no member to hold the data), a child that drops the props (React's Slot markers never reach an element), a child
+// that renders with React.
+#[test]
+fn an_item_slot_over_any_other_component_falls_back_by_name() {
+    for file in [
+        "coll_item_native.tsx",
+        "coll_item_stateless.tsx",
+        "coll_item_noforward.tsx",
+        "coll_item_island.tsx",
+    ] {
+        let all = compile_collection(file);
+        assert!(
+            all.iter()
+                .any(|i| has(&i.ir, DiagClass::Fallback, "collection-shape")),
+            "{file}: {:?}",
+            all.iter().map(|i| &i.ir.diagnostics).collect::<Vec<_>>()
+        );
+        assert!(
+            !all.iter()
+                .any(|i| i.jinja.contains("data-radix-collection-item")),
+            "{file}: a marker is printed for a child that cannot carry it"
+        );
+    }
+}
+
 // R34.140: only the build's vouching makes a `createCollection` a collection; the same component without it keeps the
 // refusal it had (`member-tag` of the unresolved `Collection.*`), and so does the same export name of another package.
 #[test]
