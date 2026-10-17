@@ -109,6 +109,14 @@ export function watchLoop(o: { root: string; /** F273: `[build] source_roots`, a
   }
 }
 
+/** F133: the line `brust dev` logs for a batch of changed paths, or null when the batch is only the boot trigger (`.`,
+ * the app root itself: the first build goes through the loop, and a watcher can report the root too). */
+export function changeLine(changed: Iterable<string>): string | null {
+  const paths = [...changed].filter((r) => r !== '.')
+  if (paths.length === 0) return null
+  return `[brust] change detected: ${paths.slice(0, 3).join(', ')}${paths.length > 3 ? ` +${paths.length - 3}` : ''}`
+}
+
 const SKIP_DIRS = new Set(['node_modules', '.git', '.wrangler', '.brust'])
 const SKIP_FILE = /(^|\/)(\.DS_Store|4913)$|~$|\.(swp|swx|tmp|log)$|\.(sqlite|db)(-wal|-shm|-journal)?$/
 
