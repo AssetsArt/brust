@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-20', title: '2.0.0-alpha.20' },
       { id: 'alpha-19', title: '2.0.0-alpha.19' },
       { id: 'alpha-18', title: '2.0.0-alpha.18' },
       { id: 'alpha-17', title: '2.0.0-alpha.17' },
@@ -43,8 +44,36 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
+      <h2 id="alpha-20">2.0.0-alpha.20 · 17 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.19 (be29ef27): #348–#350 (f337-progress-live, toggle-group F329b, collapsible-flip F385); #346 (F329 part a) was merged before the alpha.19 tag, so it is listed under alpha.19; ledger-only commits have no entry */}
+      <p>A native Radix Progress follows a changing value, and live values reach the elements of a native child&rsquo;s rest spread. Two HIGH wrong outputs are fixed: a first-click <code>ReferenceError</code> from a prop default, and an <code>undefined</code> argument in a custom hook&rsquo;s first paint.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #348 (F337 PR1); the shadcn wrapper (PR2) is not part of it: ledger F377 */}
+        <li>
+          <strong>A native Radix <code>Progress</code> root follows a changing <code>value</code>.</strong> A bare Radix Progress Root whose <code>value</code> changes in the browser compiles to native code, and the server and the browser paint the same for every kind of value (a non-integer, <code>-0</code>, a large number, <code>null</code> or <code>undefined</code>, a boolean). The shadcn <code>Progress</code> wrapper is not part of this change.
+        </li>
+        {/* source: PR #349 (F329 part b; part a is PR #346, shipped in alpha.19); measured: the served test presses one Item and checks the other Items' aria-checked and tabindex against React */}
+        <li>
+          <strong>Live values now reach the elements of a native child&rsquo;s rest spread.</strong> A value that changes at the call site and lands in a native child&rsquo;s <code>{'{'}...rest{'}'}</code> used to make the call site render with React. It now stays native: pressing one item of a roving group updates the other items&rsquo; <code>aria-checked</code> and <code>tabindex</code>, equal to React. <code>className</code>, <code>style</code>, event handlers, URL attributes, <code>value</code>, attributes with no known mapping, camelCase SVG attributes and list rows still render with React.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #348 (F376, HIGH, present in alpha.18 and alpha.19) */}
+        <li>
+          <strong>A prop default that names a module function no longer throws on the first click.</strong> In alpha.18 and alpha.19 the default was printed in the page&rsquo;s script without declaring what it reads, so a Radix <code>getValueLabel = defaultGetValueLabel</code> default gave a <code>ReferenceError</code> on the first click. The script now declares the module names and imports that prop defaults read.
+        </li>
+        {/* source: PR #350 (F385, HIGH, present in every alpha so far; the example is the PR's repro) */}
+        <li>
+          <strong>A custom hook that takes an argument no longer paints the server&rsquo;s first paint with that argument <code>undefined</code>.</strong> A hook such as <code>function useLabel(n) {'{'} return &apos;L&apos; + n {'}'}</code> called as <code>useLabel(1)</code> rendered <code>title=&quot;Lundefined&quot;</code> where React renders <code>L1</code>, and a static attribute never recovers after hydration. The server template, the server job module and the page&rsquo;s script now order their values by what each one reads.
+        </li>
+      </ul>
+
       <h2 id="alpha-19">2.0.0-alpha.19 · 17 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.18: #335–#345 (host-specialise-f344, f362-projection PR1–PR2, toggle-group F363a/F364/F369a, clone-cache F371/F374, ledger-knock12, F356/F351; ledger-only and test-only PRs #336, #340 have no entry) */}
+      {/* source: the pull requests merged after v2.0.0-alpha.18: #335–#346 (#346 added to this list by the alpha.20 notes; host-specialise-f344, f362-projection PR1–PR2, toggle-group F363a/F364/F369a, clone-cache F371/F374, ledger-knock12, F356/F351; ledger-only and test-only PRs #336, #340 have no entry) */}
       <p>Rows that run in the browser ship only the fields they read from a module-level list, and a page whose derived value was read only by a ref or an effect no longer throws on load. <code>asChild</code> over a plain static component child, and through a static wrapper that passes its rest props on, compile to native code. Two wrong outputs from alpha.18 now render with React instead.</p>
 
       <h3>New</h3>
@@ -100,6 +129,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #343 (F137) */}
         <li>
           <strong>The hover lift on the docs site&rsquo;s loader demo and benchmark cards now eases.</strong> The transition named <code>transform</code> while the lift moves the <code>translate</code> property, so it jumped. Both now transition <code>translate</code>.
+        </li>
+        {/* source: PR #346 (F329 part a; merged before the v2.0.0-alpha.19 tag but not listed when the alpha.19 notes were written) */}
+        <li>
+          <strong>A prop written after a spread of unknown keys now wins, as in React, and stays native.</strong> A function or live prop written after the last spread cannot be replaced by it, so the call site no longer renders with React for that reason. A key written twice, or between spreads, still renders with React. A <code>useMemo</code> that returns an array of plain values, as Radix <code>ToggleGroup</code> does, can now be a derived value of a native Provider.
         </li>
       </ul>
 
