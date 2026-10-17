@@ -139,9 +139,8 @@ fn page(thumb: &str, import: &str) -> String {
     )
 }
 
-/// F305: the Thumb's `cn(…)` is computed by the page and handed to the clone. Over the page's state, the rest clone does
-/// not follow its inputs until F345 widens S3 again (alpha.17 narrowed it to host clones): that page falls back by name
-/// (`frozen-prop`), never stale.
+/// F305: the Thumb's `cn(…)` is computed by the page and handed to the clone. Over the page's state the rest clone follows
+/// that input (F345: a clone reads what its call site does not pin as a signal), so the page lowers.
 #[test]
 fn a_value_that_calls_an_import_crosses_into_the_clone_as_one_input() {
     let mut live = App::new();
@@ -150,11 +149,21 @@ fn a_value_that_calls_an_import_crosses_into_the_clone_as_one_input() {
         "import { Root, Thumb } from './kit'",
     ));
     assert!(
-        info(&tree[0].0)
-            .iter()
-            .any(|d| d.starts_with("frozen-prop")),
+        !matches!(tree[0].0.tier, Tier::React { .. }),
         "{:?}",
         info(&tree[0].0)
+    );
+    let (clone, ..) = rest_clone(&tree).unwrap_or_else(|| panic!("{:?}", info(&tree[0].0)));
+    let inx = clone
+        .props
+        .iter()
+        .find(|p| p.name.starts_with("__inx"))
+        .expect("the carried value");
+    // the value changes with the page's state: not pinned, the clone follows it
+    assert!(
+        !clone.fixed_props.contains(&inx.name),
+        "{:?}",
+        clone.fixed_props
     );
     let mut app = App::new();
     let tree = app.compile(&page(

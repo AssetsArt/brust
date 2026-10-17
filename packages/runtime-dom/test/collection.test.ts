@@ -42,6 +42,37 @@ test('a nested collection keeps its items to itself (nearest root), and an item 
   expect(inner().map((i) => i.element.id)).toEqual(['n1', 'n2'])
 })
 
+// F312: a consumer host that is ITSELF a root (one element carrying x-data, x-collection-root and, here, the item marker of
+// the outer collection). Radix: the consumer reads the nearest provider above it in the tree, and the element that is the
+// inner Slot sits inside the inner Provider, so a consumer on it resolves to the INNER collection; the same element is an
+// item of the OUTER one. The runtime's nearest-root rule gives exactly that (`closest` includes the element itself).
+test('a consumer host that is itself a root resolves to its own collection, and is an item of the outer one', () => {
+  let outer!: Items; let self!: Items; let below!: Items
+  defineBehavior('c3a', ({ items: it }) => { outer = it; return {} })
+  defineBehavior('c3b', ({ items: it }) => { self = it; return {} })
+  defineBehavior('c3c', ({ items: it }) => { below = it; return {} })
+  document.body.innerHTML = `<div x-data="c3a" x-collection-root><i id="o1" data-radix-collection-item></i>
+    <section id="s" x-data="c3b" x-collection-root data-radix-collection-item><i id="n1" data-radix-collection-item></i><u x-data="c3c"></u><i id="n2" data-radix-collection-item></i></section>
+    <i id="o2" data-radix-collection-item></i></div>`
+  mount()
+  // the consumer on the inner root: its own items (not the outer's, and not the host itself)
+  expect(self().map((i) => i.element.id)).toEqual(['n1', 'n2'])
+  // a consumer below the inner root: the nearest root above it is the inner one
+  expect(below().map((i) => i.element.id)).toEqual(['n1', 'n2'])
+  // the outer collection lists the inner root element as ONE item and none of the inner items
+  expect(outer().map((i) => i.element.id)).toEqual(['o1', 's', 'o2'])
+})
+
+test('a root with no item marker of its own is not an item of the outer collection, and its consumer still sees its own items', () => {
+  let outer!: Items; let self!: Items
+  defineBehavior('c3d', ({ items: it }) => { outer = it; return {} })
+  defineBehavior('c3e', ({ items: it }) => { self = it; return {} })
+  document.body.innerHTML = `<div x-data="c3d" x-collection-root><i id="o1" data-radix-collection-item></i><section x-data="c3e" x-collection-root><i id="n1" data-radix-collection-item></i></section></div>`
+  mount()
+  expect(outer().map((i) => i.element.id)).toEqual(['o1'])
+  expect(self().map((i) => i.element.id)).toEqual(['n1'])
+})
+
 test('a host with no root above it has no items; the root is found from a descendant host too', () => {
   let none!: Items; let deep!: Items
   defineBehavior('c4n', ({ items: it }) => { none = it; return {} })

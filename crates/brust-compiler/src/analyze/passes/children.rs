@@ -2616,7 +2616,7 @@ impl Walker<'_, '_> {
                     && !children.is_empty()
                     && self.reads_context_in(children)
                 {
-                    match self.specialise_forwarder(&cir, &from, *loc, children) {
+                    match self.specialise_forwarder(&cir, &from, *loc, children, props) {
                         Ok((clone, (id, key, inputs))) => {
                             props.extend(inputs);
                             *name = id;
@@ -2923,7 +2923,7 @@ impl Walker<'_, '_> {
                     && !children.is_empty()
                     && let Some(from) = child.path.clone()
                 {
-                    match self.specialise_host(&cir, &from, *loc, children) {
+                    match self.specialise_host(&cir, &from, *loc, children, props) {
                         Ok((id, key, inputs)) => {
                             props.extend(inputs);
                             *name = id;
@@ -3030,11 +3030,7 @@ impl Walker<'_, '_> {
         let clone_id = id.clone();
         let (inputs, clone_handlers) = carry.finish();
         // An input the call site does not change on the client stays fixed in the clone.
-        let fixed: Vec<String> = inputs
-            .iter()
-            .filter(|(_, v)| !self.source_reactive(v))
-            .map(|(h, _)| h.clone())
-            .collect();
+        let fixed = self.pinned(cir, props, &inputs);
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
             &export,
@@ -3082,6 +3078,7 @@ impl Walker<'_, '_> {
         c_path: &str,
         loc: u32,
         content: &[Node],
+        props: &[(String, Expr)],
     ) -> Result<(Rc<ComponentIR>, Specialised), String> {
         let ctx = self.ctx;
         let export = match &cir.export {
@@ -3112,11 +3109,7 @@ impl Walker<'_, '_> {
         let key = format!("{c_path}#{exp}~rest~{site}~{loc}");
         let clone_id = id.clone();
         let (inputs, clone_handlers) = carry.finish();
-        let fixed: Vec<String> = inputs
-            .iter()
-            .filter(|(_, v)| !self.source_reactive(v))
-            .map(|(h, _)| h.clone())
-            .collect();
+        let fixed = self.pinned(cir, props, &inputs);
         let mut once = Some(nodes);
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
@@ -3184,6 +3177,7 @@ impl Walker<'_, '_> {
         c_path: &str,
         loc: u32,
         content: &[Node],
+        props: &[(String, Expr)],
     ) -> Result<Specialised, String> {
         if !cir.provides.is_empty() || cir.specialised {
             return Err("it provides a context, or is a clone already".into());
@@ -3232,11 +3226,7 @@ impl Walker<'_, '_> {
         let key = format!("{c_path}#{exp}~host~{site}~{loc}");
         let clone_id = id.clone();
         let (inputs, clone_handlers) = carry.finish();
-        let fixed: Vec<String> = inputs
-            .iter()
-            .filter(|(_, v)| !self.source_reactive(v))
-            .map(|(h, _)| h.clone())
-            .collect();
+        let fixed = self.pinned(cir, props, &inputs);
         let mut once = Some(nodes);
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
@@ -3258,7 +3248,6 @@ impl Walker<'_, '_> {
                 ir.fixed_props = fixed.clone();
                 ir.id = clone_id.clone();
                 ir.specialised = true;
-                ir.host_clone = true;
                 Ok(())
             },
         )?;
@@ -3279,6 +3268,56 @@ impl Walker<'_, '_> {
                     RawKind::Ident { name, kind: IdentKind::Prop }
                         if name == "*" || (name == crate::ir::REST_PROPS && !self.own_named.contains("children"))))
         })
+    }
+
+    /// F345: what a clone's one call site does not change on the client, pinned in its `fixed_props` (a clone reads every
+    /// other prop as a signal, `ComponentIR::props_are_signal`): each hidden input and each declared prop whose value at
+    /// the call site reads no state and no prop that changes here (F320's rule, `live`), and each declared prop the call
+    /// site does not pass (it stays at its default, or comes in a spread of this component's own rest), unless a spread of
+    /// unknown keys there may carry it. A pinned value that reads a prop of THIS component (a stateless wrapper passing
+    /// its own prop on, F323) freezes that prop here (F319): a caller passing a changing value falls back
+    /// (`frozen-prop`). F319's own freeze at an unlinked call site already does so; this one also holds where the clone
+    /// is linked for another reason.
+    fn pinned(
+        &mut self,
+        cir: &ComponentIR,
+        props: &[(String, Expr)],
+        inputs: &[(String, Expr)],
+    ) -> Vec<String> {
+        // A spread of this component's own rest or props carries only what its caller gave, which F319 freezes per call
+        // site (`*`, never live by F320's rule): the props it may carry are pinned too, and `*` frozen here. Any other
+        // spread (keys known only at render) may carry a changing value: what it may carry is not pinned.
+        let mut spread = false;
+        let mut frozen = Vec::new();
+        for (k, v) in props {
+            if k != crate::ir::SPREAD_KEY {
+                continue;
+            }
+            let own = matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+                RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS));
+            if own && !self.live(v) {
+                frozen.extend(self.changing_prop_roots(&self.deps_of(v)));
+            } else {
+                spread = true;
+            }
+        }
+        let mut given: Vec<(&str, &Expr)> = inputs.iter().map(|(h, v)| (h.as_str(), v)).collect();
+        let mut fixed = Vec::new();
+        for p in &cir.props {
+            match props.iter().rev().find(|(k, _)| *k == p.name) {
+                Some((_, v)) => given.push((&p.name, v)),
+                None if !spread && p.name != "children" => fixed.push(p.name.clone()),
+                None => {}
+            }
+        }
+        for (name, v) in given {
+            if matches!(v, Expr::ClientOnly { .. }) || !self.live(v) {
+                frozen.extend(self.changing_prop_roots(&self.deps_of(v)));
+                fixed.push(name.to_string());
+            }
+        }
+        self.frozen.extend(frozen);
+        fixed
     }
 
     /// A1: a consumer in `content` that reads the frame of ANOTHER native Provider (an outer one) would, once spliced,
