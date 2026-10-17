@@ -333,3 +333,62 @@ fn a_row_value_given_to_a_host_clone_is_never_pinned() {
         clone.ir.fixed_props
     );
 }
+
+// F344 (Mellow N1): host clones are keyed by their call site's source offset, and content spliced from another module
+// keeps its module's offsets. Here the page's Box and OHost's own Box sit at the same offset and both end up in OHost's
+// clone; the page's Box is already a clone there (specialised where it was written), so the two stay apart: two distinct
+// Box clones, each with its own content, and the page stays native. Two unspecialised hosts sharing an offset in one
+// template are refused (`shared_locs`: neither is specialised).
+#[test]
+fn a_spliced_host_at_the_same_offset_as_the_clones_own_host_stays_apart() {
+    let all = compile("shared_loc.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    let boxes: Vec<&Item> = all
+        .iter()
+        .filter(|i| i.ir.specialised && i.ir.id.starts_with("box_"))
+        .collect();
+    assert_eq!(
+        boxes.len(),
+        2,
+        "{:?}",
+        all.iter().map(|i| &i.ir.id).collect::<Vec<_>>()
+    );
+    assert!(boxes.iter().any(|b| b.jinja.contains("__in_on")));
+    assert!(boxes.iter().any(|b| b.jinja.contains("__in_n")));
+}
+
+// F344 (Mellow N2): a page with slot-owner call sites is read twice (F307); clones compiled in the first run and not
+// named by the second (a Provider's clone made before its content was specialised) must not be emitted. Every clone in
+// the output is named by another output's template (its `x-data`, or as a child reference).
+#[test]
+fn only_clones_the_final_templates_name_are_emitted() {
+    for file in [
+        "scoped.tsx",
+        "scoped_ok.tsx",
+        "two_sites.tsx",
+        "state_rows_free.tsx",
+        "shared_loc.tsx",
+        "wrap_live.tsx",
+    ] {
+        let all = compile(file);
+        for c in all
+            .iter()
+            .filter(|i| i.ir.specialised || i.ir.rest_clone_of.is_some())
+        {
+            let named = all.iter().any(|o| {
+                o.ir.id != c.ir.id
+                    && (o.jinja.contains(&c.ir.id)
+                        || o.ir
+                            .children
+                            .iter()
+                            .any(|r| r.id.as_deref() == Some(c.ir.id.as_str())))
+            });
+            assert!(
+                named,
+                "{file}: {} is emitted but no template names it ({:?})",
+                c.ir.id,
+                all.iter().map(|i| &i.ir.id).collect::<Vec<_>>()
+            );
+        }
+    }
+}
