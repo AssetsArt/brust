@@ -697,8 +697,108 @@ fn carried_poly(ir: &mut ComponentIR, sites: &[(PolyTag, bool)]) {
     if ir.poly.is_some() {
         return;
     }
+    // the rest has no other consumer: a second element or value reading it would print `asChild` / `children` as React does
+    // not (React hands the flag to the Slot and its children to the clone)
+    if rest_consumers(&ir.template, &poly.flag) != 1 {
+        return;
+    }
     ir.absent_props.retain(|k| k != &poly.flag);
     ir.poly = Some(poly.clone());
+}
+
+/// Whether `r` reads the component's rest or props object, other than as `<rest>.<flag>` (a read of the flag itself inside a
+/// carrier is allowed on purpose: the flag still reaches the polymorphic child through the spread).
+fn reads_rest(r: &RawExpr, flag: &str) -> bool {
+    let rest = |x: &RawExpr| {
+        matches!(&x.kind, RawKind::Ident { name, kind: IdentKind::Prop }
+            if name == "*" || name == crate::ir::REST_PROPS)
+    };
+    match &r.kind {
+        RawKind::Ident { .. } => rest(r),
+        RawKind::Member { target, name, .. } if rest(target) => name != flag,
+        RawKind::Member { target, .. } => reads_rest(target, flag),
+        RawKind::Index { target, index } => reads_rest(target, flag) || reads_rest(index, flag),
+        RawKind::Call { callee, args } => {
+            reads_rest(callee, flag) || args.iter().any(|a| reads_rest(a, flag))
+        }
+        RawKind::Binary { left, right, .. } => reads_rest(left, flag) || reads_rest(right, flag),
+        RawKind::Unary { value, .. } => reads_rest(value, flag),
+        RawKind::Cond { test, yes, no } => {
+            reads_rest(test, flag) || reads_rest(yes, flag) || reads_rest(no, flag)
+        }
+        RawKind::Template { parts, .. } => parts.iter().any(|(p, _)| reads_rest(p, flag)),
+        RawKind::Array(xs) => xs.iter().any(|x| reads_rest(x, flag)),
+        RawKind::Object(ps) => ps.iter().any(|(_, v)| reads_rest(v, flag)),
+        RawKind::Lit(_) => false,
+        // a function or code outside the subset: it may read anything
+        RawKind::Arrow { .. } | RawKind::Jsx(_) | RawKind::Opaque { .. } => true,
+    }
+}
+
+/// How many places of `n` consume the component's rest or props: each spread of the whole rest, each other read of it.
+fn rest_consumers(n: &Node, flag: &str) -> usize {
+    let expr_reads = |e: &Expr| match e {
+        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => usize::from(reads_rest(r, flag)),
+        Expr::ClientOnly { .. } | Expr::Precomputed { .. } => 0,
+    };
+    let whole = |e: &Expr| {
+        matches!(e, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
+            RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS))
+    };
+    match n {
+        Node::Element {
+            attrs, children, ..
+        } => {
+            attrs
+                .iter()
+                .map(|a| match a {
+                    Attr::Spread(v) if whole(v) => 1,
+                    Attr::Spread(v)
+                    | Attr::Dynamic { value: v, .. }
+                    | Attr::InnerHtml { value: v } => expr_reads(v),
+                    _ => 0,
+                })
+                .sum::<usize>()
+                + children
+                    .iter()
+                    .map(|c| rest_consumers(c, flag))
+                    .sum::<usize>()
+        }
+        Node::Component {
+            props, children, ..
+        } => {
+            props
+                .iter()
+                .map(|(k, v)| {
+                    if k == crate::ir::SPREAD_KEY && whole(v) {
+                        1
+                    } else {
+                        expr_reads(v)
+                    }
+                })
+                .sum::<usize>()
+                + children
+                    .iter()
+                    .map(|c| rest_consumers(c, flag))
+                    .sum::<usize>()
+        }
+        Node::Slot(e) => expr_reads(e),
+        Node::If {
+            cond, then, else_, ..
+        } => {
+            expr_reads(cond)
+                + then
+                    .iter()
+                    .chain(else_)
+                    .map(|c| rest_consumers(c, flag))
+                    .sum::<usize>()
+        }
+        Node::For { source, body, .. } => {
+            expr_reads(source) + body.iter().map(|c| rest_consumers(c, flag)).sum::<usize>()
+        }
+        Node::Fragment(cs) => cs.iter().map(|c| rest_consumers(c, flag)).sum(),
+        Node::Text(_) | Node::Outlet => 0,
+    }
 }
 
 /// The call of a carrier's template that hands the whole rest on: `(name, source, imported, member, loc)`.
@@ -6110,7 +6210,13 @@ impl Walker<'_, '_> {
                     || matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind,
                         RawKind::Ident { name, kind: IdentKind::Prop } if name == "*" || name == crate::ir::REST_PROPS))
             }) && !props.iter().any(|(k, _)| k == REST_INPUT || k == &poly.flag);
+            // the child's children are the rest's (`children` in it): children written between its tags are the Slot's
+            // content instead, and React clones THAT element, not the caller's
+            // (A member read of the flag inside a carrier, `rest.asChild`, is allowed on purpose: the flag still reaches the
+            // child through the spread. The list and whole-rest guards below are defence in depth: a list child or a
+            // path spread is refused earlier, so no fixture reaches them alone.)
             let carrier = whole_rest
+                && children.is_empty()
                 && self.guard_depth == 0
                 && self.loop_scope.is_empty()
                 && !self.own_named.contains(&flag)
