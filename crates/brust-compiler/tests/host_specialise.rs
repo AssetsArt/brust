@@ -291,6 +291,9 @@ fn a_clone_linked_for_another_reason_still_pins_the_inputs_that_never_change() {
 #[test]
 fn a_context_value_is_never_pinned_in_a_clone() {
     let all = compile("sw_thumb.tsx");
+    // the switch page is lowered (its Show tier is not React) and has clones: the loop below is not vacuous
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(all.iter().any(|i| i.ir.specialised), "no clone");
     for i in all.iter().filter(|i| i.ir.specialised) {
         assert!(
             !i.ir.fixed_props.iter().any(|p| p.starts_with("__ctx_")),
@@ -298,5 +301,40 @@ fn a_context_value_is_never_pinned_in_a_clone() {
             i.ir.id,
             i.ir.fixed_props
         );
+    }
+}
+
+/// F351: the shapes of a render prop that a Provider's clone cannot take are pinned as fixtures (`SwRefuse.tsx`): the
+/// argument is a local object built by a call, a computation, the prop called twice, and a body that reads the setter
+/// member. Each call site keeps the Provider as an island (nothing is dropped); the two with a named reason say it.
+#[test]
+fn render_prop_shapes_a_clone_cannot_take_keep_the_island() {
+    for (file, reason) in [
+        ("sw_ref_notliteral.tsx", None),
+        ("sw_ref_computed.tsx", Some("is a computation")),
+        ("sw_ref_twice.tsx", Some("exactly once")),
+        ("sw_setter.tsx", None),
+    ] {
+        let all = compile(file);
+        assert!(
+            is_react(&all[0].ir) || all[0].jinja.contains("brust-island"),
+            "{file}: {:?}",
+            all[0].ir.diagnostics
+        );
+        assert!(
+            !all.iter().any(|i| i.ir.specialised),
+            "{file}: a clone was taken"
+        );
+        if let Some(r) = reason {
+            assert!(
+                all[0]
+                    .ir
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.rule == "specialise-unsupported" && d.message.contains(r)),
+                "{file}: {:?}",
+                all[0].ir.diagnostics
+            );
+        }
     }
 }

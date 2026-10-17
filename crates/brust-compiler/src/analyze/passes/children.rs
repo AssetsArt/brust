@@ -2827,11 +2827,16 @@ impl Walker<'_, '_> {
                         && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
                             if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == k))
                 };
+                // F356 (ruling 7a25d5e0): a written literal `undefined` names no scope (as `require_absent` reads it).
+                let scope_undefined = |v: &Expr| {
+                    matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
+                        if matches!(r.kind, RawKind::Lit(crate::ir::Literal::Undefined)))
+                };
                 if !self.ctx.specialised
                     && matches!(cir.tier, Tier::Static | Tier::Native)
-                    && let Some((k, _)) = props
-                        .iter()
-                        .find(|(k, v)| k.starts_with("__scope") && !forwards_own_scope(k, v))
+                    && let Some((k, _)) = props.iter().find(|(k, v)| {
+                        k.starts_with("__scope") && !forwards_own_scope(k, v) && !scope_undefined(v)
+                    })
                 {
                     diags.push(Diagnostic::fallback(
                         "context-scope",
@@ -2841,8 +2846,8 @@ impl Walker<'_, '_> {
                     ));
                 }
                 if !self.ctx.specialised && matches!(cir.tier, Tier::Static | Tier::Native) {
-                    for (k, _) in props.iter() {
-                        if k.starts_with("__scope") {
+                    for (k, v) in props.iter() {
+                        if k.starts_with("__scope") && !scope_undefined(v) {
                             self.absent.insert(k.clone());
                         }
                     }
