@@ -127,6 +127,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .map(|h| h.name.clone())
             .collect(),
         no_spec: Default::default(),
+        shared_locs: BTreeSet::new(),
         spec_failure: None,
         bubbled_pkg: false,
         bubbled_scoped: Vec::new(),
@@ -207,6 +208,7 @@ pub fn contexts(
     let mut frames: Vec<Frame> = Vec::new();
     let mut bubbled: Vec<(String, String)> = Vec::new();
     let mut diags: Vec<Diagnostic> = Vec::new();
+    w.shared_locs = shared_component_locs(&template);
     w.frames_node(&mut template, &mut frames, &mut bubbled, &mut diags);
     ir.template = template;
     // The Provider module's helpers the substituted values call, as module declarations of this component (S2).
@@ -440,6 +442,10 @@ struct Walker<'s, 'c> {
     renders: Vec<crate::ir::RenderProp>,
     /// R34.122: call sites (by location) whose specialisation failed; they are read as island Providers.
     no_spec: std::collections::HashSet<u32>,
+    /// F344 (Mellow N1): component call sites of this template that share a source offset. A host clone is keyed by its
+    /// call site's offset (`host_spec`, `host_wanted`), and content spliced from another module (a clone's content,
+    /// R34.123/F307) keeps that module's offsets, so two sites can share one: neither is specialised (fail closed).
+    shared_locs: BTreeSet<u32>,
     /// R34.122: the location and reason of the specialisation that just failed.
     spec_failure: Option<(u32, String)>,
     /// A need bubbled out of a package-source consumer ([`ComponentIR::ctx_pkg`]).
@@ -702,6 +708,37 @@ impl Inner {
             },
         })
     }
+}
+
+/// F344 (Mellow N1): the source offsets two or more component call sites of `template` share (clones excluded).
+fn shared_component_locs(template: &Node) -> BTreeSet<u32> {
+    fn walk(n: &Node, seen: &mut BTreeSet<u32>, shared: &mut BTreeSet<u32>) {
+        match n {
+            Node::Component {
+                loc,
+                children,
+                source,
+                ..
+            } => {
+                // A clone already (content specialised where it was written) is never specialised again.
+                if source.as_deref() != Some(SPEC_SOURCE) && !seen.insert(*loc) {
+                    shared.insert(*loc);
+                }
+                children.iter().for_each(|c| walk(c, seen, shared));
+            }
+            Node::Element { children, .. } | Node::Fragment(children) => {
+                children.iter().for_each(|c| walk(c, seen, shared))
+            }
+            Node::If { then, else_, .. } => {
+                then.iter().chain(else_).for_each(|c| walk(c, seen, shared))
+            }
+            Node::For { body, .. } => body.iter().for_each(|c| walk(c, seen, shared)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    let (mut seen, mut shared) = (BTreeSet::new(), BTreeSet::new());
+    walk(template, &mut seen, &mut shared);
+    shared
 }
 
 /// A fed child (one with an instance record of `ir`) sits under a condition or in a list of `ir`'s template.
@@ -2649,9 +2686,17 @@ impl Walker<'_, '_> {
                     .iter_mut()
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
             }
-            Node::For { body, .. } => body
-                .iter_mut()
-                .for_each(|c| self.frames_node(c, frames, bubbled, diags)),
+            Node::For {
+                body, item, index, ..
+            } => {
+                // F344: the row's names are loop bindings here too (a clone made in a row must not pin a row value).
+                let n = self.loop_scope.len();
+                self.loop_scope.push(item.clone());
+                self.loop_scope.extend(index.iter().cloned());
+                body.iter_mut()
+                    .for_each(|c| self.frames_node(c, frames, bubbled, diags));
+                self.loop_scope.truncate(n);
+            }
             Node::Component {
                 loc,
                 name,
@@ -3310,6 +3355,9 @@ impl Walker<'_, '_> {
         if !cir.provides.is_empty() || cir.specialised {
             return Err("it provides a context, or is a clone already".into());
         }
+        if self.shared_locs.contains(&loc) {
+            return Err("another call site in this component has the same source offset (content written in another module), so the clone could not be told apart".into());
+        }
         if !matches!(cir.tier, Tier::Native | Tier::Static) {
             return Err("it is not lowered".into());
         }
@@ -3445,7 +3493,11 @@ impl Walker<'_, '_> {
             }
         }
         for (name, v) in given {
-            if matches!(v, Expr::ClientOnly { .. }) || !self.live(v) {
+            // F344: a row value changes per instance: pinned, a row the client adds would print the first row's value
+            // (F358's class). Not pinned, the clone follows it. (Clones are made in the frames pass, which does not know
+            // whether a list re-creates its rows: every row value counts.)
+            let row = !self.deps_of(v).loop_bindings.is_empty();
+            if matches!(v, Expr::ClientOnly { .. }) || (!self.live(v) && !row) {
                 frozen.extend(self.changing_prop_roots(&self.deps_of(v)));
                 fixed.push(name.to_string());
             }
