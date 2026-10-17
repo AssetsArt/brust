@@ -7535,12 +7535,13 @@ impl Walker<'_, '_> {
             // repaint an attribute the spread set.
             // F278: a prop the compiler wrote (`__ctx_…`, `__in_…`) AFTER the last spread is not replaced by it (React:
             // the later key wins) and no caller can name it, so the spread cannot repaint what it binds.
-            let after_spreads = (k.starts_with("__ctx_") || k.starts_with("__in_"))
-                && props
-                    .iter()
-                    .rposition(|(o, _)| o == crate::ir::SPREAD_KEY)
-                    .zip(props.iter().position(|(o, _)| o == k))
-                    .is_none_or(|(spread, at)| spread < at);
+            // F329 W1: the same for ANY key written after the last spread: the later key wins in React and the spread
+            // cannot carry it here; whether the CHILD lets it reach an element is `child.spread.lands(k)` below.
+            let after_spreads = props
+                .iter()
+                .rposition(|(o, _)| o == crate::ir::SPREAD_KEY)
+                .zip(props.iter().position(|(o, _)| o == k))
+                .is_none_or(|(spread, at)| spread < at);
             if k == crate::ir::SPREAD_KEY || (spreads_in && !after_spreads) || child.spread.lands(k)
             {
                 if snapshot_only {

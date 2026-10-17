@@ -279,6 +279,8 @@ fn calls_nothing(ir: &crate::ir::ComponentIR, e: &crate::ir::RawExpr) -> bool {
         RawKind::Cond { test, yes, no } => {
             calls_nothing(ir, test) && calls_nothing(ir, yes) && calls_nothing(ir, no)
         }
+        // an array of such values (`useMemo(() => (value ? [value] : []), [value])`, Radix `ToggleGroupImplSingle`)
+        RawKind::Array(xs) => xs.iter().all(|x| calls_nothing(ir, x)),
         _ => false,
     }
 }
