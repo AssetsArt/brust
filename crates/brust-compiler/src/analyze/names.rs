@@ -1101,6 +1101,15 @@ impl<'a> NameTable<'a> {
         self.props.insert(k, prop.to_string());
     }
 
+    /// switch-provider-chain: `const { field } = useXContext(…)`: the local reads the field's hidden prop
+    /// (`bind_prop_local`) and, in code printed as written (a handler, an effect), prints as that prop's name, which the
+    /// chunk binds around such code (`wrap_source`); printed as the author's name it would be unbound there.
+    pub fn bind_ctx_field_local(&mut self, r: js_ast::Ref, prop: &str) {
+        self.bind_prop_local(r, prop);
+        let k = self.key(r);
+        self.printed.insert(k, prop.to_string());
+    }
+
     /// `const context = useXContext(…)`: reads of `context.field` are the hidden prop of that field.
     pub fn bind_ctx_local(&mut self, r: js_ast::Ref, context: &str) {
         let k = self.key(r);

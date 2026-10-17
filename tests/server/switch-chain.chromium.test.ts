@@ -48,9 +48,10 @@ afterAll(async () => {
 /** Tag, data-* attributes and leaf text of every element under <main>; brust's `display: contents` wrappers (`<brust-row>`,
  * a row whose root is a condition, `<brust-if>`, a condition over a component, and `<brust-host>`, a specialised
  * component's host) have no box, and `<brust-island>` is the wrapper of a React island (a page that falls back): none
- * is observed. */
+ * is observed. Attributes are sorted: a live value the parent binds on a child's element (switch-provider-chain PR2) is
+ * printed ahead of the element's own spread, an order no reader of the DOM observes. */
 const observe = (page: Page) =>
-  page.evaluate(() => [...document.querySelectorAll('main *')].filter((e) => !['brust-row', 'brust-if', 'brust-host', 'brust-island'].includes(e.localName)).map((e) => `${e.localName}${[...e.attributes].filter((a) => a.name.startsWith('data-')).map((a) => `[${a.name}=${a.value}]`).join('')}:${e.children.length ? '' : e.textContent}`).join(' '))
+  page.evaluate(() => [...document.querySelectorAll('main *')].filter((e) => !['brust-row', 'brust-if', 'brust-host', 'brust-island'].includes(e.localName)).map((e) => `${e.localName}${[...e.attributes].filter((a) => a.name.startsWith('data-')).map((a) => `[${a.name}=${a.value}]`).sort().join('')}:${e.children.length ? '' : e.textContent}`).join(' '))
 
 async function run(page: string, react: boolean, clicks = ['f', 'box', 'f']): Promise<{ log: string[]; errors: string[] }> {
   const p = await browser.newPage()
@@ -84,6 +85,13 @@ const tierOf = (prefix: string) => {
   const m = JSON.parse(readFileSync(join(app, 'dist/manifest.json'), 'utf8')) as { components: Record<string, { tier: string }> }
   return Object.entries(m.components).find(([k]) => k.startsWith(prefix))![1].tier
 }
+
+// PR2 (link 3): the trigger binds the context's live `data-state` ahead of its own rest, so `bare` is served natively.
+test('bare is served without a React island', async () => {
+  expect(tierOf('kRoot_')).not.toBe('react')
+  const html = await (await fetch(`${base}/bare`)).text()
+  expect(html).not.toContain('brust-island')
+})
 
 for (const page of ['thumb', 'bare']) {
   test(`${page}: toggled twice, every observable value equals React hydrating the same page`, async () => {

@@ -377,6 +377,8 @@ jobs:
       - run: bun test --timeout 180000 tests/server/native-provider.chromium.test.ts
       # progress-flip (ruling 2c9522ea, option C): shadcn Progress is a static page, first paint == React, a changing value follows React.
       - run: bun test --timeout 300000 tests/server/shadcn-progress.chromium.test.ts
+      # switch-provider-chain PR2: Radix Switch.Root alone is served without React and toggles equal to React.
+      - run: bun test --timeout 300000 tests/server/shadcn-switch-root.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/absent-prop-seed.chromium.test.ts
       # F232: a handler reading a binding named `a` reads that binding (the handler wrapper's rest parameter is reserved).
       - run: bun test --timeout 120000 tests/server/handler-shadow.chromium.test.ts

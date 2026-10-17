@@ -1309,3 +1309,20 @@ fn a_components_own_scope_handed_on_unchanged_is_native_until_a_caller_passes_on
         );
     }
 }
+
+// switch-provider-chain PR2: a field destructured from a context and read in code printed as written prints as its hidden
+// prop, the name the chunk binds around that code (it printed as `flip` / `on`: unbound, a ReferenceError at the click
+// and in the effect).
+#[test]
+fn a_destructured_context_field_in_code_printed_as_written_reads_its_hidden_prop() {
+    let all = compile("ctx_field_verbatim.tsx");
+    let c = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("vTrigger_"))
+        .expect("the consumer");
+    assert!(!is_react(&c.ir), "{:?}", c.ir.diagnostics);
+    let js = c.client.as_deref().unwrap_or_default();
+    assert!(js.contains("_flip())"), "{js}");
+    assert!(!js.contains("=> flip()"), "{js}");
+    assert!(!js.contains("title = on"), "{js}");
+}
