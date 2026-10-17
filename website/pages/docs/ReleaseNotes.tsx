@@ -66,9 +66,9 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         <li>
           <strong>A prop default that names a module function no longer throws on the first click.</strong> In alpha.18 and alpha.19 the default was printed in the page&rsquo;s script without declaring what it reads, so a Radix <code>getValueLabel = defaultGetValueLabel</code> default gave a <code>ReferenceError</code> on the first click. The script now declares the module names and imports that prop defaults read.
         </li>
-        {/* source: PR #350 (F385, HIGH, present in every alpha so far; the example is the PR's repro) */}
+        {/* source: PR #350 (F385, HIGH, pre-existing; in alpha.19 and earlier; the example is the PR's repro) */}
         <li>
-          <strong>A custom hook that takes an argument no longer paints the server&rsquo;s first paint with that argument <code>undefined</code>.</strong> A hook such as <code>function useLabel(n) {'{'} return &apos;L&apos; + n {'}'}</code> called as <code>useLabel(1)</code> rendered <code>title=&quot;Lundefined&quot;</code> where React renders <code>L1</code>, and a static attribute never recovers after hydration. The server template, the server job module and the page&rsquo;s script now order their values by what each one reads.
+          <strong>A custom hook that takes an argument no longer paints the server&rsquo;s first paint with that argument <code>undefined</code>.</strong> In alpha.19 and earlier, a hook such as <code>function useLabel(n) {'{'} return &apos;L&apos; + n {'}'}</code> called as <code>useLabel(1)</code> rendered <code>title=&quot;Lundefined&quot;</code> where React renders <code>L1</code>, and a static attribute never recovers after hydration. The server template, the server job module and the page&rsquo;s script now order their values by what each one reads.
         </li>
       </ul>
 
