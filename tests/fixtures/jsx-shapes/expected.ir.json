@@ -215,7 +215,21 @@
                 }
               }
             ],
-            "else_": [],
+            "else_": [
+              {
+                "Slot": {
+                  "Server": {
+                    "loc": 320,
+                    "kind": {
+                      "Ident": {
+                        "name": "show",
+                        "kind": "Prop"
+                      }
+                    }
+                  }
+                }
+              }
+            ],
             "and": true
           }
         },

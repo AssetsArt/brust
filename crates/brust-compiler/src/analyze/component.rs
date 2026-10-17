@@ -697,9 +697,96 @@ fn read_function_as(
         .map(root_node)
         .unwrap_or(Node::Fragment(vec![]));
     ir.template = host_root(root, root_loc);
+    falsy_left_slots(ir);
     callback_refs(ir);
     ir.uses_outlet = has_outlet(&ir.template);
     check_printer_panic(ir);
+}
+
+/// F388: the reader gives `left && <X/>` (a side-effect-free `left`) an else branch that prints `left`, as React renders a
+/// falsy number there. That branch is dropped again where it cannot print or cannot matter:
+/// - under an element whose content model takes no text (`<table>`, `<tbody>`, `<tr>`, `<select>`, ...): the parser
+///   would move a text or wrapper node out of it, which React's own `0` cannot avoid either; today's lowering stays;
+/// - when `left` is provably boolean (a state seeded with a boolean literal, a derived value over comparisons, `!`,
+///   boolean literals and such states): a boolean prints nothing, and the branch would only add markup.
+fn falsy_left_slots(ir: &mut ComponentIR) {
+    const NO_TEXT: &[&str] = &[
+        "table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup", "datalist",
+    ];
+    fn boolean(ir: &ComponentIR, r: &RawExpr, depth: u8) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        match &r.kind {
+            RawKind::Lit(Literal::Bool(_)) => true,
+            RawKind::Unary {
+                op: crate::ir::UnOp::Not,
+                ..
+            } => true,
+            RawKind::Binary { op, left, right } => match op {
+                BinOp::Eq
+                | BinOp::Ne
+                | BinOp::StrictEq
+                | BinOp::StrictNe
+                | BinOp::Lt
+                | BinOp::Le
+                | BinOp::Gt
+                | BinOp::Ge => true,
+                BinOp::And | BinOp::Or => {
+                    boolean(ir, left, depth + 1) && boolean(ir, right, depth + 1)
+                }
+                _ => false,
+            },
+            RawKind::Cond { yes, no, .. } => {
+                boolean(ir, yes, depth + 1) && boolean(ir, no, depth + 1)
+            }
+            RawKind::Ident { name, kind } => match kind {
+                IdentKind::State => ir.state.iter().any(|s| {
+                    &s.name == name
+                        && matches!(&s.init, Expr::Raw(i) if matches!(i.kind, RawKind::Lit(Literal::Bool(_))))
+                }),
+                IdentKind::Local => ir.derived.iter().any(|d| {
+                    &d.name == name
+                        && matches!(&d.expr, Expr::Raw(e) if boolean(ir, e, depth + 1))
+                }),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+    fn walk(ir: &ComponentIR, n: &mut Node, no_text: bool) {
+        match n {
+            Node::If {
+                cond,
+                then,
+                else_,
+                and: true,
+            } => {
+                let synthesized = matches!(else_.as_slice(), [Node::Slot(Expr::Raw(s))] if matches!(cond, Expr::Raw(c) if c == s));
+                if synthesized && (no_text || matches!(cond, Expr::Raw(c) if boolean(ir, c, 0))) {
+                    else_.clear();
+                }
+                then.iter_mut().for_each(|c| walk(ir, c, no_text));
+            }
+            Node::If { then, else_, .. } => then
+                .iter_mut()
+                .chain(else_.iter_mut())
+                .for_each(|c| walk(ir, c, no_text)),
+            Node::Element { tag, children, .. } => {
+                let nt = NO_TEXT.contains(&tag.as_str());
+                children.iter_mut().for_each(|c| walk(ir, c, nt));
+            }
+            Node::Component { children, .. } => {
+                children.iter_mut().for_each(|c| walk(ir, c, false))
+            }
+            Node::Fragment(children) => children.iter_mut().for_each(|c| walk(ir, c, no_text)),
+            Node::For { body, .. } => body.iter_mut().for_each(|c| walk(ir, c, no_text)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+        }
+    }
+    let mut t = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
+    walk(ir, &mut t, false);
+    ir.template = t;
 }
 
 /// B1: `ref={x}` where `x` is a function value or a ref object the component computes (a `useCallback`, a derived

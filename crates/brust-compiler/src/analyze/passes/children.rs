@@ -7349,8 +7349,9 @@ impl Walker<'_, '_> {
                             let yes = self.lower_nodes(then, nested, env, bytes, lists)?;
                             let no = self.lower_nodes(else_, nested, env, bytes, lists)?;
                             let mut node = json!({ MARK: "if", "k": key, "c": yes, "e": no });
-                            // `cond && <X/>`: React renders a falsy number (0) as text there.
-                            if *and {
+                            // `cond && <X/>`: React renders a falsy number (0) as text there (unless the else branch
+                            // already prints `cond`, F388).
+                            if *and && else_.is_empty() {
                                 node["a"] = json!(true);
                             }
                             out.push(node);
