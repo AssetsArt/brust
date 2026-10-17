@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderColl, renderCollComp, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderSinkRef, renderSlotComp, renderLiveRest, renderMemoFrame, renderAfterSpread, renderRovingList, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderAfterSpread, renderColl, renderCollComp, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHelperFrame, renderHooks, renderHydr, renderHydrSwap, renderInEvent, renderInKids, renderInKidsGiven, renderInputs, renderLiveRest, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderMemoFrame, renderNested, renderNestedIds, renderPage, renderPoly, renderRender, renderRest, renderRoving, renderRovingList, renderSame, renderSinkRef, renderSlotComp, renderSpreadCtx, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -521,9 +521,9 @@ test('F328c: a native wrapper whose props change on the client keeps the page Re
   }
 }, 60_000)
 
-// F328b: an ItemSlot over components (a static row, a native row): the caller prints the item markers on each row's own <li>, so the
+// F328b: an ItemSlot over a component (a static row, inside an Item that is native): the caller prints the item markers on each row's own <li>, so the
 // runtime lists the items in document order with their data and skips the disabled one, as for an ItemSlot over an element.
-test('F328b: an ItemSlot over a static and a native component: markup equals React, items in order, the disabled one skipped', async () => {
+test('F328b: an ItemSlot over a static component inside a native Item: markup equals React, items in order, the disabled one skipped', async () => {
   const html = await (await fetch(`${base}/coll-comp`)).text()
   expect(html).not.toContain('brust-island')
   // attribute ORDER is not part of the DOM: the marker brust prints on the child's root comes before the child's own attributes
@@ -572,6 +572,117 @@ test('F329: a useRef only handed to a component ref prop: no island, markup equa
   await page.waitForFunction(() => document.querySelector('button')?.hasAttribute('x-data'))
   await page.getByRole('button').click()
   await page.waitForFunction(() => document.querySelector('button')?.textContent === 'a1')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+// F271: a handler of the page that takes the event argument, written in a specialised Provider's content, is called with
+// the real event (`e.detail` of a click is 1) and the live read follows.
+test('F271: a carried handler that takes the event argument is called with the event: markup equals React, each click adds the click count', async () => {
+  const html = await (await fetch(`${base}/in-event`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderInEvent()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/in-event`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('section[data-panel]')?.hasAttribute('x-data'))
+  expect(await page.locator('#live').textContent()).toBe('0')
+  await page.locator('#add').click()
+  await page.waitForFunction(() => document.querySelector('#live')?.textContent === '1')
+  // a double click dispatches two clicks (detail 1, then 2): 1 + 1 + 2 = 4 after the first click's 1
+  await page.locator('#add').dblclick()
+  await page.waitForFunction(() => document.querySelector('#live')?.textContent === '4')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+// F271: the call site's own `children` read in the content crosses as a hidden input. With children given, the
+// component stays React (`children-read`, pinned in Cargo); the page is still React's output.
+test('F271: a carried {children}: absent, no island and markup equals React; given, the page is React\'s own markup', async () => {
+  const none = await (await fetch(`${base}/in-kids`)).text()
+  expect(none).not.toContain('brust-island')
+  expect(plain(none)).toBe(plain(renderInKids()))
+  const given = await (await fetch(`${base}/in-kids-given`)).text()
+  expect(given).toContain('kids')
+  expect(plain(given.replace(/<brust-island[^>]*>|<\/brust-island>/g, ''))).toBe(plain(renderInKidsGiven()))
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/in-kids`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('main')?.hasAttribute('x-data'))
+  await page.locator('#n').click()
+  await page.waitForFunction(() => document.querySelector('#n')?.textContent === '1')
+  await page.getByRole('button', { name: 'open' }).count()
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+// F275 (F266, positive twin of the refusal of a written const object): a never-written `const` object literal spread into a
+// Provider is its entries, served equal to React, and the Provider still toggles.
+test('F275: a never-written const object spread into a Provider: markup equals React and the toggle works', async () => {
+  const html = await (await fetch(`${base}/spread-ctx`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderSpreadCtx()))
+  expect(html).toContain('body')
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/spread-ctx`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('section[data-panel]')?.hasAttribute('x-data'))
+  await page.getByRole('button', { name: 'toggle' }).click()
+  await page.locator('p', { hasText: 'body' }).waitFor({ state: 'detached' })
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+// F275: a frame field that is the negation of a module helper over state (`free = !inForm(el)`): the first paint is
+// React's, and a click that sets the state flips the field the consumer reads.
+test('F275: a `!helper(state)` frame field: markup equals React, and the consumer follows the state', async () => {
+  const html = await (await fetch(`${base}/helper-frame`)).text()
+  expect(html).not.toContain('brust-island')
+  expect(plain(html)).toBe(plain(renderHelperFrame()))
+  expect(html).toContain('data-free="y"')
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/helper-frame`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('main button')?.getAttribute('data-free') === 'y')
+  await page.getByRole('button', { name: 'grab' }).click()
+  await page.waitForFunction(() => document.querySelector('main button')?.getAttribute('data-free') === 'n')
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+
+// F302: v2 has no SPA navigation yet (runtime-dom `applyStoreSnapshot` has no callers), so the route swap is the closest
+// real path: another page's server markup inserted after the page booted, mounted by the runtime's observer. Nothing of
+// it is hydrated, so React's flag for it is a client mount's: true from its first render, its effect run once, with true.
+test('F302: a useIsHydrated consumer whose server markup is inserted after boot (a route swap) reads true and runs its effect once with true; the first one ran with false then true', async () => {
+  // the server markup says false for any page, as React renders it
+  const swapped = await (await fetch(`${base}/hydr-swap/late`)).text()
+  expect(swapped).not.toContain('brust-island')
+  expect(plain(swapped)).toBe(plain(renderHydrSwap('late')))
+  expect(swapped).toContain('data-h="n"')
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.text()) })
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/hydr-swap/first`, { waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => document.querySelector('output[data-name="first"]')?.getAttribute('data-log') === '01')
+  await page.evaluate(async (url) => {
+    const doc = new DOMParser().parseFromString(await (await fetch(url)).text(), 'text/html')
+    document.querySelector('main')!.append(...doc.querySelector('main')!.children)
+  }, `${base}/hydr-swap/late`)
+  const late = page.locator('output[data-name="late"]')
+  await late.waitFor()
+  await page.waitForFunction(() => document.querySelector('output[data-name="late"]')?.getAttribute('data-log') === '1')
+  expect(await late.getAttribute('data-h')).toBe('y')
+  // the page that was booted keeps its own order: false, then true
+  expect(await page.locator('output[data-name="first"]').getAttribute('data-log')).toBe('01')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
