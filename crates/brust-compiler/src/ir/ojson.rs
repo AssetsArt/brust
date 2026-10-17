@@ -54,15 +54,11 @@ impl OJson {
 }
 
 /// The canonical array index a property key names (`"0"`, `"7"`, up to `2^32 - 2`), which JS enumerates first, ascending.
+/// The rule itself is `brust_jinja::spread::is_array_index` (F338: one implementation).
 fn array_index(k: &str) -> Option<u64> {
-    if k.is_empty()
-        || k.len() > 10
-        || !k.bytes().all(|b| b.is_ascii_digit())
-        || (k.len() > 1 && k.starts_with('0'))
-    {
-        return None;
-    }
-    k.parse::<u64>().ok().filter(|n| *n < u32::MAX as u64)
+    brust_jinja::spread::is_array_index(k)
+        .then(|| k.parse::<u64>().ok())
+        .flatten()
 }
 
 /// A `serde_json::Value` as an ordered one: its objects keep the order the `Value` iterates (sorted).
@@ -229,26 +225,13 @@ impl<'de> Deserialize<'de> for OJson {
 mod tests {
     use super::*;
 
-    // The JS array-index rule, as one table shared (by value) with `ir/ojson.rs` / `filters/spread.rs` (F321).
-    const INDEX_KEYS: &[(&str, bool)] = &[
-        ("0", true),
-        ("7", true),
-        ("10", true),
-        ("4294967294", true),
-        ("4294967295", false),
-        ("01", false),
-        ("-1", false),
-        ("1.5", false),
-        ("", false),
-        ("a", false),
-        ("12345678901", false),
-    ];
-
     #[test]
-    fn the_array_index_rule_matches_js() {
-        for (k, want) in INDEX_KEYS {
-            assert_eq!(array_index(k).is_some(), *want, "{k:?}");
-        }
+    fn integer_keys_sort_by_value_through_the_shared_rule() {
+        // the rule's own table lives with `is_array_index` (brust-jinja); here only the value it yields
+        assert_eq!(array_index("10"), Some(10));
+        assert_eq!(array_index("4294967294"), Some(4_294_967_294));
+        assert_eq!(array_index("4294967295"), None);
+        assert_eq!(array_index("01"), None);
     }
 
     #[test]

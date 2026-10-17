@@ -93,7 +93,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         spec_salt: (ir.rest_clone_of.is_some() || ir.specialised).then(|| ir.id.clone()),
         mount_once: None,
         frozen: BTreeSet::new(),
-        callable_up: false,
+        callable_up: BTreeSet::new(),
         state_inits: ir
             .state
             .iter()
@@ -313,8 +313,10 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         "every RowOnly link is visited by resolve_row_only"
     );
     ir.template = template;
-    if w.callable_up && !ir.callable_props.iter().any(|p| p == "*") {
-        ir.callable_props.push("*".into());
+    for name in std::mem::take(&mut w.callable_up) {
+        if !ir.callable_props.contains(&name) {
+            ir.callable_props.push(name);
+        }
     }
     w.frozen.extend(ir.callable_props.iter().cloned());
     w.frozen.extend(ir.throw_props.iter().cloned());
@@ -471,8 +473,9 @@ struct Walker<'s, 'c> {
     /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
     frozen: BTreeSet<String>,
     /// W1d (progress): this component spreads its own props/rest onto a child that may call a function prop, so its
-    /// own callers must not pass one (`callable_props` gains `*`).
-    callable_up: bool,
+    /// own callers must not pass one under those names (`callable_props` gains them; F340: only the child's names, not
+    /// every key such as a `className`).
+    callable_up: BTreeSet<String>,
     /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
     state_inits: HashMap<String, Expr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
@@ -5444,7 +5447,7 @@ impl Walker<'_, '_> {
                                 {
                                     refuse = true;
                                 } else {
-                                    self.callable_up = true;
+                                    self.callable_up.insert(root.clone());
                                 }
                             } else if k == root
                                 || (root == "*"
