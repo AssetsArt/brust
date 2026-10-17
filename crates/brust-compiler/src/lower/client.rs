@@ -127,6 +127,21 @@ fn chunk_in(
         imports_in(r, &mut imports);
         module_names_in(r, &f, &mut module_names);
     }
+    // A prop read prints its default inline (`props().x === undefined ? dflt : props().x`): what the default reads is
+    // the chunk's too (F337: Radix's `getValueLabel = defaultGetValueLabel`, a module function).
+    let mut defaulted = BTreeSet::new();
+    for r in roots.iter().chain(&reached_raws) {
+        visit_idents(r, &mut |name, kind| {
+            if *kind == IdentKind::Prop && f.prop_defaults.contains_key(name) {
+                defaulted.insert(name.to_string());
+            }
+        });
+    }
+    for name in &defaulted {
+        let d = &f.prop_defaults[name];
+        imports_in(d, &mut imports);
+        module_names_in(d, &f, &mut module_names);
+    }
     // Store handles (M3-F D7): the chunk imports each one under the user's specifier; the bundler
     // resolves it against the component's source dir (C6). The job never imports a store module.
     let mut store_handles = BTreeSet::new();

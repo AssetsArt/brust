@@ -79,6 +79,9 @@ pub struct Inline {
     pub rename: std::collections::BTreeMap<String, String>,
     /// Props the call site writes with a value only the client has (a function): given, so not absent (F234).
     pub client_only: Vec<String>,
+    /// F329b: the keys whose LAST value in `segs` is a live prop the element it lands on binds itself
+    /// (`x-prop-<attribute>="<key>"`, `ComponentIR::live_props`), here or through a static component that spreads its rest.
+    pub live_keys: Vec<String>,
 }
 
 /// The child element of a Radix-`Slot`-style call (`<Button asChild><a href="/x">Go</a></Button>`),
@@ -603,8 +606,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
             );
         // Only a Server (template-subset) value is client-computable: a
-        // props-only precomputed slot never appears in the chunk (§7.1).
-        let client_ok = matches!(placed, Expr::Server(_)) && !self.reaches_props_only_slot(raw);
+        // props-only precomputed slot never appears in the chunk (§7.1)...
+        // F337: ...unless the chunk can recompute it exactly from its props (plain helpers, no host-dependent call:
+        // `plain_fn::client_value`), in a component whose props are a signal: the job paints first, the chunk follows.
+        let client_ok = (matches!(placed, Expr::Server(_)) && !self.reaches_props_only_slot(raw))
+            || (self.f.ir.props_are_signal() && self.recomputable(raw));
         let loop_read = in_row && !deps.loop_bindings.is_empty() && client_ok;
         // Props are a signal in the chunk (a linked child's change after
         // first paint): in a native component a prop read is reactive too —
@@ -636,6 +642,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
         }
         Some(b)
+    }
+
+    /// F337: `raw` (a value placed as, or reaching, a props-only slot) is one the chunk recomputes exactly.
+    fn recomputable(&self, raw: &RawExpr) -> bool {
+        crate::analyze::plain_fn::client_value(raw, self.f.ir, &|n| self.f.derived_raw(n).cloned())
     }
 
     /// `raw` reads (through derived values) a props-only precomputed slot,
@@ -949,7 +960,17 @@ impl<'a, 'c> Printer<'a, 'c> {
                 "destructure the props",
             ));
         }
-        let dict: Vec<String> = dict.into_iter().chain(ids).collect();
+        // F329b: the live props a descendant element binds (`x-prop-*`) start from the painted value, as every seeded prop does
+        let live: Vec<String> = match &self.inline {
+            Some(i) => i
+                .live_keys
+                .iter()
+                .filter(|k| !seed.contains(k.as_str()))
+                .map(|k| format!("{}: {}", jinja_string(k), value_of(k)))
+                .collect(),
+            None => Vec::new(),
+        };
+        let dict: Vec<String> = dict.into_iter().chain(ids).chain(live).collect();
         if seed.contains("*") {
             let all = match &self.inline {
                 None => "_props".to_string(),
@@ -1262,6 +1283,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         let children_body = {
             let probe = Inline {
+                live_keys: Vec::new(),
                 segs: children,
                 bind: None,
                 slots: String::new(),
@@ -1388,7 +1410,10 @@ impl<'a, 'c> Printer<'a, 'c> {
         for (_, n) in order {
             match &tail[n] {
                 It::Own(i) => self.attr(&attrs[*i], &sattrs[*i], tag, attrs, model, open),
-                It::Bound(k, PropBinding::Expr(e)) => self.bound_attr(k, e, tag, open),
+                It::Bound(k, PropBinding::Expr(e)) => {
+                    self.bound_attr(k, e, tag, open);
+                    self.live_prop_attr(k, open);
+                }
                 It::Handler(k, d) => self.handler_attr(k, d, tag, attrs, open),
                 It::Live(_, text) => open.push_str(text),
                 It::Bound(..) | It::Runtime(_) => {}
@@ -1409,6 +1434,29 @@ impl<'a, 'c> Printer<'a, 'c> {
         };
         let ev = dom_event(&event, tag, attrs);
         open.push_str(&format!(" x-on-{ev}=\"{d}\""));
+    }
+
+    /// F329b: the directive that keeps a live prop of the NATIVE instance this element belongs to in step with it:
+    /// `x-prop-<attribute>="<key>"` (the DOM name from the table the server print uses, the React key as the value). It binds
+    /// in the nearest `x-data`, which is that instance: the key is called with static components in between only
+    /// (the analysis, `native_rest_live_ok`), so the element sits in the instance's own scope.
+    fn live_prop_attr(&mut self, k: &str, open: &mut String) {
+        if !self
+            .inline
+            .as_ref()
+            .is_some_and(|i| i.live_keys.iter().any(|l| l == k))
+        {
+            return;
+        }
+        let html = attr_name(k).to_ascii_lowercase();
+        if !brust_jinja::spread::attr_name_ok(&html)
+            || !crate::analyze::passes::children::live_key_ok(k)
+            || html.contains('"')
+            || k.contains('"')
+        {
+            return;
+        }
+        open.push_str(&format!(" x-prop-{html}=\"{k}\""));
     }
 
     /// One attribute a known-shape spread brings (`k` a React name, `v` a jinja expression of the
@@ -1776,19 +1824,40 @@ impl<'a, 'c> Printer<'a, 'c> {
         name: &str,
         props: &[(String, Expr)],
         sprops: &[(String, Expr)],
-    ) -> (Vec<Seg>, Vec<String>) {
+    ) -> (Vec<Seg>, Vec<String>, Vec<String>) {
         let loc = &loc;
         let ir = self.f.ir;
         let mut segs = Vec::new();
         let mut client_only = Vec::new();
+        // F329b: the keys whose last value is a live prop of a native child (set by the analysis at this call, or handed on
+        // by a spread of this component's own rest that already carries one)
+        let mut live_keys: Vec<String> = Vec::new();
         for (pname, v) in props.iter() {
             if pname == crate::ir::COLLECTION_ITEM_PROP {
                 continue;
             }
             if pname == crate::ir::SPREAD_KEY {
-                segs.extend(self.spread_segs(v));
+                for seg in self.spread_segs(v) {
+                    match &seg {
+                        Seg::Named(k, _)
+                            if self
+                                .inline
+                                .as_ref()
+                                .is_some_and(|i| i.live_keys.contains(k)) =>
+                        {
+                            if !live_keys.contains(k) {
+                                live_keys.push(k.clone());
+                            }
+                        }
+                        Seg::Named(k, _) => live_keys.retain(|o| o != k),
+                        // keys known only at render may replace any of them
+                        Seg::Spread(_) => live_keys.clear(),
+                    }
+                    segs.push(seg);
+                }
                 continue;
             }
+            live_keys.retain(|o| o != pname);
             // F267: the parent's ref cell, bound where the child's own `ref={forwardedRef}` is.
             if pname == "ref"
                 && ir
@@ -1846,8 +1915,15 @@ impl<'a, 'c> Printer<'a, 'c> {
                 self.value(v)
             };
             segs.push(Seg::Named(pname.clone(), PropBinding::Expr(value)));
+            if ir
+                .live_props
+                .iter()
+                .any(|f| f.loc == *loc && &f.key == pname)
+            {
+                live_keys.push(pname.clone());
+            }
         }
-        (segs, client_only)
+        (segs, client_only, live_keys)
     }
 
     /// `extra`: attributes for the child's root element (a list-row directive).
@@ -2023,7 +2099,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
                 open
             });
-        let (mut segs, client_only) = self.call_segs(*loc, name, props, sprops);
+        let (mut segs, client_only, live_keys) = self.call_segs(*loc, name, props, sprops);
         if as_child.is_none() && !children.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
@@ -2101,6 +2177,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     })
                     .collect();
                 Inline {
+                    live_keys: live_keys.clone(),
                     segs,
                     bind: bind.clone(),
                     slots,
@@ -2113,6 +2190,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
             }
             None => Inline {
+                live_keys,
                 segs,
                 bind: bind.clone(),
                 slots: format!("__{id}_{ordinal}{loops}"),
@@ -2274,7 +2352,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             *k += 1;
             *k
         };
-        let (mut segs, client_only) = self.call_segs(*loc, name, props, sprops);
+        let (mut segs, client_only, _live) = self.call_segs(*loc, name, props, sprops);
         if !kids.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
@@ -2365,6 +2443,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             return;
         };
         let inline = Inline {
+            live_keys: Vec::new(),
             segs: mine,
             bind: None,
             slots: format!("__{id}_0"),

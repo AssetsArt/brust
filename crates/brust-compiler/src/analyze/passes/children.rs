@@ -88,6 +88,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         shadowed: BTreeSet::new(),
         shadowed_input: BTreeSet::new(),
         live_forwards: Vec::new(),
+        live_props: Vec::new(),
         own_refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
         sink_refs: ir.sink_refs.iter().cloned().collect(),
         ref_nulled: false,
@@ -110,6 +111,19 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
             .iter()
             .map(|s| (s.name.clone(), s.init.clone()))
             .collect(),
+        written_inits: ir
+            .structural
+            .as_deref()
+            .map(|st| {
+                st.state
+                    .iter()
+                    .filter_map(|s| match &s.init {
+                        Expr::Raw(r) => Some((s.name.clone(), r.clone())),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
         fused: Vec::new(),
         fused_counts: HashMap::new(),
         holds_island: false,
@@ -369,6 +383,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.shadowed_props = w.shadowed.iter().cloned().collect();
     ir.shadowed_input = w.shadowed_input.iter().cloned().collect();
     ir.live_forwards.extend(w.live_forwards);
+    ir.live_props.extend(w.live_props);
     ir.jobs.extend(w.jobs);
     ir.diagnostics.extend(w.diagnostics);
     ir.handlers.extend(w.handlers);
@@ -476,6 +491,8 @@ struct Walker<'s, 'c> {
     shadowed_input: BTreeSet<String>,
     /// Live props hoisted onto a static child's element (`ComponentIR::live_forwards`).
     live_forwards: Vec<crate::ir::Forwarded>,
+    /// Live props of a native child that its element binds itself (`ComponentIR::live_props`, F329b).
+    live_props: Vec<crate::ir::Forwarded>,
     /// The ref cells of this component (F267).
     own_refs: BTreeSet<String>,
     /// F329: `ComponentIR::sink_refs`.
@@ -512,6 +529,9 @@ struct Walker<'s, 'c> {
     callable_up: BTreeSet<String>,
     /// F277: this component's state cells by name: their initial values (a cell is its initial value at mount).
     state_inits: HashMap<String, Expr>,
+    /// F337 (M2, Mellow A5): each state's initializer as written (structural IR), so a lazy one (`useState(() => …)`,
+    /// which placement turns into its value) is never mistaken for a literal seed.
+    written_inits: HashMap<String, RawExpr>,
     /// Children whose jobs run inside this component's job (`ComponentIR::fused`).
     fused: Vec<crate::ir::FusedInstance>,
     fused_counts: HashMap<String, u32>,
@@ -535,6 +555,9 @@ struct Child {
     /// The compiled child has a precompute job (or an island's ssr render, L4) over its props: the
     /// server computes it once, so a link that changes those props later would leave it stale (F96d).
     prop_precompute: bool,
+    /// F337: ... but every value it precomputes over props is one its chunk recomputes when they change (only
+    /// Precompute jobs, `ComponentIR::props_slots_recomputable`, props a signal): a link may change them.
+    recomputes: bool,
     /// Where the child spreads its props (shadcn S1.2): the call-site keys that land in a spread.
     spread: SpreadSink,
     /// The child's polymorphic tag (`asChild`, R34.28): the call site must resolve it.
@@ -808,6 +831,64 @@ fn rest_consumers(n: &Node, flag: &str) -> usize {
 }
 
 /// The call of a carrier's template that hands the whole rest on: `(name, source, imported, member, loc)`.
+/// Where the whole rest / props of `n` are spread (outside lists): `Some(None)` onto an element, `Some(Some(call))` into a
+/// component, `None` when there is none, or it sits in a list.
+fn whole_rest_site(n: &Node) -> Option<Option<CallRef>> {
+    let own = |v: &Expr| {
+        matches!(v, Expr::Raw(RawExpr { kind: RawKind::Ident { name, kind: IdentKind::Prop }, .. })
+            | Expr::Server(ServerExpr(RawExpr { kind: RawKind::Ident { name, kind: IdentKind::Prop }, .. }))
+            if name == "*" || name == crate::ir::REST_PROPS)
+    };
+    match n {
+        Node::Element {
+            attrs, children, ..
+        } => {
+            if attrs.iter().any(|a| matches!(a, Attr::Spread(v) if own(v))) {
+                return Some(None);
+            }
+            children.iter().find_map(whole_rest_site)
+        }
+        Node::Component {
+            name,
+            source,
+            imported,
+            member,
+            props,
+            children,
+            loc,
+            ..
+        } => {
+            if props
+                .iter()
+                .any(|(k, v)| k == crate::ir::SPREAD_KEY && own(v))
+            {
+                return Some(Some((
+                    name.clone(),
+                    source.clone(),
+                    imported.clone(),
+                    member.clone(),
+                    *loc,
+                )));
+            }
+            children.iter().find_map(whole_rest_site)
+        }
+        Node::Fragment(cs) => cs.iter().find_map(whole_rest_site),
+        Node::If { then, else_, .. } => then.iter().chain(else_).find_map(whole_rest_site),
+        Node::For { .. } | Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+    }
+}
+
+/// A value written as a literal (a string, number, boolean, `null` or `undefined`): the same at every render.
+fn is_literal_value(v: &Expr) -> bool {
+    match v {
+        Expr::Raw(r) | Expr::Server(ServerExpr(r)) => {
+            r.json_literal().is_some()
+                || matches!(r.kind, RawKind::Lit(crate::ir::Literal::Undefined))
+        }
+        _ => false,
+    }
+}
+
 /// A component call by the names `resolve_child` takes.
 type CallRef = (String, Option<String>, Option<String>, Vec<String>, u32);
 
@@ -4176,6 +4257,7 @@ impl Walker<'_, '_> {
             fed: false,
             stores: false,
             prop_precompute: false,
+            recomputes: false,
             spread: SpreadSink::None,
             poly: None,
             poly_runtime_spread: false,
@@ -4242,6 +4324,7 @@ impl Walker<'_, '_> {
                     fed: false,
                     stores: false,
                     prop_precompute: false,
+                    recomputes: false,
                     spread: SpreadSink::None,
                     poly: None,
                     poly_runtime_spread: false,
@@ -4427,6 +4510,7 @@ impl Walker<'_, '_> {
                         fed: false,
                         stores: false,
                         prop_precompute: false,
+                        recomputes: false,
                         spread: SpreadSink::None,
                         poly: None,
                         poly_runtime_spread: false,
@@ -4487,6 +4571,7 @@ impl Walker<'_, '_> {
         let mut fed = false;
         let mut stores = false;
         let mut prop_precompute = false;
+        let mut recomputes = false;
         let mut spread = SpreadSink::None;
         let mut poly = None;
         let mut poly_runtime_spread = false;
@@ -4581,6 +4666,14 @@ impl Walker<'_, '_> {
                 prop_precompute = ir.jobs.iter().any(|j| {
                     crate::ir::feeds_instances(j) && j.inputs.iter().any(|i| i != "__store")
                 });
+                recomputes = ir.props_slots_recomputable
+                    && ir.props_are_signal()
+                    && ir.use_id_slots == 0
+                    && ir
+                        .jobs
+                        .iter()
+                        .filter(|j| crate::ir::feeds_instances(j))
+                        .all(|j| matches!(j.kind, crate::ir::JobKind::Precompute));
                 ir.tier.clone()
             }
             Lookup::Cycle => {
@@ -4618,6 +4711,7 @@ impl Walker<'_, '_> {
             fed,
             stores,
             prop_precompute,
+            recomputes,
             spread,
             poly,
             poly_runtime_spread,
@@ -4948,15 +5042,38 @@ impl Walker<'_, '_> {
         } else {
             self.spread_sources(key, props)
         };
-        let ok = (input || !props.iter().any(|(k, _)| k == key))
-            && match carried {
-                Ok((false, false)) => true,
-                Ok(src) if !self.ctx.is_root => {
-                    self.shadow(key, src);
-                    true
-                }
-                _ => false,
-            };
+        // F329b (W3): the call site WRITES the key, once, with a value the child's element can take over per call site: a literal
+        // (`'aria-pressed': undefined`, `role: 'radio'`) or a live prop this call binds itself (`live_props`). The printed item
+        // list is per call site and the child's own binding comes first (A3), so the later key replaces it and the shared
+        // chunk is not involved. After the last spread nothing a spread carries can replace it; before an own-rest spread the
+        // requirement moves up like any other (callers may not write the key); before a spread of unknown keys it is refused.
+        let written_once = !input && props.iter().filter(|(k, _)| k == key).count() == 1;
+        let value_ok = written_once
+            && props.iter().find(|(k, _)| k == key).is_some_and(|(_, v)| {
+                self.live_props.iter().any(|f| f.loc == loc && f.key == key) || is_literal_value(v)
+            });
+        let after_last_spread = {
+            let at = props.iter().position(|(k, _)| k == key);
+            let last = props
+                .iter()
+                .rposition(|(k, _)| k == crate::ir::SPREAD_KEY || k == REST_INPUT);
+            at.zip(last).is_none_or(|(at, sp)| sp < at)
+        };
+        let carry = |this: &mut Self| match carried {
+            Ok((false, false)) => true,
+            Ok(src) if !this.ctx.is_root => {
+                this.shadow(key, src);
+                true
+            }
+            _ => false,
+        };
+        let ok = if value_ok && after_last_spread {
+            true
+        } else if value_ok {
+            carry(self)
+        } else {
+            (input || !props.iter().any(|(k, _)| k == key)) && carry(self)
+        };
         if !ok {
             self.diagnostics.push(Diagnostic::fallback(
                 "spread-props",
@@ -5956,6 +6073,21 @@ impl Walker<'_, '_> {
                             record.literals.insert(name.clone(), j);
                         } else if let Some(e) = self.instance_expr(v) {
                             record.exprs.insert(name.clone(), e);
+                        } else if let Some(seed) = self.state_seed(v).filter(|_| {
+                            // ...only for a child that follows the change itself: its chunk recomputes every value its
+                            // job derives from props (F337 `recomputes`) and the job is its own (A3).
+                            child.recomputes && !fused
+                        }) {
+                            // F337 (M2, Mellow A5): this component's state, read whole: the server paints it at its
+                            // initial value, so the child's job is fed that value (a literal or a props path).
+                            match seed {
+                                Ok(j) => {
+                                    record.literals.insert(name.clone(), j);
+                                }
+                                Err(p) => {
+                                    record.props.insert(name.clone(), Some(p));
+                                }
+                            }
                         } else {
                             // The manifest has no binding for this value (a job's output, a call): its
                             // `instance-prop-path` build error becomes an island here (F164, R34.97).
@@ -6023,6 +6155,10 @@ impl Walker<'_, '_> {
                             // The child reads its rest (or its whole props object) where it would not follow a change:
                             // every key that lands there (a spread passed to it is never a named key).
                             for (k, v) in props.iter() {
+                                // F329b: a live key its element binds itself (`x-prop-*`) follows the change
+                                if self.live_props.iter().any(|f| f.loc == *loc && &f.key == k) {
+                                    continue;
+                                }
                                 if k != "children"
                                     && (c.props_rest.is_none() || !named.contains(k.as_str()))
                                 {
@@ -6178,7 +6314,18 @@ impl Walker<'_, '_> {
                         self.frozen.extend(roots);
                     }
                 }
-                if need == LinkNeed::Always && child.prop_precompute {
+                // F337: unless the child's chunk recomputes every such value from its props (`recomputes`), its job is
+                // its own, not fused into this component's (Mellow A3), and no function this call site passes feeds that
+                // job (the record cannot bind a function: the server would paint without it). A3 is unreachable today
+                // (a fused child is refused upstream in every shape the review probed); kept as the stated guard.
+                let fn_fed = kept.iter().any(|(k, v)| {
+                    matches!(v, Expr::ClientOnly { .. })
+                        && (child.job_all || child.job_roots.contains(k.as_str()))
+                });
+                if need == LinkNeed::Always
+                    && child.prop_precompute
+                    && !(child.recomputes && !fused && !fn_fed)
+                {
                     // Fail closed (F96d): the child computed values from its props once, on the
                     // server; a linked prop that changes would leave them stale with no warning.
                     self.diagnostics.push(linked_prop_precompute(name, *loc));
@@ -7624,6 +7771,75 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// F329b: whether the live prop `k` of a call of a NATIVE child can be bound by the element it lands on
+    /// (`x-prop-<attribute>="<key>"`, printed in the template per call site, never as a chunk member). Everything the
+    /// binding cannot honour fails closed, each on its own: the child is not native or has a job / a rest as data; the key is
+    /// not an attribute the server print and the binder agree on (`live_key_ok`, never `class`/`style`/the URL attributes,
+    /// A5), or the child reads it elsewhere; a spread of unknown keys may follow it; the call sits in a list (A6); the rest does
+    /// not reach exactly ONE element through static components only (a native one between would own the directive).
+    fn native_rest_live_ok(
+        &mut self,
+        k: &str,
+        v: &Expr,
+        props: &[(String, Expr)],
+        child: &Child,
+        after_spreads: bool,
+    ) -> bool {
+        if k == crate::ir::SPREAD_KEY
+            || !matches!(child.tier, Tier::Native)
+            || child.fed
+            || child.prop_precompute
+            || child.rest_as_data
+            || !after_spreads
+            || !self.loop_scope.is_empty()
+            || !child.spread.lands(k)
+            || !live_key_ok(k)
+            // a camelCase DOM name (`viewBox`) cannot be set from a lowercase `x-prop-*` attribute name (HTML lowercases it)
+            || brust_jinja::attr_name(k).chars().any(|c| c.is_ascii_uppercase())
+            || matches!(
+                brust_jinja::spread::attr_key(k).as_str(),
+                "class" | "style" | "children"
+            )
+            || !matches!(v, Expr::Raw(_) | Expr::Server(_))
+            || props.iter().filter(|(o, _)| o == k).count() != 1
+        {
+            return false;
+        }
+        let Some(ir) = child.ir.clone() else {
+            return false;
+        };
+        let sink = HandlerSink::of(&ir);
+        if sink.reads.as_ref().is_none_or(|r| r.contains(k)) {
+            return false;
+        }
+        self.rest_reaches_one_element(&ir, 4)
+    }
+
+    /// F329b: the rest `ir` spreads lands on exactly one element, through STATIC components only.
+    fn rest_reaches_one_element(&mut self, ir: &ComponentIR, depth: u32) -> bool {
+        if depth == 0 || count_prop_spreads(&ir.template) != 1 {
+            return false;
+        }
+        match whole_rest_site(&ir.template) {
+            Some(None) => true,
+            Some(Some((cname, source, imported, member, cloc))) => {
+                let cc = self.resolve_child(
+                    &cname,
+                    source.as_deref(),
+                    imported.as_deref(),
+                    &member,
+                    cloc,
+                );
+                matches!(cc.tier, Tier::Static)
+                    && cc
+                        .ir
+                        .clone()
+                        .is_some_and(|inner| self.rest_reaches_one_element(&inner, depth - 1))
+            }
+            None => false,
+        }
+    }
+
     fn check_spread(
         &mut self,
         name: &str,
@@ -7723,6 +7939,16 @@ impl Walker<'_, '_> {
                     continue;
                 }
                 let function = matches!(v, Expr::ClientOnly { .. });
+                // F329b: a live value that lands on an element through a NATIVE child's rest is bound by that element itself.
+                if !function && self.native_rest_live_ok(k, v, props, child, after_spreads) {
+                    if !self.live_props.iter().any(|f| f.loc == loc && &f.key == k) {
+                        self.live_props.push(crate::ir::Forwarded {
+                            loc,
+                            key: k.clone(),
+                        });
+                    }
+                    continue;
+                }
                 if function && crate::analyze::jsx::event_name(k).is_none() {
                     // R34.19: not an event, so no element binding can stand for it (a render prop).
                     self.diagnostics.push(Diagnostic::fallback(
@@ -7748,6 +7974,36 @@ impl Walker<'_, '_> {
 
     /// A plain props path of `e` (`item.price`), `[idx]` standing for the current row of
     /// the innermost list; `None` for anything else.
+    /// F337 (M2, Mellow A5): `e` reads one of this component's states whole, outside any row, whose initial value is a
+    /// literal (`Ok`, its JSON) or a props path (`Err`, the path): what the server paints for it. A lazy, store, context,
+    /// ref or any other initializer is `None`.
+    fn state_seed(&self, e: &Expr) -> Option<Result<crate::ir::OJson, String>> {
+        let (Expr::Raw(r) | Expr::Server(ServerExpr(r))) = e else {
+            return None;
+        };
+        let RawKind::Ident {
+            name,
+            kind: IdentKind::State,
+        } = &r.kind
+        else {
+            return None;
+        };
+        if !self.items.is_empty() {
+            return None;
+        }
+        let i = self.written_inits.get(name)?;
+        if let Some(j) = i.json_literal_ordered() {
+            return Some(Ok(j));
+        }
+        match plain_path(i, None)? {
+            // A hidden input (a Provider frame's `__ctx_*`, a clone's `__in_*`) is a value the call site or a frame hands
+            // in, not data the page's props carry: a context-initialised state is no seed (Mellow A5, review round 1).
+            PlainPath::Props(p) if p.starts_with("__ctx_") || p.starts_with("__in_") => None,
+            PlainPath::Props(p) => Some(Err(p)),
+            PlainPath::Row(_) => None,
+        }
+    }
+
     fn prop_path(&self, e: &Expr) -> Option<String> {
         let r = match e {
             Expr::Raw(r) | Expr::Server(ServerExpr(r)) => r,
