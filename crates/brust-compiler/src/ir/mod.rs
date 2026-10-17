@@ -57,7 +57,7 @@ impl Diagnostic {
         Self {
             class: DiagClass::Fallback,
             rule: rule.into(),
-            message: message.into(),
+            message: spell_hook_locals(&message.into()),
             loc,
             line: 0,
             col: 0,
@@ -85,6 +85,45 @@ impl Diagnostic {
             ..Self::fallback(rule, message, loc, remediation)
         }
     }
+}
+
+/// F290: an inlined hook's local is generated as `{source name}_{hook}{n}` (`stylesRef_usePresence1`). A diagnostic names what
+/// the author wrote: every backticked generated local reads `stylesRef` (from the hook `usePresence`).
+pub fn spell_hook_locals(message: &str) -> String {
+    fn generated(code: &str) -> Option<(&str, &str)> {
+        let (head, tail) = code.rsplit_once('_')?;
+        let hook = tail.trim_end_matches(|c: char| c.is_ascii_digit());
+        let digits = tail.len() > hook.len();
+        let named = hook.strip_prefix("use").and_then(|r| r.chars().next());
+        (digits
+            && named.is_some_and(|c| c.is_ascii_uppercase())
+            && !head.is_empty()
+            && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        .then_some((head, hook))
+    }
+    let mut out = String::with_capacity(message.len());
+    let parts: Vec<&str> = message.split('`').collect();
+    for (i, part) in parts.iter().enumerate() {
+        // An odd part sits between two backticks, unless the message has an unpaired one (the last part).
+        let code = i % 2 == 1 && i + 1 < parts.len();
+        match (code, generated(part)) {
+            (true, Some((head, hook))) => {
+                out.push_str(&format!("`{head}` (from the hook `{hook}`)"))
+            }
+            (true, None) => {
+                out.push('`');
+                out.push_str(part);
+                out.push('`');
+            }
+            // The part after an unpaired backtick keeps it.
+            (false, _) if i % 2 == 1 => {
+                out.push('`');
+                out.push_str(part);
+            }
+            _ => out.push_str(part),
+        }
+    }
+    out
 }
 
 impl DiagClass {
@@ -333,10 +372,10 @@ pub struct ComponentIR {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hosts_children: bool,
     /// F295: this component prints a value it took once at mount (a snapshot cell) where nothing re-applies it on the
-    /// client (through a spread), so an instance of it must mount with its caller and never again (transitive). The
-    /// text says what, for the call site that cannot promise it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mount_once: Option<String>,
+    /// client (through a spread), so an instance of it must mount with its caller and never again (transitive). Each
+    /// text says what (F316: every reason, in the order found), for the call site that cannot promise it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mount_once: Vec<String>,
     /// F319 (fail closed): props this component reads where a change would not be followed: the rows of a list that is
     /// printed once, a prop of a child it does not link, a key printed once through a spread (transitive through its own
     /// props). A call site that passes a value that changes on the client for one of them falls back (`frozen-prop`).
@@ -512,7 +551,7 @@ impl ComponentIR {
             live_forwards: Vec::new(),
             repeats_children: false,
             hosts_children: false,
-            mount_once: None,
+            mount_once: Vec::new(),
             frozen_props: Vec::new(),
             callable_props: Vec::new(),
             seed_props: Vec::new(),

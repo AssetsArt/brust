@@ -9,11 +9,18 @@ use std::path::PathBuf;
 
 /// `parent` (the entry, `T.tsx`) with `child` as `./C.tsx`.
 fn tree(parent: &str, child: &str) -> ComponentIR {
+    tree_files(parent, &[("C.tsx", child)])
+}
+
+/// `parent` (the entry, `T.tsx`) beside the other `files`.
+fn tree_files(parent: &str, files: &[(&str, &str)]) -> ComponentIR {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!("brust-f277-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("C.tsx"), child).unwrap();
+    for (name, src) in files {
+        std::fs::write(dir.join(name), src).unwrap();
+    }
     let path = dir.join("T.tsx").to_string_lossy().into_owned();
     let src = parent.to_string();
     run_on_compiler_thread(move || {
@@ -195,7 +202,7 @@ fn a_snapshot_through_a_forwarding_spread_is_bound_at_mount_wherever_the_instanc
     );
     assert!(fallbacks(&child).is_empty(), "{:?}", fallbacks(&child));
     assert!(
-        child.mount_once.is_none(),
+        child.mount_once.is_empty(),
         "no promise is asked of the callers"
     );
     assert!(
@@ -220,7 +227,7 @@ fn a_snapshot_through_a_forwarding_spread_is_bound_at_mount_wherever_the_instanc
         let ir = tree(&parent, FWD_BUBBLE);
         assert!(fallbacks(&ir).is_empty(), "{site}: {:?}", fallbacks(&ir));
         assert!(matches!(ir.tier, Tier::Native), "{site}: {:?}", ir.tier);
-        assert!(ir.mount_once.is_none(), "{site}");
+        assert!(ir.mount_once.is_empty(), "{site}");
     }
 }
 
@@ -234,7 +241,7 @@ fn a_seed_a_setter_writes_still_refuses_the_spread() {
         "{:?}",
         fallbacks(&ir)
     );
-    assert!(ir.mount_once.is_none());
+    assert!(ir.mount_once.is_empty());
 }
 
 #[test]
@@ -244,4 +251,39 @@ fn a_snapshot_does_not_link_the_forwarder_so_a_handler_can_be_bound_through_its_
     let ir = tree(&with_state("checked={on}"), child);
     assert!(fallbacks(&ir).is_empty(), "{:?}", fallbacks(&ir));
     assert!(matches!(ir.tier, Tier::Native), "{:?}", ir.tier);
+}
+
+/// F316: a component asks its callers to mount it once for every value it takes once at mount and hands to a child that
+/// reads it only as the seed of a cell nothing sets (no link), not for the first only; the `snapshot-remount` refusal at a
+/// call site that cannot promise it lists them all.
+const SEED_CHILD: &str = "import { useState } from 'react'\nexport default function C({ checked, other }: any) { const [x] = useState(checked); const [y] = useState(other); const [n, setN] = useState(0); return <button onClick={() => setN(n + 1)}>{x ? 'y' : 'n'}{y ? 'y' : 'n'}{n}</button> }";
+const TWO_SNAPSHOTS: &str = "import { useRef, useState } from 'react'\nimport C from './C'\nexport default function M({ x, y }: any) { const sx = useRef(x); const sy = useRef(y); const [n, setN] = useState(0); return <div onClick={() => setN(n + 1)}>{n}<C checked={sx.current} other={sy.current} /></div> }";
+
+#[test]
+fn every_reason_to_mount_once_is_kept_and_listed_in_the_remount_refusal() {
+    let files = [("M.tsx", TWO_SNAPSHOTS), ("C.tsx", SEED_CHILD)];
+    // Mounted with its caller and never again: no refusal, and the caller inherits both reasons.
+    let page = "import { useState } from 'react'\nimport M from './M'\nexport default function T() { const [on, setOn] = useState(true); return <div><button onClick={() => setOn(!on)}>t</button><M x={on} y={on} /></div> }";
+    let ok = tree_files(page, &files);
+    assert!(fallbacks(&ok).is_empty(), "{:?}", fallbacks(&ok));
+    assert_eq!(ok.mount_once.len(), 2, "{:?} {:?}", ok.mount_once, ok.tier);
+    assert!(
+        ok.mount_once.iter().any(|r| r.contains("`checked`"))
+            && ok.mount_once.iter().any(|r| r.contains("`other`")),
+        "{:?}",
+        ok.mount_once
+    );
+    // Guarded in a caller: one refusal that lists both.
+    let guarded = "import { useState } from 'react'\nimport M from './M'\nexport default function T() { const [on, setOn] = useState(true); const [open, setOpen] = useState(false); return <div><button onClick={() => { setOn(!on); setOpen(!open) }}>t</button>{open && <M x={on} y={on} />}</div> }";
+    let ir = tree_files(guarded, &files);
+    let remount: Vec<String> = fallbacks(&ir)
+        .into_iter()
+        .filter(|f| f.starts_with("snapshot-remount"))
+        .collect();
+    assert_eq!(remount.len(), 1, "{:?}", fallbacks(&ir));
+    assert!(
+        remount[0].contains("`checked`") && remount[0].contains("`other`"),
+        "{}",
+        remount[0]
+    );
 }
