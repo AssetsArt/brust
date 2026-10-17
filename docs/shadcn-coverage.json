@@ -40,36 +40,36 @@
       "blocker": "fallback:external-component",
       "kind": "compiler code",
       "classification": "survey truth (today's rule; R34.7 removes it)",
-      "measuredRows": 38,
+      "measuredRows": 37,
       "analysisOnlyRows": 0,
-      "appComponents": 125,
+      "appComponents": 124,
       "libraryComponents": 167
     },
     {
       "blocker": "fallback:spread-props",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 33,
+      "measuredRows": 32,
       "analysisOnlyRows": 0,
-      "appComponents": 115,
+      "appComponents": 114,
       "libraryComponents": 203
     },
     {
       "blocker": "fallback:island-prop",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 31,
+      "measuredRows": 30,
       "analysisOnlyRows": 0,
-      "appComponents": 79,
+      "appComponents": 78,
       "libraryComponents": 199
     },
     {
       "blocker": "fallback:island-children",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 19,
+      "measuredRows": 18,
       "analysisOnlyRows": 0,
-      "appComponents": 20,
+      "appComponents": 19,
       "libraryComponents": 62
     },
     {
@@ -91,6 +91,15 @@
       "libraryComponents": 0
     },
     {
+      "blocker": "fallback:nested-instance",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 5,
+      "analysisOnlyRows": 0,
+      "appComponents": 5,
+      "libraryComponents": 1
+    },
+    {
       "blocker": "fallback:hook-unsupported",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
@@ -107,15 +116,6 @@
       "analysisOnlyRows": 0,
       "appComponents": 4,
       "libraryComponents": 15
-    },
-    {
-      "blocker": "fallback:nested-instance",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 4,
-      "analysisOnlyRows": 0,
-      "appComponents": 4,
-      "libraryComponents": 1
     },
     {
       "blocker": "fallback:control-flow",
@@ -143,6 +143,15 @@
       "analysisOnlyRows": 0,
       "appComponents": 2,
       "libraryComponents": 17
+    },
+    {
+      "blocker": "fallback:instance-prop-path",
+      "kind": "compiler code",
+      "classification": "survey truth (compiler diagnostic)",
+      "measuredRows": 2,
+      "analysisOnlyRows": 0,
+      "appComponents": 2,
+      "libraryComponents": 1
     },
     {
       "blocker": "fallback:slot-dynamic",
@@ -209,15 +218,6 @@
     },
     {
       "blocker": "fallback:context-value",
-      "kind": "compiler code",
-      "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 1,
-      "analysisOnlyRows": 0,
-      "appComponents": 1,
-      "libraryComponents": 1
-    },
-    {
-      "blocker": "fallback:instance-prop-path",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 1,
@@ -1195,14 +1195,12 @@
       "tier": "static",
       "islands": 1,
       "components": 5,
-      "reactComponents": 2,
+      "reactComponents": 1,
       "jsGzipKb": 86,
       "workerCalls": 1,
       "codes": [
-        "external-component",
-        "island-children",
-        "island-prop",
-        "spread-props"
+        "instance-prop-path",
+        "nested-instance"
       ]
     },
     {

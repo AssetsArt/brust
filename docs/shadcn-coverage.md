@@ -36,27 +36,27 @@ One line per thing that keeps a row or a library component off the static/native
 
 | # | Blocker | Kind | Classification | Measured rows | Analysis-only rows | App components | Library components | Why |
 |---|---|---|---|---|---|---|---|---|
-| 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 38 | 0 | 125 | 167 | `external-component` diagnostic (docs/react-coverage.md) |
-| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 33 | 0 | 115 | 203 | `spread-props` diagnostic (docs/react-coverage.md) |
-| 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 31 | 0 | 79 | 199 | `island-prop` diagnostic (docs/react-coverage.md) |
-| 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 19 | 0 | 20 | 62 | `island-children` diagnostic (docs/react-coverage.md) |
+| 1 | fallback:external-component | compiler code | survey truth (today's rule; R34.7 removes it) | 37 | 0 | 124 | 167 | `external-component` diagnostic (docs/react-coverage.md) |
+| 2 | fallback:spread-props | compiler code | survey truth (compiler diagnostic) | 32 | 0 | 114 | 203 | `spread-props` diagnostic (docs/react-coverage.md) |
+| 3 | fallback:island-prop | compiler code | survey truth (compiler diagnostic) | 30 | 0 | 78 | 199 | `island-prop` diagnostic (docs/react-coverage.md) |
+| 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 18 | 0 | 19 | 62 | `island-children` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 7 | 0 | 8 | 39 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:context-island | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 8 | 0 | `context-island` diagnostic (docs/react-coverage.md) |
-| 7 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 172 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
-| 8 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 15 | `jsx-expression` diagnostic (docs/react-coverage.md) |
-| 9 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 1 | `nested-instance` diagnostic (docs/react-coverage.md) |
+| 7 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 5 | 0 | 5 | 1 | `nested-instance` diagnostic (docs/react-coverage.md) |
+| 8 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 172 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
+| 9 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 15 | `jsx-expression` diagnostic (docs/react-coverage.md) |
 | 10 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 27 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 11 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 28 | `prop-pattern` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 17 | `context-state` diagnostic (docs/react-coverage.md) |
-| 13 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
-| 14 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
-| 15 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 37 | `body-shape` diagnostic (docs/react-coverage.md) |
-| 16 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `hook-shape` diagnostic (docs/react-coverage.md) |
-| 17 | fallback:key-outside-list | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `key-outside-list` diagnostic (docs/react-coverage.md) |
-| 18 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 6 | `ref-shape` diagnostic (docs/react-coverage.md) |
-| 19 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `child-component` diagnostic (docs/react-coverage.md) |
-| 20 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
-| 21 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
+| 13 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 1 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
+| 14 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
+| 15 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
+| 16 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 37 | `body-shape` diagnostic (docs/react-coverage.md) |
+| 17 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `hook-shape` diagnostic (docs/react-coverage.md) |
+| 18 | fallback:key-outside-list | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `key-outside-list` diagnostic (docs/react-coverage.md) |
+| 19 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 6 | `ref-shape` diagnostic (docs/react-coverage.md) |
+| 20 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `child-component` diagnostic (docs/react-coverage.md) |
+| 21 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
 | 22 | fallback:list-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `list-shape` diagnostic (docs/react-coverage.md) |
 | 23 | fallback:client-function-in-job | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `client-function-in-job` diagnostic (docs/react-coverage.md) |
 | 24 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
@@ -160,7 +160,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | navigation-menu | measured | static | 1 | 15 (14) | 100 | 1 | external-component, island-prop, spread-props | built |
 | pagination | measured | static | 0 | 8 (0) | 0 | 3 | external-component | built |
 | popover | measured | static | 1 | 9 (7) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
-| progress | measured | static | 1 | 5 (2) | 86 | 1 | external-component, island-children, island-prop, spread-props | built |
+| progress | measured | static | 1 | 5 (1) | 86 | 1 | instance-prop-path, nested-instance | built |
 | radio-group | measured | static | 1 | 9 (5) | 98 | 1 | external-component, island-prop, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
 | scroll-area | measured | static | 1 | 11 (7) | 92 | 1 | external-component, island-prop, spread-props | built |
@@ -288,7 +288,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/popover.tsx#popover | external-component, spread-props | 1 |
 | components/ui/popover.tsx#popoverContent | external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/popover.tsx#popoverTrigger | external-component, spread-props | 1 |
-| components/ui/progress.tsx#progress | external-component, island-children, island-prop, spread-props | 1 |
+| components/ui/progress.tsx#progress | instance-prop-path, nested-instance | 1 |
 | components/ui/radio-group.tsx#radioGroup | external-component, island-prop, spread-props | 1 |
 | components/ui/radio-group.tsx#radioGroupItem | external-component, island-prop, spread-props | 1 |
 | components/ui/resizable.tsx#resizableHandle | external-component, island-prop, spread-props | 1 |
