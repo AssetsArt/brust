@@ -319,6 +319,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/hook-object-bind.chromium.test.ts
       # F388: a falsy number left of `&&` paints as React does (0, NaN), server and client: served == React, flips.
       - run: bun test --timeout 120000 tests/server/falsy-and.chromium.test.ts
+      # F384: `{cond && children}` / `{cond ? children : null}`, plain and in a Provider clone: served == React, toggles.
+      - run: bun test --timeout 120000 tests/server/cond-children.chromium.test.ts
       # F308: a changing key outside a list is a named refusal; the React page resets state on a key change.
       - run: bun test --timeout 120000 tests/server/live-key.chromium.test.ts
       # shadcn S1.3: handlers forwarded through shadcn spreads (fixture tests/fixtures/shadcn/handlers).
