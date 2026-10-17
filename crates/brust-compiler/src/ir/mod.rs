@@ -278,6 +278,10 @@ pub struct ComponentIR {
     /// static or native render drops; a call site that passes `ref` makes the caller React (`forwardref-ref`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forwards_ref: bool,
+    /// A `forwardRef` render reads its forwarded ref as the value `null` (`useComposedRefs(ref, …)`, B3), or hands it to
+    /// a child that does: a caller's ref cannot be dropped at the call site (F364), React gives the child a real one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forwarded_ref_nulled: bool,
     /// An inlined lucide icon of this component carries a runtime spread of its props (shadcn S1, R34.77): a call
     /// site may not pass a key the icon component reads itself (`size`, `color`, `className`, …).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -533,6 +537,7 @@ impl ComponentIR {
             props_whole: None,
             poly: None,
             forwards_ref: false,
+            forwarded_ref_nulled: false,
             icon_spread: false,
             alias_imports: vec![],
             absent_props: Vec::new(),

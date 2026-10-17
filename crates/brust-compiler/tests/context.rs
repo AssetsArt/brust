@@ -1540,3 +1540,30 @@ fn a_local_object_spread_carrying_a_local_function_to_a_callable_prop_is_refused
             .collect::<Vec<_>>()
     );
 }
+
+/// F364 (Afrojack r1): every guard of the sink drop keeps the fallback by name; each fixture is a ref that LOOKS like a sink.
+#[test]
+fn a_ref_that_is_not_a_sink_keeps_the_forwardref_fallback() {
+    for (file, page) in [
+        ("sink-ref-child-reads.tsx", "sinkRefChildReads_"),
+        ("sink-ref-on-element.tsx", "sinkRefOnElement_"),
+        ("sink-ref-assigned.tsx", "sinkRefAssigned_"),
+        ("sink-ref-nested-fn.tsx", "sinkRefNestedFn_"),
+        ("sink-ref-spread-after.tsx", "sinkRefSpreadAfter_"),
+        ("sink-ref-spread-before.tsx", "sinkRefSpreadBefore_"),
+        ("sink-ref-child-string.tsx", "sinkRefChildString_"),
+        ("sink-ref-child-compose.tsx", "sinkRefChildCompose_"),
+    ] {
+        let out = compile_all(file);
+        let p = out
+            .iter()
+            .find(|(i, ..)| i.starts_with(page))
+            .unwrap_or_else(|| panic!("{file}: page"));
+        assert!(is_react(&p.1), "{file}: {:?}", p.1.tier);
+        assert!(
+            rules(&p.1).contains(&"forwardref-ref"),
+            "{file}: {:?}",
+            p.1.diagnostics
+        );
+    }
+}

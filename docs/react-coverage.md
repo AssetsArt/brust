@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 230 | 122 | 18 | 90 | 0 | 0 | 0 | 0 |
+| B Composition | 232 | 122 | 18 | 92 | 0 | 0 | 0 | 0 |
 | C Hooks | 213 | 66 | 68 | 79 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 600 | 264 | 115 | 217 | 3 | 1 | 0 | 0 |
+| **Total** | 602 | 264 | 115 | 219 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -256,6 +256,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-fed-child-in-static-wrapper | a static wrapper (no job of its own) around a child with a job, used twice with a prop and without | static | static | 0 | ok | 0 | — | F164 R34.96 (static-wrapper case): the caller feeds the wrapper's child (records re-based onto it, numbered in template order); the second use passes no tone, which the server feeds as undefined like React |
 | b-fed-child-through-repeater-chain | a useId child passed through a component that hands its children to a repeater | react | react | ssr | ok | 4.0 | fallback:nested-instance, info:build-eval-instance | F169: the repeat check is transitive, so the same id is not printed in every row |
 | b-ref-nothing-reads | a useRef only handed to a component's ref prop (Radix ToggleGroupItem's ref) | native | native | 0 | ok | 4.6 | — | F329: nothing reads the ref, so the call site drops it and the forwardRef child renders (before: forwardref-ref island) |
+| b-ref-sink-child-reads | a sink useRef given to a forwardRef child that prints its own forwarded ref | react | react | ssr | ok | 4.0 | fallback:forwardref-ref, fallback:island-prop | F364 (Afrojack/Mellow r1): the child reads fr (React: an object, brust: null), so the drop is refused and forwardref-ref keeps the page React |
+| b-ref-sink-child-composes | a sink useRef given to a forwardRef child that composes its forwarded ref | react | react | ssr | ok | 5.4 | fallback:forwardref-ref | F364: the child reads fr as null (forwarded_ref_nulled), so the drop is refused |
 | b-ref-read-in-handler | the same ref read in a handler | react | react | ssr | ok | 5.4 | fallback:forwardref-ref | F329 guard: a read of ref.current keeps the forwardref-ref fallback |
 | b-children-called-nodes | a component that calls its children when it is a function, given element children | static | static | 0 | ok | 0 | — | F328b: typeof children === function ? children(..) : children is read as {children} for provable nodes |
 | b-children-called-function | the same component given a function (arrow, identifier, children prop) | react | react | ssr | ok | 4.0 | fallback:children-read, fallback:jsx-const-child | F328b: React calls the function; brust cannot prove a node, so the call site falls back by name (children-read) |

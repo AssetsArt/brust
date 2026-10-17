@@ -201,6 +201,7 @@ impl<'r, 'a> Reader<'r, 'a> {
             && self.names.is_forwarded_ref(id.ref_)
         {
             self.names.note_forwarded_ref_dropped(a.loc.start);
+            self.names.forwarded_ref_nulled.set(true);
             return RawExpr {
                 loc: loc_of(a),
                 kind: RawKind::Lit(Literal::Null),
