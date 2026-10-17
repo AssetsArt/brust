@@ -84,6 +84,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         <li>
           <strong>In a list built from state, a Radix-style root that spreads its rest renders with React when a row gives it a value.</strong> The case is a <code>Switch.Root</code>, or a component shaped like it, in <code>items.map(…)</code> over <code>useState</code> with a per-row <code>id</code>, <code>aria-label</code> or <code>data-*</code>. Compiled to native code, a row added in the browser showed the first row&rsquo;s value for those props. brust now refuses it by name (<code>frozen-prop</code>), so the page renders with React and shows each row&rsquo;s own value. No published version had this wrong output.
         </li>
+        {/* source: PR #333 (F360; on main since PR #321, merged after the v2.0.0-alpha.17 tag, so no published version had it) */}
+        <li>
+          <strong>In a list built from state, a copy of a child made for its host element never keeps one row&rsquo;s value for another row.</strong> A row added in the browser could show the first row&rsquo;s value for a prop that differs per row. It was found and fixed before any release, so no published version printed it.
+        </li>
         {/* source: PR #325 (F290, F316) */}
         <li>
           <strong>Two diagnostics are clearer.</strong> A diagnostic about a local that a custom hook creates names the variable you wrote and the hook it came from (<code>stylesRef</code>, from <code>usePresence</code>), not the generated name. The <code>snapshot-remount</code> hint lists every reason a component must mount once, not only the first.
