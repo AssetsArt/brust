@@ -348,6 +348,10 @@ jobs:
       - run: bun test --timeout 120000 tests/server/host-specialise.chromium.test.ts
       # F305: a value of rest-carried content that calls an import is computed by the page and handed to the clone; served == React.
       - run: bun test --timeout 120000 tests/server/clone-carry.chromium.test.ts
+      # switch-provider-chain PR1: a render prop called with a local object holding a setter is spliced into the clone; served == React.
+      - run: bun test --timeout 120000 tests/server/render-ctx.chromium.test.ts
+      # switch-provider-chain PR1: a context value is never pinned in a clone; the Switch shape toggles as React does.
+      - run: bun test --timeout 120000 tests/server/switch-chain.chromium.test.ts
       # F298: a consumer passed as children through a component's rest sits under that component's Provider; served == React.
       - run: bun test --timeout 120000 tests/server/rest-children.chromium.test.ts
       # F317: a Provider of the same context in the page AND the callee's own inner Provider: served == React.
@@ -373,6 +377,8 @@ jobs:
       - run: bun test --timeout 180000 tests/server/native-provider.chromium.test.ts
       # progress-flip (ruling 2c9522ea, option C): shadcn Progress is a static page, first paint == React, a changing value follows React.
       - run: bun test --timeout 300000 tests/server/shadcn-progress.chromium.test.ts
+      # switch-provider-chain PR2: Radix Switch.Root alone is served without React and toggles equal to React.
+      - run: bun test --timeout 300000 tests/server/shadcn-switch-root.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/absent-prop-seed.chromium.test.ts
       # F232: a handler reading a binding named `a` reads that binding (the handler wrapper's rest parameter is reserved).
       - run: bun test --timeout 120000 tests/server/handler-shadow.chromium.test.ts

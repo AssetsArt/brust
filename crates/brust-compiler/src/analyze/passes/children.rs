@@ -75,10 +75,18 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         },
         handlers: Vec::new(),
         own_named: ir.props.iter().map(|p| p.name.clone()).collect(),
-        absent: BTreeSet::new(),
+        own_scopes: ir
+            .props
+            .iter()
+            .filter(|p| p.name.starts_with("__scope") && p.local == p.name && p.default.is_none())
+            .map(|p| p.name.clone())
+            .collect(),
+        // The contexts pass (a walker of its own, before this one) may add some (a forwarded scope).
+        absent: ir.absent_props.iter().cloned().collect(),
         holes: None,
         unwritten: BTreeSet::new(),
         shadowed: BTreeSet::new(),
+        shadowed_input: BTreeSet::new(),
         live_forwards: Vec::new(),
         own_refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
         passes_to_repeater: false,
@@ -91,7 +99,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         guard_depth: 0,
         slot_depth: 0,
         spec_salt: (ir.rest_clone_of.is_some() || ir.specialised).then(|| ir.id.clone()),
-        mount_once: None,
+        mount_once: Vec::new(),
         frozen: BTreeSet::new(),
         callable_up: BTreeSet::new(),
         state_inits: ir
@@ -220,6 +228,7 @@ pub fn contexts(
         ));
     }
     ir.ctx_pkg |= w.bubbled_pkg;
+    ir.absent_props = w.absent.iter().cloned().collect();
     for c in std::mem::take(&mut w.bubbled_scoped) {
         if !ir.ctx_scoped.contains(&c) {
             ir.ctx_scoped.push(c);
@@ -283,7 +292,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     w.node(&mut template);
     ir.repeats_children = w.passes_to_repeater || template_has_for(&template);
     ir.hosts_children = w.passes_to_host;
-    ir.mount_once = w.mount_once.take();
+    ir.mount_once = std::mem::take(&mut w.mount_once);
     if !w.fused.is_empty() {
         // R34.96: the job of this component also runs its fused children's jobs: their renamed outputs are its
         // outputs, and the props they read are its inputs (the caller's record maps them, A4).
@@ -349,6 +358,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.unwritten_props = w.unwritten.iter().cloned().collect();
     ir.shadowed_props = w.shadowed.iter().cloned().collect();
+    ir.shadowed_input = w.shadowed_input.iter().cloned().collect();
     ir.live_forwards.extend(w.live_forwards);
     ir.jobs.extend(w.jobs);
     ir.diagnostics.extend(w.diagnostics);
@@ -408,6 +418,8 @@ struct Walker<'s, 'c> {
     handlers: Vec<crate::ir::HandlerDecl>,
     /// This component's named props (its `...rest` holds every other key).
     own_named: BTreeSet<String>,
+    /// switch-provider-chain: this component's own `__scope*` props, read under their own name with no default.
+    own_scopes: BTreeSet<String>,
     /// Keys this component's own call sites must not pass (`ComponentIR::absent_props`, F153c).
     absent: BTreeSet<String>,
     /// S2 F3: a child of this template is a React island, or holds one.
@@ -447,6 +459,8 @@ struct Walker<'s, 'c> {
     /// Keys this component's own call sites must not write because it binds them live ahead of a spread of its
     /// own rest (`ComponentIR::shadowed_props`).
     shadowed: BTreeSet<String>,
+    /// Keys the `__in_rest` its call sites pass must not carry (`ComponentIR::shadowed_input`).
+    shadowed_input: BTreeSet<String>,
     /// Live props hoisted onto a static child's element (`ComponentIR::live_forwards`).
     live_forwards: Vec<crate::ir::Forwarded>,
     /// The ref cells of this component (F267).
@@ -469,7 +483,7 @@ struct Walker<'s, 'c> {
     /// the clones made inside it.
     spec_salt: Option<String>,
     /// F295: what makes an instance of this component unable to mount again (`ComponentIR::mount_once`).
-    mount_once: Option<String>,
+    mount_once: Vec<String>,
     /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
     frozen: BTreeSet<String>,
     /// W1d (progress): this component spreads its own props/rest onto a child that may call a function prop, so its
@@ -552,6 +566,8 @@ struct Child {
     unwritten: Vec<String>,
     /// Keys the call site must not write at all (`ComponentIR::shadowed_props`).
     shadowed: Vec<String>,
+    /// Keys the call site's `__in_rest` must not carry (`ComponentIR::shadowed_input`).
+    shadowed_input: Vec<String>,
 }
 
 /// F267: the number of `ref={forwardedRef}` elements of `n` that always render (`always`: not inside a list, a
@@ -2807,9 +2823,20 @@ impl Walker<'_, '_> {
                 // W1d PR 2 (Mellow C4): the scope a call site would hand to a native component is never followed (frames are
                 // resolved by position), so a `__scope*` attribute on one stays an island. An unknown spread is already
                 // refused (`spread-props`); a props or rest spread can only carry what a caller wrote, which this refuses.
+                // switch-provider-chain (ruling 7a25d5e0): this component's own scope prop handed on unchanged under its
+                // own name (Radix's `Switch` to `SwitchTrigger`) names a scope only if a caller passes one: the
+                // requirement "callers do not pass it" moves up (`absent_props`, as `require_absent` does).
+                let forwards_own_scope = |k: &str, v: &Expr| {
+                    !self.ctx.is_root
+                        && self.own_scopes.contains(k)
+                        && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
+                            if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == k))
+                };
                 if !self.ctx.specialised
                     && matches!(cir.tier, Tier::Static | Tier::Native)
-                    && let Some((k, _)) = props.iter().find(|(k, _)| k.starts_with("__scope"))
+                    && let Some((k, _)) = props
+                        .iter()
+                        .find(|(k, v)| k.starts_with("__scope") && !forwards_own_scope(k, v))
                 {
                     diags.push(Diagnostic::fallback(
                         "context-scope",
@@ -2817,6 +2844,13 @@ impl Walker<'_, '_> {
                         *loc,
                         "do not pass a scope to a native component, or keep this component in React",
                     ));
+                }
+                if !self.ctx.specialised && matches!(cir.tier, Tier::Static | Tier::Native) {
+                    for (k, _) in props.iter() {
+                        if k.starts_with("__scope") {
+                            self.absent.insert(k.clone());
+                        }
+                    }
                 }
                 // Consumer: each field it reads comes from the nearest frame of its context, else bubbles up.
                 for u in &cir.ctx_uses {
@@ -3398,6 +3432,12 @@ impl Walker<'_, '_> {
         let mut given: Vec<(&str, &Expr)> = inputs.iter().map(|(h, v)| (h.as_str(), v)).collect();
         let mut fixed = Vec::new();
         for p in &cir.props {
+            // A context value (`__ctx_*`) is a Provider frame's member, filled by the frames pass where its consumer is
+            // written (not always at this call site): its liveness belongs to that frame, so it is never pinned.
+            // Pinned, a trigger's clone printed a state Provider's `checked` once (switch-provider-chain PR1).
+            if p.name.starts_with("__ctx_") {
+                continue;
+            }
             match props.iter().rev().find(|(k, _)| *k == p.name) {
                 Some((_, v)) => given.push((&p.name, v)),
                 None if !spread && p.name != "children" => fixed.push(p.name.clone()),
@@ -3826,6 +3866,7 @@ impl Walker<'_, '_> {
             job_fused: Vec::new(),
             unwritten: Vec::new(),
             shadowed: Vec::new(),
+            shadowed_input: Vec::new(),
         }
     }
 
@@ -3891,6 +3932,7 @@ impl Walker<'_, '_> {
                     job_fused: Vec::new(),
                     unwritten: Vec::new(),
                     shadowed: Vec::new(),
+                    shadowed_input: Vec::new(),
                 };
             }
             // A package export (a member of one included): its source when the build wrote it (F153c), else
@@ -4075,6 +4117,7 @@ impl Walker<'_, '_> {
                         job_fused: Vec::new(),
                         unwritten: Vec::new(),
                         shadowed: Vec::new(),
+                        shadowed_input: Vec::new(),
                     };
                 };
                 ctx.modules
@@ -4134,6 +4177,7 @@ impl Walker<'_, '_> {
         let mut job_fused = Vec::new();
         let mut unwritten = Vec::new();
         let mut shadowed = Vec::new();
+        let mut shadowed_input = Vec::new();
         let tier = match lookup {
             Lookup::Compiled(ir) => {
                 child_ir = Some(ir.clone());
@@ -4150,6 +4194,7 @@ impl Walker<'_, '_> {
                     && template_passes_rest_as_data(&ir.template);
                 unwritten = ir.unwritten_props.clone();
                 shadowed = ir.shadowed_props.clone();
+                shadowed_input = ir.shadowed_input.clone();
                 inner = Inner::of(&ir);
                 job_all = ir.jobs.iter().any(|j| j.inputs.iter().any(|i| i == "*"));
                 job_roots = ir
@@ -4263,6 +4308,7 @@ impl Walker<'_, '_> {
             job_fused,
             unwritten,
             shadowed,
+            shadowed_input,
         }
     }
 
@@ -4550,20 +4596,31 @@ impl Walker<'_, '_> {
 
     /// The call site of a component that binds `key` live ahead of a spread of its own rest (`shadowed_props`): the
     /// call site must not write `key`, or in React its value would replace the live one. A spread of this
-    /// component's own props passes the requirement up; anything else falls back, named.
+    /// component's own props passes the requirement up; anything else falls back, named. `input`: the child binds it
+    /// ahead of a spread of its hidden rest (`shadowed_input`), so only the `__in_rest` this call site passes is checked.
     fn require_shadowed(
         &mut self,
         name: &str,
         key: &str,
         props: &[(String, Expr)],
         loc: u32,
+        input: bool,
     ) -> bool {
-        let carried = self.spread_carries(key, props);
-        let ok = !props.iter().any(|(k, _)| k == key)
+        let carried = if input {
+            let rest: Vec<(String, Expr)> = props
+                .iter()
+                .filter(|(k, _)| k == REST_INPUT)
+                .cloned()
+                .collect();
+            self.spread_sources(key, &rest)
+        } else {
+            self.spread_sources(key, props)
+        };
+        let ok = (input || !props.iter().any(|(k, _)| k == key))
             && match carried {
-                Ok(false) => true,
-                Ok(true) if !self.ctx.is_root => {
-                    self.shadowed.insert(key.to_string());
+                Ok((false, false)) => true,
+                Ok(src) if !self.ctx.is_root => {
+                    self.shadow(key, src);
                     true
                 }
                 _ => false,
@@ -4585,7 +4642,16 @@ impl Walker<'_, '_> {
     /// this component's own props object, or its `...rest` and `key` is not a named prop; `Err` when a spread of
     /// keys known only at render (a props path) is among them.
     fn spread_carries(&self, key: &str, props: &[(String, Expr)]) -> Result<bool, ()> {
-        let mut carries = false;
+        self.spread_sources(key, props)
+            .map(|(own, input)| own || input)
+    }
+
+    /// `spread_carries` by source, `(own, input)`: `own` when this component's own props object or rest may carry `key`,
+    /// `input` when its hidden rest (`__in_rest`, a clone's call site rest) may: the requirement moves up to different
+    /// keys of the call site (`shadow`).
+    fn spread_sources(&self, key: &str, props: &[(String, Expr)]) -> Result<(bool, bool), ()> {
+        let mut own = false;
+        let mut input = false;
         for (k, v) in props {
             // F278: the call site's whole rest handed to a clone as its hidden input behaves as the spread of it.
             let rest_input = k == REST_INPUT;
@@ -4598,21 +4664,32 @@ impl Walker<'_, '_> {
                     RawKind::Ident {
                         name,
                         kind: IdentKind::Prop,
-                    } if name == REST_INPUT && !rest_input => carries = true,
+                    } if name == REST_INPUT && !rest_input => input = true,
                     RawKind::Ident {
                         name,
                         kind: IdentKind::Prop,
-                    } if name == "*" => carries = true,
+                    } if name == "*" => own = true,
                     RawKind::Ident {
                         name,
                         kind: IdentKind::Prop,
-                    } if name == crate::ir::REST_PROPS => carries |= !self.own_named.contains(key),
+                    } if name == crate::ir::REST_PROPS => own |= !self.own_named.contains(key),
                     _ => return Err(()),
                 },
                 _ => return Err(()),
             }
         }
-        Ok(carries)
+        Ok((own, input))
+    }
+
+    /// Moves a `shadowed_props` requirement on `key` up to this component's call sites, by where the spread that may
+    /// carry it comes from (`spread_sources`).
+    fn shadow(&mut self, key: &str, (own, input): (bool, bool)) {
+        if own {
+            self.shadowed.insert(key.to_string());
+        }
+        if input {
+            self.shadowed_input.insert(key.to_string());
+        }
     }
 
     /// The child must not get `key` (its `absent_props`, F153c): a written literal `false` / `undefined` is fine, a
@@ -4648,6 +4725,19 @@ impl Walker<'_, '_> {
             }
             return true;
         }
+        // switch-provider-chain (ruling 7a25d5e0): a scope the child hands on (its own `__scope*` prop) selects a
+        // context instance, which brust resolves by position (W1d PR 2, Mellow C4).
+        if key.starts_with("__scope") {
+            self.diagnostics.push(Diagnostic::fallback(
+                "context-scope",
+                format!(
+                    "<{name}> hands its prop `{key}` to a native component as a Radix scope, and this call site may pass one (or props of unknown keys are spread in); brust resolves scopes by position"
+                ),
+                loc,
+                "do not pass a scope, or keep this component in React",
+            ));
+            return false;
+        }
         self.diagnostics.push(Diagnostic::fallback(
             "slot-dynamic",
             format!(
@@ -4657,6 +4747,13 @@ impl Walker<'_, '_> {
             "leave the prop out, or keep the page on React",
         ));
         false
+    }
+
+    /// F316: records a reason this component's instances must mount once (each distinct reason, in the order found).
+    fn add_mount_once(&mut self, reason: String) {
+        if !self.mount_once.contains(&reason) {
+            self.mount_once.push(reason);
+        }
     }
 
     /// Mirrors `lower::template::expr_reactive`.
@@ -4670,9 +4767,9 @@ impl Walker<'_, '_> {
             return d;
         }
         d.state.clear();
-        self.mount_once.get_or_insert_with(|| {
-            format!("<{name}> gets `{k}`, a value taken once at mount, with no link")
-        });
+        self.add_mount_once(format!(
+            "<{name}> gets `{k}`, a value taken once at mount, with no link"
+        ));
         d
     }
 
@@ -5081,7 +5178,12 @@ impl Walker<'_, '_> {
                 }
             }
             for key in child.shadowed.clone() {
-                if !self.require_shadowed(name, &key, props, *loc) {
+                if !self.require_shadowed(name, &key, props, *loc, false) {
+                    break;
+                }
+            }
+            for key in child.shadowed_input.clone() {
+                if !self.require_shadowed(name, &key, props, *loc, true) {
                     break;
                 }
             }
@@ -5587,9 +5689,15 @@ impl Walker<'_, '_> {
                         let mut refuse = false;
                         for (k, v) in props.iter() {
                             if k == crate::ir::SPREAD_KEY {
+                                // F347: only the rest or the whole props (an exact `*`) deliver a key under the name its
+                                // callers wrote, so the requirement moves up to them. A path (`{...props.cfg}`) delivers
+                                // `cfg`'s members, which no caller key names: refused here.
+                                let whole = matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
+                                    if crate::analyze::passes::deps::prop_path(r).as_deref() == Some("*"));
                                 if matches!(v, Expr::ClientOnly { .. })
                                     || self.reads_state(v)
                                     || self.deps_of(v).props.is_empty()
+                                    || !whole
                                 {
                                     refuse = true;
                                 } else {
@@ -5636,11 +5744,18 @@ impl Walker<'_, '_> {
                 // F295: the child prints a value it took at mount where the client never re-applies it. Here it mounts
                 // with this component and never again, so this component inherits the promise from its own callers;
                 // anywhere else a later mount would print the server's value where React takes the current one.
-                if let Some(what) = child.ir.as_deref().and_then(|c| c.mount_once.as_deref()) {
+                if let Some(whats) = child
+                    .ir
+                    .as_deref()
+                    .map(|c| c.mount_once.as_slice())
+                    .filter(|w| !w.is_empty())
+                {
                     if self.guard_depth == 0 && self.loop_scope.is_empty() && self.slot_depth == 0 {
-                        self.mount_once
-                            .get_or_insert_with(|| format!("<{name}> → {what}"));
+                        for what in whats {
+                            self.add_mount_once(format!("<{name}> → {what}"));
+                        }
                     } else {
+                        let what = whats.join("; and ");
                         self.diagnostics.push(Diagnostic::fallback(
                             "snapshot-remount",
                             format!("<{name}> → {what}; here <{name}> can mount again after the first paint (under a condition, in a row or in slot content), when React would take the value current then"),
@@ -6633,7 +6748,7 @@ impl Walker<'_, '_> {
         ref_fwd: bool,
     ) -> Vec<String> {
         let mut live: Vec<String> = Vec::new();
-        let mut cands: Vec<(String, bool)> = Vec::new();
+        let mut cands: Vec<(String, (bool, bool))> = Vec::new();
         if !matches!(child.tier, Tier::Static) {
             return live;
         }
@@ -6642,8 +6757,9 @@ impl Walker<'_, '_> {
                 || matches!(v, Expr::ClientOnly { .. })
                 || cands.iter().any(|(c, _)| c == k)
                 || !child.spread.lands(k)
-                // F320: a prop that changes is as live as state here (it is forwarded, not printed once).
-                || !self.live(v)
+                // F320: a prop that changes is as live as state here (it is forwarded, not printed once). A context
+                // value (`__ctx_*`) too: the frame resolves it in this component's scope, where the parent binds it.
+                || !(self.live(v) || reads_ctx(&self.deps_of(v)))
                 || !(live_key_ok(k) || self.snapshot_key_ok(k, v))
                 // F296 C1 / F299: a Slot merges the call site's `style` and `className` with its child's.
                 || (matches!(k.as_str(), "style" | "class" | "className")
@@ -6666,11 +6782,11 @@ impl Walker<'_, '_> {
                 .filter(|(o, _)| o == crate::ir::SPREAD_KEY)
                 .cloned()
                 .collect();
-            let mut shadow = false;
+            let mut shadow = (false, false);
             if !later.is_empty() {
-                match self.spread_carries(k, &later) {
-                    Ok(false) => {}
-                    Ok(true) if !self.ctx.is_root => shadow = true,
+                match self.spread_sources(k, &later) {
+                    Ok((false, false)) => {}
+                    Ok(src) if !self.ctx.is_root => shadow = src,
                     _ => continue,
                 }
             }
@@ -6694,9 +6810,7 @@ impl Walker<'_, '_> {
             return live;
         }
         for (k, shadow) in cands {
-            if shadow {
-                self.shadowed.insert(k.clone());
-            }
+            self.shadow(&k, shadow);
             self.live_forwards.push(crate::ir::Forwarded {
                 loc,
                 key: k.clone(),
@@ -7049,11 +7163,9 @@ impl Walker<'_, '_> {
             if k == crate::ir::SPREAD_KEY || (spreads_in && !after_spreads) || child.spread.lands(k)
             {
                 if snapshot_only {
-                    self.mount_once.get_or_insert_with(|| {
-                        format!(
-                            "<{name}> gets `{k}`, a value taken once at mount, through a spread"
-                        )
-                    });
+                    self.add_mount_once(format!(
+                        "<{name}> gets `{k}`, a value taken once at mount, through a spread"
+                    ));
                     continue;
                 }
                 let function = matches!(v, Expr::ClientOnly { .. });
@@ -7170,6 +7282,11 @@ pub(crate) fn handler_key_ok(k: &str) -> bool {
                 && e.chars()
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
         })
+}
+
+/// `d` reads a context value (`__ctx_*`, fed by the Provider's frame).
+fn reads_ctx(d: &Deps) -> bool {
+    d.props.iter().any(|p| p.starts_with("__ctx_"))
 }
 
 /// A live prop the parent binds on a child's element prints as `x-bind-<attr>`: it must pass the gate a hand-written

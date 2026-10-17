@@ -216,6 +216,8 @@ fn a_render_prop_the_provider_only_calls_is_spliced_into_the_clone() {
         "render_noparams.tsx",
         // F266: `render(ctx)` with `const ctx = { on }`
         "render_ctx.tsx",
+        // Radix Switch: `render(ctx)` with `const ctx = { on, setOn }` (a member the body never reads is a setter)
+        "render_ctx_setter.tsx",
         // F269: `!!el.closest('form')` over state is a boolean
         "render_not.tsx",
     ] {
@@ -1213,4 +1215,171 @@ fn a_rest_spread_instance_is_not_a_collection_root() {
         "{:?}",
         all.iter().map(|i| &i.jinja).collect::<Vec<_>>()
     );
+}
+
+// A function prop called in render with a local object (members read as its literal) outside a Provider's render prop
+// is not spliced: the caller that hands the function still falls back.
+#[test]
+fn a_function_prop_called_with_a_local_object_outside_a_provider_still_falls_back() {
+    let all = compile("render_fn_whole.tsx");
+    assert!(is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+}
+
+// switch-provider-chain link 3 (Radix's SwitchTrigger): a context value bound on a forwarding child's element ahead of a
+// spread of the consumer's own rest is bound live by the consumer (F296), and the requirement "the rest does not carry
+// the key" moves to the call sites: through the clone's hidden rest (`shadowed_input`) to the rest its caller hands
+// over (`shadowed_props`), where a written key or an open spread falls back.
+#[test]
+fn a_context_value_ahead_of_the_consumers_own_rest_is_bound_live() {
+    let all = compile("live_rest.tsx");
+    for i in &all {
+        if i.ir.id.starts_with("lProvider_") && !i.ir.id.contains("_s") {
+            continue; // the Provider compiled on its own (state in its value) stays React; its clone is native
+        }
+        assert!(!is_react(&i.ir), "{}: {:?}", i.ir.id, i.ir.diagnostics);
+    }
+    let trigger = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("lTrigger_"))
+        .expect("trigger");
+    let keys: Vec<&str> = trigger
+        .ir
+        .live_forwards
+        .iter()
+        .map(|f| f.key.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        ["aria-checked", "data-state"],
+        "{:?}",
+        trigger.ir.diagnostics
+    );
+    assert_eq!(trigger.ir.shadowed_props, ["aria-checked", "data-state"]);
+    assert!(
+        !trigger
+            .ir
+            .frozen_props
+            .iter()
+            .any(|p| p.starts_with("__ctx_")),
+        "{:?}",
+        trigger.ir.frozen_props
+    );
+    let clone = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("lProvider_") && i.ir.id.contains("_s"))
+        .expect("the Provider's clone");
+    assert_eq!(clone.ir.shadowed_input, ["aria-checked", "data-state"]);
+    // a key the clone's own call site writes reaches the clone's props, not its hidden rest
+    assert!(
+        clone.ir.shadowed_props.is_empty(),
+        "{:?}",
+        clone.ir.shadowed_props
+    );
+    let root = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("lRoot_"))
+        .expect("root");
+    assert_eq!(root.ir.shadowed_props, ["aria-checked", "data-state"]);
+}
+
+#[test]
+fn a_call_site_whose_rest_may_carry_a_live_bound_key_falls_back() {
+    for file in [
+        "live_rest_write.tsx",
+        "live_rest_aria.tsx",
+        "live_rest_open.tsx",
+        "live_rest_fwd_write.tsx",
+    ] {
+        let all = compile(file);
+        assert!(
+            all.iter()
+                .any(|i| is_react(&i.ir) && has(&i.ir, DiagClass::Fallback, "spread-props")),
+            "{file}: {:?}",
+            all.iter()
+                .map(|i| (&i.ir.id, &i.ir.diagnostics))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn a_forwarder_of_its_own_rest_inherits_the_live_bound_keys() {
+    let all = compile("live_rest_fwd.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(
+        all.iter().any(|i| !i.ir.id.starts_with("lRoot_")
+            && !i.ir.id.starts_with("lTrigger_")
+            && i.ir.shadowed_props == ["aria-checked", "data-state"]),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.shadowed_props))
+            .collect::<Vec<_>>()
+    );
+}
+
+// switch-provider-chain (ruling 7a25d5e0): a component handing its own `__scopeX` prop, unchanged, to a native consumer
+// stays native while no caller passes a scope (`absent_props`, inherited through a props spread); a caller that passes
+// one, or a renamed or defaulted scope, falls back (`context-scope`, W1d PR 2 Mellow C4).
+#[test]
+fn a_components_own_scope_handed_on_unchanged_is_native_until_a_caller_passes_one() {
+    for file in ["scope_fwd.tsx", "scope_fwd_two.tsx"] {
+        let all = compile(file);
+        assert!(!is_react(&all[0].ir), "{file}: {:?}", all[0].ir.diagnostics);
+        assert!(
+            all.iter()
+                .all(|i| !has(&i.ir, DiagClass::Fallback, "context-scope")),
+            "{file}: {:?}",
+            all.iter()
+                .map(|i| (&i.ir.id, &i.ir.diagnostics))
+                .collect::<Vec<_>>()
+        );
+        let root = all
+            .iter()
+            .find(|i| i.ir.id.starts_with("qRoot_"))
+            .expect("QRoot");
+        assert!(!is_react(&root.ir), "{file}: {:?}", root.ir.diagnostics);
+        assert_eq!(root.ir.absent_props, ["__scopeQ"], "{file}");
+    }
+    let two = compile("scope_fwd_two.tsx");
+    assert!(
+        two.iter()
+            .any(|i| i.ir.id.starts_with("w_") && i.ir.absent_props == ["__scopeQ"]),
+        "{:?}",
+        two.iter()
+            .map(|i| (&i.ir.id, &i.ir.absent_props))
+            .collect::<Vec<_>>()
+    );
+    for file in [
+        "scope_fwd_pass.tsx",
+        "scope_fwd_two_pass.tsx",
+        "scope_fwd_renamed.tsx",
+        "scope_fwd_defaulted.tsx",
+    ] {
+        let all = compile(file);
+        assert!(
+            all.iter()
+                .any(|i| is_react(&i.ir) && has(&i.ir, DiagClass::Fallback, "context-scope")),
+            "{file}: {:?}",
+            all.iter()
+                .map(|i| (&i.ir.id, &i.ir.diagnostics))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+// switch-provider-chain PR2: a field destructured from a context and read in code printed as written prints as its hidden
+// prop, the name the chunk binds around that code (it printed as `flip` / `on`: unbound, a ReferenceError at the click
+// and in the effect).
+#[test]
+fn a_destructured_context_field_in_code_printed_as_written_reads_its_hidden_prop() {
+    let all = compile("ctx_field_verbatim.tsx");
+    let c = all
+        .iter()
+        .find(|i| i.ir.id.starts_with("vTrigger_"))
+        .expect("the consumer");
+    assert!(!is_react(&c.ir), "{:?}", c.ir.diagnostics);
+    let js = c.client.as_deref().unwrap_or_default();
+    assert!(js.contains("_flip())"), "{js}");
+    assert!(!js.contains("=> flip()"), "{js}");
+    assert!(!js.contains("title = on"), "{js}");
 }

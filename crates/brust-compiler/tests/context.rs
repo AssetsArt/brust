@@ -321,6 +321,30 @@ fn a_wrapper_only_moves_the_callable_names_up_not_every_key() {
     );
 }
 
+/// F347: only the rest or the whole props (an exact `*`) deliver a key under the name its callers wrote, so only they move
+/// the callable requirement up. `{...props.cfg}` delivers `cfg`'s members, which no caller key names, so the wrapper itself
+/// refuses the Root call site by the callable name (F335 closes the component-tag path spread under another rule).
+#[test]
+fn a_member_spread_does_not_move_the_callable_requirement_up() {
+    let all = compile("fn-wrap-cfg.tsx");
+    let wrap = all
+        .iter()
+        .find(|(id, ..)| id.starts_with("wrap_"))
+        .expect("Wrap");
+    assert!(
+        wrap.1.diagnostics.iter().any(|d| d.rule == "frozen-prop"
+            && d.message.contains("`getValueLabel`")
+            && d.message.contains("may call a function prop")),
+        "{:?}",
+        wrap.1.diagnostics
+    );
+    assert!(
+        !wrap.1.callable_props.iter().any(|p| p == "getValueLabel"),
+        "the requirement was lifted to callers that cannot name it: {:?}",
+        wrap.1.callable_props
+    );
+}
+
 /// A Provider field that IS a call of a proven-plain module function (`pct: clamp(value)`) is evaluated by the Provider's own
 /// instance (a native clone per call site): the call is never substituted into a lowered frame at the call site.
 #[test]
