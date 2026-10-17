@@ -278,6 +278,10 @@ pub struct ComponentIR {
     /// static or native render drops; a call site that passes `ref` makes the caller React (`forwardref-ref`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forwards_ref: bool,
+    /// A `forwardRef` render reads its forwarded ref as the value `null` (`useComposedRefs(ref, …)`, B3), or hands it to
+    /// a child that does: a caller's ref cannot be dropped at the call site (F364), React gives the child a real one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forwarded_ref_nulled: bool,
     /// An inlined lucide icon of this component carries a runtime spread of its props (shadcn S1, R34.77): a call
     /// site may not pass a key the icon component reads itself (`size`, `color`, `className`, …).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -325,6 +329,9 @@ pub struct ComponentIR {
     /// F328b: the component writes `typeof children === 'function' ? children(…) : children` and is read as `{children}`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub children_called: bool,
+    /// F329: refs (`useRef`) nothing reads: every use is the `ref` prop of a component element, so a call site may drop it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sink_refs: Vec<String>,
     /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -530,6 +537,7 @@ impl ComponentIR {
             props_whole: None,
             poly: None,
             forwards_ref: false,
+            forwarded_ref_nulled: false,
             icon_spread: false,
             alias_imports: vec![],
             absent_props: Vec::new(),
@@ -543,6 +551,7 @@ impl ComponentIR {
             ctx_pkg: false,
             uses_collection: false,
             children_called: false,
+            sink_refs: Vec::new(),
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             element_free_fns: Vec::new(),

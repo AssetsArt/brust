@@ -668,9 +668,11 @@ fn read_function_as(
     ir.handlers = body.handlers;
     ir.throw_props = body.throw_props;
     ir.refs = body.refs;
+    ir.sink_refs = body.sink_refs;
     ir.use_id_slots = body.id_bindings.len();
     ir.uses_collection = body.uses_collection;
     ir.children_called = reader.names.children_called.get();
+    ir.forwarded_ref_nulled = reader.names.forwarded_ref_nulled.get();
     ir.id_bindings = body.id_bindings;
     ir.stores = body.stores;
     ir.diagnostics.extend(body.diagnostics);

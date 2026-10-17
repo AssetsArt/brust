@@ -8,6 +8,7 @@ export default function P() {
     <main>
       <Fc ref={r} show={n > 0} />
       <button onClick={() => setN(n + 1)}>{n}</button>
+      <button onClick={() => r.current?.focus()}>focus</button>
     </main>
   )
 }
