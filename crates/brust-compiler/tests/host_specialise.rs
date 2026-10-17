@@ -300,3 +300,36 @@ fn a_context_value_is_never_pinned_in_a_clone() {
         );
     }
 }
+
+// F344 (1): a host in list rows whose items come from state. Content reading the row value is refused by name (Carry: a
+// binding of an enclosing list), and the call site keeps slot-owner (the page renders with React).
+#[test]
+fn a_host_whose_row_content_reads_the_row_value_is_refused_by_name() {
+    let all = compile("state_rows.tsx");
+    assert!(is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(rules(&all[0].ir, DiagClass::Fallback).contains(&"slot-owner".to_string()));
+    assert!(
+        all[0].ir.diagnostics.iter().any(
+            |d| d.rule == "host-specialise-unsupported" && d.message.contains("enclosing list")
+        ),
+        "{:?}",
+        all[0].ir.diagnostics
+    );
+}
+
+// F344 (1): content reading page state only is cloned in the rows; the host's own row-valued prop (`id`) is not pinned
+// in the clone (pinned, a row the client adds printed the first row's id).
+#[test]
+fn a_row_value_given_to_a_host_clone_is_never_pinned() {
+    let all = compile("state_rows_free.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    let clone = all
+        .iter()
+        .find(|i| i.ir.specialised && i.ir.id.starts_with("rBox_"))
+        .expect("the host's clone");
+    assert!(
+        !clone.ir.fixed_props.iter().any(|p| p == "id"),
+        "{:?}",
+        clone.ir.fixed_props
+    );
+}
