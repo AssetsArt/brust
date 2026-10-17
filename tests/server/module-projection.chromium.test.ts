@@ -104,8 +104,9 @@ const tierOf = (prefix: string) => {
   return Object.entries(m.components).find(([k]) => k.startsWith(prefix))![1].tier
 }
 
-test('every page is native', () => {
-  expect({ rows: tierOf('pRows_'), clone: tierOf('pClone_'), child: tierOf('pChild_'), whole: tierOf('pWhole_'), ref: tierOf('pRef_'), refd: tierOf('pRefd_'), import: tierOf('pImport_') }).toEqual({ rows: 'native', clone: 'native', child: 'native', whole: 'native', ref: 'native', refd: 'native', import: 'native' })
+// store: another module writes the list, refused by name (F230 module-written) before any projection.
+test('every page is native but store', () => {
+  expect({ rows: tierOf('pRows_'), clone: tierOf('pClone_'), child: tierOf('pChild_'), whole: tierOf('pWhole_'), ref: tierOf('pRef_'), refd: tierOf('pRefd_'), import: tierOf('pImport_'), store: tierOf('pStore_'), mixed: tierOf('pMixed_'), shared: tierOf('pShared_') }).toEqual({ rows: 'native', clone: 'native', child: 'native', whole: 'native', ref: 'native', refd: 'native', import: 'native', store: 'react', mixed: 'native', shared: 'native' })
 })
 
 for (const page of ['rows', 'clone', 'child', 'import']) {
@@ -118,8 +119,8 @@ for (const page of ['rows', 'clone', 'child', 'import']) {
   })
 }
 
-test('whole, ref, refd: the row value handed on whole, or a ref initialised from the list (directly or through a derived value), ships the list as written', async () => {
-  for (const page of ['whole', 'ref', 'refd']) {
+test('whole, ref, refd, store, mixed, shared: the row value handed on whole, a ref initialised from the list (directly or through a derived value), or a data module still in the client graph (written by another module; imported for another export; read by another module) ships the list as written', async () => {
+  for (const page of ['whole', 'ref', 'refd', 'store', 'mixed', 'shared']) {
     const all = await scripts(page)
     expect([...all.values()].some((s) => s.includes('SECRET_B'))).toBe(true)
   }
@@ -134,6 +135,10 @@ const CLICKS: Record<string, string[]> = {
   ref: ['r2', 'show', 'r3'],
   refd: ['r2', 'show', 'r3'],
   import: ['r2', 'open', 'open', 'r3', 'r1', 'open', 'open'],
+  // the push is seen when the rows are re-created (React: on its next render)
+  store: ['add', 'open', 'open', 'add', 'add', 'open', 'open'],
+  mixed: ['r2', 'r1'],
+  shared: ['r2', 'count', 'r1'],
 }
 
 for (const page of Object.keys(CLICKS)) {

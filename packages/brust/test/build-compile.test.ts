@@ -184,7 +184,7 @@ test('F75: replaces() keeps a child over a root and a chunk over none; disagreei
   const seen = (role: Role, tree: string, o: Partial<CompiledComponent> = {}): Seen => ({
     role,
     tree,
-    c: { id: 'x_1', source: 'X.tsx', ir: '{"tier":"Static"}', jinja: '<p></p>', diagnostics: [], clientModules: [], ...o },
+    c: { id: 'x_1', source: 'X.tsx', ir: '{"tier":"Static"}', jinja: '<p></p>', diagnostics: [], clientModules: [], projectedModules: [], ...o },
   })
   const linked = { jinja: '<p x-data="x_1"></p>', clientJs: 'js' }
   const native = { ir: '{"tier":"Native"}', jinja: '<p x-data="x_1"></p>', clientJs: 'js' }

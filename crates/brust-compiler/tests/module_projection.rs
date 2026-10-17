@@ -148,7 +148,8 @@ fn an_imported_list_is_declared_projected_instead_of_imported() {
     }
 }
 
-/// PR2, C1: the import stays (the data module is bundled whole, as before) when its module writes the list, when the
+/// PR2, C1: the import stays (the data module is bundled whole, as before) when its module writes the list (at load or in
+/// a function), runs anything at load or imports another module (Afrojack), when the
 /// value has a name in it, or when the chunk's own use is not recognised (a row bare; another printed declaration reads it, F1).
 #[test]
 fn an_imported_list_its_module_writes_or_the_chunk_uses_whole_stays_imported() {
@@ -157,6 +158,10 @@ fn an_imported_list_its_module_writes_or_the_chunk_uses_whole_stays_imported() {
         "imported_env.tsx",
         "imported_whole.tsx",
         "imported_helper.tsx",
+        // the module runs something at load the chunk would no longer run, or writes the list in a function body
+        "imported_effect.tsx",
+        "imported_import.tsx",
+        "imported_fnwrite.tsx",
     ] {
         let c = native(f);
         assert!(c.contains("import { ITEMS } from"), "{f}: {c}");

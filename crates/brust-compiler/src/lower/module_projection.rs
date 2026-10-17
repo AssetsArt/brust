@@ -31,7 +31,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Default)]
 pub struct Projected {
     pub module: BTreeMap<String, String>,
-    pub imports: BTreeMap<ImportUse, String>,
+    /// The statement and the data module's path from the root (the build checks the module left the client graph).
+    pub imports: BTreeMap<ImportUse, (String, String)>,
 }
 
 pub fn projections(
@@ -56,13 +57,13 @@ pub fn projections(
         if need.contains(local) {
             continue;
         }
-        if let Some(value) = ir
+        if let Some((path, value)) = ir
             .client_import_lists
             .get(&(source.clone(), imported.clone()))
             && let Some(rows) = rows_of(value)
             && let Some(stmt) = project(ir, local, &rows, template, need, code, lists)
         {
-            out.imports.insert(u.clone(), stmt);
+            out.imports.insert(u.clone(), (stmt, path.clone()));
         }
     }
     out
