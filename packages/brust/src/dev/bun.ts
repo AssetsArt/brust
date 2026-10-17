@@ -11,7 +11,7 @@ import { tierCounts } from './devtools-data'
 import { type DevProxy, startProxy } from './proxy'
 import { HOTKEYS, Tui, type TuiOut, tuiMode } from './tui'
 import { loadBuildConfig } from '../build/config'
-import { broadRootWarnings, defaultIgnored, watchLoop } from './watch'
+import { broadRootWarnings, changeLine, defaultIgnored, watchLoop } from './watch'
 
 export interface BunDevOptions {
   appRoot: string
@@ -310,7 +310,8 @@ export async function runBunDev(o: BunDevOptions): Promise<number> {
         tui.log(`[brust] css ${[...changed].join(', ')} (no reload)`)
         return
       }
-      tui.log(`[brust] change detected: ${[...changed].slice(0, 3).join(', ')}${changed.size > 3 ? ` +${changed.size - 3}` : ''}`)
+      const line = changeLine(changed)
+      if (line) tui.log(line)
       // Only built stylesheets changed (L19/L21): rebuild, boot, then swap the links instead of reloading.
       await cycle(active !== null && state === 'ready' && [...changed].every((r) => r.endsWith('.css') && !isCss(r)))
     },
