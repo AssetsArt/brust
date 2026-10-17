@@ -91,6 +91,17 @@ pub struct AsChild {
     pub attrs: Vec<(String, String)>,
     /// The child's children, printed in the call site's scope.
     pub body: String,
+    /// F363a: the child is a static component, not an element: the polymorphic element's attributes become its props.
+    pub component: Option<ChildCall>,
+}
+
+/// A static component given as the child of an `asChild` call (F363a): its props as the call site binds them.
+#[derive(Clone, Debug)]
+pub struct ChildCall {
+    pub id: String,
+    pub k: u32,
+    pub segs: Vec<Seg>,
+    pub client_only: Vec<String>,
 }
 
 impl Inline {
@@ -768,6 +779,10 @@ impl<'a, 'c> Printer<'a, 'c> {
         } else {
             None
         };
+        if let Some(call) = as_child.as_ref().and_then(|a| a.component.clone()) {
+            self.as_child_component_print(attrs, sattrs, call);
+            return;
+        }
         let tag: &String = as_child.as_ref().map_or(tag, |a| &a.tag);
         if *synthetic && *host && root && !self.native && extra.is_none() {
             // A static root that was not one element: no wrapper, so child combinators and content
@@ -1741,6 +1756,87 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
     }
 
+    /// The props a component call passes, as the segments its inlined template reads (printed in this scope).
+    fn call_segs(
+        &mut self,
+        loc: u32,
+        name: &str,
+        props: &[(String, Expr)],
+        sprops: &[(String, Expr)],
+    ) -> (Vec<Seg>, Vec<String>) {
+        let loc = &loc;
+        let ir = self.f.ir;
+        let mut segs = Vec::new();
+        let mut client_only = Vec::new();
+        for (pname, v) in props.iter() {
+            if pname == crate::ir::COLLECTION_ITEM_PROP {
+                continue;
+            }
+            if pname == crate::ir::SPREAD_KEY {
+                segs.extend(self.spread_segs(v));
+                continue;
+            }
+            // F267: the parent's ref cell, bound where the child's own `ref={forwardedRef}` is.
+            if pname == "ref"
+                && ir
+                    .live_forwards
+                    .iter()
+                    .any(|f| f.loc == *loc && f.key == "ref")
+                && let Expr::Raw(RawExpr {
+                    kind: RawKind::Ident { name: cell, .. },
+                    ..
+                }) = v
+            {
+                segs.push(Seg::Named(pname.clone(), PropBinding::Ref(cell.clone())));
+                continue;
+            }
+            let forwarded = ir.handlers.iter().find(|h| {
+                h.forwarded
+                    .as_ref()
+                    .is_some_and(|f| f.loc == *loc && &f.key == pname)
+            });
+            if let Some(h) = forwarded {
+                let d = directive(&h.name, &h.item_scoped);
+                segs.push(Seg::Named(pname.clone(), PropBinding::Handler(d)));
+                continue;
+            }
+            // A live value the parent binds on the child's element (2b-handlers): printed here, in this
+            // component's scope, like an attribute written on that element.
+            if ir
+                .live_forwards
+                .iter()
+                .any(|f| f.loc == *loc && &f.key == pname)
+            {
+                let sv = sprops
+                    .iter()
+                    .find(|(k, _)| k == pname)
+                    .map(|(_, e)| e.clone());
+                if let Some(sv) = sv {
+                    let mut text = String::new();
+                    let sa = Attr::Dynamic {
+                        name: pname.clone(),
+                        value: sv,
+                    };
+                    self.dynamic_attr_into(pname, v, &sa, name, None, &mut text);
+                    segs.push(Seg::Named(pname.clone(), PropBinding::Live(text)));
+                    continue;
+                }
+            }
+            if matches!(v, Expr::ClientOnly { .. }) {
+                client_only.push(pname.clone());
+                continue;
+            }
+            // a `style` object keeps its source order (F296 C3), like a style written on the element
+            let value = if pname == "style" {
+                crate::lower::server_expr::with_ordered_objects(|| self.value(v))
+            } else {
+                self.value(v)
+            };
+            segs.push(Seg::Named(pname.clone(), PropBinding::Expr(value)));
+        }
+        (segs, client_only)
+    }
+
     /// `extra`: attributes for the child's root element (a list-row directive).
     fn component(&mut self, n: &Node, s: &Node, extra: Option<&str>) {
         let (
@@ -1906,74 +2002,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
                 open
             });
-        let mut segs = Vec::new();
-        let mut client_only = Vec::new();
-        for (pname, v) in props.iter() {
-            if pname == crate::ir::COLLECTION_ITEM_PROP {
-                continue;
-            }
-            if pname == crate::ir::SPREAD_KEY {
-                segs.extend(self.spread_segs(v));
-                continue;
-            }
-            // F267: the parent's ref cell, bound where the child's own `ref={forwardedRef}` is.
-            if pname == "ref"
-                && ir
-                    .live_forwards
-                    .iter()
-                    .any(|f| f.loc == *loc && f.key == "ref")
-                && let Expr::Raw(RawExpr {
-                    kind: RawKind::Ident { name: cell, .. },
-                    ..
-                }) = v
-            {
-                segs.push(Seg::Named(pname.clone(), PropBinding::Ref(cell.clone())));
-                continue;
-            }
-            let forwarded = ir.handlers.iter().find(|h| {
-                h.forwarded
-                    .as_ref()
-                    .is_some_and(|f| f.loc == *loc && &f.key == pname)
-            });
-            if let Some(h) = forwarded {
-                let d = directive(&h.name, &h.item_scoped);
-                segs.push(Seg::Named(pname.clone(), PropBinding::Handler(d)));
-                continue;
-            }
-            // A live value the parent binds on the child's element (2b-handlers): printed here, in this
-            // component's scope, like an attribute written on that element.
-            if ir
-                .live_forwards
-                .iter()
-                .any(|f| f.loc == *loc && &f.key == pname)
-            {
-                let sv = sprops
-                    .iter()
-                    .find(|(k, _)| k == pname)
-                    .map(|(_, e)| e.clone());
-                if let Some(sv) = sv {
-                    let mut text = String::new();
-                    let sa = Attr::Dynamic {
-                        name: pname.clone(),
-                        value: sv,
-                    };
-                    self.dynamic_attr_into(pname, v, &sa, name, None, &mut text);
-                    segs.push(Seg::Named(pname.clone(), PropBinding::Live(text)));
-                    continue;
-                }
-            }
-            if matches!(v, Expr::ClientOnly { .. }) {
-                client_only.push(pname.clone());
-                continue;
-            }
-            // a `style` object keeps its source order (F296 C3), like a style written on the element
-            let value = if pname == "style" {
-                crate::lower::server_expr::with_ordered_objects(|| self.value(v))
-            } else {
-                self.value(v)
-            };
-            segs.push(Seg::Named(pname.clone(), PropBinding::Expr(value)));
-        }
+        let (mut segs, client_only) = self.call_segs(*loc, name, props, sprops);
         if as_child.is_none() && !children.is_empty() {
             let mut saved = String::new();
             std::mem::swap(&mut saved, &mut self.out);
@@ -2119,6 +2148,9 @@ impl<'a, 'c> Printer<'a, 'c> {
         children: &[Node],
         schildren: &[Node],
     ) -> Option<AsChild> {
+        if matches!(children, [Node::Component { .. }]) {
+            return self.as_child_component(children, schildren);
+        }
         let (
             [
                 Node::Element {
@@ -2166,7 +2198,181 @@ impl<'a, 'c> Printer<'a, 'c> {
             tag: tag.clone(),
             attrs,
             body,
+            component: None,
         })
+    }
+
+    /// F363a: the static component child of a call with a literal `asChild`, its props bound in THIS scope. The analysis
+    /// (`check_poly_component`) keeps every other shape on React, so a mismatch here is a compiler bug.
+    fn as_child_component(&mut self, children: &[Node], schildren: &[Node]) -> Option<AsChild> {
+        let (
+            [
+                Node::Component {
+                    loc,
+                    name,
+                    props,
+                    children: kids,
+                    ..
+                },
+            ],
+            [
+                Node::Component {
+                    props: sprops,
+                    children: skids,
+                    ..
+                },
+            ],
+        ) = (children, schildren)
+        else {
+            return None;
+        };
+        let shape = |this: &mut Self, why: String| {
+            this.diagnostics.push(Diagnostic::error(
+                "lower-shape",
+                why,
+                0,
+                "report this compiler bug",
+            ));
+            None
+        };
+        let Some(c) = self.f.ir.children.iter().find(|c| &c.name == name) else {
+            return shape(self, format!("<{name}> under `asChild` is not a child"));
+        };
+        let id = c.id.clone().unwrap_or_else(|| name.clone());
+        let Some(child_ir) = (self.ctx.resolve)(&id) else {
+            return shape(self, format!("child <{name}> ({id}) was not compiled"));
+        };
+        if !matches!(child_ir.tier, Tier::Static) || is_fed(child_ir) {
+            return shape(
+                self,
+                format!("<{name}> under `asChild` is not a plain static component"),
+            );
+        }
+        let k = {
+            let k = self.instances.entry(id.clone()).or_insert(0);
+            *k += 1;
+            *k
+        };
+        let (mut segs, client_only) = self.call_segs(*loc, name, props, sprops);
+        if !kids.is_empty() {
+            let mut saved = String::new();
+            std::mem::swap(&mut saved, &mut self.out);
+            self.nodes(kids, skids);
+            std::mem::swap(&mut saved, &mut self.out);
+            segs.push(Seg::Named("children".into(), PropBinding::Markup(saved)));
+        }
+        Some(AsChild {
+            tag: String::new(),
+            attrs: Vec::new(),
+            body: String::new(),
+            component: Some(ChildCall {
+                id,
+                k,
+                segs,
+                client_only,
+            }),
+        })
+    }
+
+    /// F363a: the polymorphic element replaced by the child component, which is given the element's attributes as props
+    /// (React's Slot: `cloneElement(child, mergeProps(slotProps, child.props))`): the child's own props come last and win,
+    /// except `className`, which joins (the element's first).
+    fn as_child_component_print(&mut self, attrs: &[Attr], sattrs: &[Attr], call: ChildCall) {
+        let mut mine: Vec<Seg> = Vec::new();
+        let push = |mine: &mut Vec<Seg>, seg: Seg| {
+            // a later key replaces an earlier one (a JS object literal), on the attribute they print as
+            if let Seg::Named(k, _) = &seg {
+                let key = brust_jinja::spread::attr_key(k);
+                mine.retain(
+                    |s| !matches!(s, Seg::Named(o, _) if brust_jinja::spread::attr_key(o) == key),
+                );
+            }
+            mine.push(seg);
+        };
+        for (a, sa) in attrs.iter().zip(sattrs) {
+            match a {
+                Attr::Static { name, value } => {
+                    let v = if value.is_empty() && is_boolean_attr(&attr_name(name)) {
+                        "true".to_string()
+                    } else {
+                        jinja_string(value)
+                    };
+                    push(&mut mine, Seg::Named(name.clone(), PropBinding::Expr(v)));
+                }
+                Attr::Dynamic { name, value } => {
+                    let v = self.value(value);
+                    push(&mut mine, Seg::Named(name.clone(), PropBinding::Expr(v)));
+                }
+                Attr::Spread(v) => {
+                    for seg in self.spread_segs(v) {
+                        match &seg {
+                            Seg::Named(k, _) if k == "children" || k == "key" || k == "ref" => {}
+                            _ => push(&mut mine, seg),
+                        }
+                    }
+                }
+                _ => {
+                    let _ = sa;
+                    self.diagnostics.push(Diagnostic::error(
+                        "lower-shape",
+                        "the element an `asChild` component child replaces has a directive"
+                            .to_string(),
+                        0,
+                        "report this compiler bug (check_poly_component keeps this case on React)",
+                    ));
+                    return;
+                }
+            }
+        }
+        let mut theirs = call.segs;
+        // className joins: the element's first, then the child's
+        let class_of = |segs: &[Seg]| {
+            segs.iter().position(
+                |s| matches!(s, Seg::Named(k, _) if brust_jinja::spread::attr_key(k) == "class"),
+            )
+        };
+        if let (Some(i), Some(j)) = (class_of(&mine), class_of(&theirs))
+            && let (Seg::Named(_, PropBinding::Expr(a)), Seg::Named(k, PropBinding::Expr(b))) =
+                (mine[i].clone(), theirs[j].clone())
+        {
+            mine.remove(i);
+            theirs[j] = Seg::Named(k, PropBinding::Expr(format!("class_join({a}, {b})")));
+        }
+        mine.extend(theirs);
+        let id = call.id;
+        let Some(child_ir) = (self.ctx.resolve)(&id) else {
+            return;
+        };
+        let inline = Inline {
+            segs: mine,
+            bind: None,
+            slots: format!("__{id}_0"),
+            slot_loops: Vec::new(),
+            suffix: format!("_{}{}", short(&id), call.k),
+            as_child: None,
+            folded: None,
+            rename: Default::default(),
+            client_only: call.client_only,
+        };
+        let Some(mut p) = Printer::new(
+            child_ir,
+            self.ctx,
+            Some(inline),
+            self.loop_var,
+            self.seeds.clone(),
+        ) else {
+            return;
+        };
+        p.blank = self.blank;
+        p.inst_ir = self.inst_ir;
+        p.instances = std::mem::take(&mut self.instances);
+        p.native = false;
+        p.inline_host = Some((child_ir.id.clone(), None));
+        p.preamble();
+        p.node(&child_ir.template, &p.f.structural.template, true);
+        self.out.push_str(&p.out);
+        self.diagnostics.append(&mut p.diagnostics);
+        self.instances = std::mem::take(&mut p.instances);
     }
 
     /// The props a spread `{...v}` passes (R34.15): this component's own props object (or its

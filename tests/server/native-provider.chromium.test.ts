@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, chromium } from 'playwright'
-import { renderColl, renderCollComp, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderSinkRef, renderRovingList, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
+import { renderColl, renderCollComp, renderCtxV, renderDir, renderDirProvider, renderFwd, renderGate, renderHooks, renderHydr, renderInputs, renderLocalSpread, renderLocalSpreadRest, renderLoop, renderNested, renderNestedIds, renderPage, renderPoly, renderSinkRef, renderSlotComp, renderRovingList, renderRender, renderRest, renderRoving, renderSame, renderSw, renderWrap } from '../../packages/brust/test/fixtures/native-provider/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/native-provider')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -574,4 +574,13 @@ test('F329: a useRef only handed to a component ref prop: no island, markup equa
   await page.waitForFunction(() => document.querySelector('button')?.textContent === 'a1')
   expect(errors).toEqual([])
   await page.close()
+}, 60_000)
+
+test('asChild over a static component child (F363a): served == React, no island', async () => {
+  const html = await (await fetch(`${base}/slot-comp`)).text()
+  expect(html).not.toContain('brust-island')
+  // the order of attributes carries no meaning (React's cloneElement keeps the child's props first)
+  const sorted = (h: string): string => h.replace(/<(\w+)((?: [\w-]+="[^"]*")+)>/g, (_, tag: string, a: string) => `<${tag}${(a.match(/ [\w-]+="[^"]*"/g) ?? []).sort().join('')}>`)
+  expect(sorted(plain(html))).toBe(sorted(plain(renderSlotComp())))
+  expect(sorted(plain(html))).toContain('<a class="link base x y" data-slot="btn" href="/go" id="ID0">Go</a>')
 }, 60_000)
