@@ -5,6 +5,7 @@
 //! checks the sources).
 pub mod client;
 pub mod common;
+pub mod module_projection;
 pub mod names;
 pub mod render_debug;
 pub mod server;

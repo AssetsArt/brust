@@ -8,7 +8,7 @@ use crate::ir::{
     StoreUse, Structural,
 };
 use crate::lower::server_expr::member_access;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// The raw expression of a placed value: `Server` carries it; others are
 /// looked up in the structural snapshot by the caller.
@@ -315,11 +315,24 @@ pub fn module_code(
     names: &BTreeSet<String>,
     imports: &mut BTreeSet<ImportUse>,
 ) -> String {
+    module_code_with(ir, names, imports, &BTreeMap::new())
+}
+
+/// [`module_code`] with some declarations printed as given instead of as written (F362: a projected list).
+pub fn module_code_with(
+    ir: &ComponentIR,
+    names: &BTreeSet<String>,
+    imports: &mut BTreeSet<ImportUse>,
+    printed: &BTreeMap<String, String>,
+) -> String {
     let need = module_need(ir, names, imports);
     let mut out = String::new();
     for d in &ir.module_decls {
         if d.names.iter().any(|n| need.contains(n)) {
-            out.push_str(&d.source);
+            match d.names.iter().find_map(|n| printed.get(n)) {
+                Some(p) => out.push_str(p),
+                None => out.push_str(&d.source),
+            }
             out.push('\n');
         }
     }

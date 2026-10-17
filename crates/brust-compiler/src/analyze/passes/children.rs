@@ -89,6 +89,8 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         shadowed_input: BTreeSet::new(),
         live_forwards: Vec::new(),
         own_refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
+        sink_refs: ir.sink_refs.iter().cloned().collect(),
+        ref_nulled: false,
         passes_to_repeater: false,
         passes_to_host: false,
         own_fed: crate::ir::is_fed(ir),
@@ -231,6 +233,7 @@ pub fn contexts(
     }
     ir.ctx_pkg |= w.bubbled_pkg;
     ir.absent_props = w.absent.iter().cloned().collect();
+    ir.forwarded_ref_nulled |= w.ref_nulled;
     for c in std::mem::take(&mut w.bubbled_scoped) {
         if !ir.ctx_scoped.contains(&c) {
             ir.ctx_scoped.push(c);
@@ -358,6 +361,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.holds_island |= w.holds_island;
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
+    ir.forwarded_ref_nulled |= w.ref_nulled;
     ir.unwritten_props = w.unwritten.iter().cloned().collect();
     ir.shadowed_props = w.shadowed.iter().cloned().collect();
     ir.shadowed_input = w.shadowed_input.iter().cloned().collect();
@@ -471,6 +475,10 @@ struct Walker<'s, 'c> {
     live_forwards: Vec<crate::ir::Forwarded>,
     /// The ref cells of this component (F267).
     own_refs: BTreeSet<String>,
+    /// F329: `ComponentIR::sink_refs`.
+    sink_refs: BTreeSet<String>,
+    /// A child this component passes its forwarded ref to reads it as `null` (`ComponentIR::forwarded_ref_nulled`).
+    ref_nulled: bool,
     /// Slot content handed to a component that repeats it (`ComponentIR::repeats_children`, F169).
     passes_to_repeater: bool,
     /// This component hands its own `{children}` to a component that prints them under a native host element
@@ -5131,9 +5139,29 @@ impl Walker<'_, '_> {
                 "pass the ref to an element, or to a forwardRef component that does",
             ));
         }
+        // F364: this component's forwarded ref goes to a child that reads it as `null`: so does this one, for its callers
+        if *forwarded_ref && child.ir.as_deref().is_some_and(|c| c.forwarded_ref_nulled) {
+            self.ref_nulled = true;
+        }
         // F267: a ref of this component's own bound on the one element an inlined child hands its `ref` to.
         let ref_cell = self.forward_ref(*loc, props, &child);
         let ref_fwd = ref_cell.is_some();
+        // F329: a `ref` that is one of this component's sink refs (nothing reads it: its every use is a component's `ref` prop)
+        // hands nothing to anyone, so it is dropped here and the child renders without it, as React's would be unobservable.
+        if child.forwards_ref
+            && !ref_fwd
+            && matches!(child.tier, Tier::Static | Tier::Native)
+            && !child.ir.as_deref().is_some_and(|c| c.forwarded_ref_nulled)
+            && props.iter().filter(|(k, _)| k == "ref").count() == 1
+            && matches!(
+                self.st.prop_raws.get(&(*loc, "ref".to_string())),
+                Some(RawExpr { kind: RawKind::Ident { name, .. }, .. }) if self.sink_refs.contains(name)
+            )
+            // a spread on either side may carry a `ref` of its own (React: the later one wins)
+            && !props.iter().any(|(k, _)| k == crate::ir::SPREAD_KEY)
+        {
+            props.retain(|(k, _)| k != "ref");
+        }
         if child.forwards_ref && !ref_fwd && props.iter().any(|(k, _)| k == "ref") {
             self.diagnostics.push(Diagnostic::fallback(
                 "forwardref-ref",

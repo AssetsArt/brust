@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 228 | 122 | 16 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 217 | 69 | 67 | 81 | 0 | 0 | 0 | 0 |
+| B Composition | 232 | 122 | 18 | 92 | 0 | 0 | 0 | 0 |
+| C Hooks | 217 | 69 | 68 | 80 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 602 | 267 | 112 | 219 | 3 | 1 | 0 | 0 |
+| **Total** | 606 | 267 | 115 | 220 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -255,6 +255,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-island-per-row-in-inlined-component | a static wrapper mapping a React island over its own rows | static | static | ssr | ok | 4.0 | — | F164 R34.97 (review r1 F): a row of an inlined component has no slot key for the island job, so the wrapper is the island; it was the lowering nested-instance error |
 | b-fed-child-in-static-wrapper | a static wrapper (no job of its own) around a child with a job, used twice with a prop and without | static | static | 0 | ok | 0 | — | F164 R34.96 (static-wrapper case): the caller feeds the wrapper's child (records re-based onto it, numbered in template order); the second use passes no tone, which the server feeds as undefined like React |
 | b-fed-child-through-repeater-chain | a useId child passed through a component that hands its children to a repeater | react | react | ssr | ok | 4.0 | fallback:nested-instance, info:build-eval-instance | F169: the repeat check is transitive, so the same id is not printed in every row |
+| b-ref-nothing-reads | a useRef only handed to a component's ref prop (Radix ToggleGroupItem's ref) | native | native | 0 | ok | 4.6 | — | F329: nothing reads the ref, so the call site drops it and the forwardRef child renders (before: forwardref-ref island) |
+| b-ref-sink-child-reads | a sink useRef given to a forwardRef child that prints its own forwarded ref | react | react | ssr | ok | 4.0 | fallback:forwardref-ref, fallback:island-prop | F364 (Afrojack/Mellow r1): the child reads fr (React: an object, brust: null), so the drop is refused and forwardref-ref keeps the page React |
+| b-ref-sink-child-composes | a sink useRef given to a forwardRef child that composes its forwarded ref | react | react | ssr | ok | 5.4 | fallback:forwardref-ref | F364: the child reads fr as null (forwarded_ref_nulled), so the drop is refused |
+| b-ref-read-in-handler | the same ref read in a handler | react | react | ssr | ok | 5.4 | fallback:forwardref-ref | F329 guard: a read of ref.current keeps the forwardref-ref fallback |
 | b-children-called-nodes | a component that calls its children when it is a function, given element children | static | static | 0 | ok | 0 | — | F328b: typeof children === function ? children(..) : children is read as {children} for provable nodes |
 | b-children-called-function | the same component given a function (arrow, identifier, children prop) | react | react | ssr | ok | 4.0 | fallback:children-read, fallback:jsx-const-child | F328b: React calls the function; brust cannot prove a node, so the call site falls back by name (children-read) |
 | b-fed-child-in-native-wrapper | a wrapper with state and a handler (native) around a child with a job of its own | static | static | 0 | ok | 4.6 | — | F328c (ruling on note 84cd6abb): a Native wrapper is inlined in its caller like a static one, so its fed child's record is re-based onto the caller (before: #229 hole, the caller was the React island). This child's only input is a constant, so the build evaluates it (0 jobs); the served ids case is the Chromium F328c test. A fed child under a condition or in a list of the wrapper still falls back (nested_fed.rs) |
@@ -303,7 +307,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-pkg-hook-alias-use-size | the Radix useSize hook, whose useLayoutEffect is an exported SSR-guard alias of React's | native | native | 0 | ok | 4.6 | — | F268: `const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}` (exported) is React's useLayoutEffect, by the module's own declaration, not by package name |
 | b-hook-alias-value-hook | an exported conditional alias of a hook that returns a value (useState or a no-op) | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | F268 fail closed: only an effect hook (it returns nothing) can stand beside a no-op; useState would be undefined where the guard is false |
 | b-pkg-aschild-dynamic | a dynamic asChild on a package leaf | react | react | ssr | ok | 4.0 | fallback:slot-dynamic | F153c fail closed: slot-dynamic |
-| b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | react | react | ssr | ok | 4.0 | fallback:forwardref-ref | F153c / R34.64: forwardref-ref (React attaches the ref; HTML has none) |
+| b-pkg-callsite-ref | a ref passed to a package forwardRef leaf | native | native | 0 | ok | 3.2 | — | F329 (was F153c / R34.64 forwardref-ref): React attaches the ref to the leaf's element, but nothing reads it (a useRef only handed on), so dropping it is unobservable; a ref that is read keeps the fallback (b-ref-read-in-handler) |
 | b-pkg-ref-read | a package leaf that reads its forwarded ref | static | static | ssr | ok | 4.0 | fallback:external-component | F153c fail closed: the leaf needs React (forwardref-ref), so the app keeps the island of the published export |
 | b-pkg-no-map | a package that publishes no source map | static | static | ssr | ok | 4.0 | fallback:external-component | F153c G1: no sourcesContent, no analysis: the island of the published export (external-component, reason named) |
 | b-pkg-drift | a package whose published JS was not built from its map | static | static | ssr | ok | 4.0 | fallback:external-component | F153c R34.62: the integrity check fails: the island of the published export |
@@ -439,7 +443,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-native-provider-negated-method | a render prop reading a boolean made with !! of a method of an element held in state | static | static | 0 | ok | 5.0 | — | F269: Radix's isFormControl; !x prints a boolean whatever x is, so the allowlist does not judge x |
 | c-forwardref-child-ref-cell | a useRef passed as ref to an inlined forwardRef child that hands it to its one element | native | native | 0 | ok | 4.6 | — | F267: the parent binds x-ref on the child's own element, in its scope; the child stays static and unlinked |
 | c-forwardref-child-ref-callback | a state setter passed as ref to an inlined forwardRef child | native | native | 0 | ok | 4.6 | — | F267: a callback ref is the same mount effect as on an element, its ref cell bound on the child's element |
-| c-forwardref-child-ref-conditional-child | a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes | react | react | ssr | ok | 4.0 | fallback:forwardref-ref | F267: the child may not render the element at all; the call site keeps the React fallback |
+| c-forwardref-child-ref-conditional-child | a ref passed to a forwardRef child that renders the element it hands the ref to only sometimes | native | native | 0 | ok | 5.0 | — | F329 (was F267 fallback): the child may not render the element at all, and nothing reads the ref, so it is dropped; the F267 binding path still serves a ref that is read (c-forwardref-*) |
 | c-native-provider-rest-input | a component spreads its own ...rest into a consumer under the Provider it renders | static | static | 0 | ok | 4.6 | — | F278: the rest crosses into the clone as the hidden input __in_rest and is spread there; F279: getState(checked) is its expression, so the consumer has no job |
 | c-native-provider-rest-input-live | a native page passes a live attribute to a component that spreads its rest into a clone | react | react | ssr | ok | 5.4 | fallback:spread-props, fallback:frozen-prop | F278 (Mellow F1): a live rest cannot be re-spread by the clone on the client, so the call that passes one stays React |
 | c-pure-helper-call-inlined | a single-return module helper called with a state read | native | native | 0 | ok | 4.6 | — | F279: the call is replaced by the helper's expression (a plain-read argument), so no precompute job runs it |
