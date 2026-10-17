@@ -91,7 +91,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         guard_depth: 0,
         slot_depth: 0,
         spec_salt: (ir.rest_clone_of.is_some() || ir.specialised).then(|| ir.id.clone()),
-        mount_once: None,
+        mount_once: Vec::new(),
         frozen: BTreeSet::new(),
         callable_up: BTreeSet::new(),
         state_inits: ir
@@ -283,7 +283,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     w.node(&mut template);
     ir.repeats_children = w.passes_to_repeater || template_has_for(&template);
     ir.hosts_children = w.passes_to_host;
-    ir.mount_once = w.mount_once.take();
+    ir.mount_once = std::mem::take(&mut w.mount_once);
     if !w.fused.is_empty() {
         // R34.96: the job of this component also runs its fused children's jobs: their renamed outputs are its
         // outputs, and the props they read are its inputs (the caller's record maps them, A4).
@@ -469,7 +469,7 @@ struct Walker<'s, 'c> {
     /// the clones made inside it.
     spec_salt: Option<String>,
     /// F295: what makes an instance of this component unable to mount again (`ComponentIR::mount_once`).
-    mount_once: Option<String>,
+    mount_once: Vec<String>,
     /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
     frozen: BTreeSet<String>,
     /// W1d (progress): this component spreads its own props/rest onto a child that may call a function prop, so its
@@ -4566,6 +4566,13 @@ impl Walker<'_, '_> {
         false
     }
 
+    /// F316: records a reason this component's instances must mount once (each distinct reason, in the order found).
+    fn add_mount_once(&mut self, reason: String) {
+        if !self.mount_once.contains(&reason) {
+            self.mount_once.push(reason);
+        }
+    }
+
     /// Mirrors `lower::template::expr_reactive`.
     /// F295: the deps of a prop value `v` passed to `<name>` as they stay while this instance lives: snapshot cells
     /// (read as their value at mount) do not change, so they do not link the child. Leaving them out is right only if
@@ -4577,9 +4584,9 @@ impl Walker<'_, '_> {
             return d;
         }
         d.state.clear();
-        self.mount_once.get_or_insert_with(|| {
-            format!("<{name}> gets `{k}`, a value taken once at mount, with no link")
-        });
+        self.add_mount_once(format!(
+            "<{name}> gets `{k}`, a value taken once at mount, with no link"
+        ));
         d
     }
 
@@ -5486,9 +5493,15 @@ impl Walker<'_, '_> {
                         let mut refuse = false;
                         for (k, v) in props.iter() {
                             if k == crate::ir::SPREAD_KEY {
+                                // F347: only the rest or the whole props (an exact `*`) deliver a key under the name its
+                                // callers wrote, so the requirement moves up to them. A path (`{...props.cfg}`) delivers
+                                // `cfg`'s members, which no caller key names: refused here.
+                                let whole = matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
+                                    if crate::analyze::passes::deps::prop_path(r).as_deref() == Some("*"));
                                 if matches!(v, Expr::ClientOnly { .. })
                                     || self.reads_state(v)
                                     || self.deps_of(v).props.is_empty()
+                                    || !whole
                                 {
                                     refuse = true;
                                 } else {
@@ -5535,11 +5548,18 @@ impl Walker<'_, '_> {
                 // F295: the child prints a value it took at mount where the client never re-applies it. Here it mounts
                 // with this component and never again, so this component inherits the promise from its own callers;
                 // anywhere else a later mount would print the server's value where React takes the current one.
-                if let Some(what) = child.ir.as_deref().and_then(|c| c.mount_once.as_deref()) {
+                if let Some(whats) = child
+                    .ir
+                    .as_deref()
+                    .map(|c| c.mount_once.as_slice())
+                    .filter(|w| !w.is_empty())
+                {
                     if self.guard_depth == 0 && self.loop_scope.is_empty() && self.slot_depth == 0 {
-                        self.mount_once
-                            .get_or_insert_with(|| format!("<{name}> → {what}"));
+                        for what in whats {
+                            self.add_mount_once(format!("<{name}> → {what}"));
+                        }
                     } else {
+                        let what = whats.join("; and ");
                         self.diagnostics.push(Diagnostic::fallback(
                             "snapshot-remount",
                             format!("<{name}> → {what}; here <{name}> can mount again after the first paint (under a condition, in a row or in slot content), when React would take the value current then"),
@@ -6921,11 +6941,9 @@ impl Walker<'_, '_> {
             if k == crate::ir::SPREAD_KEY || (spreads_in && !after_spreads) || child.spread.lands(k)
             {
                 if snapshot_only {
-                    self.mount_once.get_or_insert_with(|| {
-                        format!(
-                            "<{name}> gets `{k}`, a value taken once at mount, through a spread"
-                        )
-                    });
+                    self.add_mount_once(format!(
+                        "<{name}> gets `{k}`, a value taken once at mount, through a spread"
+                    ));
                     continue;
                 }
                 let function = matches!(v, Expr::ClientOnly { .. });
