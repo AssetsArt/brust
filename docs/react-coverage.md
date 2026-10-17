@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 225 | 119 | 16 | 90 | 0 | 0 | 0 | 0 |
-| C Hooks | 208 | 62 | 67 | 79 | 0 | 0 | 0 | 0 |
+| C Hooks | 210 | 63 | 67 | 80 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 590 | 257 | 112 | 217 | 3 | 1 | 0 | 0 |
+| **Total** | 592 | 258 | 112 | 218 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -368,6 +368,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-frozen-prop-call-spread | the page's state object spread into a native child that reads the key in a constant list | react | react | ssr | ok | 6.4 | fallback:spread-props | F319 (Afrojack): a spread at the call site may carry a frozen key: frozen-prop (spread-props refuses it too) |
 | c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 5.7 | — | F319: a value that does not change satisfies the requirement |
 | c-rest-children-consumer | a context consumer passed as children of a component that spreads its rest (children included) under its own Provider | static | static | 0 | ok | 4.6 | — | F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider) |
+| c-clone-carry-import | a Thumb whose className calls an import, passed through a component's rest under its own Provider | static | static | precompute | ok | 4.6 | — | F305: the call of the import is computed by the page and handed to the rest clone as one input (was: the children stayed outside, the page React) |
+| c-clone-carry-import-data | the same Thumb given an imported object member | react | react | ssr | ok | 4.0 | fallback:context-no-provider, fallback:children-rest, info:rest-children-unsupported | F305 / F325: an import read as data is not computed at the call site and shipped: the children stay outside, context-no-provider |
 | c-rest-children-linked-host | the same, where the element the rest is spread into reads the context itself | static | static | ssr | ok | 5.4 | info:rest-children-unsupported | F298 + F309: that element is linked, so it would host the Thumb (slot-owner): no clone, LiveRoot stays a React island with its children (F307 relaxes it) |
 | c-spec-rest-children | JSX children given to a state Provider component that spreads its ...rest onto an element and never prints children | static | static | 0 | ok | 4.6 | — | F324 (real fix, progress-flip): the children reach the button through the rest in React; the clone puts the call site's content into the one element that spreads the rest (explicit children win in React; this Provider writes none), so the markup carries them and no island is needed (was: refused to an island after the alpha.16 silent drop) |
 | c-spec-rest-no-children | the same Provider component called without children | static | static | 0 | ok | 4.6 | — | F324: nothing to drop, so the clone is still taken |
