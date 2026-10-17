@@ -346,8 +346,12 @@ jobs:
       - run: bun test --timeout 120000 tests/server/rest-host.chromium.test.ts
       # F307: slot content a child prints in its own host is cloned with the child per call site; served == React.
       - run: bun test --timeout 120000 tests/server/host-specialise.chromium.test.ts
+      # F305: a value of rest-carried content that calls an import is computed by the page and handed to the clone; served == React.
+      - run: bun test --timeout 120000 tests/server/clone-carry.chromium.test.ts
       # F298: a consumer passed as children through a component's rest sits under that component's Provider; served == React.
       - run: bun test --timeout 120000 tests/server/rest-children.chromium.test.ts
+      # F317: a Provider of the same context in the page AND the callee's own inner Provider: served == React.
+      - run: bun test --timeout 120000 tests/server/context-both-frames.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/spec-children.test.ts
       # F297: a condition on a useState(null) cell is decided at the server (no job); served == React hydrating the page.
       - run: bun test --timeout 120000 tests/server/form-control.chromium.test.ts

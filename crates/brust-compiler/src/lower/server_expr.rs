@@ -107,13 +107,7 @@ pub fn with_ordered_objects<T>(f: impl FnOnce() -> T) -> T {
 /// F333: whether the keys of an object literal, enumerated as JS does, come out in the byte order a jinja map literal
 /// sorts them to (so the plain literal prints the same order).
 fn js_order_is_sorted(props: &[(String, RawExpr)]) -> bool {
-    let is_index = |k: &str| {
-        k == "0"
-            || (!k.starts_with('0')
-                && k.len() <= 10
-                && k.bytes().all(|b| b.is_ascii_digit())
-                && k.parse::<u64>().is_ok_and(|n| n < u32::MAX as u64))
-    };
+    let is_index = brust_jinja::spread::is_array_index;
     let mut keys: Vec<&str> = props.iter().map(|(k, _)| k.as_str()).collect();
     let (mut idx, rest): (Vec<&str>, Vec<&str>) = keys.drain(..).partition(|k| is_index(k));
     idx.sort_by_key(|k| k.parse::<u64>().unwrap_or(0));

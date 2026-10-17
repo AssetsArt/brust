@@ -115,6 +115,22 @@ fn a_list_over_state_in_the_slot_of_a_native_child_is_refused() {
     cloned("loop.tsx");
 }
 
+// F310 (measured): the F309 guard fires while the child's link is still `RowOnly`, and the link survives only in a row the
+// client can re-create. Slot content the guard names (a handler, a live attribute) is itself a directive of the row
+// (`body_directive`), so the row IS re-created: the child keeps its host and would bind that content. The refusal is not
+// an over-refusal for these shapes (and a clone cannot carry a row's bindings: `host-specialise-unsupported`); content
+// with no directive of the caller's is not refused at all.
+#[test]
+fn a_row_only_child_with_a_directive_in_its_slot_keeps_the_refusal() {
+    refused("row-only-handler.tsx");
+    refused("row-only-attr.tsx");
+}
+
+#[test]
+fn a_row_only_child_with_plain_slot_content_is_not_refused() {
+    kept("row-only-plain.tsx");
+}
+
 #[test]
 fn a_child_with_changing_props_in_the_slot_is_refused() {
     cloned("linked.tsx");
@@ -203,4 +219,17 @@ fn children_forwarded_by_an_unlinked_static_intermediate_into_a_host_are_refused
     refused("rest-host-mid.tsx");
     refused("rest-host-mid-slot.tsx");
     kept("rest-host-mid-const.tsx");
+}
+
+#[test]
+fn children_passing_through_two_rests_before_a_host_are_refused() {
+    // F343: Mellow probed the chain by hand; this pins it. The page's children go Outer -> Mid -> Box (each an unlinked
+    // static rest spread) and land on Box's native host.
+    refused("rest-host-two-level.tsx");
+}
+
+#[test]
+fn children_reaching_a_host_through_a_local_object_spread_are_refused() {
+    // F343: tripwire for the sequence path (W1d 4b): `const common = { ...rest }` spread on the host expands to its parts.
+    refused("rest-host-seq.tsx");
 }

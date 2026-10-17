@@ -217,11 +217,6 @@ pub struct ComponentIR {
     /// shares one factory module with every clone whose chunk is equal (R34.124).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub specialised: bool,
-    /// F307: a clone of a HOST child made for one call site with that call site's slot content (`specialise_host`). Only
-    /// such a clone reads its non-fixed props as signals (S3, narrowed for progress-flip: an R34.122 or F298 clone keeps
-    /// the instance rule, F345 generalises with per-call-site pinning).
-    #[serde(skip)]
-    pub host_clone: bool,
     /// F298: a clone made for one call site whose children were put where the component spreads its rest: the clones
     /// made inside it are keyed by its id too (the same Provider call of the same module holds other content there).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -465,10 +460,10 @@ pub struct Structural {
 impl ComponentIR {
     /// F320: the chunk has an instance (state, effects, handlers or refs), so it reads its props as a signal wherever
     /// it renders: a named prop the call site does not fix changes on the client.
-    /// F307 §7.3: a host clone too (`host_clone`): its one call site is known and `fixed_props` lists what that call
-    /// site does not change, so every other prop follows the caller.
+    /// F307 §7.3 / F345: a specialised clone too: its one call site is known and `fixed_props` pins what that call site
+    /// does not change, so every other prop follows the caller.
     pub fn props_are_signal(&self) -> bool {
-        self.host_clone
+        self.specialised
             || !self.state.is_empty()
             || !self.effects.is_empty()
             || !self.handlers.is_empty()
@@ -484,7 +479,6 @@ impl ComponentIR {
             export: None,
             unexported: false,
             specialised: false,
-            host_clone: false,
             rest_clone_of: None,
             tier: Tier::Pending,
             props: vec![],

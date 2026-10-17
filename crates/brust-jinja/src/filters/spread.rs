@@ -236,7 +236,8 @@ pub fn spread_merge(segs: Rest<Value>) -> Value {
 }
 
 /// A canonical array index (`"0"`, `"7"`, up to `2^32 - 2`): the property keys JS enumerates first, ascending (F321).
-pub(crate) fn is_array_index(k: &str) -> bool {
+/// The ONE implementation of the rule: the compiler's `OJson` and object-literal printing call it too (F338).
+pub fn is_array_index(k: &str) -> bool {
     k == "0"
         || (!k.starts_with('0')
             && k.len() <= 10
@@ -342,7 +343,7 @@ pub fn obj_assign(sources: Rest<Value>) -> Value {
 
 #[cfg(test)]
 mod tests {
-    // The JS array-index rule, as one table shared (by value) with `ir/ojson.rs` / `filters/spread.rs` (F321).
+    // The JS array-index rule (F321); the compiler calls `is_array_index` too, so this is the only table (F338).
     const INDEX_KEYS: &[(&str, bool)] = &[
         ("0", true),
         ("7", true),
@@ -409,6 +410,70 @@ mod tests {
             ),
             "margin-top:5px;margin:0"
         );
+    }
+
+    /// F339: an `obj_lit` object stands in for a jinja map literal wherever a server expression reads an unsorted object
+    /// literal (F333), so every read a template makes of it gives what the map literal gave: membership, length,
+    /// truthiness, lookups (dotted and indexed, present and absent), `keys` / `values` counts, iteration and `json_attr`.
+    #[test]
+    fn obj_lit_reads_like_the_map_literal_it_replaces() {
+        // (obj_lit form, map literal form): the same entries; the keys are sorted in the map literal's own order
+        let shapes: &[(&str, &str)] = &[
+            ("obj_lit('b', 1, 'a', 2)", "{'b': 1, 'a': 2}"),
+            ("obj_lit('z', 'x', 'y', none)", "{'z': 'x', 'y': none}"),
+            ("obj_lit('b', 0, 'a', false)", "{'b': 0, 'a': false}"),
+            ("obj_lit('10', 'a', '2', 'b')", "{'10': 'a', '2': 'b'}"),
+            (
+                "obj_lit('o', obj_lit('q', 1, 'p', 2))",
+                "{'o': {'q': 1, 'p': 2}}",
+            ),
+            ("obj_lit()", "{}"),
+        ];
+        let reads = [
+            "{{ 'a' in o }}|{{ 'z' in o }}|{{ 'b' in o }}|{{ '10' in o }}|{{ 'nope' in o }}",
+            "{{ o | length }}",
+            "{% if o %}yes{% else %}no{% endif %}",
+            "{{ o is none }}|{{ o is defined }}|{{ (o and 1) | string }}|{{ (o or 2) | length }}|{{ o is mapping }}",
+            "{{ o.a }}|{{ o.b }}|{{ o.z }}|{{ o.y }}|{{ o.nope }}|{{ o['a'] }}|{{ o['nope'] }}",
+            "{{ o['10'] }}|{{ o['2'] }}|{{ o.o.q }}|{{ o.o.nope }}",
+            "{{ o | keys | length }}|{{ o | entries | length }}",
+            "{{ o | json_attr }}",
+        ];
+        let mut compared = 0;
+        for (lit, map) in shapes {
+            for read in reads {
+                let with = |expr: &str| {
+                    let mut env = Environment::new();
+                    crate::register(&mut env);
+                    env.render_str(
+                        &format!("{{% set o = {expr} %}}{read}"),
+                        minijinja::context! {},
+                    )
+                };
+                let (a, b) = (with(lit), with(map));
+                // a read both forms reject must be rejected by both; otherwise the output is identical, except for the
+                // ORDER of keys (iteration / json_attr), which is exactly what obj_lit changes: compare those sorted.
+                match (&a, &b) {
+                    (Ok(x), Ok(y)) if read.contains("json_attr") || read.contains("entries") => {
+                        assert_eq!(
+                            serde_json::from_str::<serde_json::Value>(&x.replace("&quot;", "\""))
+                                .ok(),
+                            serde_json::from_str::<serde_json::Value>(&y.replace("&quot;", "\""))
+                                .ok(),
+                            "{lit} / {read}"
+                        );
+                    }
+                    (Ok(x), Ok(y)) => {
+                        compared += 1;
+                        assert_eq!(x, y, "{lit} / {read}");
+                    }
+                    (Err(_), Err(_)) => {}
+                    _ => panic!("{lit} / {read}: {a:?} vs {b:?}"),
+                }
+            }
+        }
+        // (the table is not vacuous: most reads render in both forms)
+        assert!(compared >= 30, "{compared}");
     }
 
     /// F196: the spread path prints every attribute and value as React does (`tests/fixtures/attr-parity/react.json`).
