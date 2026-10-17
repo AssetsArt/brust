@@ -1827,6 +1827,31 @@ fn pure_path(e: &js_ast::Expr) -> bool {
     }
 }
 
+/// F384: the component's own `children` prop, read whole (`children`, destructured or as `props.children`).
+fn is_children(r: &Reader<'_, '_>, e: &js_ast::Expr) -> bool {
+    let r#ref = match &e.data {
+        E::EIdentifier(id) => id.ref_,
+        E::EImportIdentifier(id) => id.ref_,
+        E::EDot(d) if d.optional_chain.is_none() && d.name.slice() == b"children" => {
+            return match &d.target.data {
+                E::EIdentifier(id) => r.names.is_props_ident(id.ref_),
+                _ => false,
+            };
+        }
+        _ => return false,
+    };
+    matches!(r.names.kind_of(r#ref), (name, IdentKind::Prop) if name == "children")
+}
+
+/// An arm that renders nothing: `null`, `undefined` or `false`.
+fn is_nothing(e: &js_ast::Expr) -> bool {
+    match &e.data {
+        E::ENull(_) | E::EUndefined(_) => true,
+        E::EBoolean(b) => !b.value,
+        _ => false,
+    }
+}
+
 pub fn is_jsx(e: &js_ast::Expr) -> bool {
     jsx_call(e).is_some()
 }
@@ -1836,7 +1861,11 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
         E::EString(s) => out.push(Node::Text(estring(s))),
         E::ENull(_) | E::EUndefined(_) | E::EBoolean(_) => {}
         E::ECall(c) if c.was_jsx_element => out.push(read_element(r, e, false)),
-        E::EBinary(b) if b.op == OpCode::BinLogicalAnd && is_jsx(&b.right) => {
+        // F384: `cond && children` too (Radix CollapsibleContentImpl's `{isOpen && children}`): the `children` slot under
+        // the condition, read as markup like `{children}` itself.
+        E::EBinary(b)
+            if b.op == OpCode::BinLogicalAnd && (is_jsx(&b.right) || is_children(r, &b.right)) =>
+        {
             let left = r.expr(&b.left);
             let mut then = Vec::new();
             read_child(r, &b.right, &mut then);
@@ -1903,7 +1932,13 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
             r.names.children_called.set(true);
             read_child(r, &i.no, out);
         }
-        E::EIf(i) if is_jsx(&i.yes) || is_jsx(&i.no) => {
+        // F384: `cond ? children : <X/> | null` (either arm) too.
+        E::EIf(i)
+            if is_jsx(&i.yes)
+                || is_jsx(&i.no)
+                || (is_children(r, &i.yes) && is_nothing(&i.no))
+                || (is_children(r, &i.no) && is_nothing(&i.yes)) =>
+        {
             let cond = Expr::Raw(r.expr(&i.test));
             let mut then = Vec::new();
             read_child(r, &i.yes, &mut then);
