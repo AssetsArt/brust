@@ -5487,9 +5487,15 @@ impl Walker<'_, '_> {
                         let mut refuse = false;
                         for (k, v) in props.iter() {
                             if k == crate::ir::SPREAD_KEY {
+                                // F347: only the rest or the whole props (an exact `*`) deliver a key under the name its
+                                // callers wrote, so the requirement moves up to them. A path (`{...props.cfg}`) delivers
+                                // `cfg`'s members, which no caller key names: refused here.
+                                let whole = matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
+                                    if crate::analyze::passes::deps::prop_path(r).as_deref() == Some("*"));
                                 if matches!(v, Expr::ClientOnly { .. })
                                     || self.reads_state(v)
                                     || self.deps_of(v).props.is_empty()
+                                    || !whole
                                 {
                                     refuse = true;
                                 } else {
