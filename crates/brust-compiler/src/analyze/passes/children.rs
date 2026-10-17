@@ -3304,6 +3304,12 @@ impl Walker<'_, '_> {
         let mut given: Vec<(&str, &Expr)> = inputs.iter().map(|(h, v)| (h.as_str(), v)).collect();
         let mut fixed = Vec::new();
         for p in &cir.props {
+            // A context value (`__ctx_*`) is a Provider frame's member, filled by the frames pass where its consumer is
+            // written (not always at this call site): its liveness belongs to that frame, so it is never pinned.
+            // Pinned, a trigger's clone printed a state Provider's `checked` once (switch-provider-chain PR1).
+            if p.name.starts_with("__ctx_") {
+                continue;
+            }
             match props.iter().rev().find(|(k, _)| *k == p.name) {
                 Some((_, v)) => given.push((&p.name, v)),
                 None if !spread && p.name != "children" => fixed.push(p.name.clone()),

@@ -44,6 +44,13 @@ export function RC({ children, render }: { children?: React.ReactNode; render?: 
   const ctx = { on }
   return <C.Provider value={{ on, flip: () => setOn((o) => !o) }}>{typeof render === 'function' ? render(ctx) : children}</C.Provider>
 }
+// Radix Switch's `internal_do_not_use_render(context)`: the local object also holds a setter (a member read whole would
+// be a hook object's escape); the call reads its members, the body binds the one it destructures
+export function RCS({ children, render }: { children?: React.ReactNode; render?: R }) {
+  const [on, setOn] = useState(false)
+  const ctx = { on, setOn }
+  return <C.Provider value={{ on, flip: () => setOn((o) => !o) }}>{typeof render === 'function' ? render(ctx) : children}</C.Provider>
+}
 // F266: the same object, but a field of it is a computation: not a plain read, the Provider stays an island
 export function RN({ render }: { render: R }) {
   const [on, setOn] = useState(false)

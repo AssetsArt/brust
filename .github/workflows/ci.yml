@@ -348,6 +348,10 @@ jobs:
       - run: bun test --timeout 120000 tests/server/host-specialise.chromium.test.ts
       # F305: a value of rest-carried content that calls an import is computed by the page and handed to the clone; served == React.
       - run: bun test --timeout 120000 tests/server/clone-carry.chromium.test.ts
+      # switch-provider-chain PR1: a render prop called with a local object holding a setter is spliced into the clone; served == React.
+      - run: bun test --timeout 120000 tests/server/render-ctx.chromium.test.ts
+      # switch-provider-chain PR1: a context value is never pinned in a clone; the Switch shape toggles as React does.
+      - run: bun test --timeout 120000 tests/server/switch-chain.chromium.test.ts
       # F298: a consumer passed as children through a component's rest sits under that component's Provider; served == React.
       - run: bun test --timeout 120000 tests/server/rest-children.chromium.test.ts
       - run: bun test --timeout 120000 tests/server/spec-children.test.ts

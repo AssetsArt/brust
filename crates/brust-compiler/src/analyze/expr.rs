@@ -397,6 +397,29 @@ impl<'r, 'a> Reader<'r, 'a> {
                             return self.opaque(e, "spread argument");
                         }
                         self.map_callback = is_map && matches!(a.data, E::EArrow(_));
+                        // A function prop called with a local object whose members are known (`render(context)`,
+                        // Radix's `internal_do_not_use_render(context)`): the call reads that object's members, as its
+                        // literal; a render prop spliced into a clone (B7) binds its parameters to them.
+                        if matches!(
+                            &callee.kind,
+                            RawKind::Ident {
+                                kind: IdentKind::Prop,
+                                ..
+                            }
+                        ) && let E::EIdentifier(id) = &a.data
+                            && let Some(members) = self.names.hook_object(id.ref_)
+                        {
+                            let mut pairs = members.to_vec();
+                            for (_, v) in &mut pairs {
+                                crate::analyze::hooks::relocate(v, loc_of(a));
+                            }
+                            args.push(RawExpr {
+                                loc: loc_of(a),
+                                kind: RawKind::Object(pairs),
+                            });
+                            self.map_callback = false;
+                            continue;
+                        }
                         // B3: only for a function of the app or a package (evaluated in JS, where the ref IS `null`), never
                         // a builtin the server prints its own way (`String(ref)`).
                         args.push(if user_fn { self.arg(a) } else { self.expr(a) });
