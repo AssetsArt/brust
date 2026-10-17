@@ -1,6 +1,6 @@
 {
   "name": "@brust/core-cf",
-  "version": "2.0.0-alpha.17",
+  "version": "2.0.0-alpha.18",
   "description": "brust v2 on Cloudflare Workers — the prebuilt workers-rs host (wasm) that @brust/core's Cloudflare build target links",
   "license": "MIT",
   "homepage": "https://brust.dev",

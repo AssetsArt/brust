@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | pages with no worker call | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|---|
-| 64 | 56 | 1 | 7 | 35 | 26 | 22 | 0 / 87 / 240 KiB |
+| 64 | 56 | 1 | 7 | 34 | 26 | 23 | 0 / 87 / 240 KiB |
 
 ### Analysis-only (0 of 64 pages refused)
 
@@ -42,14 +42,14 @@ One line per thing that keeps a row or a library component off the static/native
 | 4 | fallback:island-children | compiler code | survey truth (compiler diagnostic) | 17 | 0 | 18 | 61 | `island-children` diagnostic (docs/react-coverage.md) |
 | 5 | fallback:jsx-const-child | compiler code | survey truth (compiler diagnostic) | 7 | 0 | 8 | 36 | `jsx-const-child` diagnostic (docs/react-coverage.md) |
 | 6 | fallback:context-island | compiler code | survey truth (compiler diagnostic) | 6 | 0 | 8 | 0 | `context-island` diagnostic (docs/react-coverage.md) |
-| 7 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 172 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
-| 8 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 15 | `jsx-expression` diagnostic (docs/react-coverage.md) |
-| 9 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 1 | `nested-instance` diagnostic (docs/react-coverage.md) |
+| 7 | fallback:nested-instance | compiler code | survey truth (compiler diagnostic) | 5 | 0 | 5 | 1 | `nested-instance` diagnostic (docs/react-coverage.md) |
+| 8 | fallback:hook-unsupported | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 172 | `hook-unsupported` diagnostic (docs/react-coverage.md) |
+| 9 | fallback:jsx-expression | compiler code | survey truth (compiler diagnostic) | 4 | 0 | 4 | 15 | `jsx-expression` diagnostic (docs/react-coverage.md) |
 | 10 | fallback:control-flow | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 8 | 27 | `control-flow` diagnostic (docs/react-coverage.md) |
 | 11 | fallback:slot-dynamic | compiler code | survey truth (compiler diagnostic) | 3 | 0 | 3 | 0 | `slot-dynamic` diagnostic (docs/react-coverage.md) |
 | 12 | fallback:prop-pattern | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 28 | `prop-pattern` diagnostic (docs/react-coverage.md) |
 | 13 | fallback:context-state | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 17 | `context-state` diagnostic (docs/react-coverage.md) |
-| 14 | fallback:children-rest | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 0 | `children-rest` diagnostic (docs/react-coverage.md) |
+| 14 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 2 | 1 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
 | 15 | fallback:spread-handler | compiler code | survey truth (compiler diagnostic) | 2 | 0 | 3 | 0 | `spread-handler` diagnostic (docs/react-coverage.md) |
 | 16 | fallback:body-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 37 | `body-shape` diagnostic (docs/react-coverage.md) |
 | 17 | fallback:hook-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 7 | `hook-shape` diagnostic (docs/react-coverage.md) |
@@ -57,13 +57,13 @@ One line per thing that keeps a row or a library component off the static/native
 | 19 | fallback:ref-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 6 | `ref-shape` diagnostic (docs/react-coverage.md) |
 | 20 | fallback:child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 5 | `child-component` diagnostic (docs/react-coverage.md) |
 | 21 | fallback:context-value | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `context-value` diagnostic (docs/react-coverage.md) |
-| 22 | fallback:instance-prop-path | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `instance-prop-path` diagnostic (docs/react-coverage.md) |
-| 23 | fallback:list-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `list-shape` diagnostic (docs/react-coverage.md) |
+| 22 | fallback:list-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 1 | `list-shape` diagnostic (docs/react-coverage.md) |
+| 23 | fallback:children-rest | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `children-rest` diagnostic (docs/react-coverage.md) |
 | 24 | fallback:client-function-in-job | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `client-function-in-job` diagnostic (docs/react-coverage.md) |
 | 25 | fallback:event-capture | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `event-capture` diagnostic (docs/react-coverage.md) |
 | 26 | fallback:linked-prop-precompute | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `linked-prop-precompute` diagnostic (docs/react-coverage.md) |
 | 27 | fallback:slot-child-component | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `slot-child-component` diagnostic (docs/react-coverage.md) |
-| 28 | fallback:slot-child-shape | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `slot-child-shape` diagnostic (docs/react-coverage.md) |
+| 28 | fallback:slot-native | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `slot-native` diagnostic (docs/react-coverage.md) |
 | 29 | fallback:slot-owner | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `slot-owner` diagnostic (docs/react-coverage.md) |
 | 30 | fallback:use-id-in-render | compiler code | survey truth (compiler diagnostic) | 1 | 0 | 1 | 0 | `use-id-in-render` diagnostic (docs/react-coverage.md) |
 | 31 | rest-props spread | construct | census (construct present; blocks per the battery row in Why) | 0 | 0 | 0 | 398 | b-spread-child / a-spread-host: fallback:spread-props |
@@ -119,7 +119,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 |---|---|---|---|---|---|---|---|---|
 | accordion | measured | static | 1 | 11 (8) | 95 | 1 | external-component, island-children, island-prop, spread-props | built |
 | alert | measured | static | 0 | 4 (0) | 0 | 0 | — | built |
-| alert-dialog | measured | react | 1 | 30 (12) | 100 | 1 | context-island, external-component, island-children, island-prop, slot-child-component, slot-child-shape, slot-dynamic, spread-props | built |
+| alert-dialog | measured | react | 1 | 30 (12) | 100 | 1 | context-island, external-component, instance-prop-path, island-children, island-prop, nested-instance, slot-child-component, slot-dynamic, slot-native, spread-props | built |
 | aspect-ratio | measured | static | 0 | 4 (0) | 0 | 0 | — | built |
 | attachment | measured | static | 0 | 7 (0) | 0 | 0 | — | built |
 | avatar | measured | static | 2 | 8 (5) | 87 | 2 | external-component, instance-prop-path, island-prop, nested-instance, spread-props | built |
@@ -174,7 +174,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | slider | measured | static | 1 | 7 (4) | 93 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
 | sonner | measured | native | 1 | 4 (2) | 87 | 1 | external-component, hook-unsupported, island-prop, jsx-expression, prop-pattern, spread-props | built |
 | spinner | measured | static | 0 | 2 (0) | 0 | 1 | external-component, spread-props | built |
-| switch | measured | static | 1 | 13 (1) | 89 | 1 | children-rest | built |
+| switch | measured | static | 0 | 13 (0) | 10 | 0 | — | built |
 | table | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
 | tabs | measured | static | 1 | 9 (8) | 95 | 1 | external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
@@ -198,7 +198,7 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/accordion.tsx#accordionItem | external-component, island-prop, spread-props | 1 |
 | components/ui/accordion.tsx#accordionTrigger | external-component, island-prop, spread-props | 1 |
 | components/ui/alert-dialog.tsx#alertDialog | external-component, spread-props | 1 |
-| components/ui/alert-dialog.tsx#alertDialogAction | slot-child-shape, slot-dynamic | 1 |
+| components/ui/alert-dialog.tsx#alertDialogAction | instance-prop-path, nested-instance, slot-dynamic, slot-native | 1 |
 | components/ui/alert-dialog.tsx#alertDialogCancel | external-component, island-prop, slot-child-component, spread-props | 1 |
 | components/ui/alert-dialog.tsx#alertDialogContent | external-component, island-children, island-prop, spread-props | 1 |
 | components/ui/alert-dialog.tsx#alertDialogOverlay | external-component, island-prop, spread-props | 1 |
@@ -312,7 +312,6 @@ Each shadcn component declaration that falls back, with its codes and the number
 | components/ui/slider.tsx#slider | external-component, island-children, island-prop, nested-instance, spread-props | 1 |
 | components/ui/sonner.tsx#toaster | external-component, hook-unsupported, island-prop, jsx-expression, prop-pattern, spread-props | 1 |
 | components/ui/spinner.tsx#spinner | external-component, spread-props | 1 |
-| components/ui/switch.tsx#switch | children-rest | 1 |
 | components/ui/tabs.tsx#tabs | external-component, island-prop, spread-props | 1 |
 | components/ui/tabs.tsx#tabsContent | external-component, island-prop, spread-props | 1 |
 | components/ui/tabs.tsx#tabsList | external-component, island-prop, spread-props | 1 |

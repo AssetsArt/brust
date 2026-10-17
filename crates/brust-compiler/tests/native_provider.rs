@@ -1367,6 +1367,22 @@ fn a_components_own_scope_handed_on_unchanged_is_native_until_a_caller_passes_on
     }
 }
 
+// F356 (ruling 7a25d5e0): a caller that writes a literal `undefined` scope names no scope, so it stays native like a
+// caller that passes none; a scope that is any other expression still falls back (scope_fwd_pass above).
+#[test]
+fn a_literal_undefined_scope_names_no_scope_and_stays_native() {
+    let all = compile("scope_fwd_undef.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert!(
+        all.iter()
+            .all(|i| !has(&i.ir, DiagClass::Fallback, "context-scope")),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.diagnostics))
+            .collect::<Vec<_>>()
+    );
+}
+
 // switch-provider-chain PR2: a field destructured from a context and read in code printed as written prints as its hidden
 // prop, the name the chunk binds around that code (it printed as `flip` / `on`: unbound, a ReferenceError at the click
 // and in the effect).
@@ -1382,4 +1398,76 @@ fn a_destructured_context_field_in_code_printed_as_written_reads_its_hidden_prop
     assert!(js.contains("_flip())"), "{js}");
     assert!(!js.contains("=> flip()"), "{js}");
     assert!(!js.contains("title = on"), "{js}");
+}
+
+// switch-provider-chain PR3 (children-rest): a consumer passed as children travels in the root's rest into the trigger's
+// clone (F298), where the frames pass hands it the context value as the clone's own `__ctx_*` prop. The clone links it
+// (it follows the value) instead of letting it print the value once, which froze the value and kept the Provider React.
+#[test]
+fn a_consumer_handed_a_context_value_by_its_parent_is_linked() {
+    let all = compile("live_rest_kids.tsx");
+    for i in &all {
+        if i.ir.id.starts_with("lProvider_") && !i.ir.id.contains("_s") {
+            continue; // the Provider compiled on its own (state in its value) stays React; its clones are native
+        }
+        assert!(!is_react(&i.ir), "{}: {:?}", i.ir.id, i.ir.diagnostics);
+        assert!(
+            !i.ir.frozen_props.iter().any(|p| p.starts_with("__ctx_")),
+            "{}: {:?}",
+            i.ir.id,
+            i.ir.frozen_props
+        );
+    }
+    assert!(
+        all.iter()
+            .all(|i| !has(&i.ir, DiagClass::Fallback, "children-rest")),
+        "{:?}",
+        all.iter()
+            .map(|i| (&i.ir.id, &i.ir.diagnostics))
+            .collect::<Vec<_>>()
+    );
+}
+
+// The link is for the hidden key only: a context value an author passes under a key of their own keeps F319's
+// per-call-site answer (frozen; fine where the Provider's value does not change). Linked instead, the forwarding child
+// with a composed handler could not be linked (the shape of Radix's SwitchBubbleInput, which then held a React island).
+#[test]
+fn a_context_value_passed_under_an_authors_key_stays_frozen() {
+    let all = compile("live_rest_bubble.tsx");
+    for i in &all {
+        if i.ir.id.starts_with("lProvider_") && !i.ir.id.contains("_s") {
+            continue;
+        }
+        assert!(!is_react(&i.ir), "{}: {:?}", i.ir.id, i.ir.diagnostics);
+    }
+}
+
+// PR3 D1 (ruling: pinned, row F357): under a Provider whose value never changes, the consumer handed its context value by
+// its parent is linked all the same (a link that never fires; the output is the constant, as in React).
+#[test]
+fn a_consumer_under_a_constant_frame_is_linked_too() {
+    let all = compile("live_rest_const.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    let clone = all
+        .iter()
+        .find(|i| i.ir.rest_clone_of.is_some() && i.jinja.contains("x-props-bind"))
+        .unwrap_or_else(|| {
+            panic!(
+                "{:?}",
+                all.iter().map(|i| (&i.ir.id, &i.jinja)).collect::<Vec<_>>()
+            )
+        });
+    assert!(clone.jinja.contains("__ctx_"), "{}", clone.jinja);
+}
+
+// PR3 D2: a row value of a list the client re-creates, handed to a child that reads it where it would not follow a change,
+// refuses by name (`frozen-prop`): a row added on the client would keep the first row's value.
+#[test]
+fn a_row_value_of_a_state_list_into_a_frozen_prop_refuses() {
+    let all = compile("live_rest_rows.tsx");
+    assert!(
+        is_react(&all[0].ir) && has(&all[0].ir, DiagClass::Fallback, "frozen-prop"),
+        "{:?}",
+        all[0].ir.diagnostics
+    );
 }
