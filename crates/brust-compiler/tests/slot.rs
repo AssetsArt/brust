@@ -49,6 +49,31 @@ fn lower(file: &str, src: &str) -> Out {
     })
 }
 
+/// Whether the component whose id starts with `prefix` came out polymorphic (`ir.poly`) when compiled as a child of `src`.
+fn is_poly(file: &str, src: &str, prefix: &str) -> bool {
+    let s = src.to_string();
+    let path = format!("crates/brust-compiler/tests/fixtures/slot/{file}");
+    let prefix = prefix.to_string();
+    run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            &path,
+            Some(s.into_bytes()),
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap();
+        tree.iter()
+            .find(|c| c.ir.id.starts_with(&prefix))
+            .unwrap_or_else(|| panic!("{prefix}"))
+            .ir
+            .poly
+            .is_some()
+    })
+}
+
 fn render(jinja: &str) -> String {
     let mut env = minijinja::Environment::new();
     brust_jinja::register(&mut env);
@@ -63,7 +88,7 @@ fn render(jinja: &str) -> String {
 
 fn page(body: &str) -> String {
     format!(
-        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nimport Fed from './Fed'\nimport Carry from './Carry'\nimport Dsi from './Dsi'\nimport Bag from './Bag'\nexport default function P() {{ return <main>{body}</main> }}"
+        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nimport Fed from './Fed'\nimport Carry from './Carry'\nimport Dsi from './Dsi'\nimport Bag from './Bag'\nimport Carrier from './Carrier'\nimport Carrier2 from './Carrier2'\nimport CarrierIf from './CarrierIf'\nimport CarrierTwo from './CarrierTwo'\nimport CarrierPath from './CarrierPath'\nimport CarrierNamed from './CarrierNamed'\nimport CarrierOver from './CarrierOver'\nimport CarrierLoop from './CarrierLoop'\nimport CarrierBag from './CarrierBag'\nimport CarrierKids from './CarrierKids'\nimport CarrierEm from './CarrierEm'\nimport CarrierFlagRead from './CarrierFlagRead'\nexport default function P() {{ return <main>{body}</main> }}"
     )
 }
 
@@ -368,4 +393,129 @@ fn an_undefined_child_prop_overrides_the_slots() {
     let html = render(&o.jinja);
     assert!(!html.contains("id="), "{html}");
     assert!(html.contains("href=\"/x\""), "{html}");
+}
+
+/// F369a (Mellow F2, F3): a component that hands its whole rest to its one polymorphic child is polymorphic itself; the
+/// Slot replaces that child's element at the carrier's call site.
+#[test]
+fn a_carrier_of_the_flag_resolves_it_at_its_call_site() {
+    for body in [
+        "<Carrier asChild><b id=\"i\">x</b></Carrier>",
+        "<Carrier2 asChild><b id=\"i\">x</b></Carrier2>",
+    ] {
+        let o = lower("P.tsx", &page(body));
+        assert_eq!(o.tier, Tier::Static, "{body}: {:?}", o.diags);
+        let html = render(&o.jinja);
+        // React: Slot clones the <b> with the Chip element's attributes (data-slot, the carriers' data-*)
+        assert!(html.starts_with("<main><b "), "{body}: {html}");
+        assert!(!html.contains("<span"), "{body}: {html}");
+        for a in [
+            "data-slot=\"chip\"",
+            "data-tone=\"a\"",
+            "id=\"i\"",
+            ">x</b>",
+        ] {
+            assert!(html.contains(a), "{body}: {a} in {html}");
+        }
+    }
+    // without the flag the host element prints, through the carrier
+    let o = lower("P.tsx", &page("<Carrier2>t</Carrier2>"));
+    assert_eq!(o.tier, Tier::Static, "{:?}", o.diags);
+    let html = render(&o.jinja);
+    assert!(html.starts_with("<main><span "), "{html}");
+    assert!(
+        html.contains("data-size=\"m\"") && html.contains(">t</span>"),
+        "{html}"
+    );
+    // a component child goes through the carrier too (the Slot element's attributes are seen after inlining)
+    let o = lower(
+        "P.tsx",
+        &page("<Carrier asChild className=\"x\"><Link href=\"/g\">Go</Link></Carrier>"),
+    );
+    assert_eq!(o.tier, Tier::Static, "{:?}", o.diags);
+    let html = render(&o.jinja);
+    assert!(
+        html.contains("<a ") && html.contains("data-slot=\"chip\"") && html.contains("href=\"/g\""),
+        "{html}"
+    );
+}
+
+/// F369a: every way the flag could fail to reach the element unchanged keeps the old requirement (`slot-dynamic`).
+#[test]
+fn a_component_that_may_not_carry_the_flag_is_not_polymorphic() {
+    for (src, id, why) in [
+        (
+            "<CarrierIf asChild on><b>x</b></CarrierIf>",
+            "carrierIf_",
+            "(a) conditional",
+        ),
+        (
+            "<CarrierTwo asChild><b>x</b></CarrierTwo>",
+            "carrierTwo_",
+            "(a) two children",
+        ),
+        (
+            "<CarrierPath asChild><b>x</b></CarrierPath>",
+            "carrierPath_",
+            "(b) a path, not the rest",
+        ),
+        (
+            "<CarrierNamed asChild><b>x</b></CarrierNamed>",
+            "carrierNamed_",
+            "(b) the flag is a named prop",
+        ),
+        (
+            "<CarrierOver asChild><b>x</b></CarrierOver>",
+            "carrierOver_",
+            "(c) the flag written after",
+        ),
+        (
+            "<CarrierLoop asChild items={['a']}><b>x</b></CarrierLoop>",
+            "carrierLoop_",
+            "(a) in a list",
+        ),
+        (
+            "<CarrierBag asChild><b>x</b></CarrierBag>",
+            "carrierBag_",
+            "the element spreads keys known only at render",
+        ),
+        (
+            "<CarrierKids asChild><b>x</b></CarrierKids>",
+            "carrierKids_",
+            "the polymorphic child has children of its own",
+        ),
+        (
+            "<CarrierEm asChild><b>x</b></CarrierEm>",
+            "carrierEm_",
+            "a second consumer of the rest",
+        ),
+    ] {
+        assert!(!is_poly("P.tsx", &page(src), id), "{why}");
+        // and the call keeps today's answer: a literal flag the component cannot hand on is refused or harmless, never
+        // resolved as a Slot
+        let o = lower("P.tsx", &page(src));
+        assert!(!codes(&o).contains(&"lower-shape"), "{why}: {:?}", o.diags);
+        if id == "carrierKids_" || id == "carrierEm_" {
+            // React clones a different element than the caller's <b> here: the page must stay React
+            assert!(react_with(&o, "slot-dynamic"), "{why}: {:?}", o.diags);
+        }
+    }
+    // the ones that DO carry it (a read of the flag itself inside a carrier is allowed on purpose)
+    assert!(is_poly(
+        "P.tsx",
+        &page("<CarrierFlagRead asChild><b>x</b></CarrierFlagRead>"),
+        "carrierFlagRead_"
+    ));
+    for id in ["carrier_", "carrier2_"] {
+        assert!(
+            is_poly("P.tsx", &page("<Carrier2 asChild><b>x</b></Carrier2>"), id),
+            "{id}"
+        );
+    }
+    // callers that spread keys known only at render keep F153c
+    let o = lower(
+        "P.tsx",
+        "import Carrier from './Carrier'\nexport default function P(props: any) { return <main><Carrier {...props.attrs}>x</Carrier></main> }",
+    );
+    assert!(react_with(&o, "slot-dynamic"), "{:?}", o.diags);
 }

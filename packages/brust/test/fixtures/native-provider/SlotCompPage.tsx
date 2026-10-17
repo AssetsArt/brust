@@ -16,6 +16,14 @@ function Link({ children, className, ...props }: React.AnchorHTMLAttributes<HTML
   )
 }
 
+// F369a: components that only hand their whole rest to the one polymorphic child (Radix `RovingFocusGroup.Item` shape)
+function Carrier({ tone = 'a', ...rest }: { tone?: string } & React.ComponentProps<typeof Btn>) {
+  return <Btn data-tone={tone} {...rest} />
+}
+function Carrier2({ size = 'm', ...rest }: { size?: string } & React.ComponentProps<typeof Carrier>) {
+  return <Carrier data-size={size} {...rest} />
+}
+
 export default function SlotCompPage() {
   return (
     <main>
@@ -25,6 +33,13 @@ export default function SlotCompPage() {
         </Link>
       </Btn>
       <Btn>plain</Btn>
+      <Carrier2 asChild className="c">
+        <b id="carried">carried</b>
+      </Carrier2>
+      <Carrier2>plain carrier</Carrier2>
+      <Carrier asChild>
+        <Link href="/via-carrier">carrier link</Link>
+      </Carrier>
     </main>
   )
 }

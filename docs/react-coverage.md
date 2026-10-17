@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 234 | 123 | 18 | 93 | 0 | 0 | 0 | 0 |
+| B Composition | 236 | 125 | 18 | 93 | 0 | 0 | 0 | 0 |
 | C Hooks | 217 | 69 | 68 | 80 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 608 | 268 | 115 | 221 | 3 | 1 | 0 | 0 |
+| **Total** | 610 | 270 | 115 | 221 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -292,6 +292,8 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-aschild-two-children | asChild with two children | react | react | ssr | ok | 4.0 | fallback:slot-child-shape | shadcn S1.4 R34.31: fallback slot-child-shape |
 | b-aschild-component-child | asChild whose child is a component | react | react | ssr | ok | 4.0 | fallback:slot-child-component | shadcn S1.4 R34.31 (Q1): fallback slot-child-component; F363a: kept for a child that does not spread its props onto its element (b-aschild-component-spreads is the one that does) |
 | b-aschild-component-spreads | asChild whose child is a static component that spreads its props onto its element | static | static | 0 | ok | 0 | — | F363a (was slot-child-component): the component's element attributes reach the child as props (Radix Slot cloneElement), className joined slot-first; served == React in the Chromium test |
+| b-aschild-carrier | asChild on a component that only hands its whole rest to a polymorphic child (Radix RovingFocusGroup.Item shape) | static | static | 0 | ok | 0 | — | F369a (was slot-dynamic via absent_props, F153c): a unique, unconditional polymorphic child given the whole rest makes the carrier polymorphic; the Slot replaces that child's element at the carrier's call site |
+| b-aschild-carrier-conditional | the same carrier with the polymorphic child under a condition | react | react | ssr | ok | 4.0 | fallback:slot-dynamic | F369a fail closed (a): not unconditional, so not a carrier and the F153c requirement stands (slot-dynamic) |
 | b-aschild-component-style | asChild over a static component that brings a style | react | react | ssr | ok | 4.0 | fallback:slot-merge | F363a fail closed: the style merge is not done for a component child (slot-merge) |
 | b-aschild-child-handler | asChild whose child has an event handler | react | react | ssr | ok | 4.0 | fallback:slot-handler | shadcn S1.4 R34.31 (Q2): fallback slot-handler |
 | b-aschild-slot-handler | a handler passed to a component with asChild | react | react | ssr | ok | 4.0 | fallback:slot-handler | shadcn S1.4 R34.31 (Q2, Q4): fallback slot-handler until the parent-scope binding of S1.3 is on main |
@@ -305,7 +307,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-pkg-leaf-handler | the Radix Label source (a handler on Primitive.label) | static | static | 0 | ok | 4.6 | — | F153c: the page stays static; the Label is a native child (its double-click selection guard binds as x-on on the <label>) |
 | b-pkg-aschild-false | a package Primitive leaf with asChild={false} | static | static | 0 | ok | 0 | — | F153c: a literal false is the host element (the leaf spreads its props into Primitive.div, so it requires `asChild` absent or false) |
 | b-pkg-primitive-aschild | Primitive.button asChild with one host child, written in the app | static | static | 0 | ok | 0 | — | F153c R34.65: asChild on a Primitive tag merges into the one host child (the R34.28 Button rule) |
-| b-pkg-aschild-through-spread | asChild passed to a package leaf that spreads it into Primitive | react | react | ssr | ok | 4.0 | fallback:slot-dynamic | F153c fail closed (slot-dynamic): the leaf forwards asChild through {...props}; only absent/false compiles |
+| b-pkg-aschild-through-spread | asChild passed to a package leaf that spreads it into Primitive | static | static | 0 | ok | 0 | — | F369a (was F153c fail closed, slot-dynamic): the leaf hands its whole props to the one Primitive, so it is polymorphic itself and the Slot replaces the Primitive's element with the child at this call site |
 | b-pkg-hook-alias-use-size | the Radix useSize hook, whose useLayoutEffect is an exported SSR-guard alias of React's | native | native | 0 | ok | 4.6 | — | F268: `const useLayoutEffect = globalThis?.document ? React.useLayoutEffect : () => {}` (exported) is React's useLayoutEffect, by the module's own declaration, not by package name |
 | b-hook-alias-value-hook | an exported conditional alias of a hook that returns a value (useState or a no-op) | react | react | ssr | ok | 4.0 | fallback:hook-unsupported | F268 fail closed: only an effect hook (it returns nothing) can stand beside a no-op; useState would be undefined where the guard is false |
 | b-pkg-aschild-dynamic | a dynamic asChild on a package leaf | react | react | ssr | ok | 4.0 | fallback:slot-dynamic | F153c fail closed: slot-dynamic |
