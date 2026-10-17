@@ -9,11 +9,11 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
-| B Composition | 227 | 121 | 16 | 90 | 0 | 0 | 0 | 0 |
+| B Composition | 228 | 122 | 16 | 90 | 0 | 0 | 0 | 0 |
 | C Hooks | 213 | 66 | 67 | 80 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 597 | 263 | 112 | 218 | 3 | 1 | 0 | 0 |
+| **Total** | 598 | 264 | 112 | 218 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -182,6 +182,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-context-nested | two Providers of one context: the nearest wins | static | static | 0 | ok | 0 | — | S2 R34.102: frames are a stack (1, 2, then 1 again) |
 | b-context-wrapper | a consumer inside a wrapper component, under a Provider | static | static | 0 | ok | 0 | — | S2 R34.104: the need bubbles up through the wrapper and is filled where the Provider is |
 | b-context-rest-wrapper | a shadcn-style wrapper forwarding its ...rest into a Provider component | static | static | ssr | ok | 4.0 | — | S2: frame values must be literals (lead ruling on 84a4650a): this wrapper's Provider reads props, so it stays a React island (context-value; F174 narrows it); the page stays static |
+| b-render-prop-local-object | a state Provider calling its render prop with a local object that also holds a setter (Radix Switch) | static | static | 0 | ok | 5.0 | — | switch-provider-chain PR1: the call reads the object's members as its literal, so B7 splices the body (was: hook-return-shape, the Provider an island) |
 | b-context-helper | a Provider value computed by helpers of its own module, used from another module | static | static | 0 | ok | 0 | — | W1d progress-flip (ruling 2c9522ea, option C): a frame value that calls a helper proven plain (clamp) is not a literal, and a call site cannot substitute a call into a lowered frame (84a4650a cut stays), so the Provider's own native clone evaluates it: the page lowers, no island |
 | b-context-plain-call-field | a Provider field that is a call of a plain module function (pct: clamp(value)) | static | static | 0 | ok | 0 | info:build-eval-instance | W1d progress-flip: the Provider's native clone evaluates the call; the call site never prints it (mutation: with the rule off the call is substituted at the call site) |
 | b-context-fn-prop-passed | a Provider whose helper call may run a function prop (getValueLabel), called with a function | react | react | ssr | ok | 4.0 | fallback:frozen-prop, fallback:linked-prop-precompute, info:build-eval-instance | W1d progress-flip: a call site that passes the function freezes the prop (frozen-prop): the job would run the module default, so the page stays React (mutation: without callable_props frozen the page is native and prints the default label) |
