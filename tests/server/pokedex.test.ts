@@ -29,7 +29,7 @@ test('/: 200, document root, HeroSearch useId stable across two requests, all 18
   expect(chips.length).toBe(18)
   expect(chips[0]).toEqual(['normal', '#9099a1']); expect(chips[3]).toEqual(['electric', '#f5c84b'])
   // React child (S12): SSR HTML inside the host, its chunk linked, the runtime linked.
-  expect(html).toMatch(/<brust-island data-id="teamBuilder_[0-9a-f]{8}"(?: x-props='[^']*')?>[\s\S]*My team/)
+  expect(html).toMatch(/<brust-island style="display:contents" data-id="teamBuilder_[0-9a-f]{8}"(?: x-props='[^']*')?>[\s\S]*My team/)
   expect(html).toMatch(/data-testid="team-count"[^>]*>0</)
   const s = scripts(html)
   expect(s.some((u) => /\/_brust\/client\/runtime-[0-9a-f]{10}\.js$/.test(u))).toBe(true)

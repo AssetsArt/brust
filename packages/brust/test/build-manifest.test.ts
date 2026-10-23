@@ -114,7 +114,7 @@ test('the generated dist passes Manifest::load and renders through the real hand
   // Per-row child precompute: each row painted with ITS value (Review Focus 1).
   expect(html.match(/<li>([^<]*)<\/li>/g)?.map((s) => s.replace(/<[^>]+>/g, ''))).toEqual(['1.0€', '2.3€'])
   // React child ssr job on the parent (D6 outputs/target/props).
-  expect(html).toContain('<brust-island data-id="team_db295766"')
+  expect(html).toContain('<brust-island style="display:contents" data-id="team_db295766"')
   expect(html).toMatch(/<span>ann<\/span><span>bob<\/span>/)
   // m2a3 literals: the constant prop reaches the child's ssr through the manifest + worker merge.
   expect(html).toContain('<h3>crew</h3>')
@@ -154,7 +154,7 @@ test('cache(), a per-row react child and a client_only child map to S6 (and pass
 
   const html = await (await fetch(`${base}/list`)).text()
   expect(html.match(/<b>.*?<\/b>/g)).toEqual(['<b>Ann<!-- -->:<!-- -->0</b>', '<b>Bob<!-- -->:<!-- -->0</b>'])
-  expect(html).toContain(`<brust-island data-id="${clock}" x-props='{}'></brust-island>`)
+  expect(html).toContain(`<brust-island style="display:contents" data-id="${clock}" x-props='{}'></brust-island>`)
   expect(html).toContain(`/_brust/${m.components[clock].client}`)
   await beginDrain(1000)
 })

@@ -99,10 +99,11 @@ pub enum MemberDef {
     },
 }
 
-/// The react island host (S12): the runtime hydrates it from `x-props`; the SSR HTML sits inside.
+/// The react island host (S12): the runtime hydrates it from `x-props`; the SSR HTML sits inside. It takes no box
+/// (`display:contents`, like brust-host/brust-row/brust-if), so a flex/grid `gap` never counts the wrapper (F413).
 pub(crate) fn island_host(id: &str, props: &str, inner: &str) -> String {
     format!(
-        "<brust-island data-id=\"{id}\" x-props='{{{{ {props} | json_attr }}}}'>{inner}</brust-island>"
+        "<brust-island style=\"display:contents\" data-id=\"{id}\" x-props='{{{{ {props} | json_attr }}}}'>{inner}</brust-island>"
     )
 }
 
