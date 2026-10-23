@@ -299,6 +299,9 @@ pub struct Printer<'a, 'c> {
     raw_text: bool,
     /// The body of the element being opened, when it carries `dangerouslySetInnerHTML`.
     inner_html: Option<String>,
+    /// F267: the caller's ref cell this element takes (`Attr::ForwardRef`), printed after the attributes: `x-ref` on an
+    /// element the caller binds, `x-pref` on a nested host (its own instance binds it; the caller's binds `x-pref`).
+    fwd_ref: Option<String>,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -331,6 +334,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             blank: false,
             raw_text: false,
             inner_html: None,
+            fwd_ref: None,
         })
     }
 
@@ -897,6 +901,14 @@ impl<'a, 'c> Printer<'a, 'c> {
         if let Some(m) = &model {
             open.push_str(&format!(" x-model=\"{m}\""));
         }
+        if let Some(n) = self.fwd_ref.take() {
+            // this element is an instance host (its `x-data` is inserted below) when it is the host root
+            let host = *host && root && self.native;
+            open.push_str(&format!(
+                " {}=\"{n}\"",
+                if host { "x-pref" } else { "x-ref" }
+            ));
+        }
         // A lone reactive slot child puts x-text on this element (Review Focus 1).
         let lone = matches!(children.as_slice(), [Node::Slot(_)]);
         let mut body = String::new();
@@ -1180,7 +1192,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 if let Some(i) = &self.inline
                     && let Some(n) = i.ref_binding()
                 {
-                    open.push_str(&format!(" x-ref=\"{n}\""));
+                    self.fwd_ref = Some(n.to_string());
                 }
             }
             Attr::Spread(_) => {}
@@ -1711,7 +1723,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                 .is_some_and(|r| self.f.deps(r, &self.scope()).reactive())
                 || ((self.ctx.linked)(&self.f.ir.id)
                     && self.reactive(src_raw.as_ref(), source).is_some())
-                || body.iter().any(|b| needs_directives(b, &self.f, !module)));
+                || body.iter().any(|b| needs_directives(b, &self.f, !module))
+                // F406: the client creates and refills the rows of a list inside a client list from the outer row's
+                // item, so the inner list is a client list too (its text directives read the inner binding).
+                || self.frames.iter().any(|fr| fr.directive));
         let var = {
             let own = self.seeds.of(self.f.ir);
             let root = self.seeds.of(self.inst_ir);

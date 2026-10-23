@@ -43,6 +43,12 @@ pub struct BodyDecls {
     pub uses_collection: bool,
     /// F329: the `useRef` cells nothing reads (every use is a component's `ref` prop).
     pub sink_refs: Vec<String>,
+    /// F288 G9: render-time `ref.current = v` statements, judged by the `render_ref_writes` pass.
+    pub render_ref_writes: Vec<crate::ir::RenderRefWrite>,
+    /// F288 G9: the deps array of each `useCallback` binding (`None`: no deps argument).
+    pub callback_deps: Vec<(String, Option<Vec<RawExpr>>)>,
+    /// F288 (Mellow F2): how many branches of an early-return chain the statements being read sit in (0: every render).
+    branch_depth: u32,
     pub return_expr: Option<Expr>,
     /// `useStore(handle)` bindings in source order (M3-F D7).
     pub stores: Vec<StoreUse>,
@@ -719,6 +725,7 @@ fn read_stmts(
     m: Module<'_, '_>,
 ) -> Option<Option<RawExpr>> {
     let mut returned = None;
+    let mut branched = 0;
     for (i, stmt) in stmts.iter().enumerate() {
         let loc = stmt.loc.start.max(0) as u32;
         // After the return only hoisted function declarations still mean
@@ -835,6 +842,9 @@ fn read_stmts(
                     && ends_with_return(&ifs.yes)
                     && ifs.no.as_ref().is_none_or(ends_with_return_or_throw) =>
             {
+                // both arms (and what follows the `if`) run on some renders only
+                out.branch_depth += 1;
+                branched += 1;
                 let test = r.expr(&ifs.test);
                 let before = out.derived.len();
                 let yes_stmts = branch_stmts(&ifs.yes);
@@ -971,6 +981,7 @@ fn read_stmts(
             ),
         }
     }
+    out.branch_depth -= branched;
     returned
 }
 
@@ -1121,6 +1132,11 @@ fn simple_hook(
                 Some(a) => r.expr(a),
                 None => undefined_at(vloc),
             };
+            let deps = args.get(1).map(|d| match &d.data {
+                E::EArray(a) => a.items.iter().map(|x| r.expr(x)).collect(),
+                _ => vec![r.expr(d)],
+            });
+            out.callback_deps.push((name.clone(), deps));
             out.handlers.push(HandlerDecl {
                 name,
                 body,
@@ -1532,6 +1548,17 @@ fn nested_hooks_in(
             continue;
         }
         if let Some((hook, _)) = hook_target(&call.target, names) {
+            // F288: React's element functions are not hooks. An element is a value brust has no runtime form for: refused
+            // by name; a call-site clone that folds every use of it (the element-value model) drops this refusal.
+            if matches!(hook.as_str(), "cloneElement" | "isValidElement") {
+                out.fallback(
+                    "element-value",
+                    format!("`{hook}` reads a React element as a value"),
+                    loc_of(e),
+                    "render the element where it is written, or keep this component in React",
+                );
+                continue;
+            }
             out.fallback(
                 if hook == "useId" {
                     "hook-in-expression"
@@ -2594,6 +2621,36 @@ fn read_expr_stmt(
             vloc,
             "move this component to React, or replace the hook with useState/useEffect",
         ),
+        // F288 G9: `r.current = v` on a `useRef` of this component is judged later, by the closed rule (Mellow A2); in a
+        // branch of an early-return chain it runs on some renders only (rule 2: `ref-in-render`, Mellow F2).
+        None if out.branch_depth > 0
+            && let E::EBinary(b) = &value.data
+            && matches!(b.op, js_ast::OpCode::BinAssign)
+            && let E::EDot(d) = &b.left.data
+            && d.name.slice() == b"current" =>
+        {
+            out.fallback(
+                "ref-in-render",
+                "a ref is written during render after an early return, so only on some renders"
+                    .into(),
+                vloc,
+                "write the ref in an effect or an event handler",
+            )
+        }
+        None if let E::EBinary(b) = &value.data
+            && matches!(b.op, js_ast::OpCode::BinAssign)
+            && let E::EDot(d) = &b.left.data
+            && d.name.slice() == b"current"
+            && let RawKind::Ident { name, .. } = r.expr(&d.target).kind
+            && out.refs.iter().any(|x| x.name == name) =>
+        {
+            let value = r.expr(&b.right);
+            out.render_ref_writes.push(crate::ir::RenderRefWrite {
+                r#ref: name,
+                value,
+                loc: vloc,
+            });
+        }
         None => out.fallback(
             "body-shape",
             "expression statement in component body (side effect during render)".into(),

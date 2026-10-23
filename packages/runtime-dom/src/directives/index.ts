@@ -16,10 +16,20 @@ export function walkChildren(inst: Instance, el: Element, scope: Scope): void {
   for (const child of Array.from(el.children)) {
     if ('__scope' in child) continue                          // x-for row: already bound with its own scope
     if (child.hasAttribute('x-for')) { bindElement(inst, child, scope); continue } // x-for owns the element (even when it is also a host)
-    if (child.hasAttribute(HOST_ATTR)) continue               // nested host: its own instance binds it
+    if (child.hasAttribute(HOST_ATTR)) {                       // nested host: its own instance binds it,
+      const pref = child.getAttribute('x-pref')                // but the ref its caller passed is the caller's (F267/F288)
+      if (pref) bindRef(inst, child, pref)
+      continue
+    }
     bindElement(inst, child, scope)
     if (!child.hasAttribute('x-if')) walkChildren(inst, child, scope)   // x-if owns its subtree
   }
+}
+/** `x-ref` / `x-pref`: the instance's ref cell `name` holds `el` while it is bound. */
+export function bindRef(inst: Instance, el: Element, name: string): void {
+  const r = inst.ref(name.trim())
+  r.current = el as HTMLElement
+  inst.onCleanup(() => { if (r.current === el) r.current = null })
 }
 export function bindElement(inst: Instance, el: Element, scope: Scope): void {
   // Structural directives own the element: x-for/x-if re-create it from a template, so the

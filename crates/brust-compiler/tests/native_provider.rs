@@ -134,7 +134,11 @@ fn call_sites_with_different_text_share_one_factory_module_and_keep_their_own_id
 
 #[test]
 fn shapes_the_splice_cannot_carry_keep_the_island_provider_and_say_why() {
-    for (file, why) in [("local.tsx", "declared in the module")] {
+    // F288: a component of the module that renders the content is named from the clone; one that needs React is not
+    for (file, why) in [(
+        "local_react.tsx",
+        "is, or holds, a React island in the content",
+    )] {
         let all = compile(file);
         assert!(clones(&all).is_empty(), "{file}: nothing was specialised");
         let root = &all[0];
@@ -157,6 +161,23 @@ fn shapes_the_splice_cannot_carry_keep_the_island_provider_and_say_why() {
             "{file}"
         );
     }
+}
+
+#[test]
+fn a_component_declared_in_the_rendering_module_is_named_from_the_clone() {
+    // F288 (was refused "declared in the module that renders it"): the clone reads `<Local>` from local.tsx by its
+    // local name; it prints as written.
+    let all = compile("local.tsx");
+    assert_eq!(
+        clones(&all).len(),
+        1,
+        "{:?}",
+        all.iter().map(|i| &i.ir.id).collect::<Vec<_>>()
+    );
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert!(root.jinja.contains("<i>local</i>"), "{}", root.jinja);
+    assert!(!root.jinja.contains("brust-island"), "{}", root.jinja);
 }
 
 #[test]

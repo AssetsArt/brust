@@ -86,35 +86,35 @@
     },
     "npm/core-cf": {
       "name": "@brust/core-cf",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
     },
     "npm/darwin-arm64": {
       "name": "@brust/native-darwin-arm64",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
     },
     "npm/darwin-x64": {
       "name": "@brust/native-darwin-x64",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
     },
     "npm/linux-arm64-gnu": {
       "name": "@brust/native-linux-arm64-gnu",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
     },
     "npm/linux-arm64-musl": {
       "name": "@brust/native-linux-arm64-musl",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
     },
     "npm/linux-x64-gnu": {
       "name": "@brust/native-linux-x64-gnu",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
     },
     "npm/linux-x64-musl": {
       "name": "@brust/native-linux-x64-musl",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
     },
     "packages/brust": {
       "name": "@brust/core",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
       "bin": {
         "brust": "./bin/brust",
       },
@@ -126,6 +126,7 @@
         "@elysia/eden": "2.0.0-rc.0",
         "@napi-rs/cli": "^3.0.0",
         "@radix-ui/react-collection": "1.2.0",
+        "@radix-ui/react-presence": "1.1.11",
         "@radix-ui/react-slot": "1.5.0",
         "@types/bun": "^1.4.0",
         "@types/react": "^19.2.0",
@@ -157,7 +158,7 @@
     },
     "packages/cache-cloudflare": {
       "name": "@brust/cache-cloudflare",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
       "devDependencies": {
         "@brust/core": "workspace:*",
         "@types/bun": "^1.4.0",
@@ -169,7 +170,7 @@
     },
     "packages/cache-redis": {
       "name": "@brust/cache-redis",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
       "devDependencies": {
         "@brust/core": "workspace:*",
         "@types/bun": "^1.4.0",
@@ -181,7 +182,7 @@
     },
     "packages/create-app": {
       "name": "@brust/create-app",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
       "bin": {
         "create-app": "./bin/create-app.ts",
       },
@@ -192,7 +193,7 @@
     },
     "packages/runtime-dom": {
       "name": "@brust/runtime-dom",
-      "version": "2.0.0-alpha.21",
+      "version": "2.0.0-alpha.22",
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.0.0",
         "@types/bun": "^1.4.0",
