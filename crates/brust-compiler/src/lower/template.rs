@@ -1624,6 +1624,28 @@ impl<'a, 'c> Printer<'a, 'c> {
         let attr = format!(" x-if=\"{d}\"{}", if hidden { " hidden" } else { "" });
         match (ns, ss) {
             ([n @ Node::Element { .. }], [s]) => self.element(n, s, false, Some(&attr)),
+            // F388: a branch that is one slot (the falsy left of `left && <X/>`) binds its text on the branch wrapper
+            // itself: no `<span>` that React does not render (a `false` / `undefined` left leaves an empty wrapper,
+            // which `display:contents` keeps out of the layout).
+            ([e @ Node::Slot(_)], [s]) => {
+                let Node::Slot(e) = e else { unreachable!() };
+                let mut text = String::new();
+                std::mem::swap(&mut text, &mut self.out);
+                let bound = self.slot(e, Some(s), true);
+                std::mem::swap(&mut text, &mut self.out);
+                let x_text = bound
+                    .as_ref()
+                    .map_or(String::new(), |d| format!(" x-text=\"{d}\""));
+                // Afrojack (F388 review): an inline `display:contents` beats the `[hidden]` rule, so the hidden copy holds
+                // no text (the left is truthy there; React prints nothing). x-text fills it when the branch shows; a slot
+                // nothing binds (a `{children}` markup slot) keeps its content, which the client clones on show.
+                if hidden && bound.is_some() {
+                    text.clear();
+                }
+                self.out.push_str(&format!(
+                    "<brust-if style=\"display:contents\"{attr}{x_text}>{text}</brust-if>"
+                ));
+            }
             _ => {
                 self.out
                     .push_str(&format!("<brust-if style=\"display:contents\"{attr}>"));

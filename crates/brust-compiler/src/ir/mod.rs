@@ -372,6 +372,10 @@ pub struct ComponentIR {
     /// subtree hydrates standalone, so a lowered context Provider above it cannot reach it (S2, F3).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub holds_island: bool,
+    /// F388 (Mellow N1): this component prints its `{children}` in an element whose content model takes no text (a table
+    /// part, a select), directly or through a component that does (any depth: each component records it for its callers).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub children_no_text: bool,
     /// Keys a call site must not write at all, not even as a literal `false` (F164, R34.83): this component spreads
     /// its props into a fed child whose job reads them, and a spread cannot feed a job input.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -588,6 +592,7 @@ impl ComponentIR {
             bound_names: Default::default(),
             module_effect: None,
             holds_island: false,
+            children_no_text: false,
             unwritten_props: Vec::new(),
             shadowed_props: Vec::new(),
             shadowed_input: Vec::new(),

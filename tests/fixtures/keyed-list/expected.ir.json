@@ -320,7 +320,30 @@
                             }
                           }
                         ],
-                        "else_": [],
+                        "else_": [
+                          {
+                            "Slot": {
+                              "Server": {
+                                "loc": 449,
+                                "kind": {
+                                  "Member": {
+                                    "target": {
+                                      "loc": 449,
+                                      "kind": {
+                                        "Ident": {
+                                          "name": "todo",
+                                          "kind": "LoopBinding"
+                                        }
+                                      }
+                                    },
+                                    "name": "done",
+                                    "optional": false
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        ],
                         "and": true
                       }
                     }
