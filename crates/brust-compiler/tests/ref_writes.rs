@@ -201,3 +201,13 @@ fn a_written_object_is_never_a_stable_source() {
         assert!(matches!(t, Tier::React { .. }), "{why}: {t:?} {rules:?}");
     }
 }
+
+#[test]
+fn a_write_after_an_early_return_is_ref_in_render() {
+    // Mellow F2: with `on` false React's effect sees `undefined`; the write runs on some renders only (A2 rule 2).
+    let (t, rules, _) = compile(&format!(
+        "{HEAD}export default function F({{ on }}: any) {{ const [n, setN] = useState(0); const r = useRef<any>(undefined)\nuseEffect(() => {{ setN(r.current ? 1 : 2) }}, [])\nif (!on) return <p>{{n}}</p>\nr.current = 'x'\nreturn <p>{{n}}!</p> }}"
+    ));
+    assert!(matches!(t, Tier::React { .. }), "{t:?} {rules:?}");
+    assert!(rules.iter().any(|r| r == "ref-in-render"), "{rules:?}");
+}

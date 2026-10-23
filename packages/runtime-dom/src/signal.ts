@@ -1,7 +1,7 @@
 // A small push-pull reactive core. Signals push "dirty" to subscribers; computeds pull lazily.
 type Subscriber = { mark(): void; deps: Set<Node> }
 type Node = { subs: Set<Subscriber> }
-type Runnable = { disposed: boolean; run(): void; post?: boolean }
+type Runnable = { disposed: boolean; run(): void; tier?: number; id?: number }
 interface ReactiveCtx { currentSub: Subscriber | null; batchDepth: number; pending: Set<Runnable> }
 
 const CTX = Symbol.for('brust.reactive.ctx')          // M3-F C7
@@ -23,13 +23,13 @@ function flush() {
   if (ctx.batchDepth > 0) return
   const pending = ctx.pending
   while (pending.size) {
-    const batch = Array.from(pending)
-    // F288: a `post` effect (`useLayoutEffect`) re-runs only once every other effect of the change has run, so it reads
-    // the DOM after every binding updated it: React's commit, then layout effects.
-    const now = batch.filter((e) => !e.post)
-    const run = now.length ? now : batch
-    for (const e of run) pending.delete(e)
-    for (const e of run) if (!e.disposed) e.run()
+    // F288 (ruling 94404307 amended): a re-run follows React's commit order: every binding of the change (tier 0, in
+    // notify order), then compiled layout effects (1), then compiled passive effects (2), each in declaration order.
+    const all = Array.from(pending)
+    const t = Math.min(...all.map((e) => e.tier || 0))
+    // a stable sort: bindings (t = 0) keep their notify order
+    const run = all.filter((e) => (e.tier || 0) === t).sort((a, b) => t && a.id! - b.id!)
+    for (const e of run) pending.delete(e), e.disposed || e.run()
   }
 }
 
@@ -72,9 +72,11 @@ export function computed<T>(fn: () => T): Computed<T> {
 // Cleanups run untracked: a read inside one must not subscribe whichever effect is running around it.
 function runCleanup(c: () => void) { const prev = ctx.currentSub; ctx.currentSub = null; try { c() } finally { ctx.currentSub = prev } }
 
+let ids = 0
 class EffectImpl implements Subscriber {
   deps = new Set<Node>(); disposed = false; cleanup: void | (() => void) = undefined
-  constructor(private fn: () => void | (() => void), readonly post = false) {}
+  readonly id = ++ids
+  constructor(private fn: () => void | (() => void), readonly tier = 0) {}
   mark() { ctx.pending.add(this) }
   run() {
     if (this.disposed) return
@@ -91,8 +93,9 @@ class EffectImpl implements Subscriber {
   }
 }
 
-export function effect(fn: () => void | (() => void), post = false): Dispose {
-  const e = new EffectImpl(fn, post)
+/** `tier`: 0 a binding, 1 a compiled layout effect, 2 a compiled passive effect (the order of re-runs). */
+export function effect(fn: () => void | (() => void), tier = 0): Dispose {
+  const e = new EffectImpl(fn, tier)
   try { e.run() } catch (x) { e.dispose(); throw x }   // F98: a first run that throws must not stay subscribed
   return () => e.dispose()
 }

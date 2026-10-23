@@ -142,7 +142,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | command | measured | static | 1 | 16 (14) | 105 | 1 | external-component, island-prop, spread-props | built |
 | context-menu | measured | static | 1 | 13 (11) | 117 | 1 | external-component, island-children, island-prop, spread-props | built |
 | dialog | measured | react | 1 | 27 (10) | 101 | 1 | context-island, external-component, island-children, island-prop, nested-instance, slot-native, spread-props | built |
-| direction | measured | static | 1 | 3 (1) | 70 | 1 | context-value | built |
+| direction | measured | static | 1 | 3 (1) | 71 | 1 | context-value | built |
 | drawer | measured | static | 1 | 20 (16) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
 | dropdown-menu | measured | static | 1 | 18 (15) | 118 | 1 | external-component, island-children, island-prop, spread-props | built |
 | empty | measured | static | 0 | 8 (0) | 0 | 0 | — | built |

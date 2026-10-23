@@ -27,7 +27,7 @@ export class Instance {
    * first paint, linked to its parent's current value): its first bind is not a first paint, so no tripwire. */
   reseeded = false
   /** Effects the component declared while its factory ran: they start once the instance is bound (x-ref, x-on), like React's commit (F97). */
-  private pending: Array<[() => void | (() => void), Dispose?, boolean?]> | null = []
+  private pending: Array<[() => void | (() => void), Dispose?, number?]> | null = []
 
   constructor(public host: HTMLElement, public name: string, public parent: Instance | null, initialProps: Record<string, unknown>) {
     this.props = signal(initialProps)
@@ -35,13 +35,15 @@ export class Instance {
     if (typeof __BRUST_DEV__ !== 'undefined' && __BRUST_DEV__) devTrack(this, true)
   }
 
-  effect(fn: () => void | (() => void), post = false): Dispose {
-    const d = coreEffect(fn, post); this.disposers.push(d); return d
+  effect(fn: () => void | (() => void), tier = 0): Dispose {
+    const d = coreEffect(fn, tier); this.disposers.push(d); return d
   }
-  /** `ctx.effect`: deferred until `start()` while the factory runs, immediate afterwards. `post`: a layout effect (F288). */
-  private componentEffect(fn: () => void | (() => void), post = false): Dispose {
-    if (!this.pending) return this.effect(fn, post)
-    const q: [() => void | (() => void), Dispose?, boolean?] = [fn, undefined, post]
+  /** `ctx.effect`: deferred until `start()` while the factory runs, immediate afterwards. A compiled effect re-runs after
+   * the bindings: layout (`layout` true) before passive (F288, ruling 94404307 amended). */
+  private componentEffect(fn: () => void | (() => void), layout = false): Dispose {
+    const tier = layout ? 1 : 2
+    if (!this.pending) return this.effect(fn, tier)
+    const q: [() => void | (() => void), Dispose?, number?] = [fn, undefined, tier]
     this.pending.push(q)
     return () => { q[0] = () => {}; q[1]?.() }
   }
@@ -70,7 +72,7 @@ export class Instance {
     return r as { current: E | null }
   }
   ctx(): BehaviorCtx {
-    return { el: this.host, props: this.props, effect: (fn, post) => this.componentEffect(fn, post), onCleanup: (fn) => this.onCleanup(fn), ref: (n, init) => this.ref(n, init), late: this.late, items: () => collectionHooks.items(this.host) }
+    return { el: this.host, props: this.props, effect: (fn, layout) => this.componentEffect(fn, layout), onCleanup: (fn) => this.onCleanup(fn), ref: (n, init) => this.ref(n, init), late: this.late, items: () => collectionHooks.items(this.host) }
   }
   init(factory: BehaviorFactory): void {
     const m = factory(this.ctx())

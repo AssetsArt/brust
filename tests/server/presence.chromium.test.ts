@@ -105,3 +105,22 @@ test('the toggle runs Presence: present follows open, and an exit animation hold
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)
+
+test('Mellow F1: a layout effect that writes runs before a passive effect that reads it on every re-run, as in React', async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
+  await page.goto(`${base}/le`, { waitUntil: 'networkidle' })
+  const t = (id: string) => page.getByTestId(id).innerText()
+  // mount: layout wrote v0 before the passive effect read it (React: the same)
+  await page.waitForFunction(() => (document.querySelector('[data-testid="seen"]') as HTMLElement).innerText === 'v0')
+  for (const k of [1, 2, 3]) {
+    await page.getByTestId('inc').click()
+    await page.waitForFunction((w) => (document.querySelector('[data-testid="n"]') as HTMLElement).innerText === w, String(k))
+    await page.waitForFunction((w) => (document.querySelector('[data-testid="seen"]') as HTMLElement).innerText === w, `v${k}`)
+    expect(await t('seen')).toBe(`v${k}`)
+  }
+  expect(errors).toEqual([])
+  await page.close()
+}, 60_000)
+

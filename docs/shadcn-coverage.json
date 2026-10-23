@@ -939,7 +939,7 @@
       "islands": 1,
       "components": 3,
       "reactComponents": 1,
-      "jsGzipKb": 70,
+      "jsGzipKb": 71,
       "workerCalls": 1,
       "codes": [
         "context-value"

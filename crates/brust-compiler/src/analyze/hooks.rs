@@ -47,6 +47,8 @@ pub struct BodyDecls {
     pub render_ref_writes: Vec<crate::ir::RenderRefWrite>,
     /// F288 G9: the deps array of each `useCallback` binding (`None`: no deps argument).
     pub callback_deps: Vec<(String, Option<Vec<RawExpr>>)>,
+    /// F288 (Mellow F2): how many branches of an early-return chain the statements being read sit in (0: every render).
+    branch_depth: u32,
     pub return_expr: Option<Expr>,
     /// `useStore(handle)` bindings in source order (M3-F D7).
     pub stores: Vec<StoreUse>,
@@ -723,6 +725,7 @@ fn read_stmts(
     m: Module<'_, '_>,
 ) -> Option<Option<RawExpr>> {
     let mut returned = None;
+    let mut branched = 0;
     for (i, stmt) in stmts.iter().enumerate() {
         let loc = stmt.loc.start.max(0) as u32;
         // After the return only hoisted function declarations still mean
@@ -839,6 +842,9 @@ fn read_stmts(
                     && ends_with_return(&ifs.yes)
                     && ifs.no.as_ref().is_none_or(ends_with_return_or_throw) =>
             {
+                // both arms (and what follows the `if`) run on some renders only
+                out.branch_depth += 1;
+                branched += 1;
                 let test = r.expr(&ifs.test);
                 let before = out.derived.len();
                 let yes_stmts = branch_stmts(&ifs.yes);
@@ -975,6 +981,7 @@ fn read_stmts(
             ),
         }
     }
+    out.branch_depth -= branched;
     returned
 }
 
@@ -2614,7 +2621,22 @@ fn read_expr_stmt(
             vloc,
             "move this component to React, or replace the hook with useState/useEffect",
         ),
-        // F288 G9: `r.current = v` on a `useRef` of this component is judged later, by the closed rule (Mellow A2).
+        // F288 G9: `r.current = v` on a `useRef` of this component is judged later, by the closed rule (Mellow A2); in a
+        // branch of an early-return chain it runs on some renders only (rule 2: `ref-in-render`, Mellow F2).
+        None if out.branch_depth > 0
+            && let E::EBinary(b) = &value.data
+            && matches!(b.op, js_ast::OpCode::BinAssign)
+            && let E::EDot(d) = &b.left.data
+            && d.name.slice() == b"current" =>
+        {
+            out.fallback(
+                "ref-in-render",
+                "a ref is written during render after an early return, so only on some renders"
+                    .into(),
+                vloc,
+                "write the ref in an effect or an event handler",
+            )
+        }
         None if let E::EBinary(b) = &value.data
             && matches!(b.op, js_ast::OpCode::BinAssign)
             && let E::EDot(d) = &b.left.data
