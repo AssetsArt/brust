@@ -103,6 +103,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         guard_depth: 0,
         slot_depth: 0,
         spec_salt: (ir.rest_clone_of.is_some() || ir.specialised).then(|| ir.id.clone()),
+        no_text: false,
         mount_once: Vec::new(),
         frozen: BTreeSet::new(),
         callable_up: BTreeSet::new(),
@@ -127,6 +128,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         fused: Vec::new(),
         fused_counts: HashMap::new(),
         holds_island: false,
+        children_no_text: false,
         provider_locs: Default::default(),
         next_owner: 0,
         native_props: Vec::new(),
@@ -375,6 +377,7 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     ir.build_eval_instances.extend(w.eval_instances);
     ir.folded_instances.extend(w.folded_instances);
     ir.holds_island |= w.holds_island;
+    ir.children_no_text |= w.children_no_text || children_in_no_text(&ir.template, false);
     ir.children.extend(w.refs);
     ir.absent_props = w.absent.iter().cloned().collect();
     ir.forwarded_ref_nulled |= w.ref_nulled;
@@ -390,6 +393,8 @@ pub fn children(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
 }
 
 struct Walker<'s, 'c> {
+    /// F388 (Mellow N1): the node being read sits directly in an element whose content model takes no text.
+    no_text: bool,
     /// Foldable module `const` initializers by name (see `children`).
     module_consts: Rc<HashMap<String, RawExpr>>,
     st: &'s mut PassState,
@@ -448,6 +453,8 @@ struct Walker<'s, 'c> {
     absent: BTreeSet<String>,
     /// S2 F3: a child of this template is a React island, or holds one.
     holds_island: bool,
+    /// F388 (Mellow N1): a `{children}` of this component reaches a child that prints its children where no text can sit.
+    children_no_text: bool,
     /// S2: component instances that push a Provider frame.
     provider_locs: std::collections::BTreeSet<u32>,
     /// R34.116: the number of native Provider instances met so far (their frame owner ids).
@@ -2725,12 +2732,72 @@ fn react(reason: &str) -> Tier {
     }
 }
 
+/// F388 (Mellow N1): a child template whose root (through fragments and its `brust-host` wrapper) is a `left && <X/>`
+/// that keeps the else branch printing `left`. By the time the caller reads it, `left` may be a server expression, so
+/// the shape is the `&&` branch with one slot as its else.
+fn falsy_left_root(n: &Node) -> bool {
+    match n {
+        Node::Fragment(ns) => ns.iter().any(falsy_left_root),
+        Node::Element { tag, children, .. } if tag == "brust-host" => {
+            children.iter().any(falsy_left_root)
+        }
+        Node::If {
+            and: true, else_, ..
+        } => matches!(else_.as_slice(), [Node::Slot(_)]),
+        _ => false,
+    }
+}
+
+/// F388 (Mellow N1): call-site content that is (through fragments and branches) the component's own `{children}`.
+fn passes_children(n: &Node) -> bool {
+    match n {
+        Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => {
+            matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children")
+        }
+        Node::Fragment(ns) => ns.iter().any(passes_children),
+        Node::If { then, else_, .. } => then.iter().chain(else_).any(passes_children),
+        _ => false,
+    }
+}
+
+/// F388 (Mellow N1): the template prints `{children}` directly in an element that takes no text (its `brust-host` wrapper
+/// and fragments, branches and lists are transparent; a component it renders them through counts as the same element).
+fn children_in_no_text(n: &Node, no_text: bool) -> bool {
+    match n {
+        Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => {
+            no_text
+                && matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children")
+        }
+        Node::Element { tag, children, .. } => {
+            let nt = if tag == "brust-host" {
+                no_text
+            } else {
+                crate::analyze::component::NO_TEXT.contains(&tag.as_str())
+            };
+            children.iter().any(|c| children_in_no_text(c, nt))
+        }
+        Node::Component { children, .. } | Node::Fragment(children) => {
+            children.iter().any(|c| children_in_no_text(c, no_text))
+        }
+        Node::If { then, else_, .. } => then
+            .iter()
+            .chain(else_)
+            .any(|c| children_in_no_text(c, no_text)),
+        Node::For { body, .. } => body.iter().any(|c| children_in_no_text(c, no_text)),
+        _ => false,
+    }
+}
+
 impl Walker<'_, '_> {
     fn node(&mut self, n: &mut Node) {
         match n {
-            Node::Element { children, .. } | Node::Fragment(children) => {
-                children.iter_mut().for_each(|c| self.node(c))
+            Node::Element { tag, children, .. } => {
+                let saved = self.no_text;
+                self.no_text = crate::analyze::component::NO_TEXT.contains(&tag.as_str());
+                children.iter_mut().for_each(|c| self.node(c));
+                self.no_text = saved;
             }
+            Node::Fragment(children) => children.iter_mut().for_each(|c| self.node(c)),
             Node::If { then, else_, .. } => {
                 self.guard_depth += 1;
                 then.iter_mut().for_each(|c| self.node(c));
@@ -5509,6 +5576,34 @@ impl Walker<'_, '_> {
             }
         };
         *tier = child.tier.clone();
+        // F388 (Mellow N1): a `left && <X/>` that prints its falsy `left` must not land in an element that takes no text
+        // (a table part, a select), across a component boundary either way: the child's root `&&` in an element of THIS
+        // template, or a `&&` given as children that the child prints in such an element of ITS template.
+        if let Some(c) = child.ir.as_deref() {
+            let at = if self.no_text && falsy_left_root(&c.template) {
+                Some(format!(
+                    "<{name}> renders `left && <X/>` at its root, here inside an element that takes no text"
+                ))
+            } else if children.iter().any(falsy_left_root) && c.children_no_text {
+                Some(format!(
+                    "<{name}> prints the `left && <X/>` given as its children inside an element that takes no text"
+                ))
+            } else {
+                None
+            };
+            // This component's own `{children}`, handed to such a child, lands there too.
+            if c.children_no_text && children.iter().any(passes_children) {
+                self.children_no_text = true;
+            }
+            if let Some(at) = at {
+                self.diagnostics.push(Diagnostic::fallback(
+                    crate::analyze::component::AND_FALSY_IN_TABLE,
+                    format!("{at} (a table part or a select), and `left` may be a number React would print there"),
+                    *loc,
+                    "test a boolean (`n > 0 && <tr/>`), or keep this component in React",
+                ));
+            }
+        }
         if !matches!(child.tier, Tier::Static | Tier::Native)
             || child.ir.as_ref().is_some_and(|c| c.holds_island)
         {
@@ -7349,8 +7444,9 @@ impl Walker<'_, '_> {
                             let yes = self.lower_nodes(then, nested, env, bytes, lists)?;
                             let no = self.lower_nodes(else_, nested, env, bytes, lists)?;
                             let mut node = json!({ MARK: "if", "k": key, "c": yes, "e": no });
-                            // `cond && <X/>`: React renders a falsy number (0) as text there.
-                            if *and {
+                            // `cond && <X/>`: React renders a falsy number (0) as text there (unless the else branch
+                            // already prints `cond`, F388).
+                            if *and && else_.is_empty() {
                                 node["a"] = json!(true);
                             }
                             out.push(node);

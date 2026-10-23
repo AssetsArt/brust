@@ -11,5 +11,7 @@ export default defineBehavior("input_d4c7015a", ({ el: __el, props, effect: __ef
   const _c2 = (i) => __text(i + 1)
   const _c3 = (todo) => __text(todo.title)
   const _c4 = (todo) => todo.done
-  return { selected, _h1, _l1, _k1, _c1, _c2, _c3, _c4 }
+  const _c4_not = (todo) => !(todo.done)
+  const _c5 = (todo) => __text(todo.done)
+  return { selected, _h1, _l1, _k1, _c1, _c2, _c3, _c4, _c4_not, _c5 }
 })

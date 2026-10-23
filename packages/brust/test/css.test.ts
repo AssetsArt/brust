@@ -120,7 +120,7 @@ test('R19.3: the server links the route CSS right after <head> / <meta charset>,
         .css!.map((f) => `<link rel="stylesheet" href="/_brust/${f}" data-brust-css>`)
         .join('')
     const home = (await (await fetch(`${base}/`)).text()).trimStart()
-    expect(home).toStartWith(`<html lang="en"><head><meta charSet="utf-8">${links('/')}<title>css fixture</title><link rel="stylesheet" href="/public/user.css"></head>`)
+    expect(home).toStartWith(`<!doctype html>\n<html lang="en"><head><meta charSet="utf-8">${links('/')}<title>css fixture</title><link rel="stylesheet" href="/public/user.css"></head>`)
     expect(home).toContain('<header>top</header>')
     const bare = await (await fetch(`${base}/bare`)).text()
     // the native page's static className is the module's class
@@ -256,3 +256,45 @@ test('--target cloudflare: the stylesheets are Static Assets and the worker bund
   const worker = readdirSync(join(out, 'cf/worker'), { recursive: true }).map(String).find((f) => f.endsWith('brust-app.js'))!
   expect(readFileSync(join(out, 'cf/worker', worker), 'utf8')).toContain(cls)
 }, 120_000)
+
+test('F393: a small relative url() asset (under Bun\'s inline threshold) is still a hashed client file, never a data: URI, minified or not', async () => {
+  const small = new Uint8Array(64).map((_, i) => (i * 5) % 251)
+  for (const minify of [true, false]) {
+    const d = tmp({
+      'node_modules/@fontsource/x/files/x.woff2': small,
+      'node_modules/@fontsource/x/index.css': "@font-face{font-family:X;src:url(./files/x.woff2) format('woff2')}",
+      'img/dot.png': small,
+      'a.css': "@import '@fontsource/x/index.css'; .d{background:url(./img/dot.png)} .w{background:url(data:image/png;base64,AAAA)}",
+    })
+    const dist = tmp({ 'client/.keep': '' })
+    const r = await buildCss(dist, [join(d, 'a.css')], minify)
+    const out = readFileSync(join(dist, r.file.get(join(d, 'a.css'))!), 'utf8')
+    expect(out.match(/data:/g)?.length).toBe(1) // only the one the author wrote
+    expect(out).toContain('data:image/png;base64,AAAA')
+    const files = readdirSync(join(dist, 'client'))
+    expect(files.some((f) => /^x-[0-9a-f]{10}\.woff2$/.test(f))).toBe(true)
+    expect(files.some((f) => /^dot-[0-9a-f]{10}\.png$/.test(f))).toBe(true)
+  }
+}, 60_000)
+
+test('F393: a ?query / #fragment on a url() asset is kept verbatim on the rewritten URL, per occurrence', async () => {
+  const small = new Uint8Array(64).map((_, i) => (i * 3) % 251)
+  const d = tmp({
+    'node_modules/@fontsource/y/files/y.woff': small,
+    'node_modules/@fontsource/y/index.css': "@font-face{font-family:Y;src:url(./files/y.woff?v=3) format('woff')}",
+    'Inter Var.woff2': small,
+    'a.css': "@import '@fontsource/y/index.css'; @font-face{font-family:I;src:url('./Inter Var.woff2?#iefix') format('woff2'),url(\"./Inter Var.woff2#x\") format('svg')} .p{background:url('./Inter Var.woff2')}",
+  })
+  for (const minify of [true, false]) {
+    const dist = tmp({ 'client/.keep': '' })
+    const r = await buildCss(dist, [join(d, 'a.css')], minify)
+    const out = readFileSync(join(dist, r.file.get(join(d, 'a.css'))!), 'utf8')
+    expect(out).not.toContain('data:')
+    const name = (ext: string) => readdirSync(join(dist, 'client')).find((f) => f.endsWith(ext))!
+    expect(out).toContain(`./${name('.woff')}?v=3`)
+    expect(out).toContain(`./${name('.woff2')}?#iefix`)
+    expect(out).toContain(`./${name('.woff2')}#x`)
+    expect(out).toMatch(new RegExp(`url\\("?\\./${name('.woff2')}"?\\)`)) // the bare occurrence has no suffix
+    expect(readdirSync(join(dist, 'client')).filter((f) => f.endsWith('.woff2')).length).toBe(1)
+  }
+}, 60_000)
