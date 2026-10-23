@@ -62,6 +62,11 @@ fn a_write_of_stable_leaves_is_the_initialiser() {
             "const r0 = useRef(0); const cb = useCallback(() => r0.current, [r0]); const r = useRef<any>(null); r.current = cb; const h = useCallback(() => r.current(), []); useEffect(() => { h() }, [])",
             "r.current = cb",
         ),
+        // A2 extension (a): a member of a const object literal is its field; (b): `a ?? <literal>`
+        (
+            "const cb = useCallback(() => setN(1), []); const o = { k: cb, j: 2 }; const r = useRef<any>(null); r.current = [o.k, cb ?? null]; useEffect(() => { r.current[0]() }, [])",
+            "r.current = [cb, cb ?? null]",
+        ),
     ] {
         let (t, rules, chunk) = compile(&page(body));
         assert!(matches!(t, Tier::Native), "{body}\n{t:?} {rules:?}");
@@ -117,6 +122,16 @@ fn every_other_write_is_ref_in_render() {
         (
             "const cb = useCallback(() => n, [n]); const r = useRef<any>(null); r.current = cb; useEffect(() => { r.current() }, [])",
             "changing deps",
+        ),
+        // rule 4 (a): a member of an object that is not a const literal of this component
+        (
+            "const o = useRef<any>({ k: 1 }); const r = useRef<any>(null); r.current = o.current.k; useEffect(() => { console.log(r.current) }, [])",
+            "member of a non-literal",
+        ),
+        // rule 4 (b): `a ?? b` with `b` not a literal
+        (
+            "const o = useRef(0); const r = useRef<any>(null); r.current = o ?? n; useEffect(() => { console.log(r.current) }, [])",
+            "?? a non-literal",
         ),
         // rule 4: a callback with no deps argument is a new function every render
         (

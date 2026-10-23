@@ -195,6 +195,31 @@ fn stable(ir: &ComponentIR, e: &RawExpr, depth: u8) -> bool {
         RawKind::Lit(_) => true,
         RawKind::Array(xs) => xs.iter().all(|x| stable(ir, x, depth + 1)),
         RawKind::Object(ps) => ps.iter().all(|(_, x)| stable(ir, x, depth + 1)),
+        // `o.k` of a const object literal of this component (F266 safe object) is its field `k` (A2 extension a).
+        RawKind::Member { target, name, .. } => match &target.kind {
+            RawKind::Ident {
+                name: o,
+                kind: IdentKind::Local,
+            } if ir.safe_objects.contains(o) => ir
+                .derived
+                .iter()
+                .find(|d| &d.name == o)
+                .and_then(|d| match &d.expr {
+                    Expr::Raw(RawExpr {
+                        kind: RawKind::Object(ps),
+                        ..
+                    }) => ps.iter().rev().find(|(k, _)| k == name).map(|(_, v)| v),
+                    _ => None,
+                })
+                .is_some_and(|v| stable(ir, v, depth + 1)),
+            _ => false,
+        },
+        // `a ?? <literal>` is `a` or a constant (A2 extension b).
+        RawKind::Binary {
+            op: crate::ir::BinOp::Nullish,
+            left,
+            right,
+        } => matches!(right.kind, RawKind::Lit(_)) && stable(ir, left, depth + 1),
         RawKind::Ident { name, kind } => match kind {
             IdentKind::Setter | IdentKind::Import { .. } => true,
             IdentKind::Prop => ir.stable_props.iter().any(|p| p == name),
