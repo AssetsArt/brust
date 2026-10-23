@@ -68,9 +68,9 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         <li>
           <strong>Radix <code>Presence</code> now compiles to native code.</strong> Before, the content of a Collapsible was an island at <code>Presence</code>. brust now compiles the published <code>@radix-ui/react-presence</code> source, with React 19&rsquo;s behaviour, including holding the content in place until <code>animationend</code> when it closes. It needs React 19: with another major version the component renders with React. Collapsible as a whole is not native yet, and Tabs content is still an island.
         </li>
-        {/* source: PR #362 (layout effects, amended ruling 94404307; runtime +106 B gzip) */}
+        {/* source: PR #362 (layout effects, amended ruling 94404307; runtime +147 B gzip, budget reason: core +168 / basics -21) */}
         <li>
-          <strong><code>useLayoutEffect</code> now runs after the DOM bindings and before <code>useEffect</code>, as in React.</strong> When an update re-runs effects, the order is: the page&rsquo;s bindings, then layout effects, then passive effects. The runtime grows by 106 bytes gzipped.
+          <strong><code>useLayoutEffect</code> now runs after the DOM bindings and before <code>useEffect</code>, as in React.</strong> When an update re-runs effects, the order is: the page&rsquo;s bindings, then layout effects, then passive effects. The runtime grows by 147 bytes gzipped in total.
         </li>
         {/* source: PR #362 (F403, pre-existing); the PR says the caller's ref stayed null */}
         <li>
