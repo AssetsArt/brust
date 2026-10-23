@@ -11,9 +11,9 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
 | C Hooks | 223 | 70 | 71 | 82 | 0 | 0 | 0 | 0 |
-| D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
+| D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 621 | 273 | 119 | 225 | 3 | 1 | 0 | 0 |
+| **Total** | 625 | 277 | 119 | 225 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -589,6 +589,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | d-preinitmodule | preinitModule in render | react | react | ssr | ok | 4.1 | fallback:body-shape |  |
 | d-preload | preload in render | react | react | ssr | ok | 4.1 | fallback:body-shape |  |
 | d-preloadmodule | preloadModule in render | react | react | ssr | ok | 4.1 | fallback:body-shape |  |
+| d-element-only-clone | Children.only(children) + cloneElement(child, { title }) on one component child | static | static | 0 | ok | 4.1 | — | F288 phase A (E2+E4): the element is folded at the call site (a clone of Wrap); React prints <b title="t"> |
+| d-element-only-two | Children.only(children) given two children | static | static | ssr | ok | 4.1 | info:specialise-unsupported | F288 phase A (E2): React throws for other than one child; Wrap stays the React island (one SSR job), named specialise-unsupported |
+| d-element-clone-replaces | cloneElement(child, { className }) over a child that has one | static | static | 0 | ok | 4.1 | — | F288 phase A (E4, G6): React 19 cloneElement REPLACES the prop (class "x"); not the asChild merge |
+| d-element-clone-spread | cloneElement(child, { ...rest }) | static | static | ssr | ok | 4.1 | — | F288 phase A (E4): a config that is not an object literal of static keys is element-value; Wrap stays the React island |
 
 ## E. v2 specifics
 
