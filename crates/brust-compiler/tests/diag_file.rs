@@ -84,3 +84,56 @@ fn a_child_prop_named_req_compiles() {
         "{found:?}"
     );
 }
+
+/// F394 (security review): the root's request props reach a child however they are handed on, whole, as a rest
+/// object or renamed: the child's own `req` is data only when the root did not give it request state.
+#[test]
+fn request_state_handed_to_a_child_reads_as_request_state() {
+    let count = (
+        "components/Count.tsx",
+        "export function Count({ req }: { req: string }) {\n  return <span>{req}</span>\n}\n",
+    );
+    for (name, home) in [
+        (
+            "whole",
+            "export default function Home(props: any) { return <main><Count {...props} /></main> }",
+        ),
+        (
+            "rest",
+            "export default function Home({ ...rest }: any) { return <main><Count {...rest} /></main> }",
+        ),
+        (
+            "renamed",
+            "export default function Home({ req: r }: any) { return <main><Count req={r} /></main> }",
+        ),
+    ] {
+        let dir = std::env::temp_dir().join(format!("brustc-f394-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("components")).unwrap();
+        std::fs::write(dir.join(count.0), count.1).unwrap();
+        std::fs::write(
+            dir.join("Home.tsx"),
+            format!("import {{ Count }} from './components/Count'\n{home}\n"),
+        )
+        .unwrap();
+        let d = dir.clone();
+        let out = run_on_compiler_thread(move || {
+            compile_tree(
+                "Home.tsx",
+                None,
+                &AnalyzeOptions {
+                    root: d,
+                    ..Default::default()
+                },
+                DEFAULT_RUNTIME_IMPORT,
+            )
+            .map(|t| t.len())
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            out.err().map(|d| d.rule),
+            Some("request-state-in-render".to_string()),
+            "{name}"
+        );
+    }
+}

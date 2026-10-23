@@ -232,20 +232,57 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         .map(|p| (p.loc, &p.deps))
         .chain(uses.iter().map(|u| (u.loc, &u.deps)))
         .collect();
-    for name in REQUEST_PROPS.iter().filter(|_| ctx.is_root) {
-        if let Some((loc, _)) = read.iter().find(|(_, d)| d.prop_roots().contains(*name)) {
-            ir.diagnostics.push(Diagnostic::error(
-                "request-state-in-render",
-                format!(
-                    "prop `{name}` carries request state and is read at line {}",
-                    ctx.line(*loc)
-                ),
-                *loc,
-                "read request values in the route loader and pass plain values as props",
-            ));
+    // F394: request state is a value origin. The props the router hands the component the caller asked for (a route
+    // page or layout) are it; a child's own prop of that name is data. A root that hands its WHOLE props object (or a
+    // rest of it, `*`) on to anything is refused too: the child could read `req` out of it.
+    if ctx.is_root {
+        // `*` only counts when some component below declares a prop of a request name: valid React that spreads its
+        // props into an element or a child with no such prop stays native.
+        let below = request_named_prop_below(ir, ctx);
+        for name in REQUEST_PROPS.iter().copied().chain(below.then_some("*")) {
+            if let Some((loc, _)) = read.iter().find(|(_, d)| d.prop_roots().contains(name)) {
+                let what = if name == "*" {
+                    "the whole props object (which includes request state) is passed on".to_string()
+                } else {
+                    format!("prop `{name}` carries request state and is read")
+                };
+                ir.diagnostics.push(Diagnostic::error(
+                    "request-state-in-render",
+                    format!("{what} at line {}", ctx.line(*loc)),
+                    *loc,
+                    "read request values in the route loader and pass plain values as props",
+                ));
+            }
         }
     }
     st.client_uses = uses;
+}
+
+/// Whether a component this one renders (at any depth) declares a prop named like request state.
+fn request_named_prop_below(ir: &ComponentIR, ctx: &PassCtx<'_>) -> bool {
+    let done: std::collections::HashMap<String, std::rc::Rc<ComponentIR>> = ctx
+        .modules
+        .borrow()
+        .done()
+        .into_iter()
+        .map(|(_, c)| (c.id.clone(), c))
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut stack: Vec<String> = ir.children.iter().filter_map(|c| c.id.clone()).collect();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        let Some(c) = done.get(&id) else { continue };
+        if c.props
+            .iter()
+            .any(|p| REQUEST_PROPS.contains(&p.name.as_str()))
+        {
+            return true;
+        }
+        stack.extend(c.children.iter().filter_map(|k| k.id.clone()));
+    }
+    false
 }
 
 /// F362: `(source, imported)` of every list whose source is an imported binding read bare.
