@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
-| C Hooks | 224 | 70 | 71 | 83 | 0 | 0 | 0 | 0 |
+| C Hooks | 225 | 71 | 71 | 83 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 622 | 273 | 119 | 226 | 3 | 1 | 0 | 0 |
+| **Total** | 623 | 274 | 119 | 226 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -381,7 +381,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-frozen-prop-spread | a native child reading the page's changing prop in a key printed once through a forwarder's spread | native | native | 0 | ok | 4.7 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
 | c-frozen-prop-stateless | a stateless child reading the page's changing prop in the rows of a constant list | react | react | ssr | ok | 4.0 | fallback:frozen-prop | F319 / F323: a stateless component cannot know whether a caller changes its props (F75): frozen-prop, the page renders with React |
 | c-frozen-prop-rest | a native wrapper passing its own changing prop into a native child's rest, handed to a static child it does not link | react | react | ssr | ok | 5.5 | fallback:frozen-prop | F319 (Mellow F1): a read of the rest freezes every key that lands there, passed up through the wrapper's own prop: frozen-prop (it was native and stale; the direct page call site was already refused by spread-props) |
-| c-frozen-prop-call-spread | the page's state object spread into a native child that reads the key in a constant list | react | react | ssr | ok | 6.5 | fallback:spread-props | F319 (Afrojack): a spread at the call site may carry a frozen key: frozen-prop (spread-props refuses it too) |
+| c-frozen-prop-call-spread | the page's state object spread into a native child that reads the key in a constant list | react | react | ssr | ok | 6.6 | fallback:spread-props | F319 (Afrojack): a spread at the call site may carry a frozen key: frozen-prop (spread-props refuses it too) |
 | c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 5.8 | — | F319: a value that does not change satisfies the requirement |
 | c-rest-children-consumer | a context consumer passed as children of a component that spreads its rest (children included) under its own Provider | static | static | 0 | ok | 4.7 | — | F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider) |
 | c-clone-carry-import | a Thumb whose className calls an import, passed through a component's rest under its own Provider | static | static | precompute | ok | 4.7 | — | F305: the call of the import is computed by the page and handed to the rest clone as one input (was: the children stayed outside, the page React) |
@@ -538,6 +538,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-local-spread-other | a local object that spreads the props and another local object | static | static | ssr | ok | 4.0 | — | W1d PR 4a (F326): only the props or the rest may be spread inside the local object; the component is a React island under a static page |
 | c-local-spread-method | a local object with a method that spreads the props | static | static | ssr | ok | 4.0 | — | W1d PR 4a (F326): a method is not a plain entry; the component is a React island under a static page |
 | c-local-spread-rest | a local object of entries and the rest ({ role, dir, ...groupProps }) used only as a JSX spread | static | static | 0 | ok | 0 | — | W1d PR 4b (F327): Radix ToggleGroupImpl's commonProps; the rest in it is not read as a value because the object is only spread |
+| c-local-spread-rest-single | the same object as the only attribute of the element (<Impl {...commonProps} />) | static | static | 0 | ok | 0 | — | F332 N3: a lone spread is recorded like the multi-attribute site; the rest in the object is not read as a value |
 | c-local-spread-rest-value | the same object also read as a value | static | static | ssr | ok | 4.0 | — | W1d PR 4b (F327): read as a value the rest would print as one: prop-pattern, the component is a React island under a static page |
 | c-scope-props | a context hook and a scope hook read props.__scopeX, the token spread on a component | static | static | 0 | ok | 0 | — | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
 | c-scope-sibling | two sibling Providers of one scoped context, one consumer each | static | static | 0 | ok | 0 | — | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
