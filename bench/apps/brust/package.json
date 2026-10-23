@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": { "build": "brust build routes.tsx", "start": "brust start", "test": "bun test", "typecheck": "bun check -p ../.." },
-  "dependencies": { "@brust/core": "workspace:*", "elysia": "2.0.0-beta.30", "react": "^19.2.0", "react-dom": "^19.2.0" },
+  "dependencies": { "@brust/core": "workspace:*", "elysia": "2.0.0-rc.0", "react": "^19.2.0", "react-dom": "^19.2.0" },
   "devDependencies": { "@types/bun": "^1.4.0", "@types/react": "^19.2.0", "typescript": "^7.0.2" }
 }

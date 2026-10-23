@@ -6,7 +6,7 @@ export class TeamFull extends HTTPError.id('TEAM_FULL') {
   constructor(readonly max: number) {
     super('team is full')
   }
-  detail() {
+  extension() {
     return { max: this.max }
   }
 }
