@@ -157,6 +157,8 @@ jobs:
       - run: git diff --exit-code docs/react-coverage.md docs/react-coverage.json docs/plans/m1-exit-report.md
       # Exit criteria checked by code (also re-runs dual evaluation and the browser cases).
       - run: bun test scripts/battery
+      # F288 §3 (ruling Q1): the installed react-presence getElementRef on real React 19 elements (prod + dev) equals the fold.
+      - run: bun test scripts/f288
       - run: sccache --show-stats
         if: always()
   browser:
