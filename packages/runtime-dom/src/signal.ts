@@ -1,7 +1,7 @@
 // A small push-pull reactive core. Signals push "dirty" to subscribers; computeds pull lazily.
 type Subscriber = { mark(): void; deps: Set<Node> }
 type Node = { subs: Set<Subscriber> }
-type Runnable = { disposed: boolean; run(): void }
+type Runnable = { disposed: boolean; run(): void; post?: boolean }
 interface ReactiveCtx { currentSub: Subscriber | null; batchDepth: number; pending: Set<Runnable> }
 
 const CTX = Symbol.for('brust.reactive.ctx')          // M3-F C7
@@ -23,8 +23,13 @@ function flush() {
   if (ctx.batchDepth > 0) return
   const pending = ctx.pending
   while (pending.size) {
-    const batch = Array.from(pending); pending.clear()
-    for (const e of batch) if (!e.disposed) e.run()
+    const batch = Array.from(pending)
+    // F288: a `post` effect (`useLayoutEffect`) re-runs only once every other effect of the change has run, so it reads
+    // the DOM after every binding updated it: React's commit, then layout effects.
+    const now = batch.filter((e) => !e.post)
+    const run = now.length ? now : batch
+    for (const e of run) pending.delete(e)
+    for (const e of run) if (!e.disposed) e.run()
   }
 }
 
@@ -69,7 +74,7 @@ function runCleanup(c: () => void) { const prev = ctx.currentSub; ctx.currentSub
 
 class EffectImpl implements Subscriber {
   deps = new Set<Node>(); disposed = false; cleanup: void | (() => void) = undefined
-  constructor(private fn: () => void | (() => void)) {}
+  constructor(private fn: () => void | (() => void), readonly post = false) {}
   mark() { ctx.pending.add(this) }
   run() {
     if (this.disposed) return
@@ -86,8 +91,8 @@ class EffectImpl implements Subscriber {
   }
 }
 
-export function effect(fn: () => void | (() => void)): Dispose {
-  const e = new EffectImpl(fn)
+export function effect(fn: () => void | (() => void), post = false): Dispose {
+  const e = new EffectImpl(fn, post)
   try { e.run() } catch (x) { e.dispose(); throw x }   // F98: a first run that throws must not stay subscribed
   return () => e.dispose()
 }

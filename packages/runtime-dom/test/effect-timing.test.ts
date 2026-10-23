@@ -49,3 +49,40 @@ test('effects run in declaration order (a bookkeeping effect declared first is s
   n.set(7)
   expect(order).toEqual(['value-effect saw 0', 'value-effect saw 7'])
 })
+
+// F288 (ruling 94404307): a layout effect (`ctx.effect(fn, true)`) re-runs only after every other effect of the same
+// change has run (the bindings it may read included), still synchronously; a passive effect keeps today's order.
+test('a post effect re-runs after the change has reached every other effect; a passive one keeps today\'s order', async () => {
+  const { effect } = await import('../src/signal')
+  for (const post of [true, false]) {
+    const a = signal(0)
+    const b = signal(0)
+    const log: string[] = []
+    // declared first, so it is notified first: it reads `b`, which the effect below derives from `a`
+    const stop1 = effect(() => { a(); log.push(`saw b=${b()}`) }, post)
+    const stop2 = effect(() => { b.set(a() * 10) })
+    a.set(1)
+    // post: one re-run, after `b` is 10 (React's commit, then layout effects). Passive: it ran first and saw the stale
+    // `b`, then again for `b` (today's timing, unchanged).
+    expect(log).toEqual(post ? ['saw b=0', 'saw b=10'] : ['saw b=0', 'saw b=0', 'saw b=10'])
+    stop1(); stop2()
+  }
+})
+
+test('x-pref: the ref a caller passes lands on a nested host, in the caller\'s ref cell (not the host\'s own)', () => {
+  const seen: string[] = []
+  defineBehavior('t_pref_parent', ({ effect, ref }) => {
+    const r = ref('_rf1')
+    effect(() => { seen.push(`parent:${r.current?.id}`) })
+    return {}
+  })
+  defineBehavior('t_pref_child', ({ effect, ref }) => {
+    const r = ref('_rf1')
+    effect(() => { seen.push(`child:${r.current?.id ?? 'null'}`) })
+    return {}
+  })
+  document.body.innerHTML = `<div x-data="t_pref_parent"><p id="kid" x-data="t_pref_child" x-pref="_rf1">k</p></div>`
+  mount()
+  expect(seen).toContain('parent:kid')
+  expect(seen).toContain('child:null')
+})

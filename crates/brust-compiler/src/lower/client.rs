@@ -240,7 +240,24 @@ fn chunk_in(
     }
     // F288 G9: a ref whose initial value reads a handler (printed after the decls) starts empty and is set right after the
     // handlers, still at instance setup, before any effect or binding runs.
-    let handler_names: BTreeSet<String> = ir.handlers.iter().map(|h| h.name.clone()).collect();
+    // Directly, or through a derived value that does (a computed `refs = [cb, …]` read by `useRef(refs)`).
+    let mut handler_names: BTreeSet<String> = ir.handlers.iter().map(|h| h.name.clone()).collect();
+    loop {
+        let more: Vec<String> = structural
+            .derived
+            .iter()
+            .filter(|d| !handler_names.contains(&d.name))
+            .filter(|d| {
+                f.derived_raw(&d.name)
+                    .is_some_and(|raw| !super::common::reads_of(raw, &handler_names).is_empty())
+            })
+            .map(|d| d.name.clone())
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        handler_names.extend(more);
+    }
     let mut late_refs: Vec<String> = Vec::new();
     for (i, r) in ir.refs.iter().enumerate() {
         let loc = structural.refs[i].init.raw_loc().unwrap_or_default();
@@ -474,15 +491,17 @@ fn chunk_in(
     for e in &ir.effects {
         // The effect body is bound per run (a cleanup it returns passes through).
         let run = format!("({})()", client_js(&e.body, &f));
+        // F288: a layout effect re-runs after every DOM binding of the change (React's commit, then layout effects).
+        let post = if e.layout { ", true" } else { "" };
         body.push(match &e.deps {
             // React re-runs it on every render: track every read.
-            None => format!("{}(() => {run})", n.effect),
+            None => format!("{}(() => {run}{post})", n.effect),
             // Re-run only when a dependency changes; the body is untracked.
             Some(deps) => {
                 uses_untracked = true;
                 let d: Vec<String> = deps.iter().map(|d| client_js(d, &f)).collect();
                 format!(
-                    "{}(() => {{ void [{}]; return {}(() => {run}) }})",
+                    "{}(() => {{ void [{}]; return {}(() => {run}) }}{post})",
                     n.effect,
                     d.join(", "),
                     n.untracked

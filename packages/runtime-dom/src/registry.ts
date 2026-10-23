@@ -3,7 +3,7 @@ import type { Dispose, Signal } from './signal'
 export interface BehaviorCtx {
   el: HTMLElement
   props: Signal<Record<string, unknown>>
-  effect: (fn: () => void | (() => void)) => Dispose
+  effect: (fn: () => void | (() => void), post?: boolean) => Dispose
   onCleanup: (fn: () => void) => void
   ref: <E extends Element = HTMLElement>(name: string, init?: unknown) => { current: E | null }
   /** True when this instance mounted after the page booted (an x-if clone, an x-for row, a navigation): nothing of it was server-rendered. */

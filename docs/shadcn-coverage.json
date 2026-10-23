@@ -665,7 +665,7 @@
       "islands": 2,
       "components": 8,
       "reactComponents": 5,
-      "jsGzipKb": 87,
+      "jsGzipKb": 88,
       "workerCalls": 2,
       "codes": [
         "external-component",
@@ -904,7 +904,7 @@
       "islands": 1,
       "components": 13,
       "reactComponents": 11,
-      "jsGzipKb": 116,
+      "jsGzipKb": 117,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -952,7 +952,7 @@
       "islands": 1,
       "components": 20,
       "reactComponents": 16,
-      "jsGzipKb": 108,
+      "jsGzipKb": 109,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1024,7 +1024,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 7,
-      "jsGzipKb": 103,
+      "jsGzipKb": 104,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1150,7 +1150,7 @@
       "islands": 1,
       "components": 13,
       "reactComponents": 12,
-      "jsGzipKb": 94,
+      "jsGzipKb": 95,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1209,7 +1209,7 @@
       "islands": 1,
       "components": 9,
       "reactComponents": 7,
-      "jsGzipKb": 109,
+      "jsGzipKb": 110,
       "workerCalls": 1,
       "codes": [
         "external-component",
@@ -1281,7 +1281,7 @@
       "islands": 1,
       "components": 26,
       "reactComponents": 20,
-      "jsGzipKb": 117,
+      "jsGzipKb": 118,
       "workerCalls": 1,
       "codes": [
         "context-island",

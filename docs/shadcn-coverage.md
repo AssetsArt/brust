@@ -123,7 +123,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | alert-dialog | measured | react | 1 | 30 (12) | 100 | 1 | context-island, external-component, instance-prop-path, island-children, island-prop, nested-instance, slot-child-component, slot-dynamic, slot-native, spread-props | built |
 | aspect-ratio | measured | static | 0 | 4 (0) | 0 | 0 | — | built |
 | attachment | measured | static | 0 | 7 (0) | 0 | 0 | — | built |
-| avatar | measured | static | 2 | 8 (5) | 87 | 2 | external-component, instance-prop-path, island-prop, nested-instance, spread-props | built |
+| avatar | measured | static | 2 | 8 (5) | 88 | 2 | external-component, instance-prop-path, island-prop, nested-instance, spread-props | built |
 | badge | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | badge-aslink | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | breadcrumb | measured | static | 0 | 7 (0) | 0 | 2 | external-component | built |
@@ -140,15 +140,15 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | collapsible | measured | react | 1 | 9 (5) | 89 | 1 | context-island, external-component, spread-props | built |
 | combobox | measured | react | 1 | 22 (16) | 158 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, key-outside-list, nested-instance, slot-child-component, slot-owner, spread-props | built |
 | command | measured | static | 1 | 16 (14) | 105 | 1 | external-component, island-prop, spread-props | built |
-| context-menu | measured | static | 1 | 13 (11) | 116 | 1 | external-component, island-children, island-prop, spread-props | built |
+| context-menu | measured | static | 1 | 13 (11) | 117 | 1 | external-component, island-children, island-prop, spread-props | built |
 | dialog | measured | react | 1 | 27 (10) | 101 | 1 | context-island, external-component, island-children, island-prop, nested-instance, slot-native, spread-props | built |
 | direction | measured | static | 1 | 3 (1) | 70 | 1 | context-value | built |
-| drawer | measured | static | 1 | 20 (16) | 108 | 1 | external-component, island-children, island-prop, spread-props | built |
+| drawer | measured | static | 1 | 20 (16) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
 | dropdown-menu | measured | static | 1 | 18 (15) | 118 | 1 | external-component, island-children, island-prop, spread-props | built |
 | empty | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
 | field | measured | static | 0 | 10 (0) | 5 | 0 | — | built |
 | form | measured | react | 1 | 5 (4) | 101 | 1 | child-component, external-component, hook-unsupported, island-children, island-prop, spread-props | built |
-| hover-card | measured | static | 1 | 9 (7) | 103 | 1 | external-component, island-children, island-prop, spread-props | built |
+| hover-card | measured | static | 1 | 9 (7) | 104 | 1 | external-component, island-children, island-prop, spread-props | built |
 | input | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | input-group | measured | static | 0 | 5 (0) | 5 | 1 | — | built |
 | input-otp | measured | static | 1 | 6 (3) | 87 | 1 | body-shape, external-component, hook-unsupported, island-prop, spread-props | built |
@@ -158,16 +158,16 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | marker | measured | static | 0 | 3 (0) | 0 | 0 | — | built |
 | menubar | measured | static | 1 | 18 (12) | 117 | 1 | external-component, island-children, island-prop, spread-props | built |
 | message | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
-| message-scroller | measured | static | 1 | 13 (12) | 94 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, spread-props | built |
+| message-scroller | measured | static | 1 | 13 (12) | 95 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, spread-props | built |
 | native-select | measured | static | 0 | 3 (0) | 0 | 1 | external-component | built |
 | navigation-menu | measured | static | 1 | 15 (14) | 100 | 1 | external-component, island-prop, spread-props | built |
 | pagination | measured | static | 0 | 8 (0) | 0 | 3 | external-component | built |
-| popover | measured | static | 1 | 9 (7) | 109 | 1 | external-component, island-children, island-prop, spread-props | built |
+| popover | measured | static | 1 | 9 (7) | 110 | 1 | external-component, island-children, island-prop, spread-props | built |
 | progress | measured | static | 0 | 5 (0) | 0 | 1 | — | built |
 | radio-group | measured | static | 1 | 9 (5) | 98 | 1 | external-component, island-prop, spread-props | built |
 | resizable | measured | static | 1 | 7 (6) | 104 | 1 | external-component, island-prop, spread-props | built |
 | scroll-area | measured | static | 1 | 11 (7) | 92 | 1 | external-component, island-prop, spread-props | built |
-| select | measured | react | 1 | 26 (20) | 117 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
+| select | measured | react | 1 | 26 (20) | 118 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | separator | measured | static | 0 | 4 (0) | 0 | 2 | — | built |
 | sheet | measured | react | 1 | 23 (9) | 101 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | sidebar | measured | static | 1 | 31 (14) | 117 | 1 | client-function-in-job, context-island, context-state, control-flow, external-component, island-children, island-prop, jsx-const-child, linked-prop-precompute, spread-handler, spread-props | built |

@@ -248,6 +248,9 @@ pub struct Printer<'a, 'c> {
     raw_text: bool,
     /// The body of the element being opened, when it carries `dangerouslySetInnerHTML`.
     inner_html: Option<String>,
+    /// F267: the caller's ref cell this element takes (`Attr::ForwardRef`), printed after the attributes: `x-ref` on an
+    /// element the caller binds, `x-pref` on a nested host (its own instance binds it; the caller's binds `x-pref`).
+    fwd_ref: Option<String>,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -280,6 +283,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             blank: false,
             raw_text: false,
             inner_html: None,
+            fwd_ref: None,
         })
     }
 
@@ -840,6 +844,14 @@ impl<'a, 'c> Printer<'a, 'c> {
         if let Some(m) = &model {
             open.push_str(&format!(" x-model=\"{m}\""));
         }
+        if let Some(n) = self.fwd_ref.take() {
+            // this element is an instance host (its `x-data` is inserted below) when it is the host root
+            let host = *host && root && self.native;
+            open.push_str(&format!(
+                " {}=\"{n}\"",
+                if host { "x-pref" } else { "x-ref" }
+            ));
+        }
         // A lone reactive slot child puts x-text on this element (Review Focus 1).
         let lone = matches!(children.as_slice(), [Node::Slot(_)]);
         let mut body = String::new();
@@ -1123,7 +1135,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 if let Some(i) = &self.inline
                     && let Some(n) = i.ref_binding()
                 {
-                    open.push_str(&format!(" x-ref=\"{n}\""));
+                    self.fwd_ref = Some(n.to_string());
                 }
             }
             Attr::Spread(_) => {}

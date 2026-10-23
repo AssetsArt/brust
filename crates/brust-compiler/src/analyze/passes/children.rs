@@ -2668,6 +2668,31 @@ fn state_frame_provider(ir: &ComponentIR) -> bool {
             .all(|d| d.rule == "context-state")
 }
 
+/// F288 G7: `ir` refuses an element read (`element-value`), and every other refusal it has is one a clone of it for a
+/// call site may drop (the clone decides: a clone that still needs React keeps the call site's island).
+fn element_only(ir: &ComponentIR) -> bool {
+    !ir.specialised
+        && ir.provides.is_empty()
+        && ir
+            .diagnostics
+            .iter()
+            .any(|d| d.rule == super::elements::ELEMENT_VALUE)
+        && ir
+            .diagnostics
+            .iter()
+            .filter(|d| d.class == DiagClass::Fallback)
+            .all(|d| {
+                matches!(
+                    d.rule.as_str(),
+                    super::elements::ELEMENT_VALUE
+                        | "ref-in-render"
+                        | "client-function-in-job"
+                        | "jsx-const-child"
+                        | "children-read"
+                ) || super::tier::CHILD_ONLY.contains(&d.rule.as_str())
+            })
+}
+
 /// Why a component compiled from package source cannot be used as compiled (F153c): it, or a component in its
 /// subtree, renders as React (an island of a package's SOURCE would run code the React build never ran), or it
 /// failed to compile. `None` = static or native all the way down.
@@ -2692,8 +2717,9 @@ fn package_needs_react(
         if !seen.insert(ir.id.clone()) {
             continue;
         }
+        // F288: an element reader is specialised at the call site like a state-frame Provider.
         if let Tier::React { reason, .. } = &ir.tier
-            && !(state_frames && state_frame_provider(&ir))
+            && !(state_frames && (state_frame_provider(&ir) || element_only(&ir)))
         {
             return Some(format!(
                 "{} renders as React in its source: {reason}",
@@ -3405,26 +3431,7 @@ impl Walker<'_, '_> {
     /// F288 G7: `cir` refuses an element read (`element-value`), and every other refusal it has is one a clone of it for a
     /// call site may drop (the clone decides: a clone that still needs React keeps the call site's island).
     fn element_specialisable(&self, cir: &ComponentIR) -> bool {
-        !cir.specialised
-            && cir.provides.is_empty()
-            && cir
-                .diagnostics
-                .iter()
-                .any(|d| d.rule == super::elements::ELEMENT_VALUE)
-            && cir
-                .diagnostics
-                .iter()
-                .filter(|d| d.class == DiagClass::Fallback)
-                .all(|d| {
-                    matches!(
-                        d.rule.as_str(),
-                        super::elements::ELEMENT_VALUE
-                            | "ref-in-render"
-                            | "client-function-in-job"
-                            | "jsx-const-child"
-                            | "children-read"
-                    ) || super::tier::CHILD_ONLY.contains(&d.rule.as_str())
-                })
+        element_only(cir)
     }
 
     /// R34.116: whether `cir` is a Provider whose frame is state-valued and a native clone of it can carry the frame.
