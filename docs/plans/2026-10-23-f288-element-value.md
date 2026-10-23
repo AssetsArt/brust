@@ -95,6 +95,8 @@ Any other operation on a record is `element-value`.
        - `useCallback` / `useMemo` with `[]` deps, setters, and `dispatch`;
        - a `useCallback` whose deps are all stable leaves;
        - a prop of the clone that is in `fixed_props` (pinned: its call site never changes it on the client) and whose call-site expression is itself a stable leaf. This is checked recursively through Carry hidden inputs, depth-bounded, and fails closed.
+       - **(ruling 255806ff, Detoro 2026-10-23, on Dew's challenge)** `o.k` is stable iff `o` is a const local of this component whose initialiser is an object literal with static keys only (no spread, computed key, getter or method), `o` is never written (`o.k = ...`, `delete`) and never escapes (rule 3 applied to `o`), and the field's value is itself stable; anything else fails closed.
+       - **(ruling 255806ff)** a logical expression `A || B`, `A ?? B`, `A && B` is stable iff EVERY operand is stable, because its value is always one of its operands; this covers `A || (A ?? null)` (the §3 fold of `getElementRef`) without a peephole. No other operators (no calls, arithmetic, comparisons or ternaries).
   - `E.ref` counts as stable only through these rules, never as a category of its own. Anything else stays `ref-in-render`.
   - A forwarded ref from a clone caller is stable only when the app's ref is absent (it folds to `null`), a `useRef` object, or a `[]`-deps callback, AND the prop is pinned. An inline arrow ref is not stable, so `ref-in-render` applies. (React attaches once with the render-1 refs, because `useStableComposedRefs`'s callback has `[]` deps. Only the no-cleanup detach reads the latest refs, :155-160. Refusing is right.)
   - Phase A tests that pin A2:
