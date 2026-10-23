@@ -195,6 +195,46 @@ fn omit_jinja(d: &str, omit: &[String]) -> String {
     format!("(({d}) | omit([{}]))", keys.join(", "))
 }
 
+/// F395: what makes the server feed a component per instance, in the words a diagnostic uses.
+fn fed_cause(ir: &ComponentIR) -> String {
+    let mut parts = Vec::new();
+    if ir.use_id_slots > 0 {
+        parts.push("calls `useId`".to_string());
+    }
+    for j in ir.jobs.iter().filter(|j| feeds_instances(j)) {
+        parts.push(match j.kind {
+            JobKind::Ssr { .. } => "holds a React island the server renders".to_string(),
+            JobKind::Precompute => format!(
+                "has a server job over {}",
+                if j.inputs.is_empty() {
+                    "no props".to_string()
+                } else {
+                    j.inputs
+                        .iter()
+                        .map(|i| format!("`{i}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            ),
+        });
+    }
+    parts.dedup();
+    if parts.is_empty() {
+        "has a job or `useId`".into()
+    } else {
+        parts.join(" and ")
+    }
+}
+
+/// A component id (`appsPanel_1a2b3c4d`) as the component is written.
+fn owner_name(id: &str) -> String {
+    let base = id.rsplit_once('_').map_or(id, |(b, _)| b);
+    let mut cs = base.chars();
+    cs.next()
+        .map(|c| c.to_uppercase().collect::<String>() + cs.as_str())
+        .unwrap_or_default()
+}
+
 pub struct TemplateOut {
     pub jinja: String,
     pub members: Vec<Member>,
@@ -292,10 +332,15 @@ impl<'a, 'c> Printer<'a, 'c> {
         self.preamble();
         let structural = self.f.structural;
         self.node(&ir.template, &structural.template, true);
+        // F395: every finding of this printer points into this component's own module.
+        let mut diagnostics = self.diagnostics;
+        for d in &mut diagnostics {
+            d.file.get_or_insert_with(|| ir.source.clone());
+        }
         TemplateOut {
             jinja: self.out,
             members: self.members,
-            diagnostics: self.diagnostics,
+            diagnostics,
         }
     }
 
@@ -831,7 +876,8 @@ impl<'a, 'c> Printer<'a, 'c> {
         let mut spread_body = None;
         if as_child.is_some() || attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
             let extra: &[(String, String)] = as_child.as_ref().map_or(&[], |a| &a.attrs);
-            spread_body = self.spread_open(tag, attrs, sattrs, model.as_deref(), extra, &mut open);
+            spread_body =
+                self.spread_open(*loc, tag, attrs, sattrs, model.as_deref(), extra, &mut open);
         } else {
             for (a, sa) in attrs.iter().zip(sattrs) {
                 self.attr(a, sa, tag, attrs, model.as_deref(), &mut open);
@@ -1165,8 +1211,10 @@ impl<'a, 'c> Printer<'a, 'c> {
     /// hand-written attributes; keys known only at render go through `spread_attrs` (brust-jinja,
     /// the same rules). An own attribute replaced by a later key is still printed into a scratch
     /// buffer, so the members it records keep their numbers in every instance.
+    #[allow(clippy::too_many_arguments)]
     fn spread_open(
         &mut self,
+        loc: u32,
         tag: &str,
         attrs: &[Attr],
         sattrs: &[Attr],
@@ -1227,7 +1275,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                             self.diagnostics.push(Diagnostic::warning(
                                 "reserved-attr",
                                 format!("`{k}` reaches <{tag}> through a spread: `x-` attributes are reserved for brust's runtime and are not rendered"),
-                                0,
+                                loc,
                                 "rename it (`data-x-…`) or move this component to React",
                             ));
                         } else if k == "dangerouslySetInnerHTML" {
@@ -1576,6 +1624,28 @@ impl<'a, 'c> Printer<'a, 'c> {
         let attr = format!(" x-if=\"{d}\"{}", if hidden { " hidden" } else { "" });
         match (ns, ss) {
             ([n @ Node::Element { .. }], [s]) => self.element(n, s, false, Some(&attr)),
+            // F388: a branch that is one slot (the falsy left of `left && <X/>`) binds its text on the branch wrapper
+            // itself: no `<span>` that React does not render (a `false` / `undefined` left leaves an empty wrapper,
+            // which `display:contents` keeps out of the layout).
+            ([e @ Node::Slot(_)], [s]) => {
+                let Node::Slot(e) = e else { unreachable!() };
+                let mut text = String::new();
+                std::mem::swap(&mut text, &mut self.out);
+                let bound = self.slot(e, Some(s), true);
+                std::mem::swap(&mut text, &mut self.out);
+                let x_text = bound
+                    .as_ref()
+                    .map_or(String::new(), |d| format!(" x-text=\"{d}\""));
+                // Afrojack (F388 review): an inline `display:contents` beats the `[hidden]` rule, so the hidden copy holds
+                // no text (the left is truthy there; React prints nothing). x-text fills it when the branch shows; a slot
+                // nothing binds (a `{children}` markup slot) keeps its content, which the client clones on show.
+                if hidden && bound.is_some() {
+                    text.clear();
+                }
+                self.out.push_str(&format!(
+                    "<brust-if style=\"display:contents\"{attr}{x_text}>{text}</brust-if>"
+                ));
+            }
             _ => {
                 self.out
                     .push_str(&format!("<brust-if style=\"display:contents\"{attr}>"));
@@ -1981,9 +2051,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                 self.diagnostics.push(Diagnostic::error(
                     "nested-instance",
                     format!(
-                        "<{name}> has a job or useId and sits inside nested lists or an inlined component"
+                        "the React island <{name}> has per-row props and sits inside nested lists or inside <{}>, which is inlined into its callers",
+                        owner_name(&self.f.ir.id)
                     ),
-                    0,
+                    *loc,
                     "flatten the lists or render the child per row in its own component (ledger F53)",
                 ));
                 return;
@@ -2034,8 +2105,12 @@ impl<'a, 'c> Printer<'a, 'c> {
             // inside an inlined child: instances of such a grandchild would collide.
             self.diagnostics.push(Diagnostic::error(
                 "nested-instance",
-                format!("<{name}> has a job or useId and is used inside another inlined component"),
-                0,
+                format!(
+                    "<{name}> {} and is used inside <{}>, which is inlined into another component",
+                    fed_cause(child_ir),
+                    owner_name(&self.f.ir.id)
+                ),
+                *loc,
                 "use it directly in the route component (ledger F53)",
             ));
             return;
@@ -2044,8 +2119,12 @@ impl<'a, 'c> Printer<'a, 'c> {
             // S6 hands the server one array per instance, indexed by ONE list.
             self.diagnostics.push(Diagnostic::error(
                 "nested-instance",
-                format!("<{name}> has a job or useId and sits inside nested lists"),
-                0,
+                format!(
+                    "<{name}> {} and sits inside nested lists in <{}>",
+                    fed_cause(child_ir),
+                    owner_name(&self.f.ir.id)
+                ),
+                *loc,
                 "flatten the lists or render the child per row in its own component (ledger F53)",
             ));
             return;
@@ -2057,8 +2136,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             // Slot content is printed once and pasted per row: its ids/jobs would repeat.
             self.diagnostics.push(Diagnostic::error(
                 "nested-instance",
-                format!("children with a job or useId are passed to <{name}>, which repeats them in a list"),
-                0,
+                format!("children with a job or useId are passed to <{name}> in <{}>, which repeats them in a list", owner_name(&self.f.ir.id)),
+                *loc,
                 "render the child inside the repeating component (ledger F53)",
             ));
             return;
@@ -2234,6 +2313,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             None => p.node(ct, cs, true),
         }
         self.out.push_str(&p.out);
+        // F395: the child's findings point into the child's own module (the deepest printer stamped first).
+        let child_source = &child_ir.source;
+        for d in &mut p.diagnostics {
+            d.file.get_or_insert_with(|| child_source.clone());
+        }
         self.diagnostics.append(&mut p.diagnostics);
         self.instances = std::mem::take(&mut p.instances);
     }
@@ -2827,7 +2911,7 @@ impl Expr {
     }
 }
 
-use crate::ir::is_fed;
+use crate::ir::{feeds_instances, is_fed};
 
 /// Whether `f` holds for `n` or any node below it.
 fn contains_node(n: &Node, f: &dyn Fn(&Node) -> bool) -> bool {

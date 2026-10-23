@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
-| C Hooks | 218 | 70 | 68 | 80 | 0 | 0 | 0 | 0 |
+| C Hooks | 222 | 70 | 69 | 83 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 616 | 273 | 116 | 223 | 3 | 1 | 0 | 0 |
+| **Total** | 620 | 273 | 117 | 226 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -550,6 +550,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-chain-throw-state | an early return chain that ends in a throw, tested on state | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
 | c-chain-throw-msg | a chain that ends in throw new Error(prop) | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
 | c-chain-throw-value | a chain that ends in throw of a string | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-and-falsy-in-table | a number left of && inside a <tbody> | react | react | ssr | ok | 4.0 | fallback:and-falsy-in-table | F388 (Mellow F2): React prints a falsy number there and the parser moves that text out of the table; no lowering paints it, so the named refusal and-falsy-in-table |
+| c-and-falsy-children-in-tbody | a number left of && given as children to a component that prints them in its <tbody> (shadcn TableBody) | react | react | ssr | ok | 4.0 | fallback:and-falsy-in-table | F388 (Mellow N1): the content model is the element the children land in, across the component boundary; and-falsy-in-table |
+| c-and-falsy-children-two-wrappers | a number left of && given as children through two wrapper components to a <tbody> | react | react | ssr | ok | 4.0 | fallback:and-falsy-in-table | F388 (Mellow round 2): each component records that it prints its children where no text can sit, for its callers, so any depth refuses; and-falsy-in-table |
+| c-and-falsy-bool-seeded | a state seeded with false and later set to 0, left of && | native | native | 0 | ok | 5.1 | — | F388 (Mellow F1): a boolean seed is not enough, every setter write must be provably boolean; the else branch prints 0 after the click |
 
 ## D. API surface
 

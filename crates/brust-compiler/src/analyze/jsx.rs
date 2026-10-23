@@ -1837,13 +1837,21 @@ fn read_child(r: &mut Reader<'_, '_>, e: &js_ast::Expr, out: &mut Vec<Node>) {
         E::ENull(_) | E::EUndefined(_) | E::EBoolean(_) => {}
         E::ECall(c) if c.was_jsx_element => out.push(read_element(r, e, false)),
         E::EBinary(b) if b.op == OpCode::BinLogicalAnd && is_jsx(&b.right) => {
-            let cond = Expr::Raw(r.expr(&b.left));
+            let left = r.expr(&b.left);
             let mut then = Vec::new();
             read_child(r, &b.right, &mut then);
+            // F388: React renders the left value when it is falsy (`0`, `-0` and `NaN` as text; `false`, `null`,
+            // `undefined` and '' as nothing, which is the slot printer's own rule): the else branch is that value. `left`
+            // is read twice (the test and the slot), so only a side-effect-free path qualifies; any other left keeps the
+            // old shape. `component::falsy_left_slots` drops the slot again where it cannot matter or cannot print.
             out.push(Node::If {
-                cond,
+                cond: Expr::Raw(left.clone()),
                 then,
-                else_: Vec::new(),
+                else_: if pure_path(&b.left) {
+                    vec![Node::Slot(Expr::Raw(left))]
+                } else {
+                    Vec::new()
+                },
                 and: true,
             });
         }

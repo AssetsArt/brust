@@ -198,9 +198,13 @@ fn props_read_by_the_children_are_holes_of_the_island() {
     assert_eq!(items[1]["$brust"], "if");
     assert_eq!(items[1]["k"], "$p2");
     assert_eq!(items[1]["c"][0]["t"], "u");
-    assert_eq!(items[1]["e"], serde_json::json!([]));
-    // `cond && <X/>`: React renders a falsy number as text there, so the node says which form it is.
-    assert_eq!(items[1]["a"], serde_json::json!(true));
+    // `cond && <X/>`: React renders a falsy number as text there. F388: the else branch prints the same hole (its
+    // falsy value, as React would), so the node needs no `a` flag of its own.
+    assert_eq!(
+        items[1]["e"],
+        serde_json::json!([{"$brust": "v", "k": "$p2"}])
+    );
+    assert_eq!(items[1]["a"], serde_json::Value::Null);
     // The same prop read twice is one hole.
     assert_eq!(
         items[2]["p"]["disabled"],
