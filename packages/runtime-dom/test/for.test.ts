@@ -112,3 +112,15 @@ test('x-for source accepts path:bindings so a nested list reads the outer row', 
   expect(after.map((r) => r.textContent)).toEqual(['789', '3', '9'])
   expect(after[1]!.querySelector('td')).toBe(row2td)
 })
+
+test('F396: a server row printed hidden by its own condition is adopted as a row, never taken for the zero-row template', () => {
+  const items = signal([{ id: 'x' }, { id: 'y' }])
+  defineBehavior('f396', () => ({ items, key: (i: { id: string }) => i.id, hide: (i: { id: string }) => i.id !== 'x' }))
+  document.body.innerHTML = `<ul x-data="f396"><li x-for="item in items by key" x-bind-hidden="hide:item">x</li><li x-for="item in items by key" hidden x-bind-hidden="hide:item">y</li></ul>`
+  const [x, y] = Array.from(document.querySelectorAll('li'))
+  mount()
+  expect(Array.from(document.querySelectorAll('li'))).toEqual([x!, y!])   // both rows kept: no stray, no clone
+  expect(x!.hidden).toBe(false)
+  expect(y!.hidden).toBe(true)
+  expect((y as unknown as { __scope?: { item: unknown } }).__scope?.item).toEqual({ id: 'y' })
+})
