@@ -73,8 +73,11 @@ test('blank pins equal the repo', () => {
   const core = json(join(repo, 'packages/brust/package.json'))
   const pokedex = json(join(repo, 'examples/pokedex/package.json'))
   const pkg = blankPkg()
-  expect(pkg.dependencies.elysia).toBe(core.peerDependencies.elysia)
-  expect(pkg.dependencies['@elysia/eden']).toBe(core.peerDependencies['@elysia/eden'])
+  // elysia-rc D1/D2: brust's peer is a range (`^2.0.0-rc.0`), a new app pins exactly the pair brust is tested with (core's devDependencies), and satisfies the peer
+  for (const k of ['elysia', '@elysia/eden']) {
+    expect(pkg.dependencies[k]).toBe(core.devDependencies[k])
+    expect(core.peerDependencies[k]).toBe(`^${pkg.dependencies[k]}`)
+  }
   for (const k of ['react', 'react-dom']) expect(pkg.dependencies[k]).toBe(pokedex.dependencies[k])
   for (const k of ['@types/bun', '@types/react', 'typescript']) expect(pkg.devDependencies[k]).toBe(pokedex.devDependencies[k])
 })

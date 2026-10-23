@@ -61,8 +61,8 @@
   "peerDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "elysia": "2.0.0-beta.30",
-    "@elysia/eden": "2.0.0-beta.6"
+    "elysia": "^2.0.0-rc.0",
+    "@elysia/eden": "^2.0.0-rc.0"
   },
   "peerDependenciesMeta": {
     "elysia": {
@@ -73,14 +73,14 @@
     }
   },
   "devDependencies": {
-    "@elysia/eden": "2.0.0-beta.6",
+    "@elysia/eden": "2.0.0-rc.0",
     "@napi-rs/cli": "^3.0.0",
     "@radix-ui/react-collection": "1.2.0",
     "@radix-ui/react-presence": "1.1.11",
     "@radix-ui/react-slot": "1.5.0",
     "@types/bun": "^1.4.0",
     "@types/react": "^19.2.0",
-    "elysia": "2.0.0-beta.30",
+    "elysia": "2.0.0-rc.0",
     "lucide-react": "1.55.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
