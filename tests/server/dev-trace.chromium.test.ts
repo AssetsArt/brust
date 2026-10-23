@@ -230,7 +230,7 @@ test('dev.json: component -> file, tier, react reason, diagnostics; its tiers eq
   rmSync(prod, { recursive: true, force: true })
 }, 120_000)
 
-test('a document with a doctype stays in standards mode with the dev markers (compatMode CSS1Compat); the control without one is BackCompat', async () => {
+test('a document with a doctype stays in standards mode with the dev markers (compatMode CSS1Compat); a layout without one gets one (F392); a non-document control stays BackCompat', async () => {
   const out = join(app, '.doctype-out')
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx', '--out-dir', out, '--dev'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
   expect(b.exitCode, b.stderr.toString()).toBe(0)
@@ -280,8 +280,13 @@ test('a document with a doctype stays in standards mode with the dev markers (co
     const withDoctype = await mode(`<!doctype html>${original}`)
     expect(withDoctype).toEqual({ compat: 'CSS1Compat', markers: withDoctype.markers, doctype: 'html', firstNode: 10 }) // the doctype is the document's FIRST node (10), no marker before it
     expect(withDoctype.markers).toBeGreaterThan(0) // the markers are there, after the doctype
-    const without = await mode(original)
-    expect(without.compat).toBe('BackCompat') // the control: a doctype-less page is quirks, so the assertion above is not vacuous
+    // F392: a root layout with no doctype of its own gets one, in front of the dev marker
+    const bare = await mode(original)
+    expect(bare).toEqual({ compat: 'CSS1Compat', markers: bare.markers, doctype: 'html', firstNode: 10 })
+    // the control: a document that is not a full document (an element ahead of `<html>`) gets no doctype and is quirks,
+    // so the assertions above are not vacuous
+    const without = await mode(`<meta charset="utf-8">${original}`)
+    expect(without.compat).toBe('BackCompat')
   } finally {
     rmSync(out, { recursive: true, force: true })
   }
