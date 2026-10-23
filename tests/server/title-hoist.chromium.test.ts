@@ -73,6 +73,19 @@ for (const [name, path] of Object.entries(routes)) {
   }, 60_000)
 }
 
+// F408: brust writes no text of its own around a page's root element. The template header used to end in a line break, so
+// `<body>` was followed by "\n" and then `<main>` where React renders `<body><main>`.
+test('served and static HTML put the page root right after <body>, as React renders it', async () => {
+  const after = (html: string) => html.match(/<body[^>]*>([\s\S]{0,12})/)?.[1]
+  for (const [name, path] of Object.entries(routes)) {
+    const file = path === '/' ? 'index.html' : `${path.slice(1)}.html`
+    const react = after(`<!doctype html>${renderPage(name)}`)
+    expect([name, react?.startsWith('<')]).toEqual([name, true])
+    expect([name, after(await (await fetch(base + path)).text())]).toEqual([name, react])
+    expect([name, after(readFileSync(join(app, 'dist/static', file), 'utf8'))]).toEqual([name, react])
+  }
+}, 60_000)
+
 test('the pages differ: each route has its own title after the layout title, a page without one keeps the layout title', async () => {
   const titles = await Promise.all(Object.values(routes).map(async (p) => (await observe(await (await fetch(base + p)).text())).head.filter((h) => h.startsWith('title')).map((t) => t.slice(6))))
   expect(titles).toEqual([['Site', 'Home page'], ['Site', 'About us'], ['Site']])

@@ -120,13 +120,13 @@ test('R19.3: the server links the route CSS right after <head> / <meta charset>,
         .css!.map((f) => `<link rel="stylesheet" href="/_brust/${f}" data-brust-css>`)
         .join('')
     const home = (await (await fetch(`${base}/`)).text()).trimStart()
-    expect(home).toStartWith(`<!doctype html>\n<html lang="en"><head><meta charSet="utf-8">${links('/')}<title>css fixture</title><link rel="stylesheet" href="/public/user.css"></head>`)
+    expect(home).toStartWith(`<!doctype html><html lang="en"><head><meta charSet="utf-8">${links('/')}<title>css fixture</title><link rel="stylesheet" href="/public/user.css"></head>`)
     expect(home).toContain('<header>top</header>')
     const bare = await (await fetch(`${base}/bare`)).text()
     // the native page's static className is the module's class
     const btn = readFileSync(join(fixture, 'dist', manifest.routes.find((r) => r.pattern === '/native')!.css![2]!), 'utf8')
     expect(await (await fetch(`${base}/native`)).text()).toContain(`class="${/\.([A-Za-z_][\w-]*)/.exec(btn)![1]!}"`)
-    expect(bare).toStartWith(`${links('/bare')}\n<section>`)
+    expect(bare).toStartWith(`${links('/bare')}<section>`)
     for (const f of manifest.routes[0]!.css!) {
       const r = await fetch(`${base}/_brust/${f}`)
       expect([f, r.status, r.headers.get('content-type'), r.headers.get('cache-control')]).toEqual([f, 200, 'text/css; charset=utf-8', 'public, max-age=31536000, immutable'])

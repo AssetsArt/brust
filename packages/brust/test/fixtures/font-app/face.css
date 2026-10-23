@@ -1,0 +1,2 @@
+@font-face { font-family: Face; src: url(./fonts/face.woff2) format('woff2'); }
+body { font-family: Face, sans-serif }

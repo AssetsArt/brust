@@ -36,7 +36,30 @@ Each source stylesheet becomes `dist/client/<name>-<hash>.css`, where the hash i
 In `url()`:
 
 - An absolute `/public/…` or `/_brust/…` URL stays as written.
-- A relative font or image is copied to `dist/client/<name>-<hash>.<ext>` and the URL is rewritten. A small file may be inlined as a `data:` URL instead. The types served from there are `.woff2 .woff .ttf .otf .eot .png .jpg .jpeg .gif .webp .avif .svg .ico`. Any other type (a `.cur`, a video) fails the build with `css-asset-type`, because the server would answer 404 for it. Put such a file in `public/` and reference it as `/public/…`.
+- A relative font or image is copied to `dist/client/<name>-<hash>.<ext>` and the URL is rewritten. It is copied at any size, never inlined as a `data:` URL. The types served from there are `.woff2 .woff .ttf .otf .eot .png .jpg .jpeg .gif .webp .avif .svg .ico`. Any other type (a `.cur`, a video) fails the build with `css-asset-type`, because the server would answer 404 for it. Put such a file in `public/` and reference it as `/public/…`.
+
+### Preload a stylesheet font
+
+The hash is known only after the build, so a layout cannot write the font's URL by hand. Import the file instead. An import of any of the served types above is the URL brust serves the file at, as a string:
+
+```tsx
+// Layout.tsx
+import nunito from './fonts/nunito.woff2'
+import './app.css' // @font-face { src: url(./fonts/nunito.woff2) }
+
+export default function Layout() {
+  return (
+    <html>
+      <head>
+        <link rel="preload" as="font" type="font/woff2" crossOrigin="" href={nunito} />
+      </head>
+      <body>…</body>
+    </html>
+  )
+}
+```
+
+`nunito` is `/_brust/client/nunito-<hash>.woff2`, the same file and name the stylesheet's `url()` is rewritten to, so the font is shipped once. The page's `<head>` gets the `<link>` (a `<link>` rendered anywhere in a page is hoisted into the head). The string is a build-time constant: it works in a layout or page, in a native component, in a React island, on the server, on Cloudflare Workers and in `--target static`. `crossOrigin=""` is required for a font preload, even from your own origin. Preload only the font files a page needs: brust does not preload the stylesheet's fonts for you, because a package such as `@fontsource-variable/nunito` lists one file per `unicode-range` subset and the browser should fetch only the subsets a page uses. The `.d.ts` for these imports is part of `@brust/core`.
 
 ## 3. Where the links go
 
