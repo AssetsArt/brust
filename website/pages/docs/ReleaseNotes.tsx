@@ -46,8 +46,8 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
       <h2 id="alpha-21">2.0.0-alpha.21 · 23 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.20 (git log --merges --first-parent v2.0.0-alpha.20..origin/main): #353 (F332, tests and doc comments only: the compiler logic is unchanged, so no entry), #354 (F396), #355 (F392, F393), #356 (F394, F395: listed here on the lead's plan; it must be merged before the cut). All five issues were filed by the Assets Art team (B-1 to B-4) */}
-      <p>A patch for five problems found while building a production site: every full page now starts with a doctype, small fonts and images in <code>url()</code> are copied instead of inlined, a prop named <code>req</code> compiles, build errors name the right file and component, and a child component in a native list row no longer throws on load.</p>
+      {/* source: the pull requests merged after v2.0.0-alpha.20 (git log --merges --first-parent v2.0.0-alpha.20..origin/main): #353 (F332, tests and doc comments only: the compiler logic is unchanged, so no entry), #354 (F396), #355 (F392, F393), #356 (F394, F395) and #357 (F388): both listed here on the lead's ruling and both must be merged before the cut. F332 aside, the Assets Art issues were filed by the Assets Art team (B-1 to B-4) */}
+      <p>A patch that starts from problems found while building a production site: every full page now starts with a doctype, small fonts and images in <code>url()</code> are copied instead of inlined, a prop named <code>req</code> compiles, build errors name the right file and component, and a child component in a native list row no longer throws on load. It also fixes a wrong output: a falsy number left of <code>&amp;&amp;</code> renders as React renders it.</p>
 
       <h3>Changes</h3>
       <ul>
@@ -70,6 +70,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #354 (F396, Assets Art B-4; HIGH, pre-existing in every alpha with a row root of hidden={cond}; the server HTML was right); F397 (a literal hidden on a row root is lost on client-added rows) is open and not fixed here */}
         <li>
           <strong>A child component in a native list row no longer throws <code>TypeError</code> on load.</strong> In alpha.20 and earlier, a native list whose row root was <code>hidden={'{'}cond{'}'}</code> and held a child component logged <code>Cannot read properties of undefined</code> when the page loaded: the server&rsquo;s row was not adopted and was cloned again without its item. The server HTML was already right. The row now keeps the server&rsquo;s markup, the child receives its row&rsquo;s item, and clicking a button that changes <code>hidden</code> behaves as it does in React.
+        </li>
+        {/* source: PR #357 (F388, wrong output with no diagnostic, pre-existing in every alpha); the table/select fallback name and the JavaScript-disabled paint are from the PR description and its tests */}
+        <li>
+          <strong>A falsy number left of <code>&amp;&amp;</code> now renders as React renders it.</strong> In alpha.20 and earlier, <code>{'{'}n &amp;&amp; &lt;X /&gt;{'}'}</code> with <code>n = 0</code> rendered nothing where React renders <code>0</code>, with no error. When the left side is not provably a boolean, the value is now printed when it is falsy, both in the server&rsquo;s first paint (also with JavaScript disabled) and in the browser. A left side that is provably a boolean is unchanged. Inside a table or a <code>select</code>, where that markup is not allowed, a non-boolean left side is rendered with React and the build names the reason <code>and-falsy-in-table</code>.
         </li>
       </ul>
 
