@@ -185,3 +185,17 @@ fn a_wrapper_chain_that_ends_in_an_element_with_text_keeps_the_else_slot() {
     let (_, html) = page(src, serde_json::json!({ "n": 0 }));
     assert!(html.contains(">0</div>"), "{html}");
 }
+
+#[test]
+fn a_one_slot_branch_nothing_binds_keeps_its_markup_in_the_hidden_copy() {
+    // Regression of the hidden-copy clear: a `{children}` arm is markup the client clones when the branch shows.
+    let (jinja, _) = page(
+        "import { useState } from 'react'\nfunction W({ children }: any) { const [o, setO] = useState(true); return <p onClick={() => setO(!o)}>{o ? <b>x</b> : children}</p> }\nexport default function F() { return <W><i>KID</i></W> }",
+        serde_json::json!({}),
+    );
+    let hidden = jinja.find("x-if=\"_c1_not\" hidden").expect(&jinja);
+    assert!(
+        jinja[hidden..].starts_with("x-if=\"_c1_not\" hidden><i>KID</i></brust-if>"),
+        "{jinja}"
+    );
+}
