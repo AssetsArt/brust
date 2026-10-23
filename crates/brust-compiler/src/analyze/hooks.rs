@@ -43,6 +43,10 @@ pub struct BodyDecls {
     pub uses_collection: bool,
     /// F329: the `useRef` cells nothing reads (every use is a component's `ref` prop).
     pub sink_refs: Vec<String>,
+    /// F288 G9: render-time `ref.current = v` statements, judged by the `render_ref_writes` pass.
+    pub render_ref_writes: Vec<crate::ir::RenderRefWrite>,
+    /// F288 G9: the deps array of each `useCallback` binding (`None`: no deps argument).
+    pub callback_deps: Vec<(String, Option<Vec<RawExpr>>)>,
     pub return_expr: Option<Expr>,
     /// `useStore(handle)` bindings in source order (M3-F D7).
     pub stores: Vec<StoreUse>,
@@ -1121,6 +1125,11 @@ fn simple_hook(
                 Some(a) => r.expr(a),
                 None => undefined_at(vloc),
             };
+            let deps = args.get(1).map(|d| match &d.data {
+                E::EArray(a) => a.items.iter().map(|x| r.expr(x)).collect(),
+                _ => vec![r.expr(d)],
+            });
+            out.callback_deps.push((name.clone(), deps));
             out.handlers.push(HandlerDecl {
                 name,
                 body,
@@ -2594,6 +2603,21 @@ fn read_expr_stmt(
             vloc,
             "move this component to React, or replace the hook with useState/useEffect",
         ),
+        // F288 G9: `r.current = v` on a `useRef` of this component is judged later, by the closed rule (Mellow A2).
+        None if let E::EBinary(b) = &value.data
+            && matches!(b.op, js_ast::OpCode::BinAssign)
+            && let E::EDot(d) = &b.left.data
+            && d.name.slice() == b"current"
+            && let RawKind::Ident { name, .. } = r.expr(&d.target).kind
+            && out.refs.iter().any(|x| x.name == name) =>
+        {
+            let value = r.expr(&b.right);
+            out.render_ref_writes.push(crate::ir::RenderRefWrite {
+                r#ref: name,
+                value,
+                loc: vloc,
+            });
+        }
         None => out.fallback(
             "body-shape",
             "expression statement in component body (side effect during render)".into(),

@@ -238,8 +238,29 @@ fn chunk_in(
         ));
         uses_signal = true;
     }
+    // F288 G9: a ref whose initial value reads a handler (printed after the decls) starts empty and is set right after the
+    // handlers, still at instance setup, before any effect or binding runs.
+    let handler_names: BTreeSet<String> = ir.handlers.iter().map(|h| h.name.clone()).collect();
+    let mut late_refs: Vec<String> = Vec::new();
     for (i, r) in ir.refs.iter().enumerate() {
         let loc = structural.refs[i].init.raw_loc().unwrap_or_default();
+        if let Expr::Raw(raw) = &structural.refs[i].init
+            && !super::common::reads_of(raw, &handler_names).is_empty()
+        {
+            late_refs.push(format!("{}.current = {}", r.name, client_js(raw, &f)));
+            decls.push((
+                loc,
+                r.name.clone(),
+                format!(
+                    "const {} = {}({})",
+                    r.name,
+                    n.ref_,
+                    crate::ir::expr::js_string(&r.name)
+                ),
+                None,
+            ));
+            continue;
+        }
         // `useRef(init)` is a cell that starts at `init` (an element attached later replaces it): `null` and
         // `undefined` are the common case of a DOM ref and print as before.
         let _ = r;
@@ -350,6 +371,7 @@ fn chunk_in(
         ));
         exported.push(h.name.clone());
     }
+    body.extend(late_refs);
     exported.extend(
         event_locals
             .iter()
