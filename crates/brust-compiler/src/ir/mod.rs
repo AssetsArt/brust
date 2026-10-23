@@ -322,6 +322,10 @@ pub struct ComponentIR {
     /// that is not client-changing there): reading one is not a client change.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fixed_props: Vec<String>,
+    /// F288 G9 (Mellow A2): the pinned props whose call-site value is a stable leaf there (absent, a literal, a module
+    /// name, a `useRef`, a setter, a `[]`-deps or stable-deps `useCallback`, or such a prop of the caller in turn).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stable_props: Vec<String>,
     /// The context fields this component reads, each as a hidden prop (see `CtxUse`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ctx_uses: Vec<CtxUse>,
@@ -342,6 +346,12 @@ pub struct ComponentIR {
     /// F329: refs (`useRef`) nothing reads: every use is the `ref` prop of a component element, so a call site may drop it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sink_refs: Vec<String>,
+    /// F288 G9: render-time writes to a ref, until the `render_ref_writes` pass lowers or refuses them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub render_ref_writes: Vec<crate::ir::RenderRefWrite>,
+    /// F288 G9: each `useCallback` binding's deps (`None`: no deps argument).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub callback_deps: Vec<(String, Option<Vec<RawExpr>>)>,
     /// R34.142: the literal default of each scalar context (`createContext(undefined)`, `createContext('ltr')`) this component
     /// reads or passes on: with no Provider above the page, the context's value is that default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -578,12 +588,15 @@ impl ComponentIR {
             safe_objects: Vec::new(),
             inline_fns: Vec::new(),
             fixed_props: Vec::new(),
+            stable_props: Vec::new(),
             ctx_uses: Vec::new(),
             ctx_scoped: Vec::new(),
             ctx_pkg: false,
             uses_collection: false,
             children_called: false,
             sink_refs: Vec::new(),
+            render_ref_writes: Vec::new(),
+            callback_deps: Vec::new(),
             ctx_defaults: Vec::new(),
             plain_fns: Vec::new(),
             client_plain_fns: Vec::new(),

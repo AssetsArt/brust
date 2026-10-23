@@ -136,6 +136,15 @@ pub struct Forwarded {
     pub key: String,
 }
 
+/// F288 G9 (Mellow A2): a top-level render statement `r.current = value` on a `useRef` of the component. The pass
+/// `render_ref_writes` lowers it to the ref's initialiser when the closed rule holds, else refuses it (`ref-in-render`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct RenderRefWrite {
+    pub r#ref: String,
+    pub value: RawExpr,
+    pub loc: u32,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct RefDecl {
     pub name: String,

@@ -60,10 +60,21 @@ export function classifyBuild(status: number | null, stderr: string, hasErrorDia
   return 'failed'
 }
 
+/** The React the repo installs (bun's isolated store). */
+const REACT_VERSION: string = (() => {
+  const store = join(repo, 'node_modules/.bun')
+  const d = readdirSync(store).find((n) => n.startsWith('react@'))
+  if (!d) throw new Error('react is not installed')
+  return JSON.parse(readFileSync(join(store, d, 'node_modules/react/package.json'), 'utf8')).version as string
+})()
+
 function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
   const dir = mkdtempSync(join(tmpdir(), 'battery-'))
   try {
     writeFileSync(join(dir, 'input.tsx'), row.snippet + '\n')
+    // An app resolves React (F288: the element fold models the React major it resolves): the version the repo installs.
+    mkdirSync(join(dir, 'node_modules/react'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules/react/package.json'), JSON.stringify({ name: 'react', version: REACT_VERSION }))
     for (const [name, text] of Object.entries(row.files ?? {})) {
       mkdirSync(dirname(join(dir, name)), { recursive: true })
       writeFileSync(join(dir, name), text + '\n')

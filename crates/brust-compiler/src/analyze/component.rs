@@ -670,6 +670,8 @@ fn read_function_as(
     ir.throw_props = body.throw_props;
     ir.refs = body.refs;
     ir.sink_refs = body.sink_refs;
+    ir.render_ref_writes = body.render_ref_writes;
+    ir.callback_deps = body.callback_deps;
     ir.use_id_slots = body.id_bindings.len();
     ir.uses_collection = body.uses_collection;
     ir.children_called = reader.names.children_called.get();
@@ -895,7 +897,7 @@ fn setter_writes_boolean(ir: &ComponentIR, set: &str, depth: u8) -> bool {
 /// what `composeRefs` itself does. A ref on an element inside a list, a conditional branch or a component's children (which
 /// may mount later or never) stays a `ref-shape` fallback. The mount effects go FIRST in `ir.effects`: React attaches
 /// refs before it runs any effect of the owner.
-fn callback_refs(ir: &mut ComponentIR) {
+pub(crate) fn callback_refs(ir: &mut ComponentIR) {
     let callable: Vec<(String, IdentKind)> = ir
         .derived
         .iter()
