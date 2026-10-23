@@ -1,8 +1,8 @@
 // F388 in real Chromium: `left && <X/>` with a falsy NUMBER on the left renders the number as text (0, -0 as 0, NaN),
 // as React does; false, null, undefined and '' render nothing; a string or object left keeps today's behaviour. The
 // first paint of every page is compared with React's own render by what the browser shows (innerText, so the
-// hidden branch brust keeps for the client does not count), and the client flips 1 -> 0 -> 1 -> NaN with no
-// duplicated text node.
+// hidden branch brust keeps for the client does not count), hydrated AND with JavaScript off (the server HTML alone:
+// a hidden branch must not paint), and the client flips 1 -> 0 -> 1 -> NaN with no duplicated text node.
 // Run alone: `bun test --timeout 120000 tests/server/falsy-and.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
@@ -77,6 +77,18 @@ for (const [path, react] of [['/flip', renderFlip], ['/zero', renderZero], ['/st
   }, 60_000)
 }
 
+for (const [path, react] of [['/flip', renderFlip], ['/zero', renderZero], ['/static', renderStatic]] as const) {
+  test(`${path}: with JavaScript off, the server HTML alone shows what React renders`, async () => {
+    const ctx = await browser.newContext({ javaScriptEnabled: false })
+    const page = await ctx.newPage()
+    await page.goto(`${base}${path}`)
+    const ref = await ctx.newPage()
+    await ref.setContent(react())
+    expect(await shown(page)).toEqual(await shown(ref))
+    await ctx.close()
+  }, 60_000)
+}
+
 test('/zero: the falsy values themselves paint as React prints them', async () => {
   const { page } = await open('/zero')
   const t = async (id: string) => (await page.getByTestId(id).innerText())
@@ -119,6 +131,12 @@ test('/flip: 1 -> 0 -> 1 -> NaN, items.length, in text, a string and an object l
   expect(await t('obj')).toBe('o')
   await page.getByTestId('o0').click()
   await until('obj', '')
+  // A boolean-seeded state written a number prints it (Mellow F1).
+  expect(await t('bool-seeded')).toBe('')
+  await page.getByTestId('bs-on').click()
+  await until('bool-seeded', 'on')
+  await page.getByTestId('bs-0').click()
+  await until('bool-seeded', '0')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

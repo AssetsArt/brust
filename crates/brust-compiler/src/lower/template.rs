@@ -1573,6 +1573,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                 let bound = self.slot(e, Some(s), true);
                 std::mem::swap(&mut text, &mut self.out);
                 let x_text = bound.map_or(String::new(), |d| format!(" x-text=\"{d}\""));
+                // Afrojack (F388 review): an inline `display:contents` beats the `[hidden]` rule, so the hidden copy holds
+                // no text (the left is truthy there; React prints nothing). x-text fills it when the branch shows.
+                if hidden {
+                    text.clear();
+                }
                 self.out.push_str(&format!(
                     "<brust-if style=\"display:contents\"{attr}{x_text}>{text}</brust-if>"
                 ));
