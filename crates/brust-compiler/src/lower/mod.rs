@@ -23,6 +23,10 @@ pub struct LowerCtx<'a> {
     /// Whether some parent links the component with this id (`x-props-bind`):
     /// a static component then still gets directives and a chunk.
     pub linked: &'a dyn Fn(&str) -> bool,
+    /// L23 / F407: the compile is provisional: some lucide icon is not rendered yet and is still an island job, and the
+    /// build compiles again with the icons rendered (`AnalyzeOptions.icons_final`). A component that holds only icons
+    /// looks fed here, so a `nested-instance` refusal is a warning; the final compile judges.
+    pub icons_pending: bool,
 }
 
 pub const DEFAULT_RUNTIME_IMPORT: &str = "brust/runtime-dom";
@@ -141,7 +145,14 @@ pub fn lower(ir: &ComponentIR, ctx: &LowerCtx<'_>) -> Result<Artifacts, Diagnost
     let seeds = names::Seeds::default();
     let printer = template::Printer::new(ir, ctx, None, &loop_var, seeds.clone())
         .ok_or_else(|| Diagnostic::error("lower-input", "structural snapshot missing", 0, ""))?;
-    let out = printer.print();
+    let mut out = printer.print();
+    if ctx.icons_pending {
+        for d in &mut out.diagnostics {
+            if d.class == crate::ir::DiagClass::Error && d.rule == "nested-instance" {
+                d.class = crate::ir::DiagClass::Warning;
+            }
+        }
+    }
     if let Some(d) = out
         .diagnostics
         .iter()
