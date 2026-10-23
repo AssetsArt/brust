@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-22', title: '2.0.0-alpha.22' },
       { id: 'alpha-21', title: '2.0.0-alpha.21' },
       { id: 'alpha-20', title: '2.0.0-alpha.20' },
       { id: 'alpha-19', title: '2.0.0-alpha.19' },
@@ -44,6 +45,42 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-22">2.0.0-alpha.22 · 23 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.21 (git log --merges --first-parent v2.0.0-alpha.21..origin/main): #359 (F384), #360 (elysia-rc), #361 (F399, Assets Art B-5) and #362 (F288 phase A); nothing else is merged */}
+      <p>Elysia moves from the 2 beta to the 2 release candidate, which is a breaking change for apps that use brust&rsquo;s actions. A <code>&lt;title&gt;</code>, <code>&lt;meta&gt;</code> or <code>&lt;link&gt;</code> rendered inside a page now goes into <code>&lt;head&gt;</code>, as in React 19, and the Radix <code>Presence</code> now compiles to native code.</p>
+
+      <h3>Breaking</h3>
+      <ul>
+        {/* source: PR #360 (elysia-rc; requested by the human); the peer range, the install command, extension() and the top-level wire members are from the PR description and docs/actions.md */}
+        <li>
+          <strong>Actions now need Elysia 2 release candidate 0 (<code>2.0.0-rc.0</code>) instead of the beta.</strong> <code>@brust/core</code> lists <code>elysia</code> and <code>@elysia/eden</code> as optional peers at <code>^2.0.0-rc.0</code>, so install them with <code>bun add elysia@rc @elysia/eden@rc</code>; keep one copy of Elysia in the app, because <code>mountActions</code> checks <code>instanceof Elysia</code>. Two things change for your code. An <code>HTTPError</code> subclass now sets its extra members with an <code>extension()</code> method; the <code>detail()</code> method is gone. And extra members of an error response are now top-level in the response body (<code>body.max</code>, not <code>body.detail.max</code>). Elysia rc also requires <code>typebox</code>, <code>exact-mirror</code> and <code>openapi-types</code> as peers; bun installs them with the two packages, and with another package manager you add them yourself. The create-app template, the pokedex example and the docs are updated to the same version.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #361 (F399, Assets Art B-5; pre-existing, in alpha.21 and earlier); the React 19 order, the skipped cases, the link rule, the per-route title advice and F405 are from the PR description */}
+        <li>
+          <strong>A <code>&lt;title&gt;</code>, <code>&lt;meta&gt;</code> or <code>&lt;link&gt;</code> rendered inside a page now goes into <code>&lt;head&gt;</code>.</strong> In alpha.21 and earlier it stayed in <code>&lt;body&gt;</code>, so a route could not set its own title. brust now moves it as React 19 does, in the server&rsquo;s HTML, in the adapters and in a <code>--target static</code> build: the head&rsquo;s own elements first, then the moved ones in the order they were rendered. A <code>&lt;link&gt;</code> moves only when it has a <code>rel</code> other than <code>stylesheet</code> and a non-empty <code>href</code>. Elements inside <code>svg</code>, <code>math</code>, <code>template</code> or an island, elements with an <code>itemprop</code>, and elements that carry a client binding or sit in a conditional or list stay where they are rendered. To give each route its own title, drop the <code>&lt;title&gt;</code> from the layout&rsquo;s <code>&lt;head&gt;</code>, as in React. A title that changes in the browser is not handled yet (F405).
+        </li>
+        {/* source: PR #362 (F288 phase A); the Presence behaviour, the layout-effect order and the 106 B are from the PR description; collapsible is not yet native past Presence (next wall F382), so the entry says only what Presence does */}
+        <li>
+          <strong>Radix <code>Presence</code> now compiles to native code.</strong> Before, the content of a Collapsible was an island at <code>Presence</code>. brust now compiles the published <code>@radix-ui/react-presence</code> source, with React 19&rsquo;s behaviour, including holding the content in place until <code>animationend</code> when it closes. It needs React 19: with another major version the component renders with React. Collapsible as a whole is not native yet, and Tabs content is still an island.
+        </li>
+        {/* source: PR #362 (layout effects, amended ruling 94404307; runtime +147 B gzip, budget reason: core +168 / basics -21) */}
+        <li>
+          <strong><code>useLayoutEffect</code> now runs after the DOM bindings and before <code>useEffect</code>, as in React.</strong> When an update re-runs effects, the order is: the page&rsquo;s bindings, then layout effects, then passive effects. The runtime grows by 147 bytes gzipped in total.
+        </li>
+        {/* source: PR #362 (F403, pre-existing); the PR says the caller's ref stayed null */}
+        <li>
+          <strong>A ref passed to a native child now reaches the caller.</strong> The ref a caller put on a native child&rsquo;s host element was bound by the child itself, so the caller&rsquo;s <code>ref.current</code> stayed <code>null</code>. It now holds the element.
+        </li>
+        {/* source: PR #359 (F384, collapsible wall W10; pre-existing) */}
+        <li>
+          <strong>A conditional <code>{'{'}children{'}'}</code> inside a specialised component compiles.</strong> <code>{'{'}isOpen &amp;&amp; children{'}'}</code> or <code>cond ? children : null</code> in a component that brust specialises per call site (Radix&rsquo;s <code>CollapsibleContentImpl</code> is one) was refused with a message that named an empty value. It is now a conditional slot, and the refusal, where one remains, names the value.
+        </li>
+      </ul>
 
       <h2 id="alpha-21">2.0.0-alpha.21 · 23 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.20 (git log --merges --first-parent v2.0.0-alpha.20..origin/main): #353 (F332, tests and doc comments only: the compiler logic is unchanged, so no entry), #354 (F396), #355 (F392, F393), #356 (F394, F395) and #357 (F388): both listed here on the lead's ruling and both must be merged before the cut. F332 aside, the Assets Art issues were filed by the Assets Art team (B-1 to B-4) */}
