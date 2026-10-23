@@ -13,6 +13,8 @@ pub struct NapiDiagnostic {
     pub line: u32,
     pub col: u32,
     pub remediation: String,
+    /// F395: the module `line`/`col` point into, when it is not the component's own (an inlined component's file).
+    pub file: Option<String>,
 }
 
 /// A module a chunk imports by name, shared with other chunks (`<name>.js` beside it, R34.124).
@@ -56,6 +58,7 @@ fn diag(d: &Diagnostic) -> NapiDiagnostic {
         line: d.line,
         col: d.col,
         remediation: d.remediation.clone(),
+        file: d.file.clone(),
     }
 }
 
@@ -97,6 +100,7 @@ fn json_input<T: Default>(
                 remediation:
                     "pass `pathAliases` (an array), `packages` (an object) and `loadWrites` (an array) in that order"
                         .into(),
+                file: None,
             }),
         })
     })
