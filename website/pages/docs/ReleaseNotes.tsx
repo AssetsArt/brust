@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-23', title: '2.0.0-alpha.23' },
       { id: 'alpha-22', title: '2.0.0-alpha.22' },
       { id: 'alpha-21', title: '2.0.0-alpha.21' },
       { id: 'alpha-20', title: '2.0.0-alpha.20' },
@@ -45,6 +46,34 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-23">2.0.0-alpha.23 · 24 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.22 (git log --merges --first-parent v2.0.0-alpha.22..origin/main), written from the lane branches before the cut: #364 (F406), #365 (F407), #366 (F408), F411 (lane aac-font-preload), F413 (lane aac-island-box) and F412 (lane aac-list-first-paint, tests only, so no entry); the merge list is re-checked against main before the tag. The issues were filed by the Assets Art team (B-6 to B-11) */}
+      <p>A patch from the Assets Art team&rsquo;s second round of issues. It adds one feature: importing a font or an image file gives its served URL, so a stylesheet font can be preloaded. It fixes a list inside a list row in a native component, a lucide icon under a condition, a line break written before every native component, and a gap that a React island added in a flex or grid row.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: lane aac-font-preload (F411, Assets Art B-9; a feature); packages/brust/src/build/css.ts cssPlugin and docs/css.md "Preload a stylesheet font"; the types, the targets and the reason for not preloading every font are from the lane's READY note and docs */}
+        <li>
+          <strong>Importing a font or an image gives its served URL, so you can preload a stylesheet font.</strong> <code>import nunito from &apos;./fonts/nunito.woff2&apos;</code> is the string <code>/_brust/client/nunito-&lt;hash&gt;.woff2</code>, the same file and name that a <code>url()</code> of it in a stylesheet is rewritten to, so the file is shipped once. It works for every type brust serves from <code>client/</code>: <code>.woff2 .woff .ttf .otf .eot .png .jpg .jpeg .gif .webp .avif .svg .ico</code>. Put it in a layout as <code>&lt;link rel=&quot;preload&quot; as=&quot;font&quot; type=&quot;font/woff2&quot; crossOrigin=&quot;&quot; href={'{'}nunito{'}'} /&gt;</code> and it lands in <code>&lt;head&gt;</code>. The string is a build-time constant, so it works in a native component, in a React island, on the server, on Cloudflare Workers and in <code>--target static</code>; <code>@brust/core</code> now carries the TypeScript declarations for these imports. brust does not preload the stylesheet&rsquo;s fonts by itself, because a package such as <code>@fontsource-variable/nunito</code> has one file for each <code>unicode-range</code> subset and the browser should fetch only the subsets a page uses. See <a href="/docs/css#preload">Preload a stylesheet font</a>.
+        </li>
+        {/* source: PR #364 (F406, Assets Art B-6; pre-existing, the server HTML was right) */}
+        <li>
+          <strong>A list inside a list row in a native component works in the browser.</strong> In alpha.22 and earlier, the inner rows of <code>items.map(item =&gt; &lt;li&gt;{'{'}item.tags.map(…){'}'}&lt;/li&gt;)</code> had their text bound but were not a list. After the page loaded, every inner row was empty, rows were copied into the next outer row, and the console warned of a first-paint mismatch. The inner list is now a client list of its own, keyed by its own <code>key</code>, with the outer row&rsquo;s item in scope. It matches React on load, when you reorder it and when it reads the outer item.
+        </li>
+        {/* source: PR #365 (F407, Assets Art B-7; pre-existing); a real nested-instance is still an error and now names its cause */}
+        <li>
+          <strong>A lucide icon in a component under a condition no longer fails the build with <code>nested-instance</code>.</strong> <code>{'{'}post.interactive &amp;&amp; &lt;TryBadge /&gt;{'}'}</code>, where <code>TryBadge</code> holds an icon and no job, was refused with &ldquo;has a job&rdquo;. The first compile sees an icon as a server-rendered island, and icons become static SVG only in the final compile; the first compile&rsquo;s refusal is now a warning. A real <code>nested-instance</code> still stops the build, and its message names the cause, for example that <code>&lt;TryBadge&gt;</code> holds the server-rendered React island <code>&lt;Hand&gt;</code>, with its position.
+        </li>
+        {/* source: PR #366 (F408, Assets Art B-8; wrong output, pre-existing); crates/brust-compiler/src/lower/template.rs is where the break was written */}
+        <li>
+          <strong>No line break is written before a native component&rsquo;s root.</strong> In alpha.22 and earlier, brust wrote a line break before every native component&rsquo;s root, whatever the JSX around it, so <code>&lt;p&gt;the end.&lt;Mark /&gt; after&lt;/p&gt;</code> was built as <code>the end.</code>, a line break, then the element, and an inline native component showed a space before it. The break is gone, and JSX&rsquo;s whitespace rule applies at a native component as at any element: a line break between text and the component is dropped, and a space on the same line is kept. The HTML of a native component now equals what React&rsquo;s <code>renderToString</code> gives for its surroundings. The built <code>.jinja</code> templates also lose the line break after their header comment and after each <code>{'{'}% set %{'}'}</code> line of the preamble, so a test that pins their exact text sees the change.
+        </li>
+        {/* source: lane aac-island-box (F413, Assets Art B-11; pre-existing); crates/brust-compiler/src/lower/mod.rs island_host is the single emit site; the wording about CSS and exact-markup tests is the lead's instruction */}
+        <li>
+          <strong>A React island no longer adds a gap in a flex or grid row.</strong> In alpha.22 and earlier, <code>&lt;brust-island&gt;</code> was an element with a box, so in a row with <code>gap: 24px</code> an island that rendered nothing still counted as an item and added a second gap. Every <code>&lt;brust-island&gt;</code> now carries <code>style=&quot;display:contents&quot;</code>, as <code>&lt;brust-host&gt;</code>, <code>&lt;brust-row&gt;</code> and <code>&lt;brust-if&gt;</code> already did, so it takes no box and the layout matches the same page written with plain React. Check two things when you upgrade: CSS of yours that gave <code>brust-island</code> a box (a width, a margin, a border) no longer applies to it, and a test that compares the exact markup of an island sees the new attribute.
+        </li>
+      </ul>
 
       <h2 id="alpha-22">2.0.0-alpha.22 · 23 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.21 (git log --merges --first-parent v2.0.0-alpha.21..origin/main): #359 (F384), #360 (elysia-rc), #361 (F399, Assets Art B-5) and #362 (F288 phase A); nothing else is merged */}
