@@ -49,6 +49,8 @@ After all three tasks merge: release notes list F392-F396 under fixes, cut the n
 - 2026-10-23: the aac-build-assets acceptance named `bun run ci` in packages/brust, which does not exist on main (that was the v0.1 biome gate). Replaced by the CI gates above. Found by knock2.
 - 2026-10-23: F393 keeps a `url()` suffix verbatim: `?query` and `#fragment` stay on the rewritten URL (`sprite.svg#icon` is semantic for SVG). Found by knock2 (unsure 1).
 
+- 2026-10-23: any lane that changes a full response's bytes also runs root `bun run server-test` and `BRUST_CF_E2E=1 bun test tests/cf/pokedex-d1.test.ts` (where workerd is available): PR #355 went red on two old `<html`-start pins the listed gates did not cover. My omission.
+
 ## Risk ledger
 
 - F392: a layout that returns `<html>` inside a fragment, or a leading comment, must still count as a document; a non-document 404 body must not gain a doctype.
