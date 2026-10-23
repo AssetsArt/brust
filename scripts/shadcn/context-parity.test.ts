@@ -130,8 +130,10 @@ for (const id of [...PAGES, ...PLAIN_PAGES]) {
 // brust's own host elements (`<brust-island>` around an island, `<brust-host style=display:contents>` around a native component
 // that returns a fragment) and the `x-on-*` handler and `x-bind-*` attribute directives a compiled component carries (a Label's mousedown guard, a toggle's live `aria-pressed`) have no React equivalent and do not change the layout.
 const plain = (h: string) => normalise(h.replace(/<!-- -->/g, '').replace(/<brust-island\b[^>]*>/g, '').replace(/<\/brust-island>/g, '').replace(/<brust-host\b[^>]*>/g, '').replace(/<\/brust-host>/g, '').replace(/ x-(?:on|bind)-[a-z-]+="?[\w$]+"?/g, '')).replace(/(radix-)_\w*R_(\d+)_/g, '$1_R_$2_')
+// F388: the `<!--x-if-->` anchor before a hidden branch is brust's marker too (a `left && <X/>` keeps one for its
+// falsy-left text).
 const unmarked = (h: string) =>
-  normalise(h.replace(/<\/?brust-(?:if|host)\b[^>]*>/g, ''))
+  normalise(h.replace(/<\/?brust-(?:if|host)\b[^>]*>/g, '').replace(/<!--x-if-->/g, ''))
     .replace(/ x-[\w-]+=[^ >]*/g, '')
     .replace(/\/>/g, '>')
 for (const id of NATIVE_PAGES) {
