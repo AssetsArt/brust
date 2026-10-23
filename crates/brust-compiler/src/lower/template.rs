@@ -342,7 +342,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         let ir = self.f.ir;
         if self.inline.is_none() {
             self.out
-                .push_str(&format!("{{# brust v2 · {} · do not edit #}}\n", ir.id));
+                .push_str(&format!("{{# brust v2 · {} · do not edit -#}}\n", ir.id));
         }
         self.preamble();
         let structural = self.f.structural;
@@ -420,8 +420,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
         }
         for line in crate::lower::common::order_decls(decls) {
+            // No newline after a `{% set %}`: the output has no text of its own there, and a line break
+            // would reach the page as whitespace JSX drops (F408).
             self.out.push_str(&line);
-            self.out.push('\n');
         }
     }
 

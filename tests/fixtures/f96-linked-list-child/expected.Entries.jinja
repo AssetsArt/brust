@@ -1,2 +1,2 @@
-{# brust v2 · entries_2200c262 · do not edit #}
+{# brust v2 · entries_2200c262 · do not edit -#}
 <ul x-data="entries_2200c262" x-props='{{ {"log": log} | json_attr }}'>{% for l in log %}{% set i = loop.index0 %}<li x-for="l, i in _l1 by _k1" x-text="_c1:l">{{ l | e }}</li>{% else %}<!--x-for--><li x-for="l, i in _l1 by _k1" hidden x-text="_c1:l">{{ __undefined | e }}</li>{% endfor %}</ul>
