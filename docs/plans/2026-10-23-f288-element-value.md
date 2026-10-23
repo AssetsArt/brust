@@ -1,6 +1,6 @@
 # F288: an element-value model for `@radix-ui/react-presence` (design note, no code)
 
-Status: Q1-Q3 ruled (§9, Detoro 2026-10-23); Q4-Q5 await Mellow before phase A code. Owner of the row: Detoro (ledger F288, parked).
+Status: Q1-Q3 ruled (§9, Detoro 2026-10-23); Q4-Q5 REVIEW-PASS by Mellow (42291d86) with binding amendments A1/A2, written into §4. Owner of the row: Detoro (ledger F288, parked).
 Author: Dew, 2026-10-23. Inputs: ledger F229/F288 (`m1a-followups.md:301,361`), `2026-10-14-shadcn-context-lowering.md` §4 and §8 (P1 is the path, P2/P3 rejected), the north star (compile libraries as published, never port).
 
 ## 1. What Presence does, and what each Radix caller needs
@@ -75,8 +75,33 @@ Any other operation on a record is `element-value`.
 
 ## 4. The other gaps, made general
 
-- **G7: B7 for non-Provider callees.** Today `splice_render` runs only inside `specialise()`, which needs `specialisable()` (non-empty `provides`). Proposal: a component that reads `children` only through E1-E5 is specialised per call site like a Provider. Same mechanism, same refusals, without the `provides` requirement. The ruled "ONE mechanism for B7" (R34.122-124) stays one mechanism; only its entry predicate widens. Mellow review item: specialisation of a component with **no** frame. The question is what makes two call sites share or not share a clone. Proposal: the clone key is the call-site content hash, as in F307 host clones.
-- **G9: a render-time write to a ref** (`useStableComposedRefs`: `refsRef.current = refs` during render). Today this is `ref-in-render`. General rule: a render-phase write `r.current = v` is accepted iff nothing in render reads `r.current` and `v` is the same across renders (all its inputs are stable: `useCallback([])` results, build-folded `E.ref`, module constants). Then it is equal to `useRef(v)`, and it lowers to the initialiser. Otherwise `ref-in-render` stays.
+- **G7: B7 for non-Provider callees.** Today `splice_render` runs only inside `specialise()`, which needs `specialisable()` (non-empty `provides`). Proposal: a component that reads `children` only through E1-E5 is specialised per call site like a Provider. Same mechanism, same refusals, without the `provides` requirement. The ruled "ONE mechanism for B7" (R34.122-124) stays one mechanism; only its entry predicate widens.
+  - **A1 (Mellow 42291d86, binding): the clone key.** The G7 entry calls `specialise()` itself, with the same key: site (module path + `spec_salt`, the enclosing clone's id) + `clone_site(carried + rebased nodes, render prop)` (F238) + loc (`children.rs` :3552-3560). It is NOT a content-only hash, and NOT the F307 host-clone key (that one is site + loc only: `"{c_path}#{exp}~host~{site}~{loc}"`). Reason: `pinned()` bakes per-call-site `fixed_props` into the clone (:3536), and those are not in the hash. Two call sites with equal content but different pins would share one clone that carries the first site's pins. Instance and job records are per id, too.
+  - Sharing happens only at lowering, through R34.124's equal-chunk factory dedup, never at analysis.
+  - `E` cannot leak across clones, given three things: (a) `E` is built only inside the `compile_specialised` closure, after `splice_render` / `splice_children`, so every `E` field is a name the clone owns or a Carry hidden input; (b) the hash covers the S2 arrow body through `render`; (c) a G7 clone nested in another clone is salted by `spec_salt` (:105), so `CollapsibleContent`'s Presence site gets one clone per enclosing host or Provider clone, not one per library file.
+  - Kept unchanged: `!cir.specialised` (a clone is never re-specialised), and the F374 refusals (children carried by a spread or by the `children` prop).
+  - Phase A tests that pin A1:
+    - two call sites of one G7 component with byte-equal children but different pinned props (one fixed, one client-changing): two distinct clone ids, and the right paint per site;
+    - one call site inside a list: one clone, with per-row values through hidden inputs.
+  - Widening the entry creates one clone per call site for EVERY component that reads children only through E1-E5, not just Presence. The phase A READY reports the clone count and chunk bytes on battery, shadcn and website.
+- **G9: a render-time write to a ref** (`useStableComposedRefs`: `refsRef.current = refs` during render). Today this is `ref-in-render`. Native has no re-render that would redo the write: it runs once, at instance setup. So "equal to `useRef(v)`" holds only when `v` cannot change after the instance is created.
+  - **A2 (Mellow 42291d86, binding): the closed rule.** A render-time write `r.current = v` lowers to the `useRef` initialiser iff ALL of these hold:
+    1. `r` is a `useRef` of this component (after custom-hook inlining).
+    2. The write is ONE unconditional top-level statement of the render body. There is no other write to `r` in render, and no read of `r.current` in render, including through a function called during render.
+    3. `r` does not escape: it is not passed as a prop, returned or stored. Its `.current` is read only inside callbacks, effects or handlers.
+    4. `v` is built only from stable leaves, through array or object literals (identity is not observable under 2 and 3). Stable leaves are:
+       - literals and module constants;
+       - `useRef` bindings;
+       - `useCallback` / `useMemo` with `[]` deps, setters, and `dispatch`;
+       - a `useCallback` whose deps are all stable leaves;
+       - a prop of the clone that is in `fixed_props` (pinned: its call site never changes it on the client) and whose call-site expression is itself a stable leaf. This is checked recursively through Carry hidden inputs, depth-bounded, and fails closed.
+  - `E.ref` counts as stable only through these rules, never as a category of its own. Anything else stays `ref-in-render`.
+  - A forwarded ref from a clone caller is stable only when the app's ref is absent (it folds to `null`), a `useRef` object, or a `[]`-deps callback, AND the prop is pinned. An inline arrow ref is not stable, so `ref-in-render` applies. (React attaches once with the render-1 refs, because `useStableComposedRefs`'s callback has `[]` deps. Only the no-cleanup detach reads the latest refs, :155-160. Refusing is right.)
+  - Phase A tests that pin A2:
+    - collapsible with no ref (native);
+    - collapsible with a `useRef` ref (native; `ref.current` is the `div` after mount, and `null` after unmount where that applies);
+    - collapsible with an inline arrow ref (`ref-in-render` refusal);
+    - a G9 battery pair, both refusing: a conditional write, and a write whose `v` is a non-pinned prop.
 - **G5: a callback ref on a node mounted by `x-if`** (needed only by the element-child callers). This needs a runtime change. Today the runtime `x-if` (`packages/runtime-dom/src/directives/if.ts`) inserts by cloning and binding, and removes with `current.remove()` only. `x-ref` registers its nulling on the instance (`directives/ref.ts`, `instance.ts:65`). Proposal: an `x-if` branch owns a cleanup list. Binds inside the branch register on it, and `remove()` runs it. The B1 desugar of a callback ref inside a branch then becomes "call `cb(node)` when the branch is inserted (after bind, before effects of that flush) and `cb(null)` (or the returned cleanup) when it is removed". That is React's attach/detach order for a conditionally mounted host. This is a general runtime feature (any `{cond && <div ref={cb}/>}` gains it, a shape that is refused today: `component.rs:961-967`), not a Presence feature. The size cost must be measured; budget ≤ 0.3 KB gzip in the always-loaded runtime, or lazy behind a flag the compiler sets.
 
 Effects and hooks Presence needs that already compile: `useReducer` through a custom hook (F285/F286), `useCallback`, `useRef`, effects with DOM access in client JS. Two points to check:
@@ -109,8 +134,8 @@ Existing names keep their meaning: `children-read`, `ref-in-render`, `ref-shape`
 - **Q1 (Detoro).** Is §3, a general fold over React 19's production element shape, acceptable for G8? If not, F288 closes as "Presence stays an island" and phases A and B do not start.
 - **Q2 (Detoro).** Phase A first, as above? Phase B needs a runtime change (G5), which is general but adds bytes to the runtime.
 - **Q3 (Detoro).** Is printing `useLayoutEffect` as a plain effect (c2) an accepted known difference for Presence, or does F288 need layout timing first (a separate row)?
-- **Q4 (Mellow).** Soundness of G7's entry predicate: what decides that two call sites share a specialised clone, and can an `E` built at one call site leak into another clone?
-- **Q5 (Mellow).** G9's "stable across renders" test: is the list (`useCallback([])`, build-folded `E.ref`, module consts) closed enough? In particular, is a forwarded ref from the caller stable when the caller is itself a clone?
+- **Q4 (Mellow; answered by A1 in §4).** Soundness of G7's entry predicate: what decides that two call sites share a specialised clone, and can an `E` built at one call site leak into another clone?
+- **Q5 (Mellow; answered by A2 in §4).** G9's "stable across renders" test: is the list (`useCallback([])`, build-folded `E.ref`, module consts) closed enough? In particular, is a forwarded ref from the caller stable when the caller is itself a clone?
 
 ## 8. Boundary (for the phase A PR)
 
