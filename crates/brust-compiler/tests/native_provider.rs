@@ -134,10 +134,7 @@ fn call_sites_with_different_text_share_one_factory_module_and_keep_their_own_id
 
 #[test]
 fn shapes_the_splice_cannot_carry_keep_the_island_provider_and_say_why() {
-    for (file, why) in [
-        ("gated.tsx", "children as a value"),
-        ("local.tsx", "declared in the module"),
-    ] {
+    for (file, why) in [("local.tsx", "declared in the module")] {
         let all = compile(file);
         assert!(clones(&all).is_empty(), "{file}: nothing was specialised");
         let root = &all[0];
@@ -160,6 +157,22 @@ fn shapes_the_splice_cannot_carry_keep_the_island_provider_and_say_why() {
             "{file}"
         );
     }
+}
+
+#[test]
+fn a_provider_that_prints_its_children_under_a_condition_is_specialised() {
+    // F384: `{open ? children : null}` is the children slot under a condition, not children read as a value, so the
+    // Provider's clone holds the content (it was the island it was before, `children-read`).
+    let all = compile("gated.tsx");
+    assert!(
+        !clones(&all).is_empty(),
+        "gated.tsx: the Provider is specialised"
+    );
+    assert!(
+        !all.iter()
+            .any(|i| i.ir.diagnostics.iter().any(|d| d.rule == "children-read")),
+        "gated.tsx"
+    );
 }
 
 #[test]

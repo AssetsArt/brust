@@ -11,8 +11,8 @@
 // the clone's own), and Radix Switch's
 // Root/Thumb shape, where the trigger the rest is spread into reads the context itself (switch, F298 + F309).
 // A stateless wrapper's own changing prop in such content is cloned too, but the wrapper does not follow it (F323), so
-// the page is refused `frozen-prop` (prop). Unchanged: content without a directive (const), a child that reads its children as a value (gate, children-read) and a
-// child whose children reach its element only through its rest (rest, S1/F324). Every observable value equals React.
+// the page is refused `frozen-prop` (prop). A child that prints its children under a condition (gate, `open && children`)
+// is native since F384. Unchanged: a child whose children reach its element only through its rest (rest, S1/F324). Every observable value equals React.
 // Run alone: `bun test --timeout 120000 tests/server/host-specialise.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { readFileSync, rmSync } from 'node:fs'
@@ -95,7 +95,7 @@ const tierOf = (prefix: string) => {
 }
 
 test('slot content a child prints inside its own host is cloned with the child per call site; the rest keeps its refusal', () => {
-  expect({ const: tierOf('pConst_'), state: tierOf('pState_'), text: tierOf('pText_'), handler: tierOf('pHandler_'), list: tierOf('pList_'), linked: tierOf('pLinkedChild_'), linked_static: tierOf('pLinkedStatic_'), two_levels: tierOf('pTwoLevels_'), ifmount: tierOf('pIfmount_'), nested: tierOf('pNested_'), prop: tierOf('pProp_'), scoped: tierOf('pScoped_'), switch: tierOf('pSwitch_'), gate: tierOf('pGate_'), rest: tierOf('pRest_'), livewrap: tierOf('pLivewrap_'), livewrap_wrapper: tierOf('liveWrap_') }).toEqual({ const: 'native', state: 'native', text: 'native', handler: 'native', list: 'native', linked: 'native', linked_static: 'native', two_levels: 'native', ifmount: 'native', nested: 'native', prop: 'react', scoped: 'native', switch: 'static', gate: 'react', rest: 'react', livewrap: 'native', livewrap_wrapper: 'native' })
+  expect({ const: tierOf('pConst_'), state: tierOf('pState_'), text: tierOf('pText_'), handler: tierOf('pHandler_'), list: tierOf('pList_'), linked: tierOf('pLinkedChild_'), linked_static: tierOf('pLinkedStatic_'), two_levels: tierOf('pTwoLevels_'), ifmount: tierOf('pIfmount_'), nested: tierOf('pNested_'), prop: tierOf('pProp_'), scoped: tierOf('pScoped_'), switch: tierOf('pSwitch_'), gate: tierOf('pGate_'), rest: tierOf('pRest_'), livewrap: tierOf('pLivewrap_'), livewrap_wrapper: tierOf('liveWrap_') }).toEqual({ const: 'native', state: 'native', text: 'native', handler: 'native', list: 'native', linked: 'native', linked_static: 'native', two_levels: 'native', ifmount: 'native', nested: 'native', prop: 'react', scoped: 'native', switch: 'static', gate: 'native', rest: 'react', livewrap: 'native', livewrap_wrapper: 'native' })
 })
 
 const CLICKS: Record<string, string[]> = { rows: ['f', 'add', 'b3', 'in3', 'rm', 'b2', 'f', 'add', 'b4', 'in4'], rows_free: ['f', 'add', 'b3', 'rm', 'b2', 'f', 'add', 'b4', 'f'], many_same: ['f', 'f', 'f'], many_diff: ['f', 'f', 'f'], livewrap: ['f', 'box', 'f', 'f', 'box'], ifmount: ['f', 'g', 'box', 'f', 'g', 'f', 'g'], linked_static: ['f', 'f'], nested: ['f', 'box', 'f', 'box'], switch: ['box', 'box', 'box'], scoped: ['f', 't', 'box', 'f', 't'] }
