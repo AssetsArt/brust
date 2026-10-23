@@ -89,28 +89,30 @@ fn a_child_prop_named_req_compiles() {
 /// object or renamed: the child's own `req` is data only when the root did not give it request state.
 #[test]
 fn request_state_handed_to_a_child_reads_as_request_state() {
-    let count = (
-        "components/Count.tsx",
-        "export function Count({ req }: { req: string }) {\n  return <span>{req}</span>\n}\n",
-    );
-    for (name, home) in [
-        (
-            "whole",
-            "export default function Home(props: any) { return <main><Count {...props} /></main> }",
-        ),
-        (
-            "rest",
-            "export default function Home({ ...rest }: any) { return <main><Count {...rest} /></main> }",
-        ),
-        (
-            "renamed",
-            "export default function Home({ req: r }: any) { return <main><Count req={r} /></main> }",
-        ),
+    let declared =
+        "export function Count({ req }: { req: string }) {\n  return <span>{req}</span>\n}\n";
+    // read without being declared: through `props`, through a rest object
+    let via_props =
+        "export function Count(props: any) {\n  return <span>{props.req.url}</span>\n}\n";
+    let via_rest =
+        "export function Count({ ...rest }: any) {\n  return <span>{rest.cookies}</span>\n}\n";
+    let whole =
+        "export default function Home(props: any) { return <main><Count {...props} /></main> }";
+    let rest = "export default function Home({ ...rest }: any) { return <main><Count {...rest} /></main> }";
+    let renamed =
+        "export default function Home({ req: r }: any) { return <main><Count req={r} /></main> }";
+    for (name, child, home) in [
+        ("whole", declared, whole),
+        ("rest", declared, rest),
+        ("renamed", declared, renamed),
+        ("whole-read-props", via_props, whole),
+        ("whole-read-rest", via_rest, whole),
+        ("rest-read-props", via_props, rest),
     ] {
         let dir = std::env::temp_dir().join(format!("brustc-f394-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("components")).unwrap();
-        std::fs::write(dir.join(count.0), count.1).unwrap();
+        std::fs::write(dir.join("components/Count.tsx"), child).unwrap();
         std::fs::write(
             dir.join("Home.tsx"),
             format!("import {{ Count }} from './components/Count'\n{home}\n"),

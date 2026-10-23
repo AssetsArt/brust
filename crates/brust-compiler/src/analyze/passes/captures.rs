@@ -235,30 +235,80 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
     // F394: request state is a value origin. The props the router hands the component the caller asked for (a route
     // page or layout) are it; a child's own prop of that name is data. A root that hands its WHOLE props object (or a
     // rest of it, `*`) on to anything is refused too: the child could read `req` out of it.
+    ir.reads_request_prop = REQUEST_PROPS
+        .iter()
+        .any(|n| read.iter().any(|(_, d)| d.prop_roots().contains(*n)));
     if ctx.is_root {
-        // `*` only counts when some component below declares a prop of a request name: valid React that spreads its
-        // props into an element or a child with no such prop stays native.
-        let below = request_named_prop_below(ir, ctx);
-        for name in REQUEST_PROPS.iter().copied().chain(below.then_some("*")) {
-            if let Some((loc, _)) = read.iter().find(|(_, d)| d.prop_roots().contains(name)) {
-                let what = if name == "*" {
-                    "the whole props object (which includes request state) is passed on".to_string()
-                } else {
-                    format!("prop `{name}` carries request state and is read")
-                };
+        for name in REQUEST_PROPS {
+            if let Some((loc, _)) = read.iter().find(|(_, d)| d.prop_roots().contains(*name)) {
                 ir.diagnostics.push(Diagnostic::error(
                     "request-state-in-render",
-                    format!("{what} at line {}", ctx.line(*loc)),
+                    format!(
+                        "prop `{name}` carries request state and is read at line {}",
+                        ctx.line(*loc)
+                    ),
                     *loc,
                     "read request values in the route loader and pass plain values as props",
                 ));
             }
         }
+        // A spread of the whole props object (or a rest of it) into a component hands it request state under any
+        // name: refused when a component below declares or reads a prop named like request state. A spread into an
+        // element, or into a component with no such prop, stays native.
+        if let Some(loc) = ir
+            .structural
+            .as_deref()
+            .and_then(|st| props_spread_into_component(&st.template))
+            && request_named_prop_below(ir, ctx)
+        {
+            ir.diagnostics.push(Diagnostic::error(
+                "request-state-in-render",
+                format!(
+                    "the whole props object (which includes request state) is passed on to a component at line {}",
+                    ctx.line(loc)
+                ),
+                loc,
+                "read request values in the route loader and pass plain values as props",
+            ));
+        }
     }
     st.client_uses = uses;
 }
 
-/// Whether a component this one renders (at any depth) declares a prop named like request state.
+/// The location of a component call that spreads the component's whole props, or a rest of them.
+fn props_spread_into_component(n: &crate::ir::Node) -> Option<u32> {
+    use crate::ir::{Expr, IdentKind, Node, RawExpr, RawKind, SPREAD_KEY};
+    match n {
+        Node::Component {
+            loc,
+            props,
+            children,
+            ..
+        } => props
+            .iter()
+            .any(|(k, v)| {
+                k == SPREAD_KEY
+                    && matches!(
+                        v,
+                        Expr::Raw(RawExpr { kind: RawKind::Ident { name, kind: IdentKind::Prop }, .. })
+                            if name == "*" || name == crate::ir::REST_PROPS
+                    )
+            })
+            .then_some(*loc)
+            .or_else(|| children.iter().find_map(props_spread_into_component)),
+        Node::Element { children, .. } | Node::Fragment(children) => {
+            children.iter().find_map(props_spread_into_component)
+        }
+        Node::If { then, else_, .. } => then
+            .iter()
+            .chain(else_)
+            .find_map(props_spread_into_component),
+        Node::For { body, .. } => body.iter().find_map(props_spread_into_component),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => None,
+    }
+}
+
+/// Whether a component this one renders (at any depth) declares or reads a prop named like request state.
 fn request_named_prop_below(ir: &ComponentIR, ctx: &PassCtx<'_>) -> bool {
     let done: std::collections::HashMap<String, std::rc::Rc<ComponentIR>> = ctx
         .modules
@@ -274,9 +324,10 @@ fn request_named_prop_below(ir: &ComponentIR, ctx: &PassCtx<'_>) -> bool {
             continue;
         }
         let Some(c) = done.get(&id) else { continue };
-        if c.props
-            .iter()
-            .any(|p| REQUEST_PROPS.contains(&p.name.as_str()))
+        if c.reads_request_prop
+            || c.props
+                .iter()
+                .any(|p| REQUEST_PROPS.contains(&p.name.as_str()))
         {
             return true;
         }
