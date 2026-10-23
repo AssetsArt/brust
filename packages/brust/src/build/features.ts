@@ -15,6 +15,8 @@ export function featureOfAttr(attr: string): RuntimeFeature | null | undefined {
     case 'x-props':
     case 'x-props-bind':
     case 'x-raw':
+    // F288: the caller's ref on a nested host, bound by the caller's walk (core `walkChildren`)
+    case 'x-pref':
       return null
     case 'x-text':
     case 'x-show':

@@ -145,7 +145,7 @@ pub fn compile_specialised(
     key: String,
     opts: &AnalyzeOptions,
     modules: &RefCell<ModuleCache>,
-    splice: &mut dyn FnMut(&mut ComponentIR) -> Result<(), String>,
+    splice: &mut dyn FnMut(&mut ComponentIR, &crate::parse::Parsed) -> Result<(), String>,
 ) -> Result<Rc<ComponentIR>, String> {
     if let Some(Entry::Done(ir)) = modules.borrow().get(&key) {
         return Ok(ir.clone());
@@ -170,7 +170,7 @@ pub fn compile_specialised(
             ir
         }
     };
-    splice(&mut ir)?;
+    splice(&mut ir, &parsed)?;
     let local = |name: &str| analyze_named_component_in(&parsed, name, Some(opts));
     let ctx = PassCtx {
         text: parsed.text(),

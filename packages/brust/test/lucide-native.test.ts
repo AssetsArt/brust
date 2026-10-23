@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { Edit, Heart, LucideProvider, Plus, Star } from 'lucide-react'
+import InlinedCond from './fixtures/lucide/InlinedCond'
 
 const app = join(import.meta.dir, 'fixtures/lucide')
 const bin = join(import.meta.dir, '../bin/brust')
@@ -103,4 +104,15 @@ test('the native page keeps the icon as inline SVG with state-driven attributes 
   expect(page.replace(/ x-bind-[a-z-]+="[^"]*"/g, '')).toContain(react(createElement(Heart, { size: 16, color: 'red' })))
   for (const a of ['x-bind-width', 'x-bind-height', 'x-bind-stroke']) expect(page).toContain(a)
   expect(page).not.toContain('brust-island')
+})
+
+test('F407: a static component with an icon, under a condition inside an inlined component with its own icon, builds and paints as React', async () => {
+  // Red before: the first compile saw both icons as island jobs and failed the build with nested-instance.
+  for (const [path, interactive] of [['/inlined-cond', true], ['/inlined-cond-off', false]] as const) {
+    const page = await html(path)
+    expect(page).toContain(react(createElement(InlinedCond, { post: { href: '/p', interactive } })))
+    expect(page).not.toContain('brust-island')
+  }
+  expect(comp('inlinedCond_').jobs).toEqual([])
+  expect(comp('inlinedCond_').needs_worker).toBe(false)
 })

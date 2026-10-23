@@ -3,6 +3,7 @@ pub mod collection;
 pub mod component;
 pub mod const_fold;
 pub mod context;
+pub mod element_value;
 pub mod exports;
 pub mod expr;
 pub mod hir;

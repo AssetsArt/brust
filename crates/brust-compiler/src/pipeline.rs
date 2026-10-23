@@ -41,6 +41,8 @@ pub fn compile_tree(
         resolve: &resolve,
         runtime_import,
         linked: &linked,
+        // L23 / F407: lucide icons not rendered yet; the build renders them and compiles again.
+        icons_pending: !opts.icons_final && done.iter().any(|(_, ir)| !ir.icon_requests.is_empty()),
     };
     let root_rc = by_id
         .get(&root.id)
