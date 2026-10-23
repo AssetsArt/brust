@@ -10,7 +10,7 @@ import Lead from '../../components/docs/Lead'
 
 export interface CssData {
   toc: TocItem[]
-  blocks: Record<'imports' | 'global' | 'urls' | 'head' | 'mod' | 'modSrc' | 'compiled' | 'install' | 'entry' | 'layout' | 'apply' | 'layer', CodeBlockData>
+  blocks: Record<'imports' | 'global' | 'urls' | 'preload' | 'head' | 'mod' | 'modSrc' | 'compiled' | 'install' | 'entry' | 'layout' | 'apply' | 'layer', CodeBlockData>
 }
 
 const IMPORTS = `// Layout.tsx: site-wide, because every page's chain starts with this layout
@@ -29,6 +29,21 @@ const URLS = `.hero {
 @font-face {
   font-family: Inter;
   src: url("./fonts/inter.woff2");           /* copied to dist/client/inter-<hash>.woff2, URL rewritten */
+}`
+
+const PRELOAD = `// Layout.tsx
+import nunito from './fonts/nunito.woff2'
+import './app.css' // @font-face { src: url(./fonts/nunito.woff2) }
+
+export default function Layout() {
+  return (
+    <html>
+      <head>
+        <link rel="preload" as="font" type="font/woff2" crossOrigin="" href={nunito} />
+      </head>
+      <body>…</body>
+    </html>
+  )
 }`
 
 const HEAD = `<head>
@@ -83,6 +98,7 @@ export async function cssLoader(): Promise<CssData> {
       { id: 'global', title: 'Global stylesheets' },
       { id: 'order', title: 'Which, and in what order' },
       { id: 'output', title: 'The built files' },
+      { id: 'preload', title: 'Preload a stylesheet font' },
       { id: 'head', title: 'Where the links go' },
       { id: 'modules', title: 'CSS Modules' },
       { id: 'fold', title: 'Class names fold at compile time' },
@@ -94,6 +110,7 @@ export async function cssLoader(): Promise<CssData> {
       imports: codeBlock({ lang: 'tsx', file: 'Layout.tsx', code: IMPORTS }),
       global: codeBlock({ lang: 'toml', file: 'brust.toml', code: GLOBAL }),
       urls: codeBlock({ lang: 'text', file: 'layout.css', code: URLS }),
+      preload: codeBlock({ lang: 'tsx', file: 'Layout.tsx', code: PRELOAD }),
       head: codeBlock({ lang: 'text', file: 'the rendered <head>', code: HEAD }),
       mod: codeBlock({ lang: 'tsx', file: 'Card.tsx', code: MOD }),
       modSrc: codeBlock({ lang: 'text', file: 'Card.module.css', code: MOD_SRC }),
@@ -155,6 +172,21 @@ export default function Css({ blocks }: CssData) {
       <p>
         The types served from there are woff2, woff, ttf, otf, eot, png, jpg, jpeg, gif, webp, avif, svg and ico. Any other type, a cursor file or a video, fails the build with <code>css-asset-type</code> because the server would answer 404 for it. Put that file in{' '}
         <code>public/</code> and reference it as <code>/public/…</code>.
+      </p>
+
+      <h2 id="preload">Preload a stylesheet font</h2>
+      {/* source: F411 (Assets Art B-9, lane aac-font-preload): css.ts cssPlugin (an import of a SERVED_ASSET_EXT file is its /_brust/client URL, the name the url() rewrite uses); docs/css.md "Preload a stylesheet font"; the hoist of a <link> into <head> is F399 (crates/brust-core/src/render.rs hoist_head_into) */}
+      <p>
+        The hash is known only after the build, so a layout cannot write a font&rsquo;s URL by hand. Import the file instead: an import of any of the served types above is the URL brust serves the file at, as a string.
+      </p>
+      <CodeBlock code={blocks.preload.code} lang={blocks.preload.lang} file={blocks.preload.file} html={blocks.preload.html} />
+      <p>
+        <code>nunito</code> is <code>/_brust/client/nunito-&lt;hash&gt;.woff2</code>, the same file and name the stylesheet&rsquo;s <code>url()</code> is rewritten to, so the font is shipped once. A <code>&lt;link&gt;</code> rendered in a page is hoisted into the
+        <code>&lt;head&gt;</code>. The string is a build-time constant, so it works in a layout or page, in a native component, in a React island, on the server, on Cloudflare Workers and with <code>--target static</code>. <code>crossOrigin=&quot;&quot;</code> is required for a font preload,
+        even from your own origin.
+      </p>
+      <p>
+        brust does not preload the stylesheet&rsquo;s fonts for you. A package such as <code>@fontsource-variable/nunito</code> lists one file for each <code>unicode-range</code> subset, and the browser should fetch only the subsets a page uses, so preload only the files a page needs.
       </p>
 
       <h2 id="head">Where the links go</h2>
