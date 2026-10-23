@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
-| C Hooks | 217 | 69 | 68 | 80 | 0 | 0 | 0 | 0 |
+| C Hooks | 218 | 70 | 68 | 80 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 615 | 272 | 116 | 223 | 3 | 1 | 0 | 0 |
+| **Total** | 616 | 273 | 116 | 223 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -535,6 +535,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-local-spread-other | a local object that spreads the props and another local object | static | static | ssr | ok | 4.0 | — | W1d PR 4a (F326): only the props or the rest may be spread inside the local object; the component is a React island under a static page |
 | c-local-spread-method | a local object with a method that spreads the props | static | static | ssr | ok | 4.0 | — | W1d PR 4a (F326): a method is not a plain entry; the component is a React island under a static page |
 | c-local-spread-rest | a local object of entries and the rest ({ role, dir, ...groupProps }) used only as a JSX spread | static | static | 0 | ok | 0 | — | W1d PR 4b (F327): Radix ToggleGroupImpl's commonProps; the rest in it is not read as a value because the object is only spread |
+| c-local-spread-rest-single | the same object as the only attribute of the element (<Impl {...commonProps} />) | static | static | 0 | ok | 0 | — | F332 N3: a lone spread is recorded like the multi-attribute site; the rest in the object is not read as a value |
 | c-local-spread-rest-value | the same object also read as a value | static | static | ssr | ok | 4.0 | — | W1d PR 4b (F327): read as a value the rest would print as one: prop-pattern, the component is a React island under a static page |
 | c-scope-props | a context hook and a scope hook read props.__scopeX, the token spread on a component | static | static | 0 | ok | 0 | — | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
 | c-scope-sibling | two sibling Providers of one scoped context, one consumer each | static | static | 0 | ok | 0 | — | W1d PR 2 (Mellow C1-C4): scope hooks are found by provenance, scopes are never followed, so anything that would need a scope to tell frames apart stays React |
