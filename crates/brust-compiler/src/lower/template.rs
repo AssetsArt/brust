@@ -1700,7 +1700,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                 .is_some_and(|r| self.f.deps(r, &self.scope()).reactive())
                 || ((self.ctx.linked)(&self.f.ir.id)
                     && self.reactive(src_raw.as_ref(), source).is_some())
-                || body.iter().any(|b| needs_directives(b, &self.f, !module)));
+                || body.iter().any(|b| needs_directives(b, &self.f, !module))
+                // F406: the client creates and refills the rows of a list inside a client list from the outer row's
+                // item, so the inner list is a client list too (its text directives read the inner binding).
+                || self.frames.iter().any(|fr| fr.directive));
         let var = {
             let own = self.seeds.of(self.f.ir);
             let root = self.seeds.of(self.inst_ir);
