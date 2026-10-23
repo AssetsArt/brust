@@ -113,6 +113,17 @@ fn request_state_props_are_errors() {
     assert!(errors(&ir, "request-state-in-render").is_empty());
 }
 
+/// F394: request state is a value origin, not a prop name. The props the router hands a route component are it
+/// (`req` included); a child's own prop called `req` is plain data.
+#[test]
+fn a_route_prop_named_req_is_request_state() {
+    let ir = analyze(
+        "R.tsx",
+        "export default function R({ req }: any) { return <p>{req.url}</p> }",
+    );
+    assert_eq!(errors(&ir, "request-state-in-render").len(), 1);
+}
+
 #[test]
 fn builtin_detection() {
     use brust_compiler::analyze::passes::captures::is_server_only;

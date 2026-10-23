@@ -50,6 +50,11 @@ pub struct Diagnostic {
     pub line: u32,
     pub col: u32,
     pub remediation: String,
+    /// The module (path relative to the app root) whose text `loc`, `line` and `col` point into, when it is not the
+    /// component the diagnostic is reported on: a finding raised while printing an inlined component from another
+    /// file (F395). `None`: the reporting component's own module.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 impl Diagnostic {
@@ -62,6 +67,7 @@ impl Diagnostic {
             line: 0,
             col: 0,
             remediation: remediation.into(),
+            file: None,
         }
     }
 

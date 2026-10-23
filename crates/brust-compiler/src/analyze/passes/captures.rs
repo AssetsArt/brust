@@ -232,7 +232,7 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         .map(|p| (p.loc, &p.deps))
         .chain(uses.iter().map(|u| (u.loc, &u.deps)))
         .collect();
-    for name in REQUEST_PROPS {
+    for name in REQUEST_PROPS.iter().filter(|_| ctx.is_root) {
         if let Some((loc, _)) = read.iter().find(|(_, d)| d.prop_roots().contains(*name)) {
             ir.diagnostics.push(Diagnostic::error(
                 "request-state-in-render",

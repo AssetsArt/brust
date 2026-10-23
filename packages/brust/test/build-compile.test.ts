@@ -216,3 +216,24 @@ test('F75: replaces() keeps a child over a root and a chunk over none; disagreei
     rule: 'component-compile-divergent',
   })
 })
+
+// F394 (Assets Art B-3): request state is a value origin, not a prop name. An ordinary child's prop called `req` is
+// plain data; the props the router hands a route component are still request state, and so is anything they flow into.
+test('F394: a child component prop named req compiles native', async () => {
+  const { compiled } = await buildFixture(join(import.meta.dir, 'fixtures/req-prop'))
+  const count = [...compiled.values()].find((c) => c.id.startsWith('count_'))!
+  expect(count.ir.diagnostics?.filter((d) => d.class === 'error') ?? []).toEqual([])
+  expect([...compiled.values()].every((c) => !(typeof c.ir.tier === 'object' && 'React' in c.ir.tier))).toBe(true)
+})
+
+test('F394: a route page prop named req is still request state, also when it flows into a child', async () => {
+  await expect(buildFixture(join(import.meta.dir, 'fixtures/req-prop-page'))).rejects.toThrow(/request-state|carries request state/)
+})
+
+// F395: a finding raised while printing an inlined component from another file names that file and its own position
+// (it used to read `Home.tsx:0:0`, the route file with no position).
+test('F395: a lowering warning in an inlined component names that component\'s file and line', async () => {
+  const { compiled } = await buildFixture(join(import.meta.dir, 'fixtures/diag-file'))
+  const found = [...compiled.values()].flatMap((c) => c.diagnostics ?? []).filter((d) => d.rule === 'reserved-attr')
+  expect(found.map((d) => [d.file, d.line, d.col])).toEqual([['components/Card.tsx', 3, 5]])
+})
