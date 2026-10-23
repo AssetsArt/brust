@@ -208,7 +208,8 @@ export async function buildCss(
     // URI whatever `loader: file` says, and `loader: dataurl` does the opposite (the name is inverted): it leaves
     // the url() as the absolute path of the source file. That path is the marker `emitSourceAssets` copies and
     // rewrites. Re-check on every Bun upgrade; the F393 tests in test/css.test.ts go red if the quirk changes.
-    loader: Object.fromEntries(SERVED_ASSET_EXT.map((e) => [e, 'dataurl'])),
+    // bun-types 1.4.2's `Loader` omits `dataurl`, which the runtime accepts.
+    loader: Object.fromEntries(SERVED_ASSET_EXT.map((e) => [e, 'dataurl'])) as unknown as Bun.BuildConfig['loader'],
   })
   if (!res.success) throw new BuildError('css', res.logs.map(String).join('\n'))
   // Assets a stylesheet references (fonts, images): `<name>-<hex10>.<ext>`, references rewritten.
