@@ -62,10 +62,15 @@ fn a_write_of_stable_leaves_is_the_initialiser() {
             "const r0 = useRef(0); const cb = useCallback(() => r0.current, [r0]); const r = useRef<any>(null); r.current = cb; const h = useCallback(() => r.current(), []); useEffect(() => { h() }, [])",
             "r.current = cb",
         ),
-        // A2 extension (a): a member of a const object literal is its field; (b): `a ?? <literal>`
+        // ruling 255806ff (a): a member of a const static-key object literal that is never written or escaping is its
+        // field; (b): `||`, `??`, `&&` over stable operands
         (
             "const cb = useCallback(() => setN(1), []); const o = { k: cb, j: 2 }; const r = useRef<any>(null); r.current = [o.k, cb ?? null]; useEffect(() => { r.current[0]() }, [])",
             "r.current = [cb, cb ?? null]",
+        ),
+        (
+            "const cb = useCallback(() => setN(1), []); const o = useRef(0); const r = useRef<any>(null); r.current = [cb || o, o && cb, cb || (cb ?? null)]; useEffect(() => { r.current[0]() }, [])",
+            "r.current = [cb || o, o && cb, cb || (cb ?? null)]",
         ),
     ] {
         let (t, rules, chunk) = compile(&page(body));
@@ -128,10 +133,28 @@ fn every_other_write_is_ref_in_render() {
             "const o = useRef<any>({ k: 1 }); const r = useRef<any>(null); r.current = o.current.k; useEffect(() => { console.log(r.current) }, [])",
             "member of a non-literal",
         ),
-        // rule 4 (b): `a ?? b` with `b` not a literal
+        // ruling 255806ff (a): the object is written, escapes, or sits in the value whole
+        // ruling 255806ff (a): a literal object that escapes (handed to code), or sits in the value whole
+        (
+            "const o = { k: 1 }; const r = useRef<any>(null); r.current = o.k; useEffect(() => { console.log(o, r.current) }, [])",
+            "literal object escapes",
+        ),
+        (
+            "const o = { k: 1 }; const r = useRef<any>(null); r.current = [o.k, o]; useEffect(() => { console.log(r.current) }, [])",
+            "literal object in the value",
+        ),
+        // ruling 255806ff (b): an unstable operand, or another operator
         (
             "const o = useRef(0); const r = useRef<any>(null); r.current = o ?? n; useEffect(() => { console.log(r.current) }, [])",
-            "?? a non-literal",
+            "?? an unstable operand",
+        ),
+        (
+            "const o = useRef(0); const r = useRef<any>(null); r.current = o || n; useEffect(() => { console.log(r.current) }, [])",
+            "|| an unstable operand",
+        ),
+        (
+            "const o = useRef(0); const r = useRef<any>(null); r.current = o ? o : null; useEffect(() => { console.log(r.current) }, [])",
+            "a ternary",
         ),
         // rule 4: a callback with no deps argument is a new function every render
         (
@@ -154,4 +177,27 @@ fn a_conditional_write_is_never_lowered() {
         "const r = useRef(0); if (n > 1) { r.current = 1 } useEffect(() => { console.log(r.current) }, [])",
     ));
     assert!(matches!(t, Tier::React { .. }), "{t:?} {rules:?}");
+}
+
+#[test]
+fn a_written_object_is_never_a_stable_source() {
+    // ruling 255806ff (a): a written or escaping object is refused before this pass too (`hook-return-shape`); either way
+    // the page stays React.
+    for (body, why) in [
+        (
+            "const cb = useCallback(() => 1, []); const o: any = { k: cb }; const r = useRef<any>(null); r.current = o.k; const h = useCallback(() => { delete o.k }, []); useEffect(() => { h(); console.log(r.current) }, [])",
+            "object written",
+        ),
+        (
+            "const cb = useCallback(() => 1, []); const o = { k: cb }; const r = useRef<any>(null); r.current = o.k; useEffect(() => { console.log(o, r.current) }, [])",
+            "object escapes",
+        ),
+        (
+            "const cb = useCallback(() => 1, []); const o = { k: cb }; const r = useRef<any>(null); r.current = [o.k, o]; useEffect(() => { console.log(r.current) }, [])",
+            "object in the value",
+        ),
+    ] {
+        let (t, rules, _) = compile(&page(body));
+        assert!(matches!(t, Tier::React { .. }), "{why}: {t:?} {rules:?}");
+    }
 }

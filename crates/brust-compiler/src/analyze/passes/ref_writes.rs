@@ -14,7 +14,8 @@ use crate::ir::{ComponentIR, Diagnostic, Expr, IdentKind, RawExpr, RawKind};
 use serde_json::Value;
 
 pub fn lower(ir: &mut ComponentIR) {
-    let writes = std::mem::take(&mut ir.render_ref_writes);
+    // Kept on the IR while judging: a write's value is a use too (an object handed to a ref escapes).
+    let writes = ir.render_ref_writes.clone();
     for w in &writes {
         let ok = check(ir, w, &writes);
         match ok {
@@ -31,6 +32,7 @@ pub fn lower(ir: &mut ComponentIR) {
             )),
         }
     }
+    ir.render_ref_writes.clear();
 }
 
 fn check(
@@ -127,7 +129,19 @@ fn calls(v: &Value, f: &str) -> bool {
 
 /// Every mention of `r` in `v` is the object of a `.current` read.
 fn only_current_reads(v: &Value, r: &str) -> bool {
-    fn count(v: &Value, r: &str, idents: &mut usize, reads: &mut usize) -> bool {
+    only_member_reads(v, r, Some("current"))
+}
+
+/// Every mention of `r` in `v` is the object of a member read (of `member` only, when given): never written (`=`,
+/// `+=`, `++`, `delete`, …), passed on or stored.
+fn only_member_reads(v: &Value, r: &str, member: Option<&str>) -> bool {
+    fn count(
+        v: &Value,
+        r: &str,
+        member: Option<&str>,
+        idents: &mut usize,
+        reads: &mut usize,
+    ) -> bool {
         match v {
             Value::Object(m) => {
                 if let Some(mm) = m.get("Member")
@@ -135,7 +149,7 @@ fn only_current_reads(v: &Value, r: &str) -> bool {
                         .pointer("/target/kind/Ident/name")
                         .and_then(Value::as_str)
                         == Some(r)
-                    && mm.get("name").and_then(Value::as_str) == Some("current")
+                    && member.is_none_or(|k| mm.get("name").and_then(Value::as_str) == Some(k))
                 {
                     *reads += 1;
                 }
@@ -146,18 +160,25 @@ fn only_current_reads(v: &Value, r: &str) -> bool {
                 }
                 // The names an arrow captures: its body, walked too, holds the uses.
                 m.iter()
-                    .all(|(k, x)| k == "captures" || count(x, r, idents, reads))
+                    .all(|(k, x)| k == "captures" || count(x, r, member, idents, reads))
             }
-            Value::Array(xs) => xs.iter().all(|x| count(x, r, idents, reads)),
-            // Source kept as text: each `r` is `r.current`, never written (`=`, `+=`, `++`, …) or passed on.
+            Value::Array(xs) => xs.iter().all(|x| count(x, r, member, idents, reads)),
+            // Source kept as text: each `r` is `r.<member>`, never written (`=`, `+=`, `++`, `delete`, …) or passed on.
             Value::String(s) => words(s, r).all(|i| {
-                let rest = &s[i + r.len()..];
-                let Some(after) = rest.strip_prefix(".current") else {
-                    return false;
-                };
-                if after.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '$') {
+                if s[..i].trim_end().ends_with("delete") {
                     return false;
                 }
+                let rest = &s[i + r.len()..];
+                let Some(after) = rest.strip_prefix('.') else {
+                    return false;
+                };
+                let key_len = after
+                    .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                    .unwrap_or(after.len());
+                if key_len == 0 || member.is_some_and(|k| &after[..key_len] != k) {
+                    return false;
+                }
+                let after = &after[key_len..];
                 let t = after.trim_start();
                 !(t.starts_with("++")
                     || t.starts_with("--")
@@ -173,7 +194,7 @@ fn only_current_reads(v: &Value, r: &str) -> bool {
         }
     }
     let (mut idents, mut reads) = (0, 0);
-    count(v, r, &mut idents, &mut reads) && idents == reads
+    count(v, r, member, &mut idents, &mut reads) && idents == reads
 }
 
 /// Byte offsets of `w` as a whole word in `s`.
@@ -195,31 +216,22 @@ fn stable(ir: &ComponentIR, e: &RawExpr, depth: u8) -> bool {
         RawKind::Lit(_) => true,
         RawKind::Array(xs) => xs.iter().all(|x| stable(ir, x, depth + 1)),
         RawKind::Object(ps) => ps.iter().all(|(_, x)| stable(ir, x, depth + 1)),
-        // `o.k` of a const object literal of this component (F266 safe object) is its field `k` (A2 extension a).
+        // `o.k` (ruling 255806ff a): `o` is a const local of this component whose initialiser is an object literal
+        // with static keys only (no spread, computed key, getter or method), never written and never escaping; the
+        // field's value is itself stable.
         RawKind::Member { target, name, .. } => match &target.kind {
             RawKind::Ident {
                 name: o,
                 kind: IdentKind::Local,
-            } if ir.safe_objects.contains(o) => ir
-                .derived
-                .iter()
-                .find(|d| &d.name == o)
-                .and_then(|d| match &d.expr {
-                    Expr::Raw(RawExpr {
-                        kind: RawKind::Object(ps),
-                        ..
-                    }) => ps.iter().rev().find(|(k, _)| k == name).map(|(_, v)| v),
-                    _ => None,
-                })
-                .is_some_and(|v| stable(ir, v, depth + 1)),
+            } => literal_field(ir, o, name).is_some_and(|v| stable(ir, v, depth + 1)),
             _ => false,
         },
-        // `a ?? <literal>` is `a` or a constant (A2 extension b).
+        // `A || B`, `A ?? B`, `A && B` (ruling 255806ff b): the value is always one of the operands.
         RawKind::Binary {
-            op: crate::ir::BinOp::Nullish,
+            op: crate::ir::BinOp::Or | crate::ir::BinOp::Nullish | crate::ir::BinOp::And,
             left,
             right,
-        } => matches!(right.kind, RawKind::Lit(_)) && stable(ir, left, depth + 1),
+        } => stable(ir, left, depth + 1) && stable(ir, right, depth + 1),
         RawKind::Ident { name, kind } => match kind {
             IdentKind::Setter | IdentKind::Import { .. } => true,
             IdentKind::Prop => ir.stable_props.iter().any(|p| p == name),
@@ -242,4 +254,50 @@ fn stable(ir: &ComponentIR, e: &RawExpr, depth: u8) -> bool {
         },
         _ => false,
     }
+}
+
+/// The field `k` of `o`, a const object literal of this component that is never written and never escapes.
+fn literal_field<'a>(ir: &'a ComponentIR, o: &str, k: &str) -> Option<&'a RawExpr> {
+    let ps = ir
+        .derived
+        .iter()
+        .find(|d| d.name == o)
+        .and_then(|d| match &d.expr {
+            Expr::Raw(RawExpr {
+                kind: RawKind::Object(ps),
+                ..
+            }) => Some(ps),
+            _ => None,
+        })?;
+    // The reader keeps only static keys in `Object` (a spread, accessor or computed key reads otherwise); a method or a
+    // function-valued field is refused too.
+    if ps
+        .iter()
+        .any(|(_, v)| matches!(v.kind, RawKind::Arrow { .. } | RawKind::Opaque { .. }))
+    {
+        return None;
+    }
+    let all: Vec<Value> = [
+        serde_json::to_value(&ir.template),
+        serde_json::to_value(
+            ir.derived
+                .iter()
+                .filter(|d| d.name != o)
+                .collect::<Vec<_>>(),
+        ),
+        serde_json::to_value(&ir.state),
+        serde_json::to_value(&ir.props),
+        serde_json::to_value(&ir.provides),
+        serde_json::to_value(&ir.refs),
+        serde_json::to_value(&ir.handlers),
+        serde_json::to_value(&ir.effects),
+        serde_json::to_value(&ir.render_ref_writes),
+    ]
+    .into_iter()
+    .map(|v| v.unwrap_or(Value::Null))
+    .collect();
+    if !all.iter().all(|v| only_member_reads(v, o, None)) {
+        return None;
+    }
+    ps.iter().rev().find(|(pk, _)| pk == k).map(|(_, v)| v)
 }

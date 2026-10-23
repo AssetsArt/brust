@@ -1541,6 +1541,17 @@ fn nested_hooks_in(
             continue;
         }
         if let Some((hook, _)) = hook_target(&call.target, names) {
+            // F288: React's element functions are not hooks. An element is a value brust has no runtime form for: refused
+            // by name; a call-site clone that folds every use of it (the element-value model) drops this refusal.
+            if matches!(hook.as_str(), "cloneElement" | "isValidElement") {
+                out.fallback(
+                    "element-value",
+                    format!("`{hook}` reads a React element as a value"),
+                    loc_of(e),
+                    "render the element where it is written, or keep this component in React",
+                );
+                continue;
+            }
             out.fallback(
                 if hook == "useId" {
                     "hook-in-expression"

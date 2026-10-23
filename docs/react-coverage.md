@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
-| C Hooks | 218 | 70 | 68 | 80 | 0 | 0 | 0 | 0 |
+| C Hooks | 223 | 70 | 71 | 82 | 0 | 0 | 0 | 0 |
 | D API surface | 29 | 9 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 616 | 273 | 116 | 223 | 3 | 1 | 0 | 0 |
+| **Total** | 621 | 273 | 119 | 225 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -550,6 +550,11 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-chain-throw-state | an early return chain that ends in a throw, tested on state | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
 | c-chain-throw-msg | a chain that ends in throw new Error(prop) | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
 | c-chain-throw-value | a chain that ends in throw of a string | static | static | ssr | ok | 4.0 | — | W1d PR 3 (ruling A): the throw arm is a server render error (HTTP 500 through the existing path, no message); a test that changes after mount or a thrown value that is not an Error with a literal message stays React |
+| c-ref-write-render-stable | a render-time ref write of a []-deps callback and a setter (useStableComposedRefs) | native | native | 0 | ok | 4.7 | — | F288 G9 (Mellow A2): one unconditional top-level write of stable leaves, read only in effects/handlers, is the useRef initialiser |
+| c-ref-write-render-member | a render-time ref write of a field of a const object literal | native | native | 0 | ok | 4.7 | — | F288 G9 ruling 255806ff (a): o.k of a const static-key literal never written or escaping is its field |
+| c-ref-write-render-logical | a render-time ref write of \|\| / ?? / && over stable operands | native | native | 0 | ok | 4.7 | — | F288 G9 ruling 255806ff (b): a logical expression is one of its operands, stable when every operand is |
+| c-ref-write-render-cond | a render-time ref write inside an if | react | react | ssr | ok | 4.0 | fallback:control-flow, fallback:hook-unsupported | F288 G9 (Mellow A2 rule 2): only one unconditional top-level write lowers |
+| c-ref-write-render-prop | a render-time ref write of a prop that is not pinned | react | react | ssr | ok | 4.0 | fallback:ref-in-render | F288 G9 (Mellow A2 rule 4): a prop is a stable leaf only when a clone pins it and its call-site value is stable; ref-in-render |
 
 ## D. API surface
 
@@ -558,7 +563,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | d-cache | cache() around a server helper | static | static | precompute | ok | 0 | — | spec §3.4 cache() |
 | d-lazy-suspense | lazy + Suspense | react | react | ssr | ok | 4.0 | fallback:dynamic-import, fallback:external-component, fallback:island-children, fallback:local-component | F38 fixed: a dynamic import() is a dynamic-import fallback, not a printer panic |
 | d-createcontext | createContext provider | static | static | 0 | ok | 0 | — |  |
-| d-clone-element | cloneElement | react | react | ssr | ok | 4.0 | fallback:hook-unsupported |  |
+| d-clone-element | cloneElement | react | react | ssr | ok | 4.0 | fallback:element-value |  |
 | d-children-map | Children.map | react | react | ssr | ok | 4.0 | fallback:jsx-expression |  |
 | d-suspense-static | <Suspense> around static content | static | static | ssr | ok | 4.0 | fallback:external-component | spec §3 react tier: Suspense is a React island; since R34.52 its constant `fallback` element travels as an element prop, so the page is static (shadcn S1, constant-slots) |
 | d-fragment-keyed | <Fragment key> inside a list | static | static | 0 | ok | 0 | — |  |
