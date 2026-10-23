@@ -425,6 +425,191 @@ pub fn ensure_doctype(html: &mut String) {
     }
 }
 
+/// F399: React 19 parity. A `<title>`, a `<meta>` and a `<link>` (not a stylesheet) that a component rendered outside
+/// `<head>` are moved into it, in render order, just before `</head>`, and the body copy is removed: React writes the
+/// hoistables after the `<head>` element's own children. One with `itemprop` is page content and stays, so does anything
+/// inside `<svg>`/`<math>` (an SVG `<title>` is the graphic's name), `<template>`, `<script>`, `<style>`, `<textarea>`,
+/// a comment, or a `<brust-island>` (its markup is React's own and hydrates as written). A fragment, and a document with
+/// no `</head>`, are untouched. Brust does not dedupe: like React, a layout `<title>` in the head stays too.
+pub fn hoist_head_into(html: &mut String) {
+    let Some(head_end) = find_ci(html, "</head>", 0) else {
+        return;
+    };
+    let from = head_end + "</head>".len();
+    let tail = &html[from..];
+    if !(tail.contains("<title") || tail.contains("<meta") || tail.contains("<link")) {
+        return;
+    }
+    let b = html.as_bytes();
+    let mut kept = String::with_capacity(html.len() - from);
+    let mut hoisted = String::new();
+    // Nesting of the elements whose content is not hoisted from: (tag, depth).
+    let mut skip: Vec<&'static str> = Vec::new();
+    let mut i = from;
+    let mut copied = from;
+    while i < b.len() {
+        if b[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        if b[i..].starts_with(b"<!--") {
+            i = html[i + 4..].find("-->").map_or(b.len(), |e| i + 4 + e + 3);
+            continue;
+        }
+        let closing = b.get(i + 1) == Some(&b'/');
+        let name_at = i + 1 + usize::from(closing);
+        let name_end = (name_at..b.len())
+            .find(|&k| !(b[k].is_ascii_alphanumeric() || b[k] == b'-'))
+            .unwrap_or(b.len());
+        let name = html[name_at..name_end].to_ascii_lowercase();
+        let Some(end) = tag_end(html, name_end) else {
+            break;
+        };
+        const OPAQUE: [&str; 8] = [
+            "svg",
+            "math",
+            "template",
+            "script",
+            "style",
+            "textarea",
+            "brust-island",
+            "noscript",
+        ];
+        if let Some(op) = OPAQUE.iter().find(|o| **o == name) {
+            if closing {
+                if skip.last() == Some(op) {
+                    skip.pop();
+                }
+                i = end;
+            } else if html[i..end].ends_with("/>")
+                && !matches!(*op, "script" | "style" | "textarea")
+            {
+                i = end;
+            } else {
+                skip.push(op);
+                // script/style/textarea hold raw text up to their own end tag.
+                i = if matches!(*op, "script" | "style" | "textarea") {
+                    let close = format!("</{op}");
+                    let at = find_ci(html, &close, end).unwrap_or(b.len());
+                    skip.pop();
+                    tag_end(html, at).unwrap_or(b.len())
+                } else {
+                    end
+                };
+            }
+            continue;
+        }
+        if closing || !skip.is_empty() || !matches!(name.as_str(), "title" | "meta" | "link") {
+            i = end;
+            continue;
+        }
+        let tag = &html[i..end];
+        let hoistable = !has_attr(tag, "itemprop")
+            && !(name == "link"
+                && attr_value(tag, "rel")
+                    .is_none_or(|r| r.to_ascii_lowercase().contains("stylesheet")));
+        let mut stop = end;
+        if name == "title" {
+            // The title's text runs to its end tag (raw text: no tags inside).
+            stop = find_ci(html, "</title", end)
+                .and_then(|e| tag_end(html, e))
+                .unwrap_or(end);
+        }
+        if hoistable {
+            kept.push_str(&html[copied..i]);
+            hoisted.push_str(&html[i..stop]);
+            copied = stop;
+        }
+        i = stop;
+    }
+    if hoisted.is_empty() {
+        return;
+    }
+    kept.push_str(&html[copied..]);
+    html.truncate(from);
+    html.push_str(&kept);
+    html.insert_str(head_end, &hoisted);
+}
+
+/// Byte offset just past the `>` closing the tag whose name ends at `from`, skipping quoted attribute values.
+fn tag_end(html: &str, from: usize) -> Option<usize> {
+    let b = html.as_bytes();
+    let mut quote = 0u8;
+    for (k, &c) in b.iter().enumerate().skip(from) {
+        match (quote, c) {
+            (0, b'"' | b'\'') => quote = c,
+            (q, c) if q != 0 && q == c => quote = 0,
+            (0, b'>') => return Some(k + 1),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Index of the ASCII-case-insensitive `needle` in `html` at or after `from`.
+fn find_ci(html: &str, needle: &str, from: usize) -> Option<usize> {
+    let (h, n) = (html.as_bytes(), needle.as_bytes());
+    if h.len() < n.len() {
+        return None;
+    }
+    (from..=h.len() - n.len()).find(|&k| h[k..k + n.len()].eq_ignore_ascii_case(n))
+}
+
+/// The value of attribute `name` (case-insensitive) in an opening tag, `Some("")` when it has none.
+fn attr_value<'t>(tag: &'t str, name: &str) -> Option<&'t str> {
+    let b = tag.as_bytes();
+    let mut i = tag.find(|c: char| c.is_ascii_whitespace())?;
+    while i < b.len() {
+        while i < b.len() && (b[i].is_ascii_whitespace() || b[i] == b'/') {
+            i += 1;
+        }
+        if b.get(i) == Some(&b'>') {
+            break;
+        }
+        let s = i;
+        while i < b.len() && !matches!(b[i], b'=' | b'>' | b'/') && !b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i == s && b.get(i) == Some(&b'=') {
+            i += 1; // a stray `=`: no name to take
+            continue;
+        }
+        let key = &tag[s..i];
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let mut val = "";
+        if b.get(i) == Some(&b'=') {
+            i += 1;
+            while i < b.len() && b[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            match b.get(i) {
+                Some(&q @ (b'"' | b'\'')) => {
+                    let e = tag[i + 1..].find(q as char).map_or(b.len(), |e| i + 1 + e);
+                    val = &tag[i + 1..e];
+                    i = e + 1;
+                }
+                _ => {
+                    let s = i;
+                    while i < b.len() && !b[i].is_ascii_whitespace() && b[i] != b'>' {
+                        i += 1;
+                    }
+                    val = &tag[s..i];
+                }
+            }
+        }
+        if !key.is_empty() && key.eq_ignore_ascii_case(name) {
+            return Some(val);
+        }
+    }
+    None
+}
+
+fn has_attr(tag: &str, name: &str) -> bool {
+    attr_value(tag, name).is_some()
+}
+
 /// Byte offset just past a leading `<!doctype …>` (case-insensitive, after optional whitespace); 0 when the document has none.
 fn doctype_end(html: &str) -> usize {
     let lead = html.len() - html.trim_start().len();
@@ -1064,6 +1249,59 @@ mod tests {
         assert_eq!(doctype_end("<!-- c --><!doctype html>"), 0);
         assert_eq!(doctype_end("<!doctype html"), 0);
         assert_eq!(doctype_end(""), 0);
+    }
+
+    fn hoist(html: &str) -> String {
+        let mut h = html.to_string();
+        hoist_head_into(&mut h);
+        h
+    }
+
+    /// F399: React 19 writes the head's own children first, then every hoistable in render order.
+    #[test]
+    fn hoist_moves_title_meta_link_into_the_head_in_render_order() {
+        assert_eq!(
+            hoist(
+                "<html><head><title>Site</title></head><body><main><title>Page</title><meta name=\"description\" content=\"d\"><link rel=\"icon\" href=\"/i.png\"><p>x</p></main></body></html>"
+            ),
+            "<html><head><title>Site</title><title>Page</title><meta name=\"description\" content=\"d\"><link rel=\"icon\" href=\"/i.png\"></head><body><main><p>x</p></main></body></html>"
+        );
+    }
+
+    #[test]
+    fn hoist_leaves_what_react_leaves() {
+        for keep in [
+            // an svg title names the graphic
+            "<html><head></head><body><svg><title>t</title></svg></body></html>",
+            // microdata is content
+            "<html><head></head><body><meta itemprop=\"x\" content=\"k\"><link itemprop=\"y\" href=\"/z\"></body></html>",
+            // a stylesheet keeps today's handling
+            "<html><head></head><body><link rel=\"stylesheet\" href=\"/a.css\"></body></html>",
+            // raw text, templates, comments, islands and attribute values are not markup
+            "<html><head></head><body><script>var s = '<title>x</title>'</script><style>/*<meta>*/</style><template><title>t</title></template><!-- <title>c</title> --><textarea><title>q</title></textarea><brust-island data-id=\"i\"><title>t</title></brust-island><p data-x=\"<title>a</title>\">p</p></body></html>",
+            // a fragment and a document with no head
+            "<main><title>t</title></main>",
+            "<html><body><title>t</title></body></html>",
+        ] {
+            assert_eq!(hoist(keep), keep, "{keep}");
+        }
+    }
+
+    #[test]
+    fn hoist_takes_a_title_next_to_an_svg_and_reads_quoted_gt() {
+        assert_eq!(
+            hoist(
+                "<html><head></head><body><svg><title>s</title></svg><title>T</title><meta name=\"a\" content=\"x>y\"></body></html>"
+            ),
+            "<html><head><title>T</title><meta name=\"a\" content=\"x>y\"></head><body><svg><title>s</title></svg></body></html>"
+        );
+        // attribute names and the tag's own spelling are case-insensitive; a link without rel is not a stylesheet
+        assert_eq!(
+            hoist(
+                "<html><head></head><body><TITLE>T</TITLE><link HREF=\"/a\" ITEMPROP=\"q\"><meta NAME=\"n\"></body></html>"
+            ),
+            "<html><head><TITLE>T</TITLE><meta NAME=\"n\"></head><body><link HREF=\"/a\" ITEMPROP=\"q\"></body></html>"
+        );
     }
 
     #[test]
