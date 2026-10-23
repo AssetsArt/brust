@@ -702,3 +702,21 @@ fn a_same_line_space_around_a_native_component_is_kept() {
         "{html}"
     );
 }
+
+/// F408: the template header is a comment that writes nothing, so a page's root element is the first thing it renders
+/// (React renders `<body><main>`, with no line break between).
+#[test]
+fn a_page_root_renders_with_nothing_before_it() {
+    let (j, _) = lower("export default function T() { return <main><p>x</p></main> }");
+    assert!(
+        render(&j, serde_json::json!({})).starts_with("<main"),
+        "{j}"
+    );
+    let (j, _) = lower(
+        "import { useState } from 'react'\nexport default function T() { const [n, setN] = useState(1); return <span onClick={() => setN(n + 1)}>{n}</span> }",
+    );
+    assert!(
+        render(&j, serde_json::json!({})).starts_with("<span"),
+        "{j}"
+    );
+}

@@ -327,7 +327,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         let ir = self.f.ir;
         if self.inline.is_none() {
             self.out
-                .push_str(&format!("{{# brust v2 · {} · do not edit #}}\n", ir.id));
+                .push_str(&format!("{{# brust v2 · {} · do not edit -#}}\n", ir.id));
         }
         self.preamble();
         let structural = self.f.structural;
