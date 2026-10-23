@@ -31,6 +31,8 @@ Actions are opt-in. Install the two packages with the `rc` tag (they are optiona
 bun add elysia@rc @elysia/eden@rc
 ```
 
+Elysia 2 rc lists `typebox`, `exact-mirror` and `openapi-types` as peer dependencies. Bun installs them with the two packages; if your package manager does not install peer dependencies, add them yourself.
+
 Add the `[actions]` table to `brust.toml`. If the table is present actions are on; if it is absent they are off, even when an `actions.ts` file exists. Every key is optional:
 
 ```toml
@@ -185,7 +187,7 @@ A body that fails validation answers **422** with `content-type: application/pro
 }
 ```
 
-The `errors` list and the `detail` text exist only outside production. `brust start` sets `NODE_ENV=production` in every worker, so a deployed app answers just `type`, `code`, `title`, `status`, `on` and `property`. A malformed JSON body is **400** (`type: "parse"`). Bodies are parsed as JSON, text, urlencoded (a flat string record), form-data and raw bytes, by content type.
+The `errors` list, the `detail` text and the `found` and `expected` values exist only outside production. `brust start` sets `NODE_ENV=production` in every worker, so a deployed app answers just `type`, `code`, `title`, `status`, `on` and `property`. A malformed JSON body is **400** (`type: "parse"`). Bodies are parsed as JSON, text, urlencoded (a flat string record), form-data and raw bytes, by content type.
 
 ## 5. Errors
 

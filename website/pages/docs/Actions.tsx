@@ -125,7 +125,7 @@ export default function Actions({ blocks, candidates }: ActionsData) {
       <Lead>Actions are the server endpoints your pages call. In brust they are one <ElysiaLink label="Elysia 2" /> app, served behind the Rust server: no second port, no second router.</Lead>
 
       <Step n={1} id="install" title="Turn actions on" />
-      <p>Install the two packages (with the <code>rc</code> tag; brust supports <code>^2.0.0-rc.0</code>) and add an <code>[actions]</code> table to <code>brust.toml</code>. Without the table, actions are off even if <code>actions.ts</code> exists.</p>
+      <p>Install the two packages (with the <code>rc</code> tag; brust supports <code>^2.0.0-rc.0</code>) and add an <code>[actions]</code> table to <code>brust.toml</code>. Without the table, actions are off even if <code>actions.ts</code> exists. Elysia 2 rc lists <code>typebox</code>, <code>exact-mirror</code> and <code>openapi-types</code> as peer dependencies; Bun installs them with the two packages, and if your package manager does not install peers, add them yourself.</p>
       <CodeBlock code={blocks.install.code} lang={blocks.install.lang} cwd={blocks.install.cwd} html={blocks.install.html} />
       <CodeBlock code={blocks.toml.code} lang={blocks.toml.lang} file={blocks.toml.file} html={blocks.toml.html} />
 
