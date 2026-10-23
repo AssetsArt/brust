@@ -276,3 +276,25 @@ test('F393: a small relative url() asset (under Bun\'s inline threshold) is stil
     expect(files.some((f) => /^dot-[0-9a-f]{10}\.png$/.test(f))).toBe(true)
   }
 }, 60_000)
+
+test('F393: a ?query / #fragment on a url() asset is kept verbatim on the rewritten URL, per occurrence', async () => {
+  const small = new Uint8Array(64).map((_, i) => (i * 3) % 251)
+  const d = tmp({
+    'node_modules/@fontsource/y/files/y.woff': small,
+    'node_modules/@fontsource/y/index.css': "@font-face{font-family:Y;src:url(./files/y.woff?v=3) format('woff')}",
+    'Inter Var.woff2': small,
+    'a.css': "@import '@fontsource/y/index.css'; @font-face{font-family:I;src:url('./Inter Var.woff2?#iefix') format('woff2'),url(\"./Inter Var.woff2#x\") format('svg')} .p{background:url('./Inter Var.woff2')}",
+  })
+  for (const minify of [true, false]) {
+    const dist = tmp({ 'client/.keep': '' })
+    const r = await buildCss(dist, [join(d, 'a.css')], minify)
+    const out = readFileSync(join(dist, r.file.get(join(d, 'a.css'))!), 'utf8')
+    expect(out).not.toContain('data:')
+    const name = (ext: string) => readdirSync(join(dist, 'client')).find((f) => f.endsWith(ext))!
+    expect(out).toContain(`./${name('.woff')}?v=3`)
+    expect(out).toContain(`./${name('.woff2')}?#iefix`)
+    expect(out).toContain(`./${name('.woff2')}#x`)
+    expect(out).toMatch(new RegExp(`url\\("?\\./${name('.woff2')}"?\\)`)) // the bare occurrence has no suffix
+    expect(readdirSync(join(dist, 'client')).filter((f) => f.endsWith('.woff2')).length).toBe(1)
+  }
+}, 60_000)
