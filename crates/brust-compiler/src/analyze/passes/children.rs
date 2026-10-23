@@ -1094,10 +1094,20 @@ fn rebase_sources(
                 ..
             } => {
                 match source {
+                    // F288: a component declared (exported or not) in the module that renders the content is named from
+                    // the clone's module by its file and local name, when it compiles without React (a native or static
+                    // child prints into the clone; there is nothing to import for it).
                     None => {
-                        return Err(format!(
-                            "<{name}> is declared in the module that renders it"
-                        ));
+                        let lookup =
+                            compile(from, &Export::Named(name.clone()), None, opts, modules);
+                        if let Some(why) = package_needs_react(&lookup, &modules.borrow(), false) {
+                            return Err(format!(
+                                "<{name}> (declared in the module that renders it) needs React: {why}"
+                            ));
+                        }
+                        *source = Some(relative_spec(to, from));
+                        *imported = Some(name.clone());
+                        member.clear();
                     }
                     Some(s) if s.starts_with("./") || s.starts_with("../") => {
                         let Some(target) = resolve(from, s, opts) else {
@@ -2717,9 +2727,11 @@ fn package_needs_react(
         if !seen.insert(ir.id.clone()) {
             continue;
         }
-        // F288: an element reader is specialised at the call site like a state-frame Provider.
+        // F288: an element reader is specialised at the call site like a state-frame Provider, from a package source too:
+        // a call site that cannot keep its clone leaves a React child in that source, so the outermost package import
+        // (written in app code) keeps its published island.
         if let Tier::React { reason, .. } = &ir.tier
-            && !(state_frames && (state_frame_provider(&ir) || element_only(&ir)))
+            && !(element_only(&ir) || (state_frames && state_frame_provider(&ir)))
         {
             return Some(format!(
                 "{} renders as React in its source: {reason}",

@@ -511,7 +511,7 @@ fn each_expr(ir: &mut ComponentIR, f: &mut dyn FnMut(&mut RawExpr)) {
     ir.refs.iter_mut().for_each(|r| ex(&mut r.init, f));
     ir.state.iter_mut().for_each(|s| ex(&mut s.init, f));
     for e in &mut ir.effects {
-        e.deps.iter_mut().flatten().for_each(|d| f(d));
+        e.deps.iter_mut().flatten().for_each(&mut *f);
     }
     for w in &mut ir.render_ref_writes {
         f(&mut w.value);
@@ -585,11 +585,10 @@ fn walk_raw(e: &RawExpr, f: &mut dyn FnMut(&RawExpr)) {
         RawKind::Template { parts, .. } => parts.iter().for_each(|(p, _)| walk_raw(p, f)),
         RawKind::Array(xs) => xs.iter().for_each(|x| walk_raw(x, f)),
         RawKind::Object(ps) => ps.iter().for_each(|(_, v)| walk_raw(v, f)),
-        RawKind::Arrow { body, .. } => {
-            if let crate::ir::ArrowBody::Expr(b) = body {
-                walk_raw(b, f)
-            }
-        }
+        RawKind::Arrow {
+            body: crate::ir::ArrowBody::Expr(b),
+            ..
+        } => walk_raw(b, f),
         _ => {}
     }
 }

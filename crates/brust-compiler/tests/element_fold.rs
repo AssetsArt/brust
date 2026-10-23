@@ -62,6 +62,8 @@ struct Out {
 }
 
 fn compile(dir: &Path, page: &str) -> Out {
+    // on disk too: a clone names a component of the page's module by reading that file
+    std::fs::write(dir.join("page.tsx"), page).unwrap();
     let (dir, page) = (dir.to_path_buf(), page.to_string());
     run_on_compiler_thread(move || {
         let tree = compile_tree(
@@ -204,6 +206,37 @@ fn a_row_value_in_the_content_keeps_the_island() {
         o.rules
             .iter()
             .any(|r| r.starts_with("specialise-unsupported") && r.contains("enclosing list")),
+        "{:?}",
+        o.rules
+    );
+}
+
+#[test]
+fn content_declared_in_the_rendering_module_is_named_from_the_clone() {
+    // Radix's CollapsibleContentImpl is a non-exported component of the module that renders `<Presence>`: the clone
+    // (in presence's module) names it by that file and its local name.
+    let dir = project("local", 19);
+    let src = format!(
+        "{HEAD}const Local = React.forwardRef<HTMLDivElement, {{ present: boolean }}>(function Local(props, ref) {{\n  return <div ref={{ref}} data-p={{props.present ? 'y' : 'n'}}>local</div>\n}})\nexport default function Page() {{\n  const [open, setOpen] = React.useState(false)\n  return <main><button type=\"button\" onClick={{() => setOpen(!open)}}>t</button><Presence present={{open}}>{{({{ present }}) => <Local present={{present}} />}}</Presence></main>\n}}\n"
+    );
+    let o = compile(&dir, &src);
+    assert!(matches!(o.tier, Tier::Native), "{:?} {:?}", o.tier, o.rules);
+    assert_eq!(o.clones.len(), 1, "{:?}", o.rules);
+}
+
+#[test]
+fn content_declared_in_the_rendering_module_that_needs_react_keeps_the_island() {
+    let dir = project("local-react", 19);
+    let src = format!(
+        "{HEAD}const Local = React.forwardRef<HTMLDivElement, {{ present: boolean }}>(function Local(props, ref) {{\n  const v = React.useSyncExternalStore(() => () => {{}}, () => 1, () => 1)\n  return <div ref={{ref}} data-v={{v}}>local</div>\n}})\nexport default function Page() {{\n  const [open, setOpen] = React.useState(false)\n  return <main><button type=\"button\" onClick={{() => setOpen(!open)}}>t</button><Presence present={{open}}>{{({{ present }}) => <Local present={{present}} />}}</Presence></main>\n}}\n"
+    );
+    let o = compile(&dir, &src);
+    assert!(o.clones.is_empty());
+    assert!(
+        o.rules
+            .iter()
+            .any(|r| r.starts_with("specialise-unsupported")
+                && r.contains("<Local> (declared in the module that renders it) needs React")),
         "{:?}",
         o.rules
     );
