@@ -84,7 +84,9 @@ fn a_provider_call_at_the_offset_of_the_clones_own_call_stays_apart() {
     let all = compile("same_loc.tsx");
     assert!(clones(&all, "prov_").is_empty());
     assert!(
-        all[0].jinja.contains(r#"<brust-island style="display:contents" data-id="prov_"#),
+        all[0]
+            .jinja
+            .contains(r#"<brust-island style="display:contents" data-id="prov_"#),
         "{}",
         all[0].jinja
     );
@@ -106,7 +108,9 @@ fn content_reading_a_provider_inside_the_clones_template_is_refused_by_name() {
     let all = compile("two.tsx");
     assert!(clones(&all, "prov_").is_empty());
     assert!(
-        all[0].jinja.contains(r#"<brust-island style="display:contents" data-id="prov_"#),
+        all[0]
+            .jinja
+            .contains(r#"<brust-island style="display:contents" data-id="prov_"#),
         "{}",
         all[0].jinja
     );
