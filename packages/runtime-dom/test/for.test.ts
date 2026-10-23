@@ -124,3 +124,22 @@ test('F396: a server row printed hidden by its own condition is adopted as a row
   expect(y!.hidden).toBe(true)
   expect((y as unknown as { __scope?: { item: unknown } }).__scope?.item).toEqual({ id: 'y' })
 })
+
+test('F412: rows printed hidden before the shown one are each adopted with their own item and index, nothing left over', () => {
+  const warns: string[] = []; const orig = console.warn; console.warn = (m: string) => { warns.push(String(m)) }
+  const items = signal([{ n: 'read' }, { n: 'write' }, { n: 'openat' }])
+  const pick = signal(2)
+  defineBehavior('f412', () => ({ items, key: (i: { n: string }) => i.n, name: (i: { n: string }) => i.n, hide: (k: number) => pick() !== k }))
+  const row = (n: string, hidden: boolean) => `<li x-for="r, k in items by key"${hidden ? ' hidden' : ''} x-bind-hidden="hide:k" x-text="name:r">${n}</li>`
+  document.body.innerHTML = `<ul x-data="f412">${row('read', true)}${row('write', true)}${row('openat', false)}</ul>`
+  const server = Array.from(document.querySelectorAll('li'))
+  mount()
+  console.warn = orig
+  expect(Array.from(document.querySelectorAll('li'))).toEqual(server)   // the server rows themselves, no clone or stray
+  expect(document.querySelectorAll('[x-for]').length).toBe(0)
+  expect(server.map((l) => (l as unknown as { __scope: { k: number } }).__scope.k)).toEqual([0, 1, 2])
+  expect(server.map((l) => l.hidden)).toEqual([true, true, false])
+  expect(warns.filter((w) => w.includes('first-paint mismatch'))).toEqual([])
+  pick.set(0)
+  expect(server.map((l) => l.hidden)).toEqual([false, true, true])
+})
