@@ -48,6 +48,8 @@ export interface BrowserCtx {
   serverFiles?: string[]
   /** L19: CSS Module class maps for `cssPlugin` (absent: no CSS was built). */
   cssMaps?: Map<string, Record<string, string>>
+  /** F411: `<dist>/client`, where an imported asset is written (see `cssPlugin`). */
+  clientDir?: string
 }
 
 /** `file` sits under `root`. */
@@ -212,7 +214,7 @@ async function browserBuild(
   try {
     res = await Bun.build({
       ...config,
-      plugins: [serverOnlyPlugin(ctx, violations), cssPlugin(ctx.cssMaps ?? new Map()), ...(config.plugins ?? [])],
+      plugins: [serverOnlyPlugin(ctx, violations), cssPlugin(ctx.cssMaps ?? new Map(), ctx.clientDir), ...(config.plugins ?? [])],
       target: 'browser',
       format: 'esm',
       minify: true,
@@ -393,7 +395,7 @@ export async function projectionFallbacks(dist: string, compiled: Map<string, Co
       target: 'browser',
       format: 'esm',
       metafile: true,
-      plugins: [serverOnlyPlugin(ctx, []), cssPlugin(ctx.cssMaps ?? new Map()), runtimeAliasPlugin(runtimeUrl), specModulePlugin(probeDir), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
+      plugins: [serverOnlyPlugin(ctx, []), cssPlugin(ctx.cssMaps ?? new Map(), ctx.clientDir), runtimeAliasPlugin(runtimeUrl), specModulePlugin(probeDir), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, [], 'browser')],
     })
     if (!res.success || !res.metafile) throw new BuildError('bundle', `client chunks (projection probe): ${res.logs.map(String).join('\n')}`)
     const loaded = new Set(Object.keys(res.metafile.inputs).map((k) => real(resolve(k))))
@@ -682,7 +684,7 @@ const ACTIONS_EXTERNALS = [...JOBS_EXTERNALS, 'elysia', 'elysia/*', '@elysia/*']
 /** `dist/actions.js` (M3-F E1): the actions entry for the worker (`target: 'bun'`). No `define`: Elysia
  * and app code read NODE_ENV at runtime (run.ts sets production). */
 export async function buildActions(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps), workerStorePlugin] })
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps, join(dist, 'client')), workerStorePlugin] })
   if (!res.success) throw new BuildError('bundle', `actions: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'actions.js'), await res.outputs[0]!.text())
   return 'actions.js'
@@ -691,7 +693,7 @@ export async function buildActions(dist: string, entry: string, cssMaps: Map<str
 /** `dist/cache-adapter.js` (cache adapters R8): a custom adapter module for the worker (`target: 'bun'`), with
  * the actions externals so it shares the app's dependencies. */
 export async function buildCacheAdapter(dist: string, entry: string, cssMaps: Map<string, Record<string, string>> = new Map()): Promise<string> {
-  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps)] })
+  const res = await Bun.build({ entrypoints: [entry], target: 'bun', format: 'esm', external: ACTIONS_EXTERNALS, plugins: [serverOnlyEmptyPlugin(), cssPlugin(cssMaps, join(dist, 'client'))] })
   if (!res.success) throw new BuildError('bundle', `cache adapter: ${res.logs.map(String).join('\n')}`)
   write(join(dist, 'cache-adapter.js'), await res.outputs[0]!.text())
   return 'cache-adapter.js'
@@ -786,7 +788,7 @@ export async function buildJobs(
         (importer) => jobFiles.has(importer),
       ),
       serverOnlyEmptyPlugin(),
-      cssPlugin(cssMaps),
+      cssPlugin(cssMaps, join(dist, 'client')),
       workerStorePlugin,
       sourceDirPlugin(sourceOf, appRoot, JOBS_EXTERNALS),
       exposePlugin(compiled),
