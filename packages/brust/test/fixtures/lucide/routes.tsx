@@ -1,6 +1,7 @@
 import { defineRoutes } from '@brust/core/routes'
 import DynProvider from './DynamicProvider'
 import Fallback from './Fallback'
+import InlinedCond from './InlinedCond'
 import NativeIcon from './Native'
 import NativeUndefined from './NativeUndef'
 import Provided from './Provider'
@@ -15,5 +16,7 @@ export const routes = defineRoutes([
   { path: '/native', Component: NativeIcon },
   { path: '/provider', Component: Provided },
   { path: '/dynprovider', Component: DynProvider, loader: () => ({ size: 12 }) },
+  { path: '/inlined-cond', Component: InlinedCond, loader: () => ({ post: { href: '/p', interactive: true } }) },
+  { path: '/inlined-cond-off', Component: InlinedCond, loader: () => ({ post: { href: '/p', interactive: false } }) },
   { path: '/fallback', Component: Fallback, loader: () => ({ label: 'x' }) },
 ])

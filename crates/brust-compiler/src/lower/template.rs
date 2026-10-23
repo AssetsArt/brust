@@ -203,7 +203,10 @@ fn fed_cause(ir: &ComponentIR) -> String {
     }
     for j in ir.jobs.iter().filter(|j| feeds_instances(j)) {
         parts.push(match j.kind {
-            JobKind::Ssr { .. } => "holds a React island the server renders".to_string(),
+            JobKind::Ssr { .. } => match j.outputs.first().and_then(|o| island_name(o)) {
+                Some(n) => format!("holds the server-rendered React island <{n}>"),
+                None => "holds a React island the server renders".to_string(),
+            },
             JobKind::Precompute => format!(
                 "has a server job over {}",
                 if j.inputs.is_empty() {
@@ -224,6 +227,14 @@ fn fed_cause(ir: &ComponentIR) -> String {
     } else {
         parts.join(" and ")
     }
+}
+
+/// The island an ssr job output (`_ssr_<id>`, `_ssr_<id>_<k>`) renders, as the component is written.
+fn island_name(out: &str) -> Option<String> {
+    let id = out.strip_prefix("_ssr_")?;
+    let mut parts = id.splitn(3, '_');
+    let (stem, hex) = (parts.next()?, parts.next()?);
+    Some(owner_name(&format!("{stem}_{hex}")))
 }
 
 /// A component id (`appsPanel_1a2b3c4d`) as the component is written.
