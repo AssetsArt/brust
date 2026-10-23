@@ -222,7 +222,7 @@ test('F75: replaces() keeps a child over a root and a chunk over none; disagreei
 test('F394: a child component prop named req compiles native', async () => {
   const { compiled } = await buildFixture(join(import.meta.dir, 'fixtures/req-prop'))
   const count = [...compiled.values()].find((c) => c.id.startsWith('count_'))!
-  expect(count.ir.diagnostics?.filter((d) => d.class === 'error') ?? []).toEqual([])
+  expect(count.diagnostics?.filter((d) => d.class === 'error') ?? []).toEqual([])
   expect([...compiled.values()].every((c) => !(typeof c.ir.tier === 'object' && 'React' in c.ir.tier))).toBe(true)
 })
 
