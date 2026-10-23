@@ -126,6 +126,7 @@
         "@elysia/eden": "2.0.0-rc.0",
         "@napi-rs/cli": "^3.0.0",
         "@radix-ui/react-collection": "1.2.0",
+        "@radix-ui/react-presence": "1.1.11",
         "@radix-ui/react-slot": "1.5.0",
         "@types/bun": "^1.4.0",
         "@types/react": "^19.2.0",

@@ -863,9 +863,33 @@ impl<'r, 'a> Reader<'r, 'a> {
                                     // handler behind: it is only a candidate for folding.
                                     let (nd, nh) =
                                         (self.diagnostics.len(), self.pending_handlers.len());
+                                    // F288: nor a finding about the component's own locals (a module `const X = (props)
+                                    // => {…}` component is read here too, F284; its body is read again as the component).
+                                    let n = &*self.names;
+                                    let cells = (
+                                        n.rest_escape.get(),
+                                        n.children_called.get(),
+                                        n.forwarded_ref_nulled.get(),
+                                        n.use_before_pattern.get(),
+                                        n.prop_read_problem.borrow().clone(),
+                                        n.snapshot_escape.get(),
+                                        n.ctx_escape.get(),
+                                        n.hook_object_escape.get(),
+                                        n.scope_token_escape.get(),
+                                    );
                                     let value = self.expr(v);
                                     self.diagnostics.truncate(nd);
                                     self.pending_handlers.truncate(nh);
+                                    let n = &*self.names;
+                                    n.rest_escape.set(cells.0);
+                                    n.children_called.set(cells.1);
+                                    n.forwarded_ref_nulled.set(cells.2);
+                                    n.use_before_pattern.set(cells.3);
+                                    *n.prop_read_problem.borrow_mut() = cells.4;
+                                    n.snapshot_escape.set(cells.5);
+                                    n.ctx_escape.set(cells.6);
+                                    n.hook_object_escape.set(cells.7);
+                                    n.scope_token_escape.set(cells.8);
                                     consts.push(crate::ir::ConstVal {
                                         name: name.clone(),
                                         value,

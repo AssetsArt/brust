@@ -522,6 +522,21 @@ fn read_element(r: &mut Reader<'_, '_>, e: &js_ast::Expr, in_list_body: bool) ->
         let name = estring(k);
         // The parser synthesises the `children` key at the element's own
         // location; an author-written `children={…}` attribute has its own.
+        // F288 S2: one arrow between a component's tags (`<Presence>{({ present }) => <X/>}</Presence>`) is a render
+        // prop named `children`, as the attribute form is: a child that only calls it gets the body spliced (B7).
+        if name == "children"
+            && key.loc.start == e.loc.start
+            && !matches!(tag, Tag::Host(_))
+            && let E::EArrow(arrow) = &value.data
+            && let Some(rp) = read_render_arrow(r, arrow, loc, "children")
+        {
+            r.render_props.push(rp);
+            r.verbatim_unused = true;
+            let v = r.expr(value);
+            r.verbatim_unused = false;
+            props_out.push((name, Expr::Raw(v)));
+            continue;
+        }
         if name == "children" && key.loc.start == e.loc.start {
             children = read_children(r, value, static_children);
             continue;

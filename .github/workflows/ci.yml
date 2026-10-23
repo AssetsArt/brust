@@ -157,6 +157,8 @@ jobs:
       - run: git diff --exit-code docs/react-coverage.md docs/react-coverage.json docs/plans/m1-exit-report.md
       # Exit criteria checked by code (also re-runs dual evaluation and the browser cases).
       - run: bun test scripts/battery
+      # F288 §3 (ruling Q1): the installed react-presence getElementRef on real React 19 elements (prod + dev) equals the fold.
+      - run: bun test scripts/f288
       - run: sccache --show-stats
         if: always()
   browser:
@@ -340,6 +342,8 @@ jobs:
       - run: bun test --timeout 180000 tests/server/slot-owner.chromium.test.ts
       # B1: ref={fn} (a callback ref that is not a useRef binding) is called with the element at mount.
       - run: bun test --timeout 120000 tests/server/callback-ref.chromium.test.ts
+      # F288 phase A: the published @radix-ui/react-presence compiled native (function child), parity + exit animation.
+      - run: bun test --timeout 120000 tests/server/presence.chromium.test.ts
       # B5: ...rest.key spread inside an object literal (style), served == React.
       - run: bun test --timeout 120000 tests/server/rest-style.chromium.test.ts
       # B4: a never-written useRef read in the render is its first value, served == React.
