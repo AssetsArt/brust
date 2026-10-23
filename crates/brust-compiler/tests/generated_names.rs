@@ -311,6 +311,7 @@ fn a_module_binding_named_behavior_moves_the_shared_factory() {
             resolve: &none,
             runtime_import: DEFAULT_RUNTIME_IMPORT,
             linked: &no,
+            icons_pending: false,
         },
     )
     .unwrap();

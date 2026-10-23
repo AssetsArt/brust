@@ -203,7 +203,10 @@ fn fed_cause(ir: &ComponentIR) -> String {
     }
     for j in ir.jobs.iter().filter(|j| feeds_instances(j)) {
         parts.push(match j.kind {
-            JobKind::Ssr { .. } => "holds a React island the server renders".to_string(),
+            JobKind::Ssr { .. } => match j.outputs.first().and_then(|o| island_name(o)) {
+                Some(n) => format!("holds the server-rendered React island <{n}>"),
+                None => "holds a React island the server renders".to_string(),
+            },
             JobKind::Precompute => format!(
                 "has a server job over {}",
                 if j.inputs.is_empty() {
@@ -224,6 +227,14 @@ fn fed_cause(ir: &ComponentIR) -> String {
     } else {
         parts.join(" and ")
     }
+}
+
+/// The island an ssr job output (`_ssr_<id>`, `_ssr_<id>_<k>`) renders, as the component is written.
+fn island_name(out: &str) -> Option<String> {
+    let id = out.strip_prefix("_ssr_")?;
+    let mut parts = id.splitn(3, '_');
+    let (stem, hex) = (parts.next()?, parts.next()?);
+    Some(owner_name(&format!("{stem}_{hex}")))
 }
 
 /// A component id (`appsPanel_1a2b3c4d`) as the component is written.
@@ -331,7 +342,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         let ir = self.f.ir;
         if self.inline.is_none() {
             self.out
-                .push_str(&format!("{{# brust v2 · {} · do not edit #}}\n", ir.id));
+                .push_str(&format!("{{# brust v2 · {} · do not edit -#}}\n", ir.id));
         }
         self.preamble();
         let structural = self.f.structural;
@@ -409,8 +420,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
         }
         for line in crate::lower::common::order_decls(decls) {
+            // No newline after a `{% set %}`: the output has no text of its own there, and a line break
+            // would reach the page as whitespace JSX drops (F408).
             self.out.push_str(&line);
-            self.out.push('\n');
         }
     }
 
@@ -1712,7 +1724,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                 .is_some_and(|r| self.f.deps(r, &self.scope()).reactive())
                 || ((self.ctx.linked)(&self.f.ir.id)
                     && self.reactive(src_raw.as_ref(), source).is_some())
-                || body.iter().any(|b| needs_directives(b, &self.f, !module)));
+                || body.iter().any(|b| needs_directives(b, &self.f, !module))
+                // F406: the client creates and refills the rows of a list inside a client list from the outer row's
+                // item, so the inner list is a client list too (its text directives read the inner binding).
+                || self.frames.iter().any(|fr| fr.directive));
         let var = {
             let own = self.seeds.of(self.f.ir);
             let root = self.seeds.of(self.inst_ir);

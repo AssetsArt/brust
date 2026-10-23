@@ -76,6 +76,7 @@ fn lowered(
             resolve: &resolve,
             runtime_import: DEFAULT_RUNTIME_IMPORT,
             linked: &linked,
+            icons_pending: false,
         };
         lower(&next, &ctx).unwrap()
     })
