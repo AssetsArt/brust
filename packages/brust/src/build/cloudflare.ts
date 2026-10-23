@@ -279,7 +279,7 @@ export async function buildCloudflare(out: string, ctx: CfBuildCtx, p: CfPrepare
     define: PRODUCTION,
     minify: false,
     external: ['node:*', 'cloudflare:*', glueSpec],
-    plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map()), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'], 'browser', CF_CONDITIONS), exposePlugin(ctx.compiled)],
+    plugins: [serverOnlyEmptyPlugin(), cssPlugin(ctx.cssMaps ?? new Map(), join(out, 'client')), cfGuard(ctx.appRoot, violations), cfAlias(p.cfg.alias, ctx.sourceOf), cfNativeStub(Bun.resolveSync('@brust/core/server-handlers', ctx.appRoot)), cfStorePlugin(ctx.appRoot), sourceDirPlugin(ctx.sourceOf, ctx.appRoot, ['node:*', 'cloudflare:*'], 'browser', CF_CONDITIONS), exposePlugin(ctx.compiled)],
   })
   if (violations.length > 0) throw new BuildError('cf-unsupported', `${[...new Set(violations)].join('\n')}\nthese modules do not exist on Cloudflare Workers; swap them with [cloudflare] alias`)
   if (!res.success) throw new BuildError('bundle', `cloudflare: ${res.logs.map(String).join('\n')}`)
