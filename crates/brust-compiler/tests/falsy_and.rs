@@ -96,6 +96,8 @@ fn a_provably_boolean_left_keeps_the_old_shape() {
         "export default function F({ n }: any) { const big = n > 2; return <div>{big && <b>x</b>}</div> }",
         // a boolean left in a <tbody> is no refusal
         "export default function F({ n }: any) { return <table><tbody>{n > 0 && <tr><td>x</td></tr>}</tbody></table> }",
+        // ... nor through two wrappers
+        "function TableBody({ children }: any) { return <tbody className=\"b\">{children}</tbody> }\nfunction Body2({ children }: any) { return <TableBody>{children}</TableBody> }\nexport default function F({ n }: any) { return <table><Body2>{n > 0 && <tr><td>x</td></tr>}</Body2></table> }",
         // ... nor through a component that prints its children in a <tbody>
         "function TableBody({ children }: any) { return <tbody className=\"b\">{children}</tbody> }\nexport default function F({ n }: any) { return <table><TableBody>{n > 0 && <tr><td>x</td></tr>}</TableBody></table> }",
     ] {
@@ -134,6 +136,11 @@ fn a_non_boolean_left_in_an_element_without_text_is_a_named_refusal() {
         "export default function F({ n }: any) { return <table><tbody><tr>{n && <td>x</td>}</tr></tbody></table> }",
         // N1: a child whose ROOT is the `&&` lands in the caller's <tbody>
         "function Rows({ n }: any) { return <>{n && <tr><td>x</td></tr>}</> }\nexport default function F({ n }: any) { return <table><tbody><Rows n={n} /></tbody></table> }",
+        // ... through TWO wrappers (Mellow round 2, h.tsx: state) and with a prop left (d.tsx: static)
+        "import { useState } from 'react'\nfunction TableBody({ children }: any) { return <tbody className=\"b\">{children}</tbody> }\nfunction Body2({ children }: any) { return <TableBody>{children}</TableBody> }\nexport default function F() { const [n, setN] = useState(0); return <table><Body2>{n && <tr><td onClick={() => setN(1)}>x</td></tr>}</Body2></table> }",
+        "function TableBody({ children }: any) { return <tbody className=\"b\">{children}</tbody> }\nfunction Body2({ children }: any) { return <TableBody>{children}</TableBody> }\nexport default function F({ n }: any) { return <table><Body2>{n && <tr><td>x</td></tr>}</Body2></table> }",
+        // ... three wrappers, one of them passing children through a fragment
+        "function TableBody({ children }: any) { return <tbody className=\"b\">{children}</tbody> }\nfunction Body2({ children }: any) { return <TableBody><>{children}</></TableBody> }\nfunction Body3({ children }: any) { return <Body2>{children}</Body2> }\nexport default function F({ n }: any) { return <table><Body3>{n && <tr><td>x</td></tr>}</Body3></table> }",
         // ... and a `&&` given as children that the child prints in its own <tbody> (shadcn's TableBody shape)
         "function TableBody({ children }: any) { return <tbody className=\"b\">{children}</tbody> }\nexport default function F({ n }: any) { return <table><TableBody>{n && <tr><td>x</td></tr>}</TableBody></table> }",
     ] {
@@ -163,4 +170,18 @@ fn the_reader_marks_the_else_slot() {
         serde_json::json!({ "n": 0 }),
     );
     assert!(jinja.contains("{% else %}{{ n | e }}"), "{jinja}");
+}
+
+#[test]
+fn a_wrapper_chain_that_ends_in_an_element_with_text_keeps_the_else_slot() {
+    // Two wrappers into a <div>: the text can sit there, so no refusal and React's `0` prints.
+    let src = "function Box({ children }: any) { return <div className=\"b\">{children}</div> }\nfunction Box2({ children }: any) { return <Box>{children}</Box> }\nexport default function F({ n }: any) { return <section><Box2>{n && <i>x</i>}</Box2></section> }";
+    let (t, rules) = tier(src);
+    assert!(
+        !rules.iter().any(|r| r == "and-falsy-in-table"),
+        "{rules:?}"
+    );
+    assert!(matches!(t, Tier::Native | Tier::Static), "{t:?}");
+    let (_, html) = page(src, serde_json::json!({ "n": 0 }));
+    assert!(html.contains(">0</div>"), "{html}");
 }
