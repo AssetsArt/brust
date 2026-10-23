@@ -38,11 +38,16 @@ Source: `/Users/detoro/code/assets-art-cloud/docs/brust-issues.md`, section Open
 |---|---|---|---|---|---|
 | aac-map-row-props | F396 | complex | implementer (suggested: Guetta) | - | red-then-green served test from the B-4 repro; `cargo test -p brust-compiler --no-fail-fast`; battery `--check`; shadcn `--check`; served `tests/server` files that touch lists, one file at a time; fmt + CI clippy. review: complex |
 | aac-diagnostics | F394, F395 | standard | implementer (suggested: Guetta after F396, or the first idle senior) | - | both B-3 repros as tests (red before); `cargo test -p brust-compiler --no-fail-fast`; battery `--check` (the req change must not move tiers except rows that named `req`); fmt + clippy |
-| aac-build-assets | F392, F393 | standard | implementer (suggested: knock2) | - | served + static + Chromium compatMode test for F392; CSS asset test for F393; `bun run ci` in packages/brust; `bun test` of the touched build tests; the B-1 and B-2 repros from the filed file pass in a scratch app built with the lane's packages |
+| aac-build-assets | F392, F393 | standard | implementer (suggested: knock2) | - | served + static + Chromium compatMode test for F392; CSS asset test for F393; CI's packages/brust gates: `cd packages/brust && bun run typecheck && bun test` (full), `test -z "$(git status --porcelain)"` after the build; for a brust-core change also `cargo test -p brust-core -p brust-server --no-fail-fast`, `cargo check -p brust-core --target wasm32-unknown-unknown` (with and without `--no-default-features`), the wasm clippy line from ci.yml, and `cd packages/brust && bun test test/cf-*.test.ts`; the B-1 and B-2 repros from the filed file pass in a scratch app built with the lane's packages |
 
 ## Release and reply (lead)
 
 After all three tasks merge: release notes list F392-F396 under fixes, cut the next alpha (incremental-publish rule), deploy brust.dev only after all six `@brust/*` show the version on npm, then tell `ed1e9f68` one line per issue: issue id + the version that fixes it. A lane that stops on a refusal instead of a fix reports that, and the reply says "refused by name (island) in <version>; full fix tracked as F<n>".
+
+## Amendments
+
+- 2026-10-23: the aac-build-assets acceptance named `bun run ci` in packages/brust, which does not exist on main (that was the v0.1 biome gate). Replaced by the CI gates above. Found by knock2.
+- 2026-10-23: F393 keeps a `url()` suffix verbatim: `?query` and `#fragment` stay on the rewritten URL (`sprite.svg#icon` is semantic for SVG). Found by knock2 (unsure 1).
 
 ## Risk ledger
 
