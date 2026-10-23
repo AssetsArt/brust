@@ -116,6 +116,16 @@ test('R9.5: a loader reading the request warns and the page is the no-cookie one
   expect(readFileSync(join(out, 'reads.html'), 'utf8')).toContain('<p class="theme">none</p>')
 })
 
+test('F392: every written page starts with <!doctype html> exactly once (a root layout returning <html> writes none itself)', () => {
+  const report = JSON.parse(readFileSync(join(out, 'ssg.json'), 'utf8')) as { pages: { file: string }[] }
+  expect(report.pages.length).toBeGreaterThan(1)
+  for (const p of report.pages) {
+    const html = readFileSync(join(out, p.file), 'utf8')
+    expect([p.file, html.slice(0, 15)]).toEqual([p.file, '<!doctype html>'])
+    expect([p.file, html.match(/<!doctype/gi)?.length]).toEqual([p.file, 1])
+  }
+})
+
 test('every page is byte-identical to what brust start serves from the same dist', async () => {
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
   const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: fixture, env, stdout: 'pipe', stderr: 'inherit' })
@@ -135,7 +145,9 @@ test('every page is byte-identical to what brust start serves from the same dist
     const report = JSON.parse(readFileSync(join(out, 'ssg.json'), 'utf8')) as { pages: { path: string; file: string }[] }
     for (const p of report.pages) {
       const r = await fetch(live + p.path, { headers: { 'accept-encoding': 'identity' } })
-      expect([p.path, r.status, await r.text()]).toEqual([p.path, 200, readFileSync(join(out, p.file), 'utf8')])
+      const body = await r.text()
+      expect([p.path, r.status, body]).toEqual([p.path, 200, readFileSync(join(out, p.file), 'utf8')])
+      expect([p.path, body.slice(0, 15)]).toEqual([p.path, '<!doctype html>']) // F392: served, not only written
     }
     const nf = await fetch(`${live}/nope`, { headers: { 'accept-encoding': 'identity' } })
     expect([nf.status, await nf.text()]).toEqual([404, readFileSync(join(out, '404.html'), 'utf8')])

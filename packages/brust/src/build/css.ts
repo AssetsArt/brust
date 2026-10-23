@@ -10,7 +10,7 @@
 //   absolute `/public/*` and `/_brust/*` stay as written.
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { BunPlugin } from 'bun'
 import type { FlatRoute } from '../routes'
 import { BuildError } from './errors'
@@ -110,6 +110,21 @@ const CLASS = /\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)/g
 /** The asset types `static_rules::is_safe_client_asset_filename` serves from `/_brust/client/` (review N1). */
 export const SERVED_ASSET_EXT = ['.woff2', '.woff', '.ttf', '.otf', '.eot', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg', '.ico']
 
+const SOURCE_URL = /url\(\s*(["']?)(\/[^"')]+)\1\s*\)/g
+
+/** F393: a `url()` that is the absolute path of a file on disk (see the `loader` in `buildCss`) becomes a
+ * hashed `./<name>-<hex10>.<ext>` client asset at any size. `/public/…` and `/_brust/…` stay as written. */
+function emitSourceAssets(text: string, assets: { name: string; bytes: Uint8Array }[]): string {
+  return text.replace(SOURCE_URL, (whole, _q: string, path: string) => {
+    const ext = extname(path).toLowerCase()
+    if (!SERVED_ASSET_EXT.includes(ext) || path.startsWith('/public/') || path.startsWith('/_brust/') || !existsSync(path)) return whole
+    const bytes = new Uint8Array(readFileSync(path))
+    const name = `${safeName(basename(path, extname(path)))}-${hex(bytes)}${ext}`
+    if (!assets.some((a) => a.name === name)) assets.push({ name, bytes })
+    return `url(./${name})`
+  })
+}
+
 /** R19.2/R19.4: builds every source stylesheet (one JS entry each) into `<dist>/client/`. `minify`
  * is off only for a development build (`brust dev`, review N3). */
 export async function buildCss(
@@ -155,6 +170,11 @@ export async function buildCss(
     external: ['/public/*', '/_brust/*'],
     root: appRoot,
     plugins,
+    // F393: Bun's CSS bundler turns an asset under its size threshold into a `data:` URI whatever the
+    // loader says, except `dataurl`, which (inverted, as of 1.4.4) leaves the url() as the absolute path of
+    // the source file. That path is the marker `emitSourceAssets` below copies and rewrites; the css test
+    // fails if a Bun release changes this.
+    loader: Object.fromEntries(SERVED_ASSET_EXT.map((e) => [e, 'dataurl'])),
   })
   if (!res.success) throw new BuildError('css', res.logs.map(String).join('\n'))
   // Assets a stylesheet references (fonts, images): `<name>-<hex10>.<ext>`, references rewritten.
@@ -194,6 +214,7 @@ export async function buildCss(
       `${lines.join('; ')}: brust serves only ${SERVED_ASSET_EXT.join(' ')} from /_brust/client; put the file in public/ and reference it as /public/…`,
     )
   }
+  for (const [i, t] of css) css.set(i, emitSourceAssets(t, assets))
   for (const a of assets) writeFileSync(join(dist, 'client', a.name), a.bytes)
   for (const [i, src] of sources.entries()) {
     let text = css.get(i)
