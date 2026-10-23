@@ -82,18 +82,18 @@ async function run(page: string, react: boolean, clicks: string[]): Promise<{ lo
 
 test('two_on and same_loc3 are native (no island); same_loc (F3) and two (a Provider inside Prov) keep Prov an island', async () => {
   for (const page of ['two_on', 'same_loc3']) expect(await (await fetch(`${base}/${page}`)).text()).not.toContain('brust-island')
-  for (const page of ['same_loc', 'two']) expect(await (await fetch(`${base}/${page}`)).text()).toContain('<brust-island data-id="prov_')
+  for (const page of ['same_loc', 'two']) expect(await (await fetch(`${base}/${page}`)).text()).toContain('<brust-island style="display:contents" data-id="prov_')
 })
 
 // F374: children reaching the Provider through a wrapper's props spread: the wrapper stays a React island (refused by
 // name), never the Provider printed without them; content reading Prov's own context still clones the wrapper (F298).
 test('rest_text and rest_k keep the wrapper an island with its children; rest_on is native', async () => {
   const text = await (await fetch(`${base}/rest_text`)).text()
-  expect(text).toContain('<brust-island data-id="outer_')
+  expect(text).toContain('<brust-island style="display:contents" data-id="outer_')
   expect(text).toContain('hello')
   expect(text).toContain('para')
   const k = await (await fetch(`${base}/rest_k`)).text()
-  expect(k).toContain('<brust-island data-id="outer_')
+  expect(k).toContain('<brust-island style="display:contents" data-id="outer_')
   expect(k).toContain('AAA')
   expect(await (await fetch(`${base}/rest_on`)).text()).not.toContain('brust-island')
 })

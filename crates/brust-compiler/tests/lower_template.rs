@@ -294,7 +294,7 @@ fn outlet_lowers_to_the_outlet_slot() {
 fn react_child_gets_the_island_host() {
     let jinja = lowered_jinja("react-child");
     assert!(
-        jinja.contains("<brust-island data-id=\"reviews_"),
+        jinja.contains("<brust-island style=\"display:contents\" data-id=\"reviews_"),
         "{jinja}"
     );
     assert!(
@@ -306,6 +306,11 @@ fn react_child_gets_the_island_host() {
         "ssr slot inside the host: {jinja}"
     );
     assert!(jinja.contains("| safe }}</brust-island>"), "{jinja}");
+    // F413: the host takes no box, so a flex/grid gap never counts it.
+    assert!(
+        jinja.contains("<brust-island style=\"display:contents\" data-id="),
+        "{jinja}"
+    );
     assert!(
         !jinja.contains("data-brust-island"),
         "old attribute name must be gone: {jinja}"
@@ -316,7 +321,7 @@ fn react_child_gets_the_island_host() {
 fn client_only_page_gets_an_empty_island_host() {
     let jinja = lowered_jinja("client-only");
     assert!(
-        jinja.contains("<brust-island data-id=\"input_")
+        jinja.contains("<brust-island style=\"display:contents\" data-id=\"input_")
             && jinja.contains("x-props='{{ _props | json_attr }}'></brust-island>"),
         "empty host: {jinja}"
     );

@@ -87,7 +87,7 @@ test('loader route: per-row values, useId, island SSR + chunk; second request is
   expect(h1).toMatch(/<li>1\.0€<\/li>.*<li>2\.3€<\/li>/s) // plain rows (F70)
   // React island SSR'd by a worker, the literal `title="crew"` merged from the manifest.
   expect(h1).toMatch(
-    /<brust-island data-id="team_[0-9a-f]{8}" x-props='[^']*'><div class="team"><h3>crew<\/h3><button>\+<!-- -->0<\/button><span>ann<\/span><span>bob<\/span><\/div><\/brust-island>/,
+    /<brust-island style="display:contents" data-id="team_[0-9a-f]{8}" x-props='[^']*'><div class="team"><h3>crew<\/h3><button>\+<!-- -->0<\/button><span>ann<\/span><span>bob<\/span><\/div><\/brust-island>/,
   )
   expect(h1).toMatch(/<script type="module" src="\/_brust\/client\/react-team_[0-9a-f]{8}-[0-9a-f]{10}\.js"><\/script>/)
   const s1 = await stats()

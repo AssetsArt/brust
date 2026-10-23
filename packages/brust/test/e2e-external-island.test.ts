@@ -51,14 +51,14 @@ afterAll(async () => {
 
 test('a package component in a static parent is server-rendered with its literal props', async () => {
   const html = await (await fetch(`${base}/`)).text()
-  expect(html).toContain('<brust-island data-id="heart_')
+  expect(html).toContain('<brust-island style="display:contents" data-id="heart_')
   expect(html).toContain('width="16"')
   expect(html).toContain('<title>loved</title>')
 })
 
 test('a package component in a native parent is server-rendered next to the native markup', async () => {
   const html = await (await fetch(`${base}/native`)).text()
-  expect(html).toContain('<brust-island data-id="heart_')
+  expect(html).toContain('<brust-island style="display:contents" data-id="heart_')
   expect(html).toContain('width="20"')
   expect(html).toMatch(/<button[^>]*>0<\/button>/)
 })

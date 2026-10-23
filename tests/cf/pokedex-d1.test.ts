@@ -54,7 +54,7 @@ describe.skipIf(!ENABLED)('pokedex on local workerd + local D1', () => {
     expect(r.status).toBe(200)
     expect(html.startsWith('<!doctype html>')).toBe(true) // F392
     expect(html.slice(15).trimStart().startsWith('<html')).toBe(true)
-    expect(html).toMatch(/<brust-island data-id="teamBuilder_[0-9a-f]{8}"(?: x-props='[^']*')?>[\s\S]*My team/)
+    expect(html).toMatch(/<brust-island style="display:contents" data-id="teamBuilder_[0-9a-f]{8}"(?: x-props='[^']*')?>[\s\S]*My team/)
     expect(html).toMatch(/data-testid="team-count"[^>]*>0</)
     const s = scripts(html)
     expect(s.some((u) => /\/_brust\/client\/runtime-[0-9a-f]{10}\.js$/.test(u))).toBe(true)
