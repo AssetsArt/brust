@@ -86,35 +86,35 @@
     },
     "npm/core-cf": {
       "name": "@brust/core-cf",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
     },
     "npm/darwin-arm64": {
       "name": "@brust/native-darwin-arm64",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
     },
     "npm/darwin-x64": {
       "name": "@brust/native-darwin-x64",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
     },
     "npm/linux-arm64-gnu": {
       "name": "@brust/native-linux-arm64-gnu",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
     },
     "npm/linux-arm64-musl": {
       "name": "@brust/native-linux-arm64-musl",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
     },
     "npm/linux-x64-gnu": {
       "name": "@brust/native-linux-x64-gnu",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
     },
     "npm/linux-x64-musl": {
       "name": "@brust/native-linux-x64-musl",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
     },
     "packages/brust": {
       "name": "@brust/core",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
       "bin": {
         "brust": "./bin/brust",
       },
@@ -157,7 +157,7 @@
     },
     "packages/cache-cloudflare": {
       "name": "@brust/cache-cloudflare",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
       "devDependencies": {
         "@brust/core": "workspace:*",
         "@types/bun": "^1.4.0",
@@ -169,7 +169,7 @@
     },
     "packages/cache-redis": {
       "name": "@brust/cache-redis",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
       "devDependencies": {
         "@brust/core": "workspace:*",
         "@types/bun": "^1.4.0",
@@ -181,7 +181,7 @@
     },
     "packages/create-app": {
       "name": "@brust/create-app",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
       "bin": {
         "create-app": "./bin/create-app.ts",
       },
@@ -192,7 +192,7 @@
     },
     "packages/runtime-dom": {
       "name": "@brust/runtime-dom",
-      "version": "2.0.0-alpha.19",
+      "version": "2.0.0-alpha.20",
       "devDependencies": {
         "@happy-dom/global-registrator": "^20.0.0",
         "@types/bun": "^1.4.0",

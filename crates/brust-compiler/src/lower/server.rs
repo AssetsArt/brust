@@ -298,18 +298,34 @@ pub fn job(ir: &ComponentIR) -> Option<String> {
         }
     }
     flush(&mut out, &mut run);
-    let mut decls: Vec<(u32, String)> = Vec::new();
+    // F385: each `const` after the ones it reads (a job reading a later one throws), then by source location.
+    let decl_names: BTreeSet<String> = ir
+        .state
+        .iter()
+        .map(|s| s.name.clone())
+        .chain(derived.iter().map(|(n, _)| n.to_string()))
+        .collect();
+    let mut decls: Vec<(u32, String, Vec<String>, String)> = Vec::new();
     for (i, s) in ir.state.iter().enumerate() {
         if let Some(r) = &inits[i] {
             let loc = structural.state[i].init.raw_loc().unwrap_or_default();
-            decls.push((loc, format!("const {} = {}", s.name, server_js(r, &f))));
+            decls.push((
+                loc,
+                s.name.clone(),
+                super::common::reads_of(r, &decl_names),
+                format!("const {} = {}", s.name, server_js(r, &f)),
+            ));
         }
     }
     for (name, r) in &derived {
-        decls.push((r.loc, format!("const {name} = {}", server_js(r, &f))));
+        decls.push((
+            r.loc,
+            name.to_string(),
+            super::common::reads_of(r, &decl_names),
+            format!("const {name} = {}", server_js(r, &f)),
+        ));
     }
-    decls.sort_by_key(|d| d.0);
-    for (_, line) in decls {
+    for line in super::common::order_decls(decls) {
         out.push_str(&format!("  {line}\n"));
     }
     let mut entries: Vec<(u32, String)> = Vec::new();

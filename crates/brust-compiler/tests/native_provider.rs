@@ -310,6 +310,86 @@ fn a_name_of_the_call_sites_component_in_the_content_is_a_hidden_input_of_the_cl
     assert!(c.jinja.contains("x-on-click=\"__inh__h1\""), "{}", c.jinja);
 }
 
+// F271: a handler of the call site that takes the event argument crosses as a handler of the clone, and the argument is
+// the clone's own (`(e) => setN(n + e.detail)` keeps its parameter).
+#[test]
+fn a_carried_handler_that_takes_the_event_keeps_its_parameter() {
+    let all = compile("handler_event.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    let c = clones(&all);
+    assert_eq!(c.len(), 1, "{:?}", root.ir.diagnostics);
+    let h = c[0]
+        .ir
+        .handlers
+        .iter()
+        .find(|h| h.name == "__inh__h1")
+        .unwrap_or_else(|| panic!("{:?}", c[0].ir.handlers));
+    // the clone calls the carried function itself (the runtime passes the event on), and the function is the page's own
+    // handler, which keeps the `e` it was written with
+    assert!(
+        matches!(&h.body.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "__in__h1"),
+        "{:?}",
+        h.body.kind
+    );
+    let page = root
+        .ir
+        .handlers
+        .iter()
+        .find(|h| matches!(&h.body.kind, RawKind::Arrow { params, .. } if params.len() == 1))
+        .unwrap_or_else(|| panic!("{:?}", root.ir.handlers));
+    assert!(page.name.starts_with("_h"), "{}", page.name);
+    assert!(
+        c[0].jinja.contains("x-on-click=\"__inh__h1\""),
+        "{}",
+        c[0].jinja
+    );
+}
+
+// F271: the call site's own `children` read in the content crosses as a hidden input of the clone (the clone prints it,
+// pinned when the call site gives none). Where the call site gives children the component is React (`children-read`), the
+// clone is still made but the page does not use it.
+#[test]
+fn the_call_sites_children_read_in_the_content_cross_as_a_hidden_input() {
+    let all = compile("in_children.tsx");
+    let root = &all[0];
+    assert!(
+        has(&root.ir, DiagClass::Fallback, "children-read") && is_react(&root.ir),
+        "{:?}",
+        root.ir.diagnostics
+    );
+    let c = clones(&all);
+    assert_eq!(c.len(), 1, "{:?}", root.ir.diagnostics);
+    assert!(c[0].ir.props.iter().any(|p| p.name == "__in_children"));
+    assert!(
+        c[0].jinja.contains("{{ __in_children | e }}"),
+        "{}",
+        c[0].jinja
+    );
+    // without children at the call site, the page is native and the input is the call site's `undefined`
+    let all = compile("in_children_none.tsx");
+    assert!(!is_react(&all[0].ir), "{:?}", all[0].ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", all[0].ir.diagnostics);
+    assert!(
+        clones(&all)[0]
+            .ir
+            .props
+            .iter()
+            .any(|p| p.name == "__in_children")
+    );
+}
+
+// F275: a frame field that is the negation of a module helper's result over state (`free = !held(grabbed)`) is a member
+// of the clone's own instance.
+#[test]
+fn a_negated_helper_over_state_is_a_frame_field_of_the_clone() {
+    let all = compile("helper_frame.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    assert_eq!(clones(&all).len(), 1, "{:?}", root.ir.diagnostics);
+    assert!(!root.jinja.contains("brust-island"), "{}", root.jinja);
+}
+
 #[test]
 fn names_that_cannot_cross_keep_the_island_provider_and_say_which() {
     for (file, why) in [

@@ -1502,6 +1502,24 @@ fn a_local_object_holding_the_rest_that_is_only_spread_reads_no_rest_as_a_value(
     );
 }
 
+/// F332 N3: a single spread of the object (`<Impl {...x} />`, no other attribute) is the only use too; it must read like the
+/// multi-attribute site, not as a value.
+#[test]
+fn a_local_object_that_is_the_only_attribute_spread_reads_no_rest_as_a_value() {
+    let all = compile("local-spread-rest-single.tsx");
+    let rules: Vec<&str> = all.iter().flat_map(|(_, ir, _)| rules(ir)).collect();
+    assert!(all.iter().all(|(_, ir, _)| !is_react(ir)), "{rules:?}");
+    let page = all
+        .iter()
+        .find(|(id, ..)| id.to_lowercase().starts_with("localspreadrestsingle"))
+        .expect("page");
+    assert!(
+        page.2.contains(r#"role="{{ "group""#) && page.2.contains("one"),
+        "{}",
+        page.2
+    );
+}
+
 /// The same object also read as a value stays `prop-pattern`: the rest would be printed as a value.
 #[test]
 fn the_same_object_read_as_a_value_still_refuses_the_rest() {
