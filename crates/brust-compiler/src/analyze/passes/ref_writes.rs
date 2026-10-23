@@ -236,7 +236,10 @@ fn stable(ir: &ComponentIR, e: &RawExpr, depth: u8) -> bool {
             IdentKind::Setter | IdentKind::Import { .. } => true,
             IdentKind::Prop => ir.stable_props.iter().any(|p| p == name),
             IdentKind::Local => {
-                ir.refs.iter().any(|r| &r.name == name)
+                // a const array / object literal read only here (the binding a custom hook's rest parameter makes:
+                // `useStableComposedRefs(...refs)`) is that literal (ruling 255806ff a, whole object)
+                whole_literal(ir, name).is_some_and(|v| stable(ir, v, depth + 1))
+                    || ir.refs.iter().any(|r| &r.name == name)
                     // a module `const` or a function declaration: one binding for the life of the module
                     || ir.module_decls.iter().any(|d| {
                         d.consts.iter().any(|c| &c.name == name)
@@ -300,4 +303,59 @@ fn literal_field<'a>(ir: &'a ComponentIR, o: &str, k: &str) -> Option<&'a RawExp
         return None;
     }
     ps.iter().rev().find(|(pk, _)| pk == k).map(|(_, v)| v)
+}
+
+/// `o`, a const array or object literal of this component that nothing reads but the one render ref write whose value
+/// it is (so its identity is never observed): the literal.
+fn whole_literal<'a>(ir: &'a ComponentIR, o: &str) -> Option<&'a RawExpr> {
+    let lit = ir
+        .derived
+        .iter()
+        .find(|d| d.name == o)
+        .and_then(|d| match &d.expr {
+            Expr::Raw(r) if matches!(r.kind, RawKind::Array(_) | RawKind::Object(_)) => Some(r),
+            _ => None,
+        })?;
+    // read once, as a write's whole value
+    let as_value = ir
+        .render_ref_writes
+        .iter()
+        .filter(|w| matches!(&w.value.kind, RawKind::Ident { name, .. } if name == o))
+        .count();
+    let others: Vec<Value> = [
+        serde_json::to_value(&ir.template),
+        serde_json::to_value(
+            ir.derived
+                .iter()
+                .filter(|d| d.name != o)
+                .collect::<Vec<_>>(),
+        ),
+        serde_json::to_value(&ir.state),
+        serde_json::to_value(&ir.props),
+        serde_json::to_value(&ir.provides),
+        // the written ref's own initialiser is replaced by the write (`useRef(refs); refsRef.current = refs`)
+        serde_json::to_value(
+            ir.refs
+                .iter()
+                .filter(|r| {
+                    !ir.render_ref_writes.iter().any(|w| {
+                        w.r#ref == r.name
+                            && matches!(&w.value.kind, RawKind::Ident { name, .. } if name == o)
+                    })
+                })
+                .collect::<Vec<_>>(),
+        ),
+        serde_json::to_value(&ir.handlers),
+        serde_json::to_value(&ir.effects),
+        serde_json::to_value(
+            ir.render_ref_writes
+                .iter()
+                .filter(|w| !matches!(&w.value.kind, RawKind::Ident { name, .. } if name == o))
+                .collect::<Vec<_>>(),
+        ),
+    ]
+    .into_iter()
+    .map(|v| v.unwrap_or(Value::Null))
+    .collect();
+    (as_value == 1 && !others.iter().any(|v| mentions(v, o))).then_some(lit)
 }

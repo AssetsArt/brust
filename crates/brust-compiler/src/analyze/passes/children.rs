@@ -2124,7 +2124,7 @@ fn ir_reads_prop(ir: &ComponentIR, key: &str) -> bool {
 }
 
 /// `map` (parameter local -> the call's argument) applied to every expression of `n`.
-fn subst_params(
+pub(super) fn subst_params(
     n: &mut Node,
     map: &std::collections::HashMap<String, RawExpr>,
 ) -> Result<(), String> {
@@ -2931,7 +2931,7 @@ impl Walker<'_, '_> {
             self.no_spec.insert(loc);
             diags.push(Diagnostic::info(
                 "specialise-unsupported",
-                format!("this Provider stays a React island: {why}"),
+                format!("this component stays a React island for this call site: {why}"),
                 loc,
                 "keep the content simple (components, text, constants) to have the Provider lowered",
             ));
@@ -3029,7 +3029,15 @@ impl Walker<'_, '_> {
                 let native_prov = child.path.is_some()
                     && !self.no_spec.contains(loc)
                     && self.specialisable(&cir, self.renders.iter().any(|r| r.loc == *loc));
-                let island = !matches!(cir.tier, Tier::Static | Tier::Native) && !native_prov;
+                // F288 G7 (A1): a component that reads its children only as an element is specialised per call site like
+                // a Provider (the same `specialise`, the same key), with no frame of its own.
+                let element_spec = !native_prov
+                    && child.path.is_some()
+                    && !self.no_spec.contains(loc)
+                    && self.element_specialisable(&cir);
+                let island = !matches!(cir.tier, Tier::Static | Tier::Native)
+                    && !native_prov
+                    && !element_spec;
                 // R34.140: a `<Collection.Slot>` over a component hands it the root marker, which only a native instance's
                 // host prints; a static (hostless) component or a React island would drop it, and `getItems()` would find
                 // nothing where React finds the items (fail closed)
@@ -3327,7 +3335,7 @@ impl Walker<'_, '_> {
                     .for_each(|c| self.frames_node(c, frames, bubbled, diags));
                 // B7: the body of a render prop is read where the Provider renders it, under its frame.
                 let mut render = None;
-                if owner.is_some()
+                if (owner.is_some() || element_spec)
                     && let Some(i) = self.renders.iter().position(|r| r.loc == *loc)
                 {
                     let mut rp = self.renders.remove(i);
@@ -3337,7 +3345,8 @@ impl Walker<'_, '_> {
                     render = Some(rp);
                 }
                 frames.truncate(frames.len() - pushed);
-                if let Some(o) = owner
+                // An element clone owns no frame (`usize::MAX`), as a rest clone (F298).
+                if let Some(o) = owner.or(element_spec.then_some(usize::MAX))
                     && self.spec_failure.as_ref().map(|(l, _)| *l) != Some(*loc)
                 {
                     // R34.122: the Provider and its content become one component for this call site.
@@ -3393,6 +3402,31 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// F288 G7: `cir` refuses an element read (`element-value`), and every other refusal it has is one a clone of it for a
+    /// call site may drop (the clone decides: a clone that still needs React keeps the call site's island).
+    fn element_specialisable(&self, cir: &ComponentIR) -> bool {
+        !cir.specialised
+            && cir.provides.is_empty()
+            && cir
+                .diagnostics
+                .iter()
+                .any(|d| d.rule == super::elements::ELEMENT_VALUE)
+            && cir
+                .diagnostics
+                .iter()
+                .filter(|d| d.class == DiagClass::Fallback)
+                .all(|d| {
+                    matches!(
+                        d.rule.as_str(),
+                        super::elements::ELEMENT_VALUE
+                            | "ref-in-render"
+                            | "client-function-in-job"
+                            | "jsx-const-child"
+                            | "children-read"
+                    ) || super::tier::CHILD_ONLY.contains(&d.rule.as_str())
+                })
+    }
+
     /// R34.116: whether `cir` is a Provider whose frame is state-valued and a native clone of it can carry the frame.
     fn specialisable(&self, cir: &ComponentIR, render: bool) -> bool {
         // A clone already carries its content (it is what a call site names after specialising).
@@ -3434,10 +3468,14 @@ impl Walker<'_, '_> {
         // the clone's `{children}` would be empty where React renders them (`function Outer(props) { return <Prov
         // {...props} /> }`, `<Outer>hello</Outer>` printed an empty section). Refused by name: the Provider stays an
         // island and React renders it with its children.
+        // F288 S2: the function between the tags is the `children` render prop, which the clone does hold.
+        let render_children = render.as_ref().is_some_and(|r| r.key == "children");
         if content.is_empty()
-            && let Some((k, _)) = props
-                .iter()
-                .find(|(k, _)| k == crate::ir::SPREAD_KEY || k == REST_INPUT || k == "children")
+            && let Some((k, _)) = props.iter().find(|(k, _)| {
+                k == crate::ir::SPREAD_KEY
+                    || k == REST_INPUT
+                    || (k == "children" && !render_children)
+            })
         {
             return Err(if k == "children" {
                 "its children are given as the `children` prop, which the clone cannot hold".into()
@@ -3494,17 +3532,22 @@ impl Walker<'_, '_> {
         let (inputs, clone_handlers) = carry.finish();
         // An input the call site does not change on the client stays fixed in the clone.
         let fixed = self.pinned(cir, props, &inputs);
+        let react_19 = super::elements::resolves_react_19(&ctx.opts.root);
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
             &export,
             key.clone(),
             ctx.opts,
             ctx.modules,
-            &mut |ir: &mut ComponentIR| {
-                if let Some(rp) = render.take() {
-                    splice_render(ir, rp)?;
+            &mut |ir: &mut ComponentIR, parsed: &crate::parse::Parsed| {
+                // F288: a component that reads its children as an element folds them for this call site first.
+                let mut content = once.take();
+                if !super::elements::fold(ir, parsed, &mut render, &mut content, react_19)? {
+                    if let Some(rp) = render.take() {
+                        splice_render(ir, rp)?;
+                    }
+                    splice_children(ir, content.unwrap_or_default())?;
                 }
-                splice_children(ir, once.take().unwrap_or_default())?;
                 for (hidden, _) in &inputs {
                     ir.props.push(crate::ir::PropDecl {
                         name: hidden.clone(),
@@ -3582,7 +3625,7 @@ impl Walker<'_, '_> {
             key.clone(),
             ctx.opts,
             ctx.modules,
-            &mut |ir: &mut ComponentIR| {
+            &mut |ir: &mut ComponentIR, _: &crate::parse::Parsed| {
                 splice_rest_children(ir, once.take().unwrap_or_default())?;
                 for (hidden, _) in &inputs {
                     ir.props.push(crate::ir::PropDecl {
@@ -3702,7 +3745,7 @@ impl Walker<'_, '_> {
             key.clone(),
             ctx.opts,
             ctx.modules,
-            &mut |ir: &mut ComponentIR| {
+            &mut |ir: &mut ComponentIR, _: &crate::parse::Parsed| {
                 splice_children(ir, once.take().unwrap_or_default())?;
                 for (hidden, _) in &inputs {
                     ir.props.push(crate::ir::PropDecl {

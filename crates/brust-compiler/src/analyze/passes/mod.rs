@@ -7,6 +7,7 @@ pub mod build_eval;
 pub mod captures;
 pub mod children;
 pub mod deps;
+pub mod elements;
 pub mod helpers;
 pub mod icons;
 pub mod placement;

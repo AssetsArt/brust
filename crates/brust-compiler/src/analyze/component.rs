@@ -712,7 +712,7 @@ fn read_function_as(
 /// what `composeRefs` itself does. A ref on an element inside a list, a conditional branch or a component's children (which
 /// may mount later or never) stays a `ref-shape` fallback. The mount effects go FIRST in `ir.effects`: React attaches
 /// refs before it runs any effect of the owner.
-fn callback_refs(ir: &mut ComponentIR) {
+pub(crate) fn callback_refs(ir: &mut ComponentIR) {
     let callable: Vec<(String, IdentKind)> = ir
         .derived
         .iter()
