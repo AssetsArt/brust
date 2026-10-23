@@ -52,7 +52,7 @@ describe('mountActions', () => {
     expect(await r.json()).toMatchObject({
       type: 'TEAM_FULL',
       code: 'TEAM_FULL',
-      detail: { max: 6 },
+      max: 6, // the class's extension() members sit on the problem document (rc.0; beta.30 nested them under detail)
       status: 409,
     })
   })

@@ -2,7 +2,7 @@
 
 Actions are the server endpoints your pages call: add a Pokemon to a team, save a form, read a count. In brust v2 they are **one Elysia 2 app**, served behind the Rust server. There is no `Bun.serve`, no second port, and no second router to keep in step with the first.
 
-This page covers `@brust/core/elysia`, `@brust/core/client`, and the `[actions]` and `[cors]` sections of `brust.toml`. It targets the pinned Elysia 2 beta (`elysia@2.0.0-beta.30`, `@elysia/eden@2.0.0-beta.6`).
+This page covers `@brust/core/elysia`, `@brust/core/client`, and the `[actions]` and `[cors]` sections of `brust.toml`. It targets Elysia 2 release candidates: brust supports `elysia@^2.0.0-rc.0` and `@elysia/eden@^2.0.0-rc.0` (tested with `2.0.0-rc.0`).
 
 ## 1. What actions are
 
@@ -25,11 +25,13 @@ client code:  const api = client<App>();  await api.team.post({ id, name })   (E
 
 ## 2. Setup
 
-Actions are opt-in. Install the two pinned packages (exact versions; they are optional peers of `@brust/core`, so an app without actions installs neither):
+Actions are opt-in. Install the two packages with the `rc` tag (they are optional peers of `@brust/core`, so an app without actions installs neither):
 
 ```sh
-bun add elysia@2.0.0-beta.30 @elysia/eden@2.0.0-beta.6
+bun add elysia@rc @elysia/eden@rc
 ```
+
+Elysia 2 rc lists `typebox`, `exact-mirror` and `openapi-types` as peer dependencies. Bun installs them with the two packages; if your package manager does not install peer dependencies, add them yourself.
 
 Add the `[actions]` table to `brust.toml`. If the table is present actions are on; if it is absent they are off, even when an `actions.ts` file exists. Every key is optional:
 
@@ -185,11 +187,11 @@ A body that fails validation answers **422** with `content-type: application/pro
 }
 ```
 
-The `errors` list and the `detail` text exist only outside production. `brust start` sets `NODE_ENV=production` in every worker, so a deployed app answers just `type`, `code`, `title`, `status`, `on` and `property`. A malformed JSON body is **400** (`type: "parse"`). Bodies are parsed as JSON, text, urlencoded (a flat string record), form-data and raw bytes, by content type.
+The `errors` list, the `detail` text and the `found` and `expected` values exist only outside production. `brust start` sets `NODE_ENV=production` in every worker, so a deployed app answers just `type`, `code`, `title`, `status`, `on` and `property`. A malformed JSON body is **400** (`type: "parse"`). Bodies are parsed as JSON, text, urlencoded (a flat string record), form-data and raw bytes, by content type.
 
 ## 5. Errors
 
-Elysia 2 beta.30 has no `.error()` method. There are three ways to produce an error, and the client sees them differently:
+Elysia 2 rc.0 has no `.error()` method. There are three ways to produce an error, and the client sees them differently:
 
 | How | Wire | Typed on the client |
 |---|---|---|
@@ -202,13 +204,13 @@ Elysia 2 beta.30 has no `.error()` method. There are three ways to produce an er
 import { brust } from '@brust/core/elysia'
 import { Elysia, HTTPError, problem } from 'elysia'
 
-// Thrown: wire problem+json {"type":"TEAM_FULL","code":"TEAM_FULL","detail":{"max":6},"status":409,...}
+// Thrown: wire problem+json {"type":"TEAM_FULL","code":"TEAM_FULL","max":6,"status":409,...}
 export class TeamFull extends HTTPError.id('TEAM_FULL') {
   override readonly status = 409
   constructor(readonly max: number) {
     super('team is full')
   }
-  detail() {
+  extension() {
     return { max: this.max }
   }
 }
@@ -430,7 +432,7 @@ The pokedex example has no auth on purpose (it is a demo); it relies on the defa
 - **Stores are per-request** inside an action (see Routes).
 - **Browser bundles refuse actions code.** Any browser build fails with `server-only-in-client` if it imports `@brust/core/elysia`, `elysia` or `elysia/*`, or the actions entry file. An `import type` is erased and allowed; that is why the client example imports `type { App }`.
 - **Running without Rust** is not built in. If you want the app on another server, `export default app.fetch` from your own entry; the `brust()` adapter's `listen` will still throw.
-- **Beta pin.** Elysia 2 is a beta. Both packages are pinned exactly; never use `next` or a range, and re-test before bumping.
+- **Release candidate.** Elysia 2 is a release candidate. brust's peer range is `^2.0.0-rc.0` for both packages and its tests run on `2.0.0-rc.0`; use one copy of each (two copies of `elysia` break the `instanceof` check in `mountActions`), and re-test before moving to a later rc.
 
 ## 11. Deploy actions separately
 

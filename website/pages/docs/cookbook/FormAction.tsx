@@ -13,7 +13,7 @@ const SRC = {
   install: {
     lang: 'sh',
     cwd: '~/my-app',
-    code: '$ bun add elysia@2.0.0-beta.30 @elysia/eden@2.0.0-beta.6',
+    code: '$ bun add elysia@rc @elysia/eden@rc',
   },
   toml: { lang: 'toml', file: 'brust.toml', code: '[actions]' },
   actions: {
