@@ -267,7 +267,7 @@ fn lowered_jinja(name: &str) -> String {
 fn document_root_is_a_plain_host_with_escaped_title() {
     let jinja = lowered_jinja("document-root");
     assert!(
-        jinja.contains("\n<html x-data=\"input_"),
+        jinja.contains("<html x-data=\"input_"),
         "root element is the host: {jinja}"
     );
     assert!(
@@ -638,4 +638,67 @@ fn a_folded_module_const_is_escaped_like_any_literal() {
     assert!(!html.contains("</script"), "{html}");
     assert!(html.contains("a&quot;b"), "{html}");
     assert!(html.contains("&lt;/script&gt;"), "{html}");
+}
+
+/// F408: a page that renders two native `Mark`s (state + handler) with `body` as the paragraph's JSX.
+fn marks_html(body: &str) -> String {
+    let (j, _) = lower(&format!(
+        "{STATE}function Mark({{ k }}: any) {{ const [o, setO] = useState(false); return <sup onClick={{() => setO(!o)}}>{{o ? 'x' : k}}</sup> }}\nexport default function T() {{ return (\n<main>\n<p>{body}</p>\n</main>\n) }}"
+    ));
+    render(&j, serde_json::json!({}))
+}
+
+/// The element opening tag of every `<sup ...>` becomes `<sup>` so the assertions read the text around it.
+fn bare_sups(html: &str) -> String {
+    let mut out = String::new();
+    let mut rest = html;
+    while let Some(i) = rest.find("<sup ") {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let end = tail.find('>').unwrap();
+        out.push_str("<sup>");
+        rest = &tail[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// F408: a line break before a native component is JSX whitespace and is dropped, as in React (`the end.<sup>2</sup>`).
+#[test]
+fn a_line_break_before_a_native_component_is_dropped() {
+    let html = marks_html("\nthe end.\n<Mark k=\"2\" />\n");
+    assert!(
+        bare_sups(&html).contains("<p>the end.<sup>2</sup></p>"),
+        "{html}"
+    );
+}
+
+/// F408: text on its own line after a native component starts right after it.
+#[test]
+fn a_line_break_after_a_native_component_is_dropped() {
+    let html = marks_html("\n<Mark k=\"2\" />\nnext words\n");
+    assert!(
+        bare_sups(&html).contains("<p><sup>2</sup>next words</p>"),
+        "{html}"
+    );
+}
+
+/// F408: two native components on consecutive lines have nothing between them.
+#[test]
+fn native_components_on_consecutive_lines_touch() {
+    let html = marks_html("\n<Mark k=\"1\" />\n<Mark k=\"2\" />\n");
+    assert!(
+        bare_sups(&html).contains("<p><sup>1</sup><sup>2</sup></p>"),
+        "{html}"
+    );
+}
+
+/// F408: a space on the same line is text and React keeps it, before and after.
+#[test]
+fn a_same_line_space_around_a_native_component_is_kept() {
+    let html = marks_html("a <Mark k=\"2\" /> b");
+    assert!(
+        bare_sups(&html).contains("<p>a <sup>2</sup> b</p>"),
+        "{html}"
+    );
 }
