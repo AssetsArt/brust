@@ -17,6 +17,8 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-21', title: '2.0.0-alpha.21' },
+      { id: 'alpha-20', title: '2.0.0-alpha.20' },
       { id: 'alpha-19', title: '2.0.0-alpha.19' },
       { id: 'alpha-18', title: '2.0.0-alpha.18' },
       { id: 'alpha-17', title: '2.0.0-alpha.17' },
@@ -43,8 +45,68 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
 
+      <h2 id="alpha-21">2.0.0-alpha.21 · 23 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.20 (git log --merges --first-parent v2.0.0-alpha.20..origin/main): #353 (F332, tests and doc comments only: the compiler logic is unchanged, so no entry), #354 (F396), #355 (F392, F393), #356 (F394, F395) and #357 (F388): both listed here on the lead's ruling and both must be merged before the cut. F332 aside, the Assets Art issues were filed by the Assets Art team (B-1 to B-4) */}
+      <p>A patch that starts from problems found while building a production site: every full page now starts with a doctype, small fonts and images in <code>url()</code> are copied instead of inlined, a prop named <code>req</code> compiles, build errors name the right file and component, and a child component in a native list row no longer throws on load. It also fixes a wrong output: a falsy number left of <code>&amp;&amp;</code> renders as React renders it.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #355 (F392, Assets Art B-1; pre-existing, in alpha.20 and earlier); the check is in the shared render step, so the server, the adapters and a static build all get it */}
+        <li>
+          <strong>Every full page now starts with <code>&lt;!doctype html&gt;</code>.</strong> In alpha.20 and earlier, a root layout that returned <code>&lt;html&gt;</code> was sent without a doctype, because JSX cannot write one, and browsers rendered the page in quirks mode (<code>document.compatMode</code> was <code>BackCompat</code>), which changes table sizing, the line height of inline images and the height of <code>body</code>. A response whose first element, after whitespace and comments, is <code>&lt;html</code> and that has no doctype now gets one in front. It applies to <code>brust start</code>, to the adapters and to the pages <code>brust build --target static</code> writes. A page that already has a doctype, and a fragment, are unchanged.
+        </li>
+        {/* source: PR #355 (F393, Assets Art B-2; pre-existing, in alpha.20 and earlier); ?query and #fragment kept verbatim and an author-written data: URI left alone are from the PR description and its tests */}
+        <li>
+          <strong>A relative <code>url()</code> in a stylesheet is always copied, never inlined.</strong> In alpha.20 and earlier, a font or image under the bundler&rsquo;s size threshold became a <code>data:</code> URI in the CSS, so importing a package such as <code>@fontsource-variable/nunito</code> produced one large stylesheet that carried every subset, and the browser could not choose a subset by <code>unicode-range</code>. Every relative <code>url()</code> asset is now written as <code>client/&lt;name&gt;-&lt;hash&gt;.&lt;ext&gt;</code> at any size, with or without minification, and the URL is rewritten to it. A <code>?query</code> or <code>#fragment</code> on the URL (<code>?v=3</code>, <code>?#iefix</code>, an SVG font&rsquo;s <code>#id</code>) is kept. A <code>data:</code> URI you wrote yourself stays as written.
+        </li>
+        {/* source: PR #356 (F394, Assets Art B-3 part 1; pre-existing, in alpha.20 and earlier) */}
+        <li>
+          <strong>A component prop named <code>req</code>, <code>request</code>, <code>cookies</code> or <code>headers</code> now compiles.</strong> In alpha.20 and earlier, any such prop was refused with <code>request-state-in-render</code>, even for plain data such as <code>&lt;Count req=&quot;18,420&quot; /&gt;</code>. Request state is now judged by where the value comes from, not by the prop&rsquo;s name: only the props the router passes to a route component can carry it. A route page that reads <code>req</code> while rendering is still refused.
+        </li>
+        {/* source: PR #356 (F395, Assets Art B-3 part 2; pre-existing, in alpha.20 and earlier) */}
+        <li>
+          <strong>Build errors name the file and the component that cause them.</strong> In alpha.20 and earlier, an error raised inside a component imported from another file printed the page&rsquo;s file name with the other file&rsquo;s line and column, and <code>nested-instance</code> could name an unrelated sibling. Each error now names the file its line and column point into, and <code>nested-instance</code> names the component that has the job or <code>useId</code>.
+        </li>
+        {/* source: PR #354 (F396, Assets Art B-4; HIGH, pre-existing in every alpha with a row root of hidden={cond}; the server HTML was right); F397 (a literal hidden on a row root is lost on client-added rows) is open and not fixed here */}
+        <li>
+          <strong>A child component in a native list row no longer throws <code>TypeError</code> on load.</strong> In alpha.20 and earlier, a native list whose row root was <code>hidden={'{'}cond{'}'}</code> and held a child component logged <code>Cannot read properties of undefined</code> when the page loaded: the server&rsquo;s row was not adopted and was cloned again without its item. The server HTML was already right. The row now keeps the server&rsquo;s markup, the child receives its row&rsquo;s item, and clicking a button that changes <code>hidden</code> behaves as it does in React.
+        </li>
+        {/* source: PR #357 (F388, wrong output with no diagnostic, pre-existing in every alpha); the table/select fallback name and the JavaScript-disabled paint are from the PR description and its tests */}
+        <li>
+          <strong>A falsy number left of <code>&amp;&amp;</code> now renders as React renders it.</strong> In alpha.20 and earlier, <code>{'{'}n &amp;&amp; &lt;X /&gt;{'}'}</code> with <code>n = 0</code> rendered nothing where React renders <code>0</code>, with no error. When the left side is not provably a boolean, the value is now printed when it is falsy, both in the server&rsquo;s first paint (also with JavaScript disabled) and in the browser. A left side that is provably a boolean is unchanged. Inside a table or a <code>select</code>, where that markup is not allowed, a non-boolean left side is rendered with React and the build names the reason <code>and-falsy-in-table</code>.
+        </li>
+      </ul>
+
+      <h2 id="alpha-20">2.0.0-alpha.20 · 17 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.19 (be29ef27): #348–#350 (f337-progress-live, toggle-group F329b, collapsible-flip F385); #346 (F329 part a) was merged before the alpha.19 tag, so it is listed under alpha.19; ledger-only commits have no entry */}
+      <p>A native Radix Progress follows a changing value, and live values reach the elements of a native child&rsquo;s rest spread. Two HIGH wrong outputs are fixed: a first-click <code>ReferenceError</code> from a prop default, and an <code>undefined</code> argument in a custom hook&rsquo;s first paint.</p>
+
+      <h3>New</h3>
+      <ul>
+        {/* source: PR #348 (F337 PR1); the shadcn wrapper (PR2) is not part of it: ledger F377 */}
+        <li>
+          <strong>A native Radix <code>Progress</code> root follows a changing <code>value</code>.</strong> A bare Radix Progress Root whose <code>value</code> changes in the browser compiles to native code, and the server and the browser paint the same for every kind of value (a non-integer, <code>-0</code>, a large number, <code>null</code> or <code>undefined</code>, a boolean). The shadcn <code>Progress</code> wrapper is not part of this change.
+        </li>
+        {/* source: PR #349 (F329 part b; part a is PR #346, shipped in alpha.19); measured: the served test presses one Item and checks the other Items' aria-checked and tabindex against React */}
+        <li>
+          <strong>Live values now reach the elements of a native child&rsquo;s rest spread.</strong> A value that changes at the call site and lands in a native child&rsquo;s <code>{'{'}...rest{'}'}</code> used to make the call site render with React. It now stays native: pressing one item of a roving group updates the other items&rsquo; <code>aria-checked</code> and <code>tabindex</code>, equal to React. <code>className</code>, <code>style</code>, event handlers, URL attributes, <code>value</code>, attributes with no known mapping, camelCase SVG attributes and list rows still render with React.
+        </li>
+      </ul>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #348 (F376, HIGH, present in alpha.18 and alpha.19) */}
+        <li>
+          <strong>A prop default that names a module function no longer throws on the first click.</strong> In alpha.18 and alpha.19 the default was printed in the page&rsquo;s script without declaring what it reads, so a Radix <code>getValueLabel = defaultGetValueLabel</code> default gave a <code>ReferenceError</code> on the first click. The script now declares the module names and imports that prop defaults read.
+        </li>
+        {/* source: PR #350 (F385, HIGH, pre-existing; in alpha.19 and earlier; the example is the PR's repro) */}
+        <li>
+          <strong>A custom hook that takes an argument no longer paints the server&rsquo;s first paint with that argument <code>undefined</code>.</strong> In alpha.19 and earlier, a hook such as <code>function useLabel(n) {'{'} return &apos;L&apos; + n {'}'}</code> called as <code>useLabel(1)</code> rendered <code>title=&quot;Lundefined&quot;</code> where React renders <code>L1</code>, and a static attribute never recovers after hydration. The server template, the server job module and the page&rsquo;s script now order their values by what each one reads.
+        </li>
+      </ul>
+
       <h2 id="alpha-19">2.0.0-alpha.19 · 17 October 2026</h2>
-      {/* source: the pull requests merged after v2.0.0-alpha.18: #335–#345 (host-specialise-f344, f362-projection PR1–PR2, toggle-group F363a/F364/F369a, clone-cache F371/F374, ledger-knock12, F356/F351; ledger-only and test-only PRs #336, #340 have no entry) */}
+      {/* source: the pull requests merged after v2.0.0-alpha.18: #335–#346 (#346 added to this list by the alpha.20 notes; host-specialise-f344, f362-projection PR1–PR2, toggle-group F363a/F364/F369a, clone-cache F371/F374, ledger-knock12, F356/F351; ledger-only and test-only PRs #336, #340 have no entry) */}
       <p>Rows that run in the browser ship only the fields they read from a module-level list, and a page whose derived value was read only by a ref or an effect no longer throws on load. <code>asChild</code> over a plain static component child, and through a static wrapper that passes its rest props on, compile to native code. Two wrong outputs from alpha.18 now render with React instead.</p>
 
       <h3>New</h3>
@@ -100,6 +162,10 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
         {/* source: PR #343 (F137) */}
         <li>
           <strong>The hover lift on the docs site&rsquo;s loader demo and benchmark cards now eases.</strong> The transition named <code>transform</code> while the lift moves the <code>translate</code> property, so it jumped. Both now transition <code>translate</code>.
+        </li>
+        {/* source: PR #346 (F329 part a; merged before the v2.0.0-alpha.19 tag but not listed when the alpha.19 notes were written) */}
+        <li>
+          <strong>A prop written after a spread of unknown keys now wins, as in React, and stays native.</strong> A function or live prop written after the last spread cannot be replaced by it, so the call site no longer renders with React for that reason. A key written twice, or between spreads, still renders with React. A <code>useMemo</code> that returns an array of plain values, as Radix <code>ToggleGroup</code> does, can now be a derived value of a native Provider.
         </li>
       </ul>
 

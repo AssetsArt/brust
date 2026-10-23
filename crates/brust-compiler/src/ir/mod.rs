@@ -50,6 +50,11 @@ pub struct Diagnostic {
     pub line: u32,
     pub col: u32,
     pub remediation: String,
+    /// The module (path relative to the app root) whose text `loc`, `line` and `col` point into, when it is not the
+    /// component the diagnostic is reported on: a finding raised while printing an inlined component from another
+    /// file (F395). `None`: the reporting component's own module.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 impl Diagnostic {
@@ -62,6 +67,7 @@ impl Diagnostic {
             line: 0,
             col: 0,
             remediation: remediation.into(),
+            file: None,
         }
     }
 
@@ -252,6 +258,10 @@ pub struct ComponentIR {
     /// `export` names a function nothing exports (a helper component of its module): the build exposes it for the island.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unexported: bool,
+    /// F394: the component reads a prop named like request state (`req`, `request`, `cookies`, `headers`), declared or
+    /// reached through `props`/a rest object. A route component that hands its whole props to such a component is refused.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reads_request_prop: bool,
     /// R34.122: a clone of a component made for one call site, with the call site's content spliced in. Its chunk
     /// shares one factory module with every clone whose chunk is equal (R34.124).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -551,6 +561,7 @@ impl ComponentIR {
             export: None,
             unexported: false,
             specialised: false,
+            reads_request_prop: false,
             rest_clone_of: None,
             tier: Tier::Pending,
             props: vec![],

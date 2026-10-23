@@ -202,8 +202,9 @@ fn chunk_in(
         projected_modules.push(path.clone());
     }
 
-    // Body declarations in source order: seeds, refs, reached derived values.
-    let mut decls: Vec<(u32, String)> = Vec::new();
+    // Body declarations (seeds, refs, reached derived values), each after the ones it reads, then in source order
+    // (F385). The fourth field is the value the declaration reads names from.
+    let mut decls: Vec<(u32, String, String, Option<RawExpr>)> = Vec::new();
     let mut uses_signal = false;
     let mut uses_computed = false;
     // `useId` values arrive from the server in the host's `x-props` (`_id{k}`, S7 step 6). They are
@@ -211,10 +212,12 @@ fn chunk_in(
     for (k, name) in ir.id_bindings.iter().enumerate() {
         decls.push((
             0,
+            name.clone(),
             format!(
                 "const {name} = JSON.parse({}.getAttribute(\"x-props\") ?? \"{{}}\")._id{k}",
                 n.el
             ),
+            None,
         ));
     }
     for (i, s) in ir.state.iter().enumerate() {
@@ -227,7 +230,12 @@ fn chunk_in(
                 .map_or("undefined".to_string(), |r| client_js(r, &f))
         };
         let loc = structural.state[i].init.raw_loc().unwrap_or_default();
-        decls.push((loc, format!("const {} = {}({init})", s.name, n.signal)));
+        decls.push((
+            loc,
+            s.name.clone(),
+            format!("const {} = {}({init})", s.name, n.signal),
+            inits[i].clone(),
+        ));
         uses_signal = true;
     }
     for (i, r) in ir.refs.iter().enumerate() {
@@ -248,12 +256,17 @@ fn chunk_in(
         };
         decls.push((
             loc,
+            r.name.clone(),
             format!(
                 "const {} = {}({}{init})",
                 r.name,
                 n.ref_,
                 crate::ir::expr::js_string(&r.name)
             ),
+            match &structural.refs[i].init {
+                Expr::Raw(r) | Expr::Server(crate::ir::ServerExpr(r)) => Some(r.clone()),
+                _ => None,
+            },
         ));
     }
     for d in &structural.derived {
@@ -275,7 +288,7 @@ fn chunk_in(
             }
             DerivedShape::Function => format!("const {} = {}", d.name, client_fn(raw, &f)),
         };
-        decls.push((raw.loc, line));
+        decls.push((raw.loc, d.name.clone(), line, Some(raw.clone())));
     }
     // The view `s` a verbatim body reads: live getters over the store's signals and computeds.
     for u in &ir.stores {
@@ -298,13 +311,30 @@ fn chunk_in(
                 )
             })
             .collect();
-        decls.push((u.loc, format!("const {v} = {{ {} }}", getters.join(", "))));
+        decls.push((
+            u.loc,
+            v.clone(),
+            format!("const {v} = {{ {} }}", getters.join(", ")),
+            None,
+        ));
     }
-    decls.sort_by_key(|d| d.0);
+    let names: BTreeSet<String> = decls.iter().map(|d| d.1.clone()).collect();
+    let decls = super::common::order_decls(
+        decls
+            .into_iter()
+            .map(|(loc, name, line, raw)| {
+                let reads = raw
+                    .as_ref()
+                    .map(|r| super::common::reads_of(r, &names))
+                    .unwrap_or_default();
+                (loc, name, reads, line)
+            })
+            .collect(),
+    );
 
     let mut helpers: BTreeSet<Helper> = BTreeSet::new();
     let mut uses_untracked = false;
-    let mut body: Vec<String> = decls.into_iter().map(|d| d.1).collect();
+    let mut body: Vec<String> = decls;
     let mut exported: Vec<String> = Vec::new();
     // x-model writes the signal: every state is a member.
     exported.extend(ir.state.iter().map(|s| s.name.clone()));

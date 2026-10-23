@@ -394,6 +394,37 @@ fn css_insert_at(html: &str) -> usize {
     after
 }
 
+/// F392: a full document (its first element, after whitespace and comments, is `<html`) with no leading
+/// doctype gets `<!doctype html>` first, so no browser renders it in quirks mode. A React root layout
+/// returning `<html>` cannot write a doctype itself. A fragment, or a document that has one, is untouched.
+pub fn ensure_doctype(html: &mut String) {
+    let b = html.as_bytes();
+    let mut i = 0;
+    loop {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if b[i..].starts_with(b"<!--") {
+            match html[i + 4..].find("-->") {
+                Some(e) => i += 4 + e + 3,
+                None => return,
+            }
+        } else {
+            break;
+        }
+    }
+    let rest = &b[i..];
+    let is_html = rest.len() > 5
+        && rest[..5].eq_ignore_ascii_case(b"<html")
+        && matches!(
+            rest[5],
+            b'>' | b'/' | b' ' | b'\t' | b'\n' | b'\r' | b'\x0c'
+        );
+    if is_html {
+        html.insert_str(0, "<!doctype html>");
+    }
+}
+
 /// Byte offset just past a leading `<!doctype …>` (case-insensitive, after optional whitespace); 0 when the document has none.
 fn doctype_end(html: &str) -> usize {
     let lead = html.len() - html.trim_start().len();
@@ -1033,6 +1064,42 @@ mod tests {
         assert_eq!(doctype_end("<!-- c --><!doctype html>"), 0);
         assert_eq!(doctype_end("<!doctype html"), 0);
         assert_eq!(doctype_end(""), 0);
+    }
+
+    #[test]
+    fn ensure_doctype_writes_one_for_a_full_document_only() {
+        let run = |s: &str| {
+            let mut h = s.to_string();
+            ensure_doctype(&mut h);
+            h
+        };
+        assert_eq!(
+            run("\n<html lang=\"th\"><body></body></html>"),
+            "<!doctype html>\n<html lang=\"th\"><body></body></html>"
+        );
+        assert_eq!(
+            run("<!-- a --> <!--b-->\n<HTML>"),
+            "<!doctype html><!-- a --> <!--b-->\n<HTML>"
+        );
+        assert_eq!(
+            run("<!--brust:root--><html></html>"),
+            "<!doctype html><!--brust:root--><html></html>"
+        );
+        // already has one (any case, leading whitespace), or is a fragment, or not an <html> element
+        for same in [
+            "<!doctype html><html>",
+            "  <!DOCTYPE html>\n<html>",
+            "<!-- c --><!doctype html><html>",
+            "<div>x</div>",
+            "<header>h</header>",
+            "<htmlx>",
+            "<html",
+            "",
+            "  ",
+            "<!-- open",
+        ] {
+            assert_eq!(run(same), same, "{same:?}");
+        }
     }
 
     #[test]

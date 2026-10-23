@@ -74,7 +74,7 @@ pub struct NameTable<'a> {
     /// `...rest` of a destructured props pattern (shadcn S1.2, R34.14): `rest.k` reads prop `k`
     /// (`undefined` for a named key), `{...rest}` spreads the props minus the named keys.
     rest: Option<u32>,
-    /// F327: body `const`s that hold an object literal spreading the rest or the props and are used ONLY as JSX spreads,
+    /// F327: body `const`s that hold an object literal spreading the rest and are used ONLY as JSX spreads,
     /// by symbol key: they are never values, so the rest inside is never read as one.
     spread_only: HashSet<u32>,
     /// W1d PR 3: locals that are the `...rest` object itself (`const singleProps = rest`), by symbol key.
@@ -398,7 +398,7 @@ impl<'a> NameTable<'a> {
         }
     }
 
-    /// F327: marks the body `const x = { …, ...rest }` (an object literal that spreads the rest or the whole props among
+    /// F327: marks the body `const x = { …, ...rest }` (an object literal that spreads the rest among
     /// plain entries) whose every use is `{...x}` on a JSX element: the object itself is never read as a value, so the rest
     /// inside it is not an escape (`jsx::spread_parts` expands it where it is spread).
     pub fn mark_spread_only_objects(&mut self, stmts: &[js_ast::Stmt]) {

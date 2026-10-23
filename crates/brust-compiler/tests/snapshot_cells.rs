@@ -287,3 +287,55 @@ fn every_reason_to_mount_once_is_kept_and_listed_in_the_remount_refusal() {
         remount[0]
     );
 }
+
+/// F315: the `snapshot-remount` refusal holds for every place a child can mount again after the first paint, not for `&&`
+/// alone: a ternary arm and the content given to another component (a wrapper's slot).
+fn remount_refusals(page: &str) -> Vec<String> {
+    let files = [("M.tsx", TWO_SNAPSHOTS), ("C.tsx", SEED_CHILD)];
+    fallbacks(&tree_files(page, &files))
+        .into_iter()
+        .filter(|f| f.starts_with("snapshot-remount"))
+        .collect()
+}
+
+#[test]
+fn the_remount_refusal_covers_a_ternary_arm() {
+    for arm in [
+        "{open ? <M x={on} y={on} /> : null}",
+        "{open ? null : <M x={on} y={on} />}",
+    ] {
+        let page = format!(
+            "import {{ useState }} from 'react'\nimport M from './M'\nexport default function T() {{ const [on, setOn] = useState(true); const [open, setOpen] = useState(false); return <div><button onClick={{() => {{ setOn(!on); setOpen(!open) }}}}>t</button>{arm}</div> }}"
+        );
+        let got = remount_refusals(&page);
+        assert_eq!(got.len(), 1, "{arm}: {got:?}");
+        assert!(
+            got[0].contains("`checked`") && got[0].contains("`other`"),
+            "{arm}: {}",
+            got[0]
+        );
+    }
+}
+
+#[test]
+fn the_remount_refusal_covers_slot_content() {
+    let wrap =
+        "export default function W({ children }: any) { return <section>{children}</section> }";
+    let page = "import { useState } from 'react'\nimport M from './M'\nimport W from './W'\nexport default function T() { const [on, setOn] = useState(true); return <div><button onClick={() => setOn(!on)}>t</button><W><M x={on} y={on} /></W></div> }";
+    let files = [
+        ("M.tsx", TWO_SNAPSHOTS),
+        ("C.tsx", SEED_CHILD),
+        ("W.tsx", wrap),
+    ];
+    let ir = tree_files(page, &files);
+    let got: Vec<String> = fallbacks(&ir)
+        .into_iter()
+        .filter(|f| f.starts_with("snapshot-remount"))
+        .collect();
+    assert_eq!(got.len(), 1, "{:?}", fallbacks(&ir));
+    assert!(
+        got[0].contains("`checked`") && got[0].contains("`other`"),
+        "{}",
+        got[0]
+    );
+}
