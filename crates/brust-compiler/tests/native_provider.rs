@@ -134,14 +134,11 @@ fn call_sites_with_different_text_share_one_factory_module_and_keep_their_own_id
 
 #[test]
 fn shapes_the_splice_cannot_carry_keep_the_island_provider_and_say_why() {
-    for (file, why) in [
-        ("gated.tsx", "children as a value"),
-        // F288: a component of the module that renders the content is named from the clone; one that needs React is not
-        (
-            "local_react.tsx",
-            "is, or holds, a React island in the content",
-        ),
-    ] {
+    // F288: a component of the module that renders the content is named from the clone; one that needs React is not
+    for (file, why) in [(
+        "local_react.tsx",
+        "is, or holds, a React island in the content",
+    )] {
         let all = compile(file);
         assert!(clones(&all).is_empty(), "{file}: nothing was specialised");
         let root = &all[0];
@@ -181,6 +178,22 @@ fn a_component_declared_in_the_rendering_module_is_named_from_the_clone() {
     assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
     assert!(root.jinja.contains("<i>local</i>"), "{}", root.jinja);
     assert!(!root.jinja.contains("brust-island"), "{}", root.jinja);
+}
+
+#[test]
+fn a_provider_that_prints_its_children_under_a_condition_is_specialised() {
+    // F384: `{open ? children : null}` is the children slot under a condition, not children read as a value, so the
+    // Provider's clone holds the content (it was the island it was before, `children-read`).
+    let all = compile("gated.tsx");
+    assert!(
+        !clones(&all).is_empty(),
+        "gated.tsx: the Provider is specialised"
+    );
+    assert!(
+        !all.iter()
+            .any(|i| i.ir.diagnostics.iter().any(|d| d.rule == "children-read")),
+        "gated.tsx"
+    );
 }
 
 #[test]

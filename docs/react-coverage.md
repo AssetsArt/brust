@@ -10,10 +10,10 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 |---|---|---|---|---|---|---|---|---|
 | A JSX basics | 54 | 36 | 13 | 5 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
-| C Hooks | 223 | 70 | 71 | 82 | 0 | 0 | 0 | 0 |
+| C Hooks | 230 | 71 | 74 | 85 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 625 | 277 | 119 | 225 | 3 | 1 | 0 | 0 |
+| **Total** | 632 | 278 | 122 | 228 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -35,7 +35,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-module-const | module const (literal, array) in render | static | static | 0 | ok | 0 | — | spec §6.2 literals/arrays; module consts fold at compile time (L1) |
 | a-module-const-mutated | module const array mutated in its module | react | react | ssr | ok | 4.2 | fallback:module-side-effect | R1.1: a mutated array never folds. F215: the precompute slot it was printed 'a' (the job copied the const, not the push) where React prints 'a, b'; the module-level push now falls back module-side-effect |
 | a-list-cond-element | .map returning a ternary between two elements | static | static | 0 | ok | 0 | — | spec §6.2 map-as-For; L6 conditional element arms desugar to For + If |
-| a-list-cond-state | .map returning a conditional element over state | native | native | 0 | ok | 6.3 | — | spec §6.2 map-as-For; L6 conditional element arms |
+| a-list-cond-state | .map returning a conditional element over state | native | native | 0 | ok | 6.4 | — | spec §6.2 map-as-For; L6 conditional element arms |
 | a-and-guard | && guard on a prop | static | static | 0 | ok | 0 | — | spec §6.2 && guard |
 | a-ternary | ternary on a prop | static | static | 0 | ok | 0 | — | spec §6.2 ternary |
 | a-fragment | fragment root | static | static | 0 | ok | 0 | — | static fragment root: no <brust-host>, no warning (gaps L8) |
@@ -46,7 +46,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-array-from-length | Array.from({ length: N }).map range list | static | static | 0 | ok | 0 | — | spec §6.2: N literal ≤ 1024 |
 | a-state-text | state text with a click handler | native | native | 0 | ok | 4.9 | — | spec §4.3 useState |
 | a-state-cond | state-driven conditional | native | native | 0 | ok | 5.2 | — | spec §4.3 useState; §7.1 x-if |
-| a-state-list | state list with append | native | native | 0 | ok | 5.9 | — | spec §4.3 useState; §7.1 x-for |
+| a-state-list | state list with append | native | native | 0 | ok | 6.0 | — | spec §4.3 useState; §7.1 x-for |
 | a-style-undefined | style={c ? {…} : undefined} (F36) | static | static | 0 | ok | 0 | — | the attribute is omitted when undefined, as React does |
 | a-inner-html | dangerouslySetInnerHTML on a host element | static | static | 0 | ok | 0 | — | raw HTML sink (html_raw), React contract: the author sanitises |
 | a-inner-html-state | dangerouslySetInnerHTML driven by state | native | native | 0 | ok | 5.2 | — | spec §4.3 useState; x-html directive repaints innerHTML |
@@ -54,7 +54,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | a-reserved-x-attr | x-* attribute written in JSX (F94) | static | static | 0 | ok | 0 | warning:reserved-attr | warning reserved-attr: runtime directives come only from compiler output; the attributes are dropped |
 | a-svg-class-state | state-driven class on an SVG element (F96a) | native | native | 0 | ok | 4.9 | — | F96a: x-bind-class uses setAttribute (SVG className is a getter-only SVGAnimatedString) |
 | a-state-spread-handler | spread of a state array in a handler and a helper (F96b) | native | native | precompute | ok | 4.9 | — | F96b: a verbatim body nested in a structured expression gets its captures bound (xs → xs()) |
-| a-state-list-static-child | static child listing a state-fed prop (F96d) | native | native | 0 | ok | 5.9 | — | F96d: the linked child repaints its own list (x-for over props()) |
+| a-state-list-static-child | static child listing a state-fed prop (F96d) | native | native | 0 | ok | 6.0 | — | F96d: the linked child repaints its own list (x-for over props()) |
 | a-linked-child-prop-precompute | state-fed prop derived with a callback in a linked child (F96d) | react | react | ssr | ok | 4.2 | fallback:instance-prop-path, fallback:linked-prop-precompute | F96d fail-closed: a server-computed value over a prop the parent changes would freeze; fallback linked-prop-precompute |
 | a-spread-host | spread props on a host element (F31) | static | static | 0 | ok | 0 | — | shadcn S1.2 R34.15 (b): keys known only at render are printed by spread_attrs (same rules as written attributes) |
 | a-rest-pattern | rest in the props pattern, read and spread (R34.14) | static | static | 0 | ok | 0 | — | shadcn S1.2 R34.14: rest.k reads prop k; {...rest} is the props minus the named keys |
@@ -266,13 +266,13 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | b-fed-child-row-invariant-const | a child with a job of its own, the same in every row, in a list over a module const (shadcn table) | static | static | 0 | ok | 0 | — | F142 R34.42: no prop reads the row, so the instance is fed once (static record) and its slot is read without a row index |
 | b-fed-child-row-invariant-inline | a child with a job of its own, the same in every row, in a list over an inline array (shadcn carousel) | static | static | 0 | ok | 0 | — | F142 R34.42: an inline array literal is the same case |
 | b-fed-child-row-invariant-props | a child with a job of its own, the same in every row, in a list over a props path | static | static | 0 | ok | 0 | — | F142 R34.42 (ruling Q1, one rule): fed once instead of once per row |
-| b-fed-child-row-invariant-xfor | a child with a job of its own, the same in every row, in a client-rendered row (x-for) over a props path | native | native | 0 | ok | 5.9 | — | F142 R34.42 (ruling on Mellow N1): fed once; the zero-row template the client clones carries the same job output (not __undefined) |
+| b-fed-child-row-invariant-xfor | a child with a job of its own, the same in every row, in a client-rendered row (x-for) over a props path | native | native | 0 | ok | 6.0 | — | F142 R34.42 (ruling on Mellow N1): fed once; the zero-row template the client clones carries the same job output (not __undefined) |
 | b-fed-child-row-reading-inline | a child with a job of its own reading each row of an inline array (and its index) | static | static | 0 | ok | 0 | — | F142 R34.43: rows from the literal; the instance reads __row and __idx |
 | b-fed-child-derived-list | a child with a job of its own reading each row of a list derived at render | react | react | ssr | ok | 4.2 | fallback:instance-list-path | F142 R34.44 / F152: the rows exist only after a render step (two-phase planning), instance-list-path fallback |
 | b-fed-child-state-list | a child with a job of its own in a list over state | react | react | ssr | ok | 4.2 | fallback:instance-list-path | F142 R34.44: rows the client re-creates get no job output (instance-list-path fallback) |
 | b-fed-child-useid-const-list | a child with useId values in a list over a module const | static | static | 0 | ok | 0 | — | F142 R34.43: ids differ per row, so the instance is not row-invariant; the rows come from the literal and each row gets its own id suffix |
 | b-spread-event-handler | an event handler that reaches an element through a child's spread | native | native | 0 | ok | 4.9 | — | shadcn S1.3 R34.18 (F141): the parent hoists the handler as its own member (_hN) and the inline print binds it on the child's element (x-on-click); the child stays static |
-| b-spread-handler-row | a handler reading the row, through a child's spread in a list | native | native | 0 | ok | 5.9 | — | shadcn S1.3 R34.18: the row is client-rendered (x-for) and the binding names the row (x-on-click="_h1:it"), as a hand-written handler |
+| b-spread-handler-row | a handler reading the row, through a child's spread in a list | native | native | 0 | ok | 6.0 | — | shadcn S1.3 R34.18: the row is client-rendered (x-for) and the binding names the row (x-on-click="_h1:it"), as a hand-written handler |
 | b-spread-handler-input | onChange through a text field's spread (shadcn Input) | native | native | 0 | ok | 4.9 | — | shadcn S1.3 R34.18: React's onChange on a text field is the input event (x-on-input) |
 | b-spread-handler-native-child | a handler through the spread of a child with state of its own | react | react | ssr | ok | 5.6 | fallback:spread-handler | shadcn S1.3 R34.19: only a static child's element can carry the parent's binding (fallback spread-handler) |
 | b-spread-handler-onward | a handler a child passes on through a second spread | react | react | ssr | ok | 4.2 | fallback:spread-handler, fallback:frozen-prop | shadcn S1.3 R34.19: bound one level deep only (fallback spread-handler) |
@@ -365,24 +365,24 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-slot-owner-state | the page's own state read in the slot of a native child | native | native | 0 | ok | 4.9 | — | F214 + F307: slot content under a native child's host would be bound by the child; the child is cloned for this call site with the content, which is then its own (was slot-owner) |
 | c-slot-owner-linked-static | a linked prop in the slot of a static child that is itself linked | native | native | 0 | ok | 4.9 | — | F309 + F307: the linked static child is cloned with the content (its inputs follow the page, §7.3), instead of a host of its own binding it (was slot-owner) |
 | c-slot-owner-handler | a handler of the page in the slot of a native child | native | native | 0 | ok | 4.9 | — | F307: the clone calls the page's handler through a carried prop |
-| c-slot-owner-list | a list over the page's state in the slot of a native child | native | native | 0 | ok | 5.9 | — | F307: the rows are the clone's own (x-for over its carried input) |
+| c-slot-owner-list | a list over the page's state in the slot of a native child | native | native | 0 | ok | 6.0 | — | F307: the rows are the clone's own (x-for over its carried input) |
 | c-slot-owner-linked | a component given the page's state in the slot of a native child | native | native | 0 | ok | 4.9 | — | F307: the Thumb is linked by the clone |
 | c-slot-owner-two-levels | the page's state in content a static wrapper hands to a native child | native | native | 0 | ok | 4.9 | — | F307: the wrapper (which hosts its children through Box) is cloned with the content |
 | c-slot-owner-text | the page's state as the only text in the slot of a native child | native | native | 0 | ok | 4.9 | — | F307 S4: the text binds x-text on the host element (its only child), as React prints a text node |
 | c-slot-owner-text-wrapper | the page's state as bare text next to an element in the slot of a native child | react | react | ssr | ok | 5.6 | fallback:slot-owner, info:slot-text-wrapper | F307 S4: the text would need a <span> React does not print: no clone (info slot-text-wrapper), slot-owner stands |
-| c-slot-owner-gate | the page's state in the slot of a native child that prints its children only when open | react | react | ssr | ok | 5.6 | fallback:children-read | R34.78: the child reads its children as a value (children-read); F307 does not apply |
+| c-slot-owner-gate | the page's state in the slot of a native child that prints its children only when open | native | native | 0 | ok | 5.2 | — | F384 (was R34.78 children-read): {open && children} is the children slot under a condition; served in tests/server/cond-children.chromium.test.ts (/gate: the page state follows while open and is current after a reopen) |
 | c-slot-owner-carry-refused | a ref of the page on an element in the slot of a native child, next to live text | react | react | ssr | ok | 5.6 | fallback:slot-owner, info:host-specialise-unsupported | F307: Carry cannot take a ref of the page into a clone: no clone (info host-specialise-unsupported), slot-owner stands |
 | c-slot-owner-clone-react | directive content in the slot of a native child whose clone would need React | react | react | ssr | ok | 5.6 | fallback:slot-owner, info:host-specialise-unsupported | F307: the child prints its children twice, so no clone can splice them once: the refusal stands |
 | c-slot-owner-rest | the page's own state read in content a native child carries through its rest onto its host | react | react | ssr | ok | 5.6 | fallback:slot-owner | F342: children carried by the rest onto the child's host are bound by the child, as in F214 (they were: first-paint mismatch, the child's counter shown): slot-owner |
 | c-slot-owner-rest-linked | a linked prop in content a static child carries through its rest, where the page links that child | react | react | ssr | ok | 4.2 | fallback:slot-owner | F342 + F309: the linked static child hosts what its rest carries: slot-owner |
 | c-slot-owner-rest-mid | the page's own state read in content an unlinked static wrapper forwards in its rest to a native child that carries it onto its host | react | react | ssr | ok | 5.6 | fallback:slot-owner | F342 (Mellow F1): the wrapper hosts its children through the rest it forwards (transitive hosts_children): slot-owner |
-| c-frozen-prop-rows | a native child reading the page's changing prop in the rows of a constant list | native | native | 0 | ok | 5.9 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
+| c-frozen-prop-rows | a native child reading the page's changing prop in the rows of a constant list | native | native | 0 | ok | 6.0 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
 | c-frozen-prop-child | a native child reading the page's changing prop in a prop of a child it does not link | native | native | 0 | ok | 4.9 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
 | c-frozen-prop-spread | a native child reading the page's changing prop in a key printed once through a forwarder's spread | native | native | 0 | ok | 4.9 | — | F319 then F320: a child with an instance follows the changing prop (it was stale on main), the page stays native |
 | c-frozen-prop-stateless | a stateless child reading the page's changing prop in the rows of a constant list | react | react | ssr | ok | 4.2 | fallback:frozen-prop | F319 / F323: a stateless component cannot know whether a caller changes its props (F75): frozen-prop, the page renders with React |
 | c-frozen-prop-rest | a native wrapper passing its own changing prop into a native child's rest, handed to a static child it does not link | react | react | ssr | ok | 5.6 | fallback:frozen-prop | F319 (Mellow F1): a read of the rest freezes every key that lands there, passed up through the wrapper's own prop: frozen-prop (it was native and stale; the direct page call site was already refused by spread-props) |
-| c-frozen-prop-call-spread | the page's state object spread into a native child that reads the key in a constant list | react | react | ssr | ok | 6.7 | fallback:spread-props | F319 (Afrojack): a spread at the call site may carry a frozen key: frozen-prop (spread-props refuses it too) |
-| c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 5.9 | — | F319: a value that does not change satisfies the requirement |
+| c-frozen-prop-call-spread | the page's state object spread into a native child that reads the key in a constant list | react | react | ssr | ok | 6.8 | fallback:spread-props | F319 (Afrojack): a spread at the call site may carry a frozen key: frozen-prop (spread-props refuses it too) |
+| c-frozen-prop-constant | the same list child given a constant | static | static | 0 | ok | 6.0 | — | F319: a value that does not change satisfies the requirement |
 | c-rest-children-consumer | a context consumer passed as children of a component that spreads its rest (children included) under its own Provider | static | static | 0 | ok | 4.9 | — | F298: a clone of Root for this call site holds the children where the rest is spread, under its Provider (was context-no-provider) |
 | c-clone-carry-import | a Thumb whose className calls an import, passed through a component's rest under its own Provider | static | static | precompute | ok | 4.9 | — | F305: the call of the import is computed by the page and handed to the rest clone as one input (was: the children stayed outside, the page React) |
 | c-clone-carry-import-data | the same Thumb given an imported object member | react | react | ssr | ok | 4.2 | fallback:context-no-provider, fallback:children-rest, info:rest-children-unsupported | F305 / F325: an import read as data is not computed at the call site and shipped: the children stay outside, context-no-provider |
@@ -510,6 +510,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-hook-hoist-object | a custom hook returning an object whose properties are hook calls | native | native | 0 | ok | 4.9 | — | F286: an unconditional hook call in a returned object property is hoisted before the return, in source order |
 | c-hook-hoist-return | custom hooks that return useState(...) and useCallback(...) | native | native | 0 | ok | 4.9 | — | F286: a hook call in the return position is the pair or the value the call site binds |
 | c-hook-hoist-conditional | a hook call in a conditional property of a returned object | react | react | ssr | ok | 4.2 | fallback:hook-unsupported | F286: only unconditional positions are hoisted; a conditional hook call stays refused |
+| c-cond-children-and | a component that renders {open && children}, given children and a changing open | native | native | 0 | ok | 5.2 | — | F384: the children slot under a condition is markup like {children} itself (Radix CollapsibleContentImpl's {isOpen && children}); was children-read |
+| c-cond-children-ternary | a component that renders {open ? children : null} | static | static | 0 | ok | 0 | — | F384: either arm of a ternary against nothing |
+| c-children-as-value | a component that tests children in an attribute | react | react | ssr | ok | 4.2 | fallback:children-read | F384: children read as a value anywhere else stays children-read |
 | c-hook-object-whole | a custom hook returning an object with a handler, bound whole at the call site | native | native | 0 | ok | 4.9 | — | F289: the object is read member by member (t.key), as a destructuring is; it was a job naming the handler local (500) |
 | c-hook-object-whole-array | a custom hook returning an array with a handler, bound whole at the call site | native | native | 0 | ok | 4.9 | — | F289: t[0] / t[1] with a literal index are the items of the returned array |
 | c-hook-object-whole-escapes | a custom hook's returned object bound whole and passed on as a whole | react | react | ssr | ok | 4.2 | fallback:hook-return-shape | F289: a hook object used as a value (not t.key) cannot be named in a job: hook-return-shape, the component stays React |
@@ -555,6 +558,10 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | c-ref-write-render-logical | a render-time ref write of \|\| / ?? / && over stable operands | native | native | 0 | ok | 4.9 | — | F288 G9 ruling 255806ff (b): a logical expression is one of its operands, stable when every operand is |
 | c-ref-write-render-cond | a render-time ref write inside an if | react | react | ssr | ok | 4.2 | fallback:control-flow, fallback:hook-unsupported | F288 G9 (Mellow A2 rule 2): only one unconditional top-level write lowers |
 | c-ref-write-render-prop | a render-time ref write of a prop that is not pinned | react | react | ssr | ok | 4.2 | fallback:ref-in-render | F288 G9 (Mellow A2 rule 4): a prop is a stable leaf only when a clone pins it and its call-site value is stable; ref-in-render |
+| c-and-falsy-in-table | a number left of && inside a <tbody> | react | react | ssr | ok | 4.2 | fallback:and-falsy-in-table | F388 (Mellow F2): React prints a falsy number there and the parser moves that text out of the table; no lowering paints it, so the named refusal and-falsy-in-table |
+| c-and-falsy-children-in-tbody | a number left of && given as children to a component that prints them in its <tbody> (shadcn TableBody) | react | react | ssr | ok | 4.2 | fallback:and-falsy-in-table | F388 (Mellow N1): the content model is the element the children land in, across the component boundary; and-falsy-in-table |
+| c-and-falsy-children-two-wrappers | a number left of && given as children through two wrapper components to a <tbody> | react | react | ssr | ok | 4.2 | fallback:and-falsy-in-table | F388 (Mellow round 2): each component records that it prints its children where no text can sit, for its callers, so any depth refuses; and-falsy-in-table |
+| c-and-falsy-bool-seeded | a state seeded with false and later set to 0, left of && | native | native | 0 | ok | 5.2 | — | F388 (Mellow F1): a boolean seed is not enough, every setter write must be provably boolean; the else branch prints 0 after the click |
 
 ## D. API surface
 
@@ -659,7 +666,7 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 | e-if-in-table | state-driven row inside a table | native | native | 0 | ok | 5.2 | — | spec §7.1 x-if |
 | e-raw-text-child | dynamic child of <script> | react | react | ssr | ok | 4.2 | fallback:raw-text-child | raw-text-child: the template would HTML-escape a dynamic value inside raw text (F35) |
 | e-static-list-child | static child with row-only props in a prop list (F70) | static | static | 0 | ok | 0 | — | ledger F70: no link, no chunk, no x-* — the row cannot change on the client |
-| e-reactive-list-child | static child in a state-dependent list keeps its link (F70) | native | native | precompute | ok | 5.9 | — | ledger F70/F71: the client re-creates the rows; the helper reads rows whole, so x-props keeps the full list |
+| e-reactive-list-child | static child in a state-dependent list keeps its link (F70) | native | native | precompute | ok | 6.0 | — | ledger F70/F71: the client re-creates the rows; the helper reads rows whole, so x-props keeps the full list |
 | e-store-read | store field read through useStore | native | native | 0 | ok | 4.9 | — | M3-F D7: store-view root → __store.cart.count |
 | e-store-destructure | destructured useStore fields | native | native | 0 | ok | 4.9 | — | M3-F D7 |
 | e-store-derived | helper over a store read | native | native | precompute | ok | 4.9 | — | M3-F D7: precompute slot keyed by __store.cart.count |

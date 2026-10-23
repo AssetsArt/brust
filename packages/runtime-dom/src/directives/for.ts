@@ -4,6 +4,11 @@ type RowScope = Record<string, unknown> & { __own: Signal<number> }
 
 const SYNTAX = /^\s*([A-Za-z_$][\w$]*)\s*(?:,\s*([A-Za-z_$][\w$]*))?\s+in\s+([A-Za-z_$][\w$.]*(?::[A-Za-z_$][\w$]*(?:\s*,\s*[A-Za-z_$][\w$]*)*)?)\s+by\s+([A-Za-z_$][\w$.]*)\s*$/
 const done = new WeakSet<Element>()
+/** The comments this binder inserted: the server's own `<!--x-for-->` marker is not among them. */
+const anchors = new WeakSet<Node>()
+/** F396: the zero-row template is the element the server prints right after its `<!--x-for-->` marker. A row is not
+ * told apart by `hidden`: a row whose own root is `hidden={cond}` is server-rendered hidden and is still a row. */
+const isTemplate = (s: Element) => { const p = s.previousSibling; return p instanceof Comment && p.data === 'x-for' && !anchors.has(p) }
 
 BINDERS.push({
   match: (a) => a === 'x-for',
@@ -17,13 +22,14 @@ BINDERS.push({
     // All server-rendered siblings carrying the same x-for are rows of this list; the first is the template.
     const parent = el.parentElement!
     const siblings = Array.from(parent.children).filter((c) => c.getAttribute('x-for') === raw)
+    const templates = new Set(siblings.filter(isTemplate))
     siblings.forEach((s) => done.add(s))
     const template = el.cloneNode(true) as Element
     template.removeAttribute('x-for'); template.removeAttribute('hidden')
-    const anchor = document.createComment('x-for')
+    const anchor = document.createComment('x-for'); anchors.add(anchor)
     parent.insertBefore(anchor, el)
-    // Server-rendered rows (not the hidden zero-row template) are adopted in order on the first run.
-    const adopt = siblings.filter((s) => !s.hasAttribute('hidden'))
+    // Server-rendered rows (not the zero-row template) are adopted in order on the first run.
+    const adopt = siblings.filter((s) => !templates.has(s))
     if (!adopt.includes(el)) el.remove()
     let firstRun = true
 

@@ -78,6 +78,17 @@ async function context(width = 1280) {
   return { ctx, page, w }
 }
 
+test('F392: every page renders in standards mode (document.compatMode is CSS1Compat), the 404 page too', async () => {
+  const { ctx, page } = await context()
+  const modes: [string, string][] = []
+  for (const p of [...paths, '/no/such/page']) {
+    await page.goto(base + p, { waitUntil: 'domcontentloaded' })
+    modes.push([p, await page.evaluate(() => document.compatMode)])
+  }
+  expect(modes.filter(([, m]) => m !== 'CSS1Compat')).toEqual([])
+  await ctx.close()
+}, 120_000)
+
 test('400px: every page and the 404 page load from files only, no error, no sideways scroll', async () => {
   const { ctx, page, w } = await context(400)
   const over: [string, number][] = []

@@ -15,7 +15,8 @@ const scripts = (html: string) => [...html.matchAll(/<script[^>]*src="([^"]+)"/g
 test('/: 200, document root, HeroSearch useId stable across two requests, all 18 TypeBadges painted, island SSR + chunk', async () => {
   const { r, html } = await get('/')
   expect(r.status).toBe(200)
-  expect(html.trimStart().startsWith('<html')).toBe(true)
+  expect(html.startsWith('<!doctype html>')).toBe(true) // F392
+  expect(html.slice(15).trimStart().startsWith('<html')).toBe(true)
   expect(html).toMatch(/<html [^>]*lang="en"[^>]*data-mode="dark"/)
   expect(html).toMatch(/<title[^>]*>PokéDex · built with brust<\/title>/)
   expect(html).toContain('Every Pokémon')

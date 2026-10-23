@@ -699,9 +699,194 @@ fn read_function_as(
         .map(root_node)
         .unwrap_or(Node::Fragment(vec![]));
     ir.template = host_root(root, root_loc);
+    falsy_left_slots(ir);
     callback_refs(ir);
     ir.uses_outlet = has_outlet(&ir.template);
     check_printer_panic(ir);
+}
+
+/// F388 (rulings 3743aabc, 6a4a1b50): the reader gives `left && <X/>` (a side-effect-free `left`) an else branch that
+/// prints `left`, as React renders a falsy number there. That branch goes again when `left` is provably boolean (a boolean
+/// prints nothing; the branch would only add markup): a comparison, `!x`, `Boolean(x)`, a boolean literal, `&&` / `||` /
+/// `?:` of those, a derived value over them, or a state seeded with a boolean literal whose every setter call writes one
+/// (`setS(!s)`, `setS(true)`, `setS((p) => !p)`). Under an element whose content model takes no text (`<table>`,
+/// `<tbody>`, `<tr>`, `<select>`, ...) a non-boolean `left` is a named refusal (`and-falsy-in-table`): the parser would
+/// move the text out of the element, so no lowering paints what React's own markup holds there.
+fn falsy_left_slots(ir: &mut ComponentIR) {
+    let mut refused: Vec<u32> = Vec::new();
+    // Walk a copy: `provably_boolean` reads the whole IR, template included (a setter handed on as a prop).
+    let mut t = ir.template.clone();
+    falsy_walk(ir, &mut t, false, &mut refused);
+    ir.template = t;
+    for loc in refused {
+        ir.diagnostics.push(Diagnostic::fallback(
+            AND_FALSY_IN_TABLE,
+            "`left && <X/>` sits in an element that takes no text (a table part or a select), and `left` may be a number React would print there".to_string(),
+            loc,
+            "test a boolean (`n > 0 && <tr/>`), or keep this component in React",
+        ));
+    }
+}
+
+/// F388: the named refusal of a non-boolean `left && <X/>` in an element that takes no text.
+pub(crate) const AND_FALSY_IN_TABLE: &str = "and-falsy-in-table";
+
+/// F388: elements whose content model takes no text; the HTML parser moves text (or a wrapper) out of them.
+pub(crate) const NO_TEXT: &[&str] = &[
+    "table", "thead", "tbody", "tfoot", "tr", "colgroup", "select", "optgroup", "datalist",
+];
+
+/// F388: the else branch the reader gave a `left && <X/>`: exactly the slot of `left` itself.
+fn falsy_left_slot(n: &Node) -> bool {
+    matches!(n, Node::If { cond: Expr::Raw(c), else_, and: true, .. }
+        if matches!(else_.as_slice(), [Node::Slot(Expr::Raw(s))] if s == c))
+}
+
+fn falsy_walk(ir: &ComponentIR, n: &mut Node, no_text: bool, refused: &mut Vec<u32>) {
+    if falsy_left_slot(n)
+        && let Node::If {
+            cond: Expr::Raw(c),
+            else_,
+            ..
+        } = n
+    {
+        if provably_boolean(ir, c, 0) {
+            else_.clear();
+        } else if no_text {
+            refused.push(c.loc);
+            else_.clear();
+        }
+    }
+    match n {
+        Node::If { then, else_, .. } => then
+            .iter_mut()
+            .chain(else_.iter_mut())
+            .for_each(|c| falsy_walk(ir, c, no_text, refused)),
+        Node::Element { tag, children, .. } => {
+            let nt = NO_TEXT.contains(&tag.as_str());
+            children
+                .iter_mut()
+                .for_each(|c| falsy_walk(ir, c, nt, refused));
+        }
+        Node::Component { children, .. } => children
+            .iter_mut()
+            .for_each(|c| falsy_walk(ir, c, false, refused)),
+        Node::Fragment(children) => children
+            .iter_mut()
+            .for_each(|c| falsy_walk(ir, c, no_text, refused)),
+        Node::For { body, .. } => body
+            .iter_mut()
+            .for_each(|c| falsy_walk(ir, c, no_text, refused)),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+    }
+}
+
+/// F388: `r` is a boolean whenever the component renders (see [`falsy_left_slots`]).
+fn provably_boolean(ir: &ComponentIR, r: &RawExpr, depth: u8) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    let b = |x: &RawExpr| provably_boolean(ir, x, depth + 1);
+    match &r.kind {
+        RawKind::Lit(Literal::Bool(_)) => true,
+        RawKind::Unary {
+            op: crate::ir::UnOp::Not,
+            ..
+        } => true,
+        RawKind::Binary { op, left, right } => match op {
+            BinOp::Eq
+            | BinOp::Ne
+            | BinOp::StrictEq
+            | BinOp::StrictNe
+            | BinOp::Lt
+            | BinOp::Le
+            | BinOp::Gt
+            | BinOp::Ge => true,
+            BinOp::And | BinOp::Or => b(left) && b(right),
+            _ => false,
+        },
+        RawKind::Cond { yes, no, .. } => b(yes) && b(no),
+        RawKind::Call { callee, args } => {
+            matches!(&callee.kind, RawKind::Ident { name, kind: IdentKind::Global } if name == "Boolean")
+                && args.len() == 1
+        }
+        RawKind::Ident { name, kind } => match kind {
+            IdentKind::State => ir.state.iter().any(|s| {
+                &s.name == name
+                    && matches!(&s.init, Expr::Raw(i) if matches!(i.kind, RawKind::Lit(Literal::Bool(_))))
+                    && s.setter
+                        .as_deref()
+                        .is_none_or(|set| setter_writes_boolean(ir, set, depth + 1))
+            }),
+            IdentKind::Local => ir.derived.iter().any(|d| {
+                &d.name == name && matches!(&d.expr, Expr::Raw(e) if b(e))
+            }),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// F388 (Mellow F1): every mention of the setter `set` anywhere in the component (handlers, effects, derived values,
+/// the template, captures of code printed as written) is a direct call `set(v)` whose `v` is provably boolean, or an
+/// updater `set((p) => v)` whose `v` is. Any other mention (passed on, stored, called in code printed as written, two
+/// arguments) may write a number, so the state is not provably boolean. Read over the component's serialised IR, so no
+/// place the setter can hide in is missed.
+fn setter_writes_boolean(ir: &ComponentIR, set: &str, depth: u8) -> bool {
+    use serde_json::Value;
+    fn walk(v: &Value, key: Option<&str>, set: &str, mentions: &mut usize, calls: &mut Vec<Value>) {
+        match v {
+            Value::String(s) if s == set && key != Some("setter") => *mentions += 1,
+            // The names an arrow captures: its body, walked too, holds the uses.
+            Value::Array(_) if key == Some("captures") => {}
+            // Source kept as text (code printed as written): any word `set` in it is a mention that is not a call.
+            Value::String(s)
+                if s != set
+                    && s.match_indices(set).any(|(i, _)| {
+                        let word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+                        !s[..i].chars().next_back().is_some_and(word)
+                            && !s[i + set.len()..].chars().next().is_some_and(word)
+                    }) =>
+            {
+                *mentions += 1
+            }
+            Value::Array(xs) => xs.iter().for_each(|x| walk(x, None, set, mentions, calls)),
+            Value::Object(m) => {
+                if let Some(c) = m.get("Call")
+                    && c.pointer("/callee/kind/Ident/name").and_then(Value::as_str) == Some(set)
+                {
+                    calls.push(c.get("args").cloned().unwrap_or(Value::Null));
+                }
+                m.iter()
+                    .for_each(|(k, x)| walk(x, Some(k), set, mentions, calls));
+            }
+            _ => {}
+        }
+    }
+    let Ok(v) = serde_json::to_value(ir) else {
+        return false;
+    };
+    let (mut mentions, mut calls) = (0, Vec::new());
+    walk(&v, None, set, &mut mentions, &mut calls);
+    // Each call mentions the setter once (its callee); anything beyond that is a mention that is not a call.
+    mentions == calls.len()
+        && calls.iter().all(|args| {
+            let Ok(mut args) = serde_json::from_value::<Vec<RawExpr>>(args.clone()) else {
+                return false;
+            };
+            if args.len() != 1 {
+                return false;
+            }
+            let arg = args.remove(0);
+            match &arg.kind {
+                RawKind::Arrow {
+                    params,
+                    body: crate::ir::ArrowBody::Expr(e),
+                    ..
+                } if params.len() <= 1 => provably_boolean(ir, e.as_ref(), depth + 1),
+                _ => provably_boolean(ir, &arg, depth + 1),
+            }
+        })
 }
 
 /// B1: `ref={x}` where `x` is a function value or a ref object the component computes (a `useCallback`, a derived
