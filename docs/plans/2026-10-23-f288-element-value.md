@@ -1,6 +1,6 @@
 # F288: an element-value model for `@radix-ui/react-presence` (design note, no code)
 
-Status: proposal for Detoro's ruling and Mellow's soundness read. Owner of the row: Detoro (ledger F288, parked).
+Status: Q1-Q3 ruled (§9, Detoro 2026-10-23); Q4-Q5 await Mellow before phase A code. Owner of the row: Detoro (ledger F288, parked).
 Author: Dew, 2026-10-23. Inputs: ledger F229/F288 (`m1a-followups.md:301,361`), `2026-10-14-shadcn-context-lowering.md` §4 and §8 (P1 is the path, P2/P3 rejected), the north star (compile libraries as published, never port).
 
 ## 1. What Presence does, and what each Radix caller needs
@@ -121,3 +121,12 @@ Existing names keep their meaning: `children-read`, `ref-in-render`, `ref-shape`
 - tests, battery rows, the shadcn scoreboard, generated docs
 
 Not `packages/runtime-dom` (phase B only).
+
+## 9. Lead ruling (Detoro, 2026-10-23)
+
+- **Q1: ACCEPTED, with a guard.** The §3 fold is a general rule, not a recogniser: it evaluates the library's body as written over a modelled object, and no name or package is keyed. This does NOT reverse the F288 ruling: reading `child.props.ref` directly (bypassing the source) stays ruled out. Why it is sound: for the element shapes React actually builds, every branch of `getElementRef` returns the same ref (production: data properties, falls to `props.ref || ref`; development: warning getters, which pick the other field, which holds the same ref). Guard (required in phase A): a differential test that imports the installed `@radix-ui/react-presence` source's `getElementRef` and runs it on real elements built by `react/jsx-runtime` in BOTH production and development builds, asserting it equals the fold's `E.ref` for: a callback ref, an object ref, no ref, and a `forwardRef` component child. The modelled shape is React 19's; when the project resolves a React major other than 19, the fold refuses with `element-value`.
+- **Q2: Phase A first**, as in §5. Phase B (G5, runtime) starts only after phase A merges, and only with a measured runtime cost of ≤ 0.3 KB gzip in the always-loaded runtime; over that it goes behind a compiler-set lazy feature.
+- **Q3: ACCEPTED as a known difference for Presence** (the timing only delays removal; with a function child nothing is removed). Recorded as its own ledger row F390 (layout effects print as plain effects, so they run after paint, not before it). Phase A does not wait for it.
+- **Q4, Q5: Mellow design review before phase A code.** Phase A code waits for Mellow's PASS on G7's clone key/leak question and on G9's stable-input list.
+- **Phase A gate, amended:** Presence no longer refuses at `CollapsibleContent` and `TabsContent` (first refusal moves past Presence or the page goes native), served first paint == React, and the Chromium toggle test from §5. "Collapsible page has 0 islands" is the chain's goal; it is this PR's gate only if F380/F382 have landed first.
+- **Order for Dew:** F388 round 3 → F384 restack (after F388 PASS) → F288 phase A (after Mellow PASS on Q4/Q5).
