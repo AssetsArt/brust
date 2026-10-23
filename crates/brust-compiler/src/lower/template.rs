@@ -405,8 +405,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             ));
         }
         for line in crate::lower::common::order_decls(decls) {
+            // No newline after a `{% set %}`: the output has no text of its own there, and a line break
+            // would reach the page as whitespace JSX drops (F408).
             self.out.push_str(&line);
-            self.out.push('\n');
         }
     }
 
