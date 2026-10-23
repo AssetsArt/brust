@@ -255,10 +255,23 @@ pub fn captures(ir: &mut ComponentIR, st: &mut PassState, ctx: &PassCtx<'_>) {
         // A spread of the whole props object (or a rest of it) into a component hands it request state under any
         // name: refused when a component below declares or reads a prop named like request state. A spread into an
         // element, or into a component with no such prop, stays native.
-        if let Some(loc) = ir
+        // The walk of the snapshot finds the call; a read of the whole props or a rest of it (`*`) among the values the
+        // component paints, and a missing snapshot, are the same hand-over seen from elsewhere (the walk does not look
+        // inside every expression), so each triggers on its own: fail closed.
+        let spread = ir
             .structural
             .as_deref()
-            .and_then(|st| props_spread_into_component(&st.template))
+            .map(|st| props_spread_into_component(&st.template));
+        let whole_read = read
+            .iter()
+            .find(|(_, d)| d.prop_roots().contains("*"))
+            .map(|(l, _)| *l);
+        let at = match (spread, whole_read) {
+            (Some(Some(loc)), _) | (_, Some(loc)) => Some(loc),
+            (None, _) => Some(0),
+            (Some(None), None) => None,
+        };
+        if let Some(loc) = at
             && request_named_prop_below(ir, ctx)
         {
             ir.diagnostics.push(Diagnostic::error(
