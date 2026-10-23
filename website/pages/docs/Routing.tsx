@@ -65,6 +65,7 @@ export async function routingLoader(): Promise<RoutingData> {
       { id: 'params', title: 'Params and the catch-all' },
       { id: 'nonascii', title: 'Paths beyond ASCII' },
       { id: 'layouts', title: 'Layouts and Outlet' },
+      { id: 'titles', title: "A page's own title" },
       { id: 'rules', title: 'What the build checks' },
     ],
     blocks: {
@@ -128,6 +129,11 @@ export default function Routing({ blocks }: RoutingData) {
       <Note>
         A layout must stay static or native. <code>&lt;Outlet/&gt;</code> inside a component that compiles to a React island fails with <code>outlet-in-react</code>, and an <code>Outlet</code> in a component that is not a layout route fails with <code>outlet-outside-layout</code>.
       </Note>
+
+      <h3 id="titles">A page's own title</h3>
+      <p>
+        A <code>&lt;title&gt;</code>, <code>&lt;meta&gt;</code> or <code>&lt;link&gt;</code> that a page renders in its body is moved into <code>&lt;head&gt;</code> in the HTML brust writes, as React 19 does: after the head's own children, in render order, with no copy left in the body. The same holds for <code>brust build --target static</code>. An SVG <code>&lt;title&gt;</code>, an element with <code>itemProp</code> and a stylesheet link stay where they are. Brust does not remove duplicates: if the layout's head has a <code>&lt;title&gt;</code>, the page's follows it and the document has both, as with React. Leave the title out of the layout's head to give each page its own.
+      </p>
 
       <h2 id="rules">What the build checks</h2>
       <table>
