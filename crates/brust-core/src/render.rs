@@ -443,8 +443,8 @@ pub fn hoist_head_into(html: &mut String) {
     let b = html.as_bytes();
     let mut kept = String::with_capacity(html.len() - from);
     let mut hoisted = String::new();
-    // Nesting of the elements whose content is not hoisted from: (tag, depth).
-    let mut skip: Vec<&'static str> = Vec::new();
+    // The elements whose content is not hoisted from, innermost last: (tag, open depth of that tag name).
+    let mut skip: Vec<(String, u32)> = Vec::new();
     let mut i = from;
     let mut copied = from;
     while i < b.len() {
@@ -465,6 +465,41 @@ pub fn hoist_head_into(html: &mut String) {
         let Some(end) = tag_end(html, name_end) else {
             break;
         };
+        let self_closing = html[i..end].ends_with("/>");
+        let void = matches!(
+            name.as_str(),
+            "area"
+                | "base"
+                | "br"
+                | "col"
+                | "embed"
+                | "hr"
+                | "img"
+                | "input"
+                | "link"
+                | "meta"
+                | "source"
+                | "track"
+                | "wbr"
+        );
+        // Inside a skipped element, count its own tag name so the matching end tag is the one that ends the skip.
+        if let Some(top) = skip.last_mut()
+            && top.0 == name
+        {
+            if closing {
+                top.1 -= 1;
+                if top.1 == 0 {
+                    skip.pop();
+                }
+                i = end;
+                continue;
+            }
+            if !void && !self_closing {
+                top.1 += 1;
+                i = end;
+                continue;
+            }
+        }
         const OPAQUE: [&str; 8] = [
             "svg",
             "math",
@@ -475,28 +510,26 @@ pub fn hoist_head_into(html: &mut String) {
             "brust-island",
             "noscript",
         ];
-        if let Some(op) = OPAQUE.iter().find(|o| **o == name) {
-            if closing {
-                if skip.last() == Some(op) {
-                    skip.pop();
-                }
-                i = end;
-            } else if html[i..end].ends_with("/>")
-                && !matches!(*op, "script" | "style" | "textarea")
-            {
-                i = end;
-            } else {
-                skip.push(op);
-                // script/style/textarea hold raw text up to their own end tag.
-                i = if matches!(*op, "script" | "style" | "textarea") {
-                    let close = format!("</{op}");
-                    let at = find_ci(html, &close, end).unwrap_or(b.len());
-                    skip.pop();
-                    tag_end(html, at).unwrap_or(b.len())
-                } else {
-                    end
-                };
-            }
+        let raw_text = matches!(name.as_str(), "script" | "style" | "textarea");
+        // F399 review: what brust binds or toggles on the client stays where the instance walks it, so the content of
+        // an `x-if`/`x-for` element and of a `<brust-if>`/`<brust-row>` wrapper is not hoisted from.
+        let dynamic = !closing
+            && !void
+            && !self_closing
+            && (matches!(name.as_str(), "brust-if" | "brust-row")
+                || find_attr(&html[i..end], |k| {
+                    k.eq_ignore_ascii_case("x-if") || k.eq_ignore_ascii_case("x-for")
+                })
+                .is_some());
+        if !closing && raw_text && !self_closing {
+            // script/style/textarea hold raw text up to their own end tag.
+            let at = find_ci(html, &format!("</{name}"), end).unwrap_or(b.len());
+            i = tag_end(html, at).unwrap_or(b.len());
+            continue;
+        }
+        if !closing && !self_closing && (dynamic || OPAQUE.contains(&name.as_str())) {
+            skip.push((name, 1));
+            i = end;
             continue;
         }
         if closing || !skip.is_empty() || !matches!(name.as_str(), "title" | "meta" | "link") {
@@ -504,10 +537,14 @@ pub fn hoist_head_into(html: &mut String) {
             continue;
         }
         let tag = &html[i..end];
+        // React 19 hoists a title or meta with no `itemprop`, a link with a `rel` and an `href` that is not a
+        // stylesheet. Anything brust binds (`x-…`) is not inert markup and stays.
         let hoistable = !has_attr(tag, "itemprop")
-            && !(name == "link"
-                && attr_value(tag, "rel")
-                    .is_none_or(|r| r.to_ascii_lowercase().contains("stylesheet")));
+            && find_attr(tag, |k| k.len() > 2 && k[..2].eq_ignore_ascii_case("x-")).is_none()
+            && (name != "link"
+                || (attr_value(tag, "rel").is_some_and(|r| {
+                    !r.is_empty() && !r.to_ascii_lowercase().contains("stylesheet")
+                }) && attr_value(tag, "href").is_some_and(|h| !h.is_empty())));
         let mut stop = end;
         if name == "title" {
             // The title's text runs to its end tag (raw text: no tags inside).
@@ -557,6 +594,11 @@ fn find_ci(html: &str, needle: &str, from: usize) -> Option<usize> {
 
 /// The value of attribute `name` (case-insensitive) in an opening tag, `Some("")` when it has none.
 fn attr_value<'t>(tag: &'t str, name: &str) -> Option<&'t str> {
+    find_attr(tag, |k| k.eq_ignore_ascii_case(name))
+}
+
+/// The value of the first attribute of an opening tag whose name `want` accepts.
+fn find_attr(tag: &str, want: impl Fn(&str) -> bool) -> Option<&str> {
     let b = tag.as_bytes();
     let mut i = tag.find(|c: char| c.is_ascii_whitespace())?;
     while i < b.len() {
@@ -599,7 +641,7 @@ fn attr_value<'t>(tag: &'t str, name: &str) -> Option<&'t str> {
                 }
             }
         }
-        if !key.is_empty() && key.eq_ignore_ascii_case(name) {
+        if !key.is_empty() && want(key) {
             return Some(val);
         }
     }
@@ -1301,6 +1343,30 @@ mod tests {
                 "<html><head></head><body><TITLE>T</TITLE><link HREF=\"/a\" ITEMPROP=\"q\"><meta NAME=\"n\"></body></html>"
             ),
             "<html><head><TITLE>T</TITLE><meta NAME=\"n\"></head><body><link HREF=\"/a\" ITEMPROP=\"q\"></body></html>"
+        );
+    }
+
+    /// F399 review: markup brust binds or toggles stays where the instance walks it.
+    #[test]
+    fn hoist_leaves_bound_and_conditional_markup_in_place() {
+        for keep in [
+            // a reactive title, and both copies of a conditional meta (the hidden one is a template)
+            "<html><head></head><body><main x-data=\"t1\"><title x-text=\"_c1\">Count 0</title><!--x-if--><meta x-if=\"_c2\" hidden name=\"description\" content=\"open\"><meta x-if=\"_c2_not\" name=\"description\" content=\"closed\"></main></body></html>",
+            // an x-for zero-row template and a <brust-if> copy hold hoistables inside
+            "<html><head></head><body><ul><!--x-for--><li x-for=\"r in _l1 by _k1\" hidden><title>row</title></li></ul><brust-if x-if=\"_c3\" hidden><title>a</title><meta name=\"b\" content=\"c\"></brust-if></body></html>",
+            // nested same-named elements inside a skipped one do not end the skip early
+            "<html><head></head><body><div x-if=\"_c4\"><div><title>deep</title></div><title>t</title></div></body></html>",
+            // a link needs a rel and an href (React renders it in place otherwise)
+            "<html><head></head><body><link href=\"/a\"><link rel=\"icon\"><link rel=\"icon\" href=\"\"></body></html>",
+        ] {
+            assert_eq!(hoist(keep), keep, "{keep}");
+        }
+        // what follows the skipped element is hoisted again
+        assert_eq!(
+            hoist(
+                "<html><head></head><body><div x-if=\"_c\"><div></div><title>no</title></div><title>yes</title></body></html>"
+            ),
+            "<html><head><title>yes</title></head><body><div x-if=\"_c\"><div></div><title>no</title></div></body></html>"
         );
     }
 

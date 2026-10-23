@@ -77,3 +77,28 @@ test('the pages differ: each route has its own title after the layout title, a p
   const titles = await Promise.all(Object.values(routes).map(async (p) => (await observe(await (await fetch(base + p)).text())).head.filter((h) => h.startsWith('title')).map((t) => t.slice(6))))
   expect(titles).toEqual([['Site', 'Home page'], ['Site', 'About us'], ['Site']])
 })
+
+// F399 review: a title or meta brust binds (`x-text`, `x-if`) is not inert markup. Hoisting it out of its instance would
+// stop it updating and leave the hidden template copy of a conditional meta in the head, so it stays in the body.
+test('a title and a conditional meta that follow client state are not hoisted and keep updating', async () => {
+  const p = await browser.newPage()
+  const errors: string[] = []
+  p.on('pageerror', (e) => errors.push(String(e)))
+  await p.goto(`${base}/dyn`, { waitUntil: 'domcontentloaded' })
+  await p.waitForFunction(() => document.querySelector('[x-data]') !== null)
+  const seen = () =>
+    p.evaluate(() => ({
+      title: document.title,
+      headBound: [...document.head.querySelectorAll('[x-text], [x-if], meta[name=description]')].length,
+      bodyTitle: document.body.querySelector('title')?.textContent,
+      visibleDescriptions: [...document.querySelectorAll('meta[name=description]')].filter((m) => !m.hasAttribute('hidden')).map((m) => m.getAttribute('content')),
+    }))
+  const first = await seen()
+  // `document.title` is the first <title> in the document: the layout's, as with React's own render.
+  expect(first).toEqual({ title: 'Site', headBound: 0, bodyTitle: 'Count 0', visibleDescriptions: ['closed'] })
+  await p.locator('[data-testid="go"]').click()
+  await p.waitForTimeout(150)
+  expect(await seen()).toEqual({ title: 'Site', headBound: 0, bodyTitle: 'Count 1', visibleDescriptions: ['open'] })
+  expect(errors).toEqual([])
+  await p.close()
+})
