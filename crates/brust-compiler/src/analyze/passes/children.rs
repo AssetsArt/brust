@@ -2733,6 +2733,13 @@ fn package_needs_react(
         if let Tier::React { reason, .. } = &ir.tier
             && !(element_only(&ir) || (state_frames && state_frame_provider(&ir)))
         {
+            // F288 (u1): a call site whose clone failed is React because of that failure (the island it keeps is only
+            // the consequence): name the failure.
+            let reason = ir
+                .diagnostics
+                .iter()
+                .find(|d| d.rule == "specialise-unsupported")
+                .map_or(reason.as_str(), |d| d.message.as_str());
             return Some(format!(
                 "{} renders as React in its source: {reason}",
                 ir.source
