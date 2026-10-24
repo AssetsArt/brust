@@ -9,9 +9,9 @@ use crate::ir::{BinOp, IdentKind, Literal, RawExpr, RawKind, ServerExpr, UnOp};
 
 /// How identifiers print in the template.
 pub struct JinjaCtx<'a> {
-    /// Loop bindings in scope, innermost last: `(item, index)`. Both are plain
-    /// template variables (the template sets the index from `loop.index0`).
-    pub in_loop: Option<(&'a str, Option<&'a str>)>,
+    /// The index bindings of the loops in scope (`(todo, i) => …`): each is a plain template variable the template sets
+    /// from `loop.index0`, and always a number (F427).
+    pub loop_indexes: &'a [&'a str],
     /// Prefix for prop reads (`props.` style contexts); `None`: props are
     /// top-level template variables.
     pub props_prefix: Option<&'a str>,
@@ -24,7 +24,7 @@ pub struct JinjaCtx<'a> {
 impl JinjaCtx<'_> {
     pub fn plain() -> JinjaCtx<'static> {
         JinjaCtx {
-            in_loop: None,
+            loop_indexes: &[],
             props_prefix: None,
             names: &|_, _| None,
         }
@@ -94,8 +94,9 @@ fn is_stringy(e: &RawExpr) -> bool {
     )
 }
 
-/// An expression that is a number whatever its inputs (a numeric literal, or the result of an arithmetic operator).
-fn is_number(e: &RawExpr) -> bool {
+/// An expression that is a number whatever its inputs: a numeric literal, the result of an arithmetic operator, a
+/// `.length` (printed through the `length` filter), or the index of the loop being printed (F427).
+fn is_number(e: &RawExpr, ctx: &JinjaCtx<'_>) -> bool {
     match &e.kind {
         RawKind::Lit(Literal::Num(_)) => true,
         RawKind::Unary {
@@ -110,7 +111,16 @@ fn is_number(e: &RawExpr) -> bool {
             op: BinOp::Add,
             left,
             right,
-        } => is_number(left) && is_number(right),
+        } => is_number(left, ctx) && is_number(right, ctx),
+        RawKind::Member {
+            name,
+            optional: false,
+            ..
+        } => name == "length",
+        RawKind::Ident {
+            name,
+            kind: IdentKind::LoopBinding,
+        } => ctx.loop_indexes.contains(&name.as_str()),
         _ => false,
     }
 }
@@ -202,8 +212,9 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
         RawKind::Unary { op, value } => match op {
             // JS truthiness (an empty list or object is true): brust-jinja's `truthy`.
             UnOp::Not => format!("(not ({} | truthy))", raw(value, ctx)),
-            UnOp::Neg => format!("(-{})", raw(value, ctx)),
-            UnOp::Pos => format!("({} | float)", raw(value, ctx)),
+            UnOp::Neg if is_number(value, ctx) => format!("(-{})", raw(value, ctx)),
+            UnOp::Neg => format!("({} | js_neg)", raw(value, ctx)),
+            UnOp::Pos => format!("({} | js_num)", raw(value, ctx)),
             UnOp::Typeof => "none".into(),
         },
         RawKind::Binary { op, left, right } => {
@@ -214,8 +225,49 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
                 }
                 // F424: jinja's `+` errors on string + number (and on `none`); JS concatenates when either side is a string.
                 // Only two operands proven numbers keep the native `+`.
-                BinOp::Add if !(is_number(left) && is_number(right)) => {
+                BinOp::Add if !(is_number(left, ctx) && is_number(right, ctx)) => {
                     format!("({l} | js_add({r}))")
+                }
+                // F428: jinja's `-` and `*` error on a string / `none` operand where JS coerces with `ToNumber`.
+                BinOp::Sub | BinOp::Mul if !(is_number(left, ctx) && is_number(right, ctx)) => {
+                    let f = if matches!(op, BinOp::Sub) {
+                        "js_sub"
+                    } else {
+                        "js_mul"
+                    };
+                    format!("({l} | {f}({r}))")
+                }
+                // Relational operators: only two numbers or two strings compare as jinja does.
+                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge
+                    if !((is_number(left, ctx) && is_number(right, ctx))
+                        || (is_stringy(left) && is_stringy(right))) =>
+                {
+                    let o = match op {
+                        BinOp::Lt => "<",
+                        BinOp::Le => "<=",
+                        BinOp::Gt => ">",
+                        _ => ">=",
+                    };
+                    format!("({l} | js_cmp({r}, '{o}'))")
+                }
+                // Equality: `===` against a string literal is jinja's `==` (a string equals only a string); two numbers or
+                // two strings too. Anything else follows JS (`1 == '1'`, `true === 1`, `null`/`undefined`).
+                BinOp::Eq | BinOp::StrictEq | BinOp::Ne | BinOp::StrictNe
+                    if !((is_number(left, ctx) && is_number(right, ctx))
+                        || (is_stringy(left) && is_stringy(right))
+                        || (matches!(op, BinOp::StrictEq | BinOp::StrictNe)
+                            && (is_stringy(left) || is_stringy(right)))) =>
+                {
+                    let f = if matches!(op, BinOp::Eq | BinOp::Ne) {
+                        "js_eq"
+                    } else {
+                        "js_seq"
+                    };
+                    if matches!(op, BinOp::Eq | BinOp::StrictEq) {
+                        format!("({l} | {f}({r}))")
+                    } else {
+                        format!("(not ({l} | {f}({r})))")
+                    }
                 }
                 BinOp::Nullish => {
                     format!("({l} if {l} is defined and {l} is not none else {r})")

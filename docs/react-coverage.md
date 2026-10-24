@@ -8,12 +8,12 @@ Expected tiers come from the design spec (§3 tier table, §4.3 hook table, §8.
 
 | Category | Rows | static | native | react | error | compile error | build failed | ⚠ |
 |---|---|---|---|---|---|---|---|---|
-| A JSX basics | 57 | 37 | 14 | 6 | 0 | 0 | 0 | 0 |
+| A JSX basics | 60 | 40 | 14 | 6 | 0 | 0 | 0 | 0 |
 | B Composition | 241 | 127 | 19 | 95 | 0 | 0 | 0 | 0 |
 | C Hooks | 231 | 71 | 75 | 85 | 0 | 0 | 0 | 0 |
 | D API surface | 33 | 13 | 1 | 19 | 0 | 0 | 0 | 0 |
 | E v2 specifics | 74 | 31 | 15 | 24 | 3 | 1 | 0 | 0 |
-| **Total** | 636 | 279 | 124 | 229 | 3 | 1 | 0 | 0 |
+| **Total** | 639 | 282 | 124 | 229 | 3 | 1 | 0 | 0 |
 
 ## Raw HTML (`dangerouslySetInnerHTML`)
 
@@ -29,6 +29,9 @@ Every attribute whose name starts with `x-` written in component JSX is reserved
 |---|---|---|---|---|---|---|---|---|
 | a-static-text | static text | static | static | 0 | ok | 0 | — | spec §3.1 static tier |
 | a-plus-js-semantics | JS `+` on a string and a number (either order), two numbers, two strings, undefined | static | static | 0 | ok | 0 | — | F424: jinja + errors on string + number; the printer keeps the native + only for two proven numbers and uses js_add otherwise |
+| a-arith-js-semantics | JS - and * on strings, null, undefined; unary - and +; division by zero | static | static | precompute | ok | 0 | — | F428: jinja - and * (and unary -) error on a string or none operand where JS coerces with ToNumber; NaN and Infinity print as JS prints them; the unary + is the one job (the placer evaluates it in JS) |
+| a-relational-js-semantics | JS < > <= >= on mixed string/number, two strings, null, undefined | static | static | 0 | ok | 0 | — | F428: a string against a number compares as numbers, two strings by code unit, undefined is NaN (false); jinja errors on the mixed case |
+| a-equality-js-semantics | JS == and === across string, number, boolean, null, undefined | static | static | 0 | ok | 0 | — | F428: loose == coerces (1 == "1", null == undefined), === is type-strict (true === 1 is false); === against a string literal is the native == |
 | a-interpolation | prop interpolation | static | static | 0 | ok | 0 | — | spec §3.1 static tier; §6.2 prop read |
 | a-attributes | static and dynamic attributes | static | static | 0 | ok | 0 | — | spec §3.1 static tier; §6.2 attributes |
 | a-classname-template | className template literal | static | static | 0 | ok | 0 | — | spec §6.2 template literal |

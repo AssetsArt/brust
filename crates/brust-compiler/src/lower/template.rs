@@ -564,10 +564,15 @@ impl<'a, 'c> Printer<'a, 'c> {
             return UNDEFINED.into();
         }
         let names = self.names();
+        let indexes: Vec<&str> = self
+            .frames
+            .iter()
+            .filter_map(|f| f.index.as_deref())
+            .collect();
         to_jinja(
             &ServerExpr(e.clone()),
             &JinjaCtx {
-                in_loop: None,
+                loop_indexes: &indexes,
                 props_prefix: None,
                 names: &names,
             },
