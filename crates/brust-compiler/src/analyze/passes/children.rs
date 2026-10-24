@@ -263,6 +263,25 @@ pub fn contexts(
             && f == crate::analyze::hooks::WHOLE_FIELD
             && w.ctx_defaults.iter().any(|(x, _)| x == c)
     };
+    // F419: the page's own read of a scalar context (`useContext(Ctx)` in the page itself) is the default too.
+    if ctx.is_root {
+        for u in &ir.ctx_uses {
+            let Some((_, d)) = ir.ctx_defaults.iter().find(|(c, _)| c == &u.context) else {
+                continue;
+            };
+            let name = crate::ir::ctx_prop(&u.context, crate::analyze::hooks::WHOLE_FIELD);
+            if let Some(p) = ir
+                .props
+                .iter_mut()
+                .find(|p| p.name == name && p.default.is_none())
+            {
+                p.default = Some(RawExpr {
+                    loc: 0,
+                    kind: RawKind::Lit(d.clone()),
+                });
+            }
+        }
+    }
     for (c, f) in &bubbled {
         let name = crate::ir::ctx_prop(c, f);
         if !ir.props.iter().any(|p| p.name == name) {

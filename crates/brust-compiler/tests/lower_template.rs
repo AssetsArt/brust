@@ -725,3 +725,42 @@ fn a_page_root_renders_with_nothing_before_it() {
         "{j}"
     );
 }
+
+/// Lowers `src` and returns (jinja, precompute job).
+fn lower_job(src: &str) -> (String, String) {
+    let s = src.to_string();
+    run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            "tests/fixtures/parent-counter/T.tsx",
+            Some(s.into_bytes()),
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap();
+        let a = &tree[0].artifacts;
+        (a.jinja.clone(), a.server_ts.clone().unwrap_or_default())
+    })
+}
+
+/// F418: `useState(load)` with a module function seeds the job (and the chunk) with `load()`, the value React paints,
+/// not the function (the job used to return `const n = load`, which paints nothing).
+#[test]
+fn use_state_module_function_seeds_the_call_in_the_job_and_chunk() {
+    let src = "import { useState } from 'react'\nfunction load() { return 41 + 1 }\nexport default function C() { const [n, setN] = useState(load); return <button onClick={() => setN(n + 1)}>{n}</button> }";
+    let (_, job) = lower_job(src);
+    assert!(job.contains("const n = load()"), "{job}");
+    let (_, chunk) = lower(src);
+    assert!(chunk.contains("signal(load())"), "{chunk}");
+}
+
+/// F419: a scalar context read by the page itself, with no Provider above, is the `createContext` default.
+#[test]
+fn page_reading_a_scalar_context_without_provider_paints_the_default() {
+    let (jinja, _) = lower_job(
+        "import { useContext, createContext } from 'react'\nconst Ctx = createContext('x')\nexport default function C() { const v = useContext(Ctx); return <p>{v}</p> }",
+    );
+    assert!(jinja.contains("is defined else \"x\""), "{jinja}");
+}

@@ -68,6 +68,15 @@ pub fn is_function_raw(r: &RawExpr) -> bool {
     }
 }
 
+/// F418: `r` names a module-level `function load() {…}` (a lazy `useState(load)` initializer React calls).
+pub fn is_module_fn(r: &RawExpr, module_decls: &[crate::ir::ModuleDecl]) -> bool {
+    matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Local }
+    if module_decls.iter().any(|d| {
+        d.names == [name.as_str()]
+            && (d.source.starts_with("function ") || d.source.starts_with("async function "))
+    }))
+}
+
 impl<'a> Facts<'a> {
     pub fn new(ir: &'a ComponentIR, structural: &'a Structural) -> Self {
         // Dependency facts over the structural decls (state-dependent slots
@@ -176,7 +185,7 @@ impl<'a> Facts<'a> {
                 body: ArrowBody::Expr(b),
                 ..
             } if params.is_empty() => (**b).clone(),
-            _ if is_function_raw(r) => RawExpr {
+            _ if is_function_raw(r) || is_module_fn(r, &self.ir.module_decls) => RawExpr {
                 loc: r.loc,
                 kind: RawKind::Call {
                     callee: Box::new(r.clone()),
