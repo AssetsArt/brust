@@ -334,6 +334,8 @@ jobs:
       - run: bun test --timeout 120000 tests/server/preamble-order.chromium.test.ts
       # F308: a changing key outside a list is a named refusal; the React page resets state on a key change.
       - run: bun test --timeout 120000 tests/server/live-key.chromium.test.ts
+      # F369c: a handler spread into a native child's element is bound by that element (x-prop-on-*), read live.
+      - run: bun test --timeout 120000 tests/server/native-spread-handler.chromium.test.ts
       # F412: native list rows printed hidden before the shown one: served and static == React, no warning, no stray row.
       - run: bun test --timeout 120000 tests/server/list-first-paint.chromium.test.ts
       # F431: object-literal context defaults at the page are native (v.a, {a, b}, a fed child); nested / inline Provider fall back.
