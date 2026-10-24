@@ -94,6 +94,27 @@ fn is_stringy(e: &RawExpr) -> bool {
     )
 }
 
+/// An expression that is a number whatever its inputs (a numeric literal, or the result of an arithmetic operator).
+fn is_number(e: &RawExpr) -> bool {
+    match &e.kind {
+        RawKind::Lit(Literal::Num(_)) => true,
+        RawKind::Unary {
+            op: UnOp::Neg | UnOp::Pos,
+            ..
+        } => true,
+        RawKind::Binary {
+            op: BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem,
+            ..
+        } => true,
+        RawKind::Binary {
+            op: BinOp::Add,
+            left,
+            right,
+        } => is_number(left) && is_number(right),
+        _ => false,
+    }
+}
+
 /// An operand of `~`: literals as they are, anything else through JS `String()`.
 fn concat_part(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
     if is_stringy(e) {
@@ -190,6 +211,11 @@ fn raw(e: &RawExpr, ctx: &JinjaCtx<'_>) -> String {
             match op {
                 BinOp::Add if is_stringy(left) || is_stringy(right) => {
                     format!("({} ~ {})", concat_part(left, ctx), concat_part(right, ctx))
+                }
+                // F424: jinja's `+` errors on string + number (and on `none`); JS concatenates when either side is a string.
+                // Only two operands proven numbers keep the native `+`.
+                BinOp::Add if !(is_number(left) && is_number(right)) => {
+                    format!("({l} | js_add({r}))")
                 }
                 BinOp::Nullish => {
                     format!("({l} if {l} is defined and {l} is not none else {r})")

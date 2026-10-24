@@ -49,8 +49,16 @@ const ROWS: &[(&str, &str, &str)] = &[
         "((n >= 3) if ((b < n) | truthy) else (b < n))",
         "b < n && n >= 3",
     ),
-    ("b + n * 2", "(b + (n * 2))", "b + n * 2"),
-    ("(b + n) % 2", "((b + n) | js_mod(2))", "(b + n) % 2"),
+    ("b + n * 2", "(b | js_add((n * 2)))", "b + n * 2"),
+    (
+        "(b + n) % 2",
+        "((b | js_add(n)) | js_mod(2))",
+        "(b + n) % 2",
+    ),
+    // F424: only two proven numbers keep the native `+`; anything else is JS `+` (concatenates when either side is a string).
+    ("n + 1", "(n | js_add(1))", "n + 1"),
+    ("1 + 2", "(1 + 2)", "1 + 2"),
+    ("n * 2 + 1", "((n * 2) + 1)", "n * 2 + 1"),
     ("n / 2", "(n | js_div(2))", "n / 2"),
     ("'x' + b", r#"("x" ~ (b | js_string))"#, r#""x" + b"#),
     ("a + '!'", r#"((a | js_string) ~ "!")"#, r#"a + "!""#),
