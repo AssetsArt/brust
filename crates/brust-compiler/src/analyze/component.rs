@@ -587,6 +587,12 @@ fn read_function_as(
         .into_iter()
         .filter(|(c, _)| ir.ctx_uses.iter().any(|u| &u.context == c))
         .collect();
+    ir.ctx_object_defaults = reader
+        .names
+        .object_defaults()
+        .into_iter()
+        .filter(|(c, _)| ir.ctx_uses.iter().any(|u| &u.context == c))
+        .collect();
     ir.foreign_ctx_reads = reader.names.foreign_ctx_reads.take();
     ir.provides = std::mem::take(&mut reader.provides);
     ir.render_props = std::mem::take(&mut reader.render_props);

@@ -782,39 +782,157 @@ fn use_state_module_const_function_seeds_the_call() {
     }
 }
 
-/// F419 (ruling 2): a page reading an object-default context with no Provider is refused by name (never an empty paint);
-/// per-field object defaults are a later row.
+/// The IR of the page compiled from `src`.
+fn page_ir(src: &str) -> brust_compiler::ir::ComponentIR {
+    let s = src.to_string();
+    run_on_compiler_thread(move || {
+        let tree = compile_tree(
+            "tests/fixtures/parent-counter/T.tsx",
+            Some(s.into_bytes()),
+            &AnalyzeOptions {
+                root: repo(),
+                ..Default::default()
+            },
+            DEFAULT_RUNTIME_IMPORT,
+        )
+        .unwrap();
+        (*tree[0].ir).clone()
+    })
+}
+
+/// The fallback rules of the page compiled from `src`.
+fn page_rules(src: &str) -> Vec<String> {
+    page_ir(src)
+        .diagnostics
+        .iter()
+        .map(|d| d.rule.clone())
+        .collect()
+}
+
+/// F431 (was F419 ruling 2's refusal): a page reading the fields of an object-default context with no Provider paints
+/// each field's literal default, read as `v.a` or destructured, by the page itself or by a child it inlines.
 #[test]
-fn page_reading_an_object_context_without_provider_falls_back_by_name() {
+fn page_reading_an_object_context_without_provider_paints_the_field_defaults() {
     for body in [
         "const v = useContext(Ctx); return <p>{v.a}-{v.b}</p>",
         "const { a, b } = useContext(Ctx); return <p>{a}-{b}</p>",
+        "return <Show />",
     ] {
         let src = format!(
-            "import {{ useContext, createContext }} from 'react'\nconst Ctx = createContext({{ a: 'dflt', b: 2 }})\nexport default function C() {{ {body} }}"
+            "import {{ useContext, createContext }} from 'react'\nconst Ctx = createContext({{ a: 'dflt', b: 2 }})\nfunction Show() {{ const {{ a, b }} = useContext(Ctx); return <p>{{a}}-{{b}}</p> }}\nexport default function C() {{ {body} }}"
         );
-        let s = src.clone();
-        let rules: Vec<String> = run_on_compiler_thread(move || {
-            let tree = compile_tree(
-                "tests/fixtures/parent-counter/T.tsx",
-                Some(s.into_bytes()),
-                &AnalyzeOptions {
-                    root: repo(),
-                    ..Default::default()
-                },
-                DEFAULT_RUNTIME_IMPORT,
-            )
-            .unwrap();
-            tree[0]
-                .ir
-                .diagnostics
-                .iter()
-                .map(|d| d.rule.clone())
-                .collect()
-        });
+        assert!(
+            page_rules(&src).is_empty(),
+            "{body}: {:?}",
+            page_rules(&src)
+        );
+        let (jinja, _) = lower_job(&src);
+        assert!(
+            jinja.contains("is defined else \"dflt\"") && jinja.contains("is defined else 2"),
+            "{body}: {jinja}"
+        );
+    }
+}
+
+/// F427: a loop index is a proven number only where it is the innermost binding of its name: an inner loop's ITEM named
+/// like an outer index shadows it (`xs.map((x, i) => ys.map((i) => i + 1))`), and `+` there stays `js_add` (a string item).
+#[test]
+fn a_loop_item_shadowing_an_outer_index_is_not_a_proven_number() {
+    let (jinja, _) = lower_job(
+        "export default function C({ xs, ys }: any) { return <div>{xs.map((x: string, i: number) => <section key={x}>{i + 1}{ys.map((i: string) => <b key={i}>{i + 1}</b>)}</section>)}</div> }",
+    );
+    // The outer `i + 1` is native, the inner one (the item `i`) goes through js_add.
+    assert!(jinja.contains("(i + 1)"), "{jinja}");
+    assert!(jinja.contains("js_add(1)"), "{jinja}");
+}
+
+/// F431: a field the default does not give a plain value (a nested object, a call, a field it does not declare, any field
+/// of a default with a spread) still falls back by name; so does a context destructured with a pattern default.
+#[test]
+fn page_reading_an_object_context_field_without_a_plain_default_falls_back_by_name() {
+    for (default, body, rule) in [
+        (
+            "{ a: { x: 1 }, b: 2 }",
+            "const v = useContext(Ctx); return <p>{v.b}{String(v.a)}</p>",
+            "context-no-provider",
+        ),
+        (
+            "{ a: String(1), b: 2 }",
+            "const { a, b } = useContext(Ctx); return <p>{a}-{b}</p>",
+            "context-no-provider",
+        ),
+        (
+            "{ b: 2 }",
+            "const v = useContext(Ctx); return <p>{v.a}-{v.b}</p>",
+            "context-no-provider",
+        ),
+        (
+            "{ ...base, b: 2 }",
+            "const v = useContext(Ctx); return <p>{v.b}</p>",
+            "context-no-provider",
+        ),
+        (
+            "{ a: 'x', b: 2 }",
+            "const { a = 'y', b } = useContext(Ctx); return <p>{a}-{b}</p>",
+            "context-shape",
+        ),
+    ] {
+        let src = format!(
+            "import {{ useContext, createContext }} from 'react'\nconst base = {{ a: 'q' }}\nconst Ctx = createContext({default})\nexport default function C() {{ {body} }}"
+        );
+        let rules = page_rules(&src);
+        assert!(
+            rules.iter().any(|r| r == rule),
+            "{default} / {body}: {rules:?}"
+        );
+    }
+}
+
+/// F431 guard: a page that renders a Provider inline is transparent around its content, so a child's need of that
+/// context bubbles to the page; no default answers it (the child may sit inside the Provider): the page falls back. The
+/// page's own read stays the default (React reads it above the page's own Provider).
+#[test]
+fn a_page_rendering_its_own_provider_does_not_default_a_childs_need() {
+    for (default, value, read) in [
+        ("'x'", "\"y\"", "v"),
+        ("{ a: 'dflt', b: 2 }", "{{ a: 'mine', b: 3 }}", "v.a"),
+    ] {
+        let src = format!(
+            "import {{ useContext, createContext }} from 'react'\nconst Ctx = createContext({default})\nfunction Show() {{ const v = useContext(Ctx); return <p>{{{read}}}</p> }}\nexport default function C() {{ return <main><Show /><Ctx.Provider value={value}><Show /></Ctx.Provider></main> }}"
+        );
+        let rules = page_rules(&src);
         assert!(
             rules.iter().any(|r| r == "context-no-provider"),
-            "{body}: {rules:?}"
+            "{default}: {rules:?}"
         );
+    }
+}
+
+/// F431: a Provider component in the page answers the children it is given; a consumer outside it takes the defaults.
+#[test]
+fn a_provider_component_in_the_page_overrides_the_field_defaults() {
+    let src = "import { useContext, createContext, type ReactNode } from 'react'\nconst Ctx = createContext({ a: 'dflt', b: 2 })\nfunction Show() { const { a, b } = useContext(Ctx); return <p>{a}-{b}</p> }\nfunction Mine({ children }: { children: ReactNode }) { return <Ctx.Provider value={{ a: 'mine' }}>{children}</Ctx.Provider> }\nexport default function C() { return <main><Show /><Mine><Show /></Mine></main> }";
+    assert!(page_rules(src).is_empty(), "{:?}", page_rules(src));
+    let (jinja, _) = lower_job(src);
+    assert!(jinja.contains("is defined else \"dflt\""), "{jinja}");
+    assert!(jinja.contains("\"mine\""), "{jinja}");
+}
+
+/// F431: a child the server feeds per instance takes a context default as a literal: nothing passes the page's hidden
+/// props, so the props path would be undefined (`String(b)` painted `undefined`).
+#[test]
+fn a_fed_child_instance_takes_the_context_default_as_a_literal() {
+    let src = "import { useContext, createContext } from 'react'\nconst Ctx = createContext({ a: 'dflt', b: 2 })\nfunction Show() { const { a, b } = useContext(Ctx); return <p>{a}-{String(b)}</p> }\nexport default function C() { return <main><Show /><Show /></main> }";
+    let ir = page_ir(src);
+    assert!(ir.diagnostics.is_empty(), "{:?}", ir.diagnostics);
+    assert!(!ir.instances.is_empty(), "{:?}", ir.instances);
+    for i in &ir.instances {
+        let (k, v) = i
+            .literals
+            .iter()
+            .find(|(k, _)| k.starts_with("__ctx_") && k.ends_with("_b"))
+            .unwrap_or_else(|| panic!("{i:?}"));
+        assert_eq!(v.to_string(), "2", "{k}");
+        assert!(!i.props.keys().any(|k| k.starts_with("__ctx_")), "{i:?}");
     }
 }
