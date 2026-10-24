@@ -531,3 +531,23 @@ fn a_native_parent_with_as_child_over_a_host_element_is_cloned_with_the_child() 
     assert!(!react_with(&o, "slot-native"), "{:?}", o.diags);
     assert!(!matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
 }
+
+#[test]
+fn a_native_parent_clone_refuses_what_the_merge_cannot_join() {
+    // F369b: a class or style on the child would be joined with the element's, a handler or text/expression child is
+    // not a plain host element: each keeps the caller on React with the original refusal.
+    for body in [
+        "<ItemLike asChild><a className=\"c\">x</a></ItemLike>",
+        "<ItemLike asChild><a style={{ color: 'red' }}>x</a></ItemLike>",
+        "<ItemLike asChild><a onClick={() => {}}>x</a></ItemLike>",
+        "<ItemLike asChild>text</ItemLike>",
+        "<ItemLike asChild><a>x</a><b>y</b></ItemLike>",
+    ] {
+        let o = lower("P.tsx", &page(body));
+        assert!(
+            matches!(o.tier, Tier::React { .. }),
+            "{body}: {:?}",
+            o.diags
+        );
+    }
+}

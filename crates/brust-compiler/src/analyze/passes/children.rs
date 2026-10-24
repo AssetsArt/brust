@@ -6735,7 +6735,11 @@ impl Walker<'_, '_> {
                 ir.state.is_empty() && ir.refs.is_empty() && ir.effects.is_empty()
             });
         if !matches!(child.tier, Tier::Static) && !owned_consumer {
-            if matches!(children, [Node::Element { poly: false, .. }]) {
+            // Not inside a Provider's clone, and not a consumer of a frame: those keep the Q5 limits (A1).
+            if matches!(children, [Node::Element { poly: false, .. }])
+                && !self.ctx.specialised
+                && !props.iter().any(|(k, _)| is_frame(k))
+            {
                 self.want_host_poly(loc, child);
             }
             self.diagnostics.push(refuse(
