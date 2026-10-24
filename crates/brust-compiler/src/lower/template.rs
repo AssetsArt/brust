@@ -42,6 +42,9 @@ pub enum PropBinding {
     /// A live value the parent bound itself (2b-handlers): the finished attribute text (server print and
     /// `x-bind-*` member) in the parent's scope, bound where a spread lands it on an element.
     Live(String),
+    /// F369c: a handler prop of a NATIVE instance that the element it lands on binds itself (`x-prop-on-<event>="<key>"`):
+    /// the React key. The event is chosen where the element is known (React's `onChange` is `input` on a text field).
+    PropHandler(String),
     /// A ref the parent bound itself on an inlined `forwardRef` child (F267): the name of the parent's ref cell, bound
     /// as `x-ref` where the child's own `ref={forwardedRef}` is (`x-cref` when the cell is a branch's callback ref).
     Ref(String, bool),
@@ -1361,6 +1364,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             Handler(String, String),
             /// A live value the parent bound itself: the React key and the finished attribute text.
             Live(String, String),
+            /// F369c: a handler prop the element binds itself (`x-prop-on-*`): the React key.
+            PropHandler(String),
         }
         // Attributes merge on the HTML attribute they print as (review F1): `className` and
         // `class`, `htmlFor` and `for`, `tabIndex` and `tabindex` are one key, so a later alias wins.
@@ -1370,7 +1375,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                     Attr::Static { name, .. } | Attr::Dynamic { name, .. } => Some(name.clone()),
                     _ => None,
                 },
-                It::Bound(k, _) | It::Handler(k, _) | It::Live(k, _) => Some(k.clone()),
+                It::Bound(k, _) | It::Handler(k, _) | It::Live(k, _) | It::PropHandler(k) => {
+                    Some(k.clone())
+                }
                 It::Runtime(_) => None,
             }
         };
@@ -1395,6 +1402,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                             items.push(It::Handler(k, d));
                         } else if let PropBinding::Live(text) = b {
                             items.push(It::Live(k, text));
+                        } else if let PropBinding::PropHandler(key) = b {
+                            items.push(It::PropHandler(key));
                         } else if k == "key"
                             || k == "ref"
                             || (k.starts_with("on")
@@ -1476,7 +1485,12 @@ impl<'a, 'c> Printer<'a, 'c> {
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
-                Some(PropBinding::Handler(_) | PropBinding::Live(_) | PropBinding::Ref(..))
+                Some(
+                    PropBinding::Handler(_)
+                    | PropBinding::Live(_)
+                    | PropBinding::PropHandler(_)
+                    | PropBinding::Ref(..),
+                )
                 | None => None,
             }
         };
@@ -1554,6 +1568,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                     // The component's own rest cannot carry the key (`shadowed_props`), so the live value is final.
                     It::Live(k, text) if !overridden(k) => open.push_str(text),
                     It::Live(..) => {}
+                    It::PropHandler(k) if !overridden(k) => {
+                        self.prop_handler_attr(k, tag, attrs, open)
+                    }
+                    It::PropHandler(..) => {}
                     It::Runtime(d) => segs.push(if tail_names.is_empty() {
                         d.clone()
                     } else {
@@ -1595,6 +1613,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 }
                 It::Handler(k, d) => self.handler_attr(k, d, tag, attrs, open),
                 It::Live(_, text) => open.push_str(text),
+                It::PropHandler(k) => self.prop_handler_attr(k, tag, attrs, open),
                 It::Bound(..) | It::Runtime(_) => {}
             }
         }
@@ -1613,6 +1632,19 @@ impl<'a, 'c> Printer<'a, 'c> {
         };
         let ev = dom_event(&event, tag, attrs);
         open.push_str(&format!(" x-on-{ev}=\"{d}\""));
+    }
+
+    /// F369c: `x-prop-on-<event>="<key>"` for a handler prop of the native instance this element belongs to; the event is
+    /// the one every handler path binds (`dom_event`: React's `onChange` on a text field is `input`).
+    fn prop_handler_attr(&mut self, k: &str, tag: &str, attrs: &[Attr], open: &mut String) {
+        if !crate::analyze::passes::children::handler_key_ok(k) || k.contains('"') {
+            return;
+        }
+        let Some(event) = crate::analyze::jsx::event_name(k) else {
+            return;
+        };
+        let ev = dom_event(&event, tag, attrs);
+        open.push_str(&format!(" x-prop-on-{ev}=\"{k}\""));
     }
 
     /// F329b: the directive that keeps a live prop of the NATIVE instance this element belongs to in step with it:
@@ -2127,11 +2159,10 @@ impl<'a, 'c> Printer<'a, 'c> {
                     .iter()
                     .any(|f| f.loc == *loc && &f.key == pname)
                     && crate::analyze::passes::children::handler_key_ok(pname)
-                    && let Some(ev) = crate::analyze::jsx::event_name(pname)
                 {
                     segs.push(Seg::Named(
                         pname.clone(),
-                        PropBinding::Live(format!(" x-prop-on-{ev}=\"{pname}\"")),
+                        PropBinding::PropHandler(pname.clone()),
                     ));
                 }
                 continue;

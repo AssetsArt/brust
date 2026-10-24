@@ -43,6 +43,7 @@ test('a mousedown handler reaches the native child element, and the swapped prop
   expect(res.status).toBe(200)
   const html = await res.text()
   expect(html).toContain('x-prop-on-mousedown="onMouseDown"')
+  expect(html).toContain('x-prop-on-input="onChange"')
   expect(html).not.toContain('brust-island')
   const page = await browser.newPage()
   const errors: string[] = []
@@ -56,6 +57,9 @@ test('a mousedown handler reaches the native child element, and the swapped prop
   await page.getByTestId('swap').click()
   await pr.dispatchEvent('mousedown')
   await page.waitForFunction(() => document.querySelector('[data-testid="count"]')?.textContent === '102')
+  // Mellow F1: React's onChange on a text field is the DOM `input` event; typing must reach the handler.
+  await page.getByTestId('field').fill('hello')
+  await page.waitForFunction(() => document.querySelector('[data-testid="typed"]')?.textContent === 'hello')
   expect(errors).toEqual([])
   await page.close()
 }, 60_000)

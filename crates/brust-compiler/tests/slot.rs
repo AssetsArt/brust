@@ -634,3 +634,17 @@ fn an_event_react_has_no_prop_for_keeps_react() {
     );
     assert!(react_with(&o, "spread-handler"), "{:?}", o.diags);
 }
+
+#[test]
+fn an_on_change_through_a_native_childs_rest_listens_to_input_on_a_text_field() {
+    // Mellow F1: every handler path maps React's `onChange` on a text field to the DOM `input` event.
+    let src = "import { useState } from 'react'\nimport Field from './Field'\nexport default function P() { const [v, setV] = useState(''); return <main><Field onChange={(e: any) => setV(e.target.value)} /><b>{v}</b></main> }";
+    let o = lower("P.tsx", src);
+    assert!(!matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
+    assert!(
+        o.jinja.contains("x-prop-on-input=\"onChange\""),
+        "{}",
+        o.jinja
+    );
+    assert!(!o.jinja.contains("x-prop-on-change"), "{}", o.jinja);
+}

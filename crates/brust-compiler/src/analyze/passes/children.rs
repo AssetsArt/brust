@@ -1363,34 +1363,6 @@ fn flag_selects_slot(poly: &crate::ir::PolyTag, props: &[(String, Expr)]) -> boo
     flag != poly.negate
 }
 
-/// The React prop of a DOM event name the compiler reads from (`jsx::event_name`'s inverse), `None` for one it does not know.
-fn event_prop(event: &str) -> Option<&'static str> {
-    Some(match event {
-        "click" => "onClick",
-        "dblclick" => "onDoubleClick",
-        "contextmenu" => "onContextMenu",
-        "mousedown" => "onMouseDown",
-        "mouseup" => "onMouseUp",
-        "mousemove" => "onMouseMove",
-        "mouseenter" => "onMouseEnter",
-        "mouseleave" => "onMouseLeave",
-        "mouseover" => "onMouseOver",
-        "mouseout" => "onMouseOut",
-        "keydown" => "onKeyDown",
-        "keyup" => "onKeyUp",
-        "focusin" => "onFocus",
-        "focusout" => "onBlur",
-        "input" => "onInput",
-        "change" => "onChange",
-        "pointerdown" => "onPointerDown",
-        "pointerup" => "onPointerUp",
-        "pointermove" => "onPointerMove",
-        "pointerenter" => "onPointerEnter",
-        "pointerleave" => "onPointerLeave",
-        _ => return None,
-    })
-}
-
 /// F369b: puts the ONE `child` (a host element or a component call) where the component's polymorphic element is
 /// (React's Slot: the child takes the element's place, the element's attributes merged under its own props, its own
 /// children kept). A component child is given the element's attributes as PROPS (the element's handlers as `on*` props,
@@ -1449,7 +1421,7 @@ fn splice_poly(ir: &mut ComponentIR, child: Node) -> Result<(), String> {
                     out.push((crate::ir::COLLECTION_ITEM_PROP.to_string(), data.clone()));
                 }
                 Attr::Event { event, handler } => {
-                    let prop = event_prop(event).ok_or_else(|| {
+                    let prop = crate::analyze::jsx::react_event_prop(event).ok_or_else(|| {
                         format!(
                             "the element's `{event}` handler has no React prop the compiler knows"
                         )
@@ -8393,7 +8365,7 @@ impl Walker<'_, '_> {
         };
         // Only an event React itself has a prop for: an unknown `onPick` is no DOM event React ever listens to, and a
         // listener for it would fire on a custom event React ignores.
-        if event_prop(&event) != Some(k) {
+        if crate::analyze::jsx::react_event_prop(&event) != Some(k) {
             return false;
         }
         let Some(ir) = child.ir.clone() else {
