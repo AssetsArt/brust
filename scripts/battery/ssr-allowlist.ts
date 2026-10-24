@@ -6,9 +6,4 @@ export const ALLOWED: Record<string, Allowed> = {
   'c-usestate-load': { row: 'F418', why: 'useState(load) with a module function paints the button empty, React paints 42' },
   'c-usecontext': { row: 'F419', why: 'a createContext default read with no Provider is not painted, React paints it' },
   'b-spread-alias-known': { row: 'F422', why: 'className + class spread: React keeps both (the first wins in the browser), brust paints the last' },
-  'c-context-field-named-loop': { row: 'F423', why: 'a useState local named loop becomes {% set loop %}: brust start refuses to boot' },
-  'b-jsx-const-child-imported-plain': { row: 'F425', why: 'a sibling module with `export const el = <b/>`: the worker has no jsx runtime (jsxDEV is not a function)' },
-  'b-jsx-const-child-shadowed': { row: 'F425', why: 'same sibling JSX const module as above' },
-  'b-jsx-const-child-provider-own': { row: 'F425', why: 'same sibling JSX const module as above' },
-  'b-context-provider-field-element': { row: 'F425', why: 'same sibling JSX const module as above' },
 }

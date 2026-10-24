@@ -383,6 +383,19 @@ impl<'a, 'c> Printer<'a, 'c> {
         self.inline.as_ref().map_or("", |i| i.suffix.as_str())
     }
 
+    /// F423: the template variable a local `name` (a state cell, a list item or index) is printed as: the name with
+    /// the instance suffix an inlined child carries, and, when that is a name minijinja refuses to assign or the
+    /// template already uses (`loop`, `none`, `range`, ...: [`crate::analyze::names::JINJA_RESERVED_LOCALS`]),
+    /// `_name`, made free of the component's own names. Every read, `set` and `for` goes through here, so they agree.
+    fn local_var(&self, name: &str) -> String {
+        let full = format!("{name}{}", self.suffix());
+        if crate::analyze::names::JINJA_RESERVED_LOCALS.contains(&full.as_str()) {
+            self.jinja_free(format!("_{full}"))
+        } else {
+            full
+        }
+    }
+
     /// Seed and derived `set`s in declaration order: each after the ones it reads, then by source location (F385).
     fn preamble(&mut self) {
         let ir = self.f.ir;
@@ -407,7 +420,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 loc,
                 s.name.clone(),
                 reads(&s.init),
-                format!("{{% set {}{} = {value} %}}", s.name, self.suffix()),
+                format!("{{% set {} = {value} %}}", self.local_var(&s.name)),
             ));
         }
         for (i, d) in ir.derived.iter().enumerate() {
@@ -514,7 +527,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     None => base,
                 })
             }
-            IdentKind::State => Some(format!("{name}{}", self.suffix())),
+            IdentKind::State => Some(self.local_var(name)),
             // An inlined child's loop variables carry the instance suffix in
             // the template, so a parent expression substituted for a prop
             // (`item.title`) is never captured by the child's own `item`.
@@ -525,9 +538,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                         f.index_used.set(true);
                     }
                 }
-                self.inline
-                    .is_some()
-                    .then(|| format!("{name}{}", self.suffix()))
+                let var = self.local_var(name);
+                (var != name).then_some(var)
             }
             IdentKind::Local => Some(if self.f.derived.contains_key(name) {
                 self.derived_var(name)
@@ -1924,12 +1936,12 @@ impl<'a, 'c> Printer<'a, 'c> {
                 sets.push_str(&format!("{{% set {var} = loop.index0 %}}"));
             }
             if let (Some(i), true) = (index, f.index_used.get()) {
-                sets.push_str(&format!("{{% set {i}{} = loop.index0 %}}", self.suffix()));
+                sets.push_str(&format!("{{% set {} = loop.index0 %}}", self.local_var(i)));
             }
         }
         self.out.push_str(&format!(
-            "{{% for {item}{} in {src} %}}{sets}{row}{empty}{{% endfor %}}",
-            self.suffix()
+            "{{% for {} in {src} %}}{sets}{row}{empty}{{% endfor %}}",
+            self.local_var(item)
         ));
     }
 

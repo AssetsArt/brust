@@ -37,3 +37,26 @@ export function installServerOnlyRuntime(): void {
     },
   })
 }
+
+let jsxDevInstalled = false
+/** F425: Bun picks the dev JSX transform (`jsxDEV` from `react/jsx-dev-runtime`) for modules the process imports directly
+ * when NODE_ENV is unset as Bun boots (a plain shell `brust start`), but React's production `react/jsx-dev-runtime` has no
+ * `jsxDEV`, and run.ts sets NODE_ENV=production for the workers afterwards. A module that builds a JSX element at import
+ * time (`export const el = <b/>`) then died with "jsxDEV_… is not a function". In production, `react/jsx-dev-runtime` is the
+ * production `jsx`/`jsxs` (resolved from the app, so it is the app's one React) with a `jsxDEV` over them; dev keeps React's own. */
+export function installProductionJsxDev(appDir: string): void {
+  if (jsxDevInstalled || process.env.NODE_ENV !== 'production') return
+  jsxDevInstalled = true
+  Bun.plugin({
+    name: 'brust-jsx-dev-production',
+    setup(b) {
+      b.module('react/jsx-dev-runtime', async () => {
+        const rt = await import(Bun.resolveSync('react/jsx-runtime', appDir))
+        return {
+          exports: { Fragment: rt.Fragment, jsx: rt.jsx, jsxs: rt.jsxs, jsxDEV: (type: unknown, props: unknown, key: unknown, isStatic: boolean) => (isStatic ? rt.jsxs : rt.jsx)(type, props, key) },
+          loader: 'object',
+        }
+      })
+    },
+  })
+}
