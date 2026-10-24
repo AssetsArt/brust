@@ -1844,7 +1844,7 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.out.push_str(&format!(
             "{{% for {} in {src} %}}{sets}{row}{empty}{{% endfor %}}",
-            self.local_var(&item)
+            self.local_var(item)
         ));
     }
 
