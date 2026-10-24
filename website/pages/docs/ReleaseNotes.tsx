@@ -17,6 +17,7 @@ const REFUSAL = '[brust] manifest: manifest version 2 unsupported (want 3): rebu
 export async function releaseNotesLoader(): Promise<ReleaseNotesData> {
   return {
     toc: [
+      { id: 'alpha-24', title: '2.0.0-alpha.24' },
       { id: 'alpha-23', title: '2.0.0-alpha.23' },
       { id: 'alpha-22', title: '2.0.0-alpha.22' },
       { id: 'alpha-21', title: '2.0.0-alpha.21' },
@@ -46,6 +47,54 @@ export default function ReleaseNotes({ blocks }: ReleaseNotesData) {
     <section style={{ display: 'contents' }}>
       <h1>Release notes</h1>
       <Lead>What changed in each published version of brust, newest first. Packages are published under <code>@brust/*</code> with the version shown.</Lead>
+
+      <h2 id="alpha-24">2.0.0-alpha.24 · 24 October 2026</h2>
+      {/* source: the pull requests merged after v2.0.0-alpha.23 (git log --merges --first-parent v2.0.0-alpha.23..origin/main): #371 (F404), #372 (F386), #373 (F415, F416), #374 (F424), #375 (F423), #376 (F425), #377 (F420, F421), #378 (F418, F419), #379 (F438, CI only; one sentence in the contributor entry) and #380 (F288 phase B PR 2); the merge list is re-checked against main before the tag. F418 to F425 were found by the new server-HTML comparison (#372) */}
+      <p>A patch of wrong output and crashes, most of them found by comparing the HTML that brust serves with React&rsquo;s own render of every battery row. A local named <code>loop</code> no longer stops the server from starting, a sibling module&rsquo;s JSX constant no longer answers 500, <code>string + number</code> follows JavaScript, and a controlled <code>&lt;select&gt;</code> or <code>&lt;textarea&gt;</code>, a lazily initialised state and a page&rsquo;s own context default now paint their value on the first load.</p>
+
+      <h3>Changes</h3>
+      <ul>
+        {/* source: PR #375 (F423; found by #372; the server did not boot); the names are from the PR description, Printer::local_var in crates/brust-compiler/src/lower/template.rs is where locals are named */}
+        <li>
+          <strong>A state or list variable named <code>loop</code>, <code>self</code>, <code>none</code>, <code>True</code> and similar no longer stops <code>brust start</code> for the whole app.</strong> A <code>useState</code>, list item or list index with such a name was written into the template as <code>{'{'}% set loop %{'}'}</code> or <code>{'{'}% for loop in … %{'}'}</code>, which the template engine refuses, so the server did not start at all. Such a name now gets another name in the template. The names covered are the engine&rsquo;s reserved words (<code>loop</code>, <code>self</code>, <code>none</code>, <code>None</code>, <code>True</code>, <code>False</code> and others) and every function brust&rsquo;s templates call. A variable named <code>not</code> also read wrongly and is fixed. Props are not affected: a prop with such a name was already refused with a message.
+        </li>
+        {/* source: PR #376 (F425; found by #372; pre-existing; the test harnesses set NODE_ENV=production, so no test caught it); installProductionJsxDev in packages/brust/src/build/server-only.ts */}
+        <li>
+          <strong>A sibling module&rsquo;s JSX constant no longer answers 500 under <code>brust start</code>.</strong> A page that imported <code>export const el = &lt;b /&gt;</code> from another module failed with <code>jsxDEV is not a function</code> when you ran <code>brust start</code> from a shell that has no <code>NODE_ENV</code>: Bun then compiles the JSX for development, and React&rsquo;s production runtime has no <code>jsxDEV</code>. Only JSX that runs when the module is imported was affected. In production mode the workers now map <code>jsxDEV</code> onto the app&rsquo;s own production JSX functions, so there is still one copy of React. <code>brust dev</code> keeps React&rsquo;s development runtime, and a static build or a Cloudflare bundle was never affected.
+        </li>
+        {/* source: PR #374 (F424; found by #372; pre-existing, HTTP 500); the new filter js_add is in crates/brust-jinja/src/lib.rs, the lowering in crates/brust-compiler/src/lower/server_expr.rs */}
+        <li>
+          <strong><code>string + number</code> in a template expression follows JavaScript and no longer answers 500.</strong> <code>tone={'{'}t + n{'}'}</code> in a list, with <code>t</code> a string and <code>n</code> an index, failed with &ldquo;tried to use + on string and number&rdquo;, because the template engine&rsquo;s <code>+</code> does not join a string and a number. A <code>+</code> whose two sides are not both known to be numbers now does what JavaScript does: it joins as text when either side is a string (<code>undefined + &apos;x&apos;</code> is <code>&apos;undefinedx&apos;</code>), and adds otherwise. Two numbers still add as before.
+        </li>
+        {/* source: PR #377 (F420, F421; found by #372); the limits are the new ledger rows F432 and F434 in the PR description; the filters selected_in and textarea_text are in crates/brust-jinja/src/lib.rs */}
+        <li>
+          <strong>A controlled <code>&lt;select&gt;</code> and <code>&lt;textarea&gt;</code> show their value on the first load.</strong> <code>&lt;select value=&quot;b&quot;&gt;</code> was written with a <code>value</code> attribute and no selected option, so the first option showed until the page loaded; <code>&lt;textarea value=&quot;hi&quot;&gt;</code> was written with a <code>value</code> attribute, which browsers ignore, so it was empty until the page loaded. They now match React: the option whose value equals the select&rsquo;s value (or its text, when it has no <code>value</code>) is <code>selected</code>, and the textarea&rsquo;s value is its text. It works for a string, a number, an array on a <code>multiple</code> select, and <code>defaultValue</code>, and for options written directly, in a <code>.map</code>, in an <code>&lt;optgroup&gt;</code> or in an inlined child component. An <code>&lt;option&gt;</code> that has no <code>value</code> and an element as a child is refused by name (<code>select-option</code>). Not covered yet: a select whose props arrive through a spread (the shadcn wrapper shape; F432), and a <code>multiple</code> select, whose picks the browser still clears when the page loads (F434).
+        </li>
+        {/* source: PR #378 (F418; found by #372); is_module_fn in crates/brust-compiler/src/lower/common.rs is the shared rule */}
+        <li>
+          <strong><code>useState(load)</code> with a module-level function paints its value.</strong> <code>const [n] = useState(load)</code>, where <code>load</code> is a function declared in the module or a <code>const</code> arrow or function expression, painted nothing on the server, because the server seeded the function itself and not its result. The server and the client now both call it. An <code>async</code> initialiser keeps its existing fallback to React.
+        </li>
+        {/* source: PR #378 (F419; found by #372); F431 and F437 are the follow-up ledger rows named in the PR description */}
+        <li>
+          <strong>A page&rsquo;s own <code>useContext</code> with no Provider paints the context&rsquo;s default.</strong> A page that read a context itself, with nothing providing it, painted nothing; the default given to <code>createContext</code> now shows. When that default is not a plain literal (an object, an array or an expression) and nothing provides the context, the component now falls back to a React island by name (<code>context-no-provider</code>) and does not paint an empty value. Still open: a page that is a React island under a layout&rsquo;s Provider paints the default and not the provided value (F437).
+        </li>
+        {/* source: PR #371 (F404; pre-existing: wrong output with no diagnostic); crates/brust-compiler/src/analyze/passes/state_children.rs. The only entry in this version that refuses something that compiled before, so it is a change and not a break: the component paints correctly as an island */}
+        <li>
+          <strong>A state whose initial value reads <code>children</code> now falls back to a React island by name.</strong> <code>const [c] = useState(children)</code> compiled as a native component and printed nothing where React prints the child. It is now refused as <code>state-from-children</code> with the component&rsquo;s file and line, and the component renders as an island, which paints correctly. This covers <code>props.children</code>, a destructured or renamed <code>children</code>, an expression over it, a lazy initialiser, an alias, the whole props object, rest props, <code>useReducer</code> and an inlined custom hook. A component that does not read <code>children</code> into state is unchanged.
+        </li>
+        {/* source: PR #373 (F415, F416; F288 phase B PR1; both pre-existing); packages/runtime-dom, the capture sink in the core */}
+        <li>
+          <strong>A conditional branch in the browser disposes its effects and refs when it closes.</strong> The effects and cleanups of an <code>x-if</code> branch (and of a replaced <code>x-for</code> row) were kept on the component, so a branch that you removed kept running: after 20 toggles, one change ran 21 text updates on detached nodes. A ref inside a removed branch also kept the detached element, where React sets it to <code>null</code>. Each branch now owns its effects and refs, and drops them before it leaves the page. The core runtime budget grows by the size of this one hook.
+        </li>
+        {/* source: PR #380 (F288 phase B PR 2); the order of attaching and detaching is from the PR description; the sentence on what stays React is from the lane's commit message */}
+        <li>
+          <strong>Radix <code>Presence</code> with an element child now compiles to native code.</strong> The checkbox and radio indicators are the case: <code>Presence</code> renders its element child while it is present, and nothing when it is not. brust now turns that into a conditional branch, and a callback ref inside a branch is attached once the branch is on the page and detached before it leaves, in React 19&rsquo;s order. A callback that changes between renders, a ref inside a list row and a component&rsquo;s <code>children</code> still render with React.
+        </li>
+        {/* source: PR #372 (F386; a test, not a change in output); scripts/battery/ssr-compare.ts, ssr-normalise.ts and ssr-allowlist.ts; PR #379 (F438) for the last sentence. For people who work on brust */}
+        <li>
+          <strong>For people who work on brust: CI now compares the HTML of every battery row with React.</strong> <code>bun scripts/battery/ssr-compare.ts --check</code> builds one app with a route for each row, starts it, and compares each row&rsquo;s served HTML with React&rsquo;s <code>renderToString</code> of the same source and props, after a normaliser whose rules are listed in its header. It fails on a difference, and on an allowlisted difference that is no longer there. It found the wrong outputs above (F418 to F425). CI also runs eight served test files that were on main but in no CI step, and a test (<code>scripts/ci-wiring.test.ts</code>) now fails when a file under <code>tests/server</code> is named neither in <code>ci.yml</code> nor in the <code>server-test</code> script.
+        </li>
+      </ul>
 
       <h2 id="alpha-23">2.0.0-alpha.23 · 24 October 2026</h2>
       {/* source: the pull requests merged after v2.0.0-alpha.22 (git log --merges --first-parent v2.0.0-alpha.22..origin/main), written from the lane branches before the cut: #364 (F406), #365 (F407), #366 (F408), F411 (lane aac-font-preload), F413 (lane aac-island-box) and F412 (lane aac-list-first-paint, tests only, so no entry); the merge list is re-checked against main before the tag. The issues were filed by the Assets Art team (B-6 to B-11) */}

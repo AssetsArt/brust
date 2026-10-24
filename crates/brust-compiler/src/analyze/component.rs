@@ -890,14 +890,23 @@ fn setter_writes_boolean(ir: &ComponentIR, set: &str, depth: u8) -> bool {
         })
 }
 
+/// The name prefix of a branch's callback-ref cell (F288 phase B), the cell holding the callback. Only a name: the
+/// printer binds `x-cref` from [`RefDecl::callback`], since a user's own `useRef` may be spelled `$cr…` too.
+pub const CALLBACK_REF: &str = "$cr";
+
 /// B1: `ref={x}` where `x` is a function value or a ref object the component computes (a `useCallback`, a derived
 /// value, a state setter) and not a `useRef` binding (a ref handed in as a prop cannot cross from a native caller, so
 /// it stays a `ref-shape` fallback). React calls a function ref with the node at mount (and
 /// its returned cleanup, or `null`, at unmount) and sets `.current` on an object ref. Each such attribute is
 /// desugared to a synthetic `useRef` bound on the element plus a mount effect that does `setRef(x, node)`, which is
-/// what `composeRefs` itself does. A ref on an element inside a list, a conditional branch or a component's children (which
-/// may mount later or never) stays a `ref-shape` fallback. The mount effects go FIRST in `ir.effects`: React attaches
-/// refs before it runs any effect of the owner.
+/// what `composeRefs` itself does. A ref on an element inside a list or a component's children (which may mount later
+/// or never) stays a `ref-shape` fallback. The mount effects go FIRST in `ir.effects`: React attaches refs before it runs
+/// any effect of the owner.
+/// F288 phase B (G5): inside a conditional branch the element mounts and unmounts with the branch, so instead of a
+/// mount effect the ref is a cell named [`CALLBACK_REF`]`N` holding the callback, printed `x-cref`: the runtime's `x-if`
+/// attaches it when the branch is inserted and detaches it when it is removed, as React does. Only a callback that keeps
+/// its identity for the life of the instance (A2 rule 4's stable leaves) qualifies: React re-attaches a callback whose
+/// identity changes on a render, which a native branch would not follow.
 pub(crate) fn callback_refs(ir: &mut ComponentIR) {
     let callable: Vec<(String, IdentKind)> = ir
         .derived
@@ -917,15 +926,61 @@ pub(crate) fn callback_refs(ir: &mut ComponentIR) {
     let mut taken: std::collections::HashSet<String> =
         ir.refs.iter().map(|r| r.name.clone()).collect();
     taken.extend(callable.iter().map(|(n, _)| n.clone()));
-    let mut made: Vec<(String, String, IdentKind, u32)> = Vec::new();
-    fn walk(
-        n: &mut Node,
-        refs: &std::collections::HashSet<String>,
-        callable: &[(String, IdentKind)],
-        taken: &mut std::collections::HashSet<String>,
-        made: &mut Vec<(String, String, IdentKind, u32)>,
-        in_list: bool,
-    ) {
+    let steady: Vec<String> = callable
+        .iter()
+        .filter(|(n, k)| {
+            crate::analyze::passes::ref_writes::stable(
+                ir,
+                &RawExpr {
+                    loc: 0,
+                    kind: RawKind::Ident {
+                        name: n.clone(),
+                        kind: k.clone(),
+                    },
+                },
+                0,
+            )
+        })
+        .map(|(n, _)| n.clone())
+        .collect();
+    struct Cx<'a> {
+        refs: std::collections::HashSet<String>,
+        callable: &'a [(String, IdentKind)],
+        steady: &'a [String],
+        taken: std::collections::HashSet<String>,
+        made: Vec<(String, String, IdentKind, u32)>,
+        /// (cell, callback, kind, loc) of a ref in a branch
+        branch: Vec<(String, String, IdentKind, u32)>,
+    }
+    impl Cx<'_> {
+        /// The cell a `ref={name}` becomes here, `None` when it stays as written.
+        fn cell(&mut self, name: &str, loc: u32, in_list: bool, in_branch: bool) -> Option<String> {
+            if in_list || self.refs.contains(name) {
+                return None;
+            }
+            let (_, kind) = self.callable.iter().find(|(c, _)| c == name)?;
+            if in_branch && !self.steady.iter().any(|s| s == name) {
+                return None;
+            }
+            let base = if in_branch { CALLBACK_REF } else { "_rf" };
+            let mut k = self.made.len() + self.branch.len() + 1;
+            let rf = loop {
+                let rf = format!("{base}{k}");
+                if self.taken.insert(rf.clone()) {
+                    break rf;
+                }
+                k += 1;
+            };
+            let entry = (rf.clone(), name.to_string(), kind.clone(), loc);
+            if in_branch {
+                self.branch.push(entry)
+            } else {
+                self.made.push(entry)
+            }
+            Some(rf)
+        }
+    }
+    fn walk(n: &mut Node, cx: &mut Cx, in_list: bool, in_branch: bool) {
         match n {
             Node::Element {
                 loc,
@@ -935,35 +990,21 @@ pub(crate) fn callback_refs(ir: &mut ComponentIR) {
             } => {
                 for a in attrs.iter_mut() {
                     let Attr::Ref { name } = a else { continue };
-                    if in_list || refs.contains(name) {
-                        continue;
+                    if let Some(rf) = cx.cell(name, *loc, in_list, in_branch) {
+                        *name = rf;
                     }
-                    let Some((_, kind)) = callable.iter().find(|(c, _)| c == name) else {
-                        continue;
-                    };
-                    let mut k = made.len() + 1;
-                    let rf = loop {
-                        let rf = format!("_rf{k}");
-                        if taken.insert(rf.clone()) {
-                            break rf;
-                        }
-                        k += 1;
-                    };
-                    made.push((rf.clone(), name.clone(), kind.clone(), *loc));
-                    *name = rf;
                 }
                 children
                     .iter_mut()
-                    .for_each(|c| walk(c, refs, callable, taken, made, in_list));
+                    .for_each(|c| walk(c, cx, in_list, in_branch));
             }
-            // A branch or a component's children may mount later or not at all; the mount effect cannot follow that.
+            // A branch mounts later or not at all: its refs follow it (phase B, `x-cref`).
             Node::If { then, else_, .. } => then
                 .iter_mut()
                 .chain(else_.iter_mut())
-                .for_each(|c| walk(c, refs, callable, taken, made, true)),
-            Node::For { body, .. } => body
-                .iter_mut()
-                .for_each(|c| walk(c, refs, callable, taken, made, true)),
+                .for_each(|c| walk(c, cx, in_list, true)),
+            // A list row or a component's children may mount later or not at all; nothing follows that.
+            Node::For { body, .. } => body.iter_mut().for_each(|c| walk(c, cx, true, in_branch)),
             Node::Component {
                 loc,
                 props,
@@ -972,44 +1013,44 @@ pub(crate) fn callback_refs(ir: &mut ComponentIR) {
             } => {
                 // F267: `ref={cb}` on a component: the same mount effect, the ref cell is what the call site binds on
                 // the child's element (the children pass decides whether the child can take it).
-                if !in_list
-                    && let Some((_, Expr::Raw(r))) = props.iter_mut().find(|(k, _)| k == "ref")
+                if let Some((_, Expr::Raw(r))) = props.iter_mut().find(|(k, _)| k == "ref")
                     && let RawKind::Ident { name, .. } = &mut r.kind
-                    && !refs.contains(name)
-                    && let Some((_, kind)) = callable.iter().find(|(c, _)| c == name)
+                    && let Some(rf) = cx.cell(name, *loc, in_list, in_branch)
                 {
-                    let mut k = made.len() + 1;
-                    let rf = loop {
-                        let rf = format!("_rf{k}");
-                        if taken.insert(rf.clone()) {
-                            break rf;
-                        }
-                        k += 1;
-                    };
-                    made.push((rf.clone(), name.clone(), kind.clone(), *loc));
                     *name = rf;
                 }
                 children
                     .iter_mut()
-                    .for_each(|c| walk(c, refs, callable, taken, made, true))
+                    .for_each(|c| walk(c, cx, true, in_branch))
             }
             Node::Fragment(children) => children
                 .iter_mut()
-                .for_each(|c| walk(c, refs, callable, taken, made, in_list)),
+                .for_each(|c| walk(c, cx, in_list, in_branch)),
             Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
         }
     }
-    let refs: std::collections::HashSet<String> = ir.refs.iter().map(|r| r.name.clone()).collect();
+    let mut cx = Cx {
+        refs: ir.refs.iter().map(|r| r.name.clone()).collect(),
+        callable: &callable,
+        steady: &steady,
+        taken,
+        made: Vec::new(),
+        branch: Vec::new(),
+    };
     let mut template = std::mem::replace(&mut ir.template, Node::Fragment(vec![]));
-    walk(
-        &mut template,
-        &refs,
-        &callable,
-        &mut taken,
-        &mut made,
-        false,
-    );
+    walk(&mut template, &mut cx, false, false);
     ir.template = template;
+    let (made, branch) = (cx.made, cx.branch);
+    for (rf, x, kind, loc) in branch {
+        ir.refs.push(RefDecl {
+            name: rf,
+            init: Expr::Raw(RawExpr {
+                loc,
+                kind: RawKind::Ident { name: x, kind },
+            }),
+            callback: true,
+        });
+    }
     for (at, (rf, x, kind, loc)) in made.into_iter().enumerate() {
         // Locals of the effect that neither shadow `x` nor the ref.
         let local = |base: &str| {
@@ -1034,6 +1075,7 @@ pub(crate) fn callback_refs(ir: &mut ComponentIR) {
                 loc,
                 kind: RawKind::Lit(Literal::Null),
             }),
+            callback: false,
         });
         ir.effects.insert(
             at,

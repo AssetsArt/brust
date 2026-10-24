@@ -263,6 +263,25 @@ pub fn contexts(
             && f == crate::analyze::hooks::WHOLE_FIELD
             && w.ctx_defaults.iter().any(|(x, _)| x == c)
     };
+    // F419: the page's own read of a scalar context (`useContext(Ctx)` in the page itself) is the default too.
+    if ctx.is_root {
+        for u in &ir.ctx_uses {
+            let Some((_, d)) = ir.ctx_defaults.iter().find(|(c, _)| c == &u.context) else {
+                continue;
+            };
+            let name = crate::ir::ctx_prop(&u.context, crate::analyze::hooks::WHOLE_FIELD);
+            if let Some(p) = ir
+                .props
+                .iter_mut()
+                .find(|p| p.name == name && p.default.is_none())
+            {
+                p.default = Some(RawExpr {
+                    loc: 0,
+                    kind: RawKind::Lit(d.clone()),
+                });
+            }
+        }
+    }
     for (c, f) in &bubbled {
         let name = crate::ir::ctx_prop(c, f);
         if !ir.props.iter().any(|p| p.name == name) {
@@ -294,6 +313,24 @@ pub fn contexts(
         if bubbled.iter().any(|(x, _)| x == c) && !ir.ctx_defaults.iter().any(|(x, _)| x == c) {
             ir.ctx_defaults.push((c.clone(), d.clone()));
         }
+    }
+    // F419 (ruling 2): the page's own read of a context with no scalar default (an object default, whose per-field defaults
+    // are not modelled) has no Provider above it either; paint nothing wrong: name it and fall back.
+    let own_unanswered = || {
+        ir.ctx_uses.iter().find(|u| {
+            !ir.ctx_defaults.iter().any(|(c, _)| c == &u.context)
+                && !bubbled.iter().any(|(c, _)| c == &u.context)
+        })
+    };
+    if ctx.is_root
+        && let Some(u) = own_unanswered()
+    {
+        diags.push(Diagnostic::fallback(
+            "context-no-provider",
+            format!("`{}` reads a context that no Provider above it provides, and its default is not a plain value", u.context),
+            0,
+            "render it inside the Provider component, or keep this component in React",
+        ));
     }
     if let Some((c, _)) = bubbled.iter().find(|(c, f)| !defaulted(c, f))
         && ctx.is_root
@@ -1055,6 +1092,11 @@ fn template_has_for(n: &Node) -> bool {
 /// The `source` of a `Component` node that names a specialised clone (its `imported` is the module-cache key).
 const SPEC_SOURCE: &str = "\u{0}spec";
 
+/// F402: the `source` of a `Primitive.<tag>` component of the Radix factory that `rebase_sources` moved into a clone of
+/// another package scope. The clone cannot name the factory's package, so the node carries the module that declares the
+/// factory (the writer's scope resolved it) in `imported`, and the tag stays in `member`.
+const PRIMITIVE_SOURCE: &str = "\u{0}primitive";
+
 /// A stable 32-bit mix of the call site (module and location): the suffix of a clone's id. Ids are per call site
 /// (R34.124); equal chunks share a factory module, not an id.
 /// F238: the call site a clone's id and module-cache key name (`site`: the module and the enclosing clone's id) with a
@@ -1126,13 +1168,23 @@ fn rebase_sources(
                         if crate::analyze::modules::package_scope(from)
                             != crate::analyze::modules::package_scope(to)
                         {
+                            // F402: `Primitive.<tag>` is the host element wherever it is written: resolved in the scope
+                            // of the module that wrote it (the clone's package cannot see the factory's package), it is
+                            // named from the clone by the module that declares the factory.
+                            if let Some(decl) = primitive_in_scope(from, s, imported, member, opts)
+                            {
+                                *source = Some(PRIMITIVE_SOURCE.to_string());
+                                *imported = Some(decl);
+                                rebase_sources(children, from, to, opts, modules)?;
+                                continue;
+                            }
                             // W1d (progress): the export is a module of the build's package sources: name that file
                             // from the clone's module instead, when it compiles without React. F306 (Radix's
                             // `Switch.Thumb`, declared beside `Switch.Root` in the clone's own module) is the case
                             // where that file is the clone's module itself.
                             let err = || {
                                 format!(
-                                    "<{name}> is imported from a package of another scope than the component it is given to"
+                                    "<{name}> is imported from a package of another scope than the component it is given to (written in {from})"
                                 )
                             };
                             let (Some(imp), Ok(entry)) = (
@@ -1175,6 +1227,36 @@ fn rebase_sources(
         }
     }
     Ok(())
+}
+
+/// F402: the module that declares the Radix `Primitive` factory, when the component `<imported>.<tag>` that the module at
+/// `from` imports from the bare specifier `spec` is one of its tags (R34.65), resolved in `from`'s own package scope.
+fn primitive_in_scope(
+    from: &str,
+    spec: &str,
+    imported: &Option<String>,
+    member: &[String],
+    opts: &crate::analyze::component::AnalyzeOptions,
+) -> Option<String> {
+    let ([tag], Some(imported)) = (member, imported.as_deref()) else {
+        return None;
+    };
+    if imported == "*" {
+        return None;
+    }
+    let entry = crate::analyze::modules::resolve_package(from, spec, opts).ok()?;
+    let there = if imported == "default" {
+        Export::Default
+    } else {
+        Export::Named(imported.to_string())
+    };
+    let (decl, Export::Named(n)) = declared_in(&entry, &there, opts) else {
+        return None;
+    };
+    crate::analyze::primitive::primitive_nodes(&decl, &n, opts)?
+        .iter()
+        .any(|t| t == tag)
+        .then_some(decl)
 }
 
 /// The relative specifier that reaches the project-relative file `target` from the module at `from`.
@@ -4437,6 +4519,12 @@ impl Walker<'_, '_> {
             let path = ir.source.clone();
             let id = ir.id.clone();
             return self.finish(name, Some(id), Some(path), Lookup::Compiled(ir), loc);
+        }
+        // F402: a `Primitive.<tag>` the rebase moved into a clone of another package scope.
+        if source == Some(PRIMITIVE_SOURCE)
+            && let (Some(decl), [tag]) = (imported, member)
+        {
+            return self.primitive_child(name, decl, tag, loc);
         }
         let Some(source) = source else {
             return self.local_child(name, loc);

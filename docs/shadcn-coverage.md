@@ -136,7 +136,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | card | measured | static | 0 | 9 (0) | 0 | 0 | — | built |
 | carousel | measured | static | 1 | 9 (5) | 97 | 1 | context-state, control-flow, event-capture, external-component, hook-unsupported, jsx-const-child, ref-shape, spread-handler | built |
 | chart | measured | static | 1 | 10 (8) | 240 | 1 | control-flow, external-component, hook-shape, jsx-const-child, list-shape, use-id-in-render | built |
-| checkbox | measured | static | 1 | 12 (2) | 92 | 1 | children-rest, external-component | built |
+| checkbox | measured | static | 1 | 14 (1) | 92 | 1 | children-rest, external-component | built |
 | collapsible | measured | react | 1 | 9 (5) | 90 | 1 | context-island, external-component, spread-props | built |
 | combobox | measured | react | 1 | 22 (16) | 158 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, key-outside-list, nested-instance, slot-child-component, slot-owner, spread-props | built |
 | command | measured | static | 1 | 16 (14) | 105 | 1 | external-component, island-prop, spread-props | built |
@@ -175,7 +175,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | slider | measured | static | 1 | 7 (4) | 93 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
 | sonner | measured | native | 1 | 4 (2) | 88 | 1 | external-component, hook-unsupported, island-prop, jsx-expression, spread-props | built |
 | spinner | measured | static | 0 | 2 (0) | 0 | 1 | external-component, spread-props | built |
-| switch | measured | static | 0 | 13 (0) | 10 | 0 | — | built |
+| switch | measured | static | 0 | 13 (0) | 11 | 0 | — | built |
 | table | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
 | tabs | measured | static | 1 | 9 (8) | 95 | 1 | external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |

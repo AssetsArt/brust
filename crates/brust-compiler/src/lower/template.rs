@@ -43,8 +43,8 @@ pub enum PropBinding {
     /// `x-bind-*` member) in the parent's scope, bound where a spread lands it on an element.
     Live(String),
     /// A ref the parent bound itself on an inlined `forwardRef` child (F267): the name of the parent's ref cell, bound
-    /// as `x-ref` where the child's own `ref={forwardedRef}` is.
-    Ref(String),
+    /// as `x-ref` where the child's own `ref={forwardedRef}` is (`x-cref` when the cell is a branch's callback ref).
+    Ref(String, bool),
 }
 
 /// One piece of a call site's props, in source order (shadcn S1.2): a named prop, or a spread
@@ -140,9 +140,9 @@ impl Inline {
     }
 
     /// The parent's ref cell bound on this instance (F267).
-    pub fn ref_binding(&self) -> Option<&str> {
+    pub fn ref_binding(&self) -> Option<(&str, bool)> {
         self.segs.iter().rev().find_map(|s| match s {
-            Seg::Named(_, PropBinding::Ref(n)) => Some(n.as_str()),
+            Seg::Named(_, PropBinding::Ref(n, cb)) => Some((n.as_str(), *cb)),
             _ => None,
         })
     }
@@ -301,7 +301,12 @@ pub struct Printer<'a, 'c> {
     inner_html: Option<String>,
     /// F267: the caller's ref cell this element takes (`Attr::ForwardRef`), printed after the attributes: `x-ref` on an
     /// element the caller binds, `x-pref` on a nested host (its own instance binds it; the caller's binds `x-pref`).
-    fwd_ref: Option<String>,
+    fwd_ref: Option<(String, bool)>,
+    /// F420: printing inside a `<select>` whose value is bound to `__select`, so an `<option>` paints `selected`.
+    in_select: bool,
+    /// F420 / F421: the element being opened is a `<select>` / `<textarea>` whose `value` becomes `selected` options /
+    /// text content, so its own `value` attribute is not printed.
+    skip_value_print: bool,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -335,6 +340,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             raw_text: false,
             inner_html: None,
             fwd_ref: None,
+            in_select: false,
+            skip_value_print: false,
         })
     }
 
@@ -902,6 +909,13 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         let model = model_pair(attrs, &self.f);
         let mut spread_body = None;
+        // F420 / F421: react-dom paints a controlled select's value as `selected` options and a textarea's as its text.
+        let control = if as_child.is_none() && !attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
+            self.control_value(tag, attrs)
+        } else {
+            None
+        };
+        self.skip_value_print = control.is_some();
         if as_child.is_some() || attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
             let extra: &[(String, String)] = as_child.as_ref().map_or(&[], |a| &a.attrs);
             spread_body =
@@ -911,16 +925,23 @@ impl<'a, 'c> Printer<'a, 'c> {
                 self.attr(a, sa, tag, attrs, model.as_deref(), &mut open);
             }
         }
+        self.skip_value_print = false;
         if let Some(m) = &model {
             open.push_str(&format!(" x-model=\"{m}\""));
         }
-        if let Some(n) = self.fwd_ref.take() {
+        if tag == "option"
+            && self.in_select
+            && !self.blank
+            && let Some(v) = self.option_text(attrs, children)
+        {
+            open.push_str(&format!(
+                "{{% if ({v}) | selected_in(__select) %}} selected=\"\"{{% endif %}}"
+            ));
+        }
+        if let Some((n, callback)) = self.fwd_ref.take() {
             // this element is an instance host (its `x-data` is inserted below) when it is the host root
             let host = *host && root && self.native;
-            open.push_str(&format!(
-                " {}=\"{n}\"",
-                if host { "x-pref" } else { "x-ref" }
-            ));
+            open.push_str(&format!(" {}=\"{n}\"", ref_directive(callback, host)));
         }
         // A lone reactive slot child puts x-text on this element (Review Focus 1).
         let lone = matches!(children.as_slice(), [Node::Slot(_)]);
@@ -929,7 +950,11 @@ impl<'a, 'c> Printer<'a, 'c> {
         let mut text_directive = None;
         let inner_html = self.inner_html.take();
         let raw_before = self.raw_text;
+        let select_before = self.in_select;
         self.raw_text = tag.eq_ignore_ascii_case("script") || tag.eq_ignore_ascii_case("style");
+        if tag == "select" && control.is_some() {
+            self.in_select = true;
+        }
         if lone {
             if let (Node::Slot(e), Some(se)) = (&children[0], schildren.first()) {
                 text_directive = self.slot(e, Some(se), true);
@@ -938,6 +963,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             self.nodes(children, schildren);
         }
         self.raw_text = raw_before;
+        self.in_select = select_before;
         std::mem::swap(&mut body, &mut self.out);
         if let Some(a) = &as_child {
             body = a.body.clone();
@@ -949,6 +975,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             // R34.15: `children` in a spread is the element's children when JSX gives none.
             body = b;
         }
+        if tag == "textarea"
+            && let Some(v) = &control
+        {
+            body = format!("{{{{ ({v}) | textarea_text | e }}}}");
+        }
         if let Some(d) = text_directive {
             open.push_str(&format!(" x-text=\"{d}\""));
         }
@@ -957,6 +988,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             let host_attrs = self.host_attrs();
             open.insert_str(tag.len() + 1, &host_attrs);
         }
+        let scoped = tag == "select" && control.is_some();
+        if scoped && let Some(v) = &control {
+            // The options read it as `__select`; `with` keeps it from reaching a later select.
+            self.out.push_str(&format!("{{% with __select = ({v}) %}}"));
+        }
         self.out.push_str(&open);
         self.out.push('>');
         if VOID.contains(&tag.as_str()) {
@@ -964,6 +1000,60 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.out.push_str(&body);
         self.out.push_str(&format!("</{tag}>"));
+        if scoped {
+            self.out.push_str("{% endwith %}");
+        }
+    }
+
+    /// F420 / F421: the jinja value of a `<select>` / `<textarea>`'s `value` (or `defaultValue`), when react-dom prints
+    /// it as `selected` options / text content instead of an attribute.
+    fn control_value(&self, tag: &str, attrs: &[Attr]) -> Option<String> {
+        if !matches!(tag, "select" | "textarea") {
+            return None;
+        }
+        let find = |want: &str| {
+            attrs.iter().find_map(|a| match a {
+                Attr::Static { name, value } if name == want => Some(jinja_string(value)),
+                Attr::Dynamic { name, value } if name == want => Some(self.value(value)),
+                _ => None,
+            })
+        };
+        find("value").or_else(|| find("defaultValue"))
+    }
+
+    /// F420: the value an `<option>` is matched by: its `value` attribute, else its text (react-dom flattens the
+    /// children to a string). A child that is not text or a slot has no known text.
+    fn option_text(&mut self, attrs: &[Attr], children: &[Node]) -> Option<String> {
+        for a in attrs {
+            match a {
+                Attr::Static { name, value } if name == "value" => {
+                    return Some(jinja_string(value));
+                }
+                Attr::Dynamic { name, value } if name == "value" => return Some(self.value(value)),
+                _ => {}
+            }
+        }
+        let mut parts = Vec::new();
+        for c in children {
+            match c {
+                Node::Text(t) => parts.push(jinja_string(t)),
+                Node::Slot(e) => parts.push(format!("({} | js_str)", self.value(e))),
+                _ => {
+                    self.diagnostics.push(Diagnostic::error(
+                        "select-option",
+                        "an <option> inside a controlled <select> has neither a `value` nor plain text, so the server cannot tell which option the select's value picks",
+                        0,
+                        "give the <option> a value",
+                    ));
+                    return None;
+                }
+            }
+        }
+        Some(if parts.is_empty() {
+            jinja_string("")
+        } else {
+            format!("({})", parts.join(" ~ "))
+        })
     }
 
     fn host_attrs(&mut self) -> String {
@@ -1128,7 +1218,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             let v = crate::lower::server_expr::with_ordered_objects(|| self.value(value));
             open.push_str(&format!("{{{{ ({v}) | style_attr }}}}"));
         } else {
-            open.push_str(&dynamic_attr(&html, &v, tag));
+            if !(self.skip_value_print && html == "value") {
+                open.push_str(&dynamic_attr(&html, &v, tag));
+            }
         }
         if model.is_some() && (html == "value" || html == "checked") {
             return;
@@ -1165,7 +1257,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                     self.refuse(&html, tag);
                     return;
                 }
-                if value.is_empty() && empty_url_dropped(&html, tag) {
+                if self.skip_value_print && html == "value" {
+                    // F420 / F421: printed as `selected` options / text content.
+                } else if value.is_empty() && empty_url_dropped(&html, tag) {
                     // `<img src="">`: React writes nothing.
                 } else if value.is_empty() && is_boolean_attr(&html) {
                     open.push_str(&format!(" {html}"));
@@ -1196,16 +1290,17 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             Attr::Ref { name } => {
                 if self.native {
-                    open.push_str(&format!(" x-ref=\"{name}\""));
+                    let callback = self.f.ir.refs.iter().any(|r| &r.name == name && r.callback);
+                    open.push_str(&format!(" {}=\"{name}\"", ref_directive(callback, false)));
                 }
             }
             // F267: the ref the caller bound on this inlined instance lands here, in the caller's scope.
             // (A static child is printed with its own printer: the binding itself says the caller is native.)
             Attr::ForwardRef => {
                 if let Some(i) = &self.inline
-                    && let Some(n) = i.ref_binding()
+                    && let Some((n, callback)) = i.ref_binding()
                 {
-                    self.fwd_ref = Some(n.to_string());
+                    self.fwd_ref = Some((n.to_string(), callback));
                 }
             }
             Attr::Spread(_) => {}
@@ -1381,7 +1476,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
-                Some(PropBinding::Handler(_) | PropBinding::Live(_) | PropBinding::Ref(_))
+                Some(PropBinding::Handler(_) | PropBinding::Live(_) | PropBinding::Ref(..))
                 | None => None,
             }
         };
@@ -1978,7 +2073,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                     ..
                 }) = v
             {
-                segs.push(Seg::Named(pname.clone(), PropBinding::Ref(cell.clone())));
+                let callback = ir.refs.iter().any(|r| &r.name == cell && r.callback);
+                segs.push(Seg::Named(
+                    pname.clone(),
+                    PropBinding::Ref(cell.clone(), callback),
+                ));
                 continue;
             }
             let forwarded = ir.handlers.iter().find(|h| {
@@ -2335,6 +2434,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             return;
         };
         p.blank = self.blank;
+        p.in_select = self.in_select;
         // The inlined component numbers its fed children with this printer's counters (F164 re-base).
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
@@ -2587,6 +2687,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             return;
         };
         p.blank = self.blank;
+        p.in_select = self.in_select;
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
         p.native = false;
@@ -3033,5 +3134,18 @@ fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
                 )
             }
         }
+    }
+}
+
+/// The directive that binds a ref cell on an element: `x-cref` for a branch's callback ref (`RefDecl::callback`, F288
+/// phase B: the runtime's `x-if` attaches it with the branch), `x-pref` for the caller's ref on a nested host, `x-ref`
+/// otherwise.
+fn ref_directive(callback: bool, host: bool) -> &'static str {
+    if callback {
+        "x-cref"
+    } else if host {
+        "x-pref"
+    } else {
+        "x-ref"
     }
 }

@@ -1164,6 +1164,7 @@ fn simple_hook(
                 out.refs.push(RefDecl {
                     name,
                     init: Expr::Raw(init),
+                    callback: false,
                 });
             }
         }
