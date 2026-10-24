@@ -257,6 +257,11 @@ export function compileApp(opts: {
   return { compiled, routeComponent }
 }
 
+/** Script modules only (`.ts/.tsx/.js/.jsx/.mjs/.cjs/.mts/.cts`): a stylesheet, JSON or asset import never reads a context. */
+const SCRIPT = /\.[cm]?[jt]sx?$/
+/** A specifier that names a non-script file by its extension (`./a.css`, `./d.json`, `./logo.svg`). */
+const nonScriptSpec = (spec: string) => /\.[A-Za-z0-9]+$/.test(spec.slice(spec.lastIndexOf('/') + 1)) && !SCRIPT.test(spec)
+
 let importScanner: InstanceType<typeof Bun.Transpiler> | undefined
 /** The module specifiers `file` imports or re-exports (`undefined`: unreadable or unparsable). */
 function moduleSpecs(file: string): string[] | undefined {
@@ -298,11 +303,13 @@ function importsProvidedModule(
     const specs = moduleSpecs(from)
     if (specs === undefined) return { hit: unfollowable, via: from }
     for (const spec of specs) {
+      if (nonScriptSpec(spec)) continue
       const target = resolve(spec, from)
       if (target === undefined) {
         if (spec.startsWith('.')) return { hit: unfollowable, via: from }
         continue
       }
+      if (!SCRIPT.test(target)) continue
       const hit = provided.find((p) => p.file === target)
       if (hit) return { hit, via: from }
       if (target.includes(`${sep}node_modules${sep}`) || visited.has(target)) continue
@@ -313,11 +320,13 @@ function importsProvidedModule(
     return undefined
   }
   for (const spec of moduleSpecs(file) ?? []) {
+    if (nonScriptSpec(spec)) continue
     const target = resolve(spec, file)
     if (target === undefined) {
       if (spec.startsWith('.')) return { spec, hit: unfollowable }
       continue
     }
+    if (!SCRIPT.test(target)) continue
     const direct = provided.find((p) => p.file === target)
     if (direct) return { spec, hit: direct }
     if (target.includes(`${sep}node_modules${sep}`)) continue

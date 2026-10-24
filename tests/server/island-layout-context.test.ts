@@ -22,7 +22,7 @@ afterAll(async () => {
     p.kill('SIGINT')
     if ((await Promise.race([p.exited, Bun.sleep(5000).then(() => undefined)])) === undefined) { p.kill('SIGKILL'); await p.exited }
   }
-  for (const v of ['layout', 'nested', 'child', 'alias', 'hook', 'barrel', 'barrel2', 'helper', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
+  for (const v of ['layout', 'nested', 'child', 'alias', 'hook', 'barrel', 'barrel2', 'helper', 'assets', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
 })
 
 test('a context declared in the layout is refused for the island page, by name', () => {
@@ -95,10 +95,8 @@ test('a context declared in a shared ctx.ts fails closed (the member tag is not 
   expect(b.stderr.toString()).toContain('outlet-in-react')
 })
 
-test('control: a context no layout provides still paints its default, like React', async () => {
-  const b = build('none')
-  expect(b.exitCode).toBe(0)
-  const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: join(root, 'none'), env: shellEnv(), stdout: 'pipe', stderr: 'pipe' })
+async function serve(v: string): Promise<string> {
+  const proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: join(root, v), env: shellEnv(), stdout: 'pipe', stderr: 'pipe' })
   procs.push(proc)
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
   const dec = new TextDecoder()
@@ -109,6 +107,18 @@ test('control: a context no layout provides still paints its default, like React
     out += dec.decode(value, { stream: true })
   }
   void (async () => { for (;;) { const { done } = await reader.read(); if (done) return } })()
-  const html = await (await fetch(`http://${/listening on (\S+)/.exec(out)![1]}/`)).text()
-  expect(html).toContain('<p data-testid="v">dflt</p>')
+  return await (await fetch(`http://${/listening on (\S+)/.exec(out)![1]}/`)).text()
+}
+
+test('control: a context no layout provides still paints its default, like React', async () => {
+  expect(build('none').exitCode).toBe(0)
+  expect(await serve('none')).toContain('<p data-testid="v">dflt</p>')
+}, 60_000)
+
+test('an island page importing a stylesheet and JSON (script specifiers only are followed) builds and serves what React renders', async () => {
+  const b = build('assets')
+  expect(b.exitCode).toBe(0)
+  // React: <p class="v" data-testid="v">from json</p> (pending is false on the first render).
+  const html = await serve('assets')
+  expect(html).toContain('<p class="v" data-testid="v">from json</p>')
 }, 60_000)
