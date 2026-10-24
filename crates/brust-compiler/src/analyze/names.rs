@@ -1566,6 +1566,8 @@ pub const JINJA_RESERVED_LOCALS: &[&str] = &[
     "debug",
     // the global functions brust-jinja registers
     "spread_attrs",
+    "spread_attrs_control",
+    "spread_control_value",
     "spread_children",
     "spread_get",
     "spread_merge",
