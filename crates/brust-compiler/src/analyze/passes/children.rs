@@ -14,7 +14,7 @@ use crate::ir::{
     InstanceRecord, JobDecl, JobKind, JsCtx, Node, PolyTag, RawExpr, RawKind, ServerExpr, Tier,
     UnOp, component_id, named_component_id,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::rc::Rc;
 
 /// The walker over `ir`'s template (shared by the context frames pass and the children pass).
@@ -103,6 +103,7 @@ fn walker<'s, 'c>(ir: &ComponentIR, st: &'s mut PassState, ctx: &'c PassCtx<'c>)
         guard_depth: 0,
         slot_depth: 0,
         spec_salt: (ir.rest_clone_of.is_some() || ir.specialised).then(|| ir.id.clone()),
+        rest_childless: ir.rest_childless,
         no_text: false,
         mount_once: Vec::new(),
         frozen: BTreeSet::new(),
@@ -209,6 +210,10 @@ struct Frame {
     loc: u32,
     /// W1d PR 2: the Provider named a `scope`.
     scoped: bool,
+    /// F372: a SHADOW frame, pushed over a native Provider's content for a context a Provider strictly inside that
+    /// Provider's own subtree provides. A consumer whose nearest frame is a shadow is neither filled nor bubbled here: the
+    /// clone's own frames walk fills it by position (React: the inner Provider is nearer than anything at the call site).
+    shadow: bool,
 }
 
 /// S2 context lowering, BEFORE placement (R34.102-R34.104): a Provider component's value fields become hidden props
@@ -563,6 +568,8 @@ struct Walker<'s, 'c> {
     /// two routes' Provider clones naming the same host clone inside them): its id, mixed into the ids and cache keys of
     /// the clones made inside it.
     spec_salt: Option<String>,
+    /// F375: `ComponentIR::rest_childless` of the component walked.
+    rest_childless: bool,
     /// F295: what makes an instance of this component unable to mount again (`ComponentIR::mount_once`).
     mount_once: Vec<String>,
     /// F319: props read where a change would not be followed (`ComponentIR::frozen_props`).
@@ -3192,14 +3199,22 @@ impl Walker<'_, '_> {
                 // F298: children that travel in the rest the component spreads under a Provider of its own reach that
                 // Provider only inside the component: a clone of it for this call site holds them where the rest is
                 // spread. Tried only for a context consumer among the children; anything else keeps today's path.
+                // F375: also when the rest lands on a native Provider, whatever the children are (text, plain elements: the
+                // Provider would be specialised with no content, F374), and with NO children when the call site provably
+                // passes none (no spread, no `children` prop, no carried rest).
+                let childless = children.is_empty()
+                    && !props.iter().any(|(k, _)| {
+                        k == crate::ir::SPREAD_KEY || k == REST_INPUT || k == "children"
+                    });
                 if let Some(from) = child.path.clone()
                     && cir.provides.is_empty()
                     && !cir.specialised
                     && (cir.props_rest.is_some() || spreads_whole_props(&cir.template))
-                    && !children.is_empty()
-                    && self.reads_context_in(children)
+                    && (!children.is_empty() || childless)
+                    && ((!children.is_empty() && self.reads_context_in(children))
+                        || self.rests_into_native_provider(&cir))
                 {
-                    match self.specialise_forwarder(&cir, &from, *loc, children, props) {
+                    match self.specialise_forwarder(&cir, &from, *loc, children, props, childless) {
                         Ok((clone, (id, key, inputs))) => {
                             props.extend(inputs);
                             *name = id;
@@ -3377,6 +3392,15 @@ impl Walker<'_, '_> {
                         if props.iter().any(|(k, _)| k == &hidden) {
                             continue;
                         }
+                        // F372: decided inside the clone, by position (see `Frame::shadow`).
+                        if frames
+                            .iter()
+                            .rev()
+                            .find(|fr| fr.context == u.context)
+                            .is_some_and(|fr| fr.shadow)
+                        {
+                            continue;
+                        }
                         let whole = f == crate::analyze::hooks::WHOLE_FIELD;
                         if let Some(fr) = frames.iter().rev().find(|fr| fr.context == u.context)
                             && whole
@@ -3481,6 +3505,7 @@ impl Walker<'_, '_> {
                             owner: Some(o),
                             loc: *loc,
                             scoped: pd.scoped,
+                            shadow: false,
                         });
                         pushed += 1;
                         continue;
@@ -3508,6 +3533,7 @@ impl Walker<'_, '_> {
                                 owner: None,
                                 loc: *loc,
                                 scoped: pd.scoped,
+                                shadow: false,
                             });
                             pushed += 1;
                         }
@@ -3523,6 +3549,27 @@ impl Walker<'_, '_> {
                 }
                 if pushed > 0 {
                     self.provider_locs.insert(*loc);
+                }
+                // F372: over the content (and a render prop's body, B7), a shadow per context a Provider inside the
+                // Provider's own subtree provides, above its own frames (the inner Provider is nearer). The content's own
+                // Providers push real frames above these, so they still win. A scoped context pushes none (R2: position
+                // cannot pick a scoped Provider; `check_inner_providers` keeps refusing it).
+                if let Some(o) = owner {
+                    for c in self
+                        .provided_below(&cir)
+                        .into_iter()
+                        .filter(|(_, scoped)| !scoped)
+                    {
+                        frames.push(Frame {
+                            context: c.0,
+                            fields: Vec::new(),
+                            owner: Some(o),
+                            loc: *loc,
+                            scoped: false,
+                            shadow: true,
+                        });
+                        pushed += 1;
+                    }
                 }
                 children
                     .iter_mut()
@@ -3645,9 +3692,15 @@ impl Walker<'_, '_> {
         // island and React renders it with its children.
         // F288 S2: the function between the tags is the `children` render prop, which the clone does hold.
         let render_children = render.as_ref().is_some_and(|r| r.key == "children");
+        // F375: in a rest clone made for a call site that passes no children (`rest_childless`), the clone's own rest
+        // spread carries none.
+        let own_rest = |v: &Expr| {
+            self.rest_childless
+                && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == crate::ir::REST_PROPS || name == "*"))
+        };
         if content.is_empty()
-            && let Some((k, _)) = props.iter().find(|(k, _)| {
-                k == crate::ir::SPREAD_KEY
+            && let Some((k, _)) = props.iter().find(|(k, v)| {
+                (k == crate::ir::SPREAD_KEY && !own_rest(v))
                     || k == REST_INPUT
                     || (k == "children" && !render_children)
             })
@@ -3746,6 +3799,26 @@ impl Walker<'_, '_> {
             ctx.modules.borrow_mut().remove(&key);
             return Err(format!("the specialised component needs React ({reason})"));
         }
+        // F372 R1: a consumer the call site left to the clone (shadowed) must be filled inside it by the inner Provider. A
+        // need of a shadowed context the clone still bubbles (one `cir` itself does not read) means the content does not
+        // sit under that Provider (beside `{children}`, say): the call site has no value for it any more.
+        if owner != usize::MAX {
+            let shadowed = self.provided_below(cir);
+            if let Some(u) = clone.ctx_uses.iter().find(|u| {
+                shadowed.get(&u.context) == Some(&false)
+                    && u.fields.iter().any(|f| {
+                        !cir.ctx_uses
+                            .iter()
+                            .any(|c| c.context == u.context && c.fields.contains(f))
+                    })
+            }) {
+                let context = u.context.clone();
+                ctx.modules.borrow_mut().remove(&key);
+                return Err(format!(
+                    "a consumer in the content reads `{context}`, which a Provider inside `{exp}` provides, but does not sit under it"
+                ));
+            }
+        }
         Ok((id, key, inputs))
     }
 
@@ -3760,6 +3833,7 @@ impl Walker<'_, '_> {
         loc: u32,
         content: &[Node],
         props: &[(String, Expr)],
+        childless: bool,
     ) -> Result<(Rc<ComponentIR>, Specialised), String> {
         let ctx = self.ctx;
         let export = match &cir.export {
@@ -3815,6 +3889,7 @@ impl Walker<'_, '_> {
                 ir.id = clone_id.clone();
                 ir.specialised = true;
                 ir.rest_clone_of = Some(ctx.path.to_string());
+                ir.rest_childless = childless;
                 Ok(())
             },
         )?;
@@ -4016,19 +4091,71 @@ impl Walker<'_, '_> {
         fixed
     }
 
-    /// A consumer in `content` of a context that a Provider INSIDE `cir`'s template provides (below `cir` itself) reads,
-    /// in React, that inner Provider wherever the content lands under it; the value the call site hands it (Carry: the
-    /// frame open where the content is written, or the context default) would override it in the clone. Refused by
-    /// name (found with F238: `<Prov>` calling a native `<Frame>` around its `{children}`, the content reading Frame's
-    /// context, printed the default).
-    fn check_inner_providers(&self, cir: &ComponentIR, content: &[Node]) -> Result<(), String> {
+    /// F375: `cir` spreads its rest (or its whole props) into a component that is a native Provider (one `specialise`
+    /// clones), so the children its call sites pass reach that Provider only through the spread.
+    fn rests_into_native_provider(&self, cir: &ComponentIR) -> bool {
+        fn rest_sites(n: &Node, out: &mut Vec<String>) {
+            match n {
+                Node::Component {
+                    name,
+                    props,
+                    children,
+                    ..
+                } => {
+                    if props.iter().any(|(k, v)| {
+                        k == crate::ir::SPREAD_KEY
+                            && matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r)) if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == crate::ir::REST_PROPS || name == "*"))
+                    }) {
+                        out.push(name.clone());
+                    }
+                    children.iter().for_each(|c| rest_sites(c, out));
+                }
+                Node::Element { children, .. } | Node::Fragment(children) => {
+                    children.iter().for_each(|c| rest_sites(c, out))
+                }
+                Node::If { then, else_, .. } => {
+                    then.iter().chain(else_).for_each(|c| rest_sites(c, out))
+                }
+                Node::For { body, .. } => body.iter().for_each(|c| rest_sites(c, out)),
+                Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+            }
+        }
+        let mut names = Vec::new();
+        rest_sites(&cir.template, &mut names);
+        let [name] = names.as_slice() else {
+            return false;
+        };
+        let modules = self.ctx.modules.borrow();
+        let Some(id) = cir
+            .children
+            .iter()
+            .find(|c| &c.name == name)
+            .and_then(|c| c.id.clone())
+        else {
+            return false;
+        };
+        let Some(ir) = modules
+            .done()
+            .into_iter()
+            .map(|(_, ir)| ir)
+            .find(|ir| ir.id == id)
+        else {
+            return false;
+        };
+        drop(modules);
+        self.specialisable(&ir, false)
+    }
+
+    /// The contexts a Provider strictly inside `cir`'s own subtree provides (its children, transitively), each with
+    /// whether it is scoped there (a `scope` named, or read scoped).
+    fn provided_below(&self, cir: &ComponentIR) -> BTreeMap<String, bool> {
         let modules = self.ctx.modules.borrow();
         let by_id: HashMap<String, Rc<ComponentIR>> = modules
             .done()
             .into_iter()
             .map(|(_, ir)| (ir.id.clone(), ir))
             .collect();
-        let mut below = BTreeSet::new();
+        let mut below: BTreeMap<String, bool> = BTreeMap::new();
         let mut stack: Vec<Rc<ComponentIR>> = cir
             .children
             .iter()
@@ -4039,13 +4166,32 @@ impl Walker<'_, '_> {
             if !seen.insert(ir.id.clone()) {
                 continue;
             }
-            below.extend(ir.provides.iter().map(|p| p.context.clone()));
+            for p in &ir.provides {
+                let scoped = p.scoped || ir.ctx_scoped.contains(&p.context);
+                *below.entry(p.context.clone()).or_insert(false) |= scoped;
+            }
             stack.extend(
                 ir.children
                     .iter()
                     .filter_map(|c| c.id.as_ref().and_then(|id| by_id.get(id)).cloned()),
             );
         }
+        below
+    }
+
+    /// A consumer in `content` of a context that a Provider INSIDE `cir`'s template provides (below `cir` itself) reads,
+    /// in React, that inner Provider wherever the content lands under it; the value the call site hands it (Carry: the
+    /// frame open where the content is written, or the context default) would override it in the clone. Refused by
+    /// name (found with F238: `<Prov>` calling a native `<Frame>` around its `{children}`, the content reading Frame's
+    /// context, printed the default). F372: an unscoped context is shadowed over the content (`Frame::shadow`), so
+    /// such a consumer carries no value; this stays the backstop for a scoped one (R2).
+    fn check_inner_providers(&self, cir: &ComponentIR, content: &[Node]) -> Result<(), String> {
+        let below: BTreeSet<String> = self
+            .provided_below(cir)
+            .into_iter()
+            .filter(|(_, scoped)| *scoped)
+            .map(|(c, _)| c)
+            .collect();
         if below.is_empty() {
             return Ok(());
         }
