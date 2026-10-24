@@ -136,6 +136,7 @@ jobs:
   # The battery and the browser harness drive the real `brustc` (built in the job).
   battery:
     runs-on: ubuntu-latest
+    needs: addon
     env: { SCCACHE_GHA_ENABLED: "true", RUSTC_WRAPPER: sccache }
     steps:
       - uses: actions/checkout@v4
@@ -157,6 +158,11 @@ jobs:
       - run: git diff --exit-code docs/react-coverage.md docs/react-coverage.json docs/plans/m1-exit-report.md
       # Exit criteria checked by code (also re-runs dual evaluation and the browser cases).
       - run: bun test scripts/battery
+      # F386: every native/static row's served first HTML equals React's renderToString (the real `brust build` + `start`, one app,
+      # a route per row); a diff or a server refusal fails unless scripts/battery/ssr-allowlist.ts explains it (wall time ~1 min).
+      - uses: actions/download-artifact@v4
+        with: { name: addon-linux-x64, path: packages/brust/native }
+      - run: bun scripts/battery/ssr-compare.ts --check
       # F288 §3 (ruling Q1): the installed react-presence getElementRef on real React 19 elements (prod + dev) equals the fold.
       - run: bun test scripts/f288
       - run: sccache --show-stats
