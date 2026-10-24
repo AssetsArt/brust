@@ -68,31 +68,41 @@ const REACT_VERSION: string = (() => {
   return JSON.parse(readFileSync(join(store, d, 'node_modules/react/package.json'), 'utf8')).version as string
 })()
 
+/** Writes a row's sources into `dir` the way the battery compiles them (the snippet, the siblings, the stub packages and their
+ * package sources, a `react` stub carrying the installed version) and returns the extra `brustc` arguments the row needs. */
+export function writeRowDir(dir: string, row: Row, reactStub = true): string[] {
+  writeFileSync(join(dir, 'input.tsx'), row.snippet + '\n')
+  // An app resolves React (F288: the element fold models the React major it resolves): the version the repo installs.
+  // `reactStub` false: the dir sits inside an app that resolves the real react (the F386 served comparison).
+  if (reactStub) {
+    mkdirSync(join(dir, 'node_modules/react'), { recursive: true })
+    writeFileSync(join(dir, 'node_modules/react/package.json'), JSON.stringify({ name: 'react', version: REACT_VERSION }))
+  }
+  for (const [name, text] of Object.entries(row.files ?? {})) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true })
+    writeFileSync(join(dir, name), text + '\n')
+  }
+  const extra: string[] = []
+  if (row.packages) {
+    for (const [name, pkg] of Object.entries(row.packages)) writeStubPackage(join(dir, 'node_modules', name), name, pkg)
+    preparePackageSources(dir, Object.keys(row.packages))
+    // `vouch`: the build's version+hash check is pinned in the pkg-src tests; a stub cannot carry the published bytes, so the
+    // row says the verified version the build would have recorded (R34.140).
+    if (row.vouch) {
+      const idx = join(dir, '.brust/pkg-src/index.json')
+      const j = JSON.parse(readFileSync(idx, 'utf8'))
+      for (const [name, version] of Object.entries(row.vouch)) j.recognised[name] = version
+      writeFileSync(idx, JSON.stringify(j))
+    }
+    extra.push('--packages', join(dir, '.brust/pkg-src/index.json'))
+  }
+  return extra
+}
+
 function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
   const dir = mkdtempSync(join(tmpdir(), 'battery-'))
   try {
-    writeFileSync(join(dir, 'input.tsx'), row.snippet + '\n')
-    // An app resolves React (F288: the element fold models the React major it resolves): the version the repo installs.
-    mkdirSync(join(dir, 'node_modules/react'), { recursive: true })
-    writeFileSync(join(dir, 'node_modules/react/package.json'), JSON.stringify({ name: 'react', version: REACT_VERSION }))
-    for (const [name, text] of Object.entries(row.files ?? {})) {
-      mkdirSync(dirname(join(dir, name)), { recursive: true })
-      writeFileSync(join(dir, name), text + '\n')
-    }
-    const extra: string[] = []
-    if (row.packages) {
-      for (const [name, pkg] of Object.entries(row.packages)) writeStubPackage(join(dir, 'node_modules', name), name, pkg)
-      preparePackageSources(dir, Object.keys(row.packages))
-      // `vouch`: the build's version+hash check is pinned in the pkg-src tests; a stub cannot carry the published bytes, so the
-      // row says the verified version the build would have recorded (R34.140).
-      if (row.vouch) {
-        const idx = join(dir, '.brust/pkg-src/index.json')
-        const j = JSON.parse(readFileSync(idx, 'utf8'))
-        for (const [name, version] of Object.entries(row.vouch)) j.recognised[name] = version
-        writeFileSync(idx, JSON.stringify(j))
-      }
-      extra.push('--packages', join(dir, '.brust/pkg-src/index.json'))
-    }
+    const extra = writeRowDir(dir, row)
     const p = spawnSync(brustc, ['input.tsx', '--emit', 'ir', ...extra], { cwd: dir, encoding: 'utf8' })
     if (p.status !== 0 || !p.stdout.trim().startsWith('{')) {
       // A snippet that does not parse is a result, not a crash.
@@ -125,7 +135,7 @@ function compile(brustc: string, row: Row): Omit<Result, 'warn'> {
 
 /** A stub package: `package.json`, the sources, `dist/index.mjs` transpiled from them (the entry source last) and,
  * unless `publish` says otherwise, the source map carrying them. */
-function writeStubPackage(dir: string, name: string, pkg: StubPackage): void {
+export function writeStubPackage(dir: string, name: string, pkg: StubPackage): void {
   const put = (rel: string, text: string) => {
     mkdirSync(dirname(join(dir, rel)), { recursive: true })
     writeFileSync(join(dir, rel), text)

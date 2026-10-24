@@ -22,6 +22,8 @@ interface RowBase {
   packages?: Record<string, StubPackage>
   /** R34.140: packages the compiler is told are the pinned release (name → version), as the build's hash check would record. */
   vouch?: Record<string, string>
+  /** F386: the props the served page and React's renderToString both get when the row's first HTML is compared (default `{}`). */
+  ssrProps?: Record<string, unknown>
   note?: string
   /** react.dev reference entries (`react-api.ts` names) this row is evidence for. Every entry needs at least one row. */
   api?: string[]
