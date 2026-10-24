@@ -261,8 +261,11 @@ export function compileApp(opts: {
  * F437: a component the compiler refused to lower because it reads a context imported from another module
  * (`useContext(Ctx)`, `ir.foreign_ctx_reads`) ships as a React island, and an island's SSR and `hydrateRoot` render it
  * alone, without the Providers a layout above its route renders: it would paint the `createContext` default where React
- * paints the layout's value. A layout's Providers (`ir.provides`, declared in the layout's own module) that such a read
- * names are refused here, by name; a context nobody provides still reads its default, which is React's own answer.
+ * paints the layout's value. Refused here, by name, conservatively: a Provider anywhere in the layout's compiled tree
+ * (`ir.provides` of the layout or of any component it renders) declared in a file counts as providing every context that
+ * file declares, so a read of ANY binding imported from that file is refused (an alias, `export { A as B }`, a re-export of
+ * the file's own context cannot slip by). A context nobody provides still reads its default, which is React's own answer.
+ * Native resolution of an imported context is F439.
  */
 function checkLayoutContexts(leaves: FlatRoute[], compiled: Map<string, Compiled>, routeComponent: Map<string, string>): void {
   const real = (f: string) => {
@@ -273,7 +276,7 @@ function checkLayoutContexts(leaves: FlatRoute[], compiled: Map<string, Compiled
     }
   }
   for (const leaf of leaves) {
-    const provided: { file: string; name: string; layout: string }[] = []
+    const provided: { file: string; layout: string }[] = []
     for (const id of leaf.chainIds) {
       const rootId = routeComponent.get(id)
       const root = rootId === undefined ? undefined : compiled.get(rootId)
@@ -293,18 +296,26 @@ function checkLayoutContexts(leaves: FlatRoute[], compiled: Map<string, Compiled
             } catch {
               continue
             }
-            const hit = provided.find((p) => p.file === from && p.name === name)
+            const hit = provided.find((p) => p.file === from)
             if (hit)
               throw new BuildError(
                 'island-layout-context',
-                `${c.ir.source} reads the context \`${name}\` (useContext) that the layout ${hit.layout} provides, but this component renders as a React island, and an island does not see its layout's Provider (it would paint the createContext default); move the Provider into this component's own tree, or read the value through the loader`,
+                `${c.ir.source} reads the context \`${name}\` (useContext) that the layout ${hit.layout} provides, but this component renders as a React island, and an island does not see its layout's Provider (it would paint the createContext default). Workaround: pass the value to the page through its loader (a prop), or render the Provider inside this component's own tree. Native resolution of an imported context is F439.`,
               )
           }
           for (const ch of (c.ir.children ?? []) as { id: string | null }[]) if (ch.id) stack.push(ch.id)
         }
       }
-      for (const p of (root.ir.provides ?? []) as { context: string }[])
-        provided.push({ file: real(root.file), name: p.context.replace(/_m[0-9a-f]{8}$/, ''), layout: root.ir.source })
+      // Every Provider the layout's compiled tree renders (the layout itself or a component it calls), by declaring file.
+      const stack = [root.id]
+      const done = new Set<string>()
+      while (stack.length > 0) {
+        const c = compiled.get(stack.pop()!)
+        if (!c || done.has(c.id)) continue
+        done.add(c.id)
+        if ((c.ir.provides ?? []).length > 0) provided.push({ file: real(c.file), layout: root.ir.source })
+        for (const ch of (c.ir.children ?? []) as { id: string | null }[]) if (ch.id) stack.push(ch.id)
+      }
     }
   }
 }

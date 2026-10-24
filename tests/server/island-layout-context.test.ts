@@ -22,7 +22,7 @@ afterAll(async () => {
     p.kill('SIGINT')
     if ((await Promise.race([p.exited, Bun.sleep(5000).then(() => undefined)])) === undefined) { p.kill('SIGKILL'); await p.exited }
   }
-  for (const v of ['layout', 'nested', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
+  for (const v of ['layout', 'nested', 'child', 'alias', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
 })
 
 test('a context declared in the layout is refused for the island page, by name', () => {
@@ -36,6 +36,24 @@ test('the same under a nested layout: the outer layout provides it', () => {
   expect(b.exitCode).not.toBe(0)
   expect(b.stderr.toString()).toContain('island-layout-context Page.tsx reads the context `Ctx`')
   expect(b.stderr.toString()).toContain('Outer.tsx')
+})
+
+test('a Provider rendered by a component the layout calls counts too', () => {
+  const b = build('child')
+  expect(b.exitCode).not.toBe(0)
+  expect(b.stderr.toString()).toContain('island-layout-context Page.tsx reads the context `Ctx`')
+})
+
+test('a context re-exported under another name (export { Ctx as Theme }) is still refused', () => {
+  const b = build('alias')
+  expect(b.exitCode).not.toBe(0)
+  expect(b.stderr.toString()).toContain('island-layout-context Page.tsx reads the context `Theme`')
+})
+
+test('the error gives the workaround and names F439', () => {
+  const e = build('layout').stderr.toString()
+  expect(e).toContain('Workaround: pass the value to the page through its loader')
+  expect(e).toContain('F439')
 })
 
 test('a Provider value that is layout state fails closed (the layout cannot be lowered)', () => {
