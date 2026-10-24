@@ -17,7 +17,7 @@ A page is **measured** when its own `brust build` succeeded: tier, components, i
 
 | Pages | static | native | react | islands in total | pages with 0 JS | pages with no worker call | Client JS gzip, smallest / median / largest |
 |---|---|---|---|---|---|---|---|
-| 64 | 56 | 1 | 7 | 34 | 26 | 23 | 0 / 87 / 240 KiB |
+| 64 | 56 | 1 | 7 | 34 | 26 | 23 | 0 / 88 / 240 KiB |
 
 ### Analysis-only (0 of 64 pages refused)
 
@@ -137,7 +137,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | carousel | measured | static | 1 | 9 (5) | 97 | 1 | context-state, control-flow, event-capture, external-component, hook-unsupported, jsx-const-child, ref-shape, spread-handler | built |
 | chart | measured | static | 1 | 10 (8) | 240 | 1 | control-flow, external-component, hook-shape, jsx-const-child, list-shape, use-id-in-render | built |
 | checkbox | measured | static | 1 | 12 (2) | 92 | 1 | children-rest, external-component | built |
-| collapsible | measured | react | 1 | 9 (5) | 89 | 1 | context-island, external-component, spread-props | built |
+| collapsible | measured | react | 1 | 9 (5) | 90 | 1 | context-island, external-component, spread-props | built |
 | combobox | measured | react | 1 | 22 (16) | 158 | 1 | external-component, island-children, island-prop, jsx-const-child, jsx-expression, key-outside-list, nested-instance, slot-child-component, slot-owner, spread-props | built |
 | command | measured | static | 1 | 16 (14) | 105 | 1 | external-component, island-prop, spread-props | built |
 | context-menu | measured | static | 1 | 13 (11) | 117 | 1 | external-component, island-children, island-prop, spread-props | built |
@@ -151,7 +151,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | hover-card | measured | static | 1 | 9 (7) | 104 | 1 | external-component, island-children, island-prop, spread-props | built |
 | input | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | input-group | measured | static | 0 | 5 (0) | 5 | 1 | — | built |
-| input-otp | measured | static | 1 | 6 (3) | 87 | 1 | body-shape, external-component, hook-unsupported, island-prop, spread-props | built |
+| input-otp | measured | static | 1 | 6 (3) | 88 | 1 | body-shape, external-component, hook-unsupported, island-prop, spread-props | built |
 | item | measured | static | 0 | 7 (0) | 0 | 0 | — | built |
 | kbd | measured | static | 0 | 3 (0) | 0 | 0 | — | built |
 | label | measured | static | 0 | 5 (0) | 5 | 0 | — | built |
@@ -170,7 +170,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | select | measured | react | 1 | 26 (20) | 118 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
 | separator | measured | static | 0 | 4 (0) | 0 | 2 | — | built |
 | sheet | measured | react | 1 | 23 (9) | 101 | 1 | context-island, external-component, island-children, island-prop, spread-props | built |
-| sidebar | measured | static | 1 | 31 (14) | 117 | 1 | client-function-in-job, context-island, context-state, control-flow, external-component, island-children, island-prop, jsx-const-child, linked-prop-precompute, spread-handler, spread-props | built |
+| sidebar | measured | static | 1 | 31 (14) | 118 | 1 | client-function-in-job, context-island, context-state, control-flow, external-component, island-children, island-prop, jsx-const-child, linked-prop-precompute, spread-handler, spread-props | built |
 | skeleton | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
 | slider | measured | static | 1 | 7 (4) | 93 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
 | sonner | measured | native | 1 | 4 (2) | 88 | 1 | external-component, hook-unsupported, island-prop, jsx-expression, spread-props | built |

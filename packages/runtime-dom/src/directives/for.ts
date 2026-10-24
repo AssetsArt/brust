@@ -33,6 +33,9 @@ BINDERS.push({
     if (!adopt.includes(el)) el.remove()
     let firstRun = true
 
+    // F415: a removed row's effects and cleanups go with it (they were bound under `inst.capture`).
+    const drops = new Map<Element, () => void>()
+    const drop = (n: Element) => { drops.get(n)?.(); drops.delete(n); n.remove() }
     let rows = new Map<unknown, Element[]>()  // key -> elements (array to tolerate duplicates)
     let order: Element[] = []
 
@@ -71,12 +74,12 @@ BINDERS.push({
           const rowScope: RowScope = { ...scope, [itemName]: item, ...(indexName ? { [indexName]: i } : {}), __own: own, __tick: computed(() => (outer ? outer() : 0) + own()) }
           ;(node as unknown as { __scope: RowScope }).__scope = rowScope
           // a row that is itself a nested host is bound by its own instance
-          if (!node.hasAttribute('x-data')) { bindElement(inst, node, rowScope); walkChildren(inst, node, rowScope) }
+          if (!node.hasAttribute('x-data')) { const n = node; drops.set(n, inst.capture(() => { bindElement(inst, n, rowScope); walkChildren(inst, n, rowScope) })) }
         }
         ;(next.get(key) ?? next.set(key, []).get(key)!).push(node)
         nextOrder.push(node)
       })
-      for (const [, pool] of rows) for (const stale of pool) stale.remove()
+      for (const [, pool] of rows) for (const stale of pool) drop(stale)
       for (const left of adopt.splice(0)) left.remove()
       firstRun = false
       // place in order after the anchor
@@ -85,6 +88,6 @@ BINDERS.push({
       rows = next; order = nextOrder
       for (const n of created) hooks.mountTree(n)   // nested hosts in new rows mount now, not on the observer's next tick
     })
-    inst.onCleanup(() => { for (const n of order) n.remove() })
+    inst.onCleanup(() => { for (const n of order) drop(n) })
   },
 })

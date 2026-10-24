@@ -71,6 +71,7 @@ pub fn register(env: &mut Environment<'_>) {
     env.add_filter("js_div", |a: Value, b: Value| {
         js_arith(&a, &b, |x, y| x / y)
     });
+    env.add_filter("js_add", |a: Value, b: Value| js_add(&a, &b));
     env.add_filter("str_slice", str_slice);
     env.add_filter("includes", includes);
     env.add_filter("starts_with", |s: Value, x: Value| {
@@ -186,6 +187,22 @@ fn js_arith(a: &Value, b: &Value, op: fn(f64, f64) -> f64) -> Value {
     } else {
         Value::from(r)
     }
+}
+
+/// JS `a + b` for operands the compiler cannot prove are both numbers (F424): a string (or an object / array, which
+/// `ToPrimitive` turns into one) on either side concatenates `String()` of both; otherwise `ToNumber` of each is added
+/// (`undefined` is `NaN`, `null` is 0, `true` is 1). jinja's own `+` errors on string + number and on `none`.
+pub fn js_add(a: &Value, b: &Value) -> Value {
+    let stringy = |v: &Value| {
+        !matches!(
+            v.kind(),
+            ValueKind::Undefined | ValueKind::None | ValueKind::Bool | ValueKind::Number
+        )
+    };
+    if stringy(a) || stringy(b) {
+        return Value::from(format!("{}{}", js_string(a), js_string(b)));
+    }
+    js_arith(a, b, |x, y| x + y)
 }
 
 /// Text of a painted value: what React (and `x-text`) shows.
@@ -1183,6 +1200,32 @@ mod tests {
                     "{t} {n}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn js_add_follows_javascript() {
+        let ctx = || Value::from(());
+        for (expr, want) in [
+            ("'x' | js_add(0)", "x0"),
+            ("0 | js_add('x')", "0x"),
+            ("1 | js_add(2)", "3"),
+            ("'a' | js_add('b')", "ab"),
+            ("undefined | js_add('x')", "undefinedx"),
+            ("'x' | js_add(1.5)", "x1.5"),
+            ("1.5 | js_add(1.5)", "3"),
+            ("0.1 | js_add(0.2)", "0.30000000000000004"),
+            ("none | js_add(1)", "1"),
+            ("true | js_add(1)", "2"),
+            ("undefined | js_add(1)", "NaN"),
+            ("[1, 2] | js_add(1)", "1,21"),
+            ("{} | js_add('a')", "[object Object]a"),
+        ] {
+            assert_eq!(
+                render(&format!("{{{{ ({expr}) | js_string }}}}"), ctx()),
+                want,
+                "{expr}"
+            );
         }
     }
 
