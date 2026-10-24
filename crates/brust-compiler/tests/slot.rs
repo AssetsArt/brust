@@ -88,7 +88,7 @@ fn render(jinja: &str) -> String {
 
 fn page(body: &str) -> String {
     format!(
-        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nimport Fed from './Fed'\nimport Carry from './Carry'\nimport Dsi from './Dsi'\nimport Bag from './Bag'\nimport Carrier from './Carrier'\nimport Carrier2 from './Carrier2'\nimport CarrierIf from './CarrierIf'\nimport CarrierTwo from './CarrierTwo'\nimport CarrierPath from './CarrierPath'\nimport CarrierNamed from './CarrierNamed'\nimport CarrierOver from './CarrierOver'\nimport CarrierLoop from './CarrierLoop'\nimport CarrierBag from './CarrierBag'\nimport CarrierKids from './CarrierKids'\nimport CarrierEm from './CarrierEm'\nimport CarrierFlagRead from './CarrierFlagRead'\nexport default function P() {{ return <main>{body}</main> }}"
+        "import Btn from './Btn'\nimport Chip from './Chip'\nimport Swapped from './Swapped'\nimport Own from './Own'\nimport Link from './Link'\nimport Plain from './Plain'\nimport Stateful from './Stateful'\nimport ItemLike from './ItemLike'\nimport Fed from './Fed'\nimport Carry from './Carry'\nimport Dsi from './Dsi'\nimport Bag from './Bag'\nimport Carrier from './Carrier'\nimport Carrier2 from './Carrier2'\nimport CarrierIf from './CarrierIf'\nimport CarrierTwo from './CarrierTwo'\nimport CarrierPath from './CarrierPath'\nimport CarrierNamed from './CarrierNamed'\nimport CarrierOver from './CarrierOver'\nimport CarrierLoop from './CarrierLoop'\nimport CarrierBag from './CarrierBag'\nimport CarrierKids from './CarrierKids'\nimport CarrierEm from './CarrierEm'\nimport CarrierFlagRead from './CarrierFlagRead'\nexport default function P() {{ return <main>{body}</main> }}"
     )
 }
 
@@ -518,4 +518,16 @@ fn a_component_that_may_not_carry_the_flag_is_not_polymorphic() {
         "import Carrier from './Carrier'\nexport default function P(props: any) { return <main><Carrier {...props.attrs}>x</Carrier></main> }",
     );
     assert!(react_with(&o, "slot-dynamic"), "{:?}", o.diags);
+}
+
+#[test]
+fn a_native_parent_with_as_child_over_a_host_element_is_cloned_with_the_child() {
+    // F369b step A: the parent has state and a handler on its polymorphic element; the call's one child becomes the
+    // content of a host clone, whose own polymorphic element is the child.
+    let o = lower(
+        "P.tsx",
+        &page("<ItemLike asChild><a href=\"/x\">go</a></ItemLike>"),
+    );
+    assert!(!react_with(&o, "slot-native"), "{:?}", o.diags);
+    assert!(!matches!(o.tier, Tier::React { .. }), "{:?}", o.diags);
 }

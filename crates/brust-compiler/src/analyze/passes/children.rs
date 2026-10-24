@@ -1251,6 +1251,125 @@ fn splice_children(ir: &mut ComponentIR, content: Vec<Node>) -> Result<(), Strin
     }
 }
 
+/// Whether the call's props select the Slot of a polymorphic tag (a literal true flag, compared with `negate`).
+fn flag_selects_slot(poly: &crate::ir::PolyTag, props: &[(String, Expr)]) -> bool {
+    let flag = props
+        .iter()
+        .rev()
+        .find(|(k, _)| k == &poly.flag)
+        .is_some_and(|(_, v)| {
+            matches!(v, Expr::Raw(r) | Expr::Server(ServerExpr(r))
+            if matches!(r.json_literal(), Some(serde_json::Value::Bool(true))))
+        });
+    flag != poly.negate
+}
+
+/// F369b: puts the ONE host element `child` where the component's polymorphic element is (React's Slot: the child
+/// element takes the polymorphic element's place, its attributes merged over the element's, its own children kept).
+/// The component is no longer polymorphic afterwards (the flag is settled), so its call site resolves nothing. Refused,
+/// and the call site keeps its `slot-native` refusal, when: the polymorphic element is not unique, its only child is
+/// not the component's `{children}`, the child is not a host element with plain attributes, or the merge would join
+/// a class or a style (a later row, Mellow F1).
+fn splice_poly(ir: &mut ComponentIR, child: Node) -> Result<(), String> {
+    fn count(n: &Node) -> usize {
+        match n {
+            Node::Element { poly, children, .. } => {
+                usize::from(*poly) + children.iter().map(count).sum::<usize>()
+            }
+            Node::Component { children, .. } | Node::Fragment(children) => {
+                children.iter().map(count).sum()
+            }
+            Node::If { then, else_, .. } => then.iter().chain(else_).map(count).sum(),
+            Node::For { body, .. } => body.iter().map(count).sum(),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => 0,
+        }
+    }
+    fn is_children_slot(n: &Node) -> bool {
+        matches!(n, Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r)))
+            if matches!(&r.kind, RawKind::Ident { name, kind: IdentKind::Prop } if name == "children"))
+    }
+    fn merge_key(name: &str) -> String {
+        let k = name.to_ascii_lowercase();
+        if k == "classname" { "class".into() } else { k }
+    }
+    fn put(n: &mut Node, child: &mut Option<Node>) -> Result<(), String> {
+        match n {
+            Node::Element {
+                poly: true,
+                attrs,
+                children,
+                tag,
+                ..
+            } => {
+                if !matches!(children.as_slice(), [only] if is_children_slot(only)) {
+                    return Err(
+                        "the polymorphic element prints more than the component's `{children}`"
+                            .into(),
+                    );
+                }
+                let Some(Node::Element {
+                    tag: ctag,
+                    attrs: cattrs,
+                    children: ckids,
+                    poly: false,
+                    ..
+                }) = child.take()
+                else {
+                    return Err("the child is not a host element".into());
+                };
+                if matches!(ctag.as_str(), "style" | "script") {
+                    return Err(format!("the child is a <{ctag}> element"));
+                }
+                let spreads = attrs.iter().any(|a| matches!(a, Attr::Spread(_)));
+                let mut keys = Vec::new();
+                for a in &cattrs {
+                    let (Attr::Static { name, .. } | Attr::Dynamic { name, .. }) = a else {
+                        return Err(
+                            "the child has a handler, a ref, a spread or another directive".into(),
+                        );
+                    };
+                    let k = merge_key(name);
+                    if k == "style" || (k == "class" && (spreads || attrs.iter().any(|o| {
+                        matches!(o, Attr::Static { name, .. } | Attr::Dynamic { name, .. } if merge_key(name) == "class")
+                    }))) {
+                        return Err("a class or style of the child would be joined with the element's".into());
+                    }
+                    keys.push(k);
+                }
+                // The child's props win over the element's (`mergeProps(slotProps, childProps)`).
+                attrs.retain(|a| match a {
+                    Attr::Static { name, .. } | Attr::Dynamic { name, .. } => {
+                        !keys.contains(&merge_key(name))
+                    }
+                    _ => true,
+                });
+                attrs.extend(cattrs);
+                *children = ckids;
+                *tag = ctag;
+                if let Node::Element { poly, .. } = n {
+                    *poly = false;
+                }
+                Ok(())
+            }
+            Node::Element { children, .. }
+            | Node::Component { children, .. }
+            | Node::Fragment(children) => children.iter_mut().try_for_each(|c| put(c, child)),
+            Node::If { then, else_, .. } => then
+                .iter_mut()
+                .chain(else_.iter_mut())
+                .try_for_each(|c| put(c, child)),
+            Node::For { body, .. } => body.iter_mut().try_for_each(|c| put(c, child)),
+            Node::Text(_) | Node::Slot(_) | Node::Outlet => Ok(()),
+        }
+    }
+    if count(&ir.template) != 1 {
+        return Err("the component has no single polymorphic element".into());
+    }
+    put(&mut ir.template, &mut Some(child))?;
+    ir.poly = None;
+    Ok(())
+}
+
 /// The elements of `n` that spread the rest or the props among their attributes: how many there are, and the content moved
 /// into the first when it has no children of its own and it is the only one (the caller checks the count).
 fn put_into_rest_host(n: &mut Node, content: &mut Option<Vec<Node>>) -> usize {
@@ -3367,8 +3486,17 @@ impl Walker<'_, '_> {
                     && !children.is_empty()
                     && let Some(from) = child.path.clone()
                 {
+                    let poly_flag = cir
+                        .poly
+                        .as_ref()
+                        .filter(|p| flag_selects_slot(p, props))
+                        .map(|p| p.flag.clone());
                     match self.specialise_host(&cir, &from, *loc, children, props) {
                         Ok((id, key, inputs)) => {
+                            // F369b: the flag is settled in the clone (the child is in its element's place).
+                            if let Some(flag) = poly_flag {
+                                props.retain(|(k, _)| *k != flag);
+                            }
                             props.extend(inputs);
                             *name = id;
                             *source = Some(SPEC_SOURCE.to_string());
@@ -3630,6 +3758,21 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// F369b: a `slot-native` refusal at `loc` (a native polymorphic parent, a literal true flag, ONE child) the frames
+    /// pass may answer by cloning the parent with the child in its polymorphic element's place (`splice_poly`).
+    fn want_host_poly(&mut self, loc: u32, child: &Child) {
+        if child.path.is_some()
+            && child.poly.is_some()
+            && !self.st.host_spec.contains(&loc)
+            && child
+                .ir
+                .as_deref()
+                .is_some_and(|c| c.provides.is_empty() && !c.specialised && prints_children_slot(c))
+        {
+            self.st.host_wanted.insert(loc);
+        }
+    }
+
     /// F307 (option B): a clone of the host child `cir` whose `{children}` is `content`, compiled as a component of its
     /// own for this call site. The call site's names the content reads cross as hidden inputs (`Carry`, as for a
     /// Provider's content, R34.123). Refused, and the call site keeps its `slot-owner` refusal, when: the child is a
@@ -3656,6 +3799,18 @@ impl Walker<'_, '_> {
         if !prints_children_slot(cir) {
             return Err("it does not print a `{children}` slot of its own".into());
         }
+        // F369b: a polymorphic parent given its flag: the call's one child takes the polymorphic element's place.
+        let poly_child = match &cir.poly {
+            Some(p) if flag_selects_slot(p, props) => match content {
+                [only @ Node::Element { .. }] => Some(only.clone()),
+                _ => {
+                    return Err(
+                        "the flag selects the child, which is not exactly one host element".into(),
+                    );
+                }
+            },
+            _ => None,
+        };
         // S4: a bare text slot of the content is printed in a `<span x-text>` unless it is an element's only child; React
         // prints a text node, so that clone would not render what React renders.
         if content.iter().any(|c| matches!(c, Node::Slot(_)))
@@ -3691,10 +3846,18 @@ impl Walker<'_, '_> {
             None => ctx.path.to_string(),
         };
         let id = format!("{}_h{:08x}", cir.id, spec_hash(&site, loc));
-        let key = format!("{c_path}#{exp}~host~{site}~{loc}");
+        let key = format!(
+            "{c_path}#{exp}~{}~{site}~{loc}",
+            if poly_child.is_some() {
+                "polyhost"
+            } else {
+                "host"
+            }
+        );
         let clone_id = id.clone();
         let (inputs, clone_handlers) = carry.finish();
         let fixed = self.pinned(cir, props, &inputs);
+        let is_poly = poly_child.is_some();
         let mut once = Some(nodes);
         let clone = crate::analyze::modules::compile_specialised(
             c_path,
@@ -3703,7 +3866,12 @@ impl Walker<'_, '_> {
             ctx.opts,
             ctx.modules,
             &mut |ir: &mut ComponentIR| {
-                splice_children(ir, once.take().unwrap_or_default())?;
+                let content = once.take().unwrap_or_default();
+                if is_poly {
+                    splice_poly(ir, content.into_iter().next().ok_or("no child")?)?;
+                } else {
+                    splice_children(ir, content)?;
+                }
                 for (hidden, _) in &inputs {
                     ir.props.push(crate::ir::PropDecl {
                         name: hidden.clone(),
@@ -6567,6 +6735,9 @@ impl Walker<'_, '_> {
                 ir.state.is_empty() && ir.refs.is_empty() && ir.effects.is_empty()
             });
         if !matches!(child.tier, Tier::Static) && !owned_consumer {
+            if matches!(children, [Node::Element { poly: false, .. }]) {
+                self.want_host_poly(loc, child);
+            }
             self.diagnostics.push(refuse(
                 "slot-native",
                 format!(
