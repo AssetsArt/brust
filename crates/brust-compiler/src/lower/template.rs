@@ -302,6 +302,11 @@ pub struct Printer<'a, 'c> {
     /// F267: the caller's ref cell this element takes (`Attr::ForwardRef`), printed after the attributes: `x-ref` on an
     /// element the caller binds, `x-pref` on a nested host (its own instance binds it; the caller's binds `x-pref`).
     fwd_ref: Option<(String, bool)>,
+    /// F420: printing inside a `<select>` whose value is bound to `__select`, so an `<option>` paints `selected`.
+    in_select: bool,
+    /// F420 / F421: the element being opened is a `<select>` / `<textarea>` whose `value` becomes `selected` options /
+    /// text content, so its own `value` attribute is not printed.
+    skip_value_print: bool,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -335,6 +340,8 @@ impl<'a, 'c> Printer<'a, 'c> {
             raw_text: false,
             inner_html: None,
             fwd_ref: None,
+            in_select: false,
+            skip_value_print: false,
         })
     }
 
@@ -376,6 +383,19 @@ impl<'a, 'c> Printer<'a, 'c> {
         self.inline.as_ref().map_or("", |i| i.suffix.as_str())
     }
 
+    /// F423: the template variable a local `name` (a state cell, a list item or index) is printed as: the name with
+    /// the instance suffix an inlined child carries, and, when that is a name minijinja refuses to assign or the
+    /// template already uses (`loop`, `none`, `range`, ...: [`crate::analyze::names::JINJA_RESERVED_LOCALS`]),
+    /// `_name`, made free of the component's own names. Every read, `set` and `for` goes through here, so they agree.
+    fn local_var(&self, name: &str) -> String {
+        let full = format!("{name}{}", self.suffix());
+        if crate::analyze::names::JINJA_RESERVED_LOCALS.contains(&full.as_str()) {
+            self.jinja_free(format!("_{full}"))
+        } else {
+            full
+        }
+    }
+
     /// Seed and derived `set`s in declaration order: each after the ones it reads, then by source location (F385).
     fn preamble(&mut self) {
         let ir = self.f.ir;
@@ -400,7 +420,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                 loc,
                 s.name.clone(),
                 reads(&s.init),
-                format!("{{% set {}{} = {value} %}}", s.name, self.suffix()),
+                format!("{{% set {} = {value} %}}", self.local_var(&s.name)),
             ));
         }
         for (i, d) in ir.derived.iter().enumerate() {
@@ -507,7 +527,7 @@ impl<'a, 'c> Printer<'a, 'c> {
                     None => base,
                 })
             }
-            IdentKind::State => Some(format!("{name}{}", self.suffix())),
+            IdentKind::State => Some(self.local_var(name)),
             // An inlined child's loop variables carry the instance suffix in
             // the template, so a parent expression substituted for a prop
             // (`item.title`) is never captured by the child's own `item`.
@@ -518,9 +538,8 @@ impl<'a, 'c> Printer<'a, 'c> {
                         f.index_used.set(true);
                     }
                 }
-                self.inline
-                    .is_some()
-                    .then(|| format!("{name}{}", self.suffix()))
+                let var = self.local_var(name);
+                (var != name).then_some(var)
             }
             IdentKind::Local => Some(if self.f.derived.contains_key(name) {
                 self.derived_var(name)
@@ -890,6 +909,13 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         let model = model_pair(attrs, &self.f);
         let mut spread_body = None;
+        // F420 / F421: react-dom paints a controlled select's value as `selected` options and a textarea's as its text.
+        let control = if as_child.is_none() && !attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
+            self.control_value(tag, attrs)
+        } else {
+            None
+        };
+        self.skip_value_print = control.is_some();
         if as_child.is_some() || attrs.iter().any(|a| matches!(a, Attr::Spread(_))) {
             let extra: &[(String, String)] = as_child.as_ref().map_or(&[], |a| &a.attrs);
             spread_body =
@@ -899,8 +925,18 @@ impl<'a, 'c> Printer<'a, 'c> {
                 self.attr(a, sa, tag, attrs, model.as_deref(), &mut open);
             }
         }
+        self.skip_value_print = false;
         if let Some(m) = &model {
             open.push_str(&format!(" x-model=\"{m}\""));
+        }
+        if tag == "option"
+            && self.in_select
+            && !self.blank
+            && let Some(v) = self.option_text(attrs, children)
+        {
+            open.push_str(&format!(
+                "{{% if ({v}) | selected_in(__select) %}} selected=\"\"{{% endif %}}"
+            ));
         }
         if let Some((n, callback)) = self.fwd_ref.take() {
             // this element is an instance host (its `x-data` is inserted below) when it is the host root
@@ -914,7 +950,11 @@ impl<'a, 'c> Printer<'a, 'c> {
         let mut text_directive = None;
         let inner_html = self.inner_html.take();
         let raw_before = self.raw_text;
+        let select_before = self.in_select;
         self.raw_text = tag.eq_ignore_ascii_case("script") || tag.eq_ignore_ascii_case("style");
+        if tag == "select" && control.is_some() {
+            self.in_select = true;
+        }
         if lone {
             if let (Node::Slot(e), Some(se)) = (&children[0], schildren.first()) {
                 text_directive = self.slot(e, Some(se), true);
@@ -923,6 +963,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             self.nodes(children, schildren);
         }
         self.raw_text = raw_before;
+        self.in_select = select_before;
         std::mem::swap(&mut body, &mut self.out);
         if let Some(a) = &as_child {
             body = a.body.clone();
@@ -934,6 +975,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             // R34.15: `children` in a spread is the element's children when JSX gives none.
             body = b;
         }
+        if tag == "textarea"
+            && let Some(v) = &control
+        {
+            body = format!("{{{{ ({v}) | textarea_text | e }}}}");
+        }
         if let Some(d) = text_directive {
             open.push_str(&format!(" x-text=\"{d}\""));
         }
@@ -942,6 +988,11 @@ impl<'a, 'c> Printer<'a, 'c> {
             let host_attrs = self.host_attrs();
             open.insert_str(tag.len() + 1, &host_attrs);
         }
+        let scoped = tag == "select" && control.is_some();
+        if scoped && let Some(v) = &control {
+            // The options read it as `__select`; `with` keeps it from reaching a later select.
+            self.out.push_str(&format!("{{% with __select = ({v}) %}}"));
+        }
         self.out.push_str(&open);
         self.out.push('>');
         if VOID.contains(&tag.as_str()) {
@@ -949,6 +1000,60 @@ impl<'a, 'c> Printer<'a, 'c> {
         }
         self.out.push_str(&body);
         self.out.push_str(&format!("</{tag}>"));
+        if scoped {
+            self.out.push_str("{% endwith %}");
+        }
+    }
+
+    /// F420 / F421: the jinja value of a `<select>` / `<textarea>`'s `value` (or `defaultValue`), when react-dom prints
+    /// it as `selected` options / text content instead of an attribute.
+    fn control_value(&self, tag: &str, attrs: &[Attr]) -> Option<String> {
+        if !matches!(tag, "select" | "textarea") {
+            return None;
+        }
+        let find = |want: &str| {
+            attrs.iter().find_map(|a| match a {
+                Attr::Static { name, value } if name == want => Some(jinja_string(value)),
+                Attr::Dynamic { name, value } if name == want => Some(self.value(value)),
+                _ => None,
+            })
+        };
+        find("value").or_else(|| find("defaultValue"))
+    }
+
+    /// F420: the value an `<option>` is matched by: its `value` attribute, else its text (react-dom flattens the
+    /// children to a string). A child that is not text or a slot has no known text.
+    fn option_text(&mut self, attrs: &[Attr], children: &[Node]) -> Option<String> {
+        for a in attrs {
+            match a {
+                Attr::Static { name, value } if name == "value" => {
+                    return Some(jinja_string(value));
+                }
+                Attr::Dynamic { name, value } if name == "value" => return Some(self.value(value)),
+                _ => {}
+            }
+        }
+        let mut parts = Vec::new();
+        for c in children {
+            match c {
+                Node::Text(t) => parts.push(jinja_string(t)),
+                Node::Slot(e) => parts.push(format!("({} | js_str)", self.value(e))),
+                _ => {
+                    self.diagnostics.push(Diagnostic::error(
+                        "select-option",
+                        "an <option> inside a controlled <select> has neither a `value` nor plain text, so the server cannot tell which option the select's value picks",
+                        0,
+                        "give the <option> a value",
+                    ));
+                    return None;
+                }
+            }
+        }
+        Some(if parts.is_empty() {
+            jinja_string("")
+        } else {
+            format!("({})", parts.join(" ~ "))
+        })
     }
 
     fn host_attrs(&mut self) -> String {
@@ -1113,7 +1218,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             let v = crate::lower::server_expr::with_ordered_objects(|| self.value(value));
             open.push_str(&format!("{{{{ ({v}) | style_attr }}}}"));
         } else {
-            open.push_str(&dynamic_attr(&html, &v, tag));
+            if !(self.skip_value_print && html == "value") {
+                open.push_str(&dynamic_attr(&html, &v, tag));
+            }
         }
         if model.is_some() && (html == "value" || html == "checked") {
             return;
@@ -1150,7 +1257,9 @@ impl<'a, 'c> Printer<'a, 'c> {
                     self.refuse(&html, tag);
                     return;
                 }
-                if value.is_empty() && empty_url_dropped(&html, tag) {
+                if self.skip_value_print && html == "value" {
+                    // F420 / F421: printed as `selected` options / text content.
+                } else if value.is_empty() && empty_url_dropped(&html, tag) {
                     // `<img src="">`: React writes nothing.
                 } else if value.is_empty() && is_boolean_attr(&html) {
                     open.push_str(&format!(" {html}"));
@@ -1825,12 +1934,12 @@ impl<'a, 'c> Printer<'a, 'c> {
                 sets.push_str(&format!("{{% set {var} = loop.index0 %}}"));
             }
             if let (Some(i), true) = (index, f.index_used.get()) {
-                sets.push_str(&format!("{{% set {i}{} = loop.index0 %}}", self.suffix()));
+                sets.push_str(&format!("{{% set {} = loop.index0 %}}", self.local_var(i)));
             }
         }
         self.out.push_str(&format!(
-            "{{% for {item}{} in {src} %}}{sets}{row}{empty}{{% endfor %}}",
-            self.suffix()
+            "{{% for {} in {src} %}}{sets}{row}{empty}{{% endfor %}}",
+            self.local_var(item)
         ));
     }
 
@@ -2325,6 +2434,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             return;
         };
         p.blank = self.blank;
+        p.in_select = self.in_select;
         // The inlined component numbers its fed children with this printer's counters (F164 re-base).
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
@@ -2577,6 +2687,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             return;
         };
         p.blank = self.blank;
+        p.in_select = self.in_select;
         p.inst_ir = self.inst_ir;
         p.instances = std::mem::take(&mut self.instances);
         p.native = false;
