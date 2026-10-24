@@ -564,11 +564,21 @@ impl<'a, 'c> Printer<'a, 'c> {
             return UNDEFINED.into();
         }
         let names = self.names();
-        let indexes: Vec<&str> = self
-            .frames
-            .iter()
-            .filter_map(|f| f.index.as_deref())
-            .collect();
+        // F427: an index is a proven number only where it is the innermost binding of its name (an inner loop's item or
+        // index of the same name shadows it).
+        let mut seen: Vec<&str> = Vec::new();
+        let mut indexes: Vec<&str> = Vec::new();
+        for f in self.frames.iter().rev() {
+            if let Some(i) = f.index.as_deref()
+                && !seen.contains(&i)
+            {
+                indexes.push(i);
+            }
+            seen.push(f.item.as_str());
+            if let Some(i) = f.index.as_deref() {
+                seen.push(i);
+            }
+        }
         to_jinja(
             &ServerExpr(e.clone()),
             &JinjaCtx {

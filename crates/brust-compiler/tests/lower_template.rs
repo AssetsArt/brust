@@ -818,3 +818,15 @@ fn page_reading_an_object_context_without_provider_falls_back_by_name() {
         );
     }
 }
+
+/// F427: a loop index is a proven number only where it is the innermost binding of its name: an inner loop's ITEM named
+/// like an outer index shadows it (`xs.map((x, i) => ys.map((i) => i + 1))`), and `+` there stays `js_add` (a string item).
+#[test]
+fn a_loop_item_shadowing_an_outer_index_is_not_a_proven_number() {
+    let (jinja, _) = lower_job(
+        "export default function C({ xs, ys }: any) { return <div>{xs.map((x: string, i: number) => <section key={x}>{i + 1}{ys.map((i: string) => <b key={i}>{i + 1}</b>)}</section>)}</div> }",
+    );
+    // The outer `i + 1` is native, the inner one (the item `i`) goes through js_add.
+    assert!(jinja.contains("(i + 1)"), "{jinja}");
+    assert!(jinja.contains("js_add(1)"), "{jinja}");
+}
