@@ -263,6 +263,25 @@ pub fn contexts(
             && f == crate::analyze::hooks::WHOLE_FIELD
             && w.ctx_defaults.iter().any(|(x, _)| x == c)
     };
+    // F419: the page's own read of a scalar context (`useContext(Ctx)` in the page itself) is the default too.
+    if ctx.is_root {
+        for u in &ir.ctx_uses {
+            let Some((_, d)) = ir.ctx_defaults.iter().find(|(c, _)| c == &u.context) else {
+                continue;
+            };
+            let name = crate::ir::ctx_prop(&u.context, crate::analyze::hooks::WHOLE_FIELD);
+            if let Some(p) = ir
+                .props
+                .iter_mut()
+                .find(|p| p.name == name && p.default.is_none())
+            {
+                p.default = Some(RawExpr {
+                    loc: 0,
+                    kind: RawKind::Lit(d.clone()),
+                });
+            }
+        }
+    }
     for (c, f) in &bubbled {
         let name = crate::ir::ctx_prop(c, f);
         if !ir.props.iter().any(|p| p.name == name) {
@@ -294,6 +313,24 @@ pub fn contexts(
         if bubbled.iter().any(|(x, _)| x == c) && !ir.ctx_defaults.iter().any(|(x, _)| x == c) {
             ir.ctx_defaults.push((c.clone(), d.clone()));
         }
+    }
+    // F419 (ruling 2): the page's own read of a context with no scalar default (an object default, whose per-field defaults
+    // are not modelled) has no Provider above it either; paint nothing wrong: name it and fall back.
+    let own_unanswered = || {
+        ir.ctx_uses.iter().find(|u| {
+            !ir.ctx_defaults.iter().any(|(c, _)| c == &u.context)
+                && !bubbled.iter().any(|(c, _)| c == &u.context)
+        })
+    };
+    if ctx.is_root
+        && let Some(u) = own_unanswered()
+    {
+        diags.push(Diagnostic::fallback(
+            "context-no-provider",
+            format!("`{}` reads a context that no Provider above it provides, and its default is not a plain value", u.context),
+            0,
+            "render it inside the Provider component, or keep this component in React",
+        ));
     }
     if let Some((c, _)) = bubbled.iter().find(|(c, f)| !defaulted(c, f))
         && ctx.is_root
