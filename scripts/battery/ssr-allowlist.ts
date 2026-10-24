@@ -9,7 +9,6 @@ export const ALLOWED: Record<string, Allowed> = {
   'a-textarea-controlled': { row: 'F421', why: 'a controlled <textarea> paints a value attribute, not its text' },
   'b-spread-alias-known': { row: 'F422', why: 'className + class spread: React keeps both (the first wins in the browser), brust paints the last' },
   'c-context-field-named-loop': { row: 'F423', why: 'a useState local named loop becomes {% set loop %}: brust start refuses to boot' },
-  'b-fed-child-row-reading-inline': { row: 'F424', why: 'string + number in a row prop is a jinja + error: HTTP 500' },
   'b-jsx-const-child-imported-plain': { row: 'F425', why: 'a sibling module with `export const el = <b/>`: the worker has no jsx runtime (jsxDEV is not a function)' },
   'b-jsx-const-child-shadowed': { row: 'F425', why: 'same sibling JSX const module as above' },
   'b-jsx-const-child-provider-own': { row: 'F425', why: 'same sibling JSX const module as above' },

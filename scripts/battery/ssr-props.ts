@@ -17,6 +17,7 @@ const OVERRIDES: Record<string, Record<string, unknown>> = {
   'b-fed-child-row-invariant-props': { items: ITEMS },
   'b-fed-child-row-invariant-xfor': { items: ITEMS },
   'b-context-helper': { v: 40 },
+  'a-plus-js-semantics': { s: 'a', n: 2 },
   'd-cache': { id: 'abcd' },
   'd-fragment-keyed': { items: ITEMS },
   'e-precompute-props': { price: 3.14159 },
