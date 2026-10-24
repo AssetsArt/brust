@@ -270,8 +270,8 @@ function moduleSpecs(file: string): string[] | undefined {
 
 /**
  * F437 (module-level rule): whether the island `file` imports ANY binding (a hook, the context, a helper) from a module that
- * declares a context a layout above provides, directly or through one re-exporting module (an app file that is not the
- * provided module itself). A relative specifier that cannot be resolved, or a barrel that cannot be read, is refused too.
+ * declares a context a layout above provides, directly or through re-exporting modules (followed transitively, each app file
+ * once). A relative specifier that cannot be resolved, or a barrel that cannot be read, is refused too.
  */
 function importsProvidedModule(
   file: string,
@@ -292,8 +292,27 @@ function importsProvidedModule(
     }
   }
   const unfollowable = { file: '', layout: '(unresolved re-export)', contexts: ['?'] }
-  const specs = moduleSpecs(file)
-  for (const spec of specs ?? []) {
+  type Hit = { file: string; layout: string; contexts: string[] }
+  // The app modules `from` imports or re-exports, followed transitively (a barrel behind barrels) with a visited set.
+  const reach = (from: string, visited: Set<string>): { hit: Hit; via: string } | undefined => {
+    const specs = moduleSpecs(from)
+    if (specs === undefined) return { hit: unfollowable, via: from }
+    for (const spec of specs) {
+      const target = resolve(spec, from)
+      if (target === undefined) {
+        if (spec.startsWith('.')) return { hit: unfollowable, via: from }
+        continue
+      }
+      const hit = provided.find((p) => p.file === target)
+      if (hit) return { hit, via: from }
+      if (target.includes(`${sep}node_modules${sep}`) || visited.has(target)) continue
+      visited.add(target)
+      const deeper = reach(target, visited)
+      if (deeper) return deeper
+    }
+    return undefined
+  }
+  for (const spec of moduleSpecs(file) ?? []) {
     const target = resolve(spec, file)
     if (target === undefined) {
       if (spec.startsWith('.')) return { spec, hit: unfollowable }
@@ -302,18 +321,8 @@ function importsProvidedModule(
     const direct = provided.find((p) => p.file === target)
     if (direct) return { spec, hit: direct }
     if (target.includes(`${sep}node_modules${sep}`)) continue
-    // One hop: a module this one imports that itself imports (re-exports) a provided module.
-    const hop = moduleSpecs(target)
-    if (hop === undefined) return { spec, via: target, hit: unfollowable }
-    for (const inner of hop) {
-      const innerTarget = resolve(inner, target)
-      if (innerTarget === undefined) {
-        if (inner.startsWith('.')) return { spec, via: target, hit: unfollowable }
-        continue
-      }
-      const hit = provided.find((p) => p.file === innerTarget)
-      if (hit) return { spec, via: relative(dirname(file), target), hit }
-    }
+    const found = reach(target, new Set([file, target]))
+    if (found) return { spec, via: relative(dirname(file), target), hit: found.hit }
   }
   return undefined
 }

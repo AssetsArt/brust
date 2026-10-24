@@ -22,7 +22,7 @@ afterAll(async () => {
     p.kill('SIGINT')
     if ((await Promise.race([p.exited, Bun.sleep(5000).then(() => undefined)])) === undefined) { p.kill('SIGKILL'); await p.exited }
   }
-  for (const v of ['layout', 'nested', 'child', 'alias', 'hook', 'barrel', 'helper', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
+  for (const v of ['layout', 'nested', 'child', 'alias', 'hook', 'barrel', 'barrel2', 'helper', 'state', 'shared', 'none']) rmSync(join(root, v, 'dist'), { recursive: true, force: true })
 })
 
 test('a context declared in the layout is refused for the island page, by name', () => {
@@ -62,6 +62,13 @@ test('a re-export barrel (index.ts: export * from ./theme) is followed one hop',
   const b = build('barrel')
   expect(b.exitCode).not.toBe(0)
   expect(b.stderr.toString()).toContain('imports ./index (through index.ts)')
+})
+
+test('a barrel behind a barrel (index -> inner -> theme) is followed too', () => {
+  const b = build('barrel2')
+  expect(b.exitCode).not.toBe(0)
+  expect(b.stderr.toString()).toContain('imports ./index (through index.ts)')
+  expect(b.stderr.toString()).toContain('declares the context `Ctx`')
 })
 
 test('an island page importing only a non-context helper from the context module is refused too (conservative by design)', () => {
