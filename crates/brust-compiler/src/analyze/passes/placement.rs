@@ -761,7 +761,7 @@ impl Placer<'_> {
                             }
                         ) || (!*optional
                             && plain_method(name)
-                            && self.receiver_problem(target, depth + 1).is_none())
+                            && self.plain_receiver(target, depth + 1))
                     }
                     RawKind::Lit(_)
                     | RawKind::Ident { .. }
@@ -825,6 +825,22 @@ impl Placer<'_> {
     /// derived local judged by this same rule; a primitive module const; member / index chains on those roots; a call of
     /// an allowlisted method on such a receiver (`n.toFixed(2).padStart(6)`), of `String` / `Number` / `Math.*`; and
     /// `new Date(…)` of the unbound global `Date` whose every read is accepted. Anything else refuses.
+    /// F442: the receiver of a built-in method (`includes`, `join`, `slice`...) is plain when it is a primitive receiver
+    /// (`receiver_problem`) or an array literal of primitive literals: a fresh array of strings, numbers and booleans carries
+    /// no method of its own, so `['mounted', 'unmountSuspended'].includes(state)` is a boolean (Radix Presence's `isPresent`).
+    /// Only as the receiver of the call: a member read of such an array (`['a'].constructor`) stays refused.
+    fn plain_receiver(&self, target: &RawExpr, depth: u8) -> bool {
+        match &target.kind {
+            RawKind::Array(xs) => xs.iter().all(|x| {
+                matches!(
+                    x.kind,
+                    RawKind::Lit(Literal::Str(_) | Literal::Num(_) | Literal::Bool(_))
+                )
+            }),
+            _ => self.receiver_problem(target, depth).is_none(),
+        }
+    }
+
     fn receiver_problem(&self, r: &RawExpr, depth: u8) -> Option<String> {
         if depth > 8 {
             return Some("an expression nested deeper than 8".into());
@@ -967,7 +983,7 @@ impl Placer<'_> {
                                 _ => not(),
                             };
                         }
-                        _ => plain_method(name) && go(target).is_none(),
+                        _ => plain_method(name) && self.plain_receiver(target, depth + 1),
                     },
                     _ => false,
                 };
