@@ -109,7 +109,9 @@ fn a_custom_hook_given_children_as_its_initial_value_is_refused() {
     let comp = "import { useKept } from './use-kept'\nexport default function C({ children }: any) { const [c] = useKept(children); return <div>{c}</div> }\n";
     let ir = project(&[("use-kept.ts", hook), ("C.tsx", comp)], "C.tsx");
     assert!(
-        fallbacks(&ir).iter().any(|d| d.rule == "state-from-children"),
+        fallbacks(&ir)
+            .iter()
+            .any(|d| d.rule == "state-from-children"),
         "{:?}\n{:?}",
         ir.tier,
         ir.diagnostics
