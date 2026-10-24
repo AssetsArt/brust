@@ -40,6 +40,27 @@ test('an inner branch attaches before the outer one, and an object ref is set an
   expect(log).toEqual(['outer obj=b', 'outer off'])
 })
 
+// review F2 (Mellow): React 19 attaches in commit post-order (children first) and detaches a removed tree outer first.
+test('nested callback refs in one branch attach inner first and detach outer first', () => {
+  const open = signal(false); const log: string[] = []
+  const cb = (tag: string) => (n: Element | null) => { log.push(`${tag} ${n ? 'on' : 'off'}`) }
+  defineBehavior('cr6', ({ ref }) => { ref('$cr1', cb('outer')); ref('$cr2', cb('inner')); return { open } })
+  document.body.innerHTML = `<div x-data="cr6"><!--x-if--><section x-if="open" x-cref="$cr1" hidden><b x-cref="$cr2"></b></section></div>`
+  mount()
+  open.set(true); open.set(false)
+  expect(log).toEqual(['inner on', 'outer on', 'outer off', 'inner off'])
+})
+
+test('an inner branch inserted with its outer one attaches after an earlier sibling\'s ref (DOM post-order)', () => {
+  const open = signal(false); const log: string[] = []
+  const cb = (tag: string) => (n: Element | null) => { if (n) log.push(tag) }
+  defineBehavior('cr7', ({ ref }) => { ref('$cr1', cb('section')); ref('$cr2', cb('i')); ref('$cr3', cb('b')); ref('$cr4', cb('u')); return { open } })
+  document.body.innerHTML = `<div x-data="cr7"><!--x-if--><section x-if="open" x-cref="$cr1" hidden><i x-cref="$cr2"></i><!--x-if--><b x-if="open" x-cref="$cr3" hidden><u x-cref="$cr4"></u></b></section></div>`
+  mount()
+  open.set(true)
+  expect(log).toEqual(['i', 'u', 'b', 'section'])
+})
+
 test('unmounting the host detaches a live branch\'s callback ref', () => {
   const log: string[] = []
   defineBehavior('cr4', ({ ref }) => { ref('$cr1', (n: Element | null) => log.push(n ? 'on' : 'off')); return { open: true } })

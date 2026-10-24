@@ -757,6 +757,7 @@ fn a_steady_callback_ref_under_a_conditional_is_a_branch_cell() {
             .iter()
             .find(|r| r.name == "$cr1")
             .unwrap_or_else(|| panic!("{cb}: {:?}", a.refs));
+        assert!(cell.callback, "{cb}: {:?}", a.refs);
         assert!(
             matches!(&cell.init, Expr::Raw(r) if matches!(&r.kind, RawKind::Ident { name, .. } if name == cb)),
             "{cb}: {:?}",

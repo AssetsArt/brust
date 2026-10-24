@@ -583,6 +583,36 @@ fn a_callback_ref_passed_to_a_forward_ref_child_under_a_condition_binds_with_the
     );
 }
 
+// F288 phase B review F1: `x-cref` comes from the cell `callback_refs` made, never from the spelling: a user's own
+// `useRef` named `$crumb` or `$cr1` (inside or outside a branch, or handed to a forwardRef child) is still `x-ref`.
+#[test]
+fn a_user_ref_spelled_like_a_callback_ref_cell_stays_x_ref() {
+    let all = compile("fwd_crumb.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    for r in ["$crumb", "$cr1", "$crf"] {
+        assert!(
+            root.jinja.contains(&format!("x-ref=\"{r}\"")),
+            "{r}: {}",
+            root.jinja
+        );
+        assert!(
+            !root.jinja.contains(&format!("x-cref=\"{r}\"")),
+            "{r}: {}",
+            root.jinja
+        );
+    }
+    let cells: Vec<_> = root.ir.refs.iter().filter(|r| r.callback).collect();
+    assert_eq!(cells.len(), 1, "{:?}", root.ir.refs);
+    assert_ne!(cells[0].name, "$cr1");
+    assert!(
+        root.jinja
+            .contains(&format!("x-cref=\"{}\"", cells[0].name)),
+        "{}",
+        root.jinja
+    );
+}
+
 #[test]
 fn a_ref_passed_to_a_forward_ref_child_that_may_not_render_stays_react() {
     // a child that renders its element sometimes; a spread after the ref

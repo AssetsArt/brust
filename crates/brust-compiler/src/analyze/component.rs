@@ -889,7 +889,8 @@ fn setter_writes_boolean(ir: &ComponentIR, set: &str, depth: u8) -> bool {
         })
 }
 
-/// The name prefix of a branch's callback-ref cell (F288 phase B): `x-cref` prints it, the cell holds the callback.
+/// The name prefix of a branch's callback-ref cell (F288 phase B), the cell holding the callback. Only a name: the
+/// printer binds `x-cref` from [`RefDecl::callback`], since a user's own `useRef` may be spelled `$cr…` too.
 pub const CALLBACK_REF: &str = "$cr";
 
 /// B1: `ref={x}` where `x` is a function value or a ref object the component computes (a `useCallback`, a derived
@@ -1046,6 +1047,7 @@ pub(crate) fn callback_refs(ir: &mut ComponentIR) {
                 loc,
                 kind: RawKind::Ident { name: x, kind },
             }),
+            callback: true,
         });
     }
     for (at, (rf, x, kind, loc)) in made.into_iter().enumerate() {
@@ -1072,6 +1074,7 @@ pub(crate) fn callback_refs(ir: &mut ComponentIR) {
                 loc,
                 kind: RawKind::Lit(Literal::Null),
             }),
+            callback: false,
         });
         ir.effects.insert(
             at,

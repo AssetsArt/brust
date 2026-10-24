@@ -43,8 +43,8 @@ pub enum PropBinding {
     /// `x-bind-*` member) in the parent's scope, bound where a spread lands it on an element.
     Live(String),
     /// A ref the parent bound itself on an inlined `forwardRef` child (F267): the name of the parent's ref cell, bound
-    /// as `x-ref` where the child's own `ref={forwardedRef}` is.
-    Ref(String),
+    /// as `x-ref` where the child's own `ref={forwardedRef}` is (`x-cref` when the cell is a branch's callback ref).
+    Ref(String, bool),
 }
 
 /// One piece of a call site's props, in source order (shadcn S1.2): a named prop, or a spread
@@ -140,9 +140,9 @@ impl Inline {
     }
 
     /// The parent's ref cell bound on this instance (F267).
-    pub fn ref_binding(&self) -> Option<&str> {
+    pub fn ref_binding(&self) -> Option<(&str, bool)> {
         self.segs.iter().rev().find_map(|s| match s {
-            Seg::Named(_, PropBinding::Ref(n)) => Some(n.as_str()),
+            Seg::Named(_, PropBinding::Ref(n, cb)) => Some((n.as_str(), *cb)),
             _ => None,
         })
     }
@@ -301,7 +301,7 @@ pub struct Printer<'a, 'c> {
     inner_html: Option<String>,
     /// F267: the caller's ref cell this element takes (`Attr::ForwardRef`), printed after the attributes: `x-ref` on an
     /// element the caller binds, `x-pref` on a nested host (its own instance binds it; the caller's binds `x-pref`).
-    fwd_ref: Option<String>,
+    fwd_ref: Option<(String, bool)>,
 }
 
 impl<'a, 'c> Printer<'a, 'c> {
@@ -902,10 +902,10 @@ impl<'a, 'c> Printer<'a, 'c> {
         if let Some(m) = &model {
             open.push_str(&format!(" x-model=\"{m}\""));
         }
-        if let Some(n) = self.fwd_ref.take() {
+        if let Some((n, callback)) = self.fwd_ref.take() {
             // this element is an instance host (its `x-data` is inserted below) when it is the host root
             let host = *host && root && self.native;
-            open.push_str(&format!(" {}=\"{n}\"", ref_directive(&n, host)));
+            open.push_str(&format!(" {}=\"{n}\"", ref_directive(callback, host)));
         }
         // A lone reactive slot child puts x-text on this element (Review Focus 1).
         let lone = matches!(children.as_slice(), [Node::Slot(_)]);
@@ -1181,16 +1181,17 @@ impl<'a, 'c> Printer<'a, 'c> {
             }
             Attr::Ref { name } => {
                 if self.native {
-                    open.push_str(&format!(" {}=\"{name}\"", ref_directive(name, false)));
+                    let callback = self.f.ir.refs.iter().any(|r| &r.name == name && r.callback);
+                    open.push_str(&format!(" {}=\"{name}\"", ref_directive(callback, false)));
                 }
             }
             // F267: the ref the caller bound on this inlined instance lands here, in the caller's scope.
             // (A static child is printed with its own printer: the binding itself says the caller is native.)
             Attr::ForwardRef => {
                 if let Some(i) = &self.inline
-                    && let Some(n) = i.ref_binding()
+                    && let Some((n, callback)) = i.ref_binding()
                 {
-                    self.fwd_ref = Some(n.to_string());
+                    self.fwd_ref = Some((n.to_string(), callback));
                 }
             }
             Attr::Spread(_) => {}
@@ -1366,7 +1367,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             match probe.get("children") {
                 Some(PropBinding::Markup(m)) => Some(m),
                 Some(PropBinding::Expr(e)) => Some(format!("{{{{ spread_children({e}) }}}}")),
-                Some(PropBinding::Handler(_) | PropBinding::Live(_) | PropBinding::Ref(_))
+                Some(PropBinding::Handler(_) | PropBinding::Live(_) | PropBinding::Ref(..))
                 | None => None,
             }
         };
@@ -1963,7 +1964,11 @@ impl<'a, 'c> Printer<'a, 'c> {
                     ..
                 }) = v
             {
-                segs.push(Seg::Named(pname.clone(), PropBinding::Ref(cell.clone())));
+                let callback = ir.refs.iter().any(|r| &r.name == cell && r.callback);
+                segs.push(Seg::Named(
+                    pname.clone(),
+                    PropBinding::Ref(cell.clone(), callback),
+                ));
                 continue;
             }
             let forwarded = ir.handlers.iter().find(|h| {
@@ -3021,10 +3026,11 @@ fn dynamic_attr(html: &str, v: &str, tag: &str) -> String {
     }
 }
 
-/// The directive that binds the ref cell `name` on an element: `x-cref` for a branch's callback ref (F288 phase B, the
-/// runtime's `x-if` attaches it with the branch), `x-pref` for the caller's ref on a nested host, `x-ref` otherwise.
-fn ref_directive(name: &str, host: bool) -> &'static str {
-    if name.starts_with(crate::analyze::component::CALLBACK_REF) {
+/// The directive that binds a ref cell on an element: `x-cref` for a branch's callback ref (`RefDecl::callback`, F288
+/// phase B: the runtime's `x-if` attaches it with the branch), `x-pref` for the caller's ref on a nested host, `x-ref`
+/// otherwise.
+fn ref_directive(callback: bool, host: bool) -> &'static str {
+    if callback {
         "x-cref"
     } else if host {
         "x-pref"

@@ -11,3 +11,9 @@ export const renderElement = async (): Promise<string> => {
   const { default: ElementPage } = await import('./ElementPage')
   return (server as unknown as { renderToString(el: unknown): string }).renderToString(createElement(ElementPage as never))
 }
+
+/** React's render of the `$cr`-spelled refs page (phase B review F1). */
+export const renderCrumb = async (): Promise<string> => {
+  const { default: CrumbPage } = await import('./CrumbPage')
+  return (server as unknown as { renderToString(el: unknown): string }).renderToString(createElement(CrumbPage as never))
+}

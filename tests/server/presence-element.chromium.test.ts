@@ -3,13 +3,14 @@
 // while present, and Presence gets its node through the composed callback ref, which the runtime's `x-if` attaches
 // with the branch and detaches before it leaves (`x-cref`). After every click the DOM equals React's; with an exit
 // animation (`fade`, 400ms) the child stays until `animationend`, as in React; after 20 toggles every `animation*`
-// listener Presence added is removed again, as in React; the console stays clean.
+// listener Presence added is removed again, as in React; the console stays clean. `/crumb`: user refs spelled `$cr…` stay
+// plain refs (review F1).
 // Run alone: `bun test --timeout 120000 tests/server/presence-element.chromium.test.ts`.
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { type Browser, type Page, chromium } from 'playwright'
-import { renderElement } from '../../packages/brust/test/fixtures/presence/render'
+import { renderCrumb, renderElement } from '../../packages/brust/test/fixtures/presence/render'
 
 const app = join(import.meta.dir, '../../packages/brust/test/fixtures/presence')
 const bin = join(import.meta.dir, '../../packages/brust/bin/brust')
@@ -18,6 +19,8 @@ let base = ''
 let browser: Browser
 let reactJs = ''
 let reactHtml = ''
+let crumbJs = ''
+let crumbHtml = ''
 
 beforeAll(async () => {
   const b = Bun.spawnSync([bin, 'build', 'routes.tsx'], { cwd: app, stdout: 'pipe', stderr: 'pipe' })
@@ -26,6 +29,10 @@ beforeAll(async () => {
   if (!r.success) throw new Error(`react reference build failed: ${r.logs.join('\n')}`)
   reactJs = await r.outputs[0]!.text()
   reactHtml = await renderElement()
+  const c = await Bun.build({ entrypoints: [join(app, 'crumb-entry.tsx')], target: 'browser', define: { 'process.env.NODE_ENV': '"production"' } })
+  if (!c.success) throw new Error(`react reference build failed: ${c.logs.join('\n')}`)
+  crumbJs = await c.outputs[0]!.text()
+  crumbHtml = await renderCrumb()
   const env = { ...process.env, BRUST_PORT: '', BRUST_WORKERS: '', BRUST_ADDR: '' }
   proc = Bun.spawn([bin, 'start', '--port', '0', '--workers', '1'], { cwd: app, env, stdout: 'pipe', stderr: 'inherit' })
   const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
@@ -64,7 +71,7 @@ const shown = (page: Page) =>
     ),
   )
 
-async function open(how: 'react' | 'served'): Promise<{ page: Page; errors: string[] }> {
+async function open(how: 'react' | 'served', path = '/element'): Promise<{ page: Page; errors: string[] }> {
   const page = await browser.newPage()
   const errors: string[] = []
   page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(`console: ${m.text()}`) })
@@ -73,13 +80,13 @@ async function open(how: 'react' | 'served'): Promise<{ page: Page; errors: stri
   if (how === 'react') {
     await page.route('http://react.test/**', (route) =>
       route.request().url().endsWith('/app.js')
-        ? route.fulfill({ contentType: 'text/javascript', body: reactJs })
-        : route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><body><div id="root">${reactHtml}</div><script src="/app.js"></script></body></html>` }),
+        ? route.fulfill({ contentType: 'text/javascript', body: path === '/crumb' ? crumbJs : reactJs })
+        : route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<!doctype html><html><body><div id="root">${path === '/crumb' ? crumbHtml : reactHtml}</div><script src="/app.js"></script></body></html>` }),
     )
     await page.goto('http://react.test/', { waitUntil: 'domcontentloaded' })
     await page.waitForFunction(() => (window as unknown as { __hydrated?: boolean }).__hydrated === true)
   } else {
-    await page.goto(`${base}/element`, { waitUntil: 'networkidle' })
+    await page.goto(`${base}${path}`, { waitUntil: 'networkidle' })
     await page.waitForFunction(() => document.querySelector('[x-data]') !== null)
   }
   await page.waitForTimeout(200)
@@ -137,3 +144,28 @@ test('after 20 toggles every animation listener Presence added is removed again,
   expect(counts.served!.add).toBeGreaterThan(0)
   expect(counts.served!.remove).toBe(counts.served!.add)
 }, 120_000)
+
+// review F1 (Mellow): `x-cref` is chosen from the compiler's own callback-ref cell, not the `$cr` spelling, so user refs
+// named `$crumb` (outside a branch) and `$cr1` (inside one) are set as React sets them, next to a real branch callback ref.
+test('user refs spelled $cr… are set as in React, outside and inside a branch', async () => {
+  const marks = (page: Page) =>
+    page.evaluate(() => ['crumb', 'cr1', 'cb'].map((t) => {
+      const e = document.querySelector(`[data-testid="${t}"]`) as HTMLElement | null
+      return e ? `${t}:${e.dataset.bound ?? '-'}:${e.dataset.cb ?? '-'}` : `${t}:absent`
+    }))
+  const runs: Record<string, string[][]> = {}
+  for (const how of ['react', 'served'] as const) {
+    const { page, errors } = await open(how, '/crumb')
+    const log = [await marks(page)]
+    for (let i = 0; i < 4; i++) {
+      await page.getByTestId('toggle').click()
+      await page.waitForTimeout(50)
+      log.push(await marks(page))
+    }
+    runs[how] = log
+    expect(errors).toEqual([])
+    await page.close()
+  }
+  expect(runs.react![1]).toEqual(['crumb:yes:-', 'cr1:1:-', 'cb:-:on'])
+  expect(runs.served).toEqual(runs.react!)
+}, 90_000)

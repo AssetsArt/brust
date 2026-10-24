@@ -1,7 +1,11 @@
 import { BINDERS, bindElement, walkChildren, parsed, read, hooks } from '../core-api'
 /** The callback refs of the branch being inserted: attached once its whole subtree is bound and mounted (React attaches
- * refs in the commit, after the DOM is placed and before layout effects); an inner branch's attach first. */
-let attach: Array<() => void> | null = null
+ * refs in the commit, after the DOM is placed and before layout effects). An inner branch inserted with it hands its
+ * refs over, so the outermost attaches them all in DOM post-order (children first, as React's commit does). */
+type Attach = [el: Element, on: () => void]
+let attach: Attach[] | null = null
+/** `a` first when `b` contains it (8) or follows it (4) without being inside it (16). */
+const postOrder = ([a]: Attach, [b]: Attach) => { const p = a.compareDocumentPosition(b); return p & 8 || (p & 20) === 4 ? -1 : 1 }
 BINDERS.push({
   match: (a) => a === 'x-if',
   bind: ({ inst, el, attr, raw, scope }) => {
@@ -21,12 +25,13 @@ BINDERS.push({
       if (want && !current) {
         const node = (current = template.cloneNode(true) as Element)
         anchor.after(node)
-        const outer = attach; const mine: Array<() => void> = (attach = [])
+        const outer = attach; const mine: Attach[] = (attach = [])
         try {
           // nested hosts mount inside the capture too: an `x-cref` on one registers its detach on this branch
           drop = inst.capture(() => { bindElement(inst, node, scope); walkChildren(inst, node, scope); hooks.mountTree(node) })
         } finally { attach = outer }
-        for (const f of mine) f()
+        if (outer) outer.push(...mine)
+        else for (const [, on] of mine.sort(postOrder)) on()
       } else if (!want && current) remove()
     })
     inst.onCleanup(remove)
@@ -34,7 +39,9 @@ BINDERS.push({
 })
 // F288 phase B (G5): `x-cref="cell"`, a callback ref inside a branch. The cell holds the callback (or a ref object); it
 // gets the node when the branch is inserted and `null` (or the callback's returned cleanup) when it is removed. On a
-// nested host the host's own instance meets it while it mounts, inside the branch's capture.
+// nested host the host's own instance meets it while it mounts, inside the branch's capture. (A host whose behavior
+// chunk is not loaded yet binds later through whenBehavior, outside the capture: it attaches at once and detaches only
+// with the owner, not the branch: reachable only if an inlined child's root can have its behavior in another chunk.)
 BINDERS.push({
   match: (a) => a === 'x-cref',
   bind: ({ inst, el, raw }) => {
@@ -48,6 +55,6 @@ BINDERS.push({
       if (typeof r === 'function') { const c = r(el); off = typeof c === 'function' ? c : () => r(null) }
       else if (r) { (r as { current: unknown }).current = el; off = () => { (r as { current: unknown }).current = null } }
     }
-    attach ? attach.push(on) : on()
+    attach ? attach.push([el, on]) : on()
   },
 })
