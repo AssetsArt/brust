@@ -1188,7 +1188,8 @@
       "url": "https://react.dev/reference/react-dom/components/select",
       "status": "native",
       "rows": [
-        "a-select-controlled"
+        "a-select-controlled",
+        "a-select-spread"
       ],
       "tiers": [
         "native"
@@ -1201,9 +1202,16 @@
           "expected": "native",
           "observed": "native",
           "diagnostics": []
+        },
+        {
+          "row": "a-select-spread",
+          "authoring": "select wrapper: value and options through a spread",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
         }
       ],
-      "note": "controlled <select>"
+      "note": "F432: the shadcn wrapper shape; the value is printed as selected on the matching option"
     },
     {
       "name": "<textarea>",
@@ -1211,7 +1219,8 @@
       "url": "https://react.dev/reference/react-dom/components/textarea",
       "status": "native",
       "rows": [
-        "a-textarea-controlled"
+        "a-textarea-controlled",
+        "a-textarea-spread"
       ],
       "tiers": [
         "native"
@@ -1224,9 +1233,16 @@
           "expected": "native",
           "observed": "native",
           "diagnostics": []
+        },
+        {
+          "row": "a-textarea-spread",
+          "authoring": "textarea wrapper: value through a spread",
+          "expected": "native",
+          "observed": "native",
+          "diagnostics": []
         }
       ],
-      "note": "controlled <textarea>"
+      "note": "F432: the value is printed as the text content"
     },
     {
       "name": "<title>",

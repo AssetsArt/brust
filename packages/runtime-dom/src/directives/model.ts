@@ -17,9 +17,10 @@ BINDERS.push({
       const h = () => { if (input.checked) s.set(input.value) }; el.addEventListener('change', h); inst.onCleanup(() => el.removeEventListener('change', h))
       inst.effect(() => { input.checked = s() === input.value })
     } else if (el instanceof HTMLSelectElement) {
-      if (el.multiple) { warnOnce(`mm:${inst.name}`, `select[multiple] unsupported`); return }
-      const h = () => s.set(el.value); el.addEventListener('change', h); inst.onCleanup(() => el.removeEventListener('change', h))
-      const apply = () => { const v = s(); if (el.value !== String(v)) el.value = String(v ?? '') }
+      // F434: a multiple select is an array of the picked values
+      const many = el.multiple
+      const h = () => s.set(many ? Array.from(el.options).filter((o) => o.selected).map((o) => o.value) : el.value); el.addEventListener('change', h); inst.onCleanup(() => el.removeEventListener('change', h))
+      const apply = () => { const v = s(); if (many) { if (v != null) { const vs = ([] as unknown[]).concat(v).map(String); for (const o of el.options) o.selected = vs.includes(o.value) } } else if (el.value !== String(v)) el.value = String(v ?? '') }
       inst.effect(apply)
       const mo = new MutationObserver(() => apply()); mo.observe(el, { childList: true }); inst.onCleanup(() => mo.disconnect())
     } else {

@@ -146,12 +146,16 @@ pub struct NameTable<'a> {
     collections_recognised: bool,
     /// Scalar contexts adopted from the hooks this module inlined (`adopt_scalar`).
     scalars_adopted: std::cell::RefCell<Vec<(String, crate::ir::Literal)>>,
+    /// F431: object-default contexts adopted from the hooks this module inlined (`adopt_object`).
+    objects_adopted: std::cell::RefCell<Vec<crate::ir::ObjectDefault>>,
     /// `const context = useXContext(…)` locals (symbol key → context name): `context.field` reads a hidden prop.
     ctx_locals: HashMap<u32, String>,
     /// The fields read per context by this component (first-use order).
     ctx_fields: std::cell::RefCell<Vec<(String, String)>>,
     /// Where a context local is used as a bare value (not `context.field`): brust cannot narrow it (fail closed).
     pub ctx_escape: std::cell::Cell<Option<u32>>,
+    /// F437: `useContext(X)` of an imported `X` (import source, imported name), see `ComponentIR::foreign_ctx_reads`.
+    pub foreign_ctx_reads: std::cell::RefCell<Vec<(String, String)>>,
     /// F289: `const t = useHook()` where the hook returns an object literal: symbol key → its members, read one by one
     /// (`t.key`), like a destructuring. The object itself is not a value in the chunk.
     hook_objects: HashMap<u32, Vec<(String, crate::ir::RawExpr)>>,
@@ -513,11 +517,13 @@ impl<'a> NameTable<'a> {
             collections: Default::default(),
             collections_recognised: false,
             scalars_adopted: std::cell::RefCell::new(Vec::new()),
+            objects_adopted: std::cell::RefCell::new(Vec::new()),
             ctx_locals: HashMap::new(),
             hook_objects: HashMap::new(),
             hook_object_escape: std::cell::Cell::new(None),
             ctx_fields: std::cell::RefCell::new(Vec::new()),
             ctx_escape: std::cell::Cell::new(None),
+            foreign_ctx_reads: Default::default(),
             ctx_scoped: std::cell::RefCell::new(Vec::new()),
             scope_tokens: std::cell::RefCell::new(HashSet::new()),
             scope_token_escape: std::cell::Cell::new(None),
@@ -1075,6 +1081,9 @@ impl<'a> NameTable<'a> {
         for (n, _) in &mut self.contexts.scalar {
             *n = format!("{n}_{tag}");
         }
+        for (n, _) in &mut self.contexts.object {
+            *n = format!("{n}_{tag}");
+        }
     }
 
     /// R34.142: the literal default of the scalar context `context` (see `Contexts::scalar`).
@@ -1098,6 +1107,25 @@ impl<'a> NameTable<'a> {
     pub fn scalar_defaults(&self) -> Vec<(String, crate::ir::Literal)> {
         let mut v = self.contexts.scalar.clone();
         for a in self.scalars_adopted.borrow().iter() {
+            if !v.iter().any(|(n, _)| n == &a.0) {
+                v.push(a.clone());
+            }
+        }
+        v
+    }
+
+    /// F431: an object-default context of an inlined hook's module, met while reading its body.
+    pub fn adopt_object(&self, context: &str, fields: &[(String, crate::ir::Literal)]) {
+        let mut found = self.objects_adopted.borrow_mut();
+        if !found.iter().any(|(n, _)| n == context) {
+            found.push((context.to_string(), fields.to_vec()));
+        }
+    }
+
+    /// F431: every object-default context this module declares or adopted, with its plain-literal fields.
+    pub fn object_defaults(&self) -> Vec<crate::ir::ObjectDefault> {
+        let mut v = self.contexts.object.clone();
+        for a in self.objects_adopted.borrow().iter() {
             if !v.iter().any(|(n, _)| n == &a.0) {
                 v.push(a.clone());
             }
@@ -1538,6 +1566,8 @@ pub const JINJA_RESERVED_LOCALS: &[&str] = &[
     "debug",
     // the global functions brust-jinja registers
     "spread_attrs",
+    "spread_attrs_control",
+    "spread_control_value",
     "spread_children",
     "spread_get",
     "spread_merge",

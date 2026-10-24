@@ -513,7 +513,8 @@ fn a_context_field_that_is_not_a_plain_identifier_is_refused_by_name() {
 }
 
 /// Mellow F2: a context is the declaring module AND its name. Two modules each declare `Ctx`: a consumer of B's never
-/// reads A's Provider (React reads B's default).
+/// reads A's Provider (React reads B's default). F431: B's object default is plain, so the page paints it, native (it
+/// fell back by name before object defaults were carried).
 #[test]
 fn a_context_with_the_same_local_name_in_another_module_is_another_context() {
     let (ir, jinja) = page("same-name.tsx");
@@ -521,12 +522,8 @@ fn a_context_with_the_same_local_name_in_another_module_is_another_context() {
         !jinja.contains("from-A"),
         "A's value must not reach B's consumer: {jinja}"
     );
-    assert!(
-        rules(&ir).contains(&"context-no-provider"),
-        "{:?}",
-        ir.diagnostics
-    );
-    assert!(is_react(&ir), "{:?}", ir.tier);
+    assert!(jinja.contains("\"B-default\""), "{jinja}");
+    assert!(!is_react(&ir), "{:?} {:?}", ir.tier, ir.diagnostics);
 }
 
 /// A context declared in a THIRD module and imported by both sides is not recognised across modules (v1): the Provider

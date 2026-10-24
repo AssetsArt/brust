@@ -1,5 +1,6 @@
 import { createElement } from 'react'
 import SelectPage from './SelectPage'
+import SpreadPage from './SpreadPage'
 import TextareaPage from './TextareaPage'
 
 const server = (await import('react-dom/server')) as unknown as { renderToStaticMarkup(el: unknown): string }
@@ -8,3 +9,4 @@ const server = (await import('react-dom/server')) as unknown as { renderToStatic
 const html = (c: unknown): string => server.renderToStaticMarkup(createElement(c as never))
 export const renderSelect = (): string => html(SelectPage)
 export const renderTextarea = (): string => html(TextareaPage)
+export const renderSpread = (): string => html(SpreadPage)

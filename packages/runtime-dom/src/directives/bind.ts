@@ -12,6 +12,8 @@ function writeAttr(inst: Instance, attr: string, el: Element, name: string, v: u
   // setAttribute: `className` is a getter-only SVGAnimatedString on SVG elements (F96a).
   // F311: undefined/null removes `class` (React does; `className=""` keeps an empty one), and an empty `style` is no attribute (the first paint omits it)
   if (name === 'class') { if (v == null) el.removeAttribute('class'); else el.setAttribute('class', `${v}`); return }
+  // F434: a multiple select is bound to an array, one pick per option (`null`/`undefined` leave the picks alone, as React does)
+  if (name === 'value' && el instanceof HTMLSelectElement && el.multiple) { if (v != null) { const vs = ([] as unknown[]).concat(v).map(String); for (const o of el.options) o.selected = vs.includes(o.value) } return }
   if (name === 'value' && 'value' in el) { (el as HTMLInputElement).value = v == null ? '' : String(v); return }
   // React passes every attribute of a custom element (a tag with `-`) through as given: `true` is ``, `false` omits it.
   const custom = el.localName.includes('-')
