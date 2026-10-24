@@ -1712,6 +1712,21 @@ fn pure_expr(e: &js_ast::Expr) -> bool {
     }
 }
 
+/// F437: a refused `useContext(X)` of an imported `X` is remembered (import source, imported name), so the build can tell
+/// when a layout above the route provides that context (an island's SSR and hydration do not see the layout's Providers).
+fn note_foreign_ctx_read(names: &NameTable<'_>, hook: &str, call: &js_ast::E::Call) {
+    if hook == "useContext"
+        && let Some(a) = call.args.first().and_then(crate::analyze::names::ident_ref)
+        && let Some((src, name)) = names.import_of(a)
+    {
+        let read = (src.to_string(), name.to_string());
+        let mut reads = names.foreign_ctx_reads.borrow_mut();
+        if !reads.contains(&read) {
+            reads.push(read);
+        }
+    }
+}
+
 /// S2: `useXContext(NAME, scope)` (a Radix hook) or `useContext(C)` (React's) of a context declared in this module:
 /// the context's name.
 fn context_read(value: &js_ast::Expr, names: &NameTable<'_>) -> Option<String> {
@@ -2362,12 +2377,15 @@ fn read_decl(
                 let state = name_at(0).unwrap_or_else(|| format!("_st{}", out.state.len() + 1));
                 reducer_hook(r, out, m, &args, state, name_at(1), vloc);
             }
-            _ => out.fallback(
-                "hook-unsupported",
-                format!("hook {hook} is not supported"),
-                vloc,
-                "move this component to React, or replace the hook with useState/useEffect",
-            ),
+            _ => {
+                note_foreign_ctx_read(r.names, &hook, call);
+                out.fallback(
+                    "hook-unsupported",
+                    format!("hook {hook} is not supported"),
+                    vloc,
+                    "move this component to React, or replace the hook with useState/useEffect",
+                )
+            }
         }
         return;
     }
@@ -2616,12 +2634,15 @@ fn read_expr_stmt(
             vloc,
             "write const s = useStore(handle)",
         ),
-        Some((hook, _, _)) => out.fallback(
-            "hook-unsupported",
-            format!("hook {hook} is not supported"),
-            vloc,
-            "move this component to React, or replace the hook with useState/useEffect",
-        ),
+        Some((hook, call, _)) => {
+            note_foreign_ctx_read(r.names, &hook, call);
+            out.fallback(
+                "hook-unsupported",
+                format!("hook {hook} is not supported"),
+                vloc,
+                "move this component to React, or replace the hook with useState/useEffect",
+            )
+        }
         // F288 G9: `r.current = v` on a `useRef` of this component is judged later, by the closed rule (Mellow A2); in a
         // branch of an early-return chain it runs on some renders only (rule 2: `ref-in-render`, Mellow F2).
         None if out.branch_depth > 0
