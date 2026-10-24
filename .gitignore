@@ -20,3 +20,4 @@ tests/fixtures/shadcn/dist/
 **/.dist.brust-tmp/
 **/.brust/resolve-cache-*.json
 crates/*/target
+packages/brust/test/fixtures/.battery-ssr/
