@@ -1647,12 +1647,15 @@ struct Carry<'a> {
     row_handlers: &'a BTreeSet<String>,
     handler_names: &'a BTreeSet<String>,
     module_consts: &'a HashMap<String, RawExpr>,
+    /// F442 (W2): the refs of the component that renders the call site whose `.current` the content may read.
+    ref_reads: &'a BTreeSet<String>,
     taken: Vec<String>,
     inputs: Vec<(String, Expr)>,
     handlers: Vec<crate::ir::HandlerDecl>,
 }
 
 impl<'a> Carry<'a> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         native: &'a [(u32, String, usize)],
         owner: usize,
@@ -1660,6 +1663,7 @@ impl<'a> Carry<'a> {
         row_handlers: &'a BTreeSet<String>,
         handler_names: &'a BTreeSet<String>,
         module_consts: &'a HashMap<String, RawExpr>,
+        ref_reads: &'a BTreeSet<String>,
         taken: Vec<String>,
     ) -> Self {
         Carry {
@@ -1669,6 +1673,7 @@ impl<'a> Carry<'a> {
             row_handlers,
             handler_names,
             module_consts,
+            ref_reads,
             taken,
             inputs: Vec::new(),
             handlers: Vec::new(),
@@ -1780,6 +1785,36 @@ impl<'a> Carry<'a> {
                     IdentKind::Store { .. } => refuse("a store"),
                     IdentKind::Unknown => refuse("unknown"),
                 }
+            }
+            // F442 (W2): `ref.current` of a ref of the call site's component, read by the content, crosses as ONE input (the
+            // call site paints the ref's initial value and the client reads the live ref, `Placer::painted`); the content
+            // reads that prop. Any other use of a ref still has no value to carry.
+            RawKind::Member {
+                target,
+                name: field,
+                optional: false,
+            } if field == "current"
+                && matches!(&target.kind, RawKind::Ident { name, kind: IdentKind::Local }
+                    if self.ref_reads.contains(name) && !bound.contains(name)) =>
+            {
+                let RawKind::Ident { name, .. } = &target.kind else {
+                    unreachable!()
+                };
+                let hidden = format!("__in_{name}_current");
+                if !self.inputs.iter().any(|(h, _)| *h == hidden) {
+                    if self.taken.contains(&hidden) {
+                        return Err(format!("the component already has a prop `{hidden}`"));
+                    }
+                    self.inputs.push((hidden.clone(), Expr::Raw(r.clone())));
+                }
+                *r = RawExpr {
+                    loc,
+                    kind: RawKind::Ident {
+                        name: hidden,
+                        kind: IdentKind::Prop,
+                    },
+                };
+                Ok(())
             }
             RawKind::Member { target, .. } => self.raw(target, bound, what),
             RawKind::Index { target, index } => {
@@ -3668,6 +3703,7 @@ impl Walker<'_, '_> {
             &self.row_handlers,
             &self.st.handler_names,
             &self.module_consts,
+            &self.st.ref_reads,
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;
@@ -3777,6 +3813,7 @@ impl Walker<'_, '_> {
             &self.row_handlers,
             &self.st.handler_names,
             &self.module_consts,
+            &self.st.ref_reads,
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;
@@ -3899,6 +3936,7 @@ impl Walker<'_, '_> {
             &self.row_handlers,
             &self.st.handler_names,
             &self.module_consts,
+            &self.st.ref_reads,
             cir.props.iter().map(|p| p.name.clone()).collect(),
         );
         carry.nodes(&mut nodes, &[])?;

@@ -12,9 +12,9 @@
     "measured": 64,
     "analysisOnly": 0,
     "tier": {
-      "static": 56,
+      "static": 55,
       "native": 1,
-      "react": 7
+      "react": 8
     },
     "islands": 34,
     "pagesWithNoJs": 26,
@@ -42,7 +42,7 @@
       "classification": "survey truth (today's rule; R34.7 removes it)",
       "measuredRows": 36,
       "analysisOnlyRows": 0,
-      "appComponents": 121,
+      "appComponents": 120,
       "libraryComponents": 167
     },
     {
@@ -51,7 +51,7 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 30,
       "analysisOnlyRows": 0,
-      "appComponents": 112,
+      "appComponents": 111,
       "libraryComponents": 203
     },
     {
@@ -60,7 +60,7 @@
       "classification": "survey truth (compiler diagnostic)",
       "measuredRows": 28,
       "analysisOnlyRows": 0,
-      "appComponents": 76,
+      "appComponents": 75,
       "libraryComponents": 199
     },
     {
@@ -85,9 +85,9 @@
       "blocker": "fallback:context-island",
       "kind": "compiler code",
       "classification": "survey truth (compiler diagnostic)",
-      "measuredRows": 6,
+      "measuredRows": 7,
       "analysisOnlyRows": 0,
-      "appComponents": 8,
+      "appComponents": 9,
       "libraryComponents": 0
     },
     {
@@ -1427,13 +1427,14 @@
     {
       "id": "tabs",
       "basis": "measured",
-      "tier": "static",
+      "tier": "react",
       "islands": 1,
-      "components": 10,
-      "reactComponents": 8,
-      "jsGzipKb": 112,
+      "components": 11,
+      "reactComponents": 7,
+      "jsGzipKb": 111,
       "workerCalls": 1,
       "codes": [
+        "context-island",
         "context-state",
         "external-component",
         "island-prop",

@@ -112,6 +112,11 @@ struct Placer<'s> {
     slot_content: bool,
     /// F199: set while placing the value of a prop passed to a component: the child may print it as content.
     component_prop: bool,
+    /// F442 (W2): set while placing the value of an attribute of an element: a ref's `.current` may be read there.
+    attr_value: bool,
+    /// F442 (W2): the `useRef(init)` of each ref a render may read as `ref.current` in an attribute or a prop: the server
+    /// prints `init` (the value of the first render); the client reads the live ref.
+    ref_inits: HashMap<String, RawExpr>,
     /// F198 + F199: the component already falls back to React (a rule before placement made it so): its template is never
     /// printed by the server, so `element_problem` is not asked (it would only repeat the fallback).
     react_already: bool,
@@ -271,6 +276,8 @@ pub fn place(ir: &mut ComponentIR, st: &mut PassState, ctx: &super::PassCtx<'_>)
         frame_value: false,
         slot_content: false,
         component_prop: false,
+        attr_value: false,
+        ref_inits: ref_inits(ir),
         react_already: ir.diagnostics.iter().any(|d| {
             d.class == crate::ir::DiagClass::Fallback
                 && !super::tier::CHILD_ONLY.contains(&d.rule.as_str())
@@ -535,6 +542,106 @@ pub(super) fn template_server_raws(ir: &ComponentIR, f: &mut dyn FnMut(&RawExpr)
 }
 
 /// Identifiers of kind `Local` read directly (not inside a function or JSX).
+/// F442 (W2, ruling on challenge 137ba9e3): the refs whose `.current` an attribute or a component prop may read during
+/// render, with the initial value they hold at the first render. Not a ref that is bound to an element (`ref={r}`: it holds
+/// a node after mount), a callback ref, one the render itself writes, one a handler or a repeating effect touches, or one
+/// with an initial value that is not an expression of the component.
+pub(crate) fn ref_inits(ir: &ComponentIR) -> HashMap<String, RawExpr> {
+    let mut bound: BTreeSet<String> = ir
+        .render_ref_writes
+        .iter()
+        .map(|w| w.r#ref.clone())
+        .collect();
+    ref_attrs(&ir.template, &mut bound);
+    // Only a ref that changes at most once after the mount: no handler touches it (a handler may write it together with a
+    // state change, which React shows at that very render), and every effect that does runs once (`[]`). Anything else
+    // would leave the attribute stale where React refreshes it at each render.
+    let touched = |e: &RawExpr, name: &str| match &e.kind {
+        RawKind::Arrow { captures, .. } | RawKind::Opaque { captures, .. } => {
+            captures.iter().any(|(n, _)| n == name)
+        }
+        _ => {
+            let mut l = BTreeSet::new();
+            direct_locals(e, &mut l);
+            l.contains(name)
+        }
+    };
+    for r in &ir.refs {
+        let by_handler = ir.handlers.iter().any(|h| touched(&h.body, &r.name));
+        let by_live_effect = ir
+            .effects
+            .iter()
+            .any(|f| !matches!(&f.deps, Some(d) if d.is_empty()) && touched(&f.body, &r.name));
+        if by_handler || by_live_effect {
+            bound.insert(r.name.clone());
+        }
+    }
+    // the structural snapshot keeps the initial values as written (placement turns them into client code)
+    ir.structural
+        .as_ref()
+        .map_or(&ir.refs, |s| &s.refs)
+        .iter()
+        .filter(|r| !r.callback && !bound.contains(&r.name))
+        .filter_map(|r| match &r.init {
+            // (placed already when the template printer asks: a value the server evaluates is the same expression)
+            Expr::Raw(e) | Expr::Server(crate::ir::ServerExpr(e)) => {
+                Some((r.name.clone(), e.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The names of the refs bound to an element by `ref={name}` anywhere in the template.
+fn ref_attrs(n: &Node, out: &mut BTreeSet<String>) {
+    match n {
+        Node::Element {
+            attrs, children, ..
+        } => {
+            for a in attrs {
+                if let Attr::Ref { name } = a {
+                    out.insert(name.clone());
+                }
+            }
+            children.iter().for_each(|c| ref_attrs(c, out));
+        }
+        Node::Component { children, .. } | Node::Fragment(children) => {
+            children.iter().for_each(|c| ref_attrs(c, out))
+        }
+        Node::If { then, else_, .. } => then.iter().chain(else_).for_each(|c| ref_attrs(c, out)),
+        Node::For { body, .. } => body.iter().for_each(|c| ref_attrs(c, out)),
+        Node::Text(_) | Node::Slot(_) | Node::Outlet => {}
+    }
+}
+
+/// `e` with every `ref.current` of a ref in `inits` replaced by the ref's initial value, when nothing else of those refs
+/// is read (`ref` alone, `ref.other`, a call of it): the expression the server evaluates for the first render.
+pub(crate) fn read_ref_inits(e: &RawExpr, inits: &HashMap<String, RawExpr>) -> Option<RawExpr> {
+    // (a flag, not `out != e`: a NaN literal makes an expression unequal to its own copy)
+    let replaced = std::cell::Cell::new(false);
+    let out = map_pre(e, &|n| match &n.kind {
+        RawKind::Member {
+            target,
+            name,
+            optional: false,
+        } if name == "current" => match &target.kind {
+            RawKind::Ident {
+                name: r,
+                kind: IdentKind::Local,
+            } => {
+                let init = inits.get(r).cloned();
+                replaced.set(replaced.get() || init.is_some());
+                init
+            }
+            _ => None,
+        },
+        _ => None,
+    });
+    let mut left = BTreeSet::new();
+    direct_locals(&out, &mut left);
+    (replaced.get() && !left.iter().any(|l| inits.contains_key(l))).then_some(out)
+}
+
 fn direct_locals(e: &RawExpr, out: &mut BTreeSet<String>) {
     match &e.kind {
         RawKind::Ident {
@@ -1701,6 +1808,22 @@ impl Placer<'_> {
 
     /// Places one first-paint value.
     fn painted(&mut self, r: &RawExpr) -> Expr {
+        // F442 (W2): in an attribute or a component prop, `ref.current` is the ref's initial value for the server (the
+        // first render), and the live ref for the client, which reads it when its other dependencies recompute the value.
+        // Known difference from React: the client does not re-render for a ref change, only for those dependencies.
+        let ref_free = (self.attr_value || self.component_prop) && !self.slot_content;
+        if ref_free
+            && !self.ref_inits.is_empty()
+            && let Some(sub) = read_ref_inits(r, &self.ref_inits)
+        {
+            return self.painted_with(r, &sub, true);
+        }
+        self.painted_with(r, r, false)
+    }
+
+    /// [`Placer::painted`]: `r` is what the client binds, `server` what the server evaluates (`r` itself, or `r` with the
+    /// initial value of a ref in place of its `.current`).
+    fn painted_with(&mut self, r: &RawExpr, server: &RawExpr, substituted: bool) -> Expr {
         // Lead ruling (c), the single print point: EVERY expression printed under a lowered Provider frame or in a
         // Provider component's own template (a child, an own slot, a component prop, an attribute, a condition or a
         // loop body) goes through the total allowlist, so no print path can skip it. F173: under a plain wrapper, every
@@ -1709,9 +1832,9 @@ impl Placer<'_> {
         let problem = if self.frame_value {
             None
         } else if self.provider_children > 0 || (self.component_children > 0 && self.slot_content) {
-            self.child_read_problem(&self.fold_consts(r), 0)
+            self.child_read_problem(&self.fold_consts(server), 0)
         } else if (self.slot_content || self.component_prop) && !self.react_already {
-            self.element_problem(&self.fold_consts(r), 0)
+            self.element_problem(&self.fold_consts(server), 0)
         } else {
             None
         };
@@ -1771,7 +1894,7 @@ impl Placer<'_> {
             });
         }
         let mut locals = BTreeSet::new();
-        direct_locals(r, &mut locals);
+        direct_locals(server, &mut locals);
         if let Some(rule) = locals.iter().find_map(|l| self.unplaceable.get(l).copied()) {
             if self.flagged.insert(rule) {
                 self.diagnostics.push(Diagnostic::fallback(
@@ -1810,9 +1933,27 @@ impl Placer<'_> {
         }
         // Not `fold`: the client binds a painted value from this expression, so an arm dropped for the server would be
         // dropped for the client too (F297 drops dead arms only in derived locals, whose chunk reads the structural IR).
-        let folded = self.fold_consts(r);
+        let folded = self.fold_consts(server);
         if try_server(&folded).is_ok() && self.locals_placed(&folded) {
-            return Expr::Server(crate::ir::ServerExpr(folded));
+            // A ref read stays in the expression: the client binds it as written (the live ref), and the template printer
+            // evaluates `ref.current` as the ref's initial value (`Printer::jinja`).
+            return Expr::Server(crate::ir::ServerExpr(if substituted {
+                self.fold_consts(r)
+            } else {
+                folded
+            }));
+        }
+        if substituted {
+            // the first render's value is not something the server evaluates: the ref read stays a refusal
+            if self.flagged.insert("ref-in-render") {
+                self.diagnostics.push(Diagnostic::fallback(
+                    "ref-in-render",
+                    "a ref is read during render",
+                    r.loc,
+                    "read refs in effects and handlers",
+                ));
+            }
+            return Expr::Raw(r.clone());
         }
         if self.reads_id(r) {
             self.flag_use_id(r.loc);
@@ -1930,9 +2071,12 @@ impl Placer<'_> {
                 }
                 for a in attrs.iter_mut() {
                     match a {
-                        Attr::Dynamic { value, .. }
-                        | Attr::Spread(value)
-                        | Attr::InnerHtml { value } => self.expr(value),
+                        Attr::Dynamic { value, .. } => {
+                            self.attr_value = true;
+                            self.expr(value);
+                            self.attr_value = false;
+                        }
+                        Attr::Spread(value) | Attr::InnerHtml { value } => self.expr(value),
                         Attr::CollectionItem { data } => self.expr(data),
                         Attr::Event { .. } => self.reactive += 1,
                         Attr::Static { .. } | Attr::Ref { .. } | Attr::ForwardRef => {}

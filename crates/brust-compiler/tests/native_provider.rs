@@ -1661,3 +1661,31 @@ fn a_frame_field_that_is_a_template_over_a_use_id_value_is_carried_by_a_native_c
     );
     assert!(!root.jinja.contains("brust-island"), "{}", root.jinja);
 }
+
+#[test]
+fn a_ref_read_in_the_content_of_a_state_provider_crosses_into_the_clone_as_one_input() {
+    // F442 (W2): `r.current` in an attribute of the content is a value of the call site (its first render's value,
+    // refreshed by the live ref on the client), not the ref itself, which no input could carry.
+    let all = compile("ctx_ref_read.tsx");
+    let root = &all[0];
+    assert!(!is_react(&root.ir), "{:?}", root.ir.diagnostics);
+    let c = clones(&all);
+    assert_eq!(
+        c.len(),
+        1,
+        "{:?} {:?}",
+        all.iter().map(|i| &i.ir.id).collect::<Vec<_>>(),
+        root.ir.diagnostics
+    );
+    assert!(
+        matches!(c[0].ir.tier, Tier::Native),
+        "{:?}",
+        c[0].ir.diagnostics
+    );
+    assert!(!root.jinja.contains("brust-island"), "{}", root.jinja);
+    assert!(
+        c[0].jinja.contains("__in_r_current"),
+        "the clone reads the carried value: {}",
+        c[0].jinja
+    );
+}

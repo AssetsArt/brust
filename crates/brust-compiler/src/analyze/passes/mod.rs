@@ -36,6 +36,8 @@ pub struct PassState {
     /// Where render reads a browser global, and which.
     pub browser_locs: Vec<(u32, String)>,
     pub handler_names: BTreeSet<String>,
+    /// F442 (W2): the refs an attribute or a prop of the component may read as `ref.current` (`placement::ref_inits`).
+    pub ref_reads: BTreeSet<String>,
     /// Names a generated handler must not take (F147): [`ComponentIR::bound_names`].
     pub reserved: std::collections::HashSet<String>,
     /// Values the client chunk evaluates, beyond handlers/effects/state inits.
@@ -100,6 +102,7 @@ impl PassState {
         PassState {
             cx: DepsCx::new(ir),
             handler_names: ir.handlers.iter().map(|h| h.name.clone()).collect(),
+            ref_reads: placement::ref_inits(ir).into_keys().collect(),
             reserved: ir.bound_names.clone(),
             ..Default::default()
         }

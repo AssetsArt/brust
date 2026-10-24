@@ -302,6 +302,8 @@ pub struct Printer<'a, 'c> {
     /// F267: the caller's ref cell this element takes (`Attr::ForwardRef`), printed after the attributes: `x-ref` on an
     /// element the caller binds, `x-pref` on a nested host (its own instance binds it; the caller's binds `x-pref`).
     fwd_ref: Option<(String, bool)>,
+    /// F442 (W2): the initial value of each ref an attribute or a prop may read as `ref.current` (the first render's value).
+    ref_inits: HashMap<String, RawExpr>,
     /// F420: printing inside a `<select>` whose value is bound to `__select`, so an `<option>` paints `selected`.
     in_select: bool,
     /// F432: printing the children a component call hands down as markup. The component may place them inside a
@@ -345,6 +347,7 @@ impl<'a, 'c> Printer<'a, 'c> {
             raw_text: false,
             inner_html: None,
             fwd_ref: None,
+            ref_inits: crate::analyze::passes::placement::ref_inits(ir),
             in_select: false,
             component_children: 0,
             skip_value_print: false,
@@ -571,6 +574,9 @@ impl<'a, 'c> Printer<'a, 'c> {
             return UNDEFINED.into();
         }
         let names = self.names();
+        // F442 (W2): the server evaluates `ref.current` as the ref's initial value
+        let e = &crate::analyze::passes::placement::read_ref_inits(e, &self.ref_inits)
+            .unwrap_or_else(|| e.clone());
         to_jinja(
             &ServerExpr(e.clone()),
             &JinjaCtx {
