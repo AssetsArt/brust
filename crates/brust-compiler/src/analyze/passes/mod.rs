@@ -14,6 +14,7 @@ pub mod placement;
 pub mod projection;
 pub mod ref_writes;
 pub mod server_expr;
+pub mod state_children;
 pub mod stores;
 pub mod tier;
 
@@ -148,6 +149,8 @@ fn run_passes_with(ir: &mut ComponentIR, ctx: &PassCtx<'_>, host_spec: BTreeSet<
     stores::resolve(ir, ctx);
     // Before placement: a refused render read never becomes a placed value.
     stores::check_render(ir, ctx);
+    // F404: a state seeded from `children` has no value to hold.
+    state_children::check(ir, ctx);
     // S2: context Providers hand their values to the consumers under them as hidden props, before the structural
     // snapshot and placement so every later pass reads them like any prop.
     let provider_locs = {
