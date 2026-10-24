@@ -242,66 +242,35 @@ fn shape(n: &Node) -> ElementShape {
 fn replace_clones(n: &mut Node, elems: &HashMap<String, Node>, failed: &mut Option<String>) {
     match n {
         Node::Slot(Expr::Raw(r) | Expr::Server(ServerExpr(r))) => {
-            let RawKind::Call { callee, args } = &r.kind else {
-                return;
-            };
-            if !react_member(callee, &["cloneElement"]) {
-                return;
-            }
-            let (
-                Some(RawExpr {
-                    kind: RawKind::Ident { name, .. },
-                    ..
-                }),
-                Some(config),
-            ) = (args.first(), args.get(1))
-            else {
-                *failed = Some("`cloneElement` of other than an element local and a config".into());
-                return;
-            };
-            if args.len() > 2 {
-                *failed = Some("`cloneElement` with children arguments".into());
-                return;
-            }
-            let Some(el) = elems.get(name) else {
-                *failed = Some(format!(
-                    "`cloneElement` of `{name}`, which is not an element"
-                ));
-                return;
-            };
-            let RawKind::Object(pairs) = &config.kind else {
-                *failed = Some(
-                    "`cloneElement` with a config that is not an object literal of static keys"
-                        .into(),
-                );
-                return;
-            };
-            let mut el = el.clone();
-            let Node::Component {
-                props,
-                forwarded_ref,
-                ..
-            } = &mut el
-            else {
-                return;
-            };
-            for (k, v) in pairs {
-                match k.as_str() {
-                    "key" => {
-                        *failed = Some("`cloneElement` with a `key`".into());
-                        return;
-                    }
-                    "ref" if matches!(v.kind, RawKind::Lit(Literal::Undefined)) => {}
-                    _ => {
-                        if k == "ref" {
-                            *forwarded_ref = false;
-                        }
-                        props.retain(|(p, _)| p != k);
-                        props.push((k.clone(), Expr::Raw(v.clone())));
-                    }
+            // Phase B (S1): `present ? cloneElement(child, config) : null` (or `present && …`) renders the element only
+            // while the test holds: a branch, as the same JSX written with the element in place would be.
+            let branch = match &r.kind {
+                RawKind::Cond { test, yes, no }
+                    if matches!(no.kind, RawKind::Lit(Literal::Null | Literal::Undefined)) =>
+                {
+                    Some((test.as_ref().clone(), yes.as_ref(), false))
                 }
+                RawKind::Binary {
+                    op: BinOp::And,
+                    left,
+                    right,
+                } => Some((left.as_ref().clone(), right.as_ref(), true)),
+                _ => None,
+            };
+            if let Some((test, yes, and)) = branch {
+                if let Some(el) = clone_of(yes, elems, failed) {
+                    *n = Node::If {
+                        cond: Expr::Raw(test),
+                        then: vec![el],
+                        else_: Vec::new(),
+                        and,
+                    };
+                }
+                return;
             }
-            *n = el;
+            if let Some(el) = clone_of(r, elems, failed) {
+                *n = el;
+            }
         }
         Node::Element { children, .. }
         | Node::Component { children, .. }
@@ -317,6 +286,74 @@ fn replace_clones(n: &mut Node, elems: &HashMap<String, Node>, failed: &mut Opti
             .for_each(|c| replace_clones(c, elems, failed)),
         Node::Slot(_) | Node::Text(_) | Node::Outlet => {}
     }
+}
+
+/// The element `cloneElement(child, config)` renders, `config` applied as React 19 applies it; `None` when `r` is not
+/// such a call (or the call is refused: `failed` says why).
+fn clone_of(
+    r: &RawExpr,
+    elems: &HashMap<String, Node>,
+    failed: &mut Option<String>,
+) -> Option<Node> {
+    let RawKind::Call { callee, args } = &r.kind else {
+        return None;
+    };
+    if !react_member(callee, &["cloneElement"]) {
+        return None;
+    }
+    let (
+        Some(RawExpr {
+            kind: RawKind::Ident { name, .. },
+            ..
+        }),
+        Some(config),
+    ) = (args.first(), args.get(1))
+    else {
+        *failed = Some("`cloneElement` of other than an element local and a config".into());
+        return None;
+    };
+    if args.len() > 2 {
+        *failed = Some("`cloneElement` with children arguments".into());
+        return None;
+    }
+    let Some(el) = elems.get(name) else {
+        *failed = Some(format!(
+            "`cloneElement` of `{name}`, which is not an element"
+        ));
+        return None;
+    };
+    let RawKind::Object(pairs) = &config.kind else {
+        *failed = Some(
+            "`cloneElement` with a config that is not an object literal of static keys".into(),
+        );
+        return None;
+    };
+    let mut el = el.clone();
+    let Node::Component {
+        props,
+        forwarded_ref,
+        ..
+    } = &mut el
+    else {
+        return None;
+    };
+    for (k, v) in pairs {
+        match k.as_str() {
+            "key" => {
+                *failed = Some("`cloneElement` with a `key`".into());
+                return None;
+            }
+            "ref" if matches!(v.kind, RawKind::Lit(Literal::Undefined)) => {}
+            _ => {
+                if k == "ref" {
+                    *forwarded_ref = false;
+                }
+                props.retain(|(p, _)| p != k);
+                props.push((k.clone(), Expr::Raw(v.clone())));
+            }
+        }
+    }
+    Some(el)
 }
 
 fn is_children(e: &RawExpr) -> bool {

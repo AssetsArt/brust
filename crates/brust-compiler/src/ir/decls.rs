@@ -149,6 +149,9 @@ pub struct RenderRefWrite {
 pub struct RefDecl {
     pub name: String,
     pub init: Expr,
+    /// F288 phase B: a branch's callback-ref cell (`callback_refs`), bound `x-cref`; its `init` is the callback.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub callback: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Fb } from './Fwd'
 
-// a callback ref under a condition: the mount effect cannot follow a branch that mounts later
+// a callback ref under a condition: it follows the branch (F288 phase B, x-cref)
 export default function P() {
   const [el, setEl] = useState<HTMLButtonElement | null>(null)
   const [n, setN] = useState(0)

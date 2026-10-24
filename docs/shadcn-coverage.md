@@ -175,7 +175,7 @@ Basis `measured` = read from the page's own successful build; `analysis-only` = 
 | slider | measured | static | 1 | 7 (4) | 93 | 1 | external-component, island-children, island-prop, nested-instance, spread-props | built |
 | sonner | measured | native | 1 | 4 (2) | 88 | 1 | external-component, hook-unsupported, island-prop, jsx-expression, spread-props | built |
 | spinner | measured | static | 0 | 2 (0) | 0 | 1 | external-component, spread-props | built |
-| switch | measured | static | 0 | 13 (0) | 10 | 0 | — | built |
+| switch | measured | static | 0 | 13 (0) | 11 | 0 | — | built |
 | table | measured | static | 0 | 8 (0) | 0 | 0 | — | built |
 | tabs | measured | static | 1 | 9 (8) | 95 | 1 | external-component, island-prop, spread-props | built |
 | textarea | measured | static | 0 | 2 (0) | 0 | 0 | — | built |
